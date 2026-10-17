@@ -36,6 +36,10 @@ def machine_work(command: Sequence[str], settings: BoundedLeaseConfig) -> bool:
     tokens = list(command)
     while tokens and (PurePath(tokens[0]).name in settings.wrappers or _assignment(tokens[0])):
         tokens.pop(0)
+    if tokens:
+        normalized = [PurePath(tokens[0]).name, *tokens[1:]]
+        if any(normalized[:len(prefix)] == list(prefix) for prefix in settings.command_prefixes):
+            return True
     if not tokens or PurePath(tokens[0]).name not in settings.programs:
         return False
     subcommand = next((token for token in tokens[1:] if not token.startswith("+")), "")

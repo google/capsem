@@ -6,7 +6,8 @@ import {
   hashLabel,
   loadReleaseData,
   packageRows,
-  profileList,
+  runtimeArchNames,
+  runtimeRecord,
 } from '../../release_site/src/lib/release-data';
 
 describe('release-site graph data', () => {
@@ -28,14 +29,19 @@ describe('release-site graph data', () => {
     });
   });
 
-  it('selects package and profile data for a channel', () => {
+  it('selects package and runtime data for a channel', () => {
     const data = dataForChannel(loadReleaseData(), 'stable');
+    const runtime = runtimeRecord(data);
 
     expect(packageRows(data).map((pkg) => pkg.id)).toContain('capsem-1-4-0-pkg');
-    expect(profileList(data).map((profile) => profile.id).sort()).toEqual([
-      'co-work',
-      'code',
-    ]);
+    expect(runtime?.revision).toBe('1.0.0-stable.20260702');
+    expect(runtimeArchNames(runtime ?? {})).toEqual(['arm64', 'x86_64']);
+  });
+
+  it('treats a manifest without a runtime as unpublished', () => {
+    const data = dataForChannel(loadReleaseData(), 'stable');
+
+    expect(runtimeRecord({ ...data, manifest: { ...data.manifest, runtime: null } })).toBeUndefined();
   });
 
   it('keeps human digest display short without changing source data', () => {

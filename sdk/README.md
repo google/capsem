@@ -11,7 +11,7 @@ the TUI uses Rust. Each client takes an explicit HTTP(S) URL and bearer token.
 | Hypervisor | `info`, `list`, `create`, `run`, `purge`, `log`, `update`, `restart` |
 | Agent debugging | `debug.panics/triage` |
 | Private networks | `networks.create/list/inspect/delete/logs` |
-| Profiles and MCP | `profiles.list`, `profiles.mcp(profile).info/servers/default_permission/get`; scoped `server.tools.list/call`, `server.refresh` |
+| MCP | `mcp.info/servers/default_permission/get`; scoped `server.tools.list/call`, `server.refresh` |
 | VM | `info`, `exec`, `persist`, `start`, `stop`, `pause`, `resume`, `delete`, `fork` |
 | VM inspection | `log`, `history`, `timeline` |
 | VM files | `files.list/read/write` |
@@ -21,7 +21,7 @@ the TUI uses Rust. Each client takes an explicit HTTP(S) URL and bearer token.
 | VM ports | `ports.open/list/close` |
 
 Rust accesses the nested resources as methods, for example
-`vm.stats().details().await?`. `info` combines versions, profiles and update
+`vm.stats().details().await?`. `info` combines versions, VM assets and update
 state at the hypervisor level, and AI/model/MCP, network and files at the VM
 level. `stats.details` returns model usage and typed model, tool, network, DNS,
 file, process, audit and credential events, plus captured bodies. It is the
@@ -59,9 +59,11 @@ create/start acknowledges launch, and an exec request waits for the guest to bec
 File access requires a running VM's security ledger. A restart acknowledgement
 requires explicit reconnection with new credentials. No mutation is retried.
 
-`run` executes a command in a temporary VM and accepts its own profile, CPU,
-memory, environment and guest deadline. `debug.panics` and `debug.triage`
-provide typed host diagnostics; triage can include one VM's session ledger. Profile MCP
+`run` executes a command in a temporary VM and accepts its own CPU, memory,
+environment and guest deadline. Omitted CPU and memory take the service
+defaults (4 CPUs, 12 GiB). `debug.panics` and `debug.triage` provide typed host
+diagnostics; triage can include one VM's session ledger. `mcp` covers the MCP
+servers every VM runs (settings.toml `[mcp]` with corp's laid over it); tool
 calls preserve arbitrary JSON arguments and results while discovery and
 permissions remain typed.
 
@@ -75,16 +77,70 @@ Port objects can be listed and closed without exposing wire request enums.
 
 Private network operations use authenticated gateway HTTP and immutable network
 IDs; VM creation accepts typed objects returned by the network resource.
-Creation uses the gateway catalog's default profile when `profile` is omitted:
-the client reads `default_profile_id` from `GET /status` once and caches it, so
-no profile name is compiled into an SDK. Explicit profile selection accepts a
-typed object returned by `profiles.list`, rather than a raw profile ID.
 Mounts remain deferred.
 
 The separately installed [`@capsem/mcp`](../mcp/typescript/README.md) package
 uses the TypeScript SDK to present these resources to AI agents over stdio. It
 requires an explicit gateway URL, bearer token, and HTTP transport timeout; the
 native Capsem installer does not install Node.js or download the npm package.
+
+## Credential injection
+
+Supply host credentials through `credentials.inject`; it returns an opaque
+reference suitable for a workload's environment. The host broker substitutes
+the real value only on the approved outbound provider request. Existing network,
+provider and corp policy remains in force. Injection does not start consent or
+automatically refresh supplied OAuth tokens.
+
+```python
+import os
+from capsem import Hypervisor
+
+async with Hypervisor(url, gateway_token) as hv:
+    credential = await hv.credentials.inject(
+        "openai", os.environ["OPENAI_API_KEY"], storage="memory"
+    )
+    vm = await hv.create(env={"OPENAI_API_KEY": credential.credential_ref})
+```
+
+TypeScript uses `hv.credentials.inject('openai', value, {storage: 'memory'})`;
+Rust uses `hv.credentials().inject(provider, value, storage)`. The authenticated
+HTTP operation is `POST /credentials/inject` with `provider`, `value` and
+`storage` (`file` by default, or `memory`). Responses contain only
+`credential_ref` and `storage`. Mutations are never replayed automatically.
+
+File mode writes the existing owner-only atomic credential store. Memory mode
+keeps injected values in the service and active VM owners' host memory, seeds
+new/resumed owners through host IPC, and loses them when the service lifetime
+ends. It creates no new credential-store file and does not delete a copy that
+was previously persisted. No keychain or unlock prompt is involved.
+
+For startup injection, explicitly select host variables with
+`CAPSEM_CREDENTIAL_INJECTION_ENV=OPENAI_API_KEY` (a comma-separated list).
+Supported names are `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`,
+`GOOGLE_API_KEY`, `GITHUB_TOKEN` and `GH_TOKEN`; unselected variables are never
+imported. `CAPSEM_CREDENTIAL_INJECTION_STORAGE=memory` selects memory for
+these inputs; the default is `file`. Those variables are not passed to VM owner
+processes or guest environments. The startup log reports provider and opaque
+reference, which can be used in a subsequent create request.
+
+Alternatively set `CAPSEM_CREDENTIAL_INJECTION_FILE` to an owner-only (0600)
+regular JSON file. Symlinks and special files are refused. Its shape is:
+
+```json
+{"credentials":[{"provider":"openai","value":"HOST_SECRET","storage":"memory"}]}
+```
+
+Each file entry independently selects storage. Keep the input outside guest
+workspaces. Invalid startup inputs produce a redacted failure while the service
+continues starting. An unavailable active owner returns 503 from memory
+injection; material already accepted into service memory remains available for
+an explicit retry. This API registers credentials for the existing broker; the
+managed OAuth connection and per-session grant flow remains separate work.
+
+The long-term credential storage model remains open in
+[#343](https://github.com/google/capsem/issues/343), including Windows DPAPI,
+macOS encryption at rest and user/system service or injected deployments.
 
 ## Oversight
 
@@ -104,7 +160,7 @@ separate SDK coverage components.
 
 These Ironbank tests use disposable services and explicit gateway credentials:
 
-- `test_braavos_sdk.py`: all three SDKs, authentication, profile/MCP and host
+- `test_braavos_sdk.py`: all three SDKs, authentication, MCP and host
   diagnostic resources, name resolution,
   stopped workspace files and file-access refusal.
 - `test_sdk_live.py`: Python and TypeScript create/exec, exact binary transfer,
@@ -114,6 +170,6 @@ These Ironbank tests use disposable services and explicit gateway credentials:
 - `test_sdk_restart.py`: Python and TypeScript acknowledged launchd restart,
   new process identities/token, explicit reconnection and unchanged stopped VM.
 
-The fixture layer owns local binaries, VM assets, profiles and teardown. SDK
+The fixture layer owns local binaries, VM assets and teardown. SDK
 drivers communicate only over HTTP. Native macOS acceptance does not establish
 Linux supervisor or KVM behavior; those platform owners retain their own gates.

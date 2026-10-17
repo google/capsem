@@ -183,6 +183,32 @@ fn an_improvement_is_never_a_regression() {
 }
 
 #[test]
+fn throughput_growth_is_an_improvement_and_loss_is_a_regression() {
+    let faster = compare(
+        "mitm-load.rps",
+        Statistic::Median,
+        &steady(100.0),
+        &steady(200.0),
+        Unit::RequestsPerSecond,
+        THRESHOLDS,
+    );
+    assert!(!faster.regressed);
+    assert_eq!(faster.ratio, 2.0, "the displayed ratio remains current/baseline");
+
+    let slower = compare(
+        "mitm-load.rps",
+        Statistic::Median,
+        &steady(100.0),
+        &steady(50.0),
+        Unit::RequestsPerSecond,
+        THRESHOLDS,
+    );
+    assert!(slower.regressed);
+    assert!(slower.significant);
+    assert_eq!(slower.ratio, 0.5);
+}
+
+#[test]
 fn nanosecond_percentages_have_no_release_authority() {
     let verdict = compare(
         "criterion.metrics.increment_ns",

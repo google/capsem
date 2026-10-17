@@ -32,7 +32,6 @@ from __future__ import annotations
 from . import config as gate_config
 from .docker import Docker
 from .errors import GateError
-from .productschema import ProfileRevisionPolicy
 from .releaseauthoring import author_binary_graph
 from .sourcecommit import SourceCommit
 
@@ -68,9 +67,7 @@ class ReleaseGraph:
         assets_manifest: str,
         candidate_base: str,
         assets_dir: str,
-        profiles_dir: str,
         channel: str,
-        profile_revision_policy: ProfileRevisionPolicy,
         manifest_version: str,
         out_dir: str,
     ) -> None:
@@ -82,9 +79,7 @@ class ReleaseGraph:
                 admin,
                 manifest=manifest,
                 assets_dir=assets_dir,
-                profiles_dir=profiles_dir,
                 channel=channel,
-                profile_revision_policy=profile_revision_policy,
                 manifest_version=manifest_version,
                 out_dir=out_dir,
             )
@@ -101,7 +96,7 @@ class ReleaseGraph:
         manifest = author_binary_graph(assets_manifest, build=build, record=record)
         self.build_site(dist=out_dir)
         self.check_channel(admin, channel=channel, dist=out_dir, manifest=manifest)
-        self.hand_off(manifest)
+        self.hand_off(manifest, channel=channel)
 
     def extract_admin(self, package: str) -> str:
         """Unpack the package without installing it, and return its admin binary.
@@ -172,9 +167,7 @@ class ReleaseGraph:
         *,
         manifest: str,
         assets_dir: str,
-        profiles_dir: str,
         channel: str,
-        profile_revision_policy: ProfileRevisionPolicy,
         manifest_version: str,
         out_dir: str,
     ) -> str:
@@ -191,12 +184,8 @@ class ReleaseGraph:
                     f'"{self._config.file_url_scheme}{self._mount}/{manifest}"',
                     "--assets-dir",
                     f'"{assets_dir}"',
-                    "--profiles-dir",
-                    f'"{profiles_dir}"',
                     "--channel",
                     channel,
-                    "--profile-revision-policy",
-                    profile_revision_policy.value,
                     "--manifest-version",
                     manifest_version,
                     "--out-dir",
@@ -206,7 +195,7 @@ class ReleaseGraph:
             user=self._config.guest_user.name,
             cwd=self._mount,
         )
-        return f"{out_dir}/{self._config.graph_manifest}"
+        return f"{out_dir}/{self._config.graph_manifest.format(channel=channel)}"
 
     def build_site(self, *, dist: str) -> None:
         """Render the release site over the generated distribution."""
@@ -241,7 +230,7 @@ class ReleaseGraph:
 
     # -- the handoff -------------------------------------------------------
 
-    def hand_off(self, manifest: str) -> None:
+    def hand_off(self, manifest: str, *, channel: str) -> None:
         """Point the package's postinst at the graph just authored.
 
         Refuses two mistakes the installer cannot report. A target that does
@@ -252,7 +241,7 @@ class ReleaseGraph:
         """
         absolute = manifest if manifest.startswith("/") else f"{self._mount}/{manifest}"
         if absolute.endswith(f"/{self._config.legacy_projection}") and not absolute.endswith(
-            f"/{self._config.graph_manifest}"
+            f"/{self._config.graph_manifest.format(channel=channel)}"
         ):
             raise GateError(
                 f"the install handoff must select the authoritative release graph, "

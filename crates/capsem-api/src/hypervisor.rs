@@ -1,6 +1,6 @@
 //! Combined gateway overview; SDK consumers call this Hypervisor.info.
 
-use crate::{ProfileCatalogStatus, UpdateStatusResponse, VmAction, VmLifecycleState};
+use crate::{AssetStatus, UpdateStatusResponse, VmAction, VmLifecycleState};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -19,7 +19,7 @@ pub struct HypervisorInfo {
     pub vms: Vec<VmSummary>,
     pub resource_summary: Option<ResourceSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub profiles: Option<ProfileCatalogStatus>,
+    pub assets: Option<AssetStatus>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updates: Option<UpdateStatusResponse>,
 }
@@ -30,7 +30,6 @@ pub struct VmSummary {
     pub name: Option<String>,
     pub status: VmLifecycleState,
     pub persistent: bool,
-    pub profile_id: String,
     // Telemetry (present for running VMs, absent for stopped)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub uptime_secs: Option<u64>,

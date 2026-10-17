@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 
 import pytest
-from capsem_builder.cache import leases
+from capsem_builder.cache import generations, inventory, leases
 from capsem_builder.cache.enforcement import enforce_repository
 from capsem_builder.cache.inventory import scan_inventory, scan_retention_inventory
 from capsem_builder.cache.models import CachePolicy, CacheScope, PruneStrategy, StagePolicy
@@ -58,6 +58,74 @@ def test_missing_stage_directory_is_an_empty_inventory(tmp_path: Path) -> None:
 
     assert report.stages[0].entry_count == 0
     assert report.stages[0].logical_bytes == 0
+
+
+@pytest.mark.parametrize("classified", [True, False])
+def test_inventory_survives_retirement_after_measurement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    classified: bool,
+) -> None:
+    configured = policy()
+    paths = CachePaths(repository_root=tmp_path, policy=configured)
+    root = paths.stage("objects") if classified else paths.root
+    retired = root / "retired"
+    retired.mkdir(parents=True)
+    (retired / "payload").write_bytes(b"retired bytes")
+    live = root / "live"
+    live.mkdir()
+    (live / "payload").write_bytes(b"live bytes")
+    owner = generations if classified else inventory
+    measure_entry = owner.entry_size
+
+    def retire_after_measurement(path: Path, seen: set[tuple[int, int]]) -> tuple[int, int]:
+        result = measure_entry(path, seen)
+        if path == retired:
+            (retired / "payload").unlink()
+            retired.rmdir()
+        return result
+
+    monkeypatch.setattr(owner, "entry_size", retire_after_measurement)
+    report = scan_inventory(paths, configured, now_ns=10)
+
+    entries = report.stages[0].entries if classified else report.unclassified
+    assert [entry.key for entry in entries] == ["live"]
+    assert report.logical_bytes == len(b"live bytes")
+    assert report.allocated_bytes == (live / "payload").stat().st_blocks * 512
+    assert not retired.exists()
+
+
+@pytest.mark.parametrize("classified", [True, False])
+def test_inventory_keeps_metadata_permission_errors_visible(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    classified: bool,
+) -> None:
+    configured = policy()
+    paths = CachePaths(repository_root=tmp_path, policy=configured)
+    root = paths.stage("objects") if classified else paths.root
+    entry = root / "entry"
+    entry.mkdir(parents=True)
+    owner = generations if classified else inventory
+    measure_entry = owner.entry_size
+    metadata = Path.lstat
+    measured = False
+
+    def measured_entry(path: Path, seen: set[tuple[int, int]]) -> tuple[int, int]:
+        nonlocal measured
+        result = measure_entry(path, seen)
+        measured = path == entry
+        return result
+
+    def refused_metadata(path: Path, *args, **kwargs):
+        if path == entry and measured:
+            raise PermissionError("metadata access denied")
+        return metadata(path, *args, **kwargs)
+
+    monkeypatch.setattr(owner, "entry_size", measured_entry)
+    monkeypatch.setattr(Path, "lstat", refused_metadata)
+    with pytest.raises(PermissionError, match="metadata access denied"):
+        scan_inventory(paths, configured, now_ns=10)
 
 
 def test_single_owner_enforcement_never_scans_unrelated_stages(tmp_path: Path) -> None:
@@ -172,13 +240,22 @@ def test_process_exit_releases_every_cache_lease(monkeypatch, tmp_path: Path) ->
     assert held == {}
 
 
-def test_nested_incremental_inventory_counts_build_outputs_once_and_protects_cargo(tmp_path: Path) -> None:
-    stage = policy().stages["objects"].model_copy(update={
-        "entry_root": Path("debug/incremental"),
-        "prune_strategy": PruneStrategy.GENERATIONAL,
-        "mutation_locks": (Path("debug/.cargo-lock"),),
-        "warm_size_bytes": 20, "max_size_bytes": 29,
-    })
+def test_nested_incremental_inventory_counts_build_outputs_once_and_protects_cargo(
+    tmp_path: Path,
+) -> None:
+    stage = (
+        policy()
+        .stages["objects"]
+        .model_copy(
+            update={
+                "entry_root": Path("debug/incremental"),
+                "prune_strategy": PruneStrategy.GENERATIONAL,
+                "mutation_locks": (Path("debug/.cargo-lock"),),
+                "warm_size_bytes": 20,
+                "max_size_bytes": 29,
+            }
+        )
+    )
     configured = policy().model_copy(update={"stages": {"objects": stage}})
     paths = CachePaths(repository_root=tmp_path, policy=configured)
     root = paths.stage("objects")
@@ -203,9 +280,15 @@ def test_nested_incremental_inventory_counts_build_outputs_once_and_protects_car
 
 
 def test_retention_root_cannot_follow_an_ancestor_symlink_outside_its_stage(tmp_path: Path) -> None:
-    stage = policy().stages["objects"].model_copy(update={
-        "retention_root": Path("debug/incremental"),
-    })
+    stage = (
+        policy()
+        .stages["objects"]
+        .model_copy(
+            update={
+                "retention_root": Path("debug/incremental"),
+            }
+        )
+    )
     configured = policy().model_copy(update={"stages": {"objects": stage}})
     paths = CachePaths(repository_root=tmp_path, policy=configured)
     paths.stage("objects").mkdir(parents=True)

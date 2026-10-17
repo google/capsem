@@ -6,11 +6,8 @@ real checked-in config. Synthetic inputs and integration fixtures belong under
 
 ## Fixtures
 
-- `tests/fixtures/config/` contains test-only settings, corp, profile, and rule
+- `tests/fixtures/config/` contains test-only settings, corp, and rule
   fixtures. Do not add test fixtures under root `config/`.
-- Source profile fixtures should follow the same rule as production profiles:
-  no manual asset or sibling-file `hash`/`size` pins unless the fixture is
-  explicitly testing materialized runtime config.
 
 ## Black-Box Gates
 

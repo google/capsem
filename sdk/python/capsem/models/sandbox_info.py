@@ -35,7 +35,6 @@ class SandboxInfo(Model):
     network: VmNetworkInfo | None = None
     persistent: StrictBool | None = None
     pid: Annotated[StrictInt, Field(ge=0)]
-    profile_id: StrictStr
     ram_mb: Annotated[StrictInt, Field(ge=0)] | None = None
     resume_blocked_reason: StrictStr | None = None
     session_db: SessionDbStatus | None = None

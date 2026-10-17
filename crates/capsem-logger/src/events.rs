@@ -3,9 +3,11 @@ use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
+mod host;
 mod network;
 mod transport;
-pub use network::{MembershipState, NetworkMembership, NetworkRecord, NetworkState};
+pub use host::{chain_hash, HostEvent, HostEventKind, GENESIS_HASH};
+pub use network::{MembershipState, NetworkDeparture, NetworkMembership, NetworkRecord, NetworkState};
 pub use transport::{TransportEvent, TransportEventKind};
 
 pub use capsem_proto::credential_reference::{credential_reference, is_credential_reference, CREDENTIAL_REF_PREFIX};
@@ -237,10 +239,9 @@ pub struct SecurityAskRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProfileMutationEvent {
+pub struct PolicyMutationEvent {
     pub timestamp_unix_ms: i64,
     pub mutation_id: String,
-    pub profile_id: String,
     pub actor: String,
     pub category: String,
     pub filename: String,
@@ -254,7 +255,7 @@ pub struct ProfileMutationEvent {
     pub old_size: u64,
     pub new_hash: String,
     pub new_size: u64,
-    pub status: ProfileMutationStatus,
+    pub status: PolicyMutationStatus,
     #[serde(default)]
     pub error: Option<String>,
     #[serde(default)]
@@ -263,12 +264,12 @@ pub struct ProfileMutationEvent {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum ProfileMutationStatus {
+pub enum PolicyMutationStatus {
     Applied,
     Failed,
 }
 
-impl ProfileMutationStatus {
+impl PolicyMutationStatus {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Applied => "applied",
@@ -625,8 +626,10 @@ pub struct NetEvent {
     /// display preview from it at insert and stages the bytes into the
     /// session archive; nothing else carries a second copy.
     #[serde(default)]
+    #[serde(with = "crate::wire_bytes::option")]
     pub request_body: Option<Vec<u8>>,
     #[serde(default)]
+    #[serde(with = "crate::wire_bytes::option")]
     pub response_body: Option<Vec<u8>>,
     pub conn_type: Option<String>,
     #[serde(default)]
@@ -751,6 +754,7 @@ pub struct ModelCall {
     pub request_bytes: u64,
     /// The request body as it was captured, once; see `NetEvent::request_body`.
     #[serde(default)]
+    #[serde(with = "crate::wire_bytes::option")]
     pub request_body: Option<Vec<u8>>,
     // Response metadata
     pub message_id: Option<String>,
@@ -758,6 +762,7 @@ pub struct ModelCall {
     pub text_content: Option<String>,
     pub thinking_content: Option<String>,
     #[serde(default)]
+    #[serde(with = "crate::wire_bytes::option")]
     pub response_body: Option<Vec<u8>>,
     pub stop_reason: Option<String>,
     pub input_tokens: Option<u64>,
@@ -787,6 +792,10 @@ pub struct ExecEvent {
     pub command: String,
     /// Request origin: "mcp", "cli", "api", "frontend".
     pub source: String,
+    /// Where it ran: the VM, or the session's container workload.
+    /// is what the caller asked for in either case, never the launcher that
+    /// carries it into the workload.
+    pub target: capsem_proto::ipc::ExecTarget,
     pub trace_id: Option<String>,
     pub process_name: Option<String>,
     #[serde(default)]
@@ -805,7 +814,9 @@ pub struct ExecEventComplete {
     pub duration_ms: u64,
     /// Each lane's leading bytes exactly as the guest wrote them, not
     /// necessarily UTF-8. The archive stores at most `MAX_BODY_BLOB_BYTES`.
+    #[serde(with = "serde_bytes")]
     pub stdout: Vec<u8>,
+    #[serde(with = "serde_bytes")]
     pub stderr: Vec<u8>,
     /// What the guest wrote per lane. More than the lane's bytes means
     /// capture or storage cut it, and the archived body says so.

@@ -1,0 +1,23 @@
+# Capsem's settings for the xpra-html5 client of an Xpra surface, served in
+# place of the package's default-settings.txt. URL parameters are never used.
+#
+# One application, no desktop: no floating menu or tray, no on-screen
+# keyboard, audio, printing or file transfer, and no remote log forwarding.
+# The clipboard works both ways on an explicit copy or paste, but the client
+# does not poll the browser's clipboard on every click and focus.
+#
+# The websocket is this origin's root, which the gateway admits with the
+# preview session cookie and hands to the VM owner.
+path = /
+floating_menu = false
+keyboard = false
+sound = false
+printing = false
+file_transfer = false
+remote_logging = false
+clock = false
+clipboard_poll = false
+reconnect = true
+blocked-hosts = xpra.org,www.xpra.org
+min-quality = 10
+min-speed = 50

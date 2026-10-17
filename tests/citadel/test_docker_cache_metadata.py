@@ -9,7 +9,7 @@ CACHE_METADATA_RATIONALE = (
     "Docker passes every in-scope ARG to subsequent RUN instructions, even "
     "when the shell never references it. Declare INPUT_IDENTITY and its label "
     "after all build work: changing helper metadata must not reinstall apt, "
-    "Rust or profile dependencies. See skills/dev-cache/SKILL.md."
+    "Rust or package dependencies. See skills/dev-cache/SKILL.md."
 )
 
 

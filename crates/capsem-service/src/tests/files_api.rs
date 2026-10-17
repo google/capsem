@@ -83,13 +83,13 @@ pub(super) fn setup_vm_with_workspace_and_uds(
     state.instances.lock().unwrap().insert(
         vm_id.into(),
         InstanceInfo {
+            generation: capsem_crypto::uuid_v4(),
+            authority: Default::default(),
+            upstream_policy: upstream_broker::test_policy_publisher(),
             id: vm_id.into(),
             name: vm_id.into(),
-            profile_id: "code".into(),
-            profile_revision: test_profile_revision(),
-            profile_payload_hash: test_profile_payload_hash(),
             asset_pins: test_asset_pins(),
-            pid: 1,
+            pid: std::process::id(),
             uds_path,
             session_dir,
             ram_mb: 2048,
@@ -99,7 +99,6 @@ pub(super) fn setup_vm_with_workspace_and_uds(
             persistent: false,
             env: None,
             forked_from: None,
-            owner_secret: String::new(),
         },
     );
 }
@@ -132,6 +131,7 @@ async fn exec_response_preserves_non_utf8_output() {
         Json(ExecRequest {
             command: "binary-output".to_string(),
             timeout_secs: Some(5),
+            target: None,
         }),
     )
     .await

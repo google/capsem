@@ -731,7 +731,7 @@ class TestGoldenFixture:
         assert SettingType.FILE.value not in present
 
     def test_runtime_settings_metadata_fields_exercised(self):
-        """Runtime settings exercise UI metadata without profile/provider payloads."""
+        """Runtime settings exercise UI metadata without provider payloads."""
         root = _load_golden()
         settings = extract_settings(root.settings)
         defaults = SettingMetadata()
@@ -761,7 +761,7 @@ class TestGoldenFixture:
                 f"Action {a.key} missing metadata.action"
             )
 
-    def test_profile_mcp_tools_are_not_settings(self):
+    def test_mcp_tools_are_not_settings(self):
         root = _load_golden()
         settings = extract_settings(root.settings)
         tools = [s for s in settings if s.setting_type == SettingType.MCP_TOOL]
@@ -789,19 +789,19 @@ class TestGoldenFixture:
         with_validator = [s for s in settings if s.metadata.validator]
         assert len(with_validator) >= 1
 
-    def test_profile_mcp_is_not_in_settings_tree(self):
-        """MCP is profile-route state, not a settings tree group."""
+    def test_mcp_is_not_in_settings_tree(self):
+        """MCP is served by its own routes, not a settings tree group."""
         root = _load_golden()
         assert all(not (isinstance(node, GroupNode) and node.key == "mcp") for node in root.settings)
 
     def test_no_settings_enabled_by_provider_state(self):
-        """Profile/provider state is not modeled through settings enabled_by."""
+        """Provider state is not modeled through settings enabled_by."""
         root = _load_golden()
         settings = extract_settings(root.settings)
         with_parent = [s for s in settings if s.enabled_by]
         assert with_parent == []
 
-    def test_no_profile_provider_file_payloads_in_settings(self):
+    def test_no_provider_file_payloads_in_settings(self):
         root = _load_golden()
         settings = extract_settings(root.settings)
         files = [s for s in settings if s.setting_type == SettingType.FILE]
@@ -815,14 +815,14 @@ class TestGoldenFixture:
         hidden = [s for s in settings if s.metadata.hidden]
         assert len(hidden) >= 1
 
-    def test_builtin_metadata_not_used_for_profile_state(self):
+    def test_builtin_metadata_is_unused(self):
         root = _load_golden()
         settings = extract_settings(root.settings)
         builtins = [s for s in settings if s.metadata.builtin]
         assert builtins == []
 
     def test_no_ai_provider_group_in_settings(self):
-        """AI/provider configuration belongs to profile/corp, not settings."""
+        """AI/provider configuration is policy, not a UI settings group."""
         root = _load_golden()
         ai_group = None
         for node in root.settings:
@@ -869,7 +869,7 @@ class TestGoldenFixture:
         assert find_collapsed(root.settings)
 
     def test_settings_are_not_collapsed_leaves(self):
-        """Leaf collapse belongs to richer profile editors, not app settings."""
+        """Leaf collapse belongs to richer policy editors, not app settings."""
         root = _load_golden()
         settings = extract_settings(root.settings)
         collapsed = [s for s in settings if s.collapsed]

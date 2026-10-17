@@ -10,8 +10,8 @@ use serde::Deserialize;
 
 use crate::app::ControlAction;
 use crate::model::{
-    AppState, Attention, ProfileOption, ServiceState, ServiceStatus, SessionLifecycle, SessionStats, SessionSummary,
-    UpdateNotice, UpdateNoticeKind, UpdateTrack,
+    AppState, Attention, ServiceState, ServiceStatus, SessionLifecycle, SessionStats, SessionSummary, UpdateNotice,
+    UpdateNoticeKind, UpdateTrack,
 };
 use crate::provider::StateProvider;
 
@@ -127,9 +127,7 @@ impl GatewayProvider {
                 fetch_status(&hypervisor).await?
             }
         };
-        let mut state = status_response_to_state(status, started.elapsed());
-        state.profiles = fetch_profiles(&hypervisor).await.unwrap_or_default();
-        Ok(state)
+        Ok(status_response_to_state(status, started.elapsed()))
     }
 
     pub fn invoke(&self, action: &ControlAction) -> Result<ActionOutcome> {
@@ -150,6 +148,38 @@ impl GatewayProvider {
         let token = self.token().await?;
         let (hypervisor, transport) = self.clients(&token)?;
         invoke_action(&hypervisor, &transport, action).await
+    }
+
+    pub fn list_images(&self) -> Result<capsem_sdk::models::ImageListResponse> {
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+        runtime.block_on(self.list_images_async())
+    }
+
+    pub async fn list_images_async(&self) -> Result<capsem_sdk::models::ImageListResponse> {
+        tokio::time::timeout(Duration::from_secs(30), self.fetch_images())
+            .await
+            .context("image catalog request timed out")?
+    }
+
+    async fn fetch_images(&self) -> Result<capsem_sdk::models::ImageListResponse> {
+        let token = self.token().await?;
+        let (_, transport) = self.clients(&token)?;
+        capsem_sdk::operations::list_images(
+            &transport,
+            &capsem_sdk::operations::ListImagesParams { refresh: Some(false) },
+            capsem_sdk::transport::CallOptions::default(),
+        )
+        .await
+        .map_err(|error| {
+            let error = crate::sdk_actions::display_error(error)
+                .to_string()
+                .replace(&token, "[redacted]");
+            anyhow::anyhow!(error
+                .chars()
+                .filter(|ch| !ch.is_control())
+                .take(512)
+                .collect::<String>())
+        })
     }
 }
 
@@ -177,21 +207,6 @@ async fn fetch_token(client: &reqwest::Client, base_url: &str) -> Result<String>
 
 async fn fetch_status(hypervisor: &Hypervisor) -> Result<HypervisorInfo> {
     hypervisor.info().await.map_err(crate::sdk_actions::display_error)
-}
-
-async fn fetch_profiles(hypervisor: &Hypervisor) -> Result<Vec<ProfileOption>> {
-    Ok(hypervisor
-        .profiles()
-        .list()
-        .await?
-        .into_iter()
-        .filter(|record| record.availability.shell)
-        .map(|record| ProfileOption {
-            id: record.id,
-            name: record.name,
-            description: Some(record.description),
-        })
-        .collect())
 }
 
 fn gateway_port() -> Option<u16> {
@@ -229,7 +244,6 @@ fn status_response_to_state(status: HypervisorInfo, latency: Duration) -> AppSta
         },
         active_session_id,
         sessions,
-        profiles: Vec::new(),
         update_notice: Some(status.updates.map(update_response_to_notice).unwrap_or(UpdateNotice {
             kind: UpdateNoticeKind::Unavailable,
             channel_url: None,
@@ -245,9 +259,6 @@ fn update_response_to_notice(status: UpdateStatusResponse) -> UpdateNotice {
     if status.assets.update_available {
         tracks.push(UpdateTrack::VmAssets);
     }
-    if status.profiles.update_available {
-        tracks.push(UpdateTrack::Profiles);
-    }
     if status.images.update_available {
         tracks.push(UpdateTrack::Images);
     }
@@ -257,9 +268,6 @@ fn update_response_to_notice(status: UpdateStatusResponse) -> UpdateNotice {
     }
     if status.assets.blocked_reason.is_some() {
         blocked.push(UpdateTrack::VmAssets);
-    }
-    if status.profiles.blocked_reason.is_some() {
-        blocked.push(UpdateTrack::Profiles);
     }
     if status.images.blocked_reason.is_some() {
         blocked.push(UpdateTrack::Images);
@@ -302,10 +310,8 @@ fn vm_response_to_summary(vm: VmSummary) -> SessionSummary {
         id,
         title,
         repo_path: None,
-        profile: vm.profile_id,
-        // The overview does not report a VM's pinned profile revision or readiness.
-        profile_status: None,
         can_resume: vm.can_resume,
+        available_actions: vm.available_actions,
         resume_blocked_reason: vm.resume_blocked_reason,
         branch: None,
         persistent: vm.persistent,

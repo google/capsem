@@ -8,19 +8,46 @@
 //! explicitly allows, and pins the connection to the exact addresses it
 //! judged.
 
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
+use super::{authorize_upstream, parse_tool_url, SecurityEnforcementDecision, SecurityPluginConfig, SecurityRuleSet};
+use capsem_mcp_transport::http_transport::BrokerHttpClient;
+use capsem_proto::mcp_worker::{McpHttpAdmission, MCP_ADMISSION_HEADER};
 use reqwest::Client;
+use std::collections::BTreeMap;
+
+pub(super) struct AuthorizedResponse {
+    pub domain: String,
+    pub decision: SecurityEnforcementDecision,
+    pub response: reqwest::Response,
+}
+
+pub(super) enum RequestFailure {
+    Denied(String),
+    Failed(String),
+}
 
 /// The HTTP settings the built-in tools connect with. Redirects are never
 /// followed: the boundary evaluated the requested URL, and a 3xx to another
 /// host would reach a name it never judged.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct BuiltinHttpClient {
     request_timeout: Duration,
     connect_timeout: Duration,
     user_agent: Option<String>,
+    broker: Option<(BrokerHttpClient, Client)>,
+}
+
+impl std::fmt::Debug for BuiltinHttpClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BuiltinHttpClient")
+            .field("request_timeout", &self.request_timeout)
+            .field("connect_timeout", &self.connect_timeout)
+            .field("user_agent", &self.user_agent)
+            .field("brokered", &self.broker.is_some())
+            .finish()
+    }
 }
 
 impl BuiltinHttpClient {
@@ -29,7 +56,85 @@ impl BuiltinHttpClient {
             request_timeout,
             connect_timeout,
             user_agent: None,
+            broker: None,
         }
+    }
+
+    /// Native tools receive policy decisions and HTTP solely from the service.
+    pub fn brokered(http: BrokerHttpClient) -> Self {
+        let mut client = Self::new(
+            Duration::from_secs(capsem_proto::MCP_HTTP_TIMEOUT_SECONDS),
+            Duration::from_secs(capsem_proto::MCP_STARTUP_TIMEOUT_SECONDS),
+        );
+        client.broker = Some((http, Client::new()));
+        client
+    }
+
+    pub(super) async fn request(
+        &self,
+        url: &str,
+        method: &str,
+        security_rules: &SecurityRuleSet,
+        plugin_policy: &BTreeMap<String, SecurityPluginConfig>,
+    ) -> Result<AuthorizedResponse, RequestFailure> {
+        let failed = |error| RequestFailure::Failed(format!("HTTP request failed: {error}"));
+        if let Some((broker, builder)) = &self.broker {
+            let parsed = parse_tool_url(url).map_err(RequestFailure::Denied)?;
+            let domain = parsed.host_str().unwrap_or_default().to_owned();
+            let request = builder
+                .request(method.parse::<http::Method>().expect("builtin HTTP method"), parsed)
+                .timeout(self.request_timeout)
+                .build()
+                .map_err(|error| failed(error.to_string()))?;
+            let mut response = broker
+                .execute(request)
+                .await
+                .map_err(|error| failed(error.to_string()))?;
+            if response.headers().get_all(MCP_ADMISSION_HEADER).iter().count() != 1 {
+                return Err(RequestFailure::Denied(
+                    "missing or ambiguous coordinator HTTP admission".into(),
+                ));
+            }
+            let receipt: McpHttpAdmission = serde_json::from_slice(
+                response
+                    .headers()
+                    .get(MCP_ADMISSION_HEADER)
+                    .expect("validated admission count")
+                    .as_bytes(),
+            )
+            .map_err(|_| RequestFailure::Denied("invalid coordinator HTTP admission".into()))?;
+            response.headers_mut().remove(MCP_ADMISSION_HEADER);
+            let decision = match receipt {
+                McpHttpAdmission::Allowed { rule_id, reason } => {
+                    let mut decision = SecurityEnforcementDecision::allow();
+                    decision.rule_id = rule_id;
+                    decision.reason = reason;
+                    decision
+                }
+                McpHttpAdmission::Denied { reason } => return Err(RequestFailure::Denied(reason)),
+            };
+            return Ok(AuthorizedResponse {
+                domain,
+                decision,
+                response,
+            });
+        }
+        let checked = authorize_upstream(url, method, security_rules, plugin_policy)
+            .await
+            .map_err(RequestFailure::Denied)?;
+        let client = self
+            .pinned(&checked.domain, &checked.addresses)
+            .map_err(|error| RequestFailure::Failed(format!("HTTP client setup failed: {error}")))?;
+        let response = client
+            .request(method.parse::<http::Method>().expect("builtin HTTP method"), url)
+            .send()
+            .await
+            .map_err(|error| failed(error.to_string()))?;
+        Ok(AuthorizedResponse {
+            domain: checked.domain,
+            decision: checked.decision,
+            response,
+        })
     }
 
     pub fn with_user_agent(mut self, user_agent: impl Into<String>) -> Self {
@@ -54,70 +159,6 @@ impl BuiltinHttpClient {
     pub fn pinned(&self, host: &str, addresses: &[SocketAddr]) -> reqwest::Result<Client> {
         self.builder().resolve_to_addrs(host, addresses).build()
     }
-}
-
-/// True for an address on the public Internet; false for loopback, private,
-/// link-local, shared, documentation, benchmark, multicast, broadcast and
-/// unspecified space, and for an IPv6 address that maps or embeds one of
-/// those. Host rules are written against names; only an explicit allow rule
-/// may send a built-in tool to an address in this set.
-pub fn is_public_address(address: IpAddr) -> bool {
-    match address {
-        IpAddr::V4(v4) => is_public_v4(v4),
-        IpAddr::V6(v6) => {
-            if let Some(v4) = v6.to_ipv4_mapped() {
-                return is_public_v4(v4);
-            }
-            let segments = v6.segments();
-            !(v6.is_unspecified()
-                || v6.is_loopback()
-                || v6.is_multicast()
-                || (segments[0] & 0xfe00) == 0xfc00 // fc00::/7 unique local
-                || (segments[0] & 0xffc0) == 0xfe80 // fe80::/10 link-local
-                || (segments[0] == 0x2001 && segments[1] == 0x0db8) // documentation
-                || (segments[0] == 0x2002 && !is_public_v4(embedded_6to4(segments))) // 6to4 of a private v4
-                || (segments[0] == 0x0064 && segments[1] == 0xff9b && !is_public_v4(embedded_nat64(segments))))
-        }
-    }
-}
-
-fn is_public_v4(address: Ipv4Addr) -> bool {
-    let [a, b, _, _] = address.octets();
-    !(address.is_unspecified()
-        || address.is_loopback()
-        || address.is_private()
-        || address.is_link_local()
-        || address.is_broadcast()
-        || address.is_multicast()
-        || address.is_documentation()
-        || a == 0 // 0.0.0.0/8 "this network"
-        || (a == 100 && (64..=127).contains(&b)) // 100.64.0.0/10 shared address space
-        || (a == 198 && (b == 18 || b == 19)) // 198.18.0.0/15 benchmarking
-        || a >= 240) // 240.0.0.0/4 reserved, incl. broadcast
-}
-
-fn embedded_6to4(segments: [u16; 8]) -> Ipv4Addr {
-    Ipv4Addr::from((u32::from(segments[1]) << 16) | u32::from(segments[2]))
-}
-
-fn embedded_nat64(segments: [u16; 8]) -> Ipv4Addr {
-    Ipv4Addr::from((u32::from(segments[6]) << 16) | u32::from(segments[7]))
-}
-
-/// Resolve `host:port` the way the connector will. An IP literal resolves
-/// to itself; a name goes through the system resolver off the runtime.
-pub async fn resolve_upstream(host: &str, port: u16) -> Result<Vec<SocketAddr>, String> {
-    if let Ok(address) = host.parse::<IpAddr>() {
-        return Ok(vec![SocketAddr::new(address, port)]);
-    }
-    let addresses: Vec<SocketAddr> = tokio::net::lookup_host((host, port))
-        .await
-        .map_err(|error| format!("could not resolve {host}: {error}"))?
-        .collect();
-    if addresses.is_empty() {
-        return Err(format!("could not resolve {host}: no addresses"));
-    }
-    Ok(addresses)
 }
 
 /// The reason a non-public address is refused when no rule allowed it.

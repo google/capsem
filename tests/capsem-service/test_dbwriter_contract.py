@@ -27,21 +27,25 @@ def test_dbwriter_source_boundaries_are_single_rail() -> None:
 
     assert 'DbWriter::open(&resolve_session_dir(&state' not in service_prod
     assert 'DbWriter::open(&session_dir.join("session.db")' not in service_prod
-    assert "profile_mutation_db: Arc<capsem_logger::DbHandle>" in service_prod
-    assert "DbHandle::open(&db_path)" in service_prod
+    assert "host_ledger: Arc<capsem_logger::DbHandle>" in service_prod
     assert "DbWriter::open(&state.main_db_path()" not in service_prod
+    assert "main_db" not in service_prod
     assert 'session_dir.join("session.db")' in service_prod
     # Workspace snapshots were retired (#228): no status query reaches the process.
     assert "SnapshotStatus" not in service_prod
 
-    assert "capsem_logger::DbWriter::open(" in process_prod
-    assert '&session_dir.join("session.db")' in process_prod
+    assert "capsem_logger::DbWriter::from_ledger_channel(" in process_prod
+    assert "DbWriter::open(" not in process_prod
+    assert 'let ledger_path = session_dir.join("session.db");' in process_prod
     assert "Arc<capsem_logger::DbWriter>" in process_vsock
     assert "rusqlite::Connection" not in process_vsock
     assert "write_many" not in process_vsock
 
     assert "pub struct DbWriter" in logger_writer
-    assert "type WriterSender = mpsc::SyncSender<WriterMessage>;" in logger_writer
-    assert "mpsc::sync_channel(capacity.max(1))" in logger_writer
+    assert "struct WriterSender {" in logger_writer
+    assert "tx: mpsc::SyncSender<QueuedWriterMessage>," in logger_writer
+    assert "budget: Arc<WriterQueueBudget>," in logger_writer
+    assert "let capacity = capacity.max(1);" in logger_writer
+    assert "let (tx, rx) = mpsc::sync_channel(capacity);" in logger_writer
     assert "mpsc::channel()" not in logger_writer
     assert '.name("capsem-db-writer".into())' in logger_writer

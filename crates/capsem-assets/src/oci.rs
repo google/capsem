@@ -5,11 +5,33 @@ use oci_client::Reference;
 use serde::Deserialize;
 
 mod cache;
+mod catalog;
+mod identity;
+mod owner;
+mod worker;
+pub use worker::CacheReconciler;
+mod removal;
+pub use owner::ImageCache;
+pub use removal::{RemovalPreview, RemovalResult};
+mod inventory;
+pub use identity::{CacheIdentity, CacheKey};
+pub use inventory::{CacheInventory, CacheUsage, ImageInventory};
+mod readiness;
+mod receipts;
+pub use readiness::{CacheReason, CacheSnapshot, CacheState};
+pub use receipts::CacheReceipt;
+
+const METADATA_LIMIT: usize = 4 * 1024 * 1024;
+const PULL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 mod pull;
+pub use catalog::{
+    is_catalog_name, Catalog, CatalogEntry, CatalogVersion, Channel, CATALOG_MEDIA_TYPE, DEFAULT_CATALOG,
+    RUNTIME_CONTRACT,
+};
+mod selector;
 pub use oci_client::secrets::RegistryAuth;
-pub use pull::{ImageLayout, Puller};
-mod transfer;
-pub use transfer::{transfer_manifest, TransferEntry};
+pub use pull::{ImageLayout, Puller, RootfsLayout, ROOTFS_MEDIA_TYPE};
+pub use selector::{admits, allows_source, Digest, ImageReference, ImageSelector, Repository, ResolvedImage};
 
 /// Require a qualified registry reference or explicit `docker://` prefix so
 /// existing shell-command arguments cannot silently turn into image pulls.

@@ -25,7 +25,6 @@ class ArtifactsConfig(Strict):
 
 class AssetsConfig(Strict):
     test_root: str
-    profiles_glob: str
     #: Every checkout path a built asset can depend on. Wider than strictly
     #: necessary on purpose: over-hashing costs a rebuild, under-hashing ships
     #: a stale rootfs in a run that stays green.
@@ -55,10 +54,8 @@ class AssetsConfig(Strict):
     cross_platform_probe_command: str
     cross_platform_probe_network: Literal[ContainerNetwork.NONE]
     merged_assets_dir: str
-    merged_config_dir: str
-    profile_home_dir: str
+    proof_home_dir: str
     failure_evidence_dir: str
-    materialized_profiles_dir: str
     current_link: str
     evidence_suffixes: tuple[str, ...]
     evidence_prune_dirs: tuple[str, ...]

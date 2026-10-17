@@ -6,11 +6,15 @@ mod create_command;
 mod doctor_bundle;
 mod doctor_output;
 use doctor_output::push_doctor_output_tail;
+mod gateway_runtime;
+use gateway_runtime::{gateway_url_from_runtime, wait_for_gateway_url};
 mod grouped_help;
+mod image_commands;
 use grouped_help::GROUPED_HELP;
 mod network_commands;
 mod paths;
 mod platform;
+mod proxy_command;
 mod route_ids;
 mod service_install;
 mod session_display;
@@ -44,12 +48,11 @@ use tokio::io::AsyncWriteExt;
 #[cfg(test)]
 use client::UpdateTrackState;
 use client::{
-    ApiResponse, AssetStatusResponse, ExecRequest, ExecResponse, ForkRequest, ForkResponse, HistoryResponse,
-    ListResponse, LogsResponse, PersistRequest, ProvisionRequest, ProvisionResponse, PurgeRequest, PurgeResponse,
-    SessionInfo, UdsClient, UpdateStatusResponse, VmLifecycleState,
+    ApiResponse, AssetStatus, ForkRequest, ForkResponse, GatewayClient, HistoryResponse, ListResponse, LogsResponse,
+    PersistRequest, ProvisionRequest, ProvisionResponse, PurgeRequest, PurgeResponse, SessionInfo,
+    UpdateStatusResponse, VmLifecycleState,
 };
 
-const DEFAULT_PROFILE_ID: &str = "code";
 const DOCTOR_MOCK_SERVER_ADDR: &str = "127.0.0.1:3713";
 const DOCTOR_MOCK_SERVER_LOCK_TIMEOUT: Duration = Duration::from_secs(600);
 
@@ -234,7 +237,7 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
 
-    /// Path to the service Unix Domain Socket
+    /// Local administration socket; VM commands use this directory's authenticated gateway
     #[arg(long)]
     uds_path: Option<PathBuf>,
 }
@@ -256,6 +259,12 @@ enum Commands {
     #[command(subcommand)]
     Network(NetworkCommands),
 
+    /// List the image catalog, or pull an image ahead of a create
+    Images(image_commands::ImagesArgs),
+
+    /// Run a VM-free OpenAI-compatible model API endpoint
+    Proxy(proxy_command::ProxyArgs),
+
     #[command(flatten)]
     Misc(MiscCommands),
 }
@@ -264,18 +273,12 @@ enum Commands {
 enum AssetsCommands {
     /// Show VM asset readiness
     Status {
-        /// Profile whose VM assets should be inspected
-        #[arg(long, default_value = DEFAULT_PROFILE_ID)]
-        profile: String,
         /// Output JSON
         #[arg(long)]
         json: bool,
     },
     /// Download missing or corrupt VM assets, then show readiness
     Ensure {
-        /// Profile whose VM assets should be repaired
-        #[arg(long, default_value = DEFAULT_PROFILE_ID)]
-        profile: String,
         /// Output JSON
         #[arg(long)]
         json: bool,
@@ -285,31 +288,17 @@ enum AssetsCommands {
 #[derive(Subcommand)]
 enum McpCommands {
     /// List configured MCP servers with connection status
-    Servers {
-        /// Profile whose MCP configuration should be inspected
-        #[arg(long, default_value = DEFAULT_PROFILE_ID)]
-        profile: String,
-    },
+    Servers,
     /// List discovered MCP tools across all servers
     Tools {
-        /// Profile whose MCP configuration should be inspected
-        #[arg(long, default_value = DEFAULT_PROFILE_ID)]
-        profile: String,
         /// Filter by server name
         #[arg(long)]
         server: Option<String>,
     },
     /// Re-discover tools from all MCP servers
-    Refresh {
-        /// Profile whose MCP servers should be refreshed
-        #[arg(long, default_value = DEFAULT_PROFILE_ID)]
-        profile: String,
-    },
+    Refresh,
     /// Call an MCP tool by namespaced name
     Call {
-        /// Profile whose MCP tool should be called
-        #[arg(long, default_value = DEFAULT_PROFILE_ID)]
-        profile: String,
         /// Namespaced tool name (e.g. github__search_repos)
         name: String,
         /// JSON arguments
@@ -357,17 +346,8 @@ enum SessionCommands {
         /// Name of the persistent session
         name: String,
     },
-    /// Execute a command in a running session
-    Exec {
-        /// Name or ID of the session
-        #[arg(value_name = "SESSION")]
-        session: String,
-        /// Command to execute
-        command: String,
-        /// Timeout in seconds
-        #[arg(long)]
-        timeout: Option<u64>,
-    },
+    /// Execute a command in a running session (an image session's workload by default)
+    Exec(container_run::ExecArgs),
     /// Run a shell command or OCI image in a fresh session, then destroy it
     Run(container_run::RunArgs),
     /// Copy a file in or out of a session's workspace.
@@ -482,7 +462,36 @@ enum SessionCommands {
 #[derive(Subcommand)]
 enum MiscCommands {
     /// Check for updates and install the latest version
-    Update(update::cli::UpdateArgs),
+    Update {
+        /// Skip confirmation prompt
+        #[arg(long, short)]
+        yes: bool,
+        /// Check the release channel and refresh update status without applying changes.
+        #[arg(long, conflicts_with_all = ["yes", "assets", "manifest", "install_manifest_stdin", "corp"])]
+        check: bool,
+        /// Refresh only VM assets (kernel/initrd/rootfs) from the release URL.
+        /// Useful when an asset-only release ships independently of binaries.
+        #[arg(long)]
+        assets: bool,
+        /// Select a named public release channel (for example stable or nightly).
+        #[arg(long, value_name = "NAME", value_parser = validate_update_channel, conflicts_with = "manifest")]
+        channel: Option<String>,
+        /// Override the asset manifest endpoint for this update.
+        #[arg(long, value_name = "URL", value_parser = validate_update_manifest_url)]
+        manifest: Option<String>,
+        /// Read preverified manifest bytes from stdin while --manifest remains
+        /// their logical URL. Reserved for the native package handoff.
+        #[arg(
+            long,
+            requires_all = ["manifest", "assets"],
+            conflicts_with_all = ["yes", "check", "channel", "corp"],
+            hide = true
+        )]
+        install_manifest_stdin: bool,
+        /// Fetch and install corporate policy config from this URL.
+        #[arg(long, value_name = "URL", value_parser = validate_update_corp_url, conflicts_with = "assets")]
+        corp: Option<String>,
+    },
     /// Run diagnostic tests in a fresh session
     ///
     /// Boots a temporary session, runs the capsem-doctor test suite, and reports
@@ -549,7 +558,19 @@ enum MiscCommands {
     Stop,
 }
 
-fn print_asset_status(status: &AssetStatusResponse) {
+fn validate_update_manifest_url(value: &str) -> std::result::Result<String, String> {
+    update::validate_source_url_arg("--manifest", value)
+}
+
+fn validate_update_channel(value: &str) -> std::result::Result<String, String> {
+    update::validate_channel_name(value).map_err(|error| error.to_string())
+}
+
+fn validate_update_corp_url(value: &str) -> std::result::Result<String, String> {
+    update::validate_source_url_arg("--corp", value)
+}
+
+fn print_asset_status(status: &AssetStatus) {
     println!(
         "Assets: {}{}",
         if status.ready { "ready" } else { "not ready" },
@@ -576,13 +597,14 @@ fn print_asset_status(status: &AssetStatusResponse) {
     if let Some(downloaded) = status.downloaded {
         println!("Downloaded: {downloaded}");
     }
-    if let Some(error) = &status.error {
+    for error in &status.errors {
         println!("Error: {error}");
     }
     if let Some(error) = &status.reconcile_error {
         println!("Last error: {error}");
     }
-    if let Some(manifest) = &status.manifest {
+    {
+        let manifest = &status.manifest;
         println!("Manifest: {} ({})", manifest.origin, manifest.path);
         if let Some(source) = &manifest.origin_source {
             println!("Manifest source: {source}");
@@ -593,9 +615,7 @@ fn print_asset_status(status: &AssetStatusResponse) {
         if let Some(refreshed_at) = &manifest.refreshed_at {
             println!("Manifest refreshed: {refreshed_at}");
         }
-        if let Some(status) = &manifest.validation_status {
-            println!("Manifest status: {status}");
-        }
+        println!("Manifest status: {:?}", manifest.validation_status);
         if let Some(error) = &manifest.validation_error {
             println!("Manifest error: {error}");
         }
@@ -610,10 +630,7 @@ fn print_asset_status(status: &AssetStatusResponse) {
         }
     }
     for asset in &status.assets {
-        match &asset.path {
-            Some(path) => println!("  {:<14} {:<8} {}", asset.name, asset.status, path),
-            None => println!("  {:<14} {}", asset.name, asset.status),
-        }
+        println!("  {:<14} {:<8?} {}", asset.name, asset.status, asset.path);
     }
 }
 
@@ -640,54 +657,6 @@ fn capsem_shell_tui_args(session: Option<&str>, gateway_url: &str) -> Vec<String
         args.extend(["--session".to_string(), session.to_string()]);
     }
     args
-}
-
-fn gateway_url_from_runtime(run_dir: &Path) -> Option<Result<String>> {
-    let port_path = run_dir.join("gateway.port");
-    let raw = match std::fs::read_to_string(&port_path) {
-        Ok(raw) => raw,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
-        Err(error) => return Some(Err(error).with_context(|| format!("read {}", port_path.display()))),
-    };
-    let raw = raw.trim();
-    if raw.is_empty() {
-        return None;
-    }
-    let port = match raw.parse::<u16>() {
-        Ok(0) => return Some(Err(anyhow!("{} contains port 0", port_path.display()))),
-        Ok(port) => port,
-        Err(error) => {
-            return Some(Err(error).with_context(|| format!("parse gateway port from {}", port_path.display())))
-        }
-    };
-    Some(Ok(format!("http://127.0.0.1:{port}")))
-}
-
-async fn wait_for_gateway_url(run_dir: &Path) -> Result<String> {
-    if let Ok(url) = std::env::var("CAPSEM_GATEWAY_URL") {
-        let url = url.trim_end_matches('/');
-        if !url.is_empty() {
-            return Ok(url.to_string());
-        }
-    }
-
-    let run_dir = run_dir.to_path_buf();
-    match capsem_foundation::poll::poll_until(
-        capsem_foundation::poll::PollOpts::new("gateway-runtime-ready", Duration::from_secs(5)),
-        || {
-            let run_dir = run_dir.clone();
-            async move { gateway_url_from_runtime(&run_dir) }
-        },
-    )
-    .await
-    {
-        Ok(result) => result,
-        Err(timeout) => Err(anyhow!(
-            "Capsem gateway did not publish {} within {:?}",
-            run_dir.join("gateway.port").display(),
-            timeout.timeout
-        )),
-    }
 }
 
 fn resolve_capsem_tui_binary() -> PathBuf {
@@ -819,10 +788,13 @@ async fn check_service_health() -> Result<Vec<String>> {
         _ => issues.push("Gateway files not found (no token/port files)".into()),
     }
 
-    let status_client = client::UdsClient::new(sock, false);
-    match service_json(&status_client, "/profiles/status").await {
-        Some(profile_status) => issues.extend(profile_status_issues(&profile_status)),
-        None => issues.push("Profile status unavailable from service".into()),
+    let status_client = client::ServiceAdminClient::new(sock, false);
+    match status_client.get::<ApiResponse<AssetStatus>>("/assets/status").await {
+        Ok(response) => match response.into_result() {
+            Ok(status) => issues.extend(asset_status_issues(&status)),
+            Err(error) => issues.push(format!("VM asset status unavailable from service: {error}")),
+        },
+        Err(error) => issues.push(format!("VM asset status unavailable from service: {error}")),
     }
 
     Ok(issues)
@@ -859,7 +831,7 @@ fn cli_gateway_token_path() -> PathBuf {
     cli_runtime_paths().gateway_token
 }
 
-async fn service_json(client: &UdsClient, path: &str) -> Option<serde_json::Value> {
+async fn service_json(client: &client::ServiceAdminClient, path: &str) -> Option<serde_json::Value> {
     client
         .get::<ApiResponse<serde_json::Value>>(path)
         .await
@@ -868,113 +840,16 @@ async fn service_json(client: &UdsClient, path: &str) -> Option<serde_json::Valu
         .ok()
 }
 
-fn profile_status_summary_lines(status: &serde_json::Value) -> Vec<String> {
-    let mut lines = Vec::new();
-    let source = status["source"].as_str().unwrap_or("unknown");
-    let profile_count = status["profile_count"].as_u64().unwrap_or(0);
-    let ready_count = status["ready_count"].as_u64().unwrap_or(0);
-    lines.push(format!("Profiles:  {ready_count}/{profile_count} ready ({source})"));
-    if let Some(manifest) = status["asset_manifest"].as_object() {
-        let origin = manifest
-            .get("origin")
-            .and_then(|value| value.as_str())
-            .unwrap_or("unknown");
-        let path = manifest.get("path").and_then(|value| value.as_str()).unwrap_or("-");
-        lines.push(format!("Manifest:  {origin} ({path})"));
-        if let Some(source) = manifest.get("origin_source").and_then(|value| value.as_str()) {
-            lines.push(format!("  source:  {source}"));
-        }
-        if let Some(packaged_at) = manifest.get("packaged_at").and_then(|value| value.as_str()) {
-            lines.push(format!("  built:   {packaged_at}"));
-        }
-        if let Some(refreshed_at) = manifest.get("refreshed_at").and_then(|value| value.as_str()) {
-            lines.push(format!("  refresh: {refreshed_at}"));
-        }
-        if let Some(validation_status) = manifest.get("validation_status").and_then(|value| value.as_str()) {
-            lines.push(format!("  status:  {validation_status}"));
-        }
-        if let Some(error) = manifest.get("validation_error").and_then(|value| value.as_str()) {
-            lines.push(format!("  error:   {error}"));
-        }
-        if let Some(hash) = manifest.get("blake3").and_then(|value| value.as_str()) {
-            lines.push(format!("  hash:    blake3:{hash}"));
-        }
-        if let Some(current) = manifest.get("assets_current").and_then(|value| value.as_str()) {
-            lines.push(format!("  assets:  {current}"));
-        }
-        if let Some(current) = manifest.get("binaries_current").and_then(|value| value.as_str()) {
-            lines.push(format!("  binary:  {current}"));
-        }
+/// What keeps a new VM from booting, for `capsem doctor`.
+fn asset_status_issues(status: &AssetStatus) -> Vec<String> {
+    if status.ready || status.downloading {
+        return Vec::new();
     }
-    if let Some(profiles) = status["profiles"].as_array() {
-        for profile in profiles {
-            let id = profile["id"].as_str().unwrap_or("-");
-            let name = profile["name"].as_str().unwrap_or(id);
-            let ready = profile["ready"].as_bool().unwrap_or(false);
-            let arch = profile["current_arch"].as_str().unwrap_or("-");
-            let hash = profile["profile_payload_hash"].as_str().unwrap_or("-");
-            let missing = profile["missing_assets"]
-                .as_array()
-                .map(|items| items.iter().filter_map(|item| item.as_str()).collect::<Vec<_>>())
-                .unwrap_or_default();
-            let readiness = if ready { "ready" } else { "not-ready" };
-            lines.push(format!("  - {id}: {name} ({readiness}, arch {arch}, hash {hash})"));
-            if !missing.is_empty() {
-                lines.push(format!("    missing: {}", missing.join(", ")));
-            }
-        }
+    if status.errors.is_empty() {
+        vec!["VM assets are not ready".to_string()]
+    } else {
+        vec![format!("VM assets are not ready ({})", status.errors.join("; "))]
     }
-    lines
-}
-
-fn print_profiles_status(status: &serde_json::Value) {
-    for line in profile_status_summary_lines(status) {
-        println!("{line}");
-    }
-}
-
-fn profile_status_issues(status: &serde_json::Value) -> Vec<String> {
-    let mut issues = Vec::new();
-    if status["profile_count"].as_u64().unwrap_or(0) == 0 {
-        issues.push("No profiles are installed".to_string());
-        return issues;
-    }
-    if let Some(profiles) = status["profiles"].as_array() {
-        for profile in profiles {
-            if profile["ready"].as_bool().unwrap_or(false) {
-                continue;
-            }
-            let id = profile["id"].as_str().unwrap_or("unknown");
-            let missing_assets = profile["missing_assets"]
-                .as_array()
-                .map(|items| items.iter().filter_map(|item| item.as_str()).collect::<Vec<_>>())
-                .unwrap_or_default();
-            let invalid_assets = profile["invalid_assets"]
-                .as_array()
-                .map(|items| items.iter().filter_map(|item| item.as_str()).collect::<Vec<_>>())
-                .unwrap_or_default();
-            let invalid_files = profile["invalid_files"]
-                .as_array()
-                .map(|items| items.iter().filter_map(|item| item.as_str()).collect::<Vec<_>>())
-                .unwrap_or_default();
-            let mut detail = Vec::new();
-            if !missing_assets.is_empty() {
-                detail.push(format!("missing assets: {}", missing_assets.join(", ")));
-            }
-            if !invalid_assets.is_empty() {
-                detail.push(format!("invalid assets: {}", invalid_assets.join(", ")));
-            }
-            if !invalid_files.is_empty() {
-                detail.push(format!("invalid profile files: {}", invalid_files.join(", ")));
-            }
-            if detail.is_empty() {
-                issues.push(format!("Profile {id} is not ready"));
-            } else {
-                issues.push(format!("Profile {id} is not ready ({})", detail.join("; ")));
-            }
-        }
-    }
-    issues
 }
 
 fn print_corp_status(info: &serde_json::Value) {
@@ -1021,14 +896,6 @@ fn update_status_lines(status: &UpdateStatusResponse) -> Vec<String> {
     if status.assets.blocked_reason.is_some() {
         blocked.push("assets");
     }
-    if status.profiles.update_available {
-        let current = status.profiles.current.as_deref().unwrap_or("unknown");
-        let latest = status.profiles.latest.as_deref().unwrap_or("unknown");
-        updates.push(format!("profiles {current} -> {latest}"));
-    }
-    if status.profiles.blocked_reason.is_some() {
-        blocked.push("profiles");
-    }
     if status.images.update_available {
         let current = status.images.current.as_deref().unwrap_or("unknown");
         let latest = status.images.latest.as_deref().unwrap_or("unknown");
@@ -1064,9 +931,6 @@ fn update_status_lines(status: &UpdateStatusResponse) -> Vec<String> {
     if let Some(reason) = &status.assets.blocked_reason {
         lines.push(format!("Assets:    blocked ({reason})"));
     }
-    if let Some(reason) = &status.profiles.blocked_reason {
-        lines.push(format!("Profiles:  blocked ({reason})"));
-    }
     if let Some(reason) = &status.images.blocked_reason {
         lines.push(format!("Images:    blocked ({reason})"));
     }
@@ -1087,7 +951,7 @@ fn should_refresh_update_cache_for_command(command: &Commands) -> bool {
                 | MiscCommands::Status
                 | MiscCommands::Start
                 | MiscCommands::Stop
-                | MiscCommands::Update(_)
+                | MiscCommands::Update { .. }
                 | MiscCommands::Completions { .. }
                 | MiscCommands::Uninstall { .. }
                 | MiscCommands::SupportBundle { .. }
@@ -1119,7 +983,9 @@ fn should_start_background_update_refresh(command: Option<&Commands>) -> bool {
 
 fn direct_service_lifetime(command: &Commands) -> client::DirectServiceLifetime {
     match command {
-        Commands::Session(SessionCommands::Run(..)) => client::DirectServiceLifetime::BoundToCommand,
+        Commands::Session(SessionCommands::Run(..)) | Commands::Proxy(..) => {
+            client::DirectServiceLifetime::BoundToCommand
+        }
         _ => client::DirectServiceLifetime::Persistent,
     }
 }
@@ -1134,7 +1000,7 @@ fn command_is_handled_before_service_api(command: &Commands) -> bool {
                 | MiscCommands::Status
                 | MiscCommands::Start
                 | MiscCommands::Stop
-                | MiscCommands::Update(_)
+                | MiscCommands::Update { .. }
                 | MiscCommands::Completions { .. }
                 | MiscCommands::Uninstall { .. }
                 | MiscCommands::SupportBundle { .. }
@@ -1328,11 +1194,14 @@ async fn main() -> Result<()> {
 
             if status.running {
                 let sock = cli_service_socket_path();
-                let status_client = client::UdsClient::new(sock, false);
+                let status_client = client::ServiceAdminClient::new(sock, false);
                 println!();
                 match service_json(&status_client, "/system/status").await {
                     Some(system_status) => {
-                        print_profiles_status(&system_status["profiles"]);
+                        match serde_json::from_value::<AssetStatus>(system_status["assets"].clone()) {
+                            Ok(assets) => print_asset_status(&assets),
+                            Err(_) => println!("Assets: unavailable"),
+                        }
                         print_corp_status(&system_status["corp"]);
                         match serde_json::from_value::<UpdateStatusResponse>(system_status["updates"].clone()) {
                             Ok(update_status) => print_update_status(&update_status),
@@ -1340,7 +1209,7 @@ async fn main() -> Result<()> {
                         }
                     }
                     None => {
-                        println!("Profiles:  unavailable");
+                        println!("Assets: unavailable");
                         println!("Corp:      unavailable");
                         println!("Updates:   unavailable");
                     }
@@ -1353,14 +1222,14 @@ async fn main() -> Result<()> {
             // `capsem status`. One-line banner + hint at `capsem logs`.
             if status.running {
                 let sock = cli_service_socket_path();
-                let list_client = client::UdsClient::new(sock, false);
+                let list_client = GatewayClient::new(sock, false);
                 if let Ok(resp) = list_client
                     .get::<client::ApiResponse<client::ListResponse>>("/vms/list")
                     .await
                 {
                     if let Ok(list) = resp.into_result() {
                         let defunct: Vec<&client::SessionInfo> = list
-                            .sessions
+                            .sandboxes
                             .iter()
                             .filter(|s| s.status == VmLifecycleState::Defunct)
                             .collect();
@@ -1403,36 +1272,40 @@ async fn main() -> Result<()> {
             uninstall::run_uninstall(*yes).await?;
             return Ok(());
         }
-        Commands::Misc(MiscCommands::Update(args)) => return args.run().await,
+        Commands::Misc(MiscCommands::Update {
+            yes,
+            check,
+            assets,
+            channel,
+            manifest,
+            install_manifest_stdin,
+            corp,
+        }) => {
+            update::run_update(
+                *yes,
+                *check,
+                *assets,
+                channel.as_deref(),
+                manifest.as_deref(),
+                *install_manifest_stdin,
+                corp.as_deref(),
+            )
+            .await?;
+            return Ok(());
+        }
         _ => {}
     }
 
     let command = cli.command.as_ref().unwrap();
-    let client = UdsClient::with_direct_service_lifetime(uds_path, auto_launch, direct_service_lifetime(command));
+    let client = GatewayClient::with_direct_service_lifetime(uds_path, auto_launch, direct_service_lifetime(command));
 
     match command {
-        Commands::Assets(AssetsCommands::Status { profile, json }) => {
-            client::validate_id(profile)?;
-            let encoded_profile = urlencoding::encode(profile);
-            let resp: ApiResponse<AssetStatusResponse> = client
-                .get(&format!("/profiles/{encoded_profile}/assets/status"))
-                .await?;
-            let status = resp.into_result()?;
-            if *json {
-                println!("{}", serde_json::to_string_pretty(&status)?);
-            } else {
-                print_asset_status(&status);
-            }
-        }
-        Commands::Assets(AssetsCommands::Ensure { profile, json }) => {
-            client::validate_id(profile)?;
-            let encoded_profile = urlencoding::encode(profile);
-            let resp: ApiResponse<AssetStatusResponse> = client
-                .post(
-                    &format!("/profiles/{encoded_profile}/assets/ensure"),
-                    serde_json::json!({}),
-                )
-                .await?;
+        Commands::Assets(command) => {
+            let (AssetsCommands::Status { json } | AssetsCommands::Ensure { json }) = command;
+            let resp: ApiResponse<AssetStatus> = match command {
+                AssetsCommands::Status { .. } => client.get("/assets/status").await?,
+                AssetsCommands::Ensure { .. } => client.post("/assets/ensure", serde_json::json!({})).await?,
+            };
             let status = resp.into_result()?;
             if *json {
                 println!("{}", serde_json::to_string_pretty(&status)?);
@@ -1487,17 +1360,17 @@ async fn main() -> Result<()> {
             let resp: ApiResponse<ListResponse> = client.get("/vms/list").await?;
             let resp = resp.into_result()?;
             if *quiet {
-                for s in &resp.sessions {
+                for s in &resp.sandboxes {
                     println!("{}", s.id);
                 }
-            } else if resp.sessions.is_empty() {
+            } else if resp.sandboxes.is_empty() {
                 println!("No sessions.");
             } else {
                 println!(
                     "{:<20} {:<12} {:<10} {:<8} {:<6} {:<10}",
                     "ID", "NAME", "STATUS", "RAM", "CPUs", "UPTIME"
                 );
-                for s in &resp.sessions {
+                for s in &resp.sandboxes {
                     let name = s.name.as_deref().unwrap_or("-");
                     let ram = s
                         .ram_mb
@@ -1521,7 +1394,7 @@ async fn main() -> Result<()> {
                     }
                 }
                 let defunct = resp
-                    .sessions
+                    .sandboxes
                     .iter()
                     .filter(|s| s.status == VmLifecycleState::Defunct)
                     .count();
@@ -1531,21 +1404,8 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Session(SessionCommands::Exec {
-            session,
-            command,
-            timeout,
-        }) => {
-            client::validate_id(session)?;
-            let session_id = resolve_session_route_id(&client, session).await?;
-            let req = ExecRequest {
-                command: command.clone(),
-                timeout_secs: *timeout,
-            };
-            let resp: ApiResponse<ExecResponse> = client.post(&format!("/vms/{}/exec", session_id), req).await?;
-            let resp = resp.into_result()?;
-            container_run::write_exec_output(&mut tokio::io::stdout(), &mut tokio::io::stderr(), &resp).await?;
-            std::process::exit(resp.exit_code);
+        Commands::Session(SessionCommands::Exec(args)) => {
+            std::process::exit(container_run::exec(&client, args).await?);
         }
         Commands::Session(SessionCommands::Run(args)) => {
             let result = container_run::run(&client, args).await;
@@ -1577,8 +1437,8 @@ async fn main() -> Result<()> {
                 use std::io::Write;
                 let list_resp: ApiResponse<ListResponse> = client.get("/vms/list").await?;
                 let resp = list_resp.into_result()?;
-                let persistent_count = resp.sessions.iter().filter(|s| s.persistent).count();
-                let ephemeral_count = resp.sessions.iter().filter(|s| !s.persistent).count();
+                let persistent_count = resp.sandboxes.iter().filter(|s| s.persistent).count();
+                let ephemeral_count = resp.sandboxes.iter().filter(|s| !s.persistent).count();
                 print!(
                     "[!] This will destroy {} persistent and {} temporary sessions. Continue? [y/N] ",
                     persistent_count, ephemeral_count
@@ -1684,16 +1544,17 @@ async fn main() -> Result<()> {
                 }
                 for entry in &history.commands {
                     let exit = entry.exit_code.map(|c| c.to_string()).unwrap_or_else(|| "-".into());
-                    let process = match entry.layer.as_str() {
-                        "exec" => entry
-                            .details
-                            .get("process_name")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("api")
-                            .to_string(),
-                        "audit" => {
-                            let parent = entry.details.get("parent_exe").and_then(|v| v.as_str()).unwrap_or("");
-                            let exe = entry.details.get("exe").and_then(|v| v.as_str()).unwrap_or("");
+                    let layer = match entry.layer {
+                        capsem_api::HistoryLayer::Exec => "exec",
+                        capsem_api::HistoryLayer::Audit => "audit",
+                    };
+                    let process = match &entry.details {
+                        capsem_api::HistoryDetails::Exec(details) => {
+                            details.process_name.as_deref().unwrap_or("api").to_string()
+                        }
+                        capsem_api::HistoryDetails::Audit(details) => {
+                            let parent = details.parent_exe.as_deref().unwrap_or("");
+                            let exe = details.exe.as_str();
                             if parent.is_empty() {
                                 exe.rsplit('/').next().unwrap_or(exe).to_string()
                             } else {
@@ -1704,17 +1565,16 @@ async fn main() -> Result<()> {
                                 )
                             }
                         }
-                        _ => "-".to_string(),
                     };
                     // Truncate command to terminal width
                     let cmd = if entry.command.len() > 80 {
-                        format!("{}...", &entry.command[..77])
+                        format!("{}...", session_display::table_prefix(&entry.command, 77))
                     } else {
                         entry.command.clone()
                     };
                     println!(
                         " {:<22} {:<7} {:<5} {:<10} {}",
-                        entry.timestamp, entry.layer, exit, process, cmd
+                        entry.timestamp, layer, exit, process, cmd
                     );
                 }
                 if history.has_more {
@@ -1752,10 +1612,13 @@ async fn main() -> Result<()> {
             println!("{}", resumed.id);
         }
         Commands::Network(command) => network_commands::run(&client, command).await?,
-        Commands::Mcp(McpCommands::Servers { profile }) => {
-            client::validate_id(profile)?;
-            let resp: ApiResponse<Vec<serde_json::Value>> =
-                client.get(&format!("/profiles/{}/mcp/servers/list", profile)).await?;
+        Commands::Images(args) => image_commands::run(&client, args).await?,
+        Commands::Proxy(args) => {
+            let result = proxy_command::run(&client, args).await;
+            client.finish_direct_request(result).await?;
+        }
+        Commands::Mcp(McpCommands::Servers) => {
+            let resp: ApiResponse<Vec<serde_json::Value>> = client.get("/mcp/servers/list").await?;
             let servers = resp.into_result()?;
             if servers.is_empty() {
                 println!("No MCP servers configured.");
@@ -1783,13 +1646,11 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Mcp(McpCommands::Tools { profile, server }) => {
-            client::validate_id(profile)?;
+        Commands::Mcp(McpCommands::Tools { server }) => {
             let server_names: Vec<String> = if let Some(server_filter) = server {
                 vec![server_filter.clone()]
             } else {
-                let resp: ApiResponse<Vec<serde_json::Value>> =
-                    client.get(&format!("/profiles/{}/mcp/servers/list", profile)).await?;
+                let resp: ApiResponse<Vec<serde_json::Value>> = client.get("/mcp/servers/list").await?;
                 resp.into_result()?
                     .into_iter()
                     .filter_map(|server| server["name"].as_str().map(ToOwned::to_owned))
@@ -1797,9 +1658,8 @@ async fn main() -> Result<()> {
             };
             let mut tools = Vec::new();
             for server_name in server_names {
-                let resp: ApiResponse<Vec<serde_json::Value>> = client
-                    .get(&format!("/profiles/{}/mcp/servers/{}/tools/list", profile, server_name))
-                    .await?;
+                let resp: ApiResponse<Vec<serde_json::Value>> =
+                    client.get(&format!("/mcp/servers/{server_name}/tools/list")).await?;
                 tools.extend(resp.into_result()?);
             }
             if tools.is_empty() {
@@ -1811,7 +1671,7 @@ async fn main() -> Result<()> {
                 }
                 for t in &tools {
                     let desc = t["description"].as_str().unwrap_or("-");
-                    let short_desc = if desc.len() > 60 { &desc[..60] } else { desc };
+                    let short_desc = session_display::table_prefix(desc, 60);
                     println!(
                         "{:<40} {:<20} {:<10} {}",
                         t["namespaced_name"].as_str().unwrap_or("-"),
@@ -1826,35 +1686,26 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Mcp(McpCommands::Refresh { profile }) => {
-            client::validate_id(profile)?;
-            let resp: ApiResponse<Vec<serde_json::Value>> =
-                client.get(&format!("/profiles/{}/mcp/servers/list", profile)).await?;
+        Commands::Mcp(McpCommands::Refresh) => {
+            let resp: ApiResponse<Vec<serde_json::Value>> = client.get("/mcp/servers/list").await?;
             for server in resp.into_result()? {
                 if let Some(server_name) = server["name"].as_str() {
                     let refresh: ApiResponse<serde_json::Value> = client
-                        .post(
-                            &format!("/profiles/{}/mcp/servers/{}/refresh", profile, server_name),
-                            &serde_json::json!({}),
-                        )
+                        .post(&format!("/mcp/servers/{server_name}/refresh"), &serde_json::json!({}))
                         .await?;
                     refresh.into_result()?;
                 }
             }
             println!("MCP tools refreshed.");
         }
-        Commands::Mcp(McpCommands::Call { profile, name, args }) => {
-            client::validate_id(profile)?;
+        Commands::Mcp(McpCommands::Call { name, args }) => {
             let (server_name, tool_name) = name
                 .split_once("__")
                 .ok_or_else(|| anyhow!("MCP tool calls must use namespaced names like server__tool; got {name}"))?;
             let arguments: serde_json::Value = serde_json::from_str(args).context("invalid JSON arguments")?;
             let resp: ApiResponse<serde_json::Value> = client
                 .post(
-                    &format!(
-                        "/profiles/{}/mcp/servers/{}/tools/{}/call",
-                        profile, server_name, tool_name
-                    ),
+                    &format!("/mcp/servers/{server_name}/tools/{tool_name}/call"),
                     &arguments,
                 )
                 .await?;
@@ -1863,7 +1714,7 @@ async fn main() -> Result<()> {
         }
         Commands::Misc(
             MiscCommands::Version
-            | MiscCommands::Update(_)
+            | MiscCommands::Update { .. }
             | MiscCommands::Completions { .. }
             | MiscCommands::Uninstall { .. }
             | MiscCommands::Install
@@ -1872,7 +1723,7 @@ async fn main() -> Result<()> {
             | MiscCommands::Stop
             | MiscCommands::SupportBundle { .. }, /* handled before UDS */
         ) => {
-            unreachable!("handled before UdsClient creation")
+            unreachable!("handled before GatewayClient creation")
         }
         Commands::Misc(MiscCommands::Doctor { bundle }) => {
             use client::StreamEvent;
@@ -1898,7 +1749,6 @@ async fn main() -> Result<()> {
 
             let req = ProvisionRequest {
                 name: None,
-                profile_id: DEFAULT_PROFILE_ID.to_string(),
                 ram_mb: Some(2048),
                 cpus: Some(2),
                 persistent: false,
@@ -1909,7 +1759,7 @@ async fn main() -> Result<()> {
             let provisioned = resp.into_result()?;
             let vm_id = provisioned.id;
 
-            async fn cleanup_doctor_vm(client: &UdsClient, vm_id: &str, cleanup: DoctorSessionCleanup) {
+            async fn cleanup_doctor_vm(client: &GatewayClient, vm_id: &str, cleanup: DoctorSessionCleanup) {
                 let route = cleanup.route(vm_id);
                 let result: Result<ApiResponse<serde_json::Value>, _> = match cleanup {
                     DoctorSessionCleanup::Failed => client.post(&route, serde_json::json!({})).await,
@@ -2069,7 +1919,7 @@ fn parse_session_arg(arg: &str) -> Option<(&str, &str)> {
     arg.split_once(':')
 }
 
-async fn handle_cp(client: &client::UdsClient, src: &str, dst: &str) -> Result<()> {
+async fn handle_cp(client: &GatewayClient, src: &str, dst: &str) -> Result<()> {
     use std::io::Write;
     let src_remote = parse_session_arg(src);
     let dst_remote = parse_session_arg(dst);

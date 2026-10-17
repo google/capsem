@@ -42,12 +42,19 @@ pub(crate) async fn handle_stream(
         ));
     }
     let uds_path = running_uds_path(&state, &id)?;
+    let owner = crate::owner_connection::OwnerConnection::acquire(&state, &uds_path)
+        .map_err(|e| AppError(StatusCode::BAD_GATEWAY, e))?;
     Ok(upgrade
         .max_message_size(stream::MAX_STREAM_FRAME_BYTES)
-        .on_upgrade(move |socket| session(state, id, uds_path, socket)))
+        .on_upgrade(move |socket| session(state, id, owner, socket)))
 }
 
-async fn session(state: Arc<ServiceState>, id: String, uds_path: PathBuf, socket: WebSocket) {
+async fn session(
+    state: Arc<ServiceState>,
+    id: String,
+    grant: crate::owner_connection::OwnerConnection,
+    socket: WebSocket,
+) {
     let (mut client_tx, mut client_rx) = socket.split();
     let outcome = async {
         let (kind, command) = tokio::time::timeout(START_TIMEOUT, first_start(&mut client_rx))
@@ -60,17 +67,27 @@ async fn session(state: Arc<ServiceState>, id: String, uds_path: PathBuf, socket
             StreamKind::Terminal | StreamKind::Exec => None,
         };
         let owner = async {
-            wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&id)).await?;
-            open_owner(&uds_path).await
+            wait_for_vm_ready(&grant.uds_path, 30, Some(&state), Some(&id)).await?;
+            grant.open(&state, capsem_proto::handshake::STREAM_PEER_ID, false).await
         }
         .await;
         match (kind, claim) {
-            (StreamKind::Terminal, _) => terminal(owner?, &mut client_tx, &mut client_rx).await,
+            (StreamKind::Terminal, _) => terminal(&state, &grant, owner?, &mut client_tx, &mut client_rx).await,
             (StreamKind::Exec, _) => {
                 let command = command.expect("decoder requires an exec command");
-                exec(&state, owner?, command, &mut client_tx, &mut client_rx)
-                    .await
-                    .map(drop)
+                // The stream protocol names no target yet, so a streamed exec
+                // goes where an untargeted POST exec goes.
+                let target = capsem_api::exec_target(None, container_setup::runs_container(&state, &id).await)?;
+                exec(
+                    &state,
+                    &grant,
+                    owner?,
+                    (command, proto_exec_target(target)),
+                    &mut client_tx,
+                    &mut client_rx,
+                )
+                .await
+                .map(drop)
             }
             (StreamKind::Container, claim) => {
                 let Some(generation) = claim else {
@@ -81,8 +98,11 @@ async fn session(state: Arc<ServiceState>, id: String, uds_path: PathBuf, socket
                         if let Err(error) = container_setup::record_launched(&state, &id) {
                             warn!(vm_id = id.as_str(), %error, "attached container launch record not written");
                         }
+                        container_setup::grant_surface_in_background(&state, &id, generation);
+                        // The launcher is the VM's: it is what starts the workload.
                         let command = capsem_core::container::LAUNCH_COMMAND.to_string();
-                        exec(&state, owner, command, &mut client_tx, &mut client_rx).await
+                        let job = (command, capsem_proto::ipc::ExecTarget::Vm);
+                        exec(&state, &grant, owner, job, &mut client_tx, &mut client_rx).await
                     }
                     Err(error) => Err(error),
                 };
@@ -145,21 +165,6 @@ async fn next_client_frame(
     }
 }
 
-async fn open_owner(uds_path: &StdPath) -> Result<OwnerChannel, String> {
-    let socket = tokio::net::UnixStream::connect(uds_path)
-        .await
-        .and_then(|socket| socket.into_std())
-        .map_err(|e| format!("VM owner unavailable: {e}"))?;
-    let (socket, _) = capsem_foundation::ipc_handshake::negotiate_initiator_off_worker(
-        socket,
-        capsem_proto::handshake::STREAM_PEER_ID,
-        capsem_foundation::telemetry::current_parent_traceparent(),
-    )
-    .await
-    .map_err(|e| format!("VM owner handshake: {e}"))?;
-    capsem_foundation::ipc_channel::channel_from_std(socket).map_err(|e| format!("VM owner channel: {e}"))
-}
-
 async fn send_data(
     client_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
     channel: StreamChannel,
@@ -182,20 +187,25 @@ async fn send_status(
 }
 
 async fn terminal(
+    state: &ServiceState,
+    grant: &crate::owner_connection::OwnerConnection,
     (owner_tx, owner_rx): OwnerChannel,
     client_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
     client_rx: &mut futures::stream::SplitStream<WebSocket>,
 ) -> Result<(), String> {
     let owner_closed = |e: std::io::Error| format!("VM owner closed: {e}");
+    grant.validate(state, false)?;
     owner_tx
         .send(ServiceToProcess::StartTerminalStream)
         .await
         .map_err(owner_closed)?;
-    send_status(client_tx, &StreamStatus::Started).await?;
     let result = async {
+        send_status(client_tx, &StreamStatus::Started).await?;
         loop {
             tokio::select! {
-            frame = next_client_frame(client_rx) => match frame? {
+            frame = next_client_frame(client_rx) => {
+                grant.validate(state, false)?;
+                match frame? {
                 None => break Ok(()),
                 Some(ClientControl::Stdin(data)) => {
                     owner_tx.send(ServiceToProcess::TerminalInput { data }).await.map_err(owner_closed)?;
@@ -205,11 +215,15 @@ async fn terminal(
                 }
                 Some(ClientControl::Control(StreamControl::CloseStdin)) => {}
                 Some(ClientControl::Control(StreamControl::Start { .. })) => break Err("stream already started".into()),
+                }
             },
-            message = owner_rx.recv() => match message.map_err(owner_closed)? {
+            message = owner_rx.recv() => {
+                grant.validate(state, false)?;
+                match message.map_err(owner_closed)? {
                 ProcessToService::TerminalOutput { data } => send_data(client_tx, StreamChannel::Stdout, &data).await?,
                 ProcessToService::TerminalStreamEnded { reason } => break Err(reason),
                 _ => {}
+                }
             },
             }
         }
@@ -224,18 +238,23 @@ async fn terminal(
 /// client left first and the command was cancelled.
 async fn exec(
     state: &ServiceState,
+    grant: &crate::owner_connection::OwnerConnection,
     (owner_tx, owner_rx): OwnerChannel,
-    command: String,
+    (command, target): (String, capsem_proto::ipc::ExecTarget),
     client_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
     client_rx: &mut futures::stream::SplitStream<WebSocket>,
 ) -> Result<Option<i32>, String> {
     let owner_closed = |e: std::io::Error| format!("VM owner closed: {e}");
     let job = state.next_job_id();
+    grant.validate(state, false)?;
     owner_tx
-        .send(ServiceToProcess::ExecStream { id: job, command })
+        .send(ServiceToProcess::ExecStream {
+            id: job,
+            command,
+            target,
+        })
         .await
         .map_err(owner_closed)?;
-    send_status(client_tx, &StreamStatus::Started).await?;
     let mut stdin_closed = false;
     // Stdin frames the owner can still queue. Client frames are read only
     // while there is credit, so the owner's read loop never waits on a full
@@ -243,9 +262,13 @@ async fn exec(
     let mut credit = capsem_proto::EXEC_STDIN_WINDOW;
     let mut ping = tokio::time::interval(CREDIT_WAIT_PING);
     ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    let result = loop {
+    let result = async {
+        send_status(client_tx, &StreamStatus::Started).await?;
+        loop {
         tokio::select! {
-            frame = next_client_frame(client_rx), if credit > 0 => match frame? {
+            frame = next_client_frame(client_rx), if credit > 0 => {
+                grant.validate(state, false)?;
+                match frame? {
                 None => break Ok(None),
                 Some(ClientControl::Stdin(_)) if stdin_closed => break Err("exec stdin is already closed".into()),
                 Some(ClientControl::Stdin(data)) => {
@@ -260,13 +283,16 @@ async fn exec(
                 Some(ClientControl::Control(StreamControl::CloseStdin)) => {}
                 Some(ClientControl::Control(StreamControl::Start { .. })) => break Err("stream already started".into()),
                 Some(ClientControl::Control(StreamControl::Resize { .. })) => {}
+                }
             },
             _ = ping.tick(), if credit == 0 => {
                 if client_tx.send(Message::Ping(Default::default())).await.is_err() {
                     break Ok(None);
                 }
             }
-            message = owner_rx.recv() => match message.map_err(owner_closed)? {
+            message = owner_rx.recv() => {
+                grant.validate(state, false)?;
+                match message.map_err(owner_closed)? {
                 ProcessToService::ExecInputConsumed { id } if id == job => {
                     credit = (credit + 1).min(capsem_proto::EXEC_STDIN_WINDOW);
                 }
@@ -285,9 +311,11 @@ async fn exec(
                     break Ok(Some(exit_code));
                 }
                 _ => {}
+                }
             },
         }
-    };
+        }
+    }.await;
     if !matches!(result, Ok(Some(_))) {
         let _ = owner_tx.send(ServiceToProcess::CancelExec { id: job }).await;
     }

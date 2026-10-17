@@ -34,9 +34,8 @@ fn create_image_takes_everything_after_the_image_as_its_command() {
 }
 
 #[test]
-fn image_only_flags_and_clone_sources_do_not_mix_with_plain_create() {
+fn image_only_flags_do_not_mix_with_plain_create() {
     for argv in [
-        vec!["capsem", "create", "--from", "base", "--image", "docker://redis"],
         vec!["capsem", "create", "redis-server"],
         vec!["capsem", "create", "--image"],
     ] {
@@ -62,7 +61,7 @@ mod against_the_service {
     use serde_json::json;
 
     fn created(id: &str) -> serde_json::Value {
-        json!({"id": id, "name": id, "profile_id": "code", "status": "Running", "available_actions": []})
+        json!({"id": id, "name": id, "status": "Running", "available_actions": []})
     }
 
     fn args(argv: &[&str]) -> CreateArgs {
@@ -74,7 +73,7 @@ mod against_the_service {
     }
 
     #[tokio::test]
-    async fn create_asks_for_what_was_given_and_the_profile_for_the_rest() {
+    async fn create_asks_for_what_was_given_and_leaves_the_rest_to_the_service() {
         let service = FakeService::start();
         service.route("POST", "/vms/create", 200, created("vm-1"));
 
@@ -93,19 +92,13 @@ mod against_the_service {
             .collect();
         assert_eq!(
             bodies[0],
-            json!({"name": null, "profile_id": "code", "persistent": false, "env": {"A": "1"}, "networks": ["team"]})
+            json!({"name": null, "persistent": false, "env": {"A": "1"}, "networks": ["team"]})
         );
         assert_eq!(
             bodies[1],
-            json!({"name": "keep", "profile_id": "code", "ram_mb": 2048, "cpus": 3, "persistent": true})
+            json!({"name": "keep", "ram_mb": 2048, "cpus": 3, "persistent": true})
         );
         assert_eq!(bodies[2]["persistent"], true, "a clone keeps its source's state");
-        assert!(create(&service.client, &args(&["--profile", "../x"])).await.is_err());
-        assert_eq!(
-            service.find("POST", "/vms/create").len(),
-            3,
-            "an invalid profile never reaches the service"
-        );
     }
 
     #[tokio::test]
@@ -193,4 +186,14 @@ mod against_the_service {
         );
         assert!(service.find("DELETE", "/vms/vm-3/delete").is_empty());
     }
+}
+
+#[test]
+fn a_clone_source_takes_a_new_image() {
+    let cli = Cli::parse_from(["capsem", "create", "--from", "base", "--image", "docker://redis"]);
+    let Commands::Session(SessionCommands::Create(args)) = cli.command.unwrap() else {
+        panic!("expected Create")
+    };
+    assert_eq!(args.from.as_deref(), Some("base"));
+    assert_eq!(args.image.image, ["docker://redis"]);
 }

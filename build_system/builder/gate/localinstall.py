@@ -5,7 +5,7 @@ from __future__ import annotations
 from . import assetplan, host
 from .actions import Call, Run
 from .command import GateCommand
-from .content import ProfileContent
+from .content import RuntimeContent
 from .errors import GateError
 from .execution import Kind, Needs, Speed, step
 from .opacity import CallJustification, OpaqueKind, machine_effects
@@ -28,10 +28,7 @@ class LocalInstallCommand(
 
         plan = Plan(self.name)
         config = self._config
-        content = ProfileContent.isolated(
-            config,
-            config.path(config.assets.test_root) / config.suites.pytest.base_profile,
-        )
+        content = RuntimeContent.built(config)
         version = workspace_version(config.root)
         package = config.path(config.outputs.packages) / (
             config.sbom.macos_package_name.format(version=version)
@@ -69,8 +66,6 @@ class LocalInstallCommand(
                         (content.assets / config.install.manifest_name).resolve().as_uri(),
                         "--assets-dir",
                         str(content.assets),
-                        "--config-root",
-                        str(content.config),
                     ]
                 ),
                 contends=(config.exclusive("workspace_binaries"),),

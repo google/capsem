@@ -198,7 +198,6 @@ async fn info_route_reports_nested_ai_activity_through_db_owner() {
     assert_eq!(body["ai"]["mcp"][0]["bytes_sent"], 33);
     assert_eq!(body["ai"]["mcp"][0]["duration_ms"], 17);
     let typed: capsem_api::SandboxInfo = serde_json::from_value(body.clone()).unwrap();
-    assert_eq!(typed.profile_id, "code");
     assert!(typed.ai.is_some());
     // The flat totals the list, gateway status, TUI and CLI read agree with
     // the nested activity. The model's own tool call has origin `model`,
@@ -234,7 +233,7 @@ async fn broken_session_db_schema_is_explicit_error_for_session_status() {
         .data
         .vms
         .insert("status-broken-db-vm".to_string(), entry);
-    state.hydrate_session_db_handles();
+    state.hydrate_session_db_handles().await;
     let handle = state
         .session_db_handle(&vm_id)
         .expect("startup hydration installs the handle so routes surface the schema error explicitly");
@@ -357,6 +356,7 @@ async fn list_reports_totals_for_a_stopped_persistent_vm_and_none_without_a_ledg
         exec_id: 1,
         command: "true".into(),
         source: "api".into(),
+        target: capsem_proto::ipc::ExecTarget::Vm,
         trace_id: None,
         process_name: None,
         credential_ref: None,

@@ -20,7 +20,6 @@ EXPECTED_BINARY_COHORT = {
     "capsem-admin",
     "capsem-app",
     "capsem-gateway",
-
     "capsem-mcp-aggregator",
     "capsem-mcp-builtin",
     "capsem-process",
@@ -37,9 +36,7 @@ EXPECTED_MACOS_BINARY_PATHS = {
         if name != "capsem-app"
     },
 }
-EXPECTED_LINUX_BINARY_PATHS = {
-    name: f"/usr/bin/{name}" for name in EXPECTED_BINARY_COHORT
-}
+EXPECTED_LINUX_BINARY_PATHS = {name: f"/usr/bin/{name}" for name in EXPECTED_BINARY_COHORT}
 
 
 def test_package_owns_binaries() -> None:
@@ -74,9 +71,7 @@ def test_sbom_not_repeated_per_binary() -> None:
         manifest = graph["manifests"][channel][current["version"]]
         for package in manifest["packages"]:
             package_sboms = [
-                item
-                for item in package.get("evidence", [])
-                if "sbom" in item["kind"].lower()
+                item for item in package.get("evidence", []) if "sbom" in item["kind"].lower()
             ]
             assert package_sboms, package["name"]
             for binary in package["binaries"]:
@@ -96,12 +91,7 @@ def test_package_sbom_not_repeated_per_binary() -> None:
         manifest = graph["manifests"][channel][current["version"]]
         for package in manifest["packages"]:
             package_page = (
-                RELEASE_SITE_DIST
-                / "channels"
-                / channel
-                / "packages"
-                / package["id"]
-                / "index.html"
+                RELEASE_SITE_DIST / "channels" / channel / "packages" / package["id"] / "index.html"
             ).read_text(encoding="utf-8")
             evidence_urls = [item["url"] for item in package["evidence"]]
             binary_refs = [binary["sbom_component_ref"] for binary in package["binaries"]]
@@ -132,23 +122,14 @@ def test_package_detail_sbom_once_binary_refs() -> None:
         manifest = graph["manifests"][channel][current["version"]]
         for package in manifest["packages"]:
             package_page = (
-                RELEASE_SITE_DIST
-                / "channels"
-                / channel
-                / "packages"
-                / package["id"]
-                / "index.html"
+                RELEASE_SITE_DIST / "channels" / channel / "packages" / package["id"] / "index.html"
             ).read_text(encoding="utf-8")
             binaries_section = package_page.split("Contained Binaries", maxsplit=1)[1].split(
                 "Package Evidence",
                 maxsplit=1,
             )[0]
             evidence_section = package_page.split("Package Evidence", maxsplit=1)[1]
-            sboms = [
-                item
-                for item in package.get("evidence", [])
-                if item.get("kind") == "sbom"
-            ]
+            sboms = [item for item in package.get("evidence", []) if item.get("kind") == "sbom"]
 
             assert len(sboms) == 1, f"{channel}:{package['name']}"
             sbom_url = sboms[0]["url"]
@@ -222,11 +203,9 @@ def test_packages_group_by_os_architecture() -> None:
     build_release_site_from_fixture()
 
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
-    stable = (
-        RELEASE_SITE_DIST / "channels" / "stable" / "index.html"
-    ).read_text(encoding="utf-8")
+    stable = (RELEASE_SITE_DIST / "channels" / "stable" / "index.html").read_text(encoding="utf-8")
     packages_section = stable.split("Capsem Packages", maxsplit=1)[1].split(
-        "Profile References",
+        ">Runtime</h2>",
         maxsplit=1,
     )[0]
     stable_packages = graph["manifests"]["stable"]["1.0.2"]["packages"]
@@ -236,9 +215,9 @@ def test_packages_group_by_os_architecture() -> None:
         ("linux", "arm64"): "Linux arm64",
     }
 
-    assert {
-        (package["platform"], package["architecture"]) for package in stable_packages
-    } == set(target_labels)
+    assert {(package["platform"], package["architecture"]) for package in stable_packages} == set(
+        target_labels
+    )
     for label in target_labels.values():
         assert f"Package target {label}" in packages_section
     for package in stable_packages:
@@ -258,8 +237,7 @@ def test_manifest_package_targets_by_architecture() -> None:
         current = next(item for item in record["manifests"] if item["status"] == "current")
         manifest = graph["manifests"][channel][current["version"]]
         targets = {
-            (package["platform"], package["architecture"])
-            for package in manifest["packages"]
+            (package["platform"], package["architecture"]) for package in manifest["packages"]
         }
 
         assert targets, channel
@@ -275,11 +253,9 @@ def test_package_architecture_sections_are_explicit() -> None:
     build_release_site_from_fixture()
 
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
-    stable = (
-        RELEASE_SITE_DIST / "channels" / "stable" / "index.html"
-    ).read_text(encoding="utf-8")
+    stable = (RELEASE_SITE_DIST / "channels" / "stable" / "index.html").read_text(encoding="utf-8")
     packages_section = stable.split("Capsem Packages", maxsplit=1)[1].split(
-        "Profile References",
+        ">Runtime</h2>",
         maxsplit=1,
     )[0]
     stable_packages = graph["manifests"]["stable"]["1.0.2"]["packages"]
@@ -297,9 +273,7 @@ def test_package_architecture_matches_native_package_filename() -> None:
         for manifest in manifests.values():
             for package in manifest["packages"]:
                 if package["kind"] == "debian_package":
-                    assert package["name"].endswith(
-                        f"_{package['architecture']}.deb"
-                    )
+                    assert package["name"].endswith(f"_{package['architecture']}.deb")
                     assert "_x86_64.deb" not in package["name"]
 
 
@@ -307,11 +281,9 @@ def test_package_target_rows_include_own_sbom() -> None:
     build_release_site_from_fixture()
 
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
-    stable = (
-        RELEASE_SITE_DIST / "channels" / "stable" / "index.html"
-    ).read_text(encoding="utf-8")
+    stable = (RELEASE_SITE_DIST / "channels" / "stable" / "index.html").read_text(encoding="utf-8")
     packages_section = stable.split("Capsem Packages", maxsplit=1)[1].split(
-        "Profile References",
+        ">Runtime</h2>",
         maxsplit=1,
     )[0]
     stable_packages = graph["manifests"]["stable"]["1.0.2"]["packages"]
@@ -349,11 +321,7 @@ def test_every_package_has_sbom() -> None:
         sbom_urls = []
 
         for package in manifest["packages"]:
-            sboms = [
-                item
-                for item in package.get("evidence", [])
-                if item.get("kind") == "sbom"
-            ]
+            sboms = [item for item in package.get("evidence", []) if item.get("kind") == "sbom"]
             assert len(sboms) == 1, package["name"]
             sbom = sboms[0]
             assert package["id"] in sbom["url"], package["name"]
@@ -383,12 +351,7 @@ def test_every_package_has_detail_page() -> None:
         manifest = graph["manifests"][channel][current["version"]]
         for package in manifest["packages"]:
             package_page_path = (
-                RELEASE_SITE_DIST
-                / "channels"
-                / channel
-                / "packages"
-                / package["id"]
-                / "index.html"
+                RELEASE_SITE_DIST / "channels" / channel / "packages" / package["id"] / "index.html"
             )
             assert package_page_path.exists(), f"{channel}:{package['id']}"
 
@@ -424,9 +387,9 @@ def test_every_package_has_detail_page_and_channel_link() -> None:
     for channel, record in graph["channels"].items():
         current = next(item for item in record["manifests"] if item["status"] == "current")
         manifest = graph["manifests"][channel][current["version"]]
-        channel_page = (
-            RELEASE_SITE_DIST / "channels" / channel / "index.html"
-        ).read_text(encoding="utf-8")
+        channel_page = (RELEASE_SITE_DIST / "channels" / channel / "index.html").read_text(
+            encoding="utf-8"
+        )
         for package in manifest["packages"]:
             assert f"/channels/{channel}/packages/{package['id']}/" in channel_page
 
@@ -439,15 +402,13 @@ def test_package_detail_lists_owned_binaries_only() -> None:
     selected = packages[0]
     sibling = packages[1]
     package_page = (
-        RELEASE_SITE_DIST
-        / "channels"
-        / "stable"
-        / "packages"
-        / selected["id"]
-        / "index.html"
+        RELEASE_SITE_DIST / "channels" / "stable" / "packages" / selected["id"] / "index.html"
     ).read_text(encoding="utf-8")
 
-    assert f"<h1 class=\"mt-3 text-4xl font-semibold tracking-normal text-black\">{selected['name']}</h1>" in package_page
+    assert (
+        f'<h1 class="mt-3 text-4xl font-semibold tracking-normal text-black">{selected["name"]}</h1>'
+        in package_page
+    )
     assert "Capsem Package" not in package_page
     assert selected["name"] in package_page
     assert selected["url"] in package_page
@@ -473,9 +434,7 @@ def test_package_detail_is_binary_owner_view() -> None:
     build_release_site_from_fixture()
 
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
-    stable = (
-        RELEASE_SITE_DIST / "channels" / "stable" / "index.html"
-    ).read_text(encoding="utf-8")
+    stable = (RELEASE_SITE_DIST / "channels" / "stable" / "index.html").read_text(encoding="utf-8")
     packages = graph["manifests"]["stable"]["1.0.2"]["packages"]
 
     assert "Capsem Packages" in stable
@@ -489,12 +448,7 @@ def test_package_detail_is_binary_owner_view() -> None:
             assert binary["sbom_component_ref"] not in stable
 
         package_page = (
-            RELEASE_SITE_DIST
-            / "channels"
-            / "stable"
-            / "packages"
-            / package["id"]
-            / "index.html"
+            RELEASE_SITE_DIST / "channels" / "stable" / "packages" / package["id"] / "index.html"
         ).read_text(encoding="utf-8")
         assert "Contained Binaries" in package_page
         assert "Package Evidence" in package_page
@@ -521,12 +475,7 @@ def test_binary_descriptions_from_metadata() -> None:
         manifest = graph["manifests"][channel][current["version"]]
         for package in manifest["packages"]:
             package_page = (
-                RELEASE_SITE_DIST
-                / "channels"
-                / channel
-                / "packages"
-                / package["id"]
-                / "index.html"
+                RELEASE_SITE_DIST / "channels" / channel / "packages" / package["id"] / "index.html"
             ).read_text(encoding="utf-8")
 
             assert "Capsem binary package" not in package_page
@@ -552,12 +501,7 @@ def test_binaries_inherit_package_target_not_all() -> None:
             assert binary["platform"] == package["platform"], binary
 
         package_page = (
-            RELEASE_SITE_DIST
-            / "channels"
-            / "stable"
-            / "packages"
-            / package["id"]
-            / "index.html"
+            RELEASE_SITE_DIST / "channels" / "stable" / "packages" / package["id"] / "index.html"
         ).read_text(encoding="utf-8")
         package_text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", package_page))
         platform = "macOS" if package["platform"] == "macos" else package["platform"].title()
@@ -569,13 +513,9 @@ def test_macos_package_present() -> None:
     build_release_site_from_fixture()
 
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
-    stable = (
-        RELEASE_SITE_DIST / "channels" / "stable" / "index.html"
-    ).read_text(encoding="utf-8")
+    stable = (RELEASE_SITE_DIST / "channels" / "stable" / "index.html").read_text(encoding="utf-8")
     stable_packages = graph["manifests"]["stable"]["1.0.2"]["packages"]
-    macos_packages = [
-        package for package in stable_packages if package["kind"] == "macos_pkg"
-    ]
+    macos_packages = [package for package in stable_packages if package["kind"] == "macos_pkg"]
 
     assert macos_packages
     for package in macos_packages:
@@ -606,12 +546,7 @@ def test_macos_package_complete_binary_cohort() -> None:
         assert set(binaries) == EXPECTED_BINARY_COHORT, f"{channel}:{package['name']}"
 
         package_page = (
-            RELEASE_SITE_DIST
-            / "channels"
-            / channel
-            / "packages"
-            / package["id"]
-            / "index.html"
+            RELEASE_SITE_DIST / "channels" / channel / "packages" / package["id"] / "index.html"
         ).read_text(encoding="utf-8")
 
         for name, expected_path in EXPECTED_MACOS_BINARY_PATHS.items():
@@ -623,9 +558,7 @@ def test_macos_package_complete_binary_cohort() -> None:
             assert binary["bytes"] > 0, f"{channel}:{name}"
             assert len(binary["digest"]["sha256"]) == 64, f"{channel}:{name}"
             assert len(binary["digest"]["blake3"]) == 64, f"{channel}:{name}"
-            assert binary["sbom_component_ref"] == f"SPDXRef-File-{name}", (
-                f"{channel}:{name}"
-            )
+            assert binary["sbom_component_ref"] == f"SPDXRef-File-{name}", f"{channel}:{name}"
             assert binary["installed_path"] in package_page
             assert binary["digest"]["sha256"][:8] + "..." in package_page
             assert binary["digest"]["blake3"][:8] + "..." in package_page
@@ -652,9 +585,7 @@ def test_linux_package_complete_binary_cohort() -> None:
         current = next(item for item in record["manifests"] if item["status"] == "current")
         manifest = graph["manifests"][channel][current["version"]]
         linux_packages = [
-            package
-            for package in manifest["packages"]
-            if package["kind"] == "debian_package"
+            package for package in manifest["packages"] if package["kind"] == "debian_package"
         ]
 
         assert {package["architecture"] for package in linux_packages} == expected_architectures
@@ -663,33 +594,22 @@ def test_linux_package_complete_binary_cohort() -> None:
             assert package["architecture"] in expected_architectures
 
             binaries = {binary["name"]: binary for binary in package["binaries"]}
-            assert set(binaries) == EXPECTED_BINARY_COHORT, (
-                f"{channel}:{package['name']}"
-            )
+            assert set(binaries) == EXPECTED_BINARY_COHORT, f"{channel}:{package['name']}"
 
             package_page = (
-                RELEASE_SITE_DIST
-                / "channels"
-                / channel
-                / "packages"
-                / package["id"]
-                / "index.html"
+                RELEASE_SITE_DIST / "channels" / channel / "packages" / package["id"] / "index.html"
             ).read_text(encoding="utf-8")
 
             for name, expected_path in EXPECTED_LINUX_BINARY_PATHS.items():
                 binary = binaries[name]
                 assert binary["version"] == package["version"], f"{channel}:{name}"
                 assert binary["platform"] == "linux", f"{channel}:{name}"
-                assert binary["architecture"] == package["architecture"], (
-                    f"{channel}:{name}"
-                )
+                assert binary["architecture"] == package["architecture"], f"{channel}:{name}"
                 assert binary["installed_path"] == expected_path, f"{channel}:{name}"
                 assert binary["bytes"] > 0, f"{channel}:{name}"
                 assert len(binary["digest"]["sha256"]) == 64, f"{channel}:{name}"
                 assert len(binary["digest"]["blake3"]) == 64, f"{channel}:{name}"
-                assert binary["sbom_component_ref"] == f"SPDXRef-File-{name}", (
-                    f"{channel}:{name}"
-                )
+                assert binary["sbom_component_ref"] == f"SPDXRef-File-{name}", f"{channel}:{name}"
                 assert binary["installed_path"] in package_page
                 assert binary["digest"]["sha256"][:8] + "..." in package_page
                 assert binary["digest"]["blake3"][:8] + "..." in package_page
@@ -711,16 +631,13 @@ def test_package_target_parity() -> None:
         manifest = graph["manifests"][channel][current["version"]]
         packages = manifest["packages"]
         observed_targets = {
-            (package["platform"], package["architecture"], package["kind"])
-            for package in packages
+            (package["platform"], package["architecture"], package["kind"]) for package in packages
         }
         assert observed_targets == expected_targets, channel
 
-        page = (
-            RELEASE_SITE_DIST / "channels" / channel / "index.html"
-        ).read_text(encoding="utf-8")
+        page = (RELEASE_SITE_DIST / "channels" / channel / "index.html").read_text(encoding="utf-8")
         packages_section = page.split("Capsem Packages", maxsplit=1)[1].split(
-            "Profile References",
+            ">Runtime</h2>",
             maxsplit=1,
         )[0]
         for package in packages:
@@ -764,12 +681,7 @@ def test_package_detail_binary_cohort() -> None:
         manifest = graph["manifests"][channel][current["version"]]
         for package in manifest["packages"]:
             package_page = (
-                RELEASE_SITE_DIST
-                / "channels"
-                / channel
-                / "packages"
-                / package["id"]
-                / "index.html"
+                RELEASE_SITE_DIST / "channels" / channel / "packages" / package["id"] / "index.html"
             ).read_text(encoding="utf-8")
             binary_names = {binary["name"] for binary in package["binaries"]}
 

@@ -5,7 +5,7 @@ The service used to keep the main session ledger at
 CAPSEM_HOME to one temporary directory moved that ledger into the run-wide
 temporary parent, and every service started that way shared one main.db. The
 e2e harness did, and its exec tests failed only when other workers ran beside
-it. The service now roots main.db in CAPSEM_HOME itself; this guard still keeps
+it. The service now roots its host ledger in CAPSEM_HOME itself; this guard keeps
 harnesses in the installed layout, where CAPSEM_HOME owns a `run/` directory,
 so what they test is what ships.
 """

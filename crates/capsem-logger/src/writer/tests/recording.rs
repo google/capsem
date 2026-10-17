@@ -33,7 +33,7 @@ fn db_writer_records_enqueue_batch_and_shutdown_metrics() {
             conn,
             rx,
             None,
-            16,
+            WriterSchedule::new(16),
             &pending_body_bytes,
             BodyArchive::disabled(SystemTime::now),
             LedgerTally::default(),

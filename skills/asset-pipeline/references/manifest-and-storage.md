@@ -40,7 +40,7 @@ manifest metadata, or hash-based cache naming.
 ```
 
 The public producer is `capsem-admin manifest generate <assets_dir>`. Full
-asset builds and initrd repacks feed that same profile-derived build rail so local, CI, and
+asset builds and initrd repacks feed that same runtime build rail so local, CI, and
 corporate manifests use one contract. Corporate VM asset channels use
 `capsem update --assets --manifest <URL>`; `--manifest` is URL-shaped, so local
 custom manifests use `file:///absolute/path/to/manifest.json`, while hosted corp
@@ -81,6 +81,6 @@ rootfs-89eb92b83534d9d0.erofs
 Native packages do not carry the repository's `cache/target/assets/manifest.json`. They carry
 `manifest-metadata.json` with the selected channel or corp manifest URL, and
 postinstall runs `capsem update --assets --manifest <URL>` to write the live
-installed manifest plus any missing profile image assets.
+installed manifest plus any missing runtime image assets.
 
 Hash-based naming: `{stem}-{hash[..16]}{ext}`. Same hash = same file across versions = natural dedup.

@@ -1,7 +1,6 @@
 """Capsem builder CLI -- backend-only helper tooling.
 
-Product profile validation, materialization, and image builds are owned by
-capsem-admin. This CLI intentionally exposes only backend helpers that are used
+Image workspace materialization and image builds are owned by capsem-admin. This CLI intentionally exposes only backend helpers that are used
 by just/CI and do not create a second product authoring rail.
 """
 
@@ -34,21 +33,11 @@ def cli(ctx: click.Context) -> None:
 
 
 @cli.command()
-@click.option("--profile", "profile_id", default="code", show_default=True,
-              help="Profile id whose ledger should be checked.")
-@click.option("--config-root", default="config", show_default=True,
-              type=click.Path(exists=False),
-              help="Config root containing profiles and rule files.")
-def doctor(profile_id: str, config_root: str) -> None:
-    """Check build prerequisites and the profile-derived build contract."""
+def doctor() -> None:
+    """Check image build prerequisites."""
     from .doctor import format_results, run_all_checks
 
-    repo_root = project_root(__file__)
-    results = run_all_checks(
-        repo_root,
-        profile_id=profile_id,
-        config_root=Path(config_root),
-    )
+    results = run_all_checks(project_root(__file__))
     click.echo(format_results(results))
     failures = [r for r in results if not r.passed]
     if failures:

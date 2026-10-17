@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import contextlib
 import datetime
-import hashlib
 import json
 import os
 import platform
@@ -17,12 +16,12 @@ import shutil
 import subprocess
 import sys
 import tarfile
-import uuid
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 from jinja2 import Environment, FileSystemLoader
 
+from .. import crypto as hashlib
 from ..gate import auditfs
 from ..policy.dockerpolicy import (
     BuildNetwork,
@@ -30,7 +29,7 @@ from ..policy.dockerpolicy import (
     require_build_network,
     require_container_network,
 )
-from ..release.obom import validate_exported_rootfs_obom
+from ..release.obom import ObomSubject, validate_exported_rootfs_obom
 from . import assetdependencies, componentcache, guestbinarycache, guestbuilder
 from .assettools import image_tag as asset_tools_image_tag
 from .doctor import check_container_runtime
@@ -123,33 +122,12 @@ def _rootfs_context(config: GuestImageConfig, arch_name: str) -> dict[str, Any]:
     """Build Jinja context for Dockerfile.rootfs.j2."""
     arch = config.build.architectures[arch_name]
 
-    apt_packages: list[str] = []
-    if "apt" in config.package_sets:
-        apt_packages = list(config.package_sets["apt"].packages)
-
-    python_packages: list[str] = []
-    python_install_cmd = "uv pip install --system --break-system-packages"
-    if "python" in config.package_sets:
-        python_packages = list(config.package_sets["python"].packages)
-        python_install_cmd = config.package_sets["python"].install_cmd
-
-    npm_packages: list[str] = []
-    npm_prefix = "/opt/ai-clis"
-    if "npm" in config.package_sets:
-        npm_packages.extend(config.package_sets["npm"].packages)
     return {
         **_debian_snapshot_context(config),
         "arch": arch,
         "arch_name": arch_name,
-        "apt_packages": apt_packages,
-        "python_packages": python_packages,
-        "python_install_cmd": python_install_cmd,
-        "npm_packages": npm_packages,
-        "npm_prefix": npm_prefix,
-        "dependency_artifacts": config.build.asset_dependencies.architectures[arch_name],
+        "apt_packages": list(config.build.rootfs.runtime_apt_packages),
         "guest_binaries": GUEST_BINARIES,
-        "profile_root_seed": config.profile_root_seed,
-        "profile_build_script": config.profile_build_script,
     }
 
 
@@ -162,6 +140,7 @@ def _kernel_context(config: GuestImageConfig, arch_name: str) -> dict[str, Any]:
         "arch_name": arch_name,
         "kernel_version": config.build.kernel.version,
         "kernel_sha256": config.build.kernel.sha256,
+        "kernel_patches": config.build.kernel.patches,
     }
 
 
@@ -590,8 +569,14 @@ def create_erofs(
     *,
     tool_image: str,
     runtime_network: ContainerNetwork,
+    id_offset: int | None = None,
 ) -> None:
-    """Create an EROFS image from a tar archive using a container."""
+    """Create an EROFS image from a tar archive using a container.
+
+    `id_offset` shifts every owner and group by that amount, so an image
+    mounted into a user namespace mapping that range keeps its root-owned
+    files owned by namespace root.
+    """
     network_value = require_container_network(runtime_network)
     if compression not in {"lz4", "lz4hc"}:
         raise ValueError(f"unsupported EROFS compression: {compression}")
@@ -611,6 +596,9 @@ def create_erofs(
     out_dir = Path(out_rel).parent.as_posix()
     cluster_flag = f" -C{cluster_size}" if cluster_size else ""
     level_flag = f",level={compression_level}" if compression_level else ""
+    if id_offset is not None and id_offset <= 0:
+        raise ValueError("EROFS id offset must be positive")
+    offset_flag = f" --uid-offset={id_offset} --gid-offset={id_offset}" if id_offset else ""
     mkdir_output = "" if out_dir == "." else f"mkdir -p /assets/{out_dir} && "
     host_uid = os.getuid()
     host_gid = os.getgid()
@@ -633,7 +621,7 @@ def create_erofs(
             "bash",
             "-c",
             f"mkdir /rootfs && {mkdir_output}tar xf /assets/{tar_rel} -C /rootfs && "
-            f"mkfs.erofs -Enosbcrc -z{compression}{level_flag}{cluster_flag} "
+            f"mkfs.erofs -Enosbcrc -z{compression}{level_flag}{cluster_flag}{offset_flag} "
             f"/assets/{out_rel} /rootfs && "
             f"chown {host_uid}:{host_gid} /assets/{out_rel}",
         ],
@@ -642,7 +630,7 @@ def create_erofs(
 
 
 def validate_rootfs_export(tar_path: Path, limits: RootfsConfig) -> None:
-    """Reject an oversized or compositionally forbidden exported rootfs."""
+    """Reject an oversized exported rootfs or one with an unsafe member path."""
     size = tar_path.stat().st_size
     if size > limits.max_uncompressed_bytes:
         raise ValueError(
@@ -657,9 +645,6 @@ def validate_rootfs_export(tar_path: Path, limits: RootfsConfig) -> None:
             path = PurePosixPath(name)
             if path.is_absolute() or any(part == ".." for part in path.parts):
                 raise ValueError(f"unsafe rootfs archive member: {member.name}")
-            for prefix in limits.forbidden_path_prefixes:
-                if name.startswith(prefix):
-                    raise ValueError(f"forbidden rootfs payload survived cleanup: {name}")
 
 
 def validate_erofs_size(image_path: Path, limits: RootfsConfig) -> None:
@@ -882,79 +867,6 @@ def cross_compile_agent(
     return container_compile_agent(build, arch_name, repo_root, output_dir)
 
 
-def build_version_script(config: GuestImageConfig) -> str:
-    """Build a shell script that extracts tool versions from config.
-
-    Returns a bash script that prints grouped key=value lines to stdout.
-    The script is assembled from version_commands in build config and package
-    sets. Profile-owned build scripts install agent CLIs; they are not authored
-    through builder config.
-    """
-    lines: list[str] = []
-
-    # -- System: build-level tools (node, npm, uv, pip) + apt packages --
-    system_cmds: list[tuple[str, str]] = []
-    for key, cmd in config.build.version_commands.items():
-        system_cmds.append((key, cmd))
-    if "apt" in config.package_sets:
-        for key, cmd in config.package_sets["apt"].version_commands.items():
-            system_cmds.append((key, cmd))
-    if system_cmds:
-        lines.append('echo "# System";')
-        for key, cmd in system_cmds:
-            lines.append(f"echo \"{key}=$({cmd} || echo 'N/A')\";")
-
-    # -- Python packages --
-    if "python" in config.package_sets:
-        py_cmds = config.package_sets["python"].version_commands
-        if py_cmds:
-            lines.append('echo "# Python";')
-            for key, cmd in py_cmds.items():
-                lines.append(f"echo \"{key}=$({cmd} || echo 'N/A')\";")
-
-    return "\n".join(lines)
-
-
-def _validate_tool_versions(
-    content: str,
-    config: GuestImageConfig,
-) -> None:
-    """Reserved hook for version-output validation."""
-    versions: dict[str, str] = {}
-    for line in content.splitlines():
-        if line.startswith("#") or "=" not in line:
-            continue
-        key, _, val = line.partition("=")
-        versions[key.strip()] = val.strip()
-
-
-def extract_tool_versions(
-    runtime: str,
-    image_tag: str,
-    platform: str,
-    output_dir: Path,
-    config: GuestImageConfig,
-    *,
-    validate: bool = True,
-) -> None:
-    """Extract tool versions from rootfs image using config-driven script."""
-    version_script = build_version_script(config)
-    if not version_script:
-        return
-    output = _container_output(
-        runtime,
-        image_tag,
-        platform,
-        version_script,
-        probe="tool versions",
-        shell_option="-c",
-    )
-    versions_path = output_dir / "tool-versions.txt"
-    versions_path.write_text(output)
-    if validate:
-        _validate_tool_versions(output, config)
-
-
 def _container_output(
     runtime: str,
     image_tag: str,
@@ -965,7 +877,7 @@ def _container_output(
     shell_option: str = "-lc",
 ) -> str:
     safe_probe = re.sub(r"[^a-z0-9]+", "-", probe.lower()).strip("-") or "command"
-    container_name = f"capsem-probe-{safe_probe}-{uuid.uuid4().hex[:12]}"
+    container_name = f"capsem-probe-{safe_probe}-{hashlib.uuid_v4().hex[:12]}"
     run_command = [
         runtime,
         "run",
@@ -1028,26 +940,7 @@ def extract_software_inventory(
         "dpkg-query -W -f='${Package}\\t${Version}\\t${Architecture}\\n'",
         probe="dpkg inventory",
     )
-    pip_output = _container_output(
-        runtime,
-        image_tag,
-        platform,
-        "python3 -m pip list --format json",
-        probe="Python inventory",
-    )
-    npm_output = _container_output(
-        runtime,
-        image_tag,
-        platform,
-        "npm ls --json --depth=0 --prefix /opt/ai-clis",
-        probe="npm inventory",
-    )
-    manifest = collect_bom(
-        arch=arch_name,
-        dpkg_output=dpkg_output,
-        pip_output=pip_output,
-        npm_output=npm_output,
-    )
+    manifest = collect_bom(arch=arch_name, dpkg_output=dpkg_output)
     rows = [
         {
             "name": package.name,
@@ -1059,7 +952,7 @@ def extract_software_inventory(
     ]
     rows.sort(key=lambda row: (row["source"], row["name"], row["architecture"], row["version"]))
     inventory = {
-        "schema": "capsem.profile_software_inventory.v1",
+        "schema": "capsem.runtime_software_inventory.v1",
         "architecture": arch_name,
         "packages": rows,
     }
@@ -1115,7 +1008,9 @@ def _extract_rootfs_command(tar_path: str) -> list[str]:
     ]
 
 
-def _normalize_cyclonedx_obom(path: Path, *, architecture: str) -> None:
+def _normalize_cyclonedx_obom(
+    path: Path, *, architecture: str, subject: ObomSubject | None = None
+) -> None:
     """Remove build-host context while preserving exported-rootfs evidence."""
     document = json.loads(path.read_text())
 
@@ -1145,15 +1040,9 @@ def _normalize_cyclonedx_obom(path: Path, *, architecture: str) -> None:
     if not isinstance(metadata, dict):
         raise RuntimeError(f"OBOM {path} has non-object metadata")
     metadata.pop("timestamp", None)
-    metadata["component"] = {
-        "type": "operating-system",
-        "name": f"capsem-rootfs-{architecture}",
-        "version": "guest-rootfs",
-        "properties": [
-            {"name": "capsem:evidence:scope", "value": "exported-rootfs"},
-            {"name": "capsem:guest:architecture", "value": architecture},
-        ],
-    }
+    metadata["component"] = (subject or ObomSubject.guest_rootfs(architecture)).component(
+        architecture
+    )
 
     components = document.get("components")
     removed_refs: set[str] = set()
@@ -1218,11 +1107,13 @@ def generate_cyclonedx_obom(
     tool_image: str,
     tool_platform: str,
     runtime_network: ContainerNetwork,
+    subject: ObomSubject | None = None,
 ) -> Path:
     """Generate a CycloneDX OS OBOM for the exported rootfs tar.
 
     The build ledger records declared build inputs. This OBOM is the runtime
-    inventory for what actually ended up in the base image.
+    inventory for what actually ended up in the base image. `subject` names
+    the image the rootfs came from; the default is the VM guest rootfs.
     """
     network_value = require_container_network(runtime_network)
 
@@ -1264,8 +1155,8 @@ def generate_cyclonedx_obom(
         capture=True,
         timeout=OBOM_COMMAND_TIMEOUT_SECONDS,
     )
-    _normalize_cyclonedx_obom(output_path, architecture=architecture)
-    _validate_cyclonedx_obom(output_path, architecture=architecture)
+    _normalize_cyclonedx_obom(output_path, architecture=architecture, subject=subject)
+    _validate_cyclonedx_obom(output_path, architecture=architecture, subject=subject)
     run_cmd(
         [
             runtime,
@@ -1297,7 +1188,7 @@ def generate_cyclonedx_obom(
 
 def _blake3_hex(path: Path) -> str:
     """Compute BLAKE3 hash of a file, returning the hex digest."""
-    import blake3
+    from .. import crypto as blake3
 
     hasher = blake3.blake3()
     with open(path, "rb") as f:
@@ -1308,7 +1199,7 @@ def _blake3_hex(path: Path) -> str:
 
 def _asset_digest_hex(path: Path) -> tuple[str, str]:
     """Stream one asset once and return its BLAKE3 and SHA-256 digests."""
-    import blake3
+    from .. import crypto as blake3
 
     blake3_hasher = blake3.blake3()
     sha256_hasher = hashlib.sha256()
@@ -1350,7 +1241,7 @@ def _directory_file_entries(directory: Path) -> list[dict[str, Any]]:
 
 def _directory_tree_hash(directory: Path) -> str:
     """Hash a directory tree from relative paths and file BLAKE3 hashes."""
-    import blake3
+    from .. import crypto as blake3
 
     hasher = blake3.blake3()
     for entry in _directory_file_entries(directory):
@@ -1426,37 +1317,6 @@ def _build_input_record(
     }
 
 
-def _path_input_record(path_value: str | None) -> dict[str, Any] | None:
-    """Return debug identity for a profile-provided path when it exists."""
-    if not path_value:
-        return None
-    path = Path(path_value)
-    record: dict[str, Any] = {"path": path.as_posix()}
-    if path.is_file():
-        record["file"] = _file_ledger_entry(path)
-    elif path.is_dir():
-        record["directory"] = {
-            "hash": _directory_tree_hash(path),
-            "files": _directory_file_entries(path),
-        }
-    else:
-        record["exists"] = False
-    return record
-
-
-def _package_config_record(config: GuestImageConfig) -> dict[str, Any]:
-    """Record declared package config inputs, not installed package state."""
-    package_inputs: dict[str, Any] = {}
-    for key, package_set in sorted(config.package_sets.items()):
-        package_inputs[key] = {
-            "manager": package_set.manager.value,
-            "install_cmd": package_set.install_cmd,
-            "packages": list(package_set.packages),
-            "version_commands": dict(sorted(package_set.version_commands.items())),
-        }
-    return package_inputs
-
-
 def _rootfs_config_input_record(
     config: GuestImageConfig,
     arch_name: str,
@@ -1465,34 +1325,16 @@ def _rootfs_config_input_record(
 
     This record is intentionally not an installed-package ledger. Installed
     package/component truth belongs to the CycloneDX OBOM generated from the
-    produced rootfs. The build ledger records the config and profile inputs we
-    fed into the build so failures can be retraced.
+    produced rootfs. The build ledger records the config inputs we fed into the
+    build so failures can be retraced.
     """
     ctx = _rootfs_context(config, arch_name)
     erofs = config.build.erofs
     return {
         "stage": "rootfs.config_inputs",
         "arch": arch_name,
-        "package_inputs": _package_config_record(config),
         "rendered_rootfs_inputs": {
             "apt_packages": list(ctx["apt_packages"]),
-            "python_packages": list(ctx["python_packages"]),
-            "python_install_cmd": ctx["python_install_cmd"],
-            "npm_packages": list(ctx["npm_packages"]),
-            "npm_prefix": ctx["npm_prefix"],
-            "dependency_artifacts": config.build.asset_dependencies.architectures[
-                arch_name
-            ].model_dump(mode="json"),
-        },
-        "profile_inputs": {
-            "root_seed": {
-                "enabled": config.profile_root_seed,
-                "source": _path_input_record(config.profile_root_seed_path),
-            },
-            "build_script": {
-                "enabled": config.profile_build_script,
-                "source": _path_input_record(config.profile_build_script_path),
-            },
         },
         "erofs": {
             "enabled": erofs.enabled,
@@ -1802,27 +1644,7 @@ def prepare_build_context(
     dockerfile_path = context_dir / "Dockerfile"
     dockerfile_path.write_text(dockerfile_content)
 
-    if template_name == config.build.asset_dependencies.rootfs_template:
-        packages_dir = guest_dir / "config" / "packages"
-        if "python" in config.package_sets:
-            python_lock = packages_dir / "python-requirements.lock"
-            if not python_lock.is_file():
-                raise FileNotFoundError(python_lock)
-            shutil.copy2(str(python_lock), str(context_dir / python_lock.name))
-        if "npm" in config.package_sets:
-            for name in ("npm-package.json", "npm-package-lock.json"):
-                source = packages_dir / name
-                if not source.is_file():
-                    raise FileNotFoundError(source)
-                shutil.copy2(str(source), str(context_dir / name))
-        if config.profile_build_script:
-            if not config.profile_build_script_path:
-                raise FileNotFoundError("profile_build_script_path")
-            profile_build = Path(config.profile_build_script_path)
-            if not profile_build.is_file():
-                raise FileNotFoundError(profile_build)
-            shutil.copy2(str(profile_build), str(context_dir / "profile-build.sh"))
-    elif template_name == "Dockerfile.rootfs.j2":
+    if template_name == "Dockerfile.rootfs.j2":
         # CA cert
         shutil.copy2(
             str(
@@ -1856,17 +1678,6 @@ def prepare_build_context(
             src = artifacts / name
             if src.is_dir():
                 shutil.copytree(str(src), str(context_dir / name), dirs_exist_ok=True)
-        if config.profile_root_seed:
-            if not config.profile_root_seed_path:
-                raise FileNotFoundError("profile_root_seed_path")
-            profile_root = Path(config.profile_root_seed_path)
-            if not profile_root.is_dir():
-                raise FileNotFoundError(profile_root)
-            shutil.copytree(
-                str(profile_root),
-                str(context_dir / "profile-root"),
-                dirs_exist_ok=True,
-            )
         # Agent binaries (if they exist in context already from cross_compile_agent)
         # They may have been copied to context_dir by the pipeline before this call
 
@@ -1877,6 +1688,10 @@ def prepare_build_context(
         defconfig_dst = context_dir / arch.defconfig
         defconfig_dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(str(defconfig_src), str(defconfig_dst))
+        for patch in config.build.kernel.patches:
+            patch_dst = context_dir / patch
+            patch_dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(str(guest_dir / "config" / patch), str(patch_dst))
         # capsem-init
         shutil.copy2(
             str(guest_dir / "artifacts" / "capsem-init"),
@@ -2179,18 +1994,6 @@ def build_image(
             )
             tar_path.unlink(missing_ok=True)
 
-            print("Extracting tool versions...")
-            extract_tool_versions(runtime, tag, arch.docker_platform, arch_output, config)
-            versions_path = arch_output / "tool-versions.txt"
-            if versions_path.is_file():
-                _append_build_ledger(
-                    arch_output,
-                    {
-                        "stage": "rootfs.tool_versions",
-                        "inputs": build_inputs,
-                        "outputs": [_file_ledger_entry(versions_path, base=arch_output)],
-                    },
-                )
             componentcache.store(
                 repo_root,
                 "rootfs",
@@ -2202,7 +2005,6 @@ def build_image(
                         "rootfs.erofs",
                         SOFTWARE_INVENTORY_ASSET,
                         OBOM_ASSET,
-                        "tool-versions.txt",
                     )
                     if (arch_output / name).is_file()
                 ),

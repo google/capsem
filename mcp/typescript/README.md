@@ -44,13 +44,20 @@ listing and byte-preserving transfers, logs, history, timeline, statistics,
 panics, and triage. VM tools take the immutable `vm_id` returned by
 `capsem_list` or `capsem_create`. File content can be passed as UTF-8 or base64.
 
+`capsem_image_list` reads the service-admitted catalog with compatible pins and
+reported cache state; `unknown` does not prove readiness. Optional `refresh`
+requests a fresh catalog read. `capsem_image_pull` prefetches a catalog name or
+registry-qualified reference and returns its resolved pin without creating a
+VM. These tools accept no registry credentials. Image admission and private
+access stay with the service's configured policy.
+
 Network tools create, list, inspect and retire private networks, attach or detach
 VMs by immutable ID, and read cursor-based audit events with VM, connection,
 event, decision, and time filters.
 
-Profile tools list the typed profile catalog, inspect MCP readiness and default
-permissions, discover or refresh one server, and invoke a tool through gateway
-policy enforcement. Successful calls provide `structuredContent`; failures set
+MCP tools cover the servers every VM runs (settings.toml `[mcp]` with corp's
+laid over it): they count and list them, read the default permission, discover
+or refresh one server, and invoke a tool through gateway policy enforcement. Successful calls provide `structuredContent`; failures set
 MCP `isError` and return a machine-readable error kind without HTTP bodies or
 low-level causes.
 
@@ -73,3 +80,11 @@ mutations are never retried automatically.
 `capsem_pause` and `capsem_status` are the canonical names. Host logs use one
 `capsem_host_logs` tool with an allowlisted `source`; the package does not expose
 the legacy `suspend`, `version`, or duplicate service-log tools.
+
+For development, build the SDK and this package, then run `pnpm prewarm:packed`
+before `pnpm exec vitest run tests/packed-package.test.ts`. Prewarming installs
+the actual local tarballs in a temporary runtime-only consumer to cache their
+dependencies. The acceptance test installs offline with scripts disabled,
+checks archive/source/installed payloads and drives the packed executable over
+stdio. Both temporary consumers are removed. Set `NPM_CONFIG_CACHE` to select
+an isolated npm cache. The gate declares prewarming outside its network sandbox.

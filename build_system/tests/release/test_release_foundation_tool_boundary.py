@@ -11,7 +11,6 @@ REPOSITORY_ROOT = BUILD_SYSTEM_ROOT.parent
 TOOL_ROOT = BUILD_SYSTEM_ROOT / "builder" / "release" / "tools"
 
 COMMANDS = {
-    "release-test-profiles.py": "release_test_profiles",
     "release_transition.py": "release_transition",
     "release_version_tag.py": "release_version_tag",
 }
@@ -30,22 +29,16 @@ LAUNCHERS = {**COMMANDS, **ADAPTERS}
 
 
 def test_release_foundations_have_direct_owned_package_modules() -> None:
-    assert {"__init__", *LAUNCHERS.values()} <= {
-        path.stem for path in TOOL_ROOT.glob("*.py")
-    }
-    project = tomllib.loads(
-        (BUILD_SYSTEM_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    )
-    assert "capsem_builder.release.tools" in project["tool"]["setuptools"][
-        "packages"
-    ]
+    assert {"__init__", *LAUNCHERS.values()} <= {path.stem for path in TOOL_ROOT.glob("*.py")}
+    project = tomllib.loads((BUILD_SYSTEM_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert "capsem_builder.release.tools" in project["tool"]["setuptools"]["packages"]
 
 
 def test_release_foundation_boundaries_are_thin_direct_adapters() -> None:
     for name, module in LAUNCHERS.items():
-        source = (
-            REPOSITORY_ROOT / "build_system" / "scripts" / "release" / name
-        ).read_text(encoding="utf-8")
+        source = (REPOSITORY_ROOT / "build_system" / "scripts" / "release" / name).read_text(
+            encoding="utf-8"
+        )
         tree = ast.parse(source)
         assert len(source.splitlines()) <= 21, f"{name} contains reusable behavior"
         imports = [
@@ -69,9 +62,7 @@ def test_release_foundation_boundaries_are_thin_direct_adapters() -> None:
             and node.exc.func.id == "SystemExit"
         ]
         assert len(exits) == (1 if name in COMMANDS else 0)
-        assert any(alias.name == "*" for alias in imports[0].names) == (
-            name in ADAPTERS
-        )
+        assert any(alias.name == "*" for alias in imports[0].names) == (name in ADAPTERS)
 
 
 def test_release_foundations_use_package_relative_sibling_imports() -> None:

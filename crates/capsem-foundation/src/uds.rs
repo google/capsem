@@ -77,7 +77,7 @@ fn owner_socket_path(run_dir: &Path, id: &str, role: &str) -> io::Result<PathBuf
     if preferred.as_os_str().len() < SUN_PATH_MAX {
         return Ok(ensured(preferred));
     }
-    let mut digest = blake3::Hasher::new();
+    let mut digest = capsem_crypto::blake3::Hasher::new();
     digest.update(run_dir.as_os_str().as_encoded_bytes());
     digest.update(id.as_bytes());
     digest.update(role.as_bytes());

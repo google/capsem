@@ -12,16 +12,19 @@ def read(relative: str) -> str:
 
 def test_frontend_uses_current_route_vocabulary_not_retired_policy_vm_terms() -> None:
     dashboard = read("lib/components/shell/NewTabPage.svelte")
-    profile = read("lib/components/shell/ProfilePage.svelte")
+    session_errors = read("lib/models/session-action-error.ts")
+    settings = read("lib/components/shell/SettingsPage.svelte")
     stats = read("lib/components/views/StatsView.svelte")
     toolbar = read("lib/components/shell/Toolbar.svelte")
 
     assert "Sessions" in dashboard
-    assert "Failed to create session" in dashboard
+    assert "import { sessionActionError }" in dashboard
+    assert "sessionActionError(error)" in dashboard
+    assert "Failed to create session" in session_errors
     assert "Session {vmId} ledger" in stats
     assert "Session Logs" in toolbar
 
-    combined = "\n".join([dashboard, profile, stats, toolbar])
+    combined = f"{dashboard}\n{settings}\n{stats}\n{toolbar}"
     assert ">VMs<" not in combined
     assert "Customize VM" not in combined
     assert "label: 'Policy'" not in combined
@@ -30,23 +33,13 @@ def test_frontend_uses_current_route_vocabulary_not_retired_policy_vm_terms() ->
     assert "build {__BUILD_TS__}" not in combined
 
 
-def test_profile_page_exposes_enforcement_detection_plugins_mcp_assets() -> None:
-    source = read("lib/components/shell/ProfilePage.svelte")
+def test_settings_page_hosts_service_wide_plugins_and_mcp() -> None:
+    source = read("lib/components/shell/SettingsPage.svelte")
 
-    assert "key: 'overview'" in source
-    assert "key: 'enforcement'" in source
-    assert "key: 'detection'" in source
-    assert "key: 'plugins'" in source
-    assert "key: 'mcp'" in source
-    assert "key: 'assets'" in source
-
-    assert "getProfileInfo(activeProfileId)" in source
-    assert "getAssetsStatus(activeProfileId)" in source
-    assert "listEnforcementRules(activeProfileId)" in source
-    assert "listDetectionRules(activeProfileId)" in source
-    assert "getCredentialBrokerInfo" in source
-    assert "<PluginSection {profileId} />" in source
-    assert "<McpSection {profileId} />" in source
+    assert "{ key: 'plugins', label: 'Plugins'" in source
+    assert "{ key: 'mcp', label: 'MCP'" in source
+    assert "<PluginSection />" in source
+    assert "<McpSection />" in source
 
 
 def test_detail_panes_render_one_canonical_payload_view_without_preview_duplicates() -> None:
@@ -69,7 +62,8 @@ def test_ui_chrome_uses_semantic_tokens_not_raw_status_colors() -> None:
     source_files = [
         read("lib/components/shell/Toolbar.svelte"),
         read("lib/components/shell/NewTabPage.svelte"),
-        read("lib/components/shell/ProfilePage.svelte"),
+        read("lib/components/settings/PluginSection.svelte"),
+        read("lib/components/settings/McpSection.svelte"),
         read("lib/components/views/StatsView.svelte"),
     ]
     combined = "\n".join(source_files)

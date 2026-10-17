@@ -1,6 +1,25 @@
 use super::*;
 
 #[test]
+fn provision_response_constructor_preserves_the_supplied_lifecycle_and_actions() {
+    let response = ProvisionResponse::new(
+        "vm-id".into(),
+        "named".into(),
+        VmLifecycleState::Suspended,
+        true,
+        true,
+        vec![VmAction::Delete],
+    );
+    assert_eq!(
+        serde_json::to_value(response).unwrap(),
+        serde_json::json!({
+            "id": "vm-id", "name": "named", "status": "Suspended",
+            "persistent": true, "can_resume": true, "available_actions": ["delete"],
+        })
+    );
+}
+
+#[test]
 fn restart_contract_acknowledges_202_and_requires_fresh_authentication() {
     let doc = serde_json::to_value(openapi()).unwrap();
     let operation = &doc["paths"]["/restart"]["post"];
@@ -110,7 +129,7 @@ fn management_categories_are_closed_enums() {
     assert!(serde_json::from_value::<ServiceAvailability>(json!("maybe")).is_err());
     assert!(serde_json::from_value::<UpdateActionStatus>(json!("maybe")).is_err());
     assert!(serde_json::from_value::<ValidationStatus>(json!("maybe")).is_err());
-    assert!(serde_json::from_value::<ProfileCatalogSource>(json!("directory")).is_err());
+    assert!(serde_json::from_value::<AssetFileState>(json!("maybe")).is_err());
     assert_eq!(
         serde_json::to_value(UpdateActionStatus::Succeeded).unwrap(),
         "succeeded"
@@ -232,6 +251,20 @@ fn openapi_describes_binary_copy_and_required_vm_identity() {
 }
 
 #[test]
+fn openapi_describes_standalone_proxy_leases() {
+    let document = serde_json::to_value(crate::openapi()).unwrap();
+    let paths = &document["paths"];
+
+    assert_eq!(paths["/proxies"]["post"]["operationId"], "createProxy");
+    assert_eq!(
+        paths["/proxies/{id}/heartbeat"]["post"]["operationId"],
+        "heartbeatProxy"
+    );
+    assert_eq!(paths["/proxies/{id}/stop"]["post"]["operationId"], "stopProxy");
+    assert_eq!(crate::CONTRACT_VERSION, "3.3.0");
+}
+
+#[test]
 fn openapi_exec_output_is_byte_safe_and_retires_ambiguous_file_json() {
     let document = serde_json::to_value(crate::openapi()).unwrap();
     let paths = &document["paths"];
@@ -277,6 +310,12 @@ fn exec_output_roundtrips_utf8_and_arbitrary_bytes() {
 #[test]
 fn openapi_describes_network_mutations_and_both_member_path_parameters() {
     let document = serde_json::to_value(crate::openapi()).unwrap();
+    let responses = &document["paths"]["/networks"]["post"]["responses"];
+    assert!(responses.get("200").is_none(), "network creation returns 201 Created");
+    assert_eq!(
+        responses["201"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/NetworkInfo"
+    );
     let paths = &document["paths"];
     assert_eq!(paths["/networks"]["post"]["operationId"], "createNetwork");
     assert_eq!(paths["/networks"]["get"]["operationId"], "listNetworks");
@@ -306,7 +345,7 @@ fn openapi_describes_network_mutations_and_both_member_path_parameters() {
 }
 
 #[test]
-fn openapi_exposes_existing_diagnostics_persistence_and_profile_mcp_routes() {
+fn openapi_exposes_existing_diagnostics_persistence_and_mcp_routes() {
     let document = serde_json::to_value(crate::openapi()).unwrap();
     let paths = &document["paths"];
     for (path, method, operation_id) in [
@@ -315,39 +354,24 @@ fn openapi_exposes_existing_diagnostics_persistence_and_profile_mcp_routes() {
         ("/panics", "get", "getPanics"),
         ("/triage", "get", "getTriage"),
         ("/vms/{id}/save", "post", "persistVm"),
-        ("/profiles/{profile_id}/mcp/info", "get", "getProfileMcpInfo"),
-        (
-            "/profiles/{profile_id}/mcp/servers/list",
-            "get",
-            "listProfileMcpServers",
-        ),
-        ("/profiles/{profile_id}/mcp/default/info", "get", "getProfileMcpDefault"),
-        (
-            "/profiles/{profile_id}/mcp/servers/{server_id}/tools/list",
-            "get",
-            "listProfileMcpTools",
-        ),
-        (
-            "/profiles/{profile_id}/mcp/servers/{server_id}/refresh",
-            "post",
-            "refreshProfileMcpServer",
-        ),
-        (
-            "/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/call",
-            "post",
-            "callProfileMcpTool",
-        ),
+        ("/assets/status", "get", "getAssetStatus"),
+        ("/mcp/info", "get", "getMcpInfo"),
+        ("/mcp/servers/list", "get", "listMcpServers"),
+        ("/mcp/default/info", "get", "getMcpDefault"),
+        ("/mcp/servers/{server_id}/tools/list", "get", "listMcpTools"),
+        ("/mcp/servers/{server_id}/refresh", "post", "refreshMcpServer"),
+        ("/mcp/servers/{server_id}/tools/{tool_id}/call", "post", "callMcpTool"),
     ] {
         assert_eq!(paths[path][method]["operationId"], operation_id, "{method} {path}");
     }
-    let call = &paths["/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/call"]["post"];
+    let call = &paths["/mcp/servers/{server_id}/tools/{tool_id}/call"]["post"];
     let parameters = call["parameters"].as_array().unwrap();
     assert_eq!(
         parameters
             .iter()
             .map(|parameter| parameter["name"].as_str().unwrap())
             .collect::<std::collections::BTreeSet<_>>(),
-        std::collections::BTreeSet::from(["profile_id", "server_id", "tool_id"])
+        std::collections::BTreeSet::from(["server_id", "tool_id"])
     );
 }
 
@@ -373,8 +397,8 @@ fn action_availability_distinguishes_resume_from_start() {
 }
 
 #[test]
-fn omitted_resources_remain_profile_owned() {
-    let request: ProvisionRequest = serde_json::from_value(json!({"profile_id": "code"})).unwrap();
+fn omitted_resources_stay_off_the_wire() {
+    let request: ProvisionRequest = serde_json::from_value(json!({})).unwrap();
     let wire = serde_json::to_value(request).unwrap();
     assert!(wire.get("ram_mb").is_none());
     assert!(wire.get("cpus").is_none());
@@ -383,8 +407,8 @@ fn omitted_resources_remain_profile_owned() {
 
 #[test]
 fn image_is_not_a_clone_source_alias() {
-    let request: ProvisionRequest = serde_json::from_value(json!({"profile_id": "code", "image": "old-img"})).unwrap();
-    assert_eq!(request.from, None);
+    let error = serde_json::from_value::<ProvisionRequest>(json!({"image": "old-img"})).unwrap_err();
+    assert!(error.to_string().contains("unknown field `image`"), "{error}");
 }
 
 #[test]
@@ -414,4 +438,65 @@ fn exec_timeout_is_bounded_and_validated() {
     );
     assert!(exec_timeout_secs(Some(0)).is_err());
     assert!(exec_timeout_secs(Some(MAX_EXEC_TIMEOUT_SECS + 1)).is_err());
+}
+
+/// An image session's exec enters its workload unless the caller names the
+/// VM; a session without one runs in the VM, and asking it for a workload is
+/// refused rather than silently answered by the VM.
+#[test]
+fn exec_target_defaults_to_the_workload_only_where_there_is_one() {
+    let absent: ExecRequest = serde_json::from_value(json!({"command": "id -u"})).unwrap();
+    assert_eq!(absent.target, None);
+    assert_eq!(exec_target(absent.target, true), Ok(ExecTarget::Workload));
+    assert_eq!(exec_target(absent.target, false), Ok(ExecTarget::Vm));
+    assert_eq!(exec_target(Some(ExecTarget::Vm), true), Ok(ExecTarget::Vm));
+    assert_eq!(exec_target(Some(ExecTarget::Vm), false), Ok(ExecTarget::Vm));
+    assert_eq!(exec_target(Some(ExecTarget::Workload), true), Ok(ExecTarget::Workload));
+    let refused = exec_target(Some(ExecTarget::Workload), false).unwrap_err();
+    assert!(refused.contains("no container workload"), "{refused}");
+
+    let named: ExecRequest = serde_json::from_value(json!({"command": "true", "target": "vm"})).unwrap();
+    assert_eq!(named.target, Some(ExecTarget::Vm));
+    assert!(serde_json::from_value::<ExecRequest>(json!({"command": "true", "target": "container"})).is_err());
+    // An absent target stays absent on the wire, so older services decode it.
+    assert_eq!(serde_json::to_value(&absent).unwrap(), json!({"command": "id -u"}));
+}
+
+#[test]
+fn validate_name_enforces_shared_vm_identifier_rule() {
+    for valid in [
+        "a",
+        "9lives",
+        "my-vm",
+        "project_alpha",
+        "vm-1712678400",
+        &"a".repeat(64),
+    ] {
+        assert_eq!(validate_name("VM name", valid), Ok(()), "{valid}");
+        assert_eq!(validate_name("VM id", valid), Ok(()), "{valid}");
+    }
+
+    assert_eq!(validate_name("VM name", ""), Err("VM name cannot be empty".to_string()));
+    assert_eq!(validate_name("VM id", ""), Err("VM id cannot be empty".to_string()));
+    assert_eq!(
+        validate_name("VM name", &"a".repeat(65)),
+        Err("VM name too long (max 64 characters)".to_string())
+    );
+    for bad_start in ["-bad", "_bad", ".bad"] {
+        assert_eq!(
+            validate_name("VM id", bad_start),
+            Err("VM id must start with a letter or digit".to_string()),
+            "{bad_start}"
+        );
+    }
+    for bad_body in ["my/vm", "../escape", "my vm", "my.vm", "vm\0id", "nai\u{00ef}ve"] {
+        assert!(
+            validate_name("VM name", bad_body).is_err(),
+            "{bad_body} should be rejected"
+        );
+    }
+    assert_eq!(
+        validate_name("VM name", "my.vm"),
+        Err("VM name must contain only letters, digits, hyphens, and underscores".to_string())
+    );
 }

@@ -58,7 +58,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from helpers.body_archive import generation_path_for_db
-from helpers.constants import CODE_PROFILE_ID
+from helpers.bounded import bounded
 from helpers.service import ServiceInstance, exec_output_text, vm_session_dir
 
 from tests.fixtures.oci.registry import registry
@@ -233,18 +233,10 @@ def keep_ledger(session_dir: Path) -> None:
         "RUSTC_WRAPPER": "",
     }
     subprocess.run(
-        [
-            "cargo",
-            "run",
-            "--quiet",
-            "-p",
-            "capsem-logger",
-            "--example",
-            "snapshot_session_ledger",
-            "--",
-            str(session_dir),
-            str(dest),
-        ],
+        bounded([
+            "cargo", "run", "--quiet", "-p", "capsem-logger", "--example",
+            "snapshot_session_ledger", "--", str(session_dir), str(dest),
+        ], 180, env={"RUSTC_WRAPPER": "", "CARGO_TARGET_AARCH64_APPLE_DARWIN_RUNNER": "/usr/bin/env"}),
         cwd=root,
         env=env,
         check=True,
@@ -355,7 +347,7 @@ def main() -> int:
     session_dir = None
     try:
         with registry(service.tmp_dir) as (reference, certificate, _requests):
-            print(f"\n== boot a sandboxed VM (profile {CODE_PROFILE_ID}) ==")
+            print("\n== boot a sandboxed VM ==")
             box = boot(service, service.tmp_dir, reference, certificate, "econ")
             booted.append(box["id"])
             session_dir = vm_session_dir(service.tmp_dir, client, box["id"])

@@ -34,7 +34,8 @@ def _prepared_tree(root: Path) -> None:
         f'[project]\nversion = "{VERSION}"\n', encoding="utf-8"
     )
     (root / "build_system/uv.lock").write_text(
-        f'[[package]]\nname = "capsem-builder"\nversion = "{VERSION}"\n', encoding="utf-8"
+        f'[[package]]\nname = "capsem-builder"\nversion = "{VERSION}"\n',
+        encoding="utf-8",
     )
     body = "### Fixed\n\n- Qualify one committed immutable source."
     (root / "CHANGELOG.md").write_text(
@@ -82,9 +83,7 @@ class FakeRunner:
             )
         if command[:3] == ("gh", "api", "graphql"):
             release = {"tagName": TAG} if self.release_published else None
-            return RELEASE.CommandResult(
-                json.dumps({"data": {"repository": {"release": release}}})
-            )
+            return RELEASE.CommandResult(json.dumps({"data": {"repository": {"release": release}}}))
         if "tag" in command and "-a" in command:
             return RELEASE.CommandResult("")
         if command[:3] == ("git", "push", "origin"):
@@ -418,8 +417,6 @@ def test_daily_nightly_schedule_freezes_one_scheduler_commit() -> None:
     assert workflow.count("build_system/scripts/release/nightly_release_scheduler.py") == 1
     assert workflow.count('--source-commit "${{ github.sha }}"') == 1
     assert "just release-" not in workflow
-    for profile in ("code", "co-work"):
-        assert workflow.count(f"--profile {profile}") == 1
     assert "ref: main" not in workflow
 
 

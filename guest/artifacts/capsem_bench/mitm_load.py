@@ -11,8 +11,7 @@ termination, SNI, policy, cert mint, telemetry) and a real, fast upstream.
 It used to target a non-existent public domain "so every request fails at
 the upstream dial". The guest's resolver answered NXDOMAIN and the client
 failed before opening a socket, so the proxy never ran and the recorded
-numbers were DNS-failure numbers. A level where every request fails is now
-an error, not a measurement.
+numbers were DNS-failure numbers. Any failed request now rejects the run.
 
 Output schema:
 
@@ -25,12 +24,13 @@ Output schema:
         "duration_s": 30.0,
         "total_requests": 1234,
         "errors": 0,
+        "error_ratio": 0.0,
         "rps": 41.1,
         "p50_ms": 22.0,
         "p95_ms": 35.0,
         "p99_ms": 41.0,
         "p999_ms": 70.0,
-        "rss_peak_mb": 132.0
+        "response_body_bytes": 29616
       },
       ...
     ]
@@ -40,77 +40,67 @@ CI gate (T5): >2x p99 regression vs. baseline at any concurrency
 level fails the build.
 """
 
+import json
 import os
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import subprocess
 
 from .helpers import console
 from .load_harness import (
     DurationLoadConfig,
+    capacity_concurrency_levels,
     render_load_table,
-    summarize_load_level,
 )
 
 # Served by capsem-mock-server through the benchmark collector's corp config
 # (DNS fixture + upstream override), configured by the shared guest collector.
 DEFAULT_TARGET = "https://fixture.capsem.test/tiny"
-DEFAULT_CONCURRENCY = (1, 10, 50, 200)
 DEFAULT_DURATION_S = 10.0
-
-
-def _do_request(url, session):
-    """Single HTTP GET; latency in ms, with non-2xx responses counted as errors."""
-    start = time.monotonic()
-    try:
-        resp = session.get(url, timeout=30)
-        elapsed_ms = (time.monotonic() - start) * 1000
-        error = None if 200 <= resp.status_code < 300 else f"HTTP {resp.status_code}"
-        return (elapsed_ms, resp.status_code, error)
-    except Exception as exc:
-        elapsed_ms = (time.monotonic() - start) * 1000
-        return (elapsed_ms, 0, str(exc))
+RUST_BENCH = "/usr/local/bin/capsem-bench-rs"
 
 
 def _drive_at_concurrency(url, concurrency, duration_s):
-    """Spawn `concurrency` workers, each looping `duration_s`.
-
-    Each worker holds its own requests Session so connection-pool
-    behavior matches a real client. Returns a list of (latency_ms,
-    status, error) tuples.
-    """
-    import requests as req
-
-    deadline = time.monotonic() + duration_s
-
-    def worker():
-        session = req.Session()
-        out = []
-        while time.monotonic() < deadline:
-            out.append(_do_request(url, session))
-        session.close()
-        return out
-
-    all_results = []
-    with ThreadPoolExecutor(max_workers=concurrency) as pool:
-        futures = [pool.submit(worker) for _ in range(concurrency)]
-        for fut in as_completed(futures):
-            all_results.extend(fut.result())
-    return all_results
-
-
-def _summarize(results, concurrency, duration_s):
-    """Build the JSON-shaped row for this concurrency level."""
-    latencies = sorted(r[0] for r in results)
-    errors = sum(1 for r in results if r[2] is not None)
-    return summarize_load_level(latencies, errors, concurrency, duration_s)
+    """Run the async Rust load engine and validate that every client ran."""
+    completed = subprocess.run(
+        [
+            RUST_BENCH,
+            "http-load",
+            "--target",
+            url,
+            "--concurrency",
+            str(concurrency),
+            "--duration-s",
+            str(duration_s),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode:
+        raise RuntimeError(
+            f"mitm-load: Rust load engine exited {completed.returncode}: "
+            f"{completed.stderr[-2000:].strip()}"
+        )
+    try:
+        row = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("mitm-load: Rust load engine returned invalid JSON") from exc
+    if row.get("concurrency") != concurrency:
+        raise RuntimeError("mitm-load: Rust load engine reported the wrong concurrency")
+    if row.get("total_requests", 0) < concurrency:
+        raise RuntimeError(
+            f"mitm-load: only {row.get('total_requests', 0)} of {concurrency} "
+            "client loops made a request; the load generator was starved"
+        )
+    return row
 
 
 def mitm_load_bench(target=None, concurrency_levels=None, duration_s=None):
     """Drive the MITM proxy at each concurrency level; return the result dict."""
     target = target or os.environ.get("CAPSEM_BENCH_MITM_TARGET", DEFAULT_TARGET)
+    default_concurrency = capacity_concurrency_levels() if concurrency_levels is None else ()
     config = DurationLoadConfig.from_inputs(
         "mitm-load",
-        default_concurrency=DEFAULT_CONCURRENCY,
+        default_concurrency=default_concurrency,
         default_duration_s=DEFAULT_DURATION_S,
         concurrency_levels=concurrency_levels,
         duration_s=duration_s,
@@ -124,18 +114,16 @@ def mitm_load_bench(target=None, concurrency_levels=None, duration_s=None):
     rows = []
     for c in config.concurrency_levels:
         console.print(f"  concurrency={c} ...")
-        results = _drive_at_concurrency(target, c, config.duration_s)
-        row = _summarize(results, c, config.duration_s)
-        if row["total_requests"] and row["errors"] >= row["total_requests"]:
-            first_error = next((r[2] for r in results if r[2] is not None), "unknown")
-            raise RuntimeError(
-                f"mitm-load: every request at concurrency {c} failed ({first_error}); "
-                "the proxy was not measured"
-            )
+        row = _drive_at_concurrency(target, c, config.duration_s)
         rows.append(row)
+        if row["errors"]:
+            # The collector is the quality gate. Return the failed row so it
+            # can reject the run without discarding the measurements that
+            # explain the failure.
+            break
 
     out = {
-        "version": "1.0",
+        "version": "1.2",
         "target": target,
         "concurrency_levels": rows,
     }

@@ -27,7 +27,6 @@ pub struct UpdateStatusResponse {
     pub last_error: Option<String>,
     pub binary: UpdateTrackStatus,
     pub assets: UpdateTrackStatus,
-    pub profiles: UpdateTrackStatus,
     pub images: UpdateTrackStatus,
     pub supply_chain: SupplyChainEvidence,
 }

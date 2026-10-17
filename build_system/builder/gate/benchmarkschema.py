@@ -8,6 +8,7 @@ a distinct subject from building and releasing.
 from __future__ import annotations
 
 import math
+from itertools import pairwise
 
 from pydantic import Field, PositiveFloat, PositiveInt, field_validator
 
@@ -27,6 +28,14 @@ class RouteCoverageConfig(Strict):
     measured: tuple[str, ...]
     unmeasured: tuple[str, ...]
     internal: dict[str, str]
+
+
+class RouteLoadConfig(Strict):
+    """Concurrent request window applied to every measured read-only route."""
+
+    concurrency: PositiveInt
+    requests: PositiveInt
+    quick_requests: PositiveInt
 
 
 class RouteBudgetConfig(Strict):
@@ -70,16 +79,13 @@ class RouteBudgetsConfig(Strict):
     status: RouteBudgetPairConfig
     vm_scalar: RouteBudgetPairConfig
     vms_list: RouteBudgetPairConfig
-    profiles: RouteBudgetPairConfig
     stats_detail: RouteBudgetPairConfig
     aggregate_ledger: RouteBudgetPairConfig
     ledger: RouteBudgetPairConfig
     assets_status: RouteBudgetPairConfig
     mcp_default: RouteBudgetPairConfig
     mcp_servers: RouteBudgetPairConfig
-    rules: RouteBudgetPairConfig
     latest: RouteBudgetPairConfig
-    evaluate: RouteBudgetPairConfig
     plugin_info: RouteBudgetPairConfig
     stats: RouteBudgetPairConfig
     default: RouteBudgetPairConfig
@@ -117,6 +123,32 @@ class BenchmarkRunConfig(Strict):
     quick_timeout_secs: int
 
 
+class BenchmarkProtocolConfig(Strict):
+    """Stable workload for the in-guest model and MCP protocol collector."""
+
+    requests: PositiveInt
+    concurrency: PositiveInt
+    timeout_ms: PositiveInt
+    scenarios: list[str]
+
+
+class BenchmarkMitmScaleConfig(Strict):
+    """Independent-VM fanout used to measure aggregate HTTPS interception."""
+
+    vm_counts: tuple[PositiveInt, ...]
+    per_vm_concurrency: PositiveInt
+    duration_seconds: PositiveInt
+
+    @field_validator("vm_counts")
+    @classmethod
+    def fanout_starts_at_one_and_increases(cls, values: tuple[int, ...]) -> tuple[int, ...]:
+        if not values or values[0] != 1:
+            raise ValueError("MITM scale fanout must start at one VM")
+        if any(current <= previous for previous, current in pairwise(values)):
+            raise ValueError("MITM scale VM counts must be strictly increasing")
+        return values
+
+
 class DiskIopsConfig(Strict):
     """A floor that is not the same number on every platform.
 
@@ -132,14 +164,11 @@ class DiskIopsConfig(Strict):
 class StartupConfig(Strict):
     """Per runtime, because "slow to start" is not one duration.
 
-    `python3` and an agent that loads a model client do not share a ceiling.
+    The minimal VM runtime ships only `python3`; agent CLIs and Node come from
+    OCI images, which carry their own startup expectations.
     """
 
     python3: int
-    node: int
-    claude: int
-    gemini: int
-    codex: int
 
 
 class BenchmarkGatesConfig(Strict):
@@ -167,6 +196,9 @@ class BenchmarkGatesConfig(Strict):
 
 class BenchmarkConfig(Strict):
     routes: RouteCoverageConfig
+    route_load: RouteLoadConfig
     route_health: RouteHealthConfig
     run: BenchmarkRunConfig
+    protocol: BenchmarkProtocolConfig
+    mitm_scale: BenchmarkMitmScaleConfig
     gates: BenchmarkGatesConfig

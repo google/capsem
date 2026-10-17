@@ -66,14 +66,12 @@ async fn system_status_route_returns_exact_installed_documents_in_one_response()
             "binaries": [{"name": "capsem", "installed_path": "/usr/local/bin/capsem"}],
             "evidence": [{"kind": "sbom", "url": "https://example.test/capsem.spdx.json"}]
         }],
-        "profiles": {"code": {
-            "name": "Code",
-            "description": "Optimized for coding.",
-            "revision": "2026.0703.2",
+        "runtime": {
+            "revision": "0.7.0-0123456789ab",
             "status": "current",
             "architectures": [{
                 "architecture": arch,
-                "image_revision": "2026.0714.18",
+                "image_revision": "0.7.0-0123456789ab",
                 "images": [
                     {"kind":"kernel","name":"vmlinuz","bytes":10,"status":"current","digest":{"blake3":digest('a'),"sha256":digest('1')}},
                     {"kind":"initrd","name":"initrd.img","bytes":20,"status":"current","digest":{"blake3":digest('b'),"sha256":digest('2')}},
@@ -86,7 +84,7 @@ async fn system_status_route_returns_exact_installed_documents_in_one_response()
                     "digest":{"blake3":digest('d'),"sha256":digest('4')}
                 }]
             }]
-        }}
+        }
     });
     let metadata = serde_json::json!({
         "schema": "capsem.manifest_metadata.v1",
@@ -119,23 +117,32 @@ async fn system_status_route_returns_exact_installed_documents_in_one_response()
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["manifest"], manifest);
     assert_eq!(body["manifest_metadata"], metadata);
-    let profiles: capsem_api::ProfileCatalogStatus = serde_json::from_value(body["profiles"].clone())
-        .expect("the real profile status response must satisfy the generated SDK contract");
-    assert!(profiles.profiles.iter().any(|profile| profile.id == "code"));
-    // Clients ask the catalog which profile to use when they name none,
-    // instead of compiling a profile name into every SDK.
-    // A container's default is published apart from a VM's; today one profile
-    // answers both, and the route must publish both claims either way.
-    assert_eq!(profiles.defaults.vm.as_deref(), Some("code"));
-    assert_eq!(profiles.defaults.container.as_deref(), Some("code"));
-    let code = body["profiles"]["profiles"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|profile| profile["id"] == "code")
-        .unwrap();
-    assert_eq!(code["description"], "Optimized for coding and long-running agents.");
+    let assets: capsem_api::AssetStatus = serde_json::from_value(body["assets"].clone())
+        .expect("the real asset status response must satisfy the generated SDK contract");
+    assert_eq!(assets.current_arch, arch);
+    assert!(body.get("profiles").is_none(), "{body}");
     assert_eq!(body["updates"]["checked_at"], 1100);
+}
+
+#[tokio::test]
+async fn gateway_status_route_returns_vms_assets_and_updates_in_one_response() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = make_asset_state(dir.path().to_path_buf());
+    install_test_runtime_assets(&state);
+    insert_fake_instance(&state, "gateway-status-vm", std::process::id());
+
+    let (status, body) = route_request(
+        build_service_router(state),
+        axum::http::Method::GET,
+        "/internal/gateway/status",
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["sandboxes"][0]["id"], "gateway-status-vm");
+    assert_eq!(body["assets"]["ready"], true);
+    assert!(body["updates"].is_object());
 }
 
 #[test]
@@ -167,7 +174,7 @@ fn find_orphan_capsem_pids_matches_capsem_process_under_run_dir() {
   1502 /path/to/cache/target/cargo/debug/capsem-process --env CAPSEM_VM_ID=orphan --id orphan --session-dir /var/folders/XY/T/capsem-test-abc/sessions/orphan --uds-path /tmp/capsem/abc.sock
   1742 /path/to/cache/target/cargo/debug/capsem-process --id victim --session-dir /var/folders/XY/T/capsem-test-abc/persistent/victim --uds-path /tmp/capsem/def.sock
 ";
-    let pids = find_orphan_capsem_pids(ps, &run_dir);
+    let pids = find_orphan_capsem_pids(&process_fixture(ps), &run_dir);
     assert_eq!(pids, vec![1502, 1742]);
 }
 
@@ -178,7 +185,7 @@ fn find_orphan_capsem_pids_skips_processes_for_other_run_dirs() {
   1502 /path/to/cache/target/cargo/debug/capsem-process --session-dir /var/folders/XY/T/capsem-test-other/sessions/foo
   1742 /path/to/cache/target/cargo/debug/capsem-process --session-dir /var/folders/XY/T/capsem-test-mine/sessions/bar
 ";
-    let pids = find_orphan_capsem_pids(ps, &run_dir);
+    let pids = find_orphan_capsem_pids(&process_fixture(ps), &run_dir);
     assert_eq!(pids, vec![1742], "must not match neighbouring test run dirs");
 }
 
@@ -190,8 +197,12 @@ fn find_orphan_capsem_pids_skips_non_capsem_process_binaries() {
   99 /bin/cargo build --manifest-path /var/folders/XY/T/capsem-test-abc/Cargo.toml
   1502 /path/to/cache/target/cargo/debug/capsem-process --session-dir /var/folders/XY/T/capsem-test-abc/sessions/orphan
 ";
-    let pids = find_orphan_capsem_pids(ps, &run_dir);
-    assert_eq!(pids, vec![1502], "match must require 'capsem-process' in the line");
+    let pids = find_orphan_capsem_pids(&process_fixture(ps), &run_dir);
+    assert_eq!(
+        pids,
+        vec![1502],
+        "match must require the exact capsem-process executable argument"
+    );
 }
 
 #[test]
@@ -201,6 +212,150 @@ fn find_orphan_capsem_pids_returns_empty_on_no_match() {
   1 /sbin/launchd
   42 /usr/bin/bash
 ";
-    let pids = find_orphan_capsem_pids(ps, &run_dir);
+    let pids = find_orphan_capsem_pids(&process_fixture(ps), &run_dir);
     assert!(pids.is_empty());
+}
+
+#[test]
+fn orphan_selection_cannot_target_neighbouring_roots_or_incidental_command_text() {
+    let run_dir = PathBuf::from("/tmp/capsem-owned");
+    let table = "\
+  41 /usr/bin/capsem-process --session-dir /tmp/capsem-owned-neighbour/sessions/other
+  42 /bin/echo capsem-process --session-dir /tmp/capsem-owned/sessions/other
+  43 /usr/bin/capsem-process-helper --session-dir /tmp/capsem-owned/sessions/other
+  44 /usr/bin/capsem-process --env FAKE=--session-dir /tmp/capsem-owned/sessions/other
+  45 /usr/bin/capsem-process --session-dir /tmp/capsem-owned/sessions/../other
+  46 /usr/bin/capsem-process --session-dir /tmp/capsem-owned/sessions/mine
+";
+    assert_eq!(
+        find_orphan_capsem_pids(&process_fixture(table), &run_dir),
+        vec![46],
+        "startup must retain neighbouring and unrelated workloads"
+    );
+}
+
+#[test]
+fn orphan_selection_preserves_argument_boundaries_and_spaceful_paths() {
+    use capsem_foundation::proctable::Process;
+    let run_dir = PathBuf::from("/tmp/capsem owned");
+    let process = |pid, argv: &[&str]| Process::from_argv(pid, 1, argv.iter().map(Into::into).collect());
+    let table = [
+        process(
+            51,
+            &[
+                "/tmp/installed bin/capsem-process",
+                "--session-dir",
+                "/tmp/capsem owned/sessions/mine",
+            ],
+        ),
+        process(
+            52,
+            &[
+                "capsem-process",
+                "--env",
+                "FAKE=--session-dir /tmp/capsem owned/sessions/mine",
+            ],
+        ),
+        process(
+            53,
+            &[
+                "capsem-process",
+                "--session-dir",
+                "/tmp/capsem owned/sessions/mine",
+                "--session-dir",
+                "/tmp/other/persistent/vm",
+            ],
+        ),
+        process(54, &["capsem-process", "--session-dir", "/tmp/capsem owned/sessions"]),
+        process(
+            55,
+            &[
+                "capsem-process",
+                "--session-dir",
+                "/tmp/capsem owned/persistent/mine/deeper",
+            ],
+        ),
+    ];
+    let incomplete = process(
+        56,
+        &[
+            "capsem-process",
+            "--session-dir",
+            "/tmp/capsem owned/sessions/mine",
+            "--session-dir",
+        ],
+    );
+    assert!(find_orphan_capsem_pids(&[incomplete], &run_dir).is_empty());
+    assert_eq!(find_orphan_capsem_pids(&table, &run_dir), vec![51]);
+}
+
+#[tokio::test]
+async fn service_wide_ledger_routes_are_db_backed_and_empty_without_session_dbs() {
+    let state = make_test_state();
+
+    let Json(latest) = handle_service_security_latest(
+        State(Arc::clone(&state)),
+        Query(SecurityLedgerQuery { limit: Some(10) }),
+    )
+    .await
+    .expect("service security latest should return an empty ledger");
+    assert!(latest.is_empty());
+
+    let Json(status) = handle_service_security_status(State(Arc::clone(&state)))
+        .await
+        .expect("service security status should return empty DB aggregate");
+    assert_eq!(status["total"], 0);
+    assert!(status["sessions"].as_array().unwrap().is_empty());
+
+    let Json(detections) = handle_service_detection_latest(
+        State(Arc::clone(&state)),
+        Query(SecurityLedgerQuery { limit: Some(10) }),
+    )
+    .await
+    .expect("service detection latest should return an empty ledger");
+    assert!(detections.is_empty());
+
+    let Json(detection_status) = handle_service_detection_status(State(state))
+        .await
+        .expect("service detection status should return empty DB aggregate");
+    assert_eq!(detection_status["total"], 0);
+}
+
+#[tokio::test]
+async fn fake_vm_mutation_routes_are_not_mounted() {
+    let state = make_test_state();
+    insert_fake_instance(&state, "ops-vm", std::process::id());
+    let app = build_service_router(state);
+
+    for (method, uri, body) in [
+        (
+            axum::http::Method::PATCH,
+            "/vms/ops-vm/edit",
+            Some(json!({ "ram_mb": 8192 })),
+        ),
+        (axum::http::Method::POST, "/vms/ops-vm/restart", None),
+        (axum::http::Method::POST, "/vms/ops-vm/reload-profile", None),
+    ] {
+        let (status, _) = route_request(app.clone(), method, uri, body).await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "{uri} must stay unmounted until the VM mutation persists or performs a real operation"
+        );
+    }
+}
+
+fn process_fixture(table: &str) -> Vec<capsem_foundation::proctable::Process> {
+    table
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let pid = fields.next()?.parse().ok()?;
+            Some(capsem_foundation::proctable::Process::from_argv(
+                pid,
+                1,
+                fields.map(Into::into).collect(),
+            ))
+        })
+        .collect()
 }

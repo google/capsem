@@ -61,6 +61,31 @@ fn preserve_renames_session_dir_and_keeps_logs() {
 }
 
 #[test]
+fn preserve_discards_evidence_when_its_checkpoint_authority_cannot_move() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = make_state_in(dir.path().to_path_buf());
+    let session_dir = state.run_dir.join("sessions").join("vm-broken-authority");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    std::fs::write(session_dir.join("session.db"), b"untrusted without its checkpoints").unwrap();
+    std::fs::write(state.run_dir.join("ledger-commitments"), b"not a directory").unwrap();
+
+    assert!(
+        state
+            .preserve_failed_session_dir(&session_dir, "vm-broken-authority")
+            .is_none(),
+        "evidence without its checkpoint authority must not be exposed"
+    );
+    assert!(!session_dir.exists());
+    assert!(std::fs::read_dir(state.run_dir.join("sessions"))
+        .unwrap()
+        .flatten()
+        .all(|entry| !entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with("vm-broken-authority-failed-")));
+}
+
+#[test]
 fn cull_keeps_newest_and_prunes_oldest() {
     let dir = tempfile::tempdir().unwrap();
     let state = make_state_in(dir.path().to_path_buf());
@@ -275,6 +300,12 @@ async fn a_registered_session_handle_reads_bodies_after_the_process_trims_them()
             owner.flush().await.expect("flush");
         }
     };
+    let encoded = |payload| {
+        capsem_proto::forensic::SecurityForensicEvent::from_json(payload, "model.call")
+            .unwrap()
+            .encode()
+            .unwrap()
+    };
     write_body("0000000000ab", r#"{"old":1}"#).await;
     // A block stays open across flushes; a retention that keeps everything
     // closes it, so the next body starts the second block this test trims to.
@@ -291,22 +322,20 @@ async fn a_registered_session_handle_reads_bodies_after_the_process_trims_them()
         .expect("register the session handle");
     assert_eq!(
         handle
-            .read_body(
-                "0000000000cd",
-                "security_rule_events",
-                capsem_logger::BodyDirection::Payload
-            )
+            .read_bodies("0000000000cd")
             .await
             .expect("read a body")
+            .into_iter()
+            .find(|body| body.direction == capsem_logger::BodyDirection::Payload)
             .expect("the body is archived")
             .bytes,
-        br#"{"new":2}"#
+        encoded(r#"{"new":2}"#)
     );
 
     // The VM's process trims on its way out. The handle above is still
     // registered: this is the window the reaper leaves open.
     let cutoff = {
-        let raw = handle
+        let raw = owner
             .query("SELECT sealed_at FROM body_blocks ORDER BY block_offset", &[])
             .await
             .expect("read the block seal times");
@@ -317,28 +346,22 @@ async fn a_registered_session_handle_reads_bodies_after_the_process_trims_them()
 
     assert_eq!(
         handle
-            .read_body(
-                "0000000000cd",
-                "security_rule_events",
-                capsem_logger::BodyDirection::Payload
-            )
+            .read_bodies("0000000000cd")
             .await
             .expect("a still-registered handle must follow the archive, not fail on it")
+            .into_iter()
+            .find(|body| body.direction == capsem_logger::BodyDirection::Payload)
             .expect("the surviving body is still archived")
             .bytes,
-        br#"{"new":2}"#,
+        encoded(r#"{"new":2}"#),
         "the same read returns the same bytes after the file was replaced under it"
     );
     assert!(
         handle
-            .read_body(
-                "0000000000ab",
-                "security_rule_events",
-                capsem_logger::BodyDirection::Payload
-            )
+            .read_bodies("0000000000ab")
             .await
             .expect("read the dropped body")
-            .is_none(),
+            .is_empty(),
         "and a dropped body is absent rather than stale bytes from the old inode"
     );
 

@@ -3,5 +3,6 @@
 
 
 export interface ErrorResponse {
+  "code"?: string | null;
   "error": string;
 }

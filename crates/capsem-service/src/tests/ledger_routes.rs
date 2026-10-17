@@ -1,4 +1,6 @@
 use super::*;
+use capsem_core::net::policy_config::{SecurityRuleGroup, SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource};
+use capsem_core::security_engine::{RuntimeSecurityEventType, SecurityEvent};
 
 mod bodies;
 mod bodies_export;
@@ -116,6 +118,7 @@ async fn history_routes_read_history_ledger_from_session_db() {
             exec_id: 41,
             command: format!("echo {marker}"),
             source: "api".to_string(),
+            target: capsem_proto::ipc::ExecTarget::Vm,
             trace_id: Some("trace-history".to_string()),
             process_name: Some("bash".to_string()),
             credential_ref: None,
@@ -323,6 +326,7 @@ async fn timeline_route_reads_timeline_ledger_from_session_db() {
             exec_id: 77,
             command: "echo timeline-marker".to_string(),
             source: "api".to_string(),
+            target: capsem_proto::ipc::ExecTarget::Vm,
             trace_id: Some("trace-timeline".to_string()),
             process_name: Some("bash".to_string()),
             credential_ref: None,
@@ -472,6 +476,7 @@ async fn triage_route_reads_triage_ledger_from_session_db() {
             exec_id: 91,
             command: "false".to_string(),
             source: "api".to_string(),
+            target: capsem_proto::ipc::ExecTarget::Vm,
             trace_id: Some("trace-triage".to_string()),
             process_name: Some("bash".to_string()),
             credential_ref: None,
@@ -568,36 +573,12 @@ async fn winterfell_routes_read_session_ledgers_after_startup_cache_hydration() 
     let dir = tempfile::tempdir().unwrap();
     let sessions_dir = dir.path().join("sessions");
     std::fs::create_dir_all(&sessions_dir).unwrap();
-    let idx = capsem_core::session::SessionIndex::open(&sessions_dir.join("main.db")).unwrap();
-    idx.create_session(&capsem_core::session::SessionRecord {
-        id: "winterfell-vm".to_string(),
-        mode: "virtiofs".to_string(),
-        command: Some("winterfell".to_string()),
-        status: "running".to_string(),
-        created_at: "2026-06-24T00:00:00Z".to_string(),
-        stopped_at: None,
-        scratch_disk_size_gb: 16,
-        ram_bytes: 4_294_967_296,
-        total_requests: 0,
-        allowed_requests: 0,
-        denied_requests: 0,
-        total_input_tokens: 0,
-        total_output_tokens: 0,
-        total_estimated_cost: 0.0,
-        total_tool_calls: 0,
-        total_file_events: 0,
-        storage_mode: "virtiofs".to_string(),
-        rootfs_hash: None,
-        rootfs_version: None,
-        forked_from: None,
-        persistent: false,
-        exec_count: 0,
-        audit_event_count: 0,
-    })
-    .unwrap();
-    drop(idx);
 
     let (state, _dir) = make_test_state_with_tempdir_at(dir);
+    state
+        .record_host_session_created("winterfell-vm", Default::default())
+        .await
+        .unwrap();
     let app = build_service_router(Arc::clone(&state));
     let session_dir = sessions_dir.join("winterfell-vm");
     std::fs::create_dir_all(&session_dir).unwrap();
@@ -626,6 +607,7 @@ async fn winterfell_routes_read_session_ledgers_after_startup_cache_hydration() 
         exec_id: 501,
         command: "echo winterfell".to_string(),
         source: "api".to_string(),
+        target: capsem_proto::ipc::ExecTarget::Vm,
         trace_id: Some("trace-winterfell".to_string()),
         process_name: Some("bash".to_string()),
         credential_ref: None,
@@ -742,8 +724,6 @@ async fn winterfell_routes_read_session_ledgers_after_startup_cache_hydration() 
         direct_rows,
         r#"{"columns":["(SELECT COUNT(*) FROM model_calls)","(SELECT COUNT(*) FROM net_events)","(SELECT COUNT(*) FROM exec_events)","(SELECT COUNT(*) FROM security_rule_events)"],"rows":[[1,1,1,1]]}"#
     );
-
-    hydrate_startup_route_caches(&state).expect("startup hydrates profile route caches");
 
     let (status, stats) = route_request(app.clone(), axum::http::Method::GET, "/stats", None).await;
     assert_eq!(status, StatusCode::OK, "{stats}");
@@ -873,7 +853,7 @@ async fn db_boundary_route_contract_db_handle_route_rewire() {
             .encode()
             .unwrap();
     let expected_bodies = json!({"abcdef123456": [{
-        "body_hash": format!("blake3:{}", blake3::hash(&forensic).to_hex()),
+        "body_hash": format!("blake3:{}", capsem_crypto::blake3::hash(&forensic).to_hex()),
         "content_type": "application/vnd.capsem.security+msgpack",
         "direction": "payload",
         "event_id": "abcdef123456",

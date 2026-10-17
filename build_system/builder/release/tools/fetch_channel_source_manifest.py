@@ -174,13 +174,9 @@ def main() -> int:
         help="Initialize an absent stable/nightly source through capsem-admin.",
     )
     parser.add_argument(
-        "--profile",
-        help="Selected profile required when bootstrapping an absent first-party channel.",
-    )
-    parser.add_argument(
-        "--require-profile-membership",
+        "--require-runtime",
         action="store_true",
-        help="Reject a binary release source that has no staged profiles.",
+        help="Reject a binary release source that has no staged runtime.",
     )
     parser.add_argument("--source-commit", type=SourceCommit)
     parser.add_argument("--output", type=Path, required=True)
@@ -217,10 +213,6 @@ def main() -> int:
         except ChannelSourceUnavailable as error:
             if not args.bootstrap_missing_first_party:
                 raise
-            if not args.profile:
-                raise ValueError(
-                    "--profile is required with --bootstrap-missing-first-party"
-                ) from error
             catalog_url = retirement.release_site_catalog_url(fallback_url)
             if not retirement.public_channel_is_absent(_read_url(catalog_url), selected_channel):
                 raise ValueError(
@@ -241,29 +233,27 @@ def main() -> int:
             )
             payload = bootstrap_source_manifest(
                 channel=selected_channel,
-                profile=args.profile,
                 source_commit=args.source_commit,
                 input_payload=donor_payload,
                 output=args.output,
             )
             source = f"capsem-admin bootstrap from {donor_source}"
         if retired_graph is not None:
-            if not args.bootstrap_missing_first_party or not args.profile:
+            if not args.bootstrap_missing_first_party:
                 raise ValueError(
-                    f"public {args.channel} graph is retired; run release-profile first"
+                    f"public {args.channel} graph is retired; run release-assets first"
                 )
             if args.source_commit is None:
                 raise ValueError("--source-commit is required for retired graph bootstrap")
             payload = bootstrap_source_manifest(
                 channel=selected_channel,
-                profile=args.profile,
                 source_commit=args.source_commit,
                 input_payload=payload,
                 output=args.output,
                 retired_graph=retired_graph,
             )
             source = f"capsem-admin retirement of {source}"
-        if args.require_profile_membership:
+        if args.require_runtime:
             validate_binary_source_manifest(payload, args.channel)
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_bytes(payload)

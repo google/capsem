@@ -47,11 +47,11 @@ fn copy_missing_local_assets_materializes_hash_named_layout() {
                     }}
                 }}
             }}"#,
-        blake3::hash(kernel).to_hex(),
+        capsem_crypto::blake3::hash(kernel).to_hex(),
         kernel.len(),
-        blake3::hash(initrd).to_hex(),
+        capsem_crypto::blake3::hash(initrd).to_hex(),
         initrd.len(),
-        blake3::hash(rootfs).to_hex(),
+        capsem_crypto::blake3::hash(rootfs).to_hex(),
         rootfs.len(),
     ))
     .unwrap();
@@ -64,7 +64,7 @@ fn copy_missing_local_assets_materializes_hash_named_layout() {
         ("initrd.img", initrd.as_slice()),
         ("rootfs.erofs", rootfs.as_slice()),
     ] {
-        let digest = blake3::hash(bytes).to_hex().to_string();
+        let digest = capsem_crypto::blake3::hash(bytes).to_hex().to_string();
         let target = install.join("arm64").join(hash_filename(logical, &digest));
         assert_eq!(std::fs::read(&target).unwrap(), bytes);
         #[cfg(unix)]
@@ -84,8 +84,8 @@ fn copy_missing_local_assets_rejects_hash_mismatch() {
     std::fs::write(source.join("arm64").join("vmlinuz"), b"wrong").unwrap();
     std::fs::write(source.join("arm64").join("initrd.img"), b"initrd").unwrap();
     std::fs::write(source.join("arm64").join("rootfs.erofs"), b"rootfs").unwrap();
-    let initrd_hash = blake3::hash(b"initrd").to_hex().to_string();
-    let rootfs_hash = blake3::hash(b"rootfs").to_hex().to_string();
+    let initrd_hash = capsem_crypto::blake3::hash(b"initrd").to_hex().to_string();
+    let rootfs_hash = capsem_crypto::blake3::hash(b"rootfs").to_hex().to_string();
 
     let manifest = ManifestV2::from_json(
         &format!(
@@ -142,7 +142,7 @@ async fn download_missing_assets_skips_direct_arch_dev_layout() {
     ];
     let mut assets = std::collections::HashMap::new();
     for (name, bytes) in files {
-        let hash = blake3::hash(bytes).to_hex().to_string();
+        let hash = capsem_crypto::blake3::hash(bytes).to_hex().to_string();
         assets.insert(
             name.to_string(),
             AssetEntry {
@@ -210,21 +210,19 @@ async fn download_missing_assets_skips_direct_arch_dev_layout() {
 // env mutation is process-wide and races with other tests in this binary.
 
 #[test]
-fn copy_missing_local_assets_hydrates_every_profiles_images() {
-    // A channel's profiles own their images (RELEASE.md), and the release graph
-    // turns each into its own asset release -- `current` can name only one of
-    // them. Hydration resolved that one and copied its assets alone, so
-    // installing a channel whose profiles pin different kernels left the
-    // other profile's kernel absent. Readiness still reported every profile
-    // ready, and if the absent one sorted first it became the default: a fresh
-    // install that cannot boot a sandbox.
+fn copy_missing_local_assets_hydrates_every_compatible_release() {
+    // A manifest can carry several compatible asset releases, and `current`
+    // names only one of them. Hydration resolved that one and copied its
+    // assets alone, so installing a manifest whose releases pin different
+    // kernels left the other kernel absent: a fresh install that could not
+    // boot what it reported ready.
     let dir = tempfile::tempdir().unwrap();
     let source = dir.path().join("source");
     let install = dir.path().join("install");
     let arch_dir = source.join("arm64");
     std::fs::create_dir_all(&arch_dir).unwrap();
 
-    // Two profiles, distinct kernels, one shared rootfs -- the realistic shape.
+    // Two releases, distinct kernels, one shared rootfs.
     let code_kernel = b"kernel-for-code";
     let cowork_kernel = b"kernel-for-co-work";
     let rootfs = b"rootfs-shared";
@@ -235,7 +233,7 @@ fn copy_missing_local_assets_hydrates_every_profiles_images() {
     let entry = |bytes: &[u8]| {
         format!(
             r#"{{ "hash": "{}", "size": {} }}"#,
-            blake3::hash(bytes).to_hex(),
+            capsem_crypto::blake3::hash(bytes).to_hex(),
             bytes.len()
         )
     };
@@ -281,19 +279,19 @@ fn copy_missing_local_assets_hydrates_every_profiles_images() {
         ("vmlinuz-co-work", cowork_kernel.as_slice()),
         ("rootfs.erofs", rootfs.as_slice()),
     ] {
-        let digest = blake3::hash(bytes).to_hex().to_string();
+        let digest = capsem_crypto::blake3::hash(bytes).to_hex().to_string();
         let target = install.join("arm64").join(hash_filename(logical, &digest));
         assert!(
             target.exists(),
-            "{logical} was never hydrated: a profile pinning it cannot boot"
+            "{logical} was never hydrated: a VM pinning it cannot boot"
         );
         assert_eq!(std::fs::read(&target).unwrap(), bytes);
     }
 }
 
 #[test]
-fn materializing_keeps_both_profiles_images_when_they_share_a_logical_name() {
-    // Two profiles each ship a `vmlinuz`. They are different bytes, they land
+fn materializing_keeps_both_releases_images_when_they_share_a_logical_name() {
+    // Two releases each ship a `vmlinuz`. They are different bytes, they land
     // under different hash-named files, and both have to exist -- so the set
     // of things to materialize is keyed by name *and* hash. Keyed by name
     // alone this quietly keeps one, which is the missing-kernel install all
@@ -303,7 +301,7 @@ fn materializing_keeps_both_profiles_images_when_they_share_a_logical_name() {
     let entry = |bytes: &[u8]| {
         format!(
             r#"{{ "hash": "{}", "size": {} }}"#,
-            blake3::hash(bytes).to_hex(),
+            capsem_crypto::blake3::hash(bytes).to_hex(),
             bytes.len()
         )
     };
@@ -328,9 +326,9 @@ fn materializing_keeps_both_profiles_images_when_they_share_a_logical_name() {
     let wanted = arch_assets_to_materialize(&manifest, "9.9.9", "arm64").unwrap();
     let hashes: Vec<&str> = wanted.iter().map(|(_, _, entry)| entry.hash.as_str()).collect();
 
-    assert_eq!(wanted.len(), 2, "one profile's kernel was dropped: {hashes:?}");
+    assert_eq!(wanted.len(), 2, "one release's kernel was dropped: {hashes:?}");
     for bytes in [code.as_slice(), cowork.as_slice()] {
-        assert!(hashes.contains(&blake3::hash(bytes).to_hex().to_string().as_str()));
+        assert!(hashes.contains(&capsem_crypto::blake3::hash(bytes).to_hex().to_string().as_str()));
     }
     // Each carries the release it came from, because that is what names its URL.
     let versions: Vec<&str> = wanted.iter().map(|(version, _, _)| *version).collect();
@@ -416,7 +414,7 @@ fn declared_manifest(asset_base: String) -> ManifestV2 {
         assets.insert(
             name.to_string(),
             AssetEntry {
-                hash: blake3::hash(bytes).to_hex().to_string(),
+                hash: capsem_crypto::blake3::hash(bytes).to_hex().to_string(),
                 sha256: String::new(),
                 size: bytes.len() as u64,
             },

@@ -72,7 +72,7 @@ class TestBootConsoleVolume:
         repeated = sorted({line for line in lines if lines.count(line) > 1})
         assert not repeated, repeated
 
-    def test_profile_seed_projection_reports_no_ownership_failures(self, serial_env):
+    def test_boot_reports_no_ownership_failures(self, serial_env):
         client, name = serial_env
         logs = client.get(f"/vms/{name}/logs").get("logs", "")
         assert "can't preserve ownership" not in logs

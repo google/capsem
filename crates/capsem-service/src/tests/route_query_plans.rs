@@ -267,8 +267,8 @@ fn seed_ledger(session_dir: &std::path::Path, rows: i64) -> PathBuf {
         INSERT INTO net_events(id, event_id, timestamp, domain, decision, status_code)
         SELECT i, printf('c%011x', i), printf('2026-09-10T%08d', i), 'evil.test', 'denied', 403 FROM n;
         WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < {rows})
-        INSERT INTO exec_events(id, event_id, timestamp, exec_id, command, exit_code)
-        SELECT i, printf('d%011x', i), printf('2026-09-10T%08d', i), i, 'false', 1 FROM n;
+        INSERT INTO exec_events(id, event_id, timestamp, exec_id, command, target, exit_code)
+        SELECT i, printf('d%011x', i), printf('2026-09-10T%08d', i), i, 'false', 'vm', 1 FROM n;
         WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < {rows})
         INSERT INTO audit_events(id, event_id, timestamp, pid, ppid, uid, exe, argv, exit_code)
         SELECT i, printf('e%011x', i), printf('2026-09-10T%08d', i), i, 1, 0, '/bin/false', 'false', 1 FROM n;
@@ -478,7 +478,10 @@ async fn stats_detail_lists_the_newest_tool_calls_with_their_joins() {
 async fn triage_lists_the_newest_tool_errors_first() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = seed_ledger(&dir.path().join("triage"), SMALL_LEDGER_ROWS);
-    let db = capsem_logger::DbHandle::open_external_reader(&db_path).unwrap();
+    let state = make_test_state();
+    let db = state
+        .register_session_db_handle("plans", db_path.parent().unwrap())
+        .unwrap();
     let triage = session_db_triage("plans", &db, &db_path, 5).await.unwrap();
     let rows = triage["tool_errors"]["rows"].as_array().unwrap();
     let messages: Vec<&str> = rows.iter().map(|row| row[8].as_str().unwrap()).collect();

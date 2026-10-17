@@ -17,6 +17,62 @@ async fn persist(state: &Arc<ServiceState>, id: &str, name: &str) -> Result<Json
     .await
 }
 
+#[tokio::test]
+async fn managed_spawn_cannot_transfer_to_persistence_through_ordinary_save_route() {
+    use capsem_core::managed_sessions::{Capability, LeaseClock, LeasePolicy, Registry, Reservation, VmBinding};
+    let (state, _dir) = make_test_state_with_tempdir();
+    let id = new_persistent_vm_id();
+    let session = insert_ephemeral_instance(&state, &id);
+    let generation = state.instances.lock().unwrap().get(&id).unwrap().generation;
+    let store = Registry::open(&state.run_dir.join("managed-ownership")).unwrap();
+    let cap = Capability::from_bytes([84; 32]);
+    let Reservation::New(ticket) = store.reserve(capsem_crypto::uuid_v4(), &cap).unwrap() else {
+        panic!();
+    };
+    let now = LeaseClock::new(100, std::time::Instant::now());
+    store
+        .start_lease(
+            &ticket,
+            LeasePolicy::new(std::time::Duration::from_secs(300)).unwrap(),
+            now,
+        )
+        .unwrap();
+    store.begin_create(&ticket, now).unwrap();
+    store
+        .prepare_spawn(&ticket, VmBinding::new(id.clone(), generation).unwrap(), now)
+        .unwrap();
+    let result = persist(&state, &id, "escape-ownership").await;
+    let error = match result {
+        Err(error) => error,
+        Ok(_) => panic!("managed VM escaped to persistence"),
+    };
+    assert_eq!(error.0, StatusCode::CONFLICT);
+    assert_still_ephemeral(&state, &id, &session);
+    assert!(registry_entry_dir(&state, "escape-ownership").is_none());
+}
+
+#[tokio::test]
+async fn unreadable_ownership_cannot_authorize_persistence_of_an_unclassified_spawn() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let id = new_persistent_vm_id();
+    let session = insert_ephemeral_instance(&state, &id);
+    let request = capsem_crypto::uuid_v4();
+    std::fs::write(
+        state.run_dir.join("managed-ownership").join(format!("{request}.json")),
+        b"corrupt private metadata",
+    )
+    .unwrap();
+    let result = persist(&state, &id, "unclassified").await;
+    let error = match result {
+        Err(error) => error,
+        Ok(_) => panic!("corrupt ownership authorized persistence"),
+    };
+    assert_eq!(error.0, StatusCode::SERVICE_UNAVAILABLE);
+    assert!(!error.1.contains("private"));
+    assert_still_ephemeral(&state, &id, &session);
+    assert!(registry_entry_dir(&state, "unclassified").is_none());
+}
+
 fn assert_still_ephemeral(state: &ServiceState, id: &str, session_dir: &StdPath) {
     assert!(
         session_dir.join("marker").is_file(),
@@ -59,7 +115,7 @@ fn registry_entry_dir(state: &ServiceState, name: &str) -> Option<PathBuf> {
 #[tokio::test]
 async fn persist_keeps_the_live_session_dir_while_the_process_runs() {
     let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
+    install_test_runtime_assets(&state);
     let session_dir = insert_ephemeral_instance(&state, "live-src");
 
     let _ = persist(&state, "live-src", "kept").await.expect("persist succeeds");
@@ -91,7 +147,7 @@ async fn persist_refuses_a_duplicate_id_and_leaves_the_instance_ephemeral() {
     // refusal must leave no trace: no entry, no moved directory, and an
     // InstanceInfo that still says ephemeral.
     let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
+    install_test_runtime_assets(&state);
     let session_dir = insert_ephemeral_instance(&state, "persist-src");
     let mut clash = test_persistent_entry("other-name", state.run_dir.join("persistent").join("elsewhere"));
     clash.id = "persist-src".to_string();
@@ -116,10 +172,8 @@ async fn racing_persists_on_one_name_leave_one_entry_and_no_orphan() {
     // Every handler runs synchronously up to the claim, which it hands to the
     // blocking pool; joining them on one runtime thread therefore races the
     // four claims themselves, each on its own thread against one registry.
-    // (The test profile override is thread-local, so the handlers cannot be
-    // spread over worker threads.)
     let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
+    install_test_runtime_assets(&state);
     let ids = ["race-a", "race-b", "race-c", "race-d"];
     let dirs: Vec<PathBuf> = ids.iter().map(|id| insert_ephemeral_instance(&state, id)).collect();
 
@@ -190,6 +244,16 @@ async fn reap_persisted_live_session(state: &Arc<ServiceState>, id: &str, name: 
         .spawn()
         .expect("spawn child");
     state.instances.lock().unwrap().get_mut(id).unwrap().pid = child.id().unwrap();
+    let retirement_id: &str = id;
+    let generation = state
+        .instances
+        .lock()
+        .unwrap()
+        .get(retirement_id)
+        .filter(|instance| Some(instance.pid) == child.id())
+        .map(|instance| instance.generation)
+        .unwrap_or_else(uuid::Uuid::new_v4);
+    let retirement = state.retirements.register(retirement_id, generation).unwrap();
     let reaper = crate::instance_reaper::spawn_exit_reaper(
         child,
         id.to_string(),
@@ -197,6 +261,7 @@ async fn reap_persisted_live_session(state: &Arc<ServiceState>, id: &str, name: 
         Arc::clone(state),
         state.run_dir.join("instances").join(format!("{id}.sock")),
         live_dir.clone(),
+        retirement,
     );
     tokio::time::timeout(std::time::Duration::from_secs(10), reaper)
         .await
@@ -368,9 +433,15 @@ fn evicting_an_instance_hands_its_record_to_exactly_one_caller() {
     let state = make_test_state();
     insert_fake_instance(&state, "evicted-vm", 4242);
 
-    let evicted = state.evict_instance("evicted-vm").expect("instance was running");
+    let generation = state.instances.lock().unwrap().get("evicted-vm").unwrap().generation;
+    let evicted = state
+        .evict_instance("evicted-vm", generation)
+        .expect("instance was running");
     assert_eq!(evicted.id, "evicted-vm");
-    assert!(state.evict_instance("evicted-vm").is_none(), "eviction is idempotent");
+    assert!(
+        state.evict_instance("evicted-vm", generation).is_none(),
+        "eviction is idempotent"
+    );
 }
 
 #[test]

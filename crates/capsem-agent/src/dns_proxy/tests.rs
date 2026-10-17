@@ -36,6 +36,16 @@ fn max_udp_dns_bytes_supports_edns() {
 }
 
 #[test]
+fn udp_burst_buffer_is_derived_from_the_shared_client_capacity() {
+    assert_eq!(DNS_SESSIONS, capsem_proto::NETWORK_DNS_SESSIONS_PER_VM);
+    assert_eq!(MAX_UDP_DNS_BYTES, capsem_proto::NETWORK_DNS_MAX_UDP_DATAGRAM_BYTES);
+    assert_eq!(
+        capsem_proto::NETWORK_DNS_UDP_SOCKET_BUFFER_BYTES,
+        capsem_proto::NETWORK_CLIENT_CAPACITY * DNS_SESSIONS * MAX_UDP_DNS_BYTES
+    );
+}
+
+#[test]
 fn dns_proxy_keeps_more_than_one_persistent_session() {
     const _: () = assert!(
         DNS_SESSIONS >= 2,

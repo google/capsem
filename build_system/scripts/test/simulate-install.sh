@@ -1,7 +1,8 @@
 #!/bin/bash
 # simulate-install.sh -- Reproduce the installed layout for testing.
-# Usage: simulate-install.sh <bin_dir_src> <assets_dir_src> <config_root>
-# Installs to ~/.capsem/{bin,assets,profiles,run}
+# Usage: simulate-install.sh <bin_dir_src> <assets_dir_src>
+# Installs to ~/.capsem/{bin,assets,run}. Like the packages, it installs no
+# configuration catalog.
 #
 # This is the single source of truth for how binaries land in ~/.capsem/.
 # Both `just install` and the Docker e2e test harness call this script.
@@ -11,16 +12,14 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-BIN_SRC="${1:?usage: simulate-install.sh <bin_dir> <assets_dir> <config_root>}"
-ASSETS_SRC="${2:?usage: simulate-install.sh <bin_dir> <assets_dir> <config_root>}"
-CONFIG_ROOT="${3:?usage: simulate-install.sh <bin_dir> <assets_dir> <config_root>}"
+BIN_SRC="${1:?usage: simulate-install.sh <bin_dir> <assets_dir>}"
+ASSETS_SRC="${2:?usage: simulate-install.sh <bin_dir> <assets_dir>}"
 
 # Honor CAPSEM_HOME so the install-test suite can redirect this script into
 # an isolated temp dir (see tests/capsem_install/conftest.py::_resolve_capsem_home).
 CAPSEM_HOME_DIR="${CAPSEM_HOME:-$HOME/.capsem}"
 INSTALL_DIR="$CAPSEM_HOME_DIR/bin"
 ASSETS_DST="$CAPSEM_HOME_DIR/assets"
-PROFILES_DST="$CAPSEM_HOME_DIR/profiles"
 RUN_DIR="${CAPSEM_RUN_DIR:-$CAPSEM_HOME_DIR/run}"
 
 # Preflight: reap any running capsem processes FROM THIS INSTALL PREFIX so
@@ -31,7 +30,7 @@ RUN_DIR="${CAPSEM_RUN_DIR:-$CAPSEM_HOME_DIR/run}"
 # ``cache/target/cargo/debug/capsem-*`` are not caught in the blast. A bare
 # ``pkill -x capsem-service`` matches every capsem-service on the box, which
 # poisoned the full test suite whenever any install fixture fired this script.
-for name in capsem-service capsem-tray capsem-gateway capsem-process capsem-router capsem-mcp-aggregator capsem-mcp-builtin; do
+for name in capsem-service capsem-tray capsem-gateway capsem-process capsem-ledger capsem-proxy capsem-router capsem-mcp-aggregator capsem-mcp-builtin; do
     pkill -9 -f "$INSTALL_DIR/$name" 2>/dev/null || true
 done
 
@@ -47,14 +46,9 @@ if [[ -L "$ASSETS_DST" ]]; then
     rm "$ASSETS_DST"
 fi
 mkdir -p "$ASSETS_DST"
-if [[ ! -d "$CONFIG_ROOT/profiles" ]]; then
-    echo "ERROR: materialized profiles not found: $CONFIG_ROOT/profiles" >&2
-    echo "Run: just _materialize-config" >&2
-    exit 1
-fi
 
 # Copy binaries
-for bin in capsem capsem-service capsem-process capsem-tui capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin capsem-mock-server capsem-bench-rs; do
+for bin in capsem capsem-service capsem-process capsem-ledger capsem-proxy capsem-tui capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin capsem-mock-server capsem-bench-rs; do
     src="$BIN_SRC/$bin"
     if [[ ! -f "$src" ]]; then
         echo "ERROR: binary not found: $src" >&2
@@ -69,6 +63,8 @@ codesign_identifier_for_bin() {
         capsem) echo "org.capsem.cli" ;;
         capsem-service) echo "org.capsem.service" ;;
         capsem-process) echo "org.capsem.process" ;;
+        capsem-ledger) echo "org.capsem.ledger" ;;
+        capsem-proxy) echo "org.capsem.proxy" ;;
         capsem-tui) echo "org.capsem.tui" ;;
         capsem-mcp) echo "org.capsem.mcp" ;;
         capsem-router) echo "org.capsem.router" ;;
@@ -95,12 +91,15 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
                 exit 1
             fi
             identifier="$(codesign_identifier_for_bin "$bin")"
-            # As the package installs it: the confined router gets no VM entitlement.
-            if [[ "$(basename "$bin")" == capsem-router ]]; then
-                codesign --sign - --identifier "$identifier" --force "$bin"
-            else
-                codesign --sign - --identifier "$identifier" --entitlements "$ENTITLEMENTS" --force "$bin"
-            fi
+            # As the package installs them: confined workers get no VM entitlement.
+            case "$(basename "$bin")" in
+                capsem-router|capsem-ledger|capsem-proxy)
+                    codesign --sign - --identifier "$identifier" --force "$bin"
+                    ;;
+                *)
+                    codesign --sign - --identifier "$identifier" --entitlements "$ENTITLEMENTS" --force "$bin"
+                    ;;
+            esac
         fi
     done
 fi
@@ -110,10 +109,6 @@ if [[ -f "$ASSETS_SRC/manifest.json" ]]; then
     bash "$REPO_ROOT/build_system/scripts/build/sync-dev-assets.sh" "$ASSETS_SRC" "$ASSETS_DST"
 fi
 
-rm -rf "$PROFILES_DST"
-mkdir -p "$PROFILES_DST"
-cp -R "$CONFIG_ROOT/profiles/." "$PROFILES_DST/"
-
 # Drop legacy v1 layout directories that ManifestV2::resolve() no longer reads.
 for legacy in "$ASSETS_DST"/v1.0.*; do
     [[ -d "$legacy" ]] || continue
@@ -122,7 +117,6 @@ done
 
 echo "Installed to $INSTALL_DIR ($(ls "$INSTALL_DIR" | wc -l | tr -d ' ') binaries)"
 echo "Assets at $ASSETS_DST"
-echo "Profiles at $PROFILES_DST"
 
 # Print build hash for verification (use source binary -- installed copy may not be signed yet)
 "$BIN_SRC/capsem" version 2>/dev/null | head -1 || true

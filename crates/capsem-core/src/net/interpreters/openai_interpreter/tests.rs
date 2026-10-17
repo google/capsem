@@ -3,6 +3,62 @@ use crate::net::ai_traffic::events::collect_summary;
 use crate::net::parsers::sse_parser::SseParser;
 
 #[test]
+fn responses_custom_calls_keep_namespace_input_and_tool_use_completion() {
+    let mut parser = OpenAiStreamParser::new();
+    let mut events = Vec::new();
+    for (kind, payload) in [
+        (
+            "response.created",
+            serde_json::json!({"response": {"id": "resp_code", "model": "gpt-fixture"}}),
+        ),
+        (
+            "response.output_item.added",
+            serde_json::json!({"output_index": 0, "item": {
+            "type": "custom_tool_call", "namespace": "functions", "name": "exec", "call_id": "call_code"}}),
+        ),
+        (
+            "response.custom_tool_call_input.delta",
+            serde_json::json!({"output_index": 0, "delta": "const result = "}),
+        ),
+        (
+            "response.custom_tool_call_input.delta",
+            serde_json::json!({"output_index": 0, "delta": "await tools.echo();"}),
+        ),
+        (
+            "response.output_item.done",
+            serde_json::json!({"output_index": 0, "item": {"type": "custom_tool_call"}}),
+        ),
+        (
+            "response.completed",
+            serde_json::json!({"response": {"usage": {"input_tokens": 31,"output_tokens":17}}}),
+        ),
+    ] {
+        events.extend(parser.parse_event(&SseEvent {
+            event_type: Some(kind.into()),
+            data: payload.to_string(),
+        }));
+    }
+    let summary = collect_summary(&events);
+    assert_eq!(summary.tool_calls.len(), 1);
+    assert_eq!(summary.tool_calls[0].name, "functions.exec");
+    assert_eq!(summary.tool_calls[0].call_id, "call_code");
+    assert_eq!(summary.tool_calls[0].arguments, "const result = await tools.echo();");
+    assert_eq!(summary.stop_reason, Some(StopReason::ToolUse));
+    assert_eq!(summary.input_tokens, Some(31));
+    assert_eq!(summary.output_tokens, Some(17));
+    let next = parser.parse_event(&SseEvent {
+        event_type: Some("response.created".into()),
+        data: "{\"response\":{\"id\":\"next\"}}".into(),
+    });
+    assert!(!next.is_empty());
+    let end = parser.parse_event(&SseEvent {
+        event_type: Some("response.completed".into()),
+        data: "{\"response\":{}}".into(),
+    });
+    assert_eq!(collect_summary(&end).stop_reason, Some(StopReason::EndTurn));
+}
+
+#[test]
 fn upstream_url_responses() {
     let p = OpenAiProvider;
     assert_eq!(
@@ -216,7 +272,7 @@ data: {\"response\":{\"id\":\"resp-2\",\"model\":\"gpt-4o\",\"usage\":{\"input_t
     assert_eq!(summary.tool_calls[0].call_id, "call_xyz");
     assert_eq!(summary.tool_calls[0].name, "get_weather");
     assert_eq!(summary.tool_calls[0].arguments, "{\"city\": \"NYC\"}");
-    assert_eq!(summary.stop_reason, Some(StopReason::EndTurn));
+    assert_eq!(summary.stop_reason, Some(StopReason::ToolUse));
     assert_eq!(summary.input_tokens, Some(20));
 }
 

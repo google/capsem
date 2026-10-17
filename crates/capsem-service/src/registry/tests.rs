@@ -5,9 +5,7 @@ fn make_entry(name: &str, session_dir: PathBuf) -> PersistentVmEntry {
     PersistentVmEntry {
         id: new_persistent_vm_id(),
         name: name.into(),
-        profile_id: "code".into(),
-        profile_revision: "2026.06.08.7".into(),
-        profile_payload_hash: "blake3:1111111111111111111111111111111111111111111111111111111111111111".into(),
+        legacy_profile_id: None,
         asset_pins: test_asset_pins(),
         ram_mb: 2048,
         cpus: 2,
@@ -73,9 +71,6 @@ fn persistent_registry_backfills_missing_ids() {
   "vms": {
     "legacy": {
       "name": "legacy",
-      "profile_id": "code",
-      "profile_revision": "2026.06.08.7",
-      "profile_payload_hash": "blake3:1111111111111111111111111111111111111111111111111111111111111111",
       "asset_pins": {
         "kernel": {"name": "vmlinuz", "hash": "blake3:aa933a569fe27ed014ae76b58eb278d72fbde8a3cbd4c06a23da2987e70d0bd1"},
         "initrd": {"name": "initrd.img", "hash": "blake3:ad31b76e82d487b207302109396b6dfa9bca97cb624c576dd3ccb6f59946cc96"},
@@ -211,14 +206,37 @@ fn suspended_flag_roundtrips_through_json() {
 }
 
 #[test]
-fn persistent_vm_entry_rejects_missing_profile_contract_fields() {
+fn persistent_vm_entry_rejects_missing_asset_pins() {
     let json =
         r#"{"name":"old","ram_mb":2048,"cpus":2,"base_version":"0.1.0","created_at":"0","session_dir":"/tmp/old"}"#;
     let err = serde_json::from_str::<PersistentVmEntry>(json).unwrap_err();
     assert!(
-        err.to_string().contains("profile_id"),
-        "registry entries without profile contract fields must fail closed, got: {err}"
+        err.to_string().contains("asset_pins"),
+        "registry entries without boot asset pins must fail closed, got: {err}"
     );
+}
+
+/// An entry written while VMs had profiles keeps saying so across a save:
+/// the service refuses it at resume, and a rewrite of the registry must not
+/// launder it into the current shape.
+#[test]
+fn a_profile_era_entry_keeps_its_profile_through_a_save() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("test_registry.json");
+    let mut entry = serde_json::to_value(make_entry("old", dir.path().join("old"))).unwrap();
+    entry["profile_id"] = serde_json::json!("code");
+    entry["profile_revision"] = serde_json::json!("2026.06.08.7");
+    std::fs::write(&path, serde_json::json!({ "vms": { "old": entry } }).to_string()).unwrap();
+
+    let mut registry = PersistentRegistry::load(path.clone()).expect("registry loads");
+    assert_eq!(registry.get("old").unwrap().legacy_profile_id.as_deref(), Some("code"));
+    registry.register(make_entry("new", dir.path().join("new"))).unwrap();
+
+    let reloaded = PersistentRegistry::load(path).expect("registry loads");
+    assert_eq!(reloaded.get("old").unwrap().legacy_profile_id.as_deref(), Some("code"));
+    assert_eq!(reloaded.get("new").unwrap().legacy_profile_id, None);
+    let saved = serde_json::to_value(reloaded.get("new").unwrap()).unwrap();
+    assert!(saved.get("profile_id").is_none(), "{saved}");
 }
 
 // -----------------------------------------------------------------------

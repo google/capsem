@@ -1,10 +1,10 @@
 //! File I/O FUSE operations: OPEN, READ, WRITE, CREATE, RELEASE, FLUSH, FSYNC, LSEEK.
 
+use capsem_foundation::unix::fd;
 use std::io::{Seek, SeekFrom, Write};
-use std::os::unix::fs::FileExt;
-use std::os::unix::fs::PermissionsExt;
-
+use std::os::fd::AsFd;
 use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::PermissionsExt;
 
 use super::FuseProcessor;
 use crate::hypervisor::fuse::{self, *};
@@ -90,24 +90,40 @@ impl FuseProcessor {
         fuse::success_response(header.unique, &[])
     }
 
-    pub(super) fn do_read(&mut self, header: &FuseInHeader, body: &[u8]) -> Vec<u8> {
-        let read_in: FuseReadIn = match fuse::read_struct(body) {
-            Some(s) => s,
-            None => return fuse::error_response(header.unique, -libc::EIO),
-        };
-        let file = match self.file_handles.get_file(read_in.fh) {
-            Some(f) => f,
-            None => return fuse::error_response(header.unique, -libc::EBADF),
-        };
+    pub(super) fn do_read_into(&mut self, header: &FuseInHeader, body: &[u8], response: &mut Vec<u8>) {
+        let header_len = std::mem::size_of::<FuseOutHeader>();
+        let result = (|| {
+            let read_in: FuseReadIn = match fuse::read_struct(body) {
+                Some(s) => s,
+                None => return Err(-libc::EIO),
+            };
+            let file = match self.file_handles.get_file(read_in.fh) {
+                Some(f) => f,
+                None => return Err(-libc::EBADF),
+            };
 
-        let clamped = read_in.size.min(super::MAX_READ_SIZE);
-        let mut data = vec![0u8; clamped as usize];
-        let n = match file.read_at(&mut data, read_in.offset) {
-            Ok(n) => n,
-            Err(e) => return fuse::error_response(header.unique, -fuse::io_error_to_errno(&e)),
+            let clamped = read_in.size.min(super::MAX_READ_SIZE);
+            response.resize(header_len + clamped as usize, 0);
+            fd::read_at(file.as_fd(), &mut response[header_len..], read_in.offset)
+                .map_err(|e| -fuse::io_error_to_errno(&e))
+        })();
+        let error = match result {
+            Ok(n) => {
+                response.truncate(header_len + n);
+                0
+            }
+            Err(error) => {
+                response.truncate(header_len);
+                response.resize(header_len, 0);
+                error
+            }
         };
-        data.truncate(n);
-        fuse::success_response(header.unique, &data)
+        let out = FuseOutHeader {
+            len: response.len() as u32,
+            error,
+            unique: header.unique,
+        };
+        response[..header_len].copy_from_slice(fuse::as_bytes(&out));
     }
 
     pub(super) fn do_write(&mut self, header: &FuseInHeader, body: &[u8]) -> Vec<u8> {
@@ -127,7 +143,10 @@ impl FuseProcessor {
         };
         let mut written = 0usize;
         while written < to_write {
-            match file.write_at(&write_data[written..to_write], write_in.offset + written as u64) {
+            // Saturation cannot wrap a guest offset into a different file
+            // region; the shared FD primitive rejects values above off_t::MAX.
+            let offset = write_in.offset.saturating_add(written as u64);
+            match fd::write_at(file.as_fd(), &write_data[written..to_write], offset) {
                 Ok(0) => return fuse::error_response(header.unique, -libc::EIO),
                 Ok(n) => written += n,
                 Err(e) => return fuse::error_response(header.unique, -fuse::io_error_to_errno(&e)),
@@ -167,20 +186,24 @@ impl FuseProcessor {
                 let flags = create_in.flags as i32;
                 let accmode = flags & libc::O_ACCMODE;
                 let readable = accmode == libc::O_RDONLY || accmode == libc::O_RDWR;
+                let mode = create_in.mode & !create_in.umask;
                 let file = match std::fs::OpenOptions::new()
                     .read(readable)
                     .write(true)
                     .append(flags & libc::O_APPEND != 0)
                     .create_new(true)
+                    .mode(mode)
                     .custom_flags(NO_FOLLOW_FLAGS)
                     .open(&child_path)
                 {
                     Ok(f) => f,
                     Err(e) => return fuse::error_response(header.unique, -fuse::io_error_to_errno(&e)),
                 };
-                let mode = create_in.mode & !create_in.umask;
-                let _ = std::fs::set_permissions(&child_path, std::fs::Permissions::from_mode(mode));
-
+                if let Err(error) = self.set_guest_mode(&child_path, mode) {
+                    drop(file);
+                    let _ = std::fs::remove_file(&child_path);
+                    return fuse::error_response(header.unique, -fuse::io_error_to_errno(&error));
+                }
                 let ino = match self.inodes.lookup(header.nodeid, name) {
                     Some(i) => i,
                     None => return fuse::error_response(header.unique, -libc::EIO),
@@ -196,7 +219,7 @@ impl FuseProcessor {
                     Ok(m) => m,
                     Err(e) => return fuse::error_response(header.unique, -fuse::io_error_to_errno(&e)),
                 };
-                return self.entry_and_open_response(header.unique, ino, &meta, fh);
+                return self.entry_and_open_response(header, ino, &meta, fh);
             }
         };
 
@@ -238,18 +261,24 @@ impl FuseProcessor {
             Ok(m) => m,
             Err(e) => return fuse::error_response(header.unique, -fuse::io_error_to_errno(&e)),
         };
-        self.entry_and_open_response(header.unique, ino, &meta, fh)
+        self.entry_and_open_response(header, ino, &meta, fh)
     }
 
-    pub(super) fn entry_and_open_response(&self, unique: u64, ino: u64, meta: &std::fs::Metadata, fh: u64) -> Vec<u8> {
+    pub(super) fn entry_and_open_response(
+        &self,
+        header: &FuseInHeader,
+        ino: u64,
+        meta: &std::fs::Metadata,
+        fh: u64,
+    ) -> Vec<u8> {
         let entry = FuseEntryOut {
             nodeid: ino,
             generation: 0,
             entry_valid: 1,
-            attr_valid: 1,
+            attr_valid: fuse::ATTR_CACHE_SECONDS,
             entry_valid_nsec: 0,
             attr_valid_nsec: 0,
-            attr: fuse::metadata_to_fuse_attr(ino, meta),
+            attr: fuse::metadata_to_fuse_attr(ino, meta, header),
         };
         let open_out = FuseOpenOut {
             fh,
@@ -258,7 +287,7 @@ impl FuseProcessor {
         };
         let mut body = fuse::as_bytes(&entry).to_vec();
         body.extend_from_slice(fuse::as_bytes(&open_out));
-        fuse::success_response(unique, &body)
+        fuse::success_response(header.unique, &body)
     }
 
     pub(super) fn do_flush(&mut self, header: &FuseInHeader, body: &[u8]) -> Vec<u8> {

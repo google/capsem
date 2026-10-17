@@ -13,7 +13,6 @@ export interface VmSummary {
   "model_call_count"?: number | null;
   "name"?: string | null;
   "persistent": boolean;
-  "profile_id": string;
   "resume_blocked_reason"?: string | null;
   "status": VmLifecycleState;
   "total_estimated_cost"?: number | null;

@@ -1,13 +1,20 @@
-use crate::credential_broker::{
-    broker_observed_credential, detect_brokered_http_references, detect_http_credential_with_provider,
-};
+use crate::credential_broker::{detect_brokered_http_references, detect_http_credential_with_provider};
 use crate::net::policy_config::{PolicyActionId, SecurityPluginConfig, SecurityPluginMode};
+use crate::net::proxy_engine::ProxyCredentials;
 use crate::security_engine::{
     security_event_contains_text, SecurityActionError, SecurityEvent, SecurityPlugin, SecurityPluginResult,
     SecurityPluginStage, DUMMY_EICAR_TEST_STRING,
 };
 
-pub(in crate::security_engine) struct CredentialBrokerPlugin;
+pub(in crate::security_engine) struct CredentialBrokerPlugin {
+    credentials: std::sync::Arc<dyn ProxyCredentials>,
+}
+
+impl CredentialBrokerPlugin {
+    pub(in crate::security_engine) fn new(credentials: std::sync::Arc<dyn ProxyCredentials>) -> Self {
+        Self { credentials }
+    }
+}
 
 impl SecurityPlugin for CredentialBrokerPlugin {
     fn id(&self) -> &'static str {
@@ -58,7 +65,10 @@ impl SecurityPlugin for CredentialBrokerPlugin {
         }
 
         for observation in &event.credential_observations {
-            let brokered = broker_observed_credential(observation).map_err(SecurityActionError::new)?;
+            let brokered = self
+                .credentials
+                .capture(observation)
+                .map_err(SecurityActionError::new)?;
             if event.credential_ref.is_none() {
                 event.credential_ref = Some(brokered.credential_ref);
             }

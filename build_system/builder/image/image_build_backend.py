@@ -1,7 +1,7 @@
 """Private image build backend invoked by capsem-admin.
 
 This module is intentionally not exposed as a `capsem-builder` CLI command.
-`capsem-admin image build` owns the public profile-derived image-build rail;
+`capsem-admin image build` owns the public runtime image-build rail;
 the Python backend only executes the already-materialized guest workspace.
 """
 
@@ -23,10 +23,10 @@ from .docker import (
 
 
 def declare_current(config, image: AssetDependencyImage, repo_root: Path) -> None:
-    """Declare the profile's dependency image this checkout's current one.
+    """Declare the runtime's dependency image this checkout's current one.
 
-    A dependency repository holds one current tag per profile, so retention
-    that kept the newest tag per repository removed a profile's image in use.
+    A dependency repository holds one current tag per runtime image, so
+    retention that kept the newest tag per repository removed an image in use.
     """
     root = repo_root.absolute()
     slot = config.manifest.name if config.manifest else "unscoped"

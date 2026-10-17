@@ -1,0 +1,146 @@
+---
+import ReleaseLayout from '../../../layouts/ReleaseLayout.astro';
+import {
+  byteLabel,
+  channelPagePath,
+  channelRows,
+  dataForChannel,
+  hashLabel,
+  loadReleaseData,
+  runtimeArchitectures,
+  runtimeRecord,
+} from '../../../lib/release-data';
+
+export function getStaticPaths() {
+  const rootData = loadReleaseData();
+  return channelRows(rootData).flatMap((channel) => {
+    const data = dataForChannel(rootData, channel.id);
+    const runtime = runtimeRecord(data);
+    return runtime ? [{ params: { channel: channel.id }, props: { channel, data, runtime } }] : [];
+  });
+}
+
+const { channel, data, runtime } = Astro.props;
+const architectures = runtimeArchitectures(runtime);
+---
+<ReleaseLayout title={`${channel.label} Runtime - Capsem Release Channel`}>
+  <header class="border-b border-zinc-200 pb-6">
+    <div class="flex flex-wrap gap-4 text-sm font-medium">
+      <a class="text-blue-600 underline" href="/">All channels</a>
+      <a class="text-blue-600 underline" href={channelPagePath(channel.id)}>{channel.label}</a>
+    </div>
+    <h1 class="mt-3 text-4xl font-semibold tracking-normal text-black">{channel.label} Runtime</h1>
+    <p class="mt-3 max-w-3xl text-base text-zinc-600">
+      The VM kernel, initrd, and root filesystem every Capsem session on <code>{channel.id}</code> boots, with their evidence.
+    </p>
+  </header>
+
+  <section class="mt-8 border border-zinc-200 p-5">
+    <h2 class="text-xl font-semibold text-black">Runtime</h2>
+    <dl class="mt-4 grid gap-3 text-sm sm:grid-cols-[14rem_1fr]">
+      <dt class="text-zinc-500">Channel</dt><dd><code>{data.channel}</code></dd>
+      <dt class="text-zinc-500">Revision</dt><dd><code>{runtime.revision}</code></dd>
+      <dt class="text-zinc-500">Source commit</dt><dd><code>{runtime.source_commit ?? 'not specified'}</code></dd>
+      <dt class="text-zinc-500">Status</dt><dd>{runtime.status ?? 'current'}</dd>
+      <dt class="text-zinc-500">Minimum Capsem</dt><dd><code>{runtime.min_capsem_version ?? 'not specified'}</code></dd>
+      <dt class="text-zinc-500">Maximum Capsem</dt><dd><code>{runtime.max_capsem_version ?? 'not specified'}</code></dd>
+    </dl>
+  </section>
+
+  <section class="mt-6 grid gap-6">
+    {architectures.length > 0 ? architectures.map((architecture) => (
+      <section class="border border-zinc-200 p-5">
+        <h2 class="text-xl font-semibold text-black">Architecture {architecture.architecture}</h2>
+        <p class="mt-1 text-sm text-zinc-600">Image revision <code>{architecture.image_revision ?? runtime.revision}</code></p>
+
+        <h3 class="mt-5 text-base font-semibold text-black">Runtime Images</h3>
+        <div class="mt-3 overflow-x-auto">
+          <table class="w-full min-w-[960px] border-collapse text-sm">
+            <thead>
+              <tr class="border-b border-zinc-200 text-left text-zinc-500">
+                <th class="py-2 pr-4 font-medium">Kind</th>
+                <th class="py-2 pr-4 font-medium">Name</th>
+                <th class="py-2 pr-4 font-medium">Download</th>
+                <th class="py-2 pr-4 font-medium">Bytes</th>
+                <th class="py-2 pr-4 font-medium">SHA-256</th>
+                <th class="py-2 pr-4 font-medium">BLAKE3</th>
+                <th class="py-2 pr-4 font-medium">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {architecture.images.length > 0 ? architecture.images.map((image) => (
+                <tr class="border-b border-zinc-100 align-top">
+                  <td class="py-3 pr-4">{image.kind}</td>
+                  <td class="py-3 pr-4">{image.name}</td>
+                  <td class="py-3 pr-4">{image.url ? <a class="break-all text-blue-600 underline" href={image.url}>{image.url}</a> : <span class="text-zinc-500">not published</span>}</td>
+                  <td class="py-3 pr-4">{byteLabel(image.bytes)}</td>
+                  <td class="py-3 pr-4"><code class="break-all">{hashLabel(image.digest?.sha256)}</code></td>
+                  <td class="py-3 pr-4"><code class="break-all">{hashLabel(image.digest?.blake3)}</code></td>
+                  <td class="py-3 pr-4">{image.status ?? 'current'}</td>
+                </tr>
+              )) : (
+                <tr><td class="py-4 pr-4 text-zinc-600" colspan="7">No runtime images are published for this architecture.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="mt-5 text-base font-semibold text-black">Runtime Evidence</h3>
+        <div class="mt-3 overflow-x-auto">
+          <table class="w-full min-w-[860px] border-collapse text-sm">
+            <thead>
+              <tr class="border-b border-zinc-200 text-left text-zinc-500">
+                <th class="py-2 pr-4 font-medium">Kind</th>
+                <th class="py-2 pr-4 font-medium">Download</th>
+                <th class="py-2 pr-4 font-medium">Bytes</th>
+                <th class="py-2 pr-4 font-medium">SHA-256</th>
+                <th class="py-2 pr-4 font-medium">BLAKE3</th>
+              </tr>
+            </thead>
+            <tbody>
+              {architecture.evidence.length > 0 ? architecture.evidence.map((evidence) => (
+                <tr class="border-b border-zinc-100 align-top">
+                  <td class="py-3 pr-4">{String(evidence.kind ?? '').toUpperCase()}</td>
+                  <td class="py-3 pr-4">{evidence.url ? <a class="break-all text-blue-600 underline" href={evidence.url}>{evidence.url}</a> : <span class="text-zinc-500">not published</span>}</td>
+                  <td class="py-3 pr-4">{byteLabel(evidence.bytes)}</td>
+                  <td class="py-3 pr-4"><code class="break-all">{hashLabel(evidence.digest?.sha256)}</code></td>
+                  <td class="py-3 pr-4"><code class="break-all">{hashLabel(evidence.digest?.blake3)}</code></td>
+                </tr>
+              )) : (
+                <tr><td class="py-4 pr-4 text-zinc-600" colspan="5">No runtime evidence is published for this architecture.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="mt-5 text-base font-semibold text-black">Installed Software</h3>
+        <div class="mt-3 overflow-x-auto">
+          <table class="w-full min-w-[960px] border-collapse text-sm">
+            <thead>
+              <tr class="border-b border-zinc-200 text-left text-zinc-500">
+                <th class="py-2 pr-4 font-medium">Name</th>
+                <th class="py-2 pr-4 font-medium">Version</th>
+                <th class="py-2 pr-4 font-medium">Source</th>
+                <th class="py-2 pr-4 font-medium">SHA-256</th>
+                <th class="py-2 pr-4 font-medium">BLAKE3</th>
+              </tr>
+            </thead>
+            <tbody>
+              {architecture.software.length > 0 ? architecture.software.map((item) => (
+                <tr class="border-b border-zinc-100 align-top">
+                  <td class="py-3 pr-4">{item.name}</td>
+                  <td class="py-3 pr-4"><code>{item.version}</code></td>
+                  <td class="py-3 pr-4">{item.source}</td>
+                  <td class="py-3 pr-4"><code class="break-all">{hashLabel(item.digest?.sha256)}</code></td>
+                  <td class="py-3 pr-4"><code class="break-all">{hashLabel(item.digest?.blake3)}</code></td>
+                </tr>
+              )) : (
+                <tr><td class="py-4 pr-4 text-zinc-600" colspan="5">No software inventory is published for this architecture.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    )) : <p class="text-sm text-zinc-600">No runtime architecture records are published for this channel.</p>}
+  </section>
+</ReleaseLayout>

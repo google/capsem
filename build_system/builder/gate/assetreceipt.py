@@ -1,4 +1,4 @@
-"""Exact byte authority for a reusable profile/architecture asset lane."""
+"""Exact byte authority for a reusable per-architecture runtime asset lane."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from .config import Arch, GateConfig
 from .errors import GateError
 from .filesystem import digest_of, write_text
 
-SCHEMA = "capsem.asset-lane-receipt.v2"
+SCHEMA = "capsem.asset-lane-receipt.v3"
 BUILD_STAGE = "build"
 PACKED_STAGE = "packed"
 REUSABLE_STAGES = frozenset({BUILD_STAGE, PACKED_STAGE})
@@ -32,19 +32,12 @@ def _location_matches(
     output: Path,
     identity: str,
     *,
-    profile: str,
     architecture: str,
 ) -> bool:
-    if (
-        len(identity) != 64
-        or identity.strip("0123456789abcdef")
-        or not profile
-        or Path(profile).name != profile
-    ):
+    if len(identity) != 64 or identity.strip("0123456789abcdef"):
         return False
-    cached = assetstore.root(config)
-    cached = cached / identity / profile / f"build-{architecture}"
-    local = config.path(config.assets.test_root) / profile / f"build-{architecture}"
+    cached = assetstore.root(config) / identity / f"build-{architecture}"
+    local = config.path(config.assets.test_root) / f"build-{architecture}"
     resolved = output.resolve()
     if resolved == cached.resolve():
         return True
@@ -86,19 +79,12 @@ def _document(
     output: Path,
     identity: str,
     *,
-    profile: str,
     arch: Arch,
     stage: str,
 ) -> dict[str, object]:
     if stage not in REUSABLE_STAGES:
         raise GateError(f"unknown asset lane receipt stage {stage!r}")
-    if not _location_matches(
-        config,
-        output,
-        identity,
-        profile=profile,
-        architecture=arch.name,
-    ):
+    if not _location_matches(config, output, identity, architecture=arch.name):
         raise GateError(f"asset lane output {output} is outside its content-addressed cache path")
     produced = output / arch.name
     missing = [
@@ -120,12 +106,10 @@ def _document(
         )
     except (OSError, UnicodeError, RuntimeError) as error:
         raise GateError(
-            f"asset lane produced an invalid exported-rootfs OBOM for {profile}/{arch.name}: "
-            f"{error}"
+            f"asset lane produced an invalid exported-rootfs OBOM for {arch.name}: {error}"
         ) from error
     return {
         "schema": SCHEMA,
-        "profile": profile,
         "architecture": arch.name,
         "stage": stage,
         "input_digest": identity,
@@ -194,13 +178,12 @@ def record(
     output: Path,
     identity: str,
     *,
-    profile: str,
     arch: Arch,
     stage: str,
 ) -> None:
     """Atomically bind exact output bytes to their source identity and stage."""
     document = _with_cache_metadata(
-        _document(config, output, identity, profile=profile, arch=arch, stage=stage),
+        _document(config, output, identity, arch=arch, stage=stage),
         now=time.time(),
     )
     write_text(
@@ -214,7 +197,6 @@ def validates(
     output: Path,
     identity: str,
     *,
-    profile: str,
     arch: Arch,
     stages: frozenset[str] = REUSABLE_STAGES,
     touch: bool = False,
@@ -229,14 +211,7 @@ def validates(
         stage = stable.get("stage")
         if not isinstance(stage, str) or stage not in stages:
             return False
-        expected = _document(
-            config,
-            output,
-            identity,
-            profile=profile,
-            arch=arch,
-            stage=stage,
-        )
+        expected = _document(config, output, identity, arch=arch, stage=stage)
         now = time.time()
         if (
             stable != expected
@@ -271,18 +246,10 @@ def cache_metadata(config: GateConfig, output: Path) -> tuple[float, float, int]
             return None
         architecture = stable.get("architecture")
         identity = stable.get("input_digest")
-        profile = stable.get("profile")
         if (
             not isinstance(architecture, str)
             or not isinstance(identity, str)
-            or not isinstance(profile, str)
-            or not _location_matches(
-                config,
-                output,
-                identity,
-                profile=profile,
-                architecture=architecture,
-            )
+            or not _location_matches(config, output, identity, architecture=architecture)
         ):
             return None
         measured = sum(

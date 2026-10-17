@@ -7,8 +7,6 @@ use crate::api;
 #[cfg(test)]
 mod tests;
 
-const UPDATE_CACHE_TTL_SECS: u64 = 24 * 3600;
-
 #[derive(Debug, Clone, Deserialize)]
 pub(super) struct UpdateCheckCache {
     #[serde(default)]
@@ -25,16 +23,6 @@ pub(super) struct UpdateCheckCache {
     assets_state: Option<String>,
     #[serde(default)]
     assets_blocked_reason: Option<String>,
-    #[serde(default)]
-    latest_profiles: Option<String>,
-    #[serde(default)]
-    current_profiles: Option<String>,
-    #[serde(default)]
-    profiles_update_available: bool,
-    #[serde(default)]
-    profiles_state: Option<String>,
-    #[serde(default)]
-    profiles_blocked_reason: Option<String>,
     #[serde(default)]
     latest_images: Option<String>,
     #[serde(default)]
@@ -67,7 +55,7 @@ pub(super) fn update_status_response_from_paths(
     };
     let checked_at = cache.as_ref().map(|cache| cache.checked_at);
     let stale = checked_at
-        .map(|checked_at| now.saturating_sub(checked_at) > UPDATE_CACHE_TTL_SECS)
+        .map(|checked_at| now.saturating_sub(checked_at) > capsem_proto::CACHE_UPDATE_CHECK_TTL_SECONDS)
         .unwrap_or(true);
     let channel_url = cache
         .as_ref()
@@ -104,18 +92,6 @@ pub(super) fn update_status_response_from_paths(
                 )
             })
             .unwrap_or_else(|| update_track(current_assets, None, false)),
-        profiles: cache
-            .as_ref()
-            .map(|cache| {
-                channel_update_track(
-                    cache.current_profiles.clone(),
-                    cache.latest_profiles.clone(),
-                    cache.profiles_update_available,
-                    cache.profiles_state.as_deref(),
-                    cache.profiles_blocked_reason.clone(),
-                )
-            })
-            .unwrap_or_else(not_published_update_track),
         images: cache
             .as_ref()
             .map(|cache| {
@@ -185,12 +161,12 @@ fn supply_chain_evidence_from_paths(
             workflow: Some(".github/workflows/release.yaml".to_string()),
         },
         vm_obom: api::SupplyChainReference {
-            name: "profile_obom".to_string(),
+            name: "vm_obom".to_string(),
             format: Some("cyclonedx-obom.v1".to_string()),
             scope: Some("base_image".to_string()),
             generator: Some("cdxgen".to_string()),
             release_artifact: None,
-            route: Some("/profiles/{profile_id}/obom".to_string()),
+            route: None,
             workflow: Some(".github/workflows/release-assets.yaml".to_string()),
         },
         attestations: vec![
@@ -237,8 +213,8 @@ fn read_update_check_cache(path: &Path) -> std::result::Result<Option<UpdateChec
 fn current_asset_version_from_manifest(assets_dir: &Path) -> Option<String> {
     let content = std::fs::read_to_string(assets_dir.join("manifest.json")).ok()?;
     if let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) {
-        if let Ok(state) = capsem_assets::asset_manager::release_graph_profile_state(&value) {
-            return Some(state.images_revision);
+        if let Ok(Some(state)) = capsem_assets::asset_manager::release_graph_runtime_state(&value) {
+            return Some(state.revision);
         }
     }
     capsem_assets::asset_manager::ManifestV2::from_json(&content)

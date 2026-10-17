@@ -171,6 +171,12 @@ impl HookState {
         self.map.get(&TypeId::of::<T>()).and_then(|b| b.downcast_ref())
     }
 
+    pub(super) fn peek_mut<T: 'static>(&mut self) -> Option<&mut T> {
+        self.map
+            .get_mut(&TypeId::of::<T>())
+            .and_then(|slot| slot.downcast_mut())
+    }
+
     /// Insert / replace a typed slot. Used by `handle_request` to seed
     /// per-request context (e.g. `TelemetryRequestContext`) into the
     /// `ChunkDispatchBody`'s `HookState` before serving, so the

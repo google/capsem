@@ -9,7 +9,7 @@ by:
 
   tests/capsem-service/    (every HTTP handler against the real service)
   mcp/typescript/tests/    (the npm host against typed gateway fixtures)
-  tests/ironbank/test_mcp_profile_ledger.py
+  tests/ironbank/test_mcp_settings_ledger.py
                            (packed npm MCP -> gateway -> service -> VM chain)
   tests/capsem-e2e/        (full CLI -> gateway -> service -> VM paths
                             for a handful of flagship flows)
@@ -31,7 +31,7 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
 import pytest
-from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.gateway import GatewayInstance, TcpHttpClient
 
 pytestmark = pytest.mark.gateway
@@ -61,6 +61,96 @@ MOCK_VMS = {
     },
 }
 
+MOCK_UPDATE_STATUS = {
+    "checked_at": 1718444400,
+    "channel_url": "https://release.capsem.org/assets/stable/manifest.json",
+    "channel_hash": "0123456789abcdef" * 4,
+    "validation_status": "valid",
+    "stale": False,
+    "binary": {
+        "current": "1.3.1",
+        "latest": "1.3.2",
+        "update_available": True,
+        "state": "update_available",
+        "compatibility": "compatible",
+    },
+    "assets": {
+        "current": "2026.0627.1",
+        "latest": "2026.0628.1",
+        "update_available": True,
+        "state": "update_available",
+        "compatibility": "compatible",
+    },
+    "images": {
+        "update_available": False,
+        "state": "not_published",
+        "compatibility": "not_applicable",
+    },
+    "supply_chain": {
+        "manifest": {"path": ""},
+        "channel_index": {},
+        "host_sbom": {"name": ""},
+        "vm_obom": {"name": ""},
+        "attestations": [],
+    },
+}
+
+MOCK_ASSET_STATUS = {
+    "ready": False,
+    "downloading": False,
+    "current_arch": "arm64",
+    "asset_version": "2026.0613.1",
+    "assets": [
+        {
+            "kind": "kernel",
+            "name": "vmlinuz",
+            "path": "/Users/test/.capsem/assets/arm64/vmlinuz-0123456789abcdef",
+            "status": "present",
+            "expected_hash": "0123456789abcdef" * 4,
+            "expected_size": 3,
+            "actual_size": 3,
+        },
+        {
+            "kind": "rootfs",
+            "name": "rootfs.erofs",
+            "path": "/Users/test/.capsem/assets/arm64/rootfs-fedcba9876543210.erofs",
+            "status": "missing",
+            "expected_hash": "fedcba9876543210" * 4,
+            "expected_size": 5,
+        },
+    ],
+    "errors": ["rootfs.erofs is missing"],
+    "manifest": {
+        "origin": "package",
+        "path": "/Users/test/.capsem/assets/manifest.json",
+        "origin_path": "/Users/test/.capsem/assets/manifest-metadata.json",
+        "origin_source": "file:///tmp/corp/manifest.json",
+        "packaged_at": "2026-06-13T00:00:00Z",
+        "blake3": "0123456789abcdef",
+        "validation_status": "valid",
+        "refresh_policy": "24h",
+        "assets_current": "2026.0613.1",
+        "binaries_current": "1.3.0",
+    },
+}
+
+
+def mock_list_response():
+    return {
+        "sandboxes": [
+            {
+                "id": vm["id"],
+                "pid": vm["pid"],
+                "status": vm["status"],
+                "persistent": vm["persistent"],
+                "ram_mb": vm["ram_mb"],
+                "cpus": vm["cpus"],
+                "available_actions": ["pause", "stop", "fork", "delete"],
+            }
+            for vm in MOCK_VMS.values()
+        ]
+    }
+
 
 class MockServiceHandler(BaseHTTPRequestHandler):
     """HTTP handler mimicking capsem-service responses."""
@@ -71,10 +161,7 @@ class MockServiceHandler(BaseHTTPRequestHandler):
     @property
     def clean_path(self):
         """Strip http://localhost prefix that hyper sends over UDS."""
-        p = self.path
-        if p.startswith("http://localhost"):
-            p = p[len("http://localhost") :]
-        return p
+        return self.path.removeprefix("http://localhost")
 
     def _read_body(self):
         length = int(self.headers.get("Content-Length", 0))
@@ -93,22 +180,16 @@ class MockServiceHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path_only = self.clean_path.split("?", 1)[0]
-        if path_only == "/vms/list":
-            sandboxes = []
-            for vm in MOCK_VMS.values():
-                sandboxes.append(
-                    {
-                        "id": vm["id"],
-                        "pid": vm["pid"],
-                        "profile_id": CODE_PROFILE_ID,
-                        "status": vm["status"],
-                        "persistent": vm["persistent"],
-                        "ram_mb": vm["ram_mb"],
-                        "cpus": vm["cpus"],
-                        "available_actions": ["pause", "stop", "fork", "delete"],
-                    }
-                )
-            self._send_json({"sandboxes": sandboxes})
+        if path_only == "/internal/gateway/status":
+            response = mock_list_response()
+            response.update(assets=MOCK_ASSET_STATUS, updates=MOCK_UPDATE_STATUS)
+            self._send_json(response)
+        elif path_only == "/vms/list":
+            self._send_json(mock_list_response())
+        elif path_only == "/images":
+            # Echoes the query, so a test can see the gateway kept it.
+            query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.clean_path).query)
+            self._send_json({"images": [], "refresh": query.get("refresh", ["false"])[0]})
         elif path_only.startswith("/vms/") and path_only.endswith("/info"):
             vm_id = path_only.split("/vms/", 1)[1].rsplit("/info", 1)[0]
             if vm_id in MOCK_VMS:
@@ -128,7 +209,6 @@ class MockServiceHandler(BaseHTTPRequestHandler):
                 self._send_json(
                     {
                         "id": vm["id"],
-                        "profile_id": CODE_PROFILE_ID,
                         "status": vm["status"],
                         "pid": vm["pid"],
                         "persistent": vm["persistent"],
@@ -149,88 +229,9 @@ class MockServiceHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
         elif path_only == "/update/status":
-            self._send_json(
-                {
-                    "checked_at": 1718444400,
-                    "channel_url": "https://release.capsem.org/assets/stable/manifest.json",
-                    "channel_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-                    "validation_status": "valid",
-                    "stale": False,
-                    "binary": {
-                        "current": "1.3.1",
-                        "latest": "1.3.2",
-                        "update_available": True,
-                        "state": "update_available",
-                        "compatibility": "compatible",
-                    },
-                    "assets": {
-                        "current": "2026.0627.1",
-                        "latest": "2026.0628.1",
-                        "update_available": True,
-                        "state": "update_available",
-                        "compatibility": "compatible",
-                    },
-                    "profiles": {
-                        "latest": "profiles-2030.0101.1",
-                        "update_available": False,
-                        "state": "current",
-                        "compatibility": "compatible",
-                    },
-                    "images": {
-                        "update_available": False,
-                        "state": "not_published",
-                        "compatibility": "not_applicable",
-                    },
-                }
-            )
-        elif path_only == "/profiles/status":
-            self._send_json(
-                {
-                    "source": "profile",
-                    "profile_count": 2,
-                    "ready_count": 1,
-                    "asset_manifest": {
-                        "origin": "package",
-                        "path": "/Users/test/.capsem/assets/manifest.json",
-                        "origin_path": "/Users/test/.capsem/assets/manifest-metadata.json",
-                        "origin_source": "file:///tmp/corp/manifest.json",
-                        "packaged_at": "2026-06-13T00:00:00Z",
-                        "blake3": "0123456789abcdef",
-                        "validation_status": "valid",
-                        "refresh_policy": "24h",
-                        "assets_current": "2026.0613.1",
-                        "binaries_current": "1.3.0",
-                    },
-                    "profiles": [
-                        {
-                            "id": CODE_PROFILE_ID,
-                            "name": "Code",
-                            "description": "Optimized for coding and long-running agents.",
-                            "ready": True,
-                            "current_arch": "arm64",
-                            "missing_assets": [],
-                            "invalid_assets": [],
-                            "invalid_files": [],
-                            "errors": [],
-                            "asset_count": 3,
-                        },
-                        {
-                            "id": "co-work",
-                            "name": "Co-work",
-                            "description": "Shared profile for collaborative agent sessions.",
-                            "ready": False,
-                            "current_arch": "arm64",
-                            "missing_assets": [
-                                {"kind": "rootfs", "path": "/missing/rootfs.erofs", "valid": False}
-                            ],
-                            "invalid_assets": [],
-                            "invalid_files": [],
-                            "errors": ["missing rootfs"],
-                            "asset_count": 3,
-                        },
-                    ],
-                }
-            )
+            self._send_json(MOCK_UPDATE_STATUS)
+        elif path_only == "/assets/status":
+            self._send_json(MOCK_ASSET_STATUS)
         else:
             self._send_error(404, f"unknown endpoint: {self.clean_path}")
 
@@ -238,12 +239,11 @@ class MockServiceHandler(BaseHTTPRequestHandler):
         body = self._read_body()
         path_only = self.clean_path.split("?", 1)[0]
         if path_only == "/vms/create":
-            data = json.loads(body) if body else {}
-            if data.get("profile_id") != CODE_PROFILE_ID:
-                self._send_error(400, "profile_id is required")
-                return
             vm_id = f"vm-{uuid.uuid4().hex[:8]}"
             self._send_json({"id": vm_id})
+        elif path_only == "/images/pull":
+            data = json.loads(body) if body else {}
+            self._send_json({"image": data.get("image"), "resolved": "mock@sha256:" + "0" * 64})
         elif path_only.startswith("/vms/") and path_only.endswith("/exec"):
             data = json.loads(body) if body else {}
             cmd = data.get("command", "")
@@ -266,10 +266,6 @@ class MockServiceHandler(BaseHTTPRequestHandler):
         elif path_only == "/purge":
             self._send_json({"purged": 0, "persistent_purged": 0, "ephemeral_purged": 0})
         elif path_only == "/run":
-            data = json.loads(body) if body else {}
-            if data.get("profile_id") != CODE_PROFILE_ID:
-                self._send_error(400, "profile_id is required")
-                return
             self._send_json({
                 "stdout": {"encoding": "utf8", "data": "mock run output\n"},
                 "stderr": {"encoding": "utf8", "data": ""},
@@ -280,8 +276,8 @@ class MockServiceHandler(BaseHTTPRequestHandler):
         elif path_only.startswith("/vms/") and path_only.endswith("/fork"):
             data = json.loads(body) if body else {}
             self._send_json({"name": data.get("name", "fork"), "size_bytes": 1024})
-        elif path_only.startswith("/profiles/") and path_only.endswith("/reload"):
-            self._send_json({"ok": True})
+        elif path_only == "/corp/reload":
+            self._send_json({"success": True, "reloaded": 0})
         elif path_only == "/echo":
             # Echo back the request body for proxy testing
             self.send_response(200)
@@ -337,6 +333,12 @@ def mock_service():
     svc.start()
     yield svc
     svc.stop()
+
+
+@pytest.fixture
+def mock_vms():
+    """Mutable service inventory for assertions about fresh gateway reads."""
+    yield MOCK_VMS
 
 
 @pytest.fixture(scope="session")

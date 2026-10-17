@@ -130,10 +130,32 @@ def test_an_unpinned_stage_above_max_says_nothing_is_held(tmp_path: Path) -> Non
     (root / "debug").mkdir(parents=True)
     (root / "debug/capsem").write_bytes(b"x" * 40)  # uplifted: counted, never selected
 
-    [violation] = plan_prune(scan_retention_inventory(paths, policy, now_ns=now), policy).violations
+    structural, over_max = plan_prune(
+        scan_retention_inventory(paths, policy, now_ns=now), policy
+    ).violations
 
-    assert violation.startswith("cargo remains 40 bytes above max size 10")
-    assert "0 bytes are protected" in violation and "no lock is held" in violation
+    # Retention can never select an uplifted path, so the stage can never
+    # reach warm: that is the cause, reported before the stage reaches max.
+    assert structural.startswith("cargo can never recover to warm size 5")
+    assert over_max.startswith("cargo remains 40 bytes above max size 10")
+    assert "0 bytes are protected" in over_max and "no lock is held" in over_max
+    for violation in (structural, over_max):
+        assert "40 bytes are outside every generation" in violation
+        assert "debug/capsem (40 bytes)" in violation, "the unselectable path is named"
+
+
+def test_unselectable_bytes_within_warm_are_reported_not_refused(tmp_path: Path) -> None:
+    now = 1_000 * HOUR_NS
+    policy = configured(max_size=100, warm_size=50)
+    paths = CachePaths(repository_root=tmp_path, policy=policy)
+    root = paths.stage("cargo")
+    (root / "debug").mkdir(parents=True)
+    (root / "debug/capsem").write_bytes(b"x" * 40)
+
+    inventory = scan_retention_inventory(paths, policy, now_ns=now)
+
+    assert inventory.stages[0].unselectable_bytes == 40
+    assert not plan_prune(inventory, policy).violations
 
 
 def test_unaccounted_walk_does_not_search_every_unit_for_each_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -160,7 +182,7 @@ def test_unaccounted_walk_does_not_search_every_unit_for_each_directory(tmp_path
 
     with monkeypatch.context() as patch:
         patch.setattr(Path, "parents", property(counted_parents))
-        logical, _ = unaccounted_size(root, frozenset(accounted), set())
+        logical, _, _ = unaccounted_size(root, frozenset(accounted), set())
     assert logical == len(b"unowned") + 100
     assert parent_lookups < 500, "inventory must not compare every unowned subtree with every unit"
 
@@ -177,3 +199,41 @@ def test_cargo_units_and_a_retention_root_are_one_policy_not_two() -> None:
     stage = configured(10, 5).stages["cargo"]
     with pytest.raises(ValueError, match="cargo_target_roots"):
         StagePolicy.model_validate({**stage.model_dump(), "retention_root": Path("debug/incremental")})
+
+
+def test_signed_copies_of_uplifted_binaries_are_reclaimable_generations(tmp_path: Path) -> None:
+    # `run_signed.sh` keys each signed copy by the source's inode and ctime, so
+    # every rebuild of an uplifted binary such as `debug/capsem-admin` leaves a
+    # new copy beside it. None carried a unit hash: 1,610 copies (71 GB) sat
+    # outside every unit and enforcement refused every compile on the machine.
+    now = 1_000 * HOUR_NS
+    policy = configured(max_size=60, warm_size=30)
+    paths = CachePaths(repository_root=tmp_path, policy=policy)
+    root = paths.stage("cargo")
+    copies = {}
+    for age, key in ((72, "a" * 64), (48, "b" * 64), (1, "c" * 64)):
+        copy = root / f"debug/.run-signed-capsem-admin-{key}"
+        receipt = root / f"debug/.run-signed/{key}"
+        receipt.parent.mkdir(parents=True, exist_ok=True)
+        copy.write_bytes(b"x" * 18)
+        receipt.write_bytes(b"x" * 2)
+        stamp = now - age * HOUR_NS
+        for path in (copy, receipt):
+            os.utime(path, ns=(stamp, stamp))
+        copies[key] = (copy, receipt)
+    staging = root / f"debug/.run-signed-capsem-admin-{'d' * 64}.tmp.4242"
+    staging.write_bytes(b"x" * 10)
+    abandoned = now - 96 * HOUR_NS
+    os.utime(staging, ns=(abandoned, abandoned))
+
+    inventory = scan_retention_inventory(paths, policy, now_ns=now)
+    entries = {entry.key: entry for entry in inventory.stages[0].entries}
+    old = entries[f"debug/signed/{'a' * 64}"]
+    assert old.relative_path.parts[-2:] == (".run-signed", "a" * 64), "the receipt goes first"
+    assert old.logical_bytes == 20
+
+    removed = {root / action.path for action in plan_prune(inventory, policy).actions}
+    for key in ("a" * 64, "b" * 64):
+        assert set(copies[key]) <= removed
+    assert staging in removed, "an abandoned staging copy is reclaimable too"
+    assert not set(copies["c" * 64]) & removed, "the newest copy, the one being run, stays"

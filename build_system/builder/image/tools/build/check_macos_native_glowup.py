@@ -96,7 +96,7 @@ def validate_report(report_path: Path, cargo_toml: Path) -> Mapping[str, object]
             raise NativeGlowupError(f"physical VZ proof did not pass {field}")
     expected_transitions = (
         TransitionKind.FRESH_INSTALL,
-        TransitionKind.PROFILE_ONLY,
+        TransitionKind.RUNTIME_ONLY,
         TransitionKind.TAMPER_REJECTION,
     )
     expected_scope = [kind.value for kind in expected_transitions]

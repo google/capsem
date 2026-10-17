@@ -7,12 +7,11 @@ capsem create -n cache -p 6379:6379 --image docker://redis:7.4.11-alpine
 capsem run --image docker://redis:7.4.11-alpine redis-cli --version
 ```
 
-The build pulls the native Linux image, provisions a VM from the profile and
+The service pulls the native Linux image, provisions a VM on the one runtime and
 uses the image's entrypoint and default command; a command after the image
 overrides its default command. `create --image` starts it detached (output in
 `capsem logs`, VM kept only when named); `run --image` streams it and destroys
 the VM when it ends. Registry-qualified references also work.
-Installed binaries, services, and profiles are not changed by this spike.
 
 ## Ownership and confinement
 
@@ -69,8 +68,8 @@ Ironbank service and VM helpers. Run it through its owner:
 python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 1800 -- just focus-test kingslanding
 ```
 
-After changing kernel or profile package inputs, first rebuild that profile with
-`just build-assets arm64 code` (use `x86_64` on that host). The focused gate
+After changing kernel or runtime package inputs, first rebuild the runtime with
+`just build-assets arm64` (use `x86_64` on that host). The focused gate
 uses the invoking checkout's assembled assets, refreshes its guest/host binaries,
 prepares the digest-pinned native images (Redis, the container under test, and
 iperf3, the native reference for the private-path matrix), and runs the suite
@@ -79,13 +78,13 @@ in `tests/ironbank/greyjoy/` on the same fixture. The fixture supports ARM64 and
 x86_64; cache reuse requires matching image identity and a verified archive hash.
 Preparation uses Docker only on the development host to export a never-started
 image. No Docker daemon runs inside Capsem. The regular functional gate runs
-Kingslanding for each profile; benchmark repetitions are omitted from release
+Kingslanding against the one runtime; benchmark repetitions are omitted from release
 rehearsal to avoid recording the same cohort twice.
 
 The suite covers CLI defaults, image cache reuse, logs, exit/timeout behavior,
 client detachment, stop/restart/fork/delete, OCI layer semantics, resource limits,
 filesystem/network isolation, router confinement and concurrent Redis traffic.
-All services and VMs belong to test fixtures; installed services and profiles are
+All services and VMs belong to test fixtures; installed services are
 untouched. Throughput results are exploratory measurements, not a release threshold.
 
 A named VM retains its image and command. Closing the client detaches. Workload
@@ -94,9 +93,107 @@ restores the command and host bindings; fork copies the workload and workspace
 without copying host ports. Redis memory and image-declared tmpfs volumes are
 fresh on cold boot, so this does not promise database persistence across restart.
 
+## capsem-debug, the test-tooling image
+
+The VM runtime rootfs is minimal. Tests that need test runners, network
+tools, package managers, model SDKs, agent CLIs or benchmark peers run them in
+a session of `images/capsem-debug` instead: an exec without a target enters
+that workload, and `"target": "vm"` still reaches the VM. The image is all
+third-party content, every source pinned (see its Dockerfile). It is a test
+fixture, not an official image: `images/catalog.toml` does not list it, so no
+default admission policy admits it, and `.github/workflows/images.yaml` does
+not build it (`tests/images/test_image_ci.py` holds both).
+
+`config/gate.toml [functional.debug_image]` pins one image manifest digest
+per platform. `pinned_image.py` keeps each pinned image as an OCI layout in the
+shared `test-images` cache stage (`config/cache.toml`), one directory per
+digest, so every checkout and gate prefix uses one copy:
+
+- the Kingslanding prefetch (`pinned_image.py debug_image prepare`) verifies the pinned
+  layout, and only when it is absent pulls it from `repository` by digest,
+  verbatim, before the suites run with no network;
+- the suites call `debug_image.ready()`, which verifies and never fetches,
+  and serve the layout through `registry.layout_registry`. Normal pinned
+  sessions require the subject-bound prepared EROFS in the layout's `rootfs-v2/`
+  OCI artifact. The local registry advertises its binding in a catalog and
+  streams its bytes; the guest verifies and mounts it without extracting layers.
+  Raw OCI extraction remains covered by the small dedicated OCI fixtures.
+
+Local image builds use `images/ci/rootfs.py` to generate and retain the EROFS
+artifact alongside the image. Prefetch downloads the image's EROFS referrer
+before offline tests and refuses missing, conflicting, foreign or corrupt
+artifacts. A cached layout needs both the image and prepared filesystem;
+having only compressed image layers is insufficient for normal boot proof.
+Prefetch supports both the referrers API and OCI's fallback index tag, as used
+by GHCR, while retaining the same subject and integrity checks. Private GHCR
+pins use the operator's existing GitHub login; public release inputs must also
+pass an anonymous pull.
+
+A workload has its own loopback; it never reaches the VM's. Clients in one
+reach the hermetic mock upstream by name: `start_mock_server(dns_answers="routable")`
+answers every fixture name with TEST-NET-2, the container's gateway carries
+it to the VM proxies by port, and a corp `upstream_overrides` entry routes the
+name to the mock (`ironbank/model_client_config.py` has the local-model
+endpoint, `ollama.capsem.test:3713`). What only a loopback name exercises --
+the broker's hermetic OAuth endpoint -- stays a `"target": "vm"` exec.
+
+### Building, pinning and publishing it (maintainers)
+
+1. Change `images/capsem-debug/` (bump a pin, add a tool). Regenerate the
+   Python lock when `requirements.in` changes:
+   `uv pip compile images/capsem-debug/requirements.in --generate-hashes --python-version 3.11 --universal --exclude-newer <date> --no-header -o images/capsem-debug/requirements.txt`.
+2. `uv run --project build_system --frozen capsem-gate debug-image` builds it
+   for this host's platform into the cache stage and loads it into Docker as
+   `capsem-debug:<arch>`. It prints the line to pin.
+3. Qualify the candidate using the layout path printed by the build:
+   `uv run --project build_system --frozen capsem-gate image-qualify --image capsem-debug --layout <built-layout>`.
+   Only after qualification passes, put that digest in
+   `[functional.debug_image] digests` and run the suites
+   against it: `uv run --project build_system --frozen capsem-gate focus-test kingslanding --slow`.
+   The prefetch finds the local layout, so nothing is pulled.
+4. Publish exactly those bytes, so the registry serves the pinned digest. With
+   push access to `ghcr.io/google/capsem` (a maintainer's token, never a trunk
+   workflow):
+
+   ```sh
+   layout=cache/target/tests/images/capsem-debug-<hex digest>
+   oras cp --from-oci-layout "$layout@sha256:<hex digest>" \
+     ghcr.io/google/capsem/capsem-debug:<arch>-<first 12 hex of the digest>
+   oras manifest fetch --descriptor ghcr.io/google/capsem/capsem-debug@sha256:<hex digest>
+   ```
+
+   `oras cp` copies the manifest and blobs verbatim; `docker push` would
+   recompress the layers and publish a different digest. Then attach its
+   OBOM the way the official images do:
+   `uv run --project build_system --frozen python images/ci/rootfs.py --image capsem-debug:<arch> --arch <arch> --repository ghcr.io/google/capsem/capsem-debug --digest sha256:<hex digest> --out <dir>`
+   and `oras attach --artifact-type application/vnd.cyclonedx+json ghcr.io/google/capsem/capsem-debug@sha256:<hex digest> <dir>/obom.cdx.json:application/vnd.cyclonedx+json`.
+   Attach the prepared filesystem to the same platform subject too:
+   `oras attach --artifact-type application/vnd.capsem.rootfs.erofs.v2 --annotation org.capsem.rootfs.blake3="$(cat <dir>/rootfs.blake3)" ghcr.io/google/capsem/capsem-debug@sha256:<hex digest> <dir>/rootfs.erofs:application/vnd.capsem.rootfs.erofs.v2`.
+   The pinned manifest binds the BLAKE3 annotation to the platform subject.
+   OCI transport retains SHA-256; host and guest verify the prepared EROFS
+   bytes with BLAKE3 before use. Version 1 roots are not admitted.
+   The package must be public, or CI's anonymous pull by digest fails.
+5. x86_64: repeat 2-4 on a Linux x86_64 host (Colima on Apple Silicon has no
+   amd64 emulator here) and add its `linux/amd64` digest beside the arm64 one.
+   Until then the x86_64 lanes fail at the prefetch, naming the missing pin.
+
+### Building and pinning the reference image (maintainers)
+
+The official `images/dev` image follows the same immutable-layout workflow.
+Run `capsem-gate reference-image` on each native architecture, qualify the
+printed layout with `capsem-gate image-qualify --image dev --layout
+<built-layout>`, and update `[functional.reference_image] digests` only after
+that native qualification passes. Publish the exact layout bytes to
+`ghcr.io/google/capsem/dev` with `oras cp`; rebuilding or using `docker push`
+can produce a different manifest digest. Attach the OBOM with
+`images/ci/rootfs.py --image dev:<arch>`, make the package public, and verify an
+anonymous manifest fetch by digest before relying on the pin in CI. The pinned
+layout is also mounted read-only into installed-package proofs through
+`CAPSEM_REFERENCE_IMAGE_LAYOUT`.
+
 ## Artifact identities and evidence
 
-Supported ARM64 `code` profile proof: **23 passed in 123.47s** at
+Supported ARM64 proof: **23 passed in 123.47s** at
 `2ade1feeccce7981442093fbcae6f661c3dc9be1`, with no source changes during execution.
 `just focus-test kingslanding` completed all 20 steps in 4m17s under the enforced
 macOS gate sandbox. The journal is
@@ -107,7 +204,7 @@ hardening diagnostics; none of those checks were skipped.
 The preceding failures were investigated and fixed:
 
 - `20260910-131254-63da2a`: shared-cache assets replaced the rebuilt OCI kernel.
-  S04-004 records the selection regression and full ARM64 profile rebuild
+  S04-004 records the selection regression and full ARM64 runtime rebuild
   `20260910-132119-a0c2a3-build-assets` (10 steps, 7m11s).
 - `20260910-133003-c0ac3b`: macOS refused nested Seatbelt initialization.
   The gate now hands off only named self-confining children; the router installs
@@ -152,10 +249,7 @@ was 93/136 (68.38%); confined children cannot write profiling files.
 
 ## Limits and next work
 
-Next: a minimal `container` profile containing the trusted guest agent, OCI runtime
-and required network plumbing, followed by policy-controlled container egress.
-Current containers boot from `code` or `co-work`; their application rootfs is already
-separate, but the surrounding VM still carries the profile's development tools.
+Next: policy-controlled container egress.
 
 - IPv4 loopback TCP publication only; no UDP, LAN binding, container egress, SDK,
   OpenAPI endpoint or Inspect integration. This does not claim Docker compatibility.

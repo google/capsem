@@ -52,10 +52,54 @@ Guest curl -> iptables REDIRECT -> capsem-net-proxy (guest, port 10443)
 | File | What |
 |------|------|
 | `crates/capsem-core/src/net/mitm_proxy.rs` | Async MITM proxy (rustls + hyper): TLS termination, HTTP inspection, upstream bridging |
-| `crates/capsem-core/src/net/cert_authority.rs` | CA loader + on-demand domain cert minting with RwLock cache |
+| `crates/capsem-core/src/net/cert_authority.rs` | CA loader + bounded single-flight domain certificate cache |
 | `crates/capsem-core/src/security_engine/` | Rule/plugin/decision rail over `SecurityEvent` |
 | `crates/capsem-core/src/net/sni.rs` | SNI parser for TLS ClientHello |
 | `crates/capsem-agent/src/net_proxy.rs` | Guest-side TCP-to-vsock relay |
+
+## Cross-process network limits
+
+`config/data/runtime-limits.toml` owns the supported concurrent network-client
+ceiling and its required multiples. `capsem-proto/build.rs` validates that file
+and generates the shared constants. DNS session capacity equals the client
+ceiling. HTTP descriptor-grant capacity multiplies it by
+`traffic_grants_per_client` because a pool can hold active and idle connections
+while a retiring connection is still closing. The process descriptor floor
+multiplies it by
+`file_descriptors_per_client` and must cover both ends of every overlapping
+grant. The ledger producer queue multiplies the client ceiling by
+`producer_events_per_network_client`; its admission batch must divide that
+queue exactly. `admission_coalesce_wait_microseconds` gives a lone audit event
+a bounded chance to join its immediate followers before the logger performs
+the commitment and admission IPC exchanges.
+
+Never add a numeric connection, ledger queue, batch or coalescing ceiling to
+the proxy, service broker, VM owner, logger, core DNS session, or guest DNS
+forwarder. A limit duplicated across those processes can make one stage admit
+work that the next stage sheds, which previously produced intermittent HTTP
+502 and DNS SERVFAIL responses under load. The guest relay, VM owner, service
+broker and confined proxy must call
+`capsem_foundation::unix::process::ensure_open_file_limit` with the generated
+floor before accepting traffic; raising only one process leaves the same cliff
+at the next hop. Change the config-owned values, exercise every consumer
+through the generated constants, and run the official HTTPS and DNS load
+benchmarks twice before and twice after the change. Any traffic error or
+capacity refusal fails the run. User overrides belong in the typed settings
+contract tracked by issue #349. Extend and run
+`tests/citadel/test_runtime_limit_authority.py` whenever a new consumer or
+derived limit is added.
+
+The same file's `[cache]` table owns DNS answer count and TTLs plus the TLS
+leaf count. Use its generated `capsem_proto::CACHE_*` constants; do not place a
+second cache bound in the proxy or DNS modules.
+
+Use `just bench mitm-scale` when a one-VM curve plateaus while the host still
+looks idle. The lane uses fresh 1/2/4/8-VM cohorts, keeps per-VM work fixed and
+records the mock upstream outside the Capsem process tree. Compare the curve to
+physical cores, not only logical CPUs: after the VM owners, confined proxies
+and ledgers consume the physical-core budget, SMT contention is expected to
+raise per-VM latency. A busy fixture, request error or hidden descriptor
+refusal invalidates the run; do not explain it as product saturation.
 
 ## Content-Encoding: the systemic rule
 
@@ -85,8 +129,8 @@ Only emit `model_calls` telemetry for actual LLM API paths (e.g., `/v1/messages`
 
 1. Network mechanics parse and normalize SNI, HTTP, DNS, model, and process
    facts into a `SecurityEvent`.
-2. Profile and corp rules compile into one `SecurityRuleSet`; profile defaults
-   are normal late-priority rules.
+2. Built-in default, settings, and corp rules compile into one
+   `SecurityRuleSet`; built-in defaults are normal late-priority rules.
 3. Security plugins run by stage over the same `SecurityEvent` object:
    `preprocess`, rule evaluation, `postprocess`, then `logging` before ledger
    handoff.
@@ -113,5 +157,6 @@ Read these for the exact SSE format, request/response shapes, and telemetry extr
 
 - Unit tests: `cargo test -p capsem-core net` (policy evaluation, SNI parsing, cert minting)
 - In-VM: `just exec "capsem-doctor -k network"` (TLS trust chain, port blocking, domain filtering)
-- Telemetry: `just exec "curl -s https://api.anthropic.com/"` then `python3 build_system/scripts/doctor/check_session.py` (check net_events)
+- Telemetry: `just exec "curl -s https://api.anthropic.com/"`, then inspect the
+  typed timeline/security routes for the expected `net_events` evidence
 - Adversarial: test with blocked domains, overlapping wildcards, malformed SNI, huge request bodies

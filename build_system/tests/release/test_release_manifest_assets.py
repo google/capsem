@@ -32,28 +32,46 @@ def _record(*, url: str, name: str | None = None, path: str | None = None) -> di
 def test_lists_and_deduplicates_every_public_release_graph_artifact() -> None:
     architecture = {
         "architecture": "arm64",
-        "image_revision": "2030.0101.1",
+        "image_revision": "0.7.0-0123456789ab",
         "images": [_record(url="https://cdn.example/vmlinuz", name="vmlinuz")],
-        "evidence": [_record(url="/evidence/obom.json", name="obom.json")],
-        "config": [_record(url="/profiles/code/profile.toml", path="profiles/code/profile.toml")],
+        "evidence": [
+            _record(
+                url="/runtime/releases/stable/0.7.0-0123456789ab/arm64/obom.cdx.json", name="obom"
+            )
+        ],
     }
-    manifest = {
-        "profiles": {
-            "code": {"architectures": [architecture]},
-            "co-work": {"architectures": [json.loads(json.dumps(architecture))]},
-        }
-    }
+    # A record named twice is one artifact, listed once.
+    architecture["evidence"].append(json.loads(json.dumps(architecture["evidence"][0])))
+    manifest = {"runtime": {"revision": "0.7.0-0123456789ab", "architectures": [architecture]}}
 
     rows = _module().manifest_asset_rows(
         manifest, "https://release.example/assets/stable/manifest.json"
     )
 
-    assert len(rows) == 3
+    assert len(rows) == 2
     assert {row[5] for row in rows} == {
         "https://cdn.example/vmlinuz",
-        "https://release.example/evidence/obom.json",
-        "https://release.example/profiles/code/profile.toml",
+        "https://release.example/runtime/releases/stable/0.7.0-0123456789ab/arm64/obom.cdx.json",
     }
+    assert {row[0] for row in rows} == {"0.7.0-0123456789ab"}
+
+
+def test_rejects_disagreeing_records_for_one_url() -> None:
+    first = _record(url="/runtime/releases/stable/r/arm64/vmlinuz", name="vmlinuz")
+    second = json.loads(json.dumps(first))
+    second["bytes"] = 13
+    manifest = {
+        "runtime": {
+            "architectures": [
+                {"architecture": "arm64", "image_revision": "r", "images": [first, second]}
+            ]
+        }
+    }
+
+    with pytest.raises(ValueError, match="disagree"):
+        _module().manifest_asset_rows(
+            manifest, "https://release.example/assets/stable/manifest.json"
+        )
 
 
 def test_lists_legacy_asset_manifest_urls() -> None:
@@ -89,9 +107,17 @@ def test_lists_legacy_asset_manifest_urls() -> None:
     ]
 
 
+def test_a_channel_graph_without_a_runtime_selects_no_artifacts() -> None:
+    for graph in ({"packages": []}, {"packages": [], "runtime": None}):
+        assert (
+            _module().manifest_asset_rows(graph, "https://release.example/assets/stable/manifest.json")
+            == []
+        )
+
+
 @pytest.mark.parametrize(
     "manifest",
-    [{}, {"profiles": {}}, {"profiles": {"code": {"architectures": []}}}],
+    [{}, {"runtime": None}, {"runtime": {}}, {"runtime": {"architectures": []}}],
 )
 def test_rejects_unknown_or_incomplete_manifest_shapes(manifest: dict) -> None:
     with pytest.raises(ValueError):
@@ -142,11 +168,7 @@ def test_cli_emits_tab_separated_rows(tmp_path: Path) -> None:
                     "current": "2030.0101.1",
                     "releases": {
                         "2030.0101.1": {
-                            "arches": {
-                                "arm64": {
-                                    "vmlinuz": {"hash": "a" * 64, "size": 12}
-                                }
-                            }
+                            "arches": {"arm64": {"vmlinuz": {"hash": "a" * 64, "size": 12}}}
                         }
                     },
                 }

@@ -287,3 +287,45 @@ match = 'http.host.matches("(^|.*\.)openai\.com$")'
 
     assert!(includes_openai_rule);
 }
+
+/// Publication, preview and named-network allows and the skill detection
+/// ship built in.
+#[test]
+fn built_in_defaults_cover_publication_preview_networks_and_skills() {
+    let built_in = ProviderRuleProfile::builtin_security_defaults()
+        .compile(SecurityRuleSource::BuiltinDefault)
+        .expect("built-in defaults compile");
+    let rule = |id: &str| {
+        built_in
+            .iter()
+            .find(|rule| rule.rule_id == format!("profiles.rules.default_{id}"))
+            .unwrap_or_else(|| panic!("built-in defaults lack default.{id}"))
+    };
+    for id in ["expose", "http_preview", "private"] {
+        assert_eq!(rule(id).action, SecurityRuleAction::Allow, "{id}");
+    }
+    let skill = rule("skill_loaded");
+    assert_eq!(skill.detection_level, Some(DetectionLevel::Informational));
+    assert_eq!(
+        skill.condition,
+        r#"file.read.name == "SKILL.md" && file.read.ext == "md""#
+    );
+}
+
+/// The built-in profile is parsed once per process: every call hands out the
+/// same instance. Policy reads on polled routes used to re-parse it per call,
+/// about 4 ms each in a debug build and once per plugin on `/plugins/list`.
+#[test]
+fn built_in_defaults_are_parsed_once_and_shared() {
+    let first = ProviderRuleProfile::builtin_security_defaults();
+    let second = ProviderRuleProfile::builtin_security_defaults();
+    assert!(
+        std::ptr::eq(first, second),
+        "built-in defaults must be one shared instance"
+    );
+    assert_eq!(
+        first,
+        &SecurityRuleProfile::parse_toml(DRAFT).expect("built-in defaults parse"),
+        "the shared instance is the compiled-in TOML"
+    );
+}

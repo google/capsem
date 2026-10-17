@@ -1,6 +1,6 @@
 //! `capsem network`: named networks over the service API.
 use crate::client::{
-    self, ApiResponse, CreateNetworkRequest, NetworkInfo, NetworkListResponse, NetworkLogsFilter, UdsClient,
+    self, ApiResponse, CreateNetworkRequest, GatewayClient, NetworkInfo, NetworkListResponse, NetworkLogsFilter,
 };
 use crate::route_ids::{resolve_network_route_id, resolve_session_route_id};
 use crate::session_display::{print_network_info, print_network_list, print_network_log_event};
@@ -62,7 +62,7 @@ pub(crate) enum NetworkCommands {
     },
 }
 
-pub(crate) async fn run(client: &UdsClient, command: &NetworkCommands) -> Result<()> {
+pub(crate) async fn run(client: &GatewayClient, command: &NetworkCommands) -> Result<()> {
     match command {
         NetworkCommands::List => {
             let resp: ApiResponse<NetworkListResponse> = client.get("/networks").await?;
@@ -131,7 +131,7 @@ pub(crate) async fn run(client: &UdsClient, command: &NetworkCommands) -> Result
 /// Print every page from the start; with `follow`, keep polling the last
 /// cursor once a second until Ctrl-C.
 async fn follow_network_logs(
-    client: &UdsClient,
+    client: &GatewayClient,
     network_id: &str,
     limit: usize,
     filter: &NetworkLogsFilter,

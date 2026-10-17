@@ -39,9 +39,7 @@ def test_image_builder_has_one_exact_source_owner() -> None:
 
 
 def test_builder_distribution_owns_image_package_and_command() -> None:
-    project = tomllib.loads(
-        (BUILD_SYSTEM_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    )
+    project = tomllib.loads((BUILD_SYSTEM_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert "capsem_builder.image" in project["tool"]["setuptools"]["packages"]
     assert "capsem_builder.image.tools" in project["tool"]["setuptools"]["packages"]
     assert "capsem_builder.image.tools.bootstrap" in project["tool"]["setuptools"]["packages"]
@@ -65,9 +63,9 @@ def test_bootstrap_script_boundaries_are_thin_exit_status_launchers() -> None:
         "provision-linux-workspace.py": "linux_workspace",
     }
     for name, module in launchers.items():
-        source = (
-            REPOSITORY_ROOT / "build_system" / "scripts" / "bootstrap" / name
-        ).read_text(encoding="utf-8")
+        source = (REPOSITORY_ROOT / "build_system" / "scripts" / "bootstrap" / name).read_text(
+            encoding="utf-8"
+        )
         tree = ast.parse(source)
         assert len(source.splitlines()) <= 20, f"{name} contains reusable behavior"
         assert f"capsem_builder.image.tools.bootstrap.{module}" in source
@@ -93,16 +91,14 @@ def test_build_script_boundaries_are_thin_image_owned_launchers() -> None:
         "gen_manifest.py": "gen_manifest",
         "print-gate-digest.py": "print_gate_digest",
         "prune-benchmark-history.py": "prune_benchmark_history",
-        "resolve-reusable-profile-assets.py": "resolve_reusable_profile_assets",
         "run-installed-winterfell.py": "run_installed_winterfell",
-        "stage_profile_assets.py": "stage_profile_assets",
         "sync-container-clock.py": "sync_container_clock",
         "tart_readiness.py": "tart_readiness",
     }
     for name, module in launchers.items():
-        source = (
-            REPOSITORY_ROOT / "build_system" / "scripts" / "build" / name
-        ).read_text(encoding="utf-8")
+        source = (REPOSITORY_ROOT / "build_system" / "scripts" / "build" / name).read_text(
+            encoding="utf-8"
+        )
         tree = ast.parse(source)
         assert len(source.splitlines()) <= 21, f"{name} contains reusable behavior"
         imports = {

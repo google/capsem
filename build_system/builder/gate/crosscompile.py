@@ -14,7 +14,7 @@ from pathlib import Path
 from . import hostimage, installplan
 from .actions import Call
 from .command import GateCommand
-from .content import ProfileContent
+from .content import RuntimeContent
 from .execution import Kind, Needs, Requires, Speed, step
 from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .packagerail import PackageRail
@@ -53,7 +53,7 @@ def fragment(
     config,
     target,
     *,
-    content: ProfileContent,
+    content: RuntimeContent,
     after: tuple = (),
     defer_proof: bool = False,
 ):
@@ -168,7 +168,7 @@ def fragment(
     return previous[0]
 
 
-def _phase(target, method: str, content: ProfileContent):
+def _phase(target, method: str, content: RuntimeContent):
     """One rail method, as a plan action.
 
     The rail is rebuilt per phase from the context's runner rather than shared
@@ -227,10 +227,10 @@ class CrossCompileCommand(
 
             raise GateError("--defer-proof requires an explicit --content-root")
         if content_root is None:
-            content = ProfileContent.standalone(config)
+            content = RuntimeContent.standalone(config)
         else:
             selected = Path(content_root)
-            content = ProfileContent.isolated(
+            content = RuntimeContent.isolated(
                 config, selected if selected.is_absolute() else config.path(str(selected))
             )
         plan = Plan(self.name)

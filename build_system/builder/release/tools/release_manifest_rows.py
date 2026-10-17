@@ -2,7 +2,7 @@
 
 The check that was missing. `check_package_url` validated the *shape* of a URL
 -- host, path template, not-an-asset-tag -- and never fetched it, and nothing
-looked at the profile rows at all. So the live stable channel served
+looked at the VM asset rows at all. So the live stable channel served
 `status: current` with HTTP 200 for a month while all three of its package URLs
 returned 404, because the tag they pointed at had been deleted after
 publication. No build-time check can see that: at build time the bytes were
@@ -41,29 +41,21 @@ WORKERS = 8
 def manifest_rows(manifest: dict[str, Any], base_url: str) -> list[tuple[str, str]]:
     """Every downloadable thing the manifest names, labelled for a human.
 
-    Packages and profile assets together, because a channel is only usable if
-    both resolve -- and the profile half is the half nothing was checking.
+    Packages and runtime assets together, because a channel is only usable if
+    both resolve -- and the runtime half is the half nothing was checking.
     """
     rows: list[tuple[str, str]] = []
     for package in manifest.get("packages") or []:
         if isinstance(package, dict) and (url := package.get("url")):
             rows.append((f"package/{package.get('name', '?')}", url))
 
-    profiles = manifest.get("profiles") or {}
-    entries = (
-        profiles.items()
-        if isinstance(profiles, dict)
-        else ((item.get("id", "?"), item) for item in profiles)
-    )
-    for name, profile in entries:
-        if not isinstance(profile, dict):
-            continue
-        for arch in profile.get("architectures") or []:
-            label = f"{name}/{arch.get('architecture', '?')}"
-            for group in ("assets", "config"):
-                for entry in arch.get(group) or []:
-                    if isinstance(entry, dict) and (url := entry.get("url")):
-                        rows.append((f"{label}/{entry.get('path', '?')}", url))
+    runtime = manifest.get("runtime")
+    for arch in (runtime.get("architectures") or []) if isinstance(runtime, dict) else []:
+        label = f"runtime/{arch.get('architecture', '?')}"
+        for group in ("images", "evidence"):
+            for entry in arch.get(group) or []:
+                if isinstance(entry, dict) and (url := entry.get("url")):
+                    rows.append((f"{label}/{entry.get('name') or entry.get('kind', '?')}", url))
 
     # Site-relative rows are resolved against the manifest they came from, so a
     # relative path is not reported dead for being relative.

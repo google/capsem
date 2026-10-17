@@ -15,11 +15,9 @@ import pytest
 from helpers.body_archive import security_payload
 from helpers.constants import (
     ASSETS_DIR,
-    CODE_PROFILE_ID,
     DEFAULT_CPUS,
     DEFAULT_RAM_MB,
     EXEC_READY_TIMEOUT,
-    PROFILES_DIR,
 )
 from helpers.gateway import GatewayInstance, TcpHttpClient
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
@@ -134,7 +132,6 @@ def _prove_gateway_proxy(gateway_client: TcpHttpClient) -> None:
 def test_dns_query_and_block_matrix_pays_full_ledger_debt_blackbox() -> None:
     assert MOCK_SERVER_BINARY.exists(), f"{MOCK_SERVER_BINARY} missing"
     assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
-    assert PROFILES_DIR.exists(), f"{PROFILES_DIR} missing; materialize profile config"
 
     service = ServiceInstance()
     gateway: GatewayInstance | None = None
@@ -190,7 +187,6 @@ def test_dns_query_and_block_matrix_pays_full_ledger_debt_blackbox() -> None:
             "/vms/create",
             {
                 "name": session_id,
-                "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
                 "env": {},

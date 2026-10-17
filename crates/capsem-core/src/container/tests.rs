@@ -30,5 +30,130 @@ fn the_detached_launch_is_the_launch_command_backgrounded_to_the_console() {
         )
         .output()
         .unwrap();
-    assert_eq!(String::from_utf8(echoed.stdout).unwrap(), LAUNCH_COMMAND);
+    assert_eq!(String::from_utf8(echoed.stdout).unwrap(), DETACHED_LAUNCH_COMMAND);
+}
+
+/// Nothing is attached to a detached launch, so its workload runs on a
+/// terminal the launcher holds; an attached `capsem run` streams the
+/// launcher's own stdio instead. A boot's relaunch is detached too.
+#[test]
+fn a_detached_launch_holds_a_terminal_and_an_attached_one_does_not() {
+    assert!(
+        DETACHED_LAUNCH_COMMAND.ends_with("/root/.capsem-image/launch.py --detached /root/.capsem-image'"),
+        "{DETACHED_LAUNCH_COMMAND}"
+    );
+    assert!(!LAUNCH_COMMAND.contains("--detached"), "{LAUNCH_COMMAND}");
+    let init = include_str!("../../../../guest/artifacts/capsem-init");
+    let relaunch = init
+        .lines()
+        .find(|line| line.contains("/root/.capsem-image/launch.py"))
+        .expect("capsem-init relaunches a staged image");
+    assert!(
+        relaunch.contains("launch.py --detached /root/.capsem-image'"),
+        "{relaunch}"
+    );
+}
+
+#[test]
+fn the_workload_gets_the_vm_minus_the_runtime_reserve() {
+    let resources = workload_resources(2048, 2).unwrap();
+    assert_eq!(resources.memory_bytes, (2048 - RUNTIME_RESERVE_MB) * 1024 * 1024);
+    assert_eq!(resources.cpu_millis, 2000 - RUNTIME_RESERVE_CPU_MILLIS);
+    assert_eq!(resources.pids, WORKLOAD_PIDS);
+    // One CPU still leaves the workload most of it.
+    assert_eq!(workload_resources(1024, 1).unwrap().cpu_millis, 750);
+}
+
+#[test]
+fn a_vm_too_small_for_a_workload_is_refused() {
+    let smallest = RUNTIME_RESERVE_MB + WORKLOAD_MIN_MB;
+    assert!(workload_resources(smallest, 1).is_ok());
+    for ram_mb in [0, RUNTIME_RESERVE_MB, smallest - 1] {
+        assert!(workload_resources(ram_mb, 1).is_err(), "{ram_mb} MiB accepted");
+    }
+    assert!(workload_resources(4096, 0).is_err());
+}
+
+#[test]
+fn the_launch_commands_do_not_mutate_the_guest_owned_stage() {
+    assert_eq!(
+        LAUNCH_COMMAND,
+        "chroot /proc/1/root /bin/busybox unshare -m /bin/sh -ec \
+         'mount --make-rprivate /; cd /newroot; mount --move . /; exec chroot . /usr/bin/python3 \
+         /root/.capsem-image/launch.py /root/.capsem-image'"
+    );
+    assert!(!DETACHED_LAUNCH_COMMAND.contains("chmod"), "{DETACHED_LAUNCH_COMMAND}");
+}
+
+/// The JSON request a `workload_exec_command` carries, hex-decoded.
+fn decode_workload_exec(payload: &str) -> serde_json::Value {
+    let bytes: Vec<u8> = (0..payload.len())
+        .step_by(2)
+        .map(|at| u8::from_str_radix(&payload[at..at + 2], 16).unwrap())
+        .collect();
+    serde_json::from_slice(&bytes).unwrap()
+}
+
+/// The workload exec runs the launcher in the same moved-root context as the
+/// launch, and a hostile command reaches it byte for byte: quotes, newlines
+/// and substitutions are payload, never shell syntax at either level.
+#[test]
+fn a_workload_exec_carries_any_command_exactly_to_the_launcher() {
+    let hostile = "printf '%s' \"$(id -u)\"; echo 'a'\\''b' `uname`\n; exit 7";
+    let command = workload_exec_command(hostile);
+    let (context, _) = LAUNCH_COMMAND.split_once("launch.py ").unwrap();
+    assert!(command.starts_with(context), "{command}");
+    // What the outer shell hands `sh -ec`: run it through a real shell with
+    // the chroot replaced by printf and read the inner script back.
+    let inner = std::process::Command::new("/bin/sh")
+        .arg("-c")
+        .arg(command.replacen(
+            "chroot /proc/1/root /bin/busybox unshare -m /bin/sh -ec",
+            "printf %s",
+            1,
+        ))
+        .output()
+        .unwrap();
+    let inner = String::from_utf8(inner.stdout).unwrap();
+    let payload = inner
+        .strip_prefix(
+            "mount --make-rprivate /; cd /newroot; mount --move . /; exec chroot . /usr/bin/python3 \
+             /root/.capsem-image/launch.py --exec ",
+        )
+        .unwrap_or_else(|| panic!("unexpected inner script: {inner}"));
+    assert!(payload.bytes().all(|byte| byte.is_ascii_hexdigit()), "{payload}");
+    assert_eq!(
+        decode_workload_exec(payload),
+        serde_json::json!({ "command": hostile, "tty": false })
+    );
+}
+
+/// The terminal shell of an image session hands its PTY to the launcher's
+/// attach loop, in the same moved-root context as exec, before any VM shell
+/// prompt: for a session created with an image and for one restarted with it.
+#[test]
+fn the_vm_bashrc_hands_an_image_session_terminal_to_the_workload() {
+    let bashrc = include_str!("../../../../guest/artifacts/capsem-bashrc");
+    let handoff = bashrc
+        .find(&format!("exec {ATTACH_COMMAND}\n"))
+        .expect("bashrc execs ATTACH_COMMAND");
+    let guard = &bashrc[..handoff];
+    assert!(guard.contains(&format!("\"${WORKLOAD_ENV}\"")), "{guard}");
+    assert!(guard.contains(&format!("/root/{STAGE}/ready")), "{guard}");
+    assert!(
+        bashrc.find("capsem-banner").unwrap() > handoff,
+        "no VM banner before the hand-off"
+    );
+    assert!(ATTACH_COMMAND.ends_with("/root/.capsem-image/launch.py --attach'"));
+}
+
+#[test]
+fn only_an_image_session_is_marked_in_its_boot_environment() {
+    let user = std::collections::HashMap::from([("A".to_string(), "1".to_string())]);
+    assert_eq!(session_env(Some(user.clone()), false), Some(user.clone()));
+    assert_eq!(session_env(None, false), None);
+    let marked = session_env(Some(user), true).unwrap();
+    assert_eq!(marked.get(WORKLOAD_ENV).map(String::as_str), Some("1"));
+    assert_eq!(marked.get("A").map(String::as_str), Some("1"));
+    assert_eq!(session_env(None, true).unwrap().len(), 1);
 }

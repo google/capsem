@@ -103,6 +103,43 @@ fn guest_memory_new_valid() {
 }
 
 #[test]
+fn guest_ram_and_kvm_slot_offsets_preserve_huge_page_alignment() {
+    const HUGE_PAGE: u64 = 2 * 1024 * 1024;
+    let host_alignment = capsem_foundation::unix::guest_memory::page_alignment();
+    for size in [4096, HUGE_PAGE, 12 * 1024 * 1024 * 1024] {
+        let memory = GuestMemory::new(size).unwrap();
+        assert_eq!(
+            memory.as_ptr().addr() % host_alignment,
+            0,
+            "4-KiB host backing once cost 1.5s reading EROFS and 1.1s booting Linux; guest RAM must stay 2-MiB aligned"
+        );
+        assert_eq!(memory.size(), size, "alignment must not increase advertised guest RAM");
+        #[cfg(target_arch = "x86_64")]
+        if size > PCI_HOLE_START {
+            assert_eq!(
+                memory.as_ptr_at(PCI_HOLE_START).unwrap().addr() % host_alignment,
+                0,
+                "the KVM slot above the PCI hole must retain host huge-page alignment"
+            );
+            assert!(PCI_HOLE_END.is_multiple_of(HUGE_PAGE));
+        }
+    }
+}
+
+#[test]
+fn fresh_guest_memory_is_zeroed_without_reusing_a_previous_guests_bytes() {
+    let size = 2 * 1024 * 1024;
+    {
+        let old = GuestMemory::new(size).unwrap();
+        old.write_at(0, &vec![0xa5; size as usize]).unwrap();
+    }
+    let fresh = GuestMemory::new(size).unwrap();
+    let mut bytes = vec![0xff; size as usize];
+    fresh.read_at(0, &mut bytes).unwrap();
+    assert!(bytes.iter().all(|byte| *byte == 0));
+}
+
+#[test]
 fn guest_memory_new_zero_fails() {
     assert!(GuestMemory::new(0).is_err());
 }

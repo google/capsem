@@ -3,7 +3,7 @@
 A foreign target used to be built by running the target's own platform child
 under QEMU. Measured cold on a 16-core Linux host, the six aarch64 guest
 binaries took 1194.7s that way against 86s cross-compiled from the amd64 base,
-and a profile release run compiles that graph three times.
+and a release run compiles that graph three times.
 
 So the builder is chosen by the *host*, not by the target: the image is always
 the host platform's exact Rust child, and a foreign target is reached by adding
@@ -14,11 +14,11 @@ resolution fixes it without a second mechanism.
 
 from __future__ import annotations
 
-import hashlib
 import platform
 from dataclasses import dataclass
 from pathlib import Path
 
+from .. import crypto as hashlib
 from .models import BuildConfig
 
 # Every spelling `platform.machine()` returns for the two supported CPUs.

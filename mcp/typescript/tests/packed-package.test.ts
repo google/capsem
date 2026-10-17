@@ -1,9 +1,10 @@
 import {execFileSync} from 'node:child_process';
-import {mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync} from 'node:fs';
+import {copyFileSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync} from 'node:fs';
+import {sha256} from '../../../sdk/typescript/tools/crypto.mjs';
 import {createServer as createHttpServer} from 'node:http';
 import type {AddressInfo} from 'node:net';
-import {tmpdir} from 'node:os';
-import {join} from 'node:path';
+import {homedir, tmpdir} from 'node:os';
+import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {StdioClientTransport} from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -15,6 +16,7 @@ describe('packed-package', () => {
   const fixtures: string[] = [];
   const clients: PackedClient[] = [];
   const gateways: ReturnType<typeof createHttpServer>[] = [];
+  const retained: {path: string; sha256: string}[] = [];
 
   afterEach(async () => {
     for (const packed of clients.splice(0)) await packed.client.close();
@@ -23,49 +25,100 @@ describe('packed-package', () => {
       await new Promise<void>((resolve, reject) => gateway.close(error => error ? reject(error) : resolve()));
     }
     for (const fixture of fixtures.splice(0)) rmSync(fixture, {recursive: true, force: true});
+    for (const archive of retained.splice(0)) expect(digest(archive.path)).toBe(archive.sha256);
   });
 
-  function pack(): {cli: string; manifest: Record<string, unknown>} {
+  const digest = (path: string): string => sha256(readFileSync(path));
+
+  function pack(): {cli: string; dependencies: string; manifest: Record<string, unknown>} {
     const packageRoot = fileURLToPath(new URL('..', import.meta.url));
     const fixture = mkdtempSync(join(tmpdir(), 'capsem-mcp-pack-'));
     fixtures.push(fixture);
-    execFileSync('pnpm', ['pack', '--config.ignore-scripts=true', '--pack-destination', fixture], {
-      cwd: packageRoot,
-      stdio: 'pipe',
+    const sources = {sdk: join(packageRoot, '../../sdk/typescript'), mcp: packageRoot};
+    const archives: string[] = [];
+    for (const [owner, source] of Object.entries(sources)) {
+      const destination = join(fixture, owner);
+      mkdirSync(destination);
+      const selectedDirectory = process.env.CAPSEM_MCP_PACKAGE_ARCHIVES;
+      if (selectedDirectory) {
+        const version = (JSON.parse(readFileSync(join(source, 'package.json'), 'utf8')) as {version: string}).version;
+        const path = join(selectedDirectory, `capsem-${owner}-${version}.tgz`);
+        retained.push({path, sha256: digest(path)});
+        copyFileSync(path, join(destination, `capsem-${owner}-${version}.tgz`));
+      } else execFileSync('pnpm', ['pack', '--config.ignore-scripts=true', '--pack-destination', destination], {
+        cwd: source, stdio: 'pipe', timeout: 15_000, env: {...process.env, HOME: fixture},
+      });
+      const name = readdirSync(destination).find(entry => entry.endsWith('.tgz'));
+      if (!name) throw new Error('pnpm pack did not create a tarball');
+      const archive = join(destination, name);
+      if (selectedDirectory) expect(digest(archive)).toBe(retained.at(-1)?.sha256);
+      archives.push(archive);
+      execFileSync('tar', ['-xzf', archive, '-C', destination], {timeout: 5000});
+    }
+    writeFileSync(join(fixture, 'package.json'), JSON.stringify({name: 'capsem-mcp-clean-consumer', private: true}));
+    execFileSync('npm', ['install', '--offline', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund', ...archives], {
+      cwd: fixture, stdio: 'pipe', timeout: 60_000,
+      env: {PATH: process.env.PATH ?? '', HOME: fixture,
+        NPM_CONFIG_CACHE: process.env.NPM_CONFIG_CACHE ?? join(homedir(), '.npm')},
     });
-    const archive = readdirSync(fixture).find(name => name.endsWith('.tgz'));
-    if (!archive) throw new Error('pnpm pack did not create a tarball');
-    execFileSync('tar', ['-xzf', join(fixture, archive), '-C', fixture]);
-    const extracted = join(fixture, 'package');
-    symlinkSync(join(packageRoot, 'node_modules'), join(extracted, 'node_modules'), 'dir');
+    const dependencies = join(fixture, 'node_modules');
+    for (const [owner, source] of Object.entries(sources)) {
+      const installed = join(dependencies, '@capsem', owner);
+      expect(lstatSync(installed).isSymbolicLink()).toBe(false);
+      comparePayload(join(fixture, owner, 'package'), installed);
+      comparePayload(join(source, 'dist'), join(installed, 'dist'));
+    }
+    const installed = join(dependencies, '@capsem/mcp');
     return {
-      cli: join(extracted, 'dist', 'cli.js'),
-      manifest: JSON.parse(readFileSync(join(extracted, 'package.json'), 'utf8')) as Record<string, unknown>,
+      cli: join(installed, 'dist', 'cli.js'), dependencies,
+      manifest: JSON.parse(readFileSync(join(installed, 'package.json'), 'utf8')) as Record<string, unknown>,
     };
   }
 
+  function comparePayload(expected: string, actual: string): void {
+    expect(lstatSync(actual).isSymbolicLink()).toBe(false);
+    const names = readdirSync(expected).sort();
+    expect(readdirSync(actual).sort()).toEqual(names);
+    for (const name of names) {
+      const from = join(expected, name), to = join(actual, name);
+      expect(lstatSync(to).isSymbolicLink()).toBe(false);
+      if (lstatSync(from).isDirectory()) comparePayload(from, to);
+      else expect(readFileSync(to)).toEqual(readFileSync(from));
+    }
+  }
+
   async function connect(cli: string, gatewayUrl: string, token: string): Promise<PackedClient> {
+    const consumerNode = process.env.CAPSEM_MCP_PACKAGE_NODE ?? process.execPath;
+    const runtimeVersion = execFileSync(consumerNode, ['-p', 'process.version'], {encoding: 'utf8', timeout: 5000}).trim();
+    expect(Number(runtimeVersion.slice(1).split('.')[0])).toBeGreaterThanOrEqual(20);
     const transport = new StdioClientTransport({
-      command: process.execPath,
+      command: consumerNode,
       args: [cli, '--gateway-url', gatewayUrl, '--timeout-ms', '5000'],
-      env: {PATH: process.env.PATH ?? '', CAPSEM_GATEWAY_TOKEN: token},
+      env: {HOME: dirname(cli), PATH: process.env.PATH ?? '', CAPSEM_GATEWAY_TOKEN: token},
       stderr: 'pipe',
     });
     const stderr: string[] = [];
     transport.stderr?.on('data', chunk => stderr.push(String(chunk)));
     const client = new Client({name: 'packed-package-test', version: '1'});
     await client.connect(transport);
+    expect(transport.pid).toBeGreaterThan(0);
+    if (process.platform === 'linux') {
+      expect(realpathSync(`/proc/${transport.pid}/exe`)).toBe(realpathSync(consumerNode));
+    }
     const packed = {client, transport, stderr};
     clients.push(packed);
     return packed;
   }
 
   it('drives isolated authenticated workflows through the tarball executable', async () => {
-    const {cli, manifest} = pack();
+    const {cli, dependencies, manifest} = pack();
+    expect(lstatSync(dependencies).isSymbolicLink()).toBe(false);
     expect(manifest.bin).toEqual({'capsem-mcp': './dist/cli.js'});
-    expect(manifest.dependencies).toMatchObject({'@capsem/sdk': '0.6.3'});
+    expect(manifest.dependencies).toMatchObject({'@capsem/sdk': manifest.version});
 
     const authorizations: string[] = [];
+    const pin = `registry.example/code@sha256:${'a'.repeat(64)}`;
+    const imageRequests: {path: string; method: string | undefined; body: string}[] = [];
     let slowRequestClosed: (() => void) | undefined;
     const slowClosed = new Promise<void>(resolve => {slowRequestClosed = resolve;});
     let slowRequestStarted: (() => void) | undefined;
@@ -77,6 +130,19 @@ describe('packed-package', () => {
     const gateway = createHttpServer((request, response) => {
       authorizations.push(request.headers.authorization ?? '');
       const path = new URL(request.url ?? '/', 'http://gateway.test').pathname;
+      if (path === '/images' || path === '/images/pull') {
+        let body = '';
+        request.setEncoding('utf8');
+        request.on('data', (chunk: string) => {body += chunk;});
+        request.on('end', () => {
+          imageRequests.push({path: request.url ?? '', method: request.method, body});
+          response.setHeader('content-type', 'application/json');
+          response.end(JSON.stringify(path === '/images'
+            ? {images: [{name: 'code', description: 'Tools', architectures: ['amd64'], image: pin, cached: 'unknown'}]}
+            : {image: 'code', resolved: pin, digest: `sha256:${'b'.repeat(64)}`}));
+        });
+        return;
+      }
       if (path === '/networks') {
         response.setHeader('content-type', 'application/json');
         return response.end(JSON.stringify({networks: []}));
@@ -102,6 +168,9 @@ describe('packed-package', () => {
     const [first, second] = await Promise.all([
       connect(cli, gatewayUrl, 'token-a'), connect(cli, gatewayUrl, 'token-b'),
     ]);
+    for (const connection of [first, second]) {
+      expect(connection.client.getServerVersion()).toEqual({name: 'capsem-mcp', version: manifest.version});
+    }
 
     const tools = await first.client.listTools();
     expect(tools.tools.some(tool => tool.name === 'capsem_network_list')).toBe(true);
@@ -112,6 +181,19 @@ describe('packed-package', () => {
     expect(one.structuredContent).toEqual({networks: []});
     expect(two.structuredContent).toEqual({networks: []});
     expect(new Set(authorizations.slice(0, 2))).toEqual(new Set(['Bearer token-a', 'Bearer token-b']));
+
+    expect(tools.tools.map(tool => tool.name)).toEqual(expect.arrayContaining(['capsem_image_list', 'capsem_image_pull']));
+    const catalog = await first.client.callTool({name: 'capsem_image_list', arguments: {refresh: true}});
+    expect(catalog.isError).not.toBe(true);
+    expect(catalog.structuredContent).toEqual({images: [{name: 'code', description: 'Tools', architectures: ['amd64'], image: pin, cached: 'unknown'}]});
+    const pulled = await first.client.callTool({name: 'capsem_image_pull', arguments: {image: 'code'}});
+    expect(pulled.isError).not.toBe(true);
+    expect(pulled.structuredContent).toEqual({image: 'code', resolved: pin, digest: `sha256:${'b'.repeat(64)}`});
+    expect(imageRequests).toEqual([
+      {method: 'GET', path: '/images?refresh=true', body: ''},
+      {method: 'POST', path: '/images/pull', body: '{"image":"code"}'},
+    ]);
+    expect(authorizations.slice(2, 4)).toEqual(['Bearer token-a', 'Bearer token-a']);
 
     const denied = await first.client.callTool({name: 'capsem_host_logs', arguments: {source: 'mcp'}});
     expect(denied.isError).toBe(true);
@@ -140,5 +222,10 @@ describe('packed-package', () => {
     ]);
     expect(first.stderr.join('')).toBe('');
     expect(second.stderr.join('')).toBe('');
-  }, 15_000);
+    if (process.env.CAPSEM_MCP_PACKAGE_RECEIPT) {
+      writeFileSync(process.env.CAPSEM_MCP_PACKAGE_RECEIPT, JSON.stringify({archives: retained,
+        version: manifest.version, node: execFileSync(process.env.CAPSEM_MCP_PACKAGE_NODE ?? process.execPath,
+          ['-p', 'process.version'], {encoding: 'utf8', timeout: 5000}).trim(), ok: true}, null, 2) + '\n');
+    }
+  }, 90_000);
 });

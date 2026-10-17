@@ -92,7 +92,10 @@ class BenchmarkMetric(StrEnum):
     # can only make another sample slower. A real regression still raises every
     # floor. Image size is deterministic and therefore retains its maximum.
     LIFECYCLE_PROVISION = "operations.provision_ms.min"
-    LIFECYCLE_READY = "operations.exec_ready_ms.min"
+    # Provision returns once the VM owner has launched; exec-ready ends the
+    # same startup once the guest can run commands. Refactors may move work
+    # across that response boundary, so the stable capability is their sum.
+    LIFECYCLE_STARTUP = "operations.startup_ms.min"
     LIFECYCLE_EXEC = "operations.exec_ms.min"
     LIFECYCLE_DELETE = "operations.delete_ms.min"
     FORK_DURATION = "fork.fork_ms.min"
@@ -113,15 +116,10 @@ class HostClass(StrEnum):
     HOSTED = "hosted"
 
 
-def base_profile(project_root: Path) -> str:
+def base_profile(project_root: Path) -> str | None:
     """The lane whose numbers the unlabelled historical evidence describes."""
     config = tomllib.loads((project_root / "config" / "gate.toml").read_text(encoding="utf-8"))
-    return str(config["suites"]["pytest"]["base_profile"])
-
-
-def measuring_profile(project_root: Path) -> str:
-    """The profile this test process is exercising."""
-    return os.environ.get("CAPSEM_TEST_PROFILE") or base_profile(project_root)
+    return config["suites"]["pytest"].get("base_profile")
 
 
 def measuring_host(project_root: Path) -> HostClass:
@@ -166,11 +164,11 @@ def latest_checked_in_benchmark(
             continue
         # Unlabelled is local for the same reason: the build box recorded all
         # of it, and no hosted number has ever been checked in without the field.
-        if profile is not None and (document.get("host_class") or HostClass.LOCAL) != host:
+        if (document.get("host_class") or HostClass.LOCAL) != host:
             continue
         candidates.append((float(document["timestamp"]), path, document))
     if not candidates:
-        if profile is not None and (profile != base or host != HostClass.LOCAL):
+        if host != HostClass.LOCAL or (profile is not None and profile != base):
             # A lane with no evidence of its own is seeded by this run rather
             # than measured against another lane's. Returning the base
             # profile's numbers, or the build box's, here is exactly the
@@ -200,6 +198,16 @@ def _regression_config(project_root: Path) -> dict[str, Any]:
 
 
 def metric_value(document: dict[str, Any], metric: BenchmarkMetric) -> float:
+    if metric == BenchmarkMetric.LIFECYCLE_STARTUP:
+        operations = document["operations"]
+        if "startup_ms" in operations:
+            return float(operations["startup_ms"]["min"])
+        provision = operations["provision_ms"]
+        ready = operations["exec_ready_ms"]
+        if "values" in provision and "values" in ready:
+            pairs = zip(provision["values"], ready["values"], strict=True)
+            return float(min(create + exec_ready for create, exec_ready in pairs))
+        return float(provision["min"] + ready["min"])
     value: Any = document
     for component in metric.value.split("."):
         value = value[component]

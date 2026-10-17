@@ -87,6 +87,7 @@ def observing(
         declared=declared,
         on_fault=report,
         duplicate_content_exempt=config.runlog.duplicate_content_exempt,
+        duplicate_content_mirrors=config.runlog.duplicate_content_mirrors,
         source_replica_roots=config.runlog.source_replica_roots,
         observer_timeout=settings.observer_timeout_seconds,
         survey_interval=settings.observer_survey_seconds,

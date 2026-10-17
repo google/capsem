@@ -223,7 +223,10 @@ def test_ci_jobs_are_selected_by_one_fail_closed_owner_stream() -> None:
     assert "if" not in jobs["fast-gate"]
     assert "needs" not in jobs["fast-gate"]
     for name in INDEPENDENT_JOBS:
-        assert jobs[name]["needs"] == "scope"
+        # Source-runtime/install construction is expensive and must wait for
+        # the fast gate; all other scoped jobs retain independent scheduling.
+        expected = ["scope", "fast-gate"] if name == "test-install" else "scope"
+        assert jobs[name]["needs"] == expected
         assert jobs[name]["if"] == (
             f"${{{{ contains(fromJSON(needs.scope.outputs.owners), '{name}') }}}}"
         )

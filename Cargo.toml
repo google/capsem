@@ -1,6 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/capsem-cache",
+    "crates/capsem-crypto",
     "sdk/rust",
     "crates/capsem-api",
     "crates/capsem-assets",
@@ -14,12 +16,15 @@ members = [
     "crates/capsem-app",
     "crates/capsem-agent",
     "crates/capsem-logger",
+    "crates/capsem-ledger",
+    "crates/capsem-proxy",
     "crates/capsem-process",
     "crates/capsem-service",
     "crates/capsem-admin",
     "crates/capsem",
     "crates/capsem-bench",
     "crates/capsem-tui",
+    "crates/capsem-mcp-transport",
     "crates/capsem-mcp-aggregator",
     "crates/capsem-mcp-builtin",
     "crates/capsem-mock-server",
@@ -31,7 +36,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.6.6"
+version = "0.7.0"
 edition = "2021"
 rust-version = "1.91"
 license = "Apache-2.0"
@@ -49,6 +54,39 @@ debug = "line-tables-only"
 # Always optimize blake3 -- its SIMD assembly is 100x faster than
 # unoptimized Rust. Without this, debug-build hashing takes 24s for 2GB.
 [profile.dev.package.blake3]
+opt-level = 3
+
+# OCI cache hits verify full blobs too; unoptimized SHA-256 dominates warm
+# image startup and holds cache acquisition locks for large published roots.
+[profile.dev.package.sha2]
+opt-level = 3
+
+[profile.dev.package.capsem-crypto]
+opt-level = 3
+
+[profile.dev.package.capsem-cache]
+opt-level = 3
+
+[profile.dev.package.capsem-logger]
+opt-level = 3
+
+# The ledger's SQLite transaction is part of live DNS/HTTP admission. Package
+# overrides do not flow into dependencies, so optimize both the Rust wrapper
+# and bundled C engine explicitly in the debug binaries used by installs and
+# gateway benchmarks.
+[profile.dev.package.rusqlite]
+opt-level = 3
+
+[profile.dev.package.libsqlite3-sys]
+opt-level = 3
+
+[profile.dev.package.quick_cache]
+opt-level = 3
+
+[profile.dev.package.blake2b_simd]
+opt-level = 3
+
+[profile.dev.package.blake2s_simd]
 opt-level = 3
 
 # Always optimize hot wire-format codecs in dev/install builds. `just install`
@@ -179,7 +217,7 @@ tracing-appender = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_bytes = "0.11"
 serde_json = { version = "1", features = ["raw_value"] }
-serde_yaml = "0.9"
+serde-saphyr = { version = "1.3", default-features = false, features = ["deserialize"] }
 rmp-serde = "1.3.0"
 toml = "0.8"
 rusqlite = { version = "0.32", features = ["bundled", "hooks", "serialize"] }

@@ -413,7 +413,7 @@ async fn db_correctness_db_query_exact_after_flush_and_restart() {
                     forensic.len(),
                     forensic.len(),
                     0,
-                    format!("blake3:{}", blake3::hash(&forensic).to_hex()),
+                    format!("blake3:{}", capsem_crypto::blake3::hash(&forensic).to_hex()),
                     "trace-correctness-1",
                     "trace-correctness-1"
                 ],

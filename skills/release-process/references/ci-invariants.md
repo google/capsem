@@ -8,7 +8,7 @@ Reference for /release-process: the Ironbank parity rule and every burned-releas
 ##### Ironbank parity rule
 
 The Ironbank parity rule is that every portable release gate must be owned by
-`just test`. Local development rebuilds every package and every profile.
+`just test`. Local development rebuilds every package and the runtime.
 Release CI reuses the same checked-in test modules while building only its
 owned artifact family and resolving the unchanged family by manifest-recorded
 digest. A specialized job is useful evidence, but it cannot become the sole
@@ -32,10 +32,10 @@ entrypoint with a local gate. Current required mappings are:
   rather than rebuilding them;
 - VM assets: `just test` owns `just _gate-assets`, which executes the same
   `just _build-kernel` and `just _build-rootfs` primitives as
-  `release-assets.yaml` for every checked-in profile and both published
+  `release-assets.yaml` for the one runtime and both published
   architectures, validates the full payload and manifest, and proves a real
   guest shell from each rebuilt host-architecture image. Both local and CI
-  primitives first materialize the exact profile/architecture dependency
+  primitives first materialize the exact architecture dependency
   helpers on their one named network-open frontier, then require the source
   kernel/rootfs builds to consume those exact image IDs with BuildKit network
   `none` and no remote cache;
@@ -44,8 +44,8 @@ entrypoint with a local gate. Current required mappings are:
   every deployable production dist must contain and validate both `stable` and
   `nightly`, preserving the untouched channel graph instead of replacing the
   Pages site with only the channel being updated. The local gate must
-  materialize profile config from the same candidate worktree used to generate
-  its descriptors, while production assembly must use an immutable git ref;
+  generate its descriptors from the candidate worktree, while production
+  assembly must use an immutable git ref;
 - VM asset digests: the asset build/ingest boundary streams every immutable
   blob once and persists BLAKE3 plus SHA-256 in the authoritative manifest.
   Channel assembly reuses those records and must not hash complete blobs once
@@ -192,7 +192,7 @@ host-side Colima clock synchronizer with a hard timeout and fail closed.
   preparation keeps all three aligned before `just test`; release workflows
   never silently stamp or commit them.
 - **Do not resurrect local VM manifest signing.** VM asset integrity is the
-  profile manifest plus BLAKE3 hashes, manifest metadata/hash reporting, and
+  runtime manifest plus BLAKE3 hashes, manifest metadata/hash reporting, and
   SBOM/OBOM/build-ledger evidence. Local `manifest-sign.pub` keys and minisign
   setup are security theater for this rail. Tauri updater signatures still use
   `TAURI_SIGNING_PRIVATE_KEY`; do not confuse that with VM asset manifests.

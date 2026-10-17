@@ -11,19 +11,14 @@ pub struct Ports<'a>(pub(crate) &'a VM);
 pub struct VmNetworks<'a>(pub(crate) &'a VM);
 pub struct Networks<'a>(pub(crate) &'a Client);
 pub struct Debug<'a>(pub(crate) &'a Client);
-pub struct Profiles<'a>(pub(crate) &'a Client);
-pub struct ProfileMcp<'a> {
+/// The MCP servers every VM runs: settings.toml `[mcp]` with corp's over it.
+pub struct Mcp<'a>(pub(crate) &'a Client);
+pub struct McpServer<'a> {
     client: &'a Client,
-    profile_id: String,
-}
-pub struct ProfileMcpServer<'a> {
-    client: &'a Client,
-    profile_id: String,
     pub info: models::McpServerInfoResponse,
 }
 pub struct McpTools<'a> {
     client: &'a Client,
-    profile_id: String,
     server_id: String,
 }
 
@@ -379,54 +374,20 @@ impl Debug<'_> {
     }
 }
 
-impl<'a> Profiles<'a> {
-    pub async fn list(&self) -> Result<Vec<models::ProfileSummary>> {
-        Ok(api::list_profiles(&self.0.transport, self.0.options).await?.profiles)
-    }
-
-    pub fn mcp(&self, profile: &models::ProfileSummary) -> ProfileMcp<'a> {
-        ProfileMcp {
-            client: self.0,
-            profile_id: profile.id.clone(),
-        }
-    }
-}
-
-impl<'a> ProfileMcp<'a> {
-    pub async fn info(&self) -> Result<models::ProfileMcpInfoResponse> {
-        api::get_profile_mcp_info(
-            &self.client.transport,
-            &api::GetProfileMcpInfoParams {
-                profile_id: self.profile_id.clone(),
-            },
-            self.client.options,
-        )
-        .await
+impl<'a> Mcp<'a> {
+    pub async fn info(&self) -> Result<models::McpInfoResponse> {
+        api::get_mcp_info(&self.0.transport, self.0.options).await
     }
 
     pub async fn servers(&self) -> Result<models::McpServersListResponse> {
-        api::list_profile_mcp_servers(
-            &self.client.transport,
-            &api::ListProfileMcpServersParams {
-                profile_id: self.profile_id.clone(),
-            },
-            self.client.options,
-        )
-        .await
+        api::list_mcp_servers(&self.0.transport, self.0.options).await
     }
 
     pub async fn default_permission(&self) -> Result<models::McpDefaultPermissionResponse> {
-        api::get_profile_mcp_default(
-            &self.client.transport,
-            &api::GetProfileMcpDefaultParams {
-                profile_id: self.profile_id.clone(),
-            },
-            self.client.options,
-        )
-        .await
+        api::get_mcp_default(&self.0.transport, self.0.options).await
     }
 
-    pub async fn get(&self, name: &str) -> Result<ProfileMcpServer<'a>> {
+    pub async fn get(&self, name: &str) -> Result<McpServer<'a>> {
         let matches = self
             .servers()
             .await?
@@ -437,28 +398,25 @@ impl<'a> ProfileMcp<'a> {
         if matches.len() != 1 {
             return Err(crate::Error::InvalidInput("MCP server name must resolve exactly once"));
         }
-        Ok(ProfileMcpServer {
-            client: self.client,
-            profile_id: self.profile_id.clone(),
+        Ok(McpServer {
+            client: self.0,
             info: matches.into_iter().next().expect("one MCP server matched"),
         })
     }
 }
 
-impl<'a> ProfileMcpServer<'a> {
+impl<'a> McpServer<'a> {
     pub fn tools(&self) -> McpTools<'a> {
         McpTools {
             client: self.client,
-            profile_id: self.profile_id.clone(),
             server_id: self.info.name.clone(),
         }
     }
 
     pub async fn refresh(&self) -> Result<models::McpRefreshResponse> {
-        api::refresh_profile_mcp_server(
+        api::refresh_mcp_server(
             &self.client.transport,
-            &api::RefreshProfileMcpServerParams {
-                profile_id: self.profile_id.clone(),
+            &api::RefreshMcpServerParams {
                 server_id: self.info.name.clone(),
             },
             self.client.options,
@@ -469,10 +427,9 @@ impl<'a> ProfileMcpServer<'a> {
 
 impl McpTools<'_> {
     pub async fn list(&self) -> Result<models::McpToolsListResponse> {
-        api::list_profile_mcp_tools(
+        api::list_mcp_tools(
             &self.client.transport,
-            &api::ListProfileMcpToolsParams {
-                profile_id: self.profile_id.clone(),
+            &api::ListMcpToolsParams {
                 server_id: self.server_id.clone(),
             },
             self.client.options,
@@ -481,10 +438,9 @@ impl McpTools<'_> {
     }
 
     pub async fn call(&self, name: &str, arguments: models::Value) -> Result<models::Value> {
-        api::call_profile_mcp_tool(
+        api::call_mcp_tool(
             &self.client.transport,
-            &api::CallProfileMcpToolParams {
-                profile_id: self.profile_id.clone(),
+            &api::CallMcpToolParams {
                 server_id: self.server_id.clone(),
                 tool_id: name.into(),
                 body: arguments,

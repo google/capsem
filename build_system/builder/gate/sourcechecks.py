@@ -44,7 +44,9 @@ def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) ->
     if strict:
         # No `--ignore`: that is what strict means, and a held-back rule here
         # would be the ratchet quietly growing a second home.
-        steps.append(phase.add(_ty("strict", config, strict, (), ()), after=after))
+        steps.append(
+            phase.add(_ty("strict", config, strict, (), settings.strict_ty_search_paths), after=after)
+        )
     if relaxed:
         steps.append(
             phase.add(
@@ -86,7 +88,7 @@ def ty_argv(
     roots: tuple[str, ...] | list[str],
     *,
     held_back: tuple[str, ...] = (),
-    search_paths: tuple[str, ...] = (),
+    search_paths: tuple[str, ...] | None = None,
 ) -> list[str]:
     """One spelling of a `ty` invocation.
 
@@ -106,7 +108,7 @@ def ty_argv(
         project,
         *flags,
         *platform,
-        *_ty_search_paths(search_paths),
+        *_ty_search_paths(config.lint.strict_ty_search_paths if search_paths is None else search_paths),
         *roots,
         *ignores,
     )

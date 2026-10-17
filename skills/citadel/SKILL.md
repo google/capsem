@@ -50,6 +50,8 @@ the suite has one collector and its failures have one owner.
 | `test_work_graph_invariants.py` | the plan's graph properties, asked of the graph |
 | `test_workflow_script_checkout.py` | a workflow checks out its source before running a checked-in script |
 | `test_release_requires_local_proof.py` | no agent-facing text says a release can skip `just test` |
+| `test_no_vm_profiles.py` | the removed VM profile concept does not grow back under its old vocabulary |
+| `test_runtime_limit_authority.py` | cross-process network ceilings stay config-owned and shared |
 
 ## Adding a guard
 

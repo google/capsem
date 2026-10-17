@@ -14,7 +14,8 @@ function isOpenJson(schema: Schema): boolean {
 }
 
 for (const {path, method, operation} of routes) {
-  const status = operation.responses['200'] ? '200' : '202';
+  const status = Object.keys(operation.responses).find(status => /^2[0-9]{2}$/.test(status));
+  if (!status) throw new Error('Operation has no successful status');
   const content = operation.responses[status]?.content;
   if (!content) throw new Error('Operation has no successful response');
   const responseMediaType = MediaType.GZIP in content ? MediaType.GZIP : MediaType.BINARY in content ? MediaType.BINARY : MediaType.JSON;

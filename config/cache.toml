@@ -121,23 +121,13 @@ maximum_age_hours = 720
 maximum_count = 60
 managed_globs = ["20*-*"]
 
-[stages.materialized-config]
-description = "Validated profile configuration materialized for builders and tests."
-scope = "disk"
-path = "target/config"
-warm_size_bytes = 67108864 # 64 MiB
-max_size_bytes = 134217728 # 128 MiB
-prune_strategy = "generational"
-maximum_age_hours = 336
-maximum_count = 8
-
 [stages.objects]
 description = "Content-addressed immutable objects shared across build and release lanes."
 scope = "disk"
 path = "objects"
 warm_size_bytes = 8589934592 # 8 GiB
 max_size_bytes = 12884901888 # 12 GiB
-# A generation is one rootfs per profile (~850 MB each) plus kernel and initrd.
+# A generation is one rootfs per architecture (~850 MB each) plus kernel and initrd.
 # At 48 GiB and 90 days the store held 37 GB: ~40 unreferenced rootfs objects
 # from 112 rootfs receipts, most three weeks old. 12 GiB keeps ~6 generations.
 # One receipt generation at a time, with the objects only it names; readers and
@@ -158,6 +148,8 @@ max_size_bytes = 8589934592
 prune_strategy = "lru"
 maximum_age_hours = 168
 mutation_locks = ["cache.lock"]
+# Immutable filesystem payloads have one link per active image share.
+protect_hardlinks = true
 
 [stages.prefix-products]
 description = "Cargo outputs lent between source-isolated gate worktrees."
@@ -178,8 +170,8 @@ scope = "disk"
 path = "target/vm-assets"
 entry_root = "generations"
 selector_globs = [
-  "target/tests/ironbank/*/build-*",
-  "worktrees/*/cache/target/tests/ironbank/*/build-*",
+  "target/tests/ironbank/build-*",
+  "worktrees/*/cache/target/tests/ironbank/build-*",
 ]
 warm_size_bytes = 6442450944 # 6 GiB
 max_size_bytes = 12884901888 # 12 GiB
@@ -191,8 +183,11 @@ maximum_count = 10
 description = "Current assembled VM runtime view consumed by local shells and packaging."
 scope = "disk"
 path = "target/assets"
-warm_size_bytes = 4294967296 # 4 GiB
-max_size_bytes = 8589934592 # 8 GiB
+# OCI test tooling lives in test-images. The current assembled view, including
+# legacy aliases, uses 3.2 GiB; retain 4 GiB and transfer the other 4 GiB to
+# fixture retention without raising the total budget or lowering headroom.
+warm_size_bytes = 2147483648 # 2 GiB
+max_size_bytes = 4294967296 # 4 GiB
 prune_strategy = "none"
 maximum_age_hours = 336
 
@@ -219,11 +214,28 @@ maximum_age_hours = 168
 description = "Bounded diagnostics preserved from failed expensive tests."
 scope = "disk"
 path = "target/tests/evidence"
-warm_size_bytes = 4294967296 # 4 GiB
-max_size_bytes = 8589934592 # 8 GiB
+# The stage held 53 MB when measured on 2026-10-04. Half a GiB retains several
+# failed-run evidence sets while funding the complete pinned-image matrix.
+warm_size_bytes = 268435456 # 256 MiB
+max_size_bytes = 536870912 # 512 MiB
 prune_strategy = "lru"
 maximum_age_hours = 720
 maximum_count = 20
+
+[stages.test-images]
+description = "Digest-pinned OCI layouts of the debug and reference images, shared by every checkout and gate prefix."
+scope = "disk"
+# One directory per image digest: a local build and a registry pull of the same
+# digest land in the same entry, so the harness pulls a pinned image once per
+# machine rather than once per private checkout. The gate needs both images for
+# both supported architectures present before its network sandbox closes.
+path = "target/tests/images"
+warm_size_bytes = 6442450944 # 6 GiB
+max_size_bytes = 8589934592 # 8 GiB
+prune_strategy = "lru"
+maximum_age_hours = 720
+maximum_count = 4
+lease_template = ".{key}.lock"
 
 [stages.test-benchmarks]
 description = "Local benchmark recordings used for performance regression checks."
@@ -488,6 +500,10 @@ volume_prefixes = ["capsem-package-target-"]
 build_cache_owned = true
 maximum_age_hours = 168
 keep_image_generations = 1
+# Docker on macOS lives in Colima's VM, whose disk image keeps every freed
+# block until the guest discards it: pruning Docker to 18 GiB left the image at
+# 196 GB until this returned 130 GiB. Skipped where colima is not installed.
+disk_release_command = ["colima", "ssh", "--", "sudo", "fstrim", "-a"]
 
 [runtimes.tart]
 description = "Disposable Tart virtual machines owned by Capsem release proof."

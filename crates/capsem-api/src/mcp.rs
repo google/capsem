@@ -16,8 +16,7 @@ pub enum McpPermissionAction {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, ToSchema)]
-pub struct ProfileMcpInfoResponse {
-    pub profile_id: String,
+pub struct McpInfoResponse {
     pub server_count: usize,
     pub manual_server_count: usize,
     pub builtin_local_enabled: bool,

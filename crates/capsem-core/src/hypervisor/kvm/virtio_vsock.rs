@@ -56,13 +56,16 @@ const VSOCK_PORT_BLOCK_COUNT: u32 = 2_500;
 // VhostVsockDevice
 // ---------------------------------------------------------------------------
 
+mod checkpoint;
+mod events;
+mod lifecycle;
+use checkpoint::{decode_vsock_checkpoint, encode_vsock_checkpoint, queue_avail_idx, queue_used_idx};
+
 /// Virtio-vsock device backed by Linux's vhost-vsock kernel module.
 ///
 /// Implements the VirtioDevice trait for MMIO transport discovery and
 /// feature negotiation. The actual data plane runs in-kernel via
 /// /dev/vhost-vsock.
-mod lifecycle;
-
 pub(super) struct VhostVsockDevice {
     guest_cid: u64,
     vhost_fd: Option<OwnedFd>,
@@ -71,6 +74,7 @@ pub(super) struct VhostVsockDevice {
     activated: bool,
     checkpoint_state: Option<Vec<u8>>,
     restore_vring_bases: Option<[u32; VHOST_VSOCK_BACKEND_QUEUES]>,
+    event_queue: Option<events::TransportEvents>,
 }
 
 trait VhostIoctl {
@@ -130,6 +134,7 @@ impl VhostVsockDevice {
             activated: false,
             checkpoint_state: None,
             restore_vring_bases: None,
+            event_queue: None,
         };
 
         Ok((dev, call_raw))
@@ -201,6 +206,10 @@ impl VhostVsockDevice {
         // 3. Configure backend vrings. The virtio-vsock event queue is
         // guest-visible but not represented in Linux vhost_vsock.
         for (i, queue) in queues.iter().take(VHOST_VSOCK_BACKEND_QUEUES).enumerate() {
+            ensure!(
+                queue.size > 0 && queue.size <= 256 && queue.size.is_power_of_two(),
+                "invalid vhost-vsock queue {i} size"
+            );
             // Set queue size
             let vring_state = VhostVringState {
                 index: i as u32,
@@ -237,12 +246,16 @@ impl VhostVsockDevice {
                 .context("VHOST_SET_VRING_BASE")?;
 
             // Translate GPA -> HVA for vring addresses
-            let desc_hva = mem.gpa_to_host(queue.desc_addr).context("desc_addr GPA out of range")? as u64;
+            let entries = u64::from(queue.size);
+            let event_bytes = if queue.event_idx { 2 } else { 0 };
+            let desc_hva = mem
+                .gpa_range_to_host(queue.desc_addr, entries * 16)
+                .context("desc_addr GPA range out of bounds")? as u64;
             let avail_hva = mem
-                .gpa_to_host(queue.driver_addr)
+                .gpa_range_to_host(queue.driver_addr, 4 + entries * 2 + event_bytes)
                 .context("driver_addr (avail) GPA out of range")? as u64;
             let used_hva = mem
-                .gpa_to_host(queue.device_addr)
+                .gpa_range_to_host(queue.device_addr, 4 + entries * 8 + event_bytes)
                 .context("device_addr (used) GPA out of range")? as u64;
 
             let vring_addr = VhostVringAddr {
@@ -300,8 +313,11 @@ impl VhostVsockDevice {
         let vring_bases = self
             .restore_vring_bases
             .context("missing vhost-vsock checkpoint state for warm restore")?;
+        self.configure_event_queue(mem.clone(), queues)?;
         self.configure_vhost_with(&mem, queues, Some(vring_bases), ioctl)
             .context("restore vhost-vsock backend")?;
+        self.event_queue.as_mut().unwrap().reset_pending = true;
+        self.process_transport_events()?;
         self.activated = true;
         info!(
             guest_cid = self.guest_cid,
@@ -311,98 +327,24 @@ impl VhostVsockDevice {
         );
         Ok(())
     }
-}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct VsockCheckpointState {
-    guest_cid: u64,
-    vring_bases: Option<[u32; VHOST_VSOCK_BACKEND_QUEUES]>,
-}
-
-fn encode_vsock_checkpoint(guest_cid: u64, vring_bases: Option<[u32; VHOST_VSOCK_BACKEND_QUEUES]>) -> Vec<u8> {
-    let capacity = if vring_bases.is_some() {
-        VSOCK_CHECKPOINT_WITH_BASES_BYTES
-    } else {
-        VSOCK_CHECKPOINT_HEADER_BYTES
-    };
-    let mut encoded = Vec::with_capacity(capacity);
-    encoded.extend_from_slice(&VSOCK_CHECKPOINT_VERSION.to_le_bytes());
-    encoded.extend_from_slice(&guest_cid.to_le_bytes());
-    encoded.push(u8::from(vring_bases.is_some()));
-    if let Some(vring_bases) = vring_bases {
-        for base in vring_bases {
-            encoded.extend_from_slice(&base.to_le_bytes());
-        }
+    fn configure_event_queue(&mut self, mem: GuestMemoryRef, queues: &[QueueConfig]) -> Result<()> {
+        let config = queues
+            .get(events::QUEUE_INDEX)
+            .context("missing virtio-vsock event queue")?;
+        self.event_queue = Some(events::TransportEvents::new(mem, config)?);
+        Ok(())
     }
-    encoded
-}
 
-fn decode_vsock_checkpoint(encoded: &[u8]) -> Result<VsockCheckpointState> {
-    ensure!(
-        matches!(
-            encoded.len(),
-            VSOCK_CHECKPOINT_HEADER_BYTES | VSOCK_CHECKPOINT_WITH_BASES_BYTES
-        ),
-        "invalid vhost-vsock checkpoint length: {}",
-        encoded.len()
-    );
-    let version = u32::from_le_bytes(encoded[0..4].try_into().unwrap());
-    ensure!(
-        version == VSOCK_CHECKPOINT_VERSION,
-        "unsupported vhost-vsock checkpoint version: {version}"
-    );
-    let cid_offset = std::mem::size_of::<u32>();
-    let guest_cid = u64::from_le_bytes(
-        encoded[cid_offset..cid_offset + std::mem::size_of::<u64>()]
-            .try_into()
-            .unwrap(),
-    );
-    let presence_offset = cid_offset + std::mem::size_of::<u64>();
-    let vring_bases = match encoded[presence_offset] {
-        0 => {
-            ensure!(
-                encoded.len() == VSOCK_CHECKPOINT_HEADER_BYTES,
-                "invalid vhost-vsock checkpoint length for bases-present flag 0: {}",
-                encoded.len()
-            );
-            None
-        }
-        1 => {
-            ensure!(
-                encoded.len() == VSOCK_CHECKPOINT_WITH_BASES_BYTES,
-                "invalid vhost-vsock checkpoint length for bases-present flag 1: {}",
-                encoded.len()
-            );
-            let mut vring_bases = [0u32; VHOST_VSOCK_BACKEND_QUEUES];
-            for (index, base) in vring_bases.iter_mut().enumerate() {
-                let offset = VSOCK_CHECKPOINT_HEADER_BYTES + index * std::mem::size_of::<u32>();
-                *base = u32::from_le_bytes(encoded[offset..offset + 4].try_into().unwrap());
-                ensure!(
-                    u16::try_from(*base).is_ok(),
-                    "invalid vhost-vsock queue {index} vring base: {base}"
-                );
+    fn process_transport_events(&mut self) -> Result<()> {
+        if let Some(events) = self.event_queue.as_mut() {
+            if events.drain_reset()? {
+                use std::os::fd::AsFd;
+                capsem_foundation::unix::fd::signal_counter(self.call_fds[events::QUEUE_INDEX].as_fd())?;
             }
-            Some(vring_bases)
         }
-        flag => bail!("invalid vhost-vsock bases-present flag: {flag}"),
-    };
-    Ok(VsockCheckpointState { guest_cid, vring_bases })
-}
-
-fn queue_used_idx(mem: &GuestMemoryRef, queue: &QueueConfig) -> Result<u32> {
-    let ptr = mem
-        .gpa_to_host(queue.device_addr + 2)
-        .context("vhost-vsock used ring idx GPA out of range")?;
-    let idx = unsafe { u16::from_le(std::ptr::read_unaligned(ptr as *const u16)) };
-    Ok(u32::from(idx))
-}
-
-fn queue_avail_idx(mem: &GuestMemoryRef, queue: &QueueConfig) -> Result<u32> {
-    let ptr = mem
-        .gpa_to_host(queue.driver_addr + 2)
-        .context("vhost-vsock avail ring idx GPA out of range")?;
-    let idx = unsafe { u16::from_le(std::ptr::read_unaligned(ptr as *const u16)) };
-    Ok(u32::from(idx))
+        Ok(())
+    }
 }
 
 /// Bridge vhost-vsock call eventfds into virtio-mmio interrupts.
@@ -633,6 +575,10 @@ impl VirtioDevice for VhostVsockDevice {
         if self.activated {
             return;
         }
+        if let Err(error) = self.configure_event_queue(mem.clone(), queues) {
+            warn!(%error, "virtio-vsock event queue activation failed");
+            return;
+        }
         if let Err(e) = self.configure_vhost(&mem, queues) {
             warn!(error = format!("{e:#}"), "vhost-vsock activate failed");
             return;
@@ -642,6 +588,12 @@ impl VirtioDevice for VhostVsockDevice {
     }
 
     fn queue_notify(&mut self, queue_index: u32) -> bool {
+        if queue_index as usize == events::QUEUE_INDEX {
+            if let Err(error) = self.process_transport_events() {
+                warn!(%error, "virtio-vsock reset event delivery failed");
+            }
+            return false;
+        }
         let idx = queue_index as usize;
         if idx >= VHOST_VSOCK_BACKEND_QUEUES {
             if idx < VSOCK_NUM_QUEUES {
@@ -763,7 +715,7 @@ pub(super) struct BoundVsockListener {
     sock: OwnedFd,
 }
 
-pub(super) struct BoundVsockListeners {
+pub(crate) struct BoundVsockListeners {
     offset: u32,
     guest_cid: u32,
     listeners: Vec<BoundVsockListener>,
@@ -779,7 +731,7 @@ impl BoundVsockListeners {
     }
 }
 
-pub(super) fn bind_vsock_listeners_for_vm(logical_ports: &[u32], seed: u32) -> Result<BoundVsockListeners> {
+pub(crate) fn bind_vsock_listeners_for_vm(logical_ports: &[u32], seed: u32) -> Result<BoundVsockListeners> {
     if logical_ports.is_empty() {
         return Ok(BoundVsockListeners {
             offset: 0,

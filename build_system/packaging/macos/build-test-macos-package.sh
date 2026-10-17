@@ -11,7 +11,6 @@ ROOT=$(cd "$SCRIPT_DIR/../../.." && pwd)
 VERSION=$(grep '^version' "$ROOT/Cargo.toml" | head -1 | sed 's/.*"\(.*\)".*/\1/')
 MANIFEST_URL="${CAPSEM_INSTALL_MANIFEST_URL:-https://release.capsem.org/assets/stable/manifest.json}"
 ASSETS_DIR=""
-CONFIG_ROOT=""
 SBOM=""
 
 while [ "$#" -gt 0 ]; do
@@ -28,30 +27,26 @@ while [ "$#" -gt 0 ]; do
             ASSETS_DIR="${2:?--assets-dir requires a value}"
             shift 2
             ;;
-        --config-root)
-            CONFIG_ROOT="${2:?--config-root requires a value}"
-            shift 2
-            ;;
         --sbom)
             SBOM="${2:?--sbom requires a value}"
             shift 2
             ;;
         *)
-            echo "usage: $0 [--version VERSION] [--manifest-url URL] --assets-dir DIR --config-root DIR --sbom FILE" >&2
+            echo "usage: $0 [--version VERSION] [--manifest-url URL] --assets-dir DIR --sbom FILE" >&2
             exit 2
             ;;
     esac
 done
 
-[ -n "$ASSETS_DIR" ] && [ -n "$CONFIG_ROOT" ] || {
-    echo "ERROR: --assets-dir and --config-root are required as one content pair" >&2
+[ -n "$ASSETS_DIR" ] || {
+    echo "ERROR: --assets-dir names the selected runtime assets" >&2
     exit 2
 }
 [ -n "$SBOM" ] || {
     echo "ERROR: --sbom names where the package SBOM is written" >&2
     exit 2
 }
-[ -d "$ASSETS_DIR" ] && [ -d "$CONFIG_ROOT" ] || {
+[ -d "$ASSETS_DIR" ] || {
     echo "ERROR: selected macOS package content is incomplete" >&2
     exit 1
 }
@@ -68,6 +63,8 @@ cargo build --release \
     -p capsem \
     -p capsem-service \
     -p capsem-process \
+    -p capsem-ledger \
+    -p capsem-proxy \
     -p capsem-tui \
     \
     -p capsem-router \
@@ -84,7 +81,6 @@ bash "$SCRIPT_DIR/build-pkg.sh" \
     "$ROOT/cache/target/cargo/release/bundle/macos/Capsem.app" \
     "$ROOT/cache/target/cargo/release" \
     "$ASSETS_DIR" \
-    "$CONFIG_ROOT" \
     "$VERSION"
 
 PKG="$ROOT/cache/target/packages/Capsem-$VERSION.pkg"
@@ -99,7 +95,7 @@ import sys
 expected = {
     "capsem", "capsem-admin", "capsem-app", "capsem-gateway",
     "capsem-router", "capsem-mcp-aggregator", "capsem-mcp-builtin",
-    "capsem-process", "capsem-service", "capsem-tray", "capsem-tui",
+    "capsem-process", "capsem-ledger", "capsem-proxy", "capsem-service", "capsem-tray", "capsem-tui",
     "capsem-mock-server", "capsem-bench-rs",
 }
 document = json.loads(pathlib.Path(sys.argv[1]).read_text())

@@ -1,6 +1,6 @@
 use super::*;
 
-mod exposures;
+pub(crate) mod exposures;
 pub(crate) mod restart;
 mod streams;
 
@@ -10,6 +10,7 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route("/restart", post(restart::handle_restart))
         .route("/update/status", get(handle_update_status))
         .route("/system/status", get(handle_system_status))
+        .route("/internal/gateway/status", get(handle_gateway_status))
         .route("/update/check", post(handle_update_check))
         .route("/update/apply", post(handle_update_apply))
         .route(
@@ -30,10 +31,41 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
             post(private_routes::handle_private_resolve),
         )
         .route(
+            "/internal/vms/{id}/metrics",
+            post(service_runtime::telemetry_export::handle_metric_relay).layer(axum::extract::DefaultBodyLimit::max(
+                capsem_core::service_uds::MAX_BODY_BYTES,
+            )),
+        )
+        .route(
             "/networks/{id}/members/{vm_id}",
             put(network_routes::handle_network_attach).delete(network_routes::handle_network_detach),
         )
+        .route("/images", get(container_setup::images::handle_list_images))
+        .route("/images/pull", post(container_setup::images::handle_pull_image))
+        .route("/connections", get(connection_routes::list))
+        .route("/connections/google/authorize", post(connection_routes::authorize))
+        .route(
+            "/connections/authorizations/{transaction_id}",
+            get(connection_routes::authorization).delete(connection_routes::cancel),
+        )
+        .route(
+            "/connections/{connection_id}",
+            get(connection_routes::get_connection).delete(connection_routes::disconnect),
+        )
+        .route(
+            "/vms/{id}/credential-grants",
+            get(connection_routes::grants).post(connection_routes::create_grant),
+        )
+        .route(
+            "/vms/{id}/credential-grants/{grant_id}",
+            delete(connection_routes::revoke_grant),
+        )
         .route("/vms/create", post(handle_provision))
+        .route("/proxies", post(standalone_proxy::handle_create))
+        .route("/proxies/{id}/heartbeat", post(standalone_proxy::handle_heartbeat))
+        .route("/proxies/{id}/stop", post(standalone_proxy::handle_stop))
+        .route("/vms/managed/{request_id}/claim", post(managed_routes::claim))
+        .route("/vms/managed/{request_id}/close", post(managed_routes::close))
         .route("/vms/list", get(handle_list))
         .route("/vms/{id}/info", get(handle_info))
         .route("/vms/{id}/status", get(handle_vm_status))
@@ -98,133 +130,46 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route("/enforcement/status", get(handle_service_security_status))
         .route("/detection/latest", get(handle_service_detection_latest))
         .route("/detection/status", get(handle_service_detection_status))
-        .route("/profiles/list", get(handle_profiles_list))
-        .route("/profiles/status", get(handle_profiles_status))
-        .route("/profiles/reload", post(handle_profiles_reload))
-        .route("/profiles/{profile_id}/info", get(handle_profile_info))
-        .route("/profiles/{profile_id}/obom", get(handle_profile_obom))
-        .route("/profiles/{profile_id}/validate", post(handle_profile_validate))
+        .route("/assets/status", get(asset_routes::handle_asset_status))
+        .route("/assets/ensure", post(asset_routes::handle_asset_ensure))
+        .route("/plugins/list", get(plugin_routes::handle_plugins))
+        .route("/credentials/inject", post(credential_routes::inject))
         .route(
-            "/profiles/{profile_id}/enforcement/evaluate",
-            post(handle_enforcement_evaluate),
-        )
-        .route("/profiles/{profile_id}/enforcement/info", get(handle_enforcement_info))
-        .route(
-            "/profiles/{profile_id}/enforcement/rules/{rule_id}/edit",
-            put(handle_enforcement_rule_upsert),
+            "/plugins/credential_broker/credentials/info",
+            get(plugin_routes::handle_credential_broker_credentials_info),
         )
         .route(
-            "/profiles/{profile_id}/enforcement/rules/{rule_id}/delete",
-            delete(handle_enforcement_rule_delete),
+            "/plugins/credential_broker/credentials/reload",
+            post(plugin_routes::handle_credential_broker_credentials_reload),
         )
-        .route(
-            "/profiles/{profile_id}/enforcement/reload",
-            post(handle_enforcement_reload),
-        )
-        .route(
-            "/profiles/{profile_id}/enforcement/rules/list",
-            get(handle_enforcement_rules_list),
-        )
-        .route(
-            "/profiles/{profile_id}/detection/evaluate",
-            post(handle_detection_evaluate),
-        )
-        .route("/profiles/{profile_id}/detection/info", get(handle_detection_info))
-        .route(
-            "/profiles/{profile_id}/detection/rules/{rule_id}/edit",
-            put(handle_detection_rule_upsert),
-        )
-        .route(
-            "/profiles/{profile_id}/detection/rules/{rule_id}/delete",
-            delete(handle_detection_rule_delete),
-        )
-        .route("/profiles/{profile_id}/detection/reload", post(handle_detection_reload))
-        .route(
-            "/profiles/{profile_id}/detection/rules/list",
-            get(handle_detection_rules_list),
-        )
-        .route("/profiles/{profile_id}/plugins/list", get(handle_profile_plugins))
-        .route("/profiles/{profile_id}/plugins/info", get(handle_profile_plugins_info))
-        .route(
-            "/profiles/{profile_id}/plugins/credential_broker/credentials/info",
-            get(handle_profile_credential_broker_credentials_info),
-        )
-        .route(
-            "/profiles/{profile_id}/plugins/credential_broker/credentials/reload",
-            post(handle_profile_credential_broker_credentials_reload),
-        )
-        .route(
-            "/profiles/{profile_id}/plugins/{plugin_id}/info",
-            get(handle_profile_plugin_info),
-        )
-        .route(
-            "/profiles/{profile_id}/plugins/{plugin_id}/edit",
-            patch(handle_profile_plugin_update),
-        )
-        .route("/profiles/{profile_id}/reload", post(handle_profile_reload))
+        .route("/plugins/{plugin_id}/info", get(plugin_routes::handle_plugin_info))
+        .route("/plugins/{plugin_id}/edit", patch(plugin_routes::handle_plugin_update))
         .route("/vms/{id}/fork", post(handle_fork))
         .route("/settings/info", get(handle_get_settings))
         .route("/settings/edit", patch(handle_save_settings))
-        .route(
-            "/profiles/{profile_id}/assets/status",
-            get(handle_profile_assets_status),
-        )
-        .route("/profiles/{profile_id}/assets/info", get(handle_profile_assets_info))
-        .route(
-            "/profiles/{profile_id}/assets/ensure",
-            post(handle_profile_assets_ensure),
-        )
-        .route("/profiles/{profile_id}/skills/info", get(handle_profile_skills_info))
-        .route("/profiles/{profile_id}/skills/list", get(handle_profile_skills_list))
-        .route("/profiles/{profile_id}/skills/add", post(handle_profile_skill_add))
-        .route(
-            "/profiles/{profile_id}/skills/{skill_id}/edit",
-            patch(handle_profile_skill_edit),
-        )
-        .route(
-            "/profiles/{profile_id}/skills/{skill_id}/delete",
-            delete(handle_profile_skill_delete),
-        )
         .route("/corp/info", get(handle_corp_info))
         .route("/corp/edit", put(handle_corp_config))
         .route("/corp/validate", post(handle_corp_validate))
         .route("/corp/reload", post(handle_corp_reload))
+        .route("/mcp/info", get(mcp_routes::handle_mcp_info))
+        .route("/mcp/servers/list", get(mcp_routes::handle_mcp_servers))
+        .route("/mcp/default/info", get(mcp_routes::handle_mcp_default_info))
+        .route("/mcp/default/edit", patch(mcp_routes::handle_mcp_default_edit))
         .route(
-            "/profiles/{profile_id}/mcp/servers/list",
-            get(handle_profile_mcp_servers),
-        )
-        .route("/profiles/{profile_id}/mcp/info", get(handle_profile_mcp_info))
-        .route(
-            "/profiles/{profile_id}/mcp/default/info",
-            get(handle_profile_mcp_default_info),
-        )
-        .route(
-            "/profiles/{profile_id}/mcp/default/edit",
-            patch(handle_profile_mcp_default_edit),
+            "/mcp/servers/{server_id}/tools/list",
+            get(mcp_routes::handle_mcp_server_tools),
         )
         .route(
-            "/profiles/{profile_id}/mcp/servers/{server_id}/edit",
-            put(handle_profile_mcp_server_edit),
+            "/mcp/servers/{server_id}/refresh",
+            post(mcp_routes::handle_mcp_server_refresh),
         )
         .route(
-            "/profiles/{profile_id}/mcp/servers/{server_id}/delete",
-            delete(handle_profile_mcp_server_delete),
+            "/mcp/servers/{server_id}/tools/{tool_id}/edit",
+            patch(mcp_routes::handle_mcp_tool_edit),
         )
         .route(
-            "/profiles/{profile_id}/mcp/servers/{server_id}/tools/list",
-            get(handle_profile_mcp_server_tools),
-        )
-        .route(
-            "/profiles/{profile_id}/mcp/servers/{server_id}/refresh",
-            post(handle_profile_mcp_server_refresh),
-        )
-        .route(
-            "/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/edit",
-            patch(handle_profile_mcp_tool_edit),
-        )
-        .route(
-            "/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/call",
-            post(handle_profile_mcp_tool_call),
+            "/mcp/servers/{server_id}/tools/{tool_id}/call",
+            post(mcp_routes::handle_mcp_tool_call),
         )
         .route("/vms/{id}/history", get(handle_history))
         .route("/vms/{id}/history/processes", get(handle_history_processes))
@@ -239,6 +184,10 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
         // refused file uploads the API documents.
         .layer(axum::extract::DefaultBodyLimit::max(capsem_api::MAX_REQUEST_BODY_BYTES))
         .layer(TraceLayer::new_for_http().on_request(()).on_response(()))
+        .layer(axum::middleware::from_fn_with_state(
+            Arc::clone(&state),
+            service_peer::restrict_owner_routes,
+        ))
         .with_state(state)
 }
 
@@ -270,20 +219,42 @@ pub(super) async fn handle_system_status(
             format!("installed manifest is invalid: {error:#}"),
         )
     })?;
-    let profiles = if asset_reconcile_has_route_fields(&state) {
-        refresh_reconcile_fields(&state, profile_status_cache(&state)?.catalog.clone())
-    } else {
-        profile_status_cache(&state)?.catalog.clone()
-    };
+    let assets = state.off_worker(|state| asset_routes::asset_status(&state)).await??;
     Ok(Json(api::SystemStatusResponse {
         version: state.current_version.clone(),
         service: "running".to_string(),
         manifest,
         manifest_metadata,
-        profiles,
+        assets,
         corp: corp_info_value()?,
         updates,
     }))
+}
+
+#[derive(Serialize)]
+struct GatewayStatusResponse {
+    #[serde(flatten)]
+    list: api::ListResponse,
+    assets: api::AssetStatus,
+    updates: api::UpdateStatusResponse,
+}
+
+/// One service snapshot for the gateway's polled overview. Keeping the three
+/// sections in one HTTP exchange avoids tripling broker and parser work while
+/// preserving a fresh `/vms/list` read for every gateway status refresh.
+async fn handle_gateway_status(
+    State(state): State<Arc<ServiceState>>,
+) -> Result<Json<GatewayStatusResponse>, AppError> {
+    let list = sandbox_info::list_response(&state).await?;
+    let (assets, updates) = state
+        .off_worker(|state| {
+            Ok::<_, AppError>((
+                asset_routes::asset_status(&state)?,
+                asset_routes::update_status_response(&state),
+            ))
+        })
+        .await??;
+    Ok(Json(GatewayStatusResponse { list, assets, updates }))
 }
 
 pub(super) fn read_installed_status_document(path: &StdPath) -> Result<serde_json::Value, AppError> {
@@ -540,22 +511,18 @@ pub(super) fn reload_activated_update_runtime(state: &ServiceState) -> Result<Up
         )
     })?;
     let selected_binary = manifest.binaries.current.clone();
-    let previous_manifest = {
-        let mut installed = state.manifest.write().map_err(|error| {
+    state
+        .manifest
+        .write()
+        .map_err(|error| {
             AppError(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("installed manifest lock poisoned: {error}"),
             )
-        })?;
-        installed.replace(Arc::new(manifest))
-    };
-
-    if let Err(error) = refresh_profile_route_caches(state) {
-        if let Ok(mut installed) = state.manifest.write() {
-            *installed = previous_manifest;
-        }
-        return Err(error);
-    }
+        })?
+        .replace(Arc::new(manifest));
+    // Resume state is derived from the installed manifest (revoked pins).
+    state.persistent_resume_state_cache.clear();
 
     if selected_binary != state.current_version {
         info!(
@@ -568,7 +535,7 @@ pub(super) fn reload_activated_update_runtime(state: &ServiceState) -> Result<Up
     } else {
         info!(
             selected = %selected_binary,
-            "reloaded activated manifest and profile caches in the running service"
+            "reloaded the activated manifest in the running service"
         );
         Ok(UpdateRuntimeDisposition::Reloaded)
     }

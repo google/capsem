@@ -26,7 +26,6 @@ sys.path.insert(0, str(ROOT / "tests"))
 sys.path.insert(0, str(ROOT))
 
 from helpers.constants import (  # noqa: E402 - after the path insert
-    CODE_PROFILE_ID,
     EXEC_READY_TIMEOUT,
 )
 from helpers.service import ServiceInstance, wait_exec_ready  # noqa: E402
@@ -155,7 +154,7 @@ def main() -> int:
         ids = {}
         for name in (sender, receiver):
             created = client.post(
-                "/vms/create", {"name": name, "profile_id": CODE_PROFILE_ID, "ram_mb": 2048, "cpus": 4}
+                "/vms/create", {"name": name, "ram_mb": 2048, "cpus": 4}
             )
             ids[name] = created["id"]
             if not wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT):

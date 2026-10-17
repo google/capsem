@@ -10,11 +10,12 @@ import signal
 import subprocess
 import time
 
+import psutil
 import pytest
-from helpers.constants import BIN_DIR, CODE_PROFILE_ID
+from helpers.constants import BIN_DIR
 from helpers.service import ServiceInstance, exec_output_text, vm_session_dir
 
-from tests.fixtures.oci.registry import registry
+from tests.fixtures.oci.registry import grant_image, registry
 
 pytestmark = pytest.mark.integration
 
@@ -59,7 +60,8 @@ def cli(service, *args):
 
 
 def image_command(verb, service, reference, certificate=None, *args):
-    result = cli(service, verb, "--profile", CODE_PROFILE_ID)
+    grant_image(service.home_dir, reference)
+    result = cli(service, verb)
     if certificate is not None:
         result += ["--registry-ca", str(certificate)]
     return [*result, *args, "--image", reference]
@@ -81,10 +83,15 @@ def console(service, vm_id):
     return logs.get("serial_logs") or ""
 
 
+#: What the Redis fixture prints once it accepts connections.
+REDIS_READY = "Ready to accept connections tcp"
+
+
 @contextlib.contextmanager
-def created(service, tmp_path, reference, certificate, name, *options):
-    """A named container VM from `create --image`, up once its Redis is
-    ready; its create stderr (the published ports) is kept at `stderr`."""
+def created(service, tmp_path, reference, certificate, name, *options, ready=REDIS_READY):
+    """A named container VM from `create --image`, up once its console shows
+    `ready` (Redis's own readiness line by default); its create stderr (the
+    published ports) is kept at `stderr`."""
     result = subprocess.run(
         create_command(service, reference, certificate, "-n", name, *options),
         env=environment(service),
@@ -104,9 +111,7 @@ def created(service, tmp_path, reference, certificate, name, *options):
     assert rows[0]["id"] in result.stdout.decode(), result.stdout
     try:
         wait_for(
-            lambda: (
-                "Ready to accept connections tcp" in console(service, rows[0]["id"])
-            ),
+            lambda: ready in console(service, rows[0]["id"]),
             f"{name} container startup",
             timeout=180,
         )
@@ -121,7 +126,6 @@ def environment(service):
         **os.environ,
         "CAPSEM_HOME": str(service.home_dir),
         "CAPSEM_RUN_DIR": str(service.tmp_dir),
-        "CAPSEM_PROFILES_DIR": str(service.profiles_dir),
     }
 
 
@@ -137,7 +141,16 @@ def test_cli_run_image_streams_and_an_interrupt_destroys_the_vm(service, tmp_pat
         )
         assert rejected.returncode != 0
         assert b"Pulling " in rejected.stderr and not requests
+        assert b"UnknownIssuer" in rejected.stderr, rejected.stderr
         assert client.get("/vms/list")["sandboxes"] == []
+        kept = list((service.tmp_dir / "sessions").glob("*-failed-*"))
+        assert len(kept) == 1 and (kept[0] / "session.db").is_file(), kept
+        assert (kept[0] / "process.log").is_file(), kept
+        assert service.proc is not None
+        remaining = {
+            child.name() for child in psutil.Process(service.proc.pid).children(recursive=True)
+        } & {"capsem-process", "capsem-ledger", "capsem-proxy", "capsem-mcp-aggregator", "capsem-mcp-builtin"}
+        assert not remaining, f"failed create left native session roles alive: {remaining}"
         with (
             (tmp_path / "stdout").open("wb") as stdout,
             (tmp_path / "stderr").open("wb") as stderr,
@@ -173,6 +186,7 @@ def test_cli_run_image_streams_and_an_interrupt_destroys_the_vm(service, tmp_pat
                 proof = client.post(
                     f"/vms/{rows[0]['id']}/exec",
                     {
+                        "target": "vm",
                         "command": "set -eu; pid=$(cat /var/tmp/capsem-container/workload.pid); "
                         "nsenter -t $pid -n /bin/bash -c 'exec 3<>/dev/tcp/127.0.0.1/6379; printf \"PING\\r\\n\" >&3; head -c 7 <&3'",
                         "timeout_secs": 10,
@@ -267,6 +281,27 @@ def test_cli_runtime_failure_destroys_the_vm(service, tmp_path):
         assert service.client().get("/vms/list")["sandboxes"] == []
 
 
+def test_cli_create_reports_a_workload_that_never_started(service, tmp_path):
+    """A detached workload runc cannot start fails the create, promptly,
+    instead of being reported running or waited on until the deadline."""
+    metadata = {"Entrypoint": ["/missing-entrypoint"], "Cmd": []}
+    with registry(tmp_path, image_config=metadata) as (reference, certificate, _):
+        started = time.monotonic()
+        result = subprocess.run(
+            create_command(service, reference, certificate, "-n", "never-started"),
+            env=environment(service),
+            capture_output=True,
+            timeout=240,
+            check=False,
+        )
+        elapsed = time.monotonic() - started
+    (tmp_path / "create.stderr").write_bytes(result.stderr)
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert b"the workload did not start" in result.stderr, result.stderr
+    # Well inside the service's 110-second readiness deadline.
+    assert elapsed < 60, elapsed
+
+
 def test_cli_stream_exceeds_captured_exec_limit(service, tmp_path):
     with registry(tmp_path) as (reference, certificate, _):
         result = subprocess.run(
@@ -292,8 +327,6 @@ def test_shell_run_still_uses_existing_command_path(service):
         cli(
             service,
             "run",
-            "--profile",
-            CODE_PROFILE_ID,
             "printf shell-proof; printf shell-error >&2; exit 3",
         ),
         env=environment(service),
@@ -315,6 +348,7 @@ def test_cli_create_image_starts_detached_and_keeps_only_a_named_vm(service, tmp
             proof = client.post(
                 f"/vms/{vm['id']}/exec",
                 {
+                    "target": "vm",
                     "command": "set -eu; pid=$(cat /var/tmp/capsem-container/workload.pid); "
                     "nsenter -t $pid -n /bin/bash -c 'exec 3<>/dev/tcp/127.0.0.1/6379; printf \"PING\\r\\n\" >&3; head -c 7 <&3'",
                     "timeout_secs": 10,
@@ -333,6 +367,12 @@ def test_cli_create_image_starts_detached_and_keeps_only_a_named_vm(service, tmp
         assert unnamed.returncode == 0, unnamed.stderr
         rows = client.get("/vms/list")["sandboxes"]
         assert len(rows) == 1 and not rows[0]["persistent"], rows
+        # A create returns once the workload runs, so the very next exec
+        # enters it: `running` used to be reported from the staged image,
+        # before runc had created anything to enter.
+        assert client.get(f"/vms/{rows[0]['id']}/container")["state"] == "running"
+        first = client.post(f"/vms/{rows[0]['id']}/exec", {"command": "echo entered", "timeout_secs": 10})
+        assert first["exit_code"] == 0 and exec_output_text(first) == "entered\n", first
         wait_for(
             lambda: (
                 "Ready to accept connections tcp" in console(service, rows[0]["id"])

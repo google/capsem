@@ -17,7 +17,7 @@ from dataclasses import replace
 
 from . import assetdependencies, assetreceipt, hostbuild, hostpackage, initrd
 from .actions import Call
-from .assetlanes import RequireLaneReceipts, SealPackedReceipts, discover_profiles, lane_assets
+from .assetlanes import RequireLaneReceipts, SealPackedReceipts, lane_assets
 from .assets import AssetGate
 from .command import GateCommand
 from .execution import Kind, Needs, Speed, step
@@ -37,7 +37,7 @@ from .plan import Plan
 PREFLIGHT = "reads daemon capacity and clears derived output while retaining isolated lane caches"
 LANE = "one architecture's build lane: several builder invocations that only mean anything together"
 SWEEP = "which containers the lanes left behind is only knowable once they have run"
-ASSEMBLE = "merge, publish, materialise and boot each profile, as one indivisible assembly"
+ASSEMBLE = "merge, publish, materialise and boot the runtime, as one indivisible assembly"
 
 
 def _because(kind: OpaqueKind, reason: str, *effects: Effect) -> CallJustification:
@@ -55,7 +55,6 @@ def fragment(plan, config, *, after: tuple = ()):
     exclusive = (config.exclusive("docker_daemon"),)
     shared = (config.shared("docker_daemon"),)
     rust_builders = required_rust_builder_names(config)
-    profiles = discover_profiles(config)
 
     ready = phase.add(
         step(
@@ -84,7 +83,6 @@ def fragment(plan, config, *, after: tuple = ()):
     dependencies = phase.add(
         assetdependencies.dependency_step(
             config,
-            (profile.name for profile in profiles),
             config.architectures,
             config.imagebuild.lane_templates,
         ),
@@ -95,7 +93,7 @@ def fragment(plan, config, *, after: tuple = ()):
             step(
                 f"build.{name}",
                 Call(
-                    f"build every profile's assets for {name}",
+                    f"build the runtime assets for {name}",
                     _lane(name),
                     justification=_because(
                         OpaqueKind.DOMAIN_TRANSACTION,
@@ -106,11 +104,7 @@ def fragment(plan, config, *, after: tuple = ()):
                 ),
                 contends=shared,
                 carry_checks=(
-                    RequireLaneReceipts(
-                        config,
-                        profiles,
-                        (config.arch(name),),
-                    ),
+                    RequireLaneReceipts(config, (config.arch(name),)),
                 ),
                 kind=Kind.PACKAGE,
                 needs=frozenset({Needs.DOCKER, Needs.DISK}),
@@ -141,21 +135,17 @@ def fragment(plan, config, *, after: tuple = ()):
         after=lanes,
     )
     targets = {
-        name: tuple(
-            lane_assets(config, profile, config.arch(name)) / name / config.artifacts.initrd
-            for profile in profiles
-        )
+        name: (lane_assets(config, config.arch(name)) / name / config.artifacts.initrd,)
         for name in config.architectures
     }
     packed_step = initrd.repack_step(config, targets)
     packed = phase.add(
         replace(
             packed_step,
-            actions=(*packed_step.actions, SealPackedReceipts(config, profiles)),
+            actions=(*packed_step.actions, SealPackedReceipts(config)),
             carry_checks=(
                 RequireLaneReceipts(
                     config,
-                    profiles,
                     tuple(config.architectures.values()),
                     stages=assetreceipt.PACKED_STAGES,
                 ),
@@ -177,7 +167,7 @@ def fragment(plan, config, *, after: tuple = ()):
         step(
             "assemble",
             Call(
-                "merge, publish, materialise and boot each profile",
+                "merge, publish, materialise and boot the runtime",
                 lambda ctx: AssetGate(ctx.runner).assemble(),
                 justification=_because(
                     OpaqueKind.DOMAIN_TRANSACTION,
@@ -203,7 +193,7 @@ def _lane(arch_name: str):
 
 
 class AssetsCommand(
-    GateCommand, name="assets", help="build every profile's VM assets and boot each one"
+    GateCommand, name="assets", help="build the VM runtime assets and boot them"
 ):
     exclusive = True
 

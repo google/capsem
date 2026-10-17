@@ -131,6 +131,24 @@ across the CLI, service, process, guard, credentials, and core.
   Cover errno preservation, ownership after the source is dropped, symlink and
   path-replacement races, special files, exact modes, and concurrent callers.
 
+When transferring connected sockets with `unix::router_channel`, retain the
+original socket until a request-bound receipt confirms that the receiver owns
+and validated its descriptor. A completed `sendmsg` only queues SCM_RIGHTS;
+Darwin may collect sockets with no owner outside that queue. Bound the receipt
+wait, reject wrong identities, directions and extra descriptors, and preserve
+scope cancellation and positive child reaping. The native MCP regression is
+`upstream_broker/mcp_spawn/tests.rs`: it delays adoption, checks that the original
+stays alive, and proves it is released after the receipt. Keeping an extra
+socket for the child's entire lifetime masks disconnects and leaks descriptors.
+The same rule covers startup policy, proxy traffic/MCP/trace hints, ledger
+clients, gateway connections and the aggregator's owner connection. Auditing
+only the native MCP bootstrap missed these paths and left a macOS policy-update
+broken pipe. `tests/citadel/test_descriptor_adoption_lifetime.py` guards the
+early-drop sites, including private cable handoff: its table reference can be
+replaced by a reconnect before adoption. Gateway and upstream grant tests drop the received copy
+before acknowledging to prove the sender still owns its original, then assert
+EOF after adoption to rule out retention leaks.
+
 Direct Unix calls remain valid only in modules that implement a kernel or
 platform ABI rather than reusable host policy, such as KVM/FUSE and guest audit
 plumbing. `tests/citadel/test_unix_boundary.py` and its exact domain-ABI
@@ -141,6 +159,18 @@ one that `nix` already wraps, and catches aliased imports (`use ::libc as sys`),
 `extern "C" { fn ... }` blocks and renamed or table-form manifest
 dependencies. Before it did, foundation's own internals were unscanned and
 raw calls with `nix` wrappers accumulated there unnoticed.
+
+## Guest RAM and VirtioFS performance
+
+Before changing guest RAM, KVM storage or OCI boot, read
+[Guest RAM and VirtioFS performance](references/guest-memory-performance.md).
+Keep RAM and KVM slot offsets aligned to 2 MiB and request transparent huge
+pages through `capsem_foundation::unix::guest_memory::GuestRam`. A regular
+4-KiB-backed mapping once made kernel startup take 1.1 seconds and a 352-MB
+EROFS scan wait 1.5 seconds in reads. The allocation and slot regression is
+`guest_ram_and_kvm_slot_offsets_preserve_huge_page_alignment` in
+`hypervisor/kvm/memory/tests.rs`; alignment alone is insufficient without the
+per-mapping huge-page hint.
 
 ## Bidirectional I/O -- thread per direction
 
@@ -183,9 +213,21 @@ struct FunctionCall {
 
 ## Concurrency patterns
 
-- **RwLock for caches**: Cert authority uses `RwLock<HashMap>` -- many readers, rare writers. Use `read()` first, upgrade to `write()` only on cache miss.
+- **Shared runtime caches**: Use `capsem-cache` primitives instead of a local
+  map and eviction policy. Import capacities and freshness windows from the
+  generated `capsem_proto::CACHE_*` constants; their only numeric source is
+  `[cache]` in `config/data/runtime-limits.toml`.
 - **Arc for shared state**: VM state, proxy config, and telemetry handles are `Arc`-wrapped for sharing across tasks.
 - **Per-connection tasks**: The MITM proxy spawns a new tokio task per connection. Each task owns its TLS state and upstream connection. No shared mutable state between connections.
+- **Config-owned runtime ceilings**: Network concurrency and in-memory cache
+  policy are owned by
+  `config/data/runtime-limits.toml` and generated into `capsem-proto`. Import
+  the shared protocol constant in host and guest consumers; never duplicate a
+  numeric capacity in individual crates. Ledger queue and batch capacities
+  derive from the same supported-client ceiling, and bounded coalescing waits
+  use the generated duration rather than a local sleep literal. Extend the
+  runtime-limit Citadel guard for every new consumer. See `/dev-mitm-proxy` for
+  the load proof required when a limit changes.
 
 ### Host-serialization locks for per-host critical sections
 

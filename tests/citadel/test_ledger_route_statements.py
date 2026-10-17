@@ -41,12 +41,7 @@ SERVICE = ROOT / "crates" / "capsem-service" / "src"
 REGISTRY = SERVICE / "tests" / "route_query_plans.rs"
 
 # SQL items that are not ledger reads, keyed `path:item`, with the reason.
-NOT_LEDGER_READS: dict[str, str] = {
-    "crates/capsem-service/src/ledger_routes/global_stats.rs:STATS_RESPONSE_SQL": (
-        "GET /stats reads main.db, one row per session (at most about a thousand per machine), "
-        "filled from each session's counter snapshot at stop; no session ledger is read"
-    ),
-}
+NOT_LEDGER_READS: dict[str, str] = {}
 
 SQL = re.compile(
     r"\bselect\b[\s\S]*\bfrom\b|\binsert\s+into\b|\bupdate\s+\w+\s+set\b|\bdelete\s+from\b|\bpragma\s+\w",
@@ -236,7 +231,7 @@ def test_a_name_used_elsewhere_in_the_test_file_does_not_register_it() -> None:
 
 
 def test_prose_is_not_mistaken_for_sql() -> None:
-    sources = {"x.rs": 'fn msg() { error!("pick a profile"); bail!("no rows selected"); }\n'}
+    sources = {"x.rs": 'fn msg() { error!("pick a session"); bail!("no rows selected"); }\n'}
     assert unregistered(sources, REGISTRY_SNIPPET) == {}
 
 

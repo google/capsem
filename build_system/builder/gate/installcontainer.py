@@ -73,6 +73,18 @@ def verify_vm_device_access(docker: Docker, container: str, settings: InstallCon
         docker.exec(container, ["test", "-r", device, "-a", "-w", device], user=user)
 
 
+def claim_owned_paths(docker: Docker, container: str, settings: InstallConfig) -> None:
+    """Grant the proof user its scratch trees and replaceable parent entries."""
+    guest = settings.guest_user.name
+    owned = settings.layout.owned_paths(settings.mount)
+    docker.exec(container, ["mkdir", "-p", *owned])
+    docker.exec(container, ["chown", "-R", f"{guest}:{guest}", *owned])
+    # Replacing a scratch directory needs its parent's entry permission;
+    # recursively changing the parent would also claim unrelated output.
+    parents = settings.layout.owned_parent_paths(settings.mount)
+    docker.exec(container, ["chown", f"{guest}:{guest}", *parents])
+
+
 class InstallContainer:
     """A systemd container, its host prerequisites, and its file ownership."""
 
@@ -176,7 +188,7 @@ class InstallContainer:
             ],
         )
         self._await_systemd()
-        self._claim_paths()
+        claim_owned_paths(self._docker, self.name, self._settings)
 
     def verify_vm_device_access(self) -> None:
         if self.boots_a_guest:
@@ -185,21 +197,15 @@ class InstallContainer:
     def _content_mounts(self) -> tuple[Mount, ...]:
         if self._content is None:
             return ()
-        mount = self._settings.mount
-        profile = self._content.content
         mounts = [
             Mount.generated(
-                str(profile.assets),
-                f"{mount}/{self._config.functional.assets_dir}",
-            ),
-            Mount.generated(
-                str(profile.config),
-                f"{mount}/{self._config.functional.config_root}",
+                str(self._content.content.assets),
+                f"{self._settings.mount}/{self._config.functional.assets_dir}",
             ),
         ]
         if isinstance(self._content, SelectedInstallContent):
             # stage-release-test-inputs writes absolute file:// URLs. Mounting
-            # the one paired root at the same address keeps those immutable
+            # the one content root at the same address keeps those immutable
             # bytes resolvable without exposing the checkout or public egress.
             root = self._content.content.root.resolve()
             mounts.append(Mount.generated(str(root), str(root)))
@@ -212,19 +218,6 @@ class InstallContainer:
             attempts=self._settings.systemd_ready_attempts,
             interval=self._settings.systemd_ready_interval_seconds,
             sleep=self._sleep,
-        )
-
-    def _claim_paths(self) -> None:
-        guest = self._settings.guest_user.name
-        self._docker.exec(self.name, ["mkdir", "-p", *self._owned])
-        self._docker.exec(self.name, ["chown", "-R", f"{guest}:{guest}", *self._owned])
-        # Removing an owned path needs write permission on its parent, not on
-        # the path itself. Claim each config-derived parent entry without
-        # recursively walking unrelated build output beneath it.
-        parents = self._settings.layout.owned_parent_paths(self._settings.mount)
-        self._docker.exec(
-            self.name,
-            ["chown", f"{guest}:{guest}", *parents],
         )
 
     def return_paths(self) -> None:

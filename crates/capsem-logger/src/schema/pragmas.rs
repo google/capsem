@@ -21,7 +21,7 @@ const READER_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 /// Keep this in the DB layer: routes and security components should not know
 /// whether a query reads through SQLite's page cache, mmap, or DB-owned memory
 /// tables.
-pub const SQLITE_MMAP_SIZE_BYTES: i64 = 256 * 1024 * 1024;
+pub const SQLITE_MMAP_SIZE_BYTES: i64 = capsem_proto::LEDGER_SQLITE_MMAP_BYTES;
 
 fn apply_mmap_pragma(conn: &Connection) -> rusqlite::Result<()> {
     conn.pragma_update(None, "mmap_size", SQLITE_MMAP_SIZE_BYTES)
@@ -85,6 +85,11 @@ pub fn record_sqlite_mmap_telemetry(conn: &Connection, path: &Path, role: &'stat
 pub fn apply_pragmas(conn: &Connection) -> rusqlite::Result<()> {
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "synchronous", "FULL")?;
+    // A confined ledger owner has authority over its session directory, not
+    // the process-wide temporary directory SQLite otherwise selects for
+    // large INSERT..SELECT and sort operations. Keep that scratch state in
+    // the connection so a burst can flush without ambient filesystem access.
+    conn.pragma_update(None, "temp_store", "MEMORY")?;
     #[cfg(target_os = "macos")]
     conn.pragma_update(None, "fullfsync", "ON")?;
     apply_mmap_pragma(conn)?;

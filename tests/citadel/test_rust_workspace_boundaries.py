@@ -19,6 +19,9 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 FOCUSED_DEPENDENCY_RULES = {
+    "capsem-cache": frozenset(
+        {"capsem-core", "capsem-logger", "capsem-assets", "capsem-config", "rusqlite", "tokio"}
+    ),
     "capsem-foundation": frozenset(
         {"capsem-core", "capsem-logger", "capsem-assets", "rmcp", "rusqlite"}
     ),
@@ -30,6 +33,9 @@ FOCUSED_DEPENDENCY_RULES = {
     ),
     "capsem-credentials": frozenset(
         {"capsem-core", "capsem-logger", "capsem-assets", "rmcp", "rusqlite"}
+    ),
+    "capsem-mcp-transport": frozenset(
+        {"capsem-core", "capsem-logger", "capsem-assets", "capsem-config", "capsem-credentials", "rmcp", "rusqlite"}
     ),
     "capsem-mcp-aggregator": frozenset(
         {"capsem-core", "capsem-logger", "capsem-assets", "capsem-config", "rusqlite"}
@@ -241,17 +247,18 @@ def test_core_does_not_reexport_extracted_owner_crates() -> None:
     )
 
 
-def test_dependency_guard_detects_normal_target_and_renamed_dependencies() -> None:
+@pytest.mark.parametrize("owner", ["capsem-foundation", "capsem-mcp-transport"])
+def test_dependency_guard_detects_normal_target_and_renamed_dependencies(owner: str) -> None:
     manifests: dict[str, dict[str, Any]] = {
         crate: {} for crate in FOCUSED_DEPENDENCY_RULES
     }
-    manifests["capsem-foundation"] = {
+    manifests[owner] = {
         "dependencies": {"db": {"package": "rusqlite", "version": "0.1"}},
         "target": {"cfg(unix)": {"dependencies": {"capsem-core": {"path": "../core"}}}},
         "dev-dependencies": {"rmcp": "1"},
     }
     assert _dependency_violations(manifests) == {
-        "capsem-foundation": ["capsem-core", "rusqlite"]
+        owner: ["capsem-core", "rusqlite"]
     }
 
 

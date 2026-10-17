@@ -46,20 +46,21 @@ AGGREGATE_DEBT: dict[str, str] = {
     "crates/capsem-logger/src/schema/memory_sync.rs:6493cf061729": (
         "the flush folds the decision transitions it moves to disk into counted runs; one flush's rows"
     ),
-    "crates/capsem-logger/src/session_index.rs:01c7d0dfd4aa": "main.db: how many sessions it indexes",
     "crates/capsem-logger/src/writer/retention.rs:4b420a811f87": (
         "retention reports the blocks it keeps; runs on an explicit retention request, over the block index"
     ),
-    "crates/capsem-service/src/ledger_routes/global_stats.rs:afb847047612": (
-        "GET /stats totals across sessions from main.db, one row per session filled from each session's "
-        "snapshot at stop; it never reads a session ledger"
-    ),
     "crates/capsem-service/src/ledger_routes/history.rs:b803454453eb": (
+        "live GET /history search total; the stopped-session ledger worker executes the equivalent typed query"
+    ),
+    "crates/capsem-service/src/ledger_routes/stats_detail/interactions.rs:b3cfe18c894d": (
+        "live stats detail rows fold tool responses into one error flag per item; this is a bounded detail page"
+    ),
+    "crates/capsem-logger/src/ledger_server/queries.rs:003d2ea18b92": (
         "GET /history total when a search is given: how many exec/audit rows match a literal substring. "
         "No snapshot can hold a count per search text and the ledger has no full-text index yet, so this is "
         "a scan bounded by the reader's 5-second interrupt; without a search the total is the counter snapshot"
     ),
-    "crates/capsem-service/src/ledger_routes/stats_detail/interactions.rs:b3cfe18c894d": (
+    "crates/capsem-logger/src/ledger_server/queries.rs:df35421e7776": (
         "stats detail rows: folds each model item's tool responses into one error flag per item; a detail "
         "view over a bounded page of rows, not a polled total"
     ),
@@ -72,7 +73,7 @@ POLLED_ROUTE_FILES = {
     "crates/capsem-service/src/ledger_routes/vm_info.rs": "populate_vm_info",
     "crates/capsem-service/src/ledger_routes/activity.rs": "read_counters",
     "crates/capsem-service/src/ledger_routes/security.rs": "security_stats_for_vm",
-    "crates/capsem-service/src/ledger_routes.rs": "hydrate_plugin_execution_runtime",
+    "crates/capsem-service/src/plugin_routes.rs": "hydrate_plugin_execution_runtime",
     "crates/capsem-service/src/vm_lifecycle.rs": "handle_history_counts",
     "crates/capsem-service/src/vm_files.rs": "handle_stats_summary",
     "crates/capsem-gateway/src/status.rs": "fn ",

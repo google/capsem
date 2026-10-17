@@ -67,7 +67,8 @@ EXCLUDED_POLICY_FILES = frozenset(
     }
 )
 PATH_LITERAL = re.compile(
-    rf"(?<![A-Za-z0-9_./-])(?:\.\./|\./)*(?P<path>"
+    # `$` too: `$tmp/x` is a shell variable's directory, not a repository path.
+    rf"(?<![A-Za-z0-9_./$-])(?:\.\./|\./)*(?P<path>"
     rf"(?:{'|'.join(re.escape(prefix) for prefix in OBSOLETE_PREFIXES)})"
     rf"[A-Za-z0-9_.@+/-]*)"
 )
@@ -163,6 +164,14 @@ def test_operating_system_tmp_path_is_not_repository_debt() -> None:
     assert _tokens("write the socket to /tmp/capsem.sock") == [], (
         PATH_OWNERSHIP_RATIONALE
     )
+
+
+def test_shell_variable_path_is_not_repository_debt() -> None:
+    # `$tmp/asset` is a mktemp directory, not the retired top-level `tmp/`.
+    assert _tokens('curl -o "$tmp/$asset" && tar -xzf "$tmp/x.tgz"') == [], (
+        PATH_OWNERSHIP_RATIONALE
+    )
+    assert _tokens("rm -rf tmp/build") == ["tmp/build"], PATH_OWNERSHIP_RATIONALE
 
 
 def test_external_url_path_is_not_repository_debt() -> None:

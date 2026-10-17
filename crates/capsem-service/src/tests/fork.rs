@@ -26,7 +26,7 @@ fn running_fork_source(state: &Arc<ServiceState>, dir: &tempfile::TempDir, refus
 #[tokio::test]
 async fn handle_fork_creates_persistent_sandbox() {
     let (state, dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
+    install_test_runtime_assets(&state);
     running_fork_source(&state, &dir, None);
     let result = handle_fork(
         State(state.clone()),
@@ -45,9 +45,8 @@ async fn handle_fork_creates_persistent_sandbox() {
     // Verify fork created a persistent sandbox entry in the registry
     let registry = state.persistent_registry.lock().unwrap();
     let entry = registry.get("my-fork").unwrap();
-    assert_eq!(entry.profile_id, "code");
-    assert_eq!(entry.profile_revision, test_profile_revision());
-    assert_eq!(entry.profile_payload_hash, test_profile_payload_hash());
+    assert_eq!(entry.asset_pins, test_asset_pins());
+    assert!(entry.legacy_profile_id.is_none());
     assert_eq!(entry.asset_pins, test_asset_pins());
     assert_eq!(entry.forked_from, Some("fork-src".into()));
     assert_eq!(entry.description, Some("test".into()));
@@ -65,7 +64,7 @@ async fn a_fork_whose_guest_will_not_freeze_fails_and_leaves_nothing() {
     // Copying a live ext4 overlay without the freeze can yield an image the
     // fork cannot boot, so a refused freeze is a refused fork.
     let (state, dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
+    install_test_runtime_assets(&state);
     running_fork_source(&state, &dir, Some("timed out waiting for SnapshotReady"));
     let error = handle_fork(
         State(state.clone()),
@@ -109,7 +108,7 @@ async fn handle_fork_not_found() {
 #[tokio::test]
 async fn handle_fork_duplicate_returns_conflict() {
     let (state, dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
+    install_test_runtime_assets(&state);
     let session_dir = state.run_dir.join("sessions/dup-src");
     std::fs::create_dir_all(session_dir.join("system")).unwrap();
     std::fs::create_dir_all(session_dir.join("workspace")).unwrap();
@@ -154,7 +153,7 @@ async fn handle_fork_duplicate_returns_conflict() {
 #[tokio::test]
 async fn handle_fork_from_persistent_registry() {
     let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
+    install_test_runtime_assets(&state);
     let session_dir = state.run_dir.join("persistent/pers-vm");
     std::fs::create_dir_all(session_dir.join("system")).unwrap();
     std::fs::create_dir_all(session_dir.join("workspace")).unwrap();
@@ -187,53 +186,35 @@ async fn handle_fork_from_persistent_registry() {
     assert_eq!(result.0.name, "from-pers");
     let registry = state.persistent_registry.lock().unwrap();
     let entry = registry.get("from-pers").unwrap();
-    assert_eq!(entry.profile_id, "code");
-    assert_eq!(entry.profile_revision, test_profile_revision());
-    assert_eq!(entry.profile_payload_hash, test_profile_payload_hash());
+    assert_eq!(entry.asset_pins, test_asset_pins());
+    assert!(entry.legacy_profile_id.is_none());
     assert_eq!(entry.asset_pins, test_asset_pins());
     drop(registry);
 }
 
+/// A VM from before profiles were removed is refused, not laundered into a
+/// fork in the current shape.
 #[tokio::test]
-async fn handle_fork_rejects_asset_pin_drift() {
+async fn handle_fork_refuses_a_profile_era_vm() {
     let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
-    let session_dir = state.run_dir.join("persistent/pin-drift");
-    std::fs::create_dir_all(session_dir.join("system")).unwrap();
+    install_test_runtime_assets(&state);
+    let session_dir = state.run_dir.join("persistent/profile-era");
     std::fs::create_dir_all(session_dir.join("workspace")).unwrap();
-    std::fs::write(session_dir.join("system/rootfs.img"), b"data").unwrap();
-    let mut pins = test_asset_pins();
-    pins.rootfs.hash = "blake3:0000000000000000000000000000000000000000000000000000000000000000".into();
-    let vm_id = new_persistent_vm_id();
-    {
-        let mut reg = state.persistent_registry.lock().unwrap();
-        reg.data.vms.insert(
-            "pin-drift".into(),
-            PersistentVmEntry {
-                id: vm_id.clone(),
-                name: "pin-drift".into(),
-                profile_id: "code".into(),
-                profile_revision: test_profile_revision(),
-                profile_payload_hash: test_profile_payload_hash(),
-                asset_pins: pins,
-                ram_mb: 2048,
-                cpus: 2,
-                base_version: "0.0.0".into(),
-                created_at: "0".into(),
-                session_dir,
-                forked_from: None,
-                description: None,
-                suspended: false,
-                defunct: false,
-                last_error: None,
-                checkpoint_path: None,
-                env: None,
-            },
-        );
-    }
+    let entry = PersistentVmEntry {
+        legacy_profile_id: Some("code".into()),
+        ..test_persistent_entry("profile-era", session_dir)
+    };
+    let vm_id = entry.id.clone();
+    state
+        .persistent_registry
+        .lock()
+        .unwrap()
+        .data
+        .vms
+        .insert("profile-era".into(), entry);
 
     let err = handle_fork(
-        State(state),
+        State(Arc::clone(&state)),
         Path(vm_id),
         Json(ForkRequest {
             name: "blocked-fork".into(),
@@ -243,9 +224,6 @@ async fn handle_fork_rejects_asset_pin_drift() {
     .await
     .unwrap_err();
     assert_eq!(err.0, StatusCode::PRECONDITION_FAILED);
-    assert!(
-        err.1.contains("asset pins changed"),
-        "fork must fail closed on asset pin drift, got: {}",
-        err.1
-    );
+    assert!(err.1.contains("profiles no longer exist"), "{}", err.1);
+    assert!(!state.persistent_registry.lock().unwrap().contains("blocked-fork"));
 }

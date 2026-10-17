@@ -16,6 +16,7 @@ static MEMORY_SCHEMA_LOCK: Mutex<()> = Mutex::new(());
 const SECURITY_EVENT_TYPE_CHECK: &str =
     "CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask', 'network.connect', 'network.connect_result', 'network.close', 'network.lifecycle', 'network.probe', 'network.probe_result'))";
 mod ddl;
+mod integrity;
 pub use ddl::CREATE_SCHEMA;
 
 mod memory_sync;
@@ -56,8 +57,8 @@ pub(crate) fn create_tables_with_archive_header(
         conn.execute_batch(CREATE_SCHEMA)?;
         if !has_archive_state {
             let header = prepared.unwrap_or(FileHeader {
-                archive_id: ArchiveId::new_v4(),
-                generation_id: GenerationId::new_v4(),
+                archive_id: ArchiveId::generate(),
+                generation_id: GenerationId::generate(),
             });
             conn.execute(
                 "INSERT INTO archive_state(
@@ -82,6 +83,7 @@ pub(crate) fn create_tables_with_archive_header(
         }
         transport::assert_current(conn)?;
         security_event_types::assert_current(conn)?;
+        integrity::validate(conn)?;
         archive_state(conn)?;
         Ok(())
     })();
@@ -238,7 +240,7 @@ pub fn memory_uri_for_path(path: &Path) -> String {
 }
 
 pub fn memory_uri_for_name(name: &str) -> String {
-    let hash = blake3::hash(name.as_bytes()).to_hex();
+    let hash = capsem_crypto::blake3::hash(name.as_bytes()).to_hex();
     format!("file:capsem-ledger-mem-{}?mode=memory&cache=shared", &hash[..16])
 }
 
@@ -255,7 +257,13 @@ pub(crate) fn with_memory_schema_lock<T>(operation: impl FnOnce() -> rusqlite::R
 /// from `main.sqlite_master` so table shape cannot drift into a second hand
 /// written contract. Blob storage stays disk-owned and bounded.
 pub fn create_memory_tables(conn: &Connection, memory_uri: &str) -> rusqlite::Result<()> {
+    integrity::validate(conn)?;
     attach_memory_schema(conn, memory_uri)?;
+    // DELETE alone leaves an in-memory SQLite database's freed pages attached
+    // to the process forever. The staging schema is emptied every flush, so
+    // return those pages at the same commit instead of retaining the largest
+    // burst for the rest of the VM's lifetime.
+    conn.execute_batch("PRAGMA mem.auto_vacuum = FULL")?;
     reconcile_memory_tables_from_disk(conn)
 }
 
@@ -341,6 +349,7 @@ pub fn validate_ready_schema(conn: &Connection) -> Result<(), String> {
     // A CHECK constraint is not a column, so the loop above cannot see a
     // security ledger that was declared against an older list of event types.
     security_event_types::validate_ready(conn, "main")?;
+    integrity::validate(conn).map_err(|error| error.to_string())?;
 
     Ok(())
 }

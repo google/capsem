@@ -331,7 +331,7 @@ def test_authority_does_not_parse_the_outer_checkouts_configuration(
     tree's `config/gate.toml` with that older schema couples the two trees: any
     key added to the config on `main` makes every already-qualified commit
     unreleasable, with a validation error naming a file the release does not
-    need. That is what happened to `release-profile stable co-work` after
+    need. That is what happened to a stable runtime release after
     `[platforms]` was added -- the commit was qualified, its own config was
     correct, and it still refused to start.
 

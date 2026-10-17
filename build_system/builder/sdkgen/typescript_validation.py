@@ -35,9 +35,19 @@ def expression(schema: Schema) -> str:
         return "z.instanceof(Uint8Array)"
     if schema.format == "ipv4":
         return "z.ipv4()"
+    if schema.format == "uuid":
+        return "z.uuid()"
+    if schema.format == "date-time":
+        return "z.iso.datetime({offset: true})"
     result = {"string": "z.string()", "integer": "z.int()", "number": "z.number()",
               "boolean": "z.boolean()", "null": "z.null()"}[schema.type]
-    return result + (f".min({schema.minimum})" if schema.minimum is not None else "")
+    if schema.pattern is not None:
+        result += f".length({schema.pattern_width}).regex(new RegExp({json.dumps(schema.pattern)}))"
+    if schema.minimum is not None:
+        result += f".min({schema.minimum})"
+    if schema.maximum is not None:
+        result += f".max({schema.maximum})"
+    return result
 
 
 def render_validators(schemas: dict[str, Schema]) -> dict[str, str]:

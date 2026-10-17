@@ -185,7 +185,7 @@ from pathlib import Path
 out = Path(sys.argv[1])
 arch = sys.argv[2]
 document = {
-    "schema": "capsem.profile_software_inventory.v1",
+    "schema": "capsem.runtime_software_inventory.v1",
     "architecture": arch,
     "packages": [
         {
@@ -212,4 +212,5 @@ cp -R "$ASSETS_DIR/$arch/." "$ASSETS_DIR/current/"
 
 VERSION=$(grep '^version' "$ROOT/Cargo.toml" | head -1 | sed 's/.*"\(.*\)"/\1/')
 cd "$ROOT"
-cargo run -p capsem-admin -- manifest generate "$ASSETS_DIR" --version "$VERSION"
+python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 180 -- \
+    cargo run -p capsem-admin -- manifest generate "$ASSETS_DIR" --version "$VERSION"

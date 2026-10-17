@@ -6,18 +6,18 @@
 //! from VM asset hydration.
 
 mod asset_install;
-pub(crate) mod cli;
-mod published_profile_catalog;
+mod candidate_audit;
 mod verified_update;
 
 use asset_install::*;
+use candidate_audit::*;
 use verified_update::*;
 
 #[cfg(test)]
 mod runtime_contract_tests;
 
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet},
     fs::OpenOptions,
     io::{Read, Write},
     path::{Path, PathBuf},
@@ -25,14 +25,12 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use capsem_crypto::Sha256;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use tracing::{info, warn};
 
 use crate::platform::{self, InstallLayout};
 use capsem_assets::asset_manager::{Architecture, PackageArchitecture};
-use capsem_core::net::policy_config::ProfileCatalog;
-use published_profile_catalog::resolve_release_channel_artifact_url;
 
 const RELEASE_HTTP_ATTEMPTS: usize = 6;
 const RELEASE_HTTP_INITIAL_BACKOFF_MS: u64 = 1_000;
@@ -68,27 +66,6 @@ pub struct UpdateCheck {
     /// Why the advertised VM asset set cannot be applied by this install.
     #[serde(default)]
     pub assets_blocked_reason: Option<String>,
-    /// Latest profile catalog advertised by the release channel, when published.
-    #[serde(default)]
-    pub latest_profiles: Option<String>,
-    /// Installed profile catalog revision derived from the local catalog.
-    #[serde(default)]
-    pub current_profiles: Option<String>,
-    /// Whether the advertised profile catalog differs from the installed one.
-    #[serde(default)]
-    pub profiles_update_available: bool,
-    /// Release-channel state for profile updates.
-    #[serde(default)]
-    pub profiles_state: Option<String>,
-    /// Why the advertised profile catalog cannot be applied by this install.
-    #[serde(default)]
-    pub profiles_blocked_reason: Option<String>,
-    /// URL or release-channel artifact path for the advertised profile catalog.
-    #[serde(default)]
-    pub profile_catalog_source: Option<String>,
-    /// BLAKE3 digest of the advertised profile catalog payload.
-    #[serde(default)]
-    pub profile_catalog_hash: Option<String>,
     /// Latest VM image catalog advertised by the release channel, when published.
     #[serde(default)]
     pub latest_images: Option<String>,
@@ -169,6 +146,24 @@ impl BinaryInstallerApplyPlan {
     }
 }
 
+async fn apply_binary_installer_plan(plan: &BinaryInstallerApplyPlan) -> Result<()> {
+    for command in &plan.commands {
+        let line = command.command_line();
+        info!("applying binary update with package manager: {line}");
+        let status = tokio::process::Command::new(&command.program)
+            .args(&command.args)
+            .status()
+            .await
+            .with_context(|| format!("run binary update apply command: {line}"))?;
+        if !status.success() {
+            anyhow::bail!(
+                "binary update apply command failed with {status}: {line}. Current installation was left for the package manager to preserve or repair."
+            );
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct BinaryInstallerApplyCommand {
     program: String,
@@ -185,30 +180,11 @@ impl BinaryInstallerApplyCommand {
     }
 }
 
-const CACHE_TTL_SECS: u64 = 24 * 3600; // 24 hours
 const DEFAULT_RELEASE_MANIFEST_URL: &str = "https://release.capsem.org/assets/stable/manifest.json";
 const DEFAULT_RELEASE_CHANNELS_URL: &str = "https://release.capsem.org/channels.json";
 const RELEASE_MANIFEST_URL_ENV: &str = "CAPSEM_RELEASE_MANIFEST_URL";
 const RELEASE_CHANNELS_URL_ENV: &str = "CAPSEM_RELEASE_CHANNELS_URL";
 const LEGACY_RELEASE_HEALTH_URL_ENV: &str = "CAPSEM_RELEASE_HEALTH_URL";
-
-#[derive(Debug, Clone, Deserialize)]
-#[allow(dead_code)]
-struct ReleaseChannelHealth {
-    schema: String,
-    updates: ReleaseChannelUpdates,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[allow(dead_code)]
-struct ReleaseChannelUpdates {
-    binary: ReleaseChannelUpdateTarget,
-    assets: ReleaseChannelUpdateTarget,
-    #[serde(default)]
-    profiles: Option<ReleaseChannelUpdateTarget>,
-    #[serde(default)]
-    images: Option<ReleaseChannelUpdateTarget>,
-}
 
 #[derive(Debug, Clone, Deserialize)]
 #[allow(dead_code)]
@@ -257,34 +233,29 @@ struct ReleaseChannelBinaryFile {
     size: u64,
 }
 
-#[derive(Debug, Deserialize)]
-struct ReleaseChannelProfileManifest {
-    #[allow(dead_code)]
-    version: String,
-    #[serde(default)]
-    profiles: BTreeMap<String, ReleaseChannelProfileDocument>,
-}
-
+/// The VM runtime a release graph publishes: one image set per architecture.
 #[derive(Debug, Serialize, Deserialize)]
-struct ReleaseChannelProfileDocument {
+struct ReleaseChannelRuntimeDocument {
     revision: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    min_capsem_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    max_capsem_version: Option<String>,
     #[serde(default)]
-    architectures: Vec<ReleaseChannelProfileArchitecture>,
+    architectures: Vec<ReleaseChannelRuntimeArchitecture>,
     #[serde(flatten)]
     extra: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct ReleaseChannelProfileArchitecture {
+struct ReleaseChannelRuntimeArchitecture {
     architecture: Architecture,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     image_revision: Option<String>,
     #[serde(default)]
-    config: Vec<ReleaseChannelProfileConfig>,
-    #[serde(default, rename = "images")]
-    artifacts: Vec<ReleaseChannelProfileImage>,
+    images: Vec<ReleaseChannelRuntimeImage>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     evidence: Vec<serde_json::Value>,
     #[serde(flatten)]
@@ -292,28 +263,13 @@ struct ReleaseChannelProfileArchitecture {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct ReleaseChannelProfileConfig {
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    kind: String,
-    path: String,
-    url: String,
-    #[serde(rename = "bytes")]
-    size: u64,
-    digest: ReleaseChannelProfileDigest,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    status: String,
-    #[serde(flatten)]
-    extra: BTreeMap<String, serde_json::Value>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ReleaseChannelProfileImage {
+struct ReleaseChannelRuntimeImage {
     kind: String,
     name: String,
     url: String,
     #[serde(rename = "bytes")]
     size: u64,
-    digest: ReleaseChannelProfileDigest,
+    digest: ReleaseChannelRuntimeDigest,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     status: String,
     #[serde(flatten)]
@@ -321,17 +277,38 @@ struct ReleaseChannelProfileImage {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct ReleaseChannelProfileDigest {
+struct ReleaseChannelRuntimeDigest {
     sha256: String,
     blake3: String,
 }
 
+/// A public release graph: the package cohort and, once published, the runtime.
 #[derive(Debug, Deserialize)]
 struct ReleaseGraphManifest {
     #[serde(default)]
     packages: Vec<ReleaseGraphPackage>,
     #[serde(default)]
-    profiles: BTreeMap<String, ReleaseChannelProfileDocument>,
+    runtime: Option<ReleaseChannelRuntimeDocument>,
+}
+
+/// The release graph in `body`, or `None` for a format-2 asset manifest.
+///
+/// A graph is recognized by its package cohort or runtime. One publishing
+/// `profiles` is a pre-runtime channel and is refused, not read as binary-only.
+fn release_graph_from_payload(body: &[u8]) -> Result<Option<ReleaseGraphManifest>> {
+    let value: serde_json::Value = serde_json::from_slice(body).context("parse release manifest JSON")?;
+    if value.get("format").is_some() {
+        return Ok(None);
+    }
+    if value.get("profiles").is_some() {
+        anyhow::bail!("release graph publishes profiles; this Capsem installs only a runtime graph");
+    }
+    if value.get("packages").is_none() && value.get("runtime").is_none() {
+        return Ok(None);
+    }
+    serde_json::from_value(value)
+        .map(Some)
+        .context("parse release graph manifest")
 }
 
 #[derive(Debug, Deserialize)]
@@ -414,33 +391,6 @@ struct ReleaseChannelAssetDownload {
     size: u64,
     sha256: String,
     blake3: String,
-}
-
-#[derive(Debug, Clone)]
-struct ReleaseChannelProfileConfigDownload {
-    profile_id: String,
-    relative_path: std::path::PathBuf,
-    url: String,
-    size: u64,
-    sha256: String,
-    blake3: String,
-}
-
-#[derive(Debug, Clone)]
-struct ReleaseChannelProfileRuntimePin {
-    profile_id: String,
-    arch: String,
-    kind: String,
-    name: String,
-    url: String,
-    size: u64,
-    blake3: String,
-}
-
-struct ReleaseChannelProfileGraphInputs {
-    asset_downloads: Vec<ReleaseChannelAssetDownload>,
-    config_downloads: Vec<ReleaseChannelProfileConfigDownload>,
-    runtime_pins: Vec<ReleaseChannelProfileRuntimePin>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -546,17 +496,13 @@ pub fn read_cached_update_notice() -> Option<String> {
     let source = release_manifest_url().ok()?;
     let check = read_cache_for_source(&source).ok()?;
 
-    if !check.update_available
-        && !check.assets_update_available
-        && !check.profiles_update_available
-        && check.profiles_blocked_reason.is_none()
-    {
+    if !check.update_available && !check.assets_update_available {
         return None;
     }
 
     // Only show if cache is still fresh
     let age = now_secs().saturating_sub(check.checked_at);
-    if age > CACHE_TTL_SECS {
+    if age > capsem_proto::CACHE_UPDATE_CHECK_TTL_SECONDS {
         return None;
     }
 
@@ -576,20 +522,6 @@ pub fn read_cached_update_notice() -> Option<String> {
                 "VM asset update available: {latest_assets}. The installed service will apply it automatically."
             ));
         }
-    }
-
-    if check.profiles_update_available {
-        if let Some(latest_profiles) = check.latest_profiles {
-            return Some(format!(
-                "Profile catalog update available: {latest_profiles}. The installed service will apply it automatically."
-            ));
-        }
-    }
-
-    if let Some(reason) = check.profiles_blocked_reason {
-        return Some(format!(
-            "Profile catalog update blocked: {reason}. Run `capsem update --check` for details."
-        ));
     }
 
     None
@@ -687,13 +619,6 @@ fn failed_update_check_from_previous(
         assets_update_available: false,
         assets_state: None,
         assets_blocked_reason: None,
-        latest_profiles: None,
-        current_profiles: None,
-        profiles_update_available: false,
-        profiles_state: None,
-        profiles_blocked_reason: None,
-        profile_catalog_source: None,
-        profile_catalog_hash: None,
         latest_images: None,
         images_update_available: false,
         images_state: None,
@@ -731,7 +656,7 @@ pub async fn refresh_update_cache_if_stale() {
         .filter(|check| check.source.as_deref() == Some(manifest_url.as_str()));
     if let Some(check) = previous_check.as_ref() {
         let age = now_secs().saturating_sub(check.checked_at);
-        if age < CACHE_TTL_SECS {
+        if age < capsem_proto::CACHE_UPDATE_CHECK_TTL_SECONDS {
             return; // Still fresh
         }
     }
@@ -990,7 +915,7 @@ fn verify_selected_channel_manifest(selection: &ResolvedReleaseChannelManifest, 
             actual_sha256
         );
     }
-    let actual_blake3 = blake3::hash(bytes).to_hex().to_string();
+    let actual_blake3 = capsem_crypto::blake3::hash(bytes).to_hex().to_string();
     if actual_blake3 != selection.blake3 {
         anyhow::bail!(
             "channel {} manifest BLAKE3 mismatch: expected {}, got {}",
@@ -1072,13 +997,15 @@ fn channel_manifest_url(manifest_url: &str) -> Result<String> {
     Ok(url.to_string())
 }
 
+/// The installed runtime revision, or the format-2 manifest's asset release.
 fn local_current_asset_version() -> Option<String> {
-    if let Some(state) = local_release_graph_profile_state() {
-        return Some(state.images_revision);
-    }
     let assets_dir = capsem_assets::asset_manager::default_assets_dir()?;
-    let manifest_path = assets_dir.join("manifest.json");
-    let manifest_bytes = std::fs::read_to_string(manifest_path).ok()?;
+    let manifest_bytes = std::fs::read_to_string(assets_dir.join("manifest.json")).ok()?;
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&manifest_bytes) {
+        if let Ok(Some(state)) = capsem_assets::asset_manager::release_graph_runtime_state(&value) {
+            return Some(state.revision);
+        }
+    }
     let manifest = capsem_assets::asset_manager::ManifestV2::from_json(&manifest_bytes).ok()?;
     Some(manifest.assets.current)
 }
@@ -1094,37 +1021,6 @@ fn local_current_binary_version() -> String {
                 .map(ToOwned::to_owned)
         });
     package_version.unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string())
-}
-
-fn local_current_profile_catalog_revision() -> Option<String> {
-    if let Some(state) = local_release_graph_profile_state() {
-        return Some(state.catalog_revision);
-    }
-    let catalog = capsem_core::net::policy_config::ProfileCatalog::load_default().ok()?;
-    profile_catalog_revision(catalog.profiles().collect::<Vec<_>>().as_slice()).ok()
-}
-
-fn local_release_graph_profile_state() -> Option<capsem_assets::asset_manager::ReleaseGraphProfileState> {
-    let assets_dir = capsem_assets::asset_manager::default_assets_dir()?;
-    let manifest = std::fs::read(assets_dir.join("manifest.json")).ok()?;
-    let value: serde_json::Value = serde_json::from_slice(&manifest).ok()?;
-    capsem_assets::asset_manager::release_graph_profile_state(&value).ok()
-}
-
-fn profile_catalog_revision(profiles: &[&capsem_core::net::policy_config::ProfileConfigFile]) -> Result<String> {
-    let mut revisions = profiles
-        .iter()
-        .map(|profile| profile.revision.as_str())
-        .collect::<BTreeSet<_>>();
-    if revisions.len() == 1 {
-        let revision = revisions
-            .pop_first()
-            .ok_or_else(|| anyhow::anyhow!("profile catalog revision set is empty"))?;
-        return Ok(revision.to_string());
-    }
-    let bytes = serde_json::to_vec(profiles).context("serialize profile catalog for hashing")?;
-    let hash = blake3::hash(&bytes).to_hex().to_string();
-    Ok(format!("catalog-{}", &hash[..16]))
 }
 
 fn update_target_blocked_reason(
@@ -1165,13 +1061,11 @@ fn update_target_blocked_reason(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn update_check_from_release_manifest(
     manifest: &capsem_assets::asset_manager::ManifestV2,
     checked_at: u64,
     current_binary: &str,
     current_assets: Option<&str>,
-    current_profiles: Option<&str>,
     install_layout: &InstallLayout,
     source: &str,
     channel_hash: Option<String>,
@@ -1238,13 +1132,6 @@ fn update_check_from_release_manifest(
         assets_update_available: assets_differ && assets_blocked_reason.is_none(),
         assets_state,
         assets_blocked_reason,
-        latest_profiles: None,
-        current_profiles: current_profiles.map(ToOwned::to_owned),
-        profiles_update_available: false,
-        profiles_state: None,
-        profiles_blocked_reason: None,
-        profile_catalog_source: None,
-        profile_catalog_hash: None,
         latest_images: None,
         images_update_available: false,
         images_state: None,
@@ -1256,18 +1143,16 @@ fn update_check_from_release_manifest(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
 fn update_check_from_release_graph_manifest(
     manifest: &ReleaseGraphManifest,
     checked_at: u64,
     current_binary: &str,
     current_assets: Option<&str>,
-    current_profiles: Option<&str>,
     install_layout: &InstallLayout,
     source: &str,
     channel_hash: Option<String>,
 ) -> Result<UpdateCheck> {
-    let profile_state = release_graph_profile_state(manifest)?;
+    let runtime_state = release_graph_runtime_state(manifest)?;
     let latest_version = graph_current_binary_version(&manifest.packages)?;
     let update_available = latest_version
         .as_deref()
@@ -1277,36 +1162,25 @@ fn update_check_from_release_graph_manifest(
     } else {
         None
     };
-    let latest_assets = profile_state.as_ref().map(|state| state.images_revision.clone());
+    let latest_assets = runtime_state.as_ref().map(|state| state.revision.clone());
     let assets_differ = match (latest_assets.as_deref(), current_assets) {
         (Some(latest), Some(current)) => latest != current,
         _ => false,
     };
-    let latest_profiles = profile_state.as_ref().map(|state| state.catalog_revision.clone());
-    let profiles_differ = match (latest_profiles.as_deref(), current_profiles) {
-        (Some(latest), Some(current)) => latest != current,
-        _ => false,
-    };
+    let published_state = |published: bool| if published { "current" } else { "not_published" }.to_string();
     Ok(UpdateCheck {
         checked_at,
         latest_version,
         update_available,
         binary_installer,
-        latest_assets: latest_assets.clone(),
+        latest_assets,
         current_assets: current_assets.map(ToOwned::to_owned),
         assets_update_available: assets_differ,
-        assets_state: latest_assets.as_ref().map(|_| "current".to_string()),
+        assets_state: Some(published_state(runtime_state.is_some())),
         assets_blocked_reason: None,
-        latest_profiles: latest_profiles.clone(),
-        current_profiles: current_profiles.map(ToOwned::to_owned),
-        profiles_update_available: profiles_differ,
-        profiles_state: latest_profiles.as_ref().map(|_| "current".to_string()),
-        profiles_blocked_reason: None,
-        profile_catalog_source: None,
-        profile_catalog_hash: None,
-        latest_images: latest_assets,
+        latest_images: runtime_state.as_ref().map(|state| state.images_revision.clone()),
         images_update_available: assets_differ,
-        images_state: profile_state.as_ref().map(|_| "current".to_string()),
+        images_state: Some(published_state(runtime_state.is_some())),
         images_blocked_reason: None,
         source: Some(source.to_string()),
         channel_hash,
@@ -1331,14 +1205,10 @@ fn graph_current_binary_version(packages: &[ReleaseGraphPackage]) -> Result<Opti
     }
 }
 
-fn release_graph_profile_state(
+fn release_graph_runtime_state(
     manifest: &ReleaseGraphManifest,
-) -> Result<Option<capsem_assets::asset_manager::ReleaseGraphProfileState>> {
-    if manifest.profiles.is_empty() {
-        return Ok(None);
-    }
-    let value = serde_json::json!({"profiles": &manifest.profiles});
-    capsem_assets::asset_manager::release_graph_profile_state(&value).map(Some)
+) -> Result<Option<capsem_assets::asset_manager::ReleaseGraphRuntimeState>> {
+    capsem_assets::asset_manager::release_graph_runtime_state(&serde_json::json!({"runtime": &manifest.runtime}))
 }
 
 fn graph_binary_installer_for_layout(
@@ -1449,121 +1319,6 @@ fn manifest_binary_file_url(
         .join(name)
         .map(|url| url.to_string())
         .with_context(|| format!("resolve binary file {name} against manifest URL {source}"))
-}
-
-#[allow(clippy::too_many_arguments)]
-#[allow(dead_code)]
-fn update_check_from_release_health(
-    legacy: &ReleaseChannelHealth,
-    checked_at: u64,
-    current_binary: &str,
-    current_assets: Option<&str>,
-    current_profiles: Option<&str>,
-    install_layout: &InstallLayout,
-    source: &str,
-    channel_hash: Option<String>,
-) -> Result<UpdateCheck> {
-    if legacy.schema != "capsem.assets_channel.legacy.v1" {
-        anyhow::bail!("release channel legacy schema mismatch");
-    }
-    let latest_version = legacy.updates.binary.latest_version();
-    let latest_assets = legacy.updates.assets.latest_version();
-    let assets_state = legacy.updates.assets.state.clone();
-    let latest_profiles = legacy
-        .updates
-        .profiles
-        .as_ref()
-        .and_then(ReleaseChannelUpdateTarget::latest_version);
-    let profiles_state = legacy.updates.profiles.as_ref().and_then(|target| target.state.clone());
-    let profile_catalog_source = legacy
-        .updates
-        .profiles
-        .as_ref()
-        .and_then(|target| target.source.clone());
-    let profile_catalog_hash = legacy.updates.profiles.as_ref().and_then(|target| target.hash.clone());
-    let latest_images = legacy
-        .updates
-        .images
-        .as_ref()
-        .and_then(ReleaseChannelUpdateTarget::latest_version);
-    let images_state = legacy.updates.images.as_ref().and_then(|target| target.state.clone());
-    let update_available = latest_version
-        .as_deref()
-        .is_some_and(|latest| is_newer(latest, current_binary));
-    let binary_installer = if update_available {
-        binary_installer_for_layout(&legacy.updates.binary.files, install_layout)
-    } else {
-        None
-    };
-    let assets_differ = match (latest_assets.as_deref(), current_assets) {
-        (Some(latest), Some(current)) => latest != current,
-        _ => false,
-    };
-    let assets_blocked_reason = if assets_differ
-        && assets_state
-            .as_deref()
-            .is_some_and(|state| state.eq_ignore_ascii_case("deprecated"))
-    {
-        Some("latest VM asset release is deprecated".to_string())
-    } else if assets_differ {
-        update_target_blocked_reason(&legacy.updates.assets, current_binary, current_assets)
-    } else {
-        None
-    };
-    let assets_update_available = assets_differ && assets_blocked_reason.is_none();
-    let profiles_differ = match (latest_profiles.as_deref(), current_profiles) {
-        (Some(latest), Some(current)) => latest != current,
-        _ => false,
-    };
-    let profiles_blocked_reason = legacy
-        .updates
-        .profiles
-        .as_ref()
-        .and_then(|target| update_target_blocked_reason(target, current_binary, current_assets))
-        .or_else(|| {
-            if profiles_differ && profile_catalog_source.is_none() {
-                Some("release channel did not advertise a profile catalog source".to_string())
-            } else if profiles_differ && profile_catalog_hash.is_none() {
-                Some("release channel did not advertise a profile catalog hash".to_string())
-            } else {
-                None
-            }
-        });
-    let images_blocked_reason = legacy
-        .updates
-        .images
-        .as_ref()
-        .and_then(|target| update_target_blocked_reason(target, current_binary, current_assets));
-    let profiles_update_available = profiles_blocked_reason.is_none()
-        && profile_catalog_source.is_some()
-        && profile_catalog_hash.is_some()
-        && profiles_differ;
-    Ok(UpdateCheck {
-        checked_at,
-        latest_version,
-        update_available,
-        binary_installer,
-        latest_assets,
-        current_assets: current_assets.map(ToOwned::to_owned),
-        assets_update_available,
-        assets_state,
-        assets_blocked_reason,
-        latest_profiles,
-        current_profiles: current_profiles.map(ToOwned::to_owned),
-        profiles_update_available,
-        profiles_state,
-        profiles_blocked_reason,
-        profile_catalog_source,
-        profile_catalog_hash,
-        latest_images,
-        images_update_available: false,
-        images_state,
-        images_blocked_reason,
-        source: Some(source.to_string()),
-        channel_hash,
-        validation_status: Some("valid".to_string()),
-        validation_error: None,
-    })
 }
 
 fn binary_installer_for_layout(
@@ -1719,24 +1474,21 @@ fn update_check_from_release_payload(
     channel_hash: Option<String>,
 ) -> Result<UpdateCheck> {
     let current_binary = local_current_binary_version();
-    if let Ok(graph) = serde_json::from_slice::<ReleaseGraphManifest>(body) {
-        if !graph.packages.is_empty() || !graph.profiles.is_empty() {
-            if !graph.profiles.is_empty() {
-                let text = std::str::from_utf8(body).context("release graph manifest is not valid UTF-8")?;
-                capsem_assets::asset_manager::ManifestV2::from_json(text)
-                    .context("validate release graph through the runtime manifest parser")?;
-            }
-            return update_check_from_release_graph_manifest(
-                &graph,
-                now_secs(),
-                &current_binary,
-                local_current_asset_version().as_deref(),
-                local_current_profile_catalog_revision().as_deref(),
-                layout,
-                manifest_url,
-                channel_hash,
-            );
+    if let Some(graph) = release_graph_from_payload(body)? {
+        if graph.runtime.is_some() {
+            let text = std::str::from_utf8(body).context("release graph manifest is not valid UTF-8")?;
+            capsem_assets::asset_manager::ManifestV2::from_json(text)
+                .context("validate release graph through the runtime manifest parser")?;
         }
+        return update_check_from_release_graph_manifest(
+            &graph,
+            now_secs(),
+            &current_binary,
+            local_current_asset_version().as_deref(),
+            layout,
+            manifest_url,
+            channel_hash,
+        );
     }
     let manifest: capsem_assets::asset_manager::ManifestV2 =
         serde_json::from_slice(body).with_context(|| format!("parse release manifest from {manifest_url}"))?;
@@ -1745,7 +1497,6 @@ fn update_check_from_release_payload(
         now_secs(),
         &current_binary,
         local_current_asset_version().as_deref(),
-        local_current_profile_catalog_revision().as_deref(),
         layout,
         manifest_url,
         channel_hash,
@@ -1757,10 +1508,8 @@ fn binary_installer_from_release_payload(
     layout: &InstallLayout,
     manifest_url: &str,
 ) -> Result<Option<BinaryInstaller>> {
-    if let Ok(graph) = serde_json::from_slice::<ReleaseGraphManifest>(body) {
-        if !graph.packages.is_empty() || !graph.profiles.is_empty() {
-            return Ok(graph_binary_installer_for_layout(&graph.packages, layout, manifest_url));
-        }
+    if let Some(graph) = release_graph_from_payload(body)? {
+        return Ok(graph_binary_installer_for_layout(&graph.packages, layout, manifest_url));
     }
     let manifest: capsem_assets::asset_manager::ManifestV2 =
         serde_json::from_slice(body).with_context(|| format!("parse release manifest from {manifest_url}"))?;
@@ -1912,7 +1661,7 @@ fn verify_binary_installer_bytes(bytes: &[u8], installer: &BinaryInstaller) -> R
             actual
         );
     }
-    let actual_blake3 = blake3::hash(bytes).to_hex().to_string();
+    let actual_blake3 = capsem_crypto::blake3::hash(bytes).to_hex().to_string();
     if !actual_blake3.eq_ignore_ascii_case(&installer.blake3) {
         anyhow::bail!(
             "binary installer blake3 mismatch for {}: expected {}, got {}",
@@ -2080,38 +1829,19 @@ pub async fn run_update(
         .source
         .as_deref()
         .context("verified update is missing its manifest source")?;
-    let candidate_manifest_sha256 = sha256_hex(&manifest_bytes);
     let candidate_assets_dir = capsem_assets::asset_manager::default_assets_dir()
         .context("cannot resolve CAPSEM_HOME -- set $HOME or $CAPSEM_HOME")?;
-    let candidate_previous_state = installed_asset_audit_state(&candidate_assets_dir);
-    let mut staged_update = if yes {
-        append_update_audit(serde_json::json!({
-            "event": "release_candidate_fetched",
-            "action": "release_candidate",
-            "outcome": "fetched",
-            "source": candidate_source,
-            "channel": channel_from_source(candidate_source),
-            "candidate_manifest_sha256": candidate_manifest_sha256,
-            "previous": candidate_previous_state
-        }));
+    let audit = CandidateAudit::new(candidate_source, &manifest_bytes, candidate_assets_dir);
+    let staged_update = if yes {
+        audit.fetched();
         let plan = match plan_verified_update(&check, &manifest_bytes, &current) {
             Ok(plan) => plan,
             Err(error) => {
-                append_update_audit(serde_json::json!({
-                    "event": "release_candidate_rejected",
-                    "action": "release_candidate",
-                    "outcome": "failure",
-                    "source": candidate_source,
-                    "channel": channel_from_source(candidate_source),
-                    "candidate_manifest_sha256": candidate_manifest_sha256,
-                    "previous": candidate_previous_state,
-                    "current": installed_asset_audit_state(&candidate_assets_dir),
-                    "error": format!("{error:#}")
-                }));
+                audit.rejected(&error);
                 return Err(error).context("release manifest does not describe a complete compatible update");
             }
         };
-        if plan.steps.is_empty() && selected_channel.is_none() {
+        if !plan.needs_staging(&selected_channel, audit.installed_assets()) {
             None
         } else {
             let capsem_home = crate::paths::capsem_home()?;
@@ -2137,51 +1867,43 @@ pub async fn run_update(
                     }
                 }));
             }
-            let staged = match stage_verified_update_at(&capsem_home, &plan, &check, &manifest_bytes).await {
-                Ok(staged) => staged,
-                Err(error) => {
-                    if let Some(installer) = check
-                        .binary_installer
-                        .as_ref()
-                        .filter(|_| plan.steps.contains(&UpdatePlanStep::Binary))
-                    {
-                        append_update_audit(serde_json::json!({
-                            "event": "binary_update_failed",
-                            "action": "binary_update",
-                            "outcome": "failure",
-                            "source": check.source.as_deref(),
-                            "channel": check.source.as_deref().and_then(channel_from_source),
-                            "old_version": current.as_str(),
-                            "new_version": plan.selected_binary.as_str(),
-                            "package": {
-                                "name": &installer.name,
-                                "url": &installer.url,
-                                "sha256": &installer.sha256,
-                                "size": installer.size,
-                                "layout": &installer.install_layout
-                            },
-                            "error": format!("{error:#}")
-                        }));
+            let staged =
+                match stage_verified_update_at(&capsem_home, audit.installed_assets(), &plan, &check, &manifest_bytes)
+                    .await
+                {
+                    Ok(staged) => staged,
+                    Err(error) => {
+                        if let Some(installer) = check
+                            .binary_installer
+                            .as_ref()
+                            .filter(|_| plan.steps.contains(&UpdatePlanStep::Binary))
+                        {
+                            append_update_audit(serde_json::json!({
+                                "event": "binary_update_failed",
+                                "action": "binary_update",
+                                "outcome": "failure",
+                                "source": check.source.as_deref(),
+                                "channel": check.source.as_deref().and_then(channel_from_source),
+                                "old_version": current.as_str(),
+                                "new_version": plan.selected_binary.as_str(),
+                                "package": {
+                                    "name": &installer.name,
+                                    "url": &installer.url,
+                                    "sha256": &installer.sha256,
+                                    "size": installer.size,
+                                    "layout": &installer.install_layout
+                                },
+                                "error": format!("{error:#}")
+                            }));
+                        }
+                        audit.rejected(&error);
+                        return Err(error);
                     }
-                    append_update_audit(serde_json::json!({
-                        "event": "release_candidate_rejected",
-                        "action": "release_candidate",
-                        "outcome": "failure",
-                        "source": candidate_source,
-                        "channel": channel_from_source(candidate_source),
-                        "candidate_manifest_sha256": candidate_manifest_sha256,
-                        "previous": candidate_previous_state,
-                        "current": installed_asset_audit_state(&candidate_assets_dir),
-                        "error": format!("{error:#}")
-                    }));
-                    return Err(error);
-                }
-            };
+                };
             info!(
                 manifest = %staged.manifest_path.display(),
                 installer = ?staged.installer_path,
                 assets = ?staged.assets_dir,
-                profiles = ?staged.profiles.as_ref().map(|profiles| &profiles.dir),
                 "verified every changed update artifact before mutation"
             );
             Some(staged)
@@ -2214,7 +1936,7 @@ pub async fn run_update(
                             println!("  {command}");
                         }
                         apply_binary_installer_plan(&plan).await?;
-                        validate_staged_profiles_with_new_binary(staged_update.as_mut(), &layout).await
+                        Ok(())
                     }
                     .await;
                     match update_result {
@@ -2253,35 +1975,19 @@ pub async fn run_update(
         None => println!("Release channel did not advertise a binary version."),
     }
 
-    if let Some(reason) = check.profiles_blocked_reason.as_deref() {
-        println!("Profile catalog update blocked: {reason}.");
-    } else if check.profiles_update_available {
-        let current_profiles = check.current_profiles.as_deref().unwrap_or("unknown");
-        let latest_profiles = check.latest_profiles.as_deref().unwrap_or("unknown");
-        println!("Profile catalog update available: {current_profiles} -> {latest_profiles}");
-        if yes {
-            println!("Profile update was verified and staged for atomic activation.");
-        } else {
-            println!("Re-run with --yes to apply the profile catalog update.");
-        }
-    }
-
     if let Some(reason) = check.assets_blocked_reason.as_deref() {
         println!("VM asset update blocked: {reason}.");
+    } else if check.assets_update_available && !yes {
+        println!("Re-run with --yes to apply the VM runtime update.");
     }
 
     if yes {
+        retire_profile_catalog();
         if let Some(staged) = staged_update.as_ref() {
-            let capsem_home = crate::paths::capsem_home()?;
-            let installed_assets = capsem_assets::asset_manager::default_assets_dir()
-                .context("cannot resolve CAPSEM_HOME -- set $HOME or $CAPSEM_HOME")?;
-            if let Err(error) = activate_staged_update_with_asset_audit(
-                &capsem_home,
-                &installed_assets,
-                staged,
-                &check,
-                &requested_transition,
-            ) {
+            let installed_assets = audit.installed_assets();
+            if let Err(error) =
+                activate_staged_update_with_asset_audit(installed_assets, staged, &check, &requested_transition)
+            {
                 if binary_applied {
                     if let Some(installer) = check.binary_installer.as_ref() {
                         append_update_audit(serde_json::json!({
@@ -2303,29 +2009,10 @@ pub async fn run_update(
                         }));
                     }
                 }
-                append_update_audit(serde_json::json!({
-                    "event": "release_candidate_rejected",
-                    "action": "release_candidate",
-                    "outcome": "failure",
-                    "source": candidate_source,
-                    "channel": channel_from_source(candidate_source),
-                    "candidate_manifest_sha256": candidate_manifest_sha256,
-                    "previous": candidate_previous_state,
-                    "current": installed_asset_audit_state(&installed_assets),
-                    "error": format!("{error:#}")
-                }));
+                audit.rejected(&error);
                 return Err(error);
             }
-            append_update_audit(serde_json::json!({
-                "event": "release_candidate_activated",
-                "action": "release_candidate",
-                "outcome": "success",
-                "source": candidate_source,
-                "channel": channel_from_source(candidate_source),
-                "candidate_manifest_sha256": candidate_manifest_sha256,
-                "previous": candidate_previous_state,
-                "current": installed_asset_audit_state(&installed_assets)
-            }));
+            audit.activated();
             did_update = true;
 
             if binary_applied {
@@ -2360,8 +2047,8 @@ pub async fn run_update(
                 }));
                 println!("Binary update applied. Restart Capsem to use {latest}.");
             }
-            if check.profiles_update_available || check.assets_update_available || check.images_update_available {
-                println!("Profile configuration and VM assets were atomically activated.");
+            if check.assets_update_available || check.images_update_available {
+                println!("VM runtime assets were atomically activated.");
             }
             if let Some(selection) = selected_channel.as_ref() {
                 println!(
@@ -2373,12 +2060,9 @@ pub async fn run_update(
     }
     print_image_update_status(&check);
 
-    let has_blocked_update = check.profiles_blocked_reason.is_some()
-        || check.assets_blocked_reason.is_some()
-        || check.images_blocked_reason.is_some();
+    let has_blocked_update = check.assets_blocked_reason.is_some() || check.images_blocked_reason.is_some();
 
     if !check.update_available
-        && !check.profiles_update_available
         && !check.assets_update_available
         && !check.images_update_available
         && !has_blocked_update
@@ -2387,8 +2071,6 @@ pub async fn run_update(
     } else if !did_update && !check.update_available && !check.assets_update_available {
         if !has_blocked_update {
             println!("No local update action was needed.");
-        } else if check.profiles_blocked_reason.is_some() {
-            println!("Capsem binary is current; profile catalog update requires a newer dependency.");
         } else {
             println!("Capsem binary is current; one or more update tracks are blocked.");
         }
@@ -2416,23 +2098,12 @@ fn print_update_check_summary(check: &UpdateCheck, current: &str, layout: &Insta
         None => println!("Release channel did not advertise a binary version."),
     }
 
-    if let Some(reason) = check.profiles_blocked_reason.as_deref() {
-        println!("Profile catalog update blocked: {reason}.");
-    } else if check.profiles_update_available {
-        let current_profiles = check.current_profiles.as_deref().unwrap_or("unknown");
-        let latest_profiles = check.latest_profiles.as_deref().unwrap_or("unknown");
-        println!("Profile catalog update available: {current_profiles} -> {latest_profiles}");
-    }
-
     print_asset_update_status(check);
     print_image_update_status(check);
 
-    let has_blocked_update = check.profiles_blocked_reason.is_some()
-        || check.assets_blocked_reason.is_some()
-        || check.images_blocked_reason.is_some();
+    let has_blocked_update = check.assets_blocked_reason.is_some() || check.images_blocked_reason.is_some();
 
     if !check.update_available
-        && !check.profiles_update_available
         && !check.assets_update_available
         && !check.images_update_available
         && !has_blocked_update

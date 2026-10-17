@@ -6,8 +6,20 @@ Reference for /dev-testing: every portable release gate must be owned by just te
 
 ### Ironbank parity rule
 
+Native supervisor restart belongs to `glowup.pytest.managed-restart` in both
+local and pulled-package plans. Ordinary functional collection excludes its
+file. The owner prepares both SDKs, then starts supervisor setup outside
+inherited confinement. macOS uses its disposable launchd job; Linux creates
+one isolated systemd user manager with `PrivateNetwork=yes`, enters that
+loopback-only namespace and drops to the original UID/groups with
+`no_new_privs` before the SDK worker runs. The worker proves its kernel
+identity, privilege flag and denied numeric egress; original and restarted
+services must share its namespace and privilege restriction. Exact unit and
+process cleanup remain mandatory. A native host-only pass does not prove
+this boundary, and sudo inside the ordinary sealed caller cannot prepare it.
+
 The Ironbank parity rule is that every portable release gate must be owned by
-`just test`. Local development rebuilds every package and every profile, then
+`just test`. Local development rebuilds every package and the runtime, then
 runs the complete gate. Release CI calls the same checked-in modules while
 building only the lane-owned artifact family and resolving the unchanged
 family from the selected channel manifest. Specialized CI jobs may provide
@@ -54,13 +66,10 @@ runner. A release runner blackout during an expensive tool is a missing
 local/CI resource contract, not permission to rerun unchanged.
 
 Run `build_system/scripts/audit/check-hardcoded-release-selections.sh` at the start of `just test`.
-This source guard is a release contract, not a style check: user-facing and
-profile-scoped requests must obtain profile ids from arguments or the installed
-catalog, package rails must materialize the catalog, native installers must use
-packaged manifest metadata without a stable/nightly fallback, and both release
-commands must bind selection to explicit channel/profile inputs. Extend the
-guarded profile terms during renames; keep `code`, `co-work`, `cowork`,
-`terminal`, `termional`, and `gui` until every migration path is complete.
+This source guard is a release contract, not a style check: native
+installers must use packaged manifest metadata without a stable/nightly
+fallback, and both release commands must bind selection to an explicit channel
+input.
 Because it runs before the expensive test stages, the guard must use only
 declared bootstrap dependencies. Its scanner is Python-standard-library
 only and has an executable regression with `rg` absent; never reintroduce a
@@ -79,9 +88,9 @@ distinct schemas even when they share the name `manifest.json`.
 This includes workspace/runtime tests, Rust and Python coverage floors,
 `capsem-doctor` and Ironbank acceptance, benchmarks, artifact completeness,
 web app, docs, marketing, and release-site validation, and the Docker/systemd Linux
-package install and guest-shell proof. It also includes the full profile-owned
-VM asset matrix: `just test` calls `just _gate-assets`, which rebuilds every
-checked-in profile for arm64 and x86_64 through `just _build-kernel` and
+package install and guest-shell proof. It also includes the full
+VM runtime asset matrix: `just test` calls `just _gate-assets`, which rebuilds
+the runtime for arm64 and x86_64 through `just _build-kernel` and
 `just _build-rootfs`, validates the release payload and manifest, and boots each
 host-architecture result to a real guest-shell marker. Truly non-portable
 boundaries remain explicit final gates: Apple signing/notarization, hosted KVM,
@@ -94,7 +103,7 @@ similar commands. If CI calls a `just` recipe or checked-in script, local proof
 must call that same recipe or script; if a requirement is implemented as a
 shared shell function, both paths must execute that function.
 
-Generated release graphs and their materialized profile artifacts must come
+Generated release graphs and their runtime artifacts must come
 from the same source snapshot. The local gate qualifies uncommitted candidate
 bytes from the worktree; it must never generate descriptors from the worktree
 and then fetch artifact bytes from `HEAD`. Production release workflows keep

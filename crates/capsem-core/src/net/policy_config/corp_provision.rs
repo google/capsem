@@ -174,7 +174,7 @@ pub async fn refresh_corp_config_if_stale(capsem_dir: PathBuf) {
     if url.starts_with("file://") {
         match fetch_corp_config(&client, &url).await {
             Ok((body, _)) => {
-                let content_hash = blake3::hash(body.as_bytes()).to_hex().to_string();
+                let content_hash = capsem_crypto::blake3::hash(body.as_bytes()).to_hex().to_string();
                 let new_source = CorpSource {
                     url: Some(url),
                     file_path: None,
@@ -238,7 +238,7 @@ pub async fn refresh_corp_config_if_stale(capsem_dir: PathBuf) {
         return;
     }
 
-    let content_hash = blake3::hash(body.as_bytes()).to_hex().to_string();
+    let content_hash = capsem_crypto::blake3::hash(body.as_bytes()).to_hex().to_string();
     let new_source = CorpSource {
         url: Some(url),
         file_path: None,
@@ -260,7 +260,7 @@ pub async fn refresh_corp_config_if_stale(capsem_dir: PathBuf) {
 pub async fn provision_from_source(capsem_dir: &Path, source_url: &str) -> Result<()> {
     let client = reqwest::Client::new();
     let (body, etag) = fetch_corp_config(&client, source_url).await?;
-    let content_hash = blake3::hash(body.as_bytes()).to_hex().to_string();
+    let content_hash = capsem_crypto::blake3::hash(body.as_bytes()).to_hex().to_string();
     let cs = CorpSource {
         url: Some(source_url.to_string()),
         file_path: None,
@@ -276,7 +276,9 @@ pub async fn provision_from_source(capsem_dir: &Path, source_url: &str) -> Resul
 /// Convenience wrapper for the service API.
 pub fn install_inline_corp_config(capsem_dir: &Path, toml_content: &str) -> Result<()> {
     validate_corp_toml(toml_content)?;
-    let content_hash = blake3::hash(toml_content.as_bytes()).to_hex().to_string();
+    let content_hash = capsem_crypto::blake3::hash(toml_content.as_bytes())
+        .to_hex()
+        .to_string();
     let cs = CorpSource {
         url: None,
         file_path: None,

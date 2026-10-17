@@ -2,6 +2,26 @@ use super::*;
 use crate::test_gateway::Server;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+#[tokio::test]
+async fn binary_response_preserves_content_type_and_bytes() {
+    let mut server = Server::respond(|_| {
+        axum::http::Response::builder()
+            .header(CONTENT_TYPE, "application/octet-stream")
+            .body(axum::body::Body::from(vec![0, 255, 13, 10]))
+            .unwrap()
+    })
+    .await;
+    let response = server
+        .client()
+        .request_response(Method::GET, "/files", Request::default())
+        .await
+        .unwrap();
+    assert_eq!(response.body, [0, 255, 13, 10]);
+    assert_eq!(response.content_type.as_deref(), Some("application/octet-stream"));
+    let (parts, _) = server.received.recv().await.unwrap();
+    assert_eq!(parts.headers[AUTHORIZATION], "Bearer private-token");
+}
+
 #[test]
 fn invalid_configuration_fails_without_network() {
     for url in [

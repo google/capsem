@@ -13,9 +13,8 @@ permissions:
   actions: write
   contents: write
 
-# Spec 13.2: freeze `github.sha`, invoke the public profile command for each
-# selected profile, then the binary command. One job keeps that SHA frozen
-# across all three lanes.
+# Spec 13.2: freeze `github.sha`, invoke the public runtime asset command,
+# then the binary command. One job keeps that SHA frozen across both lanes.
 #
 # This runner builds nothing and boots nothing: each command validates, creates
 # the immutable source ref, dispatches its lane and waits. The lane does the
@@ -63,10 +62,10 @@ jobs:
           CAPSEM_SKIP_ASSET_CHECK: "1"
         run: sh bootstrap.sh --yes
 
-      # Profiles first, then binaries: a profile needing new code is published
+      # Runtime first, then binaries: a runtime needing new code is published
       # immutably but stays inactive until the following binary release
       # activates the compatible graph. The scheduler records each result and
-      # runs all three lanes before it returns their aggregate verdict. The job
+      # runs both lanes before it returns their aggregate verdict. The job
       # timeout is the outer wall-clock bound; each release command retains
       # ownership of its gate journal, workflow wait, and resource teardown.
       - name: Run every nightly lane and aggregate outcomes
@@ -75,6 +74,4 @@ jobs:
         run: |
           uv run --project build_system --frozen python build_system/scripts/release/nightly_release_scheduler.py \
             --channel nightly \
-            --profile code \
-            --profile co-work \
             --source-commit "${{ github.sha }}"

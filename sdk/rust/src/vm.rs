@@ -40,6 +40,10 @@ impl VM {
         VmNetworks(self)
     }
 
+    pub fn credential_grants(&self) -> crate::CredentialGrants<'_> {
+        crate::CredentialGrants(self)
+    }
+
     pub fn new(url: &str, token: &str, selector: VmSelector) -> Result<Self> {
         Self::bind(Client::new(url, token)?, selector)
     }
@@ -155,6 +159,7 @@ impl VM {
             body: models::ExecRequest {
                 command: command.into(),
                 timeout_secs,
+                target: None,
             },
         };
         api::exec_vm(
@@ -171,7 +176,7 @@ impl VM {
             &api::StartVmParams {
                 id: self.resolve().await?,
             },
-            self.client.options,
+            self.client.create_options(),
         )
         .await
     }
@@ -204,7 +209,7 @@ impl VM {
             &api::ResumeVmParams {
                 id: self.resolve().await?,
             },
-            self.client.options,
+            self.client.create_options(),
         )
         .await
     }

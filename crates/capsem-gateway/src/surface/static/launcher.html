@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Opening app</title>
+    <style>
+      :root { color-scheme: light dark; font: 15px/1.5 system-ui, sans-serif; }
+      body { display: grid; place-items: center; min-height: 100vh; margin: 0; }
+      main { max-width: 28rem; padding: 1.5rem; }
+      button { font: inherit; padding: 0.4rem 1rem; border-radius: 0.5rem; }
+    </style>
+    <script src="launch.js" defer></script>
+  </head>
+  <body data-auto="{{auto}}">
+    <main>
+      <p id="status">Opening the app...</p>
+      <button id="open" type="button">Open app</button>
+    </main>
+  </body>
+</html>

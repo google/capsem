@@ -27,7 +27,7 @@ from capsem_builder.gate import (
 )
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate.command import GateCommand
-from capsem_builder.gate.content import ProfileContent
+from capsem_builder.gate.content import RuntimeContent
 from capsem_builder.gate.execution import Requires
 from capsem_builder.gate.installimage import InstallImageStep
 from capsem_builder.gate.plan import Plan
@@ -240,7 +240,7 @@ def test_chained_lanes_do_not_make_the_builder_depend_on_them() -> None:
     from capsem_builder.gate import crosscompile
 
     plan = Plan("chained")
-    content = ProfileContent.standalone(CONFIG)
+    content = RuntimeContent.standalone(CONFIG)
     first = crosscompile.fragment(plan, CONFIG, CONFIG.arch("arm64"), content=content)
     crosscompile.fragment(plan, CONFIG, CONFIG.arch("x86_64"), content=content, after=(first,))
 

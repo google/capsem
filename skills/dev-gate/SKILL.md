@@ -5,15 +5,18 @@ description: How capsem-gate works and how to add or change a gate command. Use 
 
 # The build and release gate
 
-The justfile dispatches; `src/capsem/gate/` decides. No recipe carries a shell
+The justfile dispatches; `build_system/builder/gate/` decides. No recipe carries a shell
 body, none exceeds five lines, and both are contract tests rather than
 conventions.
 
 `just test` is **one process, one machine lock, one workspace, one plan**. Its
 dry run reports the current totals; conditional asset staging makes a literal
 step/action count depend on machine state. Its exact-source journal is the
-proof both release commands require before they tag or dispatch
-(`qualificationflow.decide`, `qualificationevidence.find_release_proof`).
+proof both release commands require before they tag or dispatch. Only the
+unattended nightly scheduler is exempt (`[release].unattended_channels` in
+[`config/gate.toml`](../../config/gate.toml); see
+[`RELEASE.md`](../../RELEASE.md) section 8). Proof selection is owned by
+`qualificationflow.decide` and `qualificationevidence.find_release_proof`.
 
 ## The rule everything else follows from
 
@@ -67,7 +70,7 @@ Nothing in `gatelaunch` may import `capsem.gate` at module scope.
 
 `Qualification.from_environment` is read once in `GateCommand.__init__` and
 passed to `artifacts()`, `functional()` and `glowup()`. Three legal shapes —
-local, binary release, profile release — and every partial combination is
+local, binary release, runtime release — and every partial combination is
 refused while the plan is being built. **No module below reads
 `CAPSEM_RELEASE_*` itself.** They each did, from a different variable, and a
 dropped `GITHUB_ENV` line built a plan that verified pulled assets against a
@@ -93,6 +96,12 @@ Never overridden — a contract test fails if a subclass defines it. In order:
 
 ## The host kernel owns the network boundary
 
+During implementation, prefer minimal native TDD/regression checks instead of
+running gate plans repeatedly. Qualify the full outcome at major phase
+boundaries and before merge/release. Routine bounded commands do not take the
+global machine lock; use `--machine-lease` only when deliberately selecting
+isolated machine work. Complete gate/release isolation remains authoritative.
+
 Candidate, both release commands, and directly invoked private test modules
 run under Bubblewrap on Linux or Seatbelt on macOS. Linux receives loopback and
 the configured UNIX sockets but no external interface; macOS uses the generated
@@ -103,8 +112,10 @@ the Seatbelt-style attempted-egress ledger.
 ordinary actions through the config-owned environment name. Outside-sandbox
 actions clear it. Host Doctor combines owning-command policy with live kernel
 state; the machine-lock marker proves only lock ownership, never enforcement.
-Candidate produces optional local qualification; release commands dispatch
-hosted qualification. All three accept only `enforce`: explicit `off` or `report` is
+Candidate produces the complete local qualification journal required by the
+public release commands under the policy above. Those commands then dispatch
+independent hosted qualification. All three accept only `enforce`: explicit
+`off` or `report` is
 refused before plan construction, re-exec, or resource acquisition. Measure a
 changing rule through an incomplete module, whose evidence cannot qualify.
 
@@ -130,6 +141,12 @@ prefetch. Never hand the external runner to any other qualification work.
 Release CI downloads immutable inputs and materializes locked dependencies
 before invoking its sandboxed modules.
 
+Native supervisor restart uses its existing glow-up owner because supervisor
+setup must precede inherited privilege confinement. Linux then runs the SDK
+worker as the original user with `no_new_privs` in a loopback-only namespace;
+see `/dev-testing`'s `../dev-testing/references/local-ci-parity.md`. Never run sudo after
+that restriction or disable it to make setup work.
+
 ## Declaring a command
 
 ```python
@@ -153,14 +170,12 @@ are `threading.Lock`s: they order steps inside one plan and coordinate nothing
 between two `capsem-gate` processes. `just _sign` in one terminal could replace
 the codesigned binaries a qualification in another was executing.
 
-Direct commands are the other half. `boundedlease` makes the bounded-command
-wrapper take this same lock for the programs `[locks.bounded]` names (cargo,
-minus subcommands that neither compile nor write), seen through `env` and
-assignments, and skipped inside a run because the lock is not reentrant. Until
-it did, the lock ordered gates while every worktree's cargo went unarbitrated
-into the shared target directory: a 0%-CPU deadlock on an incremental session
-lock, VM start deadlines missed under another session's compile, and agents
-trading "VMs done" messages. Add a program there; do not add a second lock.
+Direct commands retain finite timeout and process-tree cleanup without a
+global lease. An explicit `--machine-lease` selects `boundedlease` for the
+programs and command prefixes in `[locks.bounded]`, seen through `env` and
+assignments. Inside a gate run it reuses the parent's isolation rather than
+waiting for its own lock. Routine compilation and focused TDD use the default
+unleased path; phase qualification retains the gate's machine isolation.
 
 The machine `flock` and holder record are config-owned user-home paths, never
 checkout-relative paths. Every linked worktree, clone, and detached full-SHA
@@ -190,13 +205,13 @@ environment you hand to a process. Standard conventions (`HOME`, `TMPDIR`,
 
 Reach for the builders rather than assembling dictionaries:
 `config.environment.capsem(home=…, run_dir=…)`,
-`config.environment.content(assets=…, profiles=…)`, and the typed families
+`config.environment.content(assets=…)`, and the typed families
 under `[environment.package]`, `[environment.release_site]`,
 `[environment.install_proof]`.
 
-Treat a profile's assets and materialized configuration as one typed
-`ProfileContent` root. Pass that value through composed package/install/glow-up
-fragments; never rediscover its halves from ambient variables or mutable
+Treat the runtime assets as one typed `RuntimeContent` root. Pass that value
+through composed package/install/glow-up fragments; never rediscover it from
+ambient variables or mutable
 checkout selectors at a Docker/Colima boundary.
 
 Machine effects and stable lifecycle labels are closed `StrEnum` vocabularies.

@@ -1,11 +1,118 @@
 use std::io::{Read, Write};
-use std::os::fd::{AsFd, AsRawFd};
+use std::os::fd::{AsFd, AsRawFd, FromRawFd};
 use std::os::unix::net::UnixStream;
 
 use nix::fcntl::{fcntl, FcntlArg, FdFlag, OFlag};
 
-use super::{duplicate, retry_eintr, set_nonblocking, shutdown, wait_readable, SocketShutdown};
+use super::{duplicate, retry_eintr, set_close_on_exec, set_nonblocking, shutdown, wait_readable, SocketShutdown};
 use nix::errno::Errno;
+
+#[test]
+fn inherited_descriptor_policy_keeps_only_stdio_and_explicit_grants() {
+    for descriptor in 0..=2 {
+        assert!(!super::should_close_inherited_descriptor(descriptor, &[]));
+    }
+    assert!(super::should_close_inherited_descriptor(7, &[]));
+    assert!(!super::should_close_inherited_descriptor(7, &[7, 11]));
+    assert!(super::should_close_inherited_descriptor(9, &[7, 11]));
+}
+
+#[test]
+fn isolated_exec_child_closes_ambient_descriptor_and_keeps_declared_grant() {
+    const AMBIENT: &str = "CAPSEM_TEST_AMBIENT_FD";
+    const GRANT: &str = "CAPSEM_TEST_GRANTED_FD";
+    if let (Ok(ambient), Ok(grant)) = (std::env::var(AMBIENT), std::env::var(GRANT)) {
+        let ambient: i32 = ambient.parse().unwrap();
+        let grant: i32 = grant.parse().unwrap();
+        // SAFETY: this isolated subprocess runs exactly this one test and exits
+        // immediately after taking ownership of its declared report grant.
+        unsafe { super::close_inherited_descriptors_except(&[grant]).unwrap() };
+        let ambient_closed = fcntl(ambient, FcntlArg::F_GETFD) == Err(Errno::EBADF);
+        let grant_open = fcntl(grant, FcntlArg::F_GETFD).is_ok();
+        // SAFETY: the descriptor was inherited solely for this child report.
+        let mut report = unsafe { UnixStream::from_raw_fd(grant) };
+        report.write_all(&[u8::from(ambient_closed && grant_open)]).unwrap();
+        std::process::exit(i32::from(!(ambient_closed && grant_open)));
+    }
+
+    let (_ambient_parent, ambient_child) = UnixStream::pair().unwrap();
+    let (mut report_parent, report_child) = UnixStream::pair().unwrap();
+    for descriptor in [&ambient_child, &report_child] {
+        fcntl(descriptor.as_raw_fd(), FcntlArg::F_SETFD(FdFlag::empty())).unwrap();
+    }
+    let executable = std::env::current_exe().unwrap();
+    let mut child = std::process::Command::new(executable)
+        .args([
+            "--exact",
+            "unix::fd::tests::isolated_exec_child_closes_ambient_descriptor_and_keeps_declared_grant",
+            "--test-threads=1",
+        ])
+        .env(AMBIENT, ambient_child.as_raw_fd().to_string())
+        .env(GRANT, report_child.as_raw_fd().to_string())
+        .spawn()
+        .unwrap();
+    drop(ambient_child);
+    drop(report_child);
+
+    let mut result = [0];
+    report_parent.read_exact(&mut result).unwrap();
+    assert_eq!(result, [1]);
+    assert!(child.wait().unwrap().success());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn counter_signals_are_owned_and_accumulate_completions() {
+    use nix::sys::eventfd::{EfdFlags, EventFd};
+    let counter = EventFd::from_flags(EfdFlags::EFD_CLOEXEC | EfdFlags::EFD_NONBLOCK).unwrap();
+    super::signal_counter(counter.as_fd()).unwrap();
+    assert_eq!(counter.read().unwrap(), 1);
+    super::signal_counter(counter.as_fd()).unwrap();
+    super::signal_counter(counter.as_fd()).unwrap();
+    assert_eq!(counter.read().unwrap(), 2);
+}
+
+#[test]
+fn positioned_io_preserves_cursor_and_reports_short_reads_and_eof() {
+    use std::io::{Seek, SeekFrom};
+    let mut file = tempfile::tempfile().unwrap();
+    file.write_all(b"abcdef").unwrap();
+    assert_eq!(super::regular_file_size(file.as_fd()).unwrap(), 6);
+    file.seek(SeekFrom::Start(2)).unwrap();
+    assert_eq!(super::write_at(file.as_fd(), b"XY", 4).unwrap(), 2);
+    assert_eq!(file.stream_position().unwrap(), 2);
+    let mut bytes = [0; 8];
+    assert_eq!(super::read_at(file.as_fd(), &mut bytes, 3).unwrap(), 3);
+    assert_eq!(&bytes[..3], b"dXY");
+    assert_eq!(super::read_at(file.as_fd(), &mut bytes, 6).unwrap(), 0);
+    assert_eq!(file.stream_position().unwrap(), 2);
+}
+
+#[test]
+fn positioned_io_rejects_unrepresentable_offsets_and_preserves_os_errors() {
+    let file = tempfile::tempfile().unwrap();
+    assert_eq!(
+        super::read_at(file.as_fd(), &mut [0], u64::MAX)
+            .unwrap_err()
+            .raw_os_error(),
+        Some(22)
+    );
+    assert_eq!(
+        super::write_at(file.as_fd(), b"x", u64::MAX)
+            .unwrap_err()
+            .raw_os_error(),
+        Some(22)
+    );
+    let (socket, _peer) = UnixStream::pair().unwrap();
+    assert_eq!(
+        super::regular_file_size(socket.as_fd()).unwrap_err().kind(),
+        std::io::ErrorKind::InvalidInput
+    );
+    assert_eq!(
+        super::read_at(socket.as_fd(), &mut [0], 0).unwrap_err().kind(),
+        std::io::ErrorKind::NotSeekable
+    );
+}
 
 #[test]
 fn tcp_reset_waits_for_the_last_owned_descriptor_then_reaches_the_peer() {
@@ -116,6 +223,14 @@ fn stream_buffer_limits_replace_large_kernel_queues() {
 }
 
 #[test]
+fn datagram_receive_buffer_can_hold_a_concurrent_burst() {
+    use nix::sys::socket::{getsockopt, sockopt};
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    super::set_receive_buffer(socket.as_fd(), 512 * 1024).unwrap();
+    assert!(getsockopt(&socket, sockopt::RcvBuf).unwrap() >= 512 * 1024);
+}
+
+#[test]
 fn zero_buffer_limit_is_refused_without_changing_the_socket() {
     use nix::sys::socket::{getsockopt, sockopt};
     let (stream, _peer) = UnixStream::pair().unwrap();
@@ -149,6 +264,16 @@ fn duplicate_owns_an_independent_cloexec_descriptor() {
     let mut bytes = [0; 5];
     duplicated.read_exact(&mut bytes).unwrap();
     assert_eq!(&bytes, b"owned");
+}
+
+#[test]
+fn close_on_exec_change_reports_previous_state_and_preserves_descriptor_flags() {
+    let (stream, _peer) = UnixStream::pair().unwrap();
+    fcntl(stream.as_raw_fd(), FcntlArg::F_SETFD(FdFlag::empty())).unwrap();
+    assert!(!set_close_on_exec(stream.as_fd()).unwrap());
+    assert!(set_close_on_exec(stream.as_fd()).unwrap());
+    let flags = FdFlag::from_bits_truncate(fcntl(stream.as_raw_fd(), FcntlArg::F_GETFD).unwrap());
+    assert!(flags.contains(FdFlag::FD_CLOEXEC));
 }
 
 #[test]

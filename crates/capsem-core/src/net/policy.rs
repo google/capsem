@@ -110,7 +110,7 @@ pub struct UpstreamOverride {
     pub protocol: UpstreamOverrideProtocol,
 }
 
-/// Network mechanics derived from profile/corp config.
+/// Network mechanics derived from settings and corp config.
 ///
 /// Security decisions live in the security-rule engine. This type must not
 /// carry allow/ask/block/default semantics.

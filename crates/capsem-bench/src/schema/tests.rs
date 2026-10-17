@@ -19,7 +19,6 @@ fn record() -> Record {
             governor: Some("performance".to_string()),
             load_before: 0.1,
         },
-        profile: "code".to_string(),
         quick: false,
         metrics: vec![Metric {
             key: "gateway./vms/list.cpu_s".to_string(),
@@ -50,7 +49,6 @@ fn a_round_trip_preserves_every_field_that_is_not_a_float() {
     assert_eq!(parsed.schema, SCHEMA);
     assert_eq!(parsed.dimension, Dimension::Routes);
     assert_eq!(parsed.release, record().release);
-    assert_eq!(parsed.profile, "code");
     assert!(!parsed.quick);
     assert_eq!(parsed.metrics.len(), 1);
     assert_eq!(parsed.metrics[0].key, "gateway./vms/list.cpu_s");
@@ -96,7 +94,15 @@ fn every_dimension_is_listed_once() {
     names.sort_unstable();
     names.dedup();
     assert_eq!(names.len(), listed, "a dimension is listed twice");
-    assert_eq!(listed, 19, "ALL must carry every dimension");
+    assert_eq!(listed, 21, "ALL must carry every dimension");
+}
+
+#[test]
+fn mitm_scale_is_a_multi_vm_measurement_outside_the_quick_lane() {
+    let scale: Dimension = serde_json::from_str("\"mitm-scale\"").expect("parses");
+    assert_eq!(scale, Dimension::MitmScale);
+    assert!(scale.needs_vm(), "it drives several live guests");
+    assert!(!scale.in_quick_lane(), "it measures sustained VM fanout");
 }
 
 #[test]
@@ -105,6 +111,14 @@ fn the_network_dimension_measures_members_over_a_switch_on_booted_vms() {
     assert_eq!(network, Dimension::Network);
     assert!(network.needs_vm(), "two members boot and plug into a switch");
     assert!(!network.in_quick_lane(), "it boots two VMs and runs transfers");
+}
+
+#[test]
+fn crypto_is_a_host_measurement_outside_the_quick_lane() {
+    let crypto: Dimension = serde_json::from_str("\"crypto\"").expect("parses");
+    assert_eq!(crypto, Dimension::Crypto);
+    assert!(!crypto.needs_vm());
+    assert!(!crypto.in_quick_lane());
 }
 
 #[test]

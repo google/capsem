@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import platform
@@ -17,6 +16,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TextIO, cast
 
+from capsem_builder import crypto as hashlib
 from capsem_builder.cache.config import load_policy
 from capsem_builder.cache.runtimemodels import TartRuntimePolicy
 from capsem_builder.release.tools.release_glowup import (
@@ -29,7 +29,7 @@ from capsem_builder.release.tools.release_glowup import (
 from capsem_builder.release.tools.release_transition_candidates import (
     validate_macos_guest_report,
 )
-from macos_candidate_content import stage_file, stage_guest_scripts
+from macos_candidate_content import stage_file, stage_guest_scripts, stage_release_site
 from macos_tart_transition_support import local_tart_capabilities
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -51,13 +51,10 @@ def tart_run_command(
     vm_name: str,
     share: Path,
     asset_share: Path | None = None,
-    profile_share: Path | None = None,
 ) -> list[str]:
     directories = [f"--dir=capsem-release:{share}"]
     if asset_share is not None:
         directories.append(f"--dir=capsem-assets:{asset_share}")
-    if profile_share is not None:
-        directories.append(f"--dir=capsem-profiles:{profile_share}")
     return [
         "tart",
         "run",
@@ -362,7 +359,6 @@ def main() -> int:
     parser.add_argument("--incompatible-manifest-file", required=True, type=Path)
     parser.add_argument("--sbom", required=True, type=Path)
     parser.add_argument("--asset-share", required=True, type=Path)
-    parser.add_argument("--profile-share", required=True, type=Path)
     parser.add_argument("--channel", choices=("stable", "nightly"), required=True)
     parser.add_argument(
         "--image",
@@ -386,9 +382,6 @@ def main() -> int:
     asset_share = args.asset_share.resolve()
     if not asset_share.is_dir():
         raise RuntimeError(f"candidate asset share is missing: {asset_share}")
-    profile_share = args.profile_share.resolve()
-    if not profile_share.is_dir():
-        raise RuntimeError(f"candidate profile share is missing: {profile_share}")
     manifest = load_manifest_bytes(manifest_file.read_bytes())
     assert_manifest_artifact(manifest, artifact)
     candidate_files = (
@@ -418,7 +411,7 @@ def main() -> int:
     guest_package = release_dir / package.name
     stage_file(package, guest_package)
     stage_file(args.sbom.resolve(), release_dir / "capsem-sbom.spdx.json")
-    stage_file(manifest_file, candidate_dir / "assets" / args.channel / "manifest.json")
+    stage_release_site(manifest_file, asset_share, candidate_dir, args.channel)
     stage_file(manifest_file, share / "original-manifest.json")
     for source, name in zip(
         candidate_files,
@@ -449,7 +442,7 @@ def main() -> int:
         )
         tart_log = work_dir / "tart-run.log"
         log_stream = tart_log.open("w")
-        command = tart_run_command(vm_name, share, asset_share, profile_share)
+        command = tart_run_command(vm_name, share, asset_share)
         print("+", shlex.join(command), flush=True)
         runner = subprocess.Popen(
             command,

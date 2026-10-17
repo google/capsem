@@ -13,12 +13,12 @@ from pathlib import Path
 
 import pytest
 from capsem_builder.gate import config as gate_config
-from capsem_builder.gate.content import ProfileContent
+from capsem_builder.gate.content import RuntimeContent
 from capsem_builder.gate.debproof import DebProof
 from capsem_builder.gate.errors import GateError
 from capsem_builder.gate.sourcecommit import SourceCommit
 from helpers.gate import RecordingRunner
-from profile_content import materialize_required_artifacts
+from runtime_content import materialize_required_artifacts
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -48,9 +48,9 @@ def _checkout(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def _content(root: Path) -> ProfileContent:
+def _content(root: Path) -> RuntimeContent:
     config = gate_config.load(root)
-    content = ProfileContent.standalone(config)
+    content = RuntimeContent.standalone(config)
     payload = json.dumps(
         {
             "assets": {
@@ -64,17 +64,10 @@ def _content(root: Path) -> ProfileContent:
     content.assets.mkdir(parents=True)
     (content.assets / config.install.manifest_name).write_bytes(payload)
     materialize_required_artifacts(config, content.assets)
-    config_manifest = content.config_manifest(config)
-    config_manifest.parent.mkdir(parents=True)
-    config_manifest.write_bytes(payload)
-    profile = content.profiles(config) / "code/profile.toml"
-    profile.parent.mkdir(parents=True)
-    profile.write_text("name = 'code'\n")
     return content
 
 
 def _replies(*, version: str = VERSION, status: str | None = None) -> dict[str, str]:
-    ready = len(list((PROJECT_ROOT / "config" / "profiles").glob("*/profile.toml")))
     return {
         "dpkg-deb -f": version,
         "-f=${Status}": "install ok installed",
@@ -84,7 +77,6 @@ def _replies(*, version: str = VERSION, status: str | None = None) -> dict[str, 
         if status is not None
         else (
             "Installed: true\nRunning:   true\nService:   ok\nGateway:   ok\n"
-            f"Profiles:  {ready}/{ready} ready\n"
         ),
         "systemctl is-system-running": "running",
     }
@@ -196,11 +188,13 @@ def test_exact_package_graph_is_checked_and_handed_off_before_dpkg(
     handoff = transcript.index("install-manifest-request.sh write")
     install = transcript.index("dpkg -i")
     assert extract < first_build < record < second_build < check < handoff < install
-    authoritative = f"{CONFIG.install.layout.channel}/{CONFIG.install.graph_manifest}"
+    authoritative = (
+        f"{CONFIG.install.layout.channel}/"
+        f"{CONFIG.install.graph_manifest.format(channel='nightly')}"
+    )
     record_command = runner.matching(r"assets channel record-binary")[0]
     assert f"--manifest-path {authoritative}" in record_command
     assert f"--source-commit {SOURCE_COMMIT}" in transcript
-    assert "--profile-revision-policy selected-input" in transcript
     assert "--network none" in runner.matching(r"docker run -d")[0]
 
 
@@ -213,15 +207,37 @@ def test_read_only_content_is_staged_before_record_binary_mutates_the_generated_
 
     started = runner.matching(r"docker run -d")[0]
     assert f":{CONFIG.install.proof_assets_mount}:ro" in started
-    assert f":{CONFIG.install.proof_config_mount}:ro" in started
     record = runner.matching(r"assets channel record-binary")[0]
-    authoritative = f"{CONFIG.install.layout.channel}/{CONFIG.install.graph_manifest}"
+    authoritative = (
+        f"{CONFIG.install.layout.channel}/"
+        f"{CONFIG.install.graph_manifest.format(channel='nightly')}"
+    )
     assert f"--manifest-path {authoritative}" in record
     assert (
         f"--manifest-path {CONFIG.install.proof_assets_mount}/{CONFIG.install.manifest_name}"
         not in record
     )
     assert not runner.ran(r"docker exec(?: [^ ]+)* capsem-install-test(?: |$)")
+
+
+def test_non_root_staging_claims_only_configured_scratch_before_copying_assets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    proof, runner = _proof(tmp_path, monkeypatch)
+
+    proof.run()
+
+    owned = CONFIG.install.layout.owned_paths(CONFIG.install.mount)
+    parents = CONFIG.install.layout.owned_parent_paths(CONFIG.install.mount)
+    container = PROOF.container
+    claim = f"docker exec {container} chown -R capsem:capsem " + " ".join(owned)
+    replace = f"docker exec {container} chown capsem:capsem " + " ".join(parents)
+    assert claim in runner.rendered
+    assert replace in runner.rendered
+    transcript = "\n".join(runner.rendered)
+    assert transcript.index(claim) < transcript.index(replace) < transcript.index("cp -R")
+    assert not runner.ran(r"chown -R capsem:capsem /src(?: |$)")
+    assert f":{CONFIG.install.proof_assets_mount}:ro" in runner.matching(r"docker run -d")[0]
 
 
 def test_runtime_dependency_authority_is_verified_before_dpkg(
@@ -330,33 +346,6 @@ def test_a_status_line_that_is_missing_fails_the_proof(
         ).run()
 
 
-@pytest.mark.parametrize("counts", ["0/0", "1/3"])
-def test_profiles_must_all_be_ready(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, counts: str
-) -> None:
-    """Zero of zero is the interesting one: it reads as success to anything
-    that only compares the two numbers."""
-    monkeypatch.setattr("capsem_builder.gate.host.device_available", lambda _path: True)
-    root = _checkout(tmp_path)
-    replies = _replies()
-    replies["capsem status"] = (
-        "Installed: true\nRunning:   true\nService:   ok\nGateway:   ok\n"
-        f"Profiles:  {counts} ready\n"
-    )
-    runner = RecordingRunner(root, replies=replies)
-
-    with pytest.raises(GateError, match="profiles are not all ready"):
-        DebProof(
-            runner,
-            package=root / PACKAGE_ROOT / f"Capsem_{VERSION}_arm64.deb",
-            content=_content(root),
-            manifest_url="file:///src/m.json",
-            channel="nightly",
-            source_commit=SOURCE_COMMIT,
-            sleep=lambda _seconds: None,
-        ).run()
-
-
 def test_the_release_and_shell_proofs_run_as_the_unprivileged_user(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -369,6 +358,19 @@ def test_the_release_and_shell_proofs_run_as_the_unprivileged_user(
         matched = runner.matching(script.replace(".", r"\."))
         assert matched
         assert f"-u {CONFIG.install.guest_user.name}" in matched[0]
+
+
+def test_installed_bytes_and_metadata_polling_url_are_verified_separately(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    proof, runner = _proof(tmp_path, monkeypatch)
+
+    proof.run()
+
+    verifier = runner.matching(PROOF.verify_script.replace(".", r"\."))[0]
+    graph = CONFIG.install.graph_manifest.format(channel="nightly")
+    assert f"--manifest-url file:///src/{CONFIG.install.layout.channel}/{graph}" in verifier
+    assert "--metadata-manifest-url file:///src/m.json" in verifier
 
 
 def test_vm_devices_are_granted_and_probed_as_the_runtime_user(

@@ -5,6 +5,7 @@ use super::*;
 #[test]
 fn ambient_trace_id_from_capsem_env_takes_precedence() {
     let id = resolve_ambient_capsem_trace_id(
+        None,
         Some("deadbeefcafef00d"),
         Some("00-11111111111111112222222222222222-3333333333333333-01"),
     );
@@ -13,14 +14,32 @@ fn ambient_trace_id_from_capsem_env_takes_precedence() {
 
 #[test]
 fn ambient_trace_id_returns_none_without_env() {
-    let id = resolve_ambient_capsem_trace_id(None, None);
+    let id = resolve_ambient_capsem_trace_id(None, None, None);
     assert_eq!(id, None);
 }
 
 #[test]
 fn ambient_trace_id_extracts_lower_half_from_traceparent() {
-    let id = resolve_ambient_capsem_trace_id(None, Some("00-11111111111111112222222222222222-3333333333333333-01"));
+    let id = resolve_ambient_capsem_trace_id(
+        None,
+        None,
+        Some("00-11111111111111112222222222222222-3333333333333333-01"),
+    );
     assert_eq!(id.as_deref(), Some("2222222222222222"));
+}
+
+#[test]
+fn trusted_in_band_trace_id_survives_an_empty_environment() {
+    let id = resolve_ambient_capsem_trace_id(Some("0707070707070707"), None, None);
+    assert_eq!(id.as_deref(), Some("0707070707070707"));
+}
+
+#[test]
+fn trusted_in_band_trace_id_must_use_the_compact_canonical_form() {
+    for invalid in ["", "0707", "070707070707070G", "070707070707070A", "0000000000000000"] {
+        assert!(!valid_compact_trace_id(invalid), "accepted {invalid}");
+    }
+    assert!(valid_compact_trace_id("070707070707070a"));
 }
 
 #[test]
@@ -104,6 +123,20 @@ fn rolling_parts_survives_a_path_with_no_extension_or_parent() {
     assert_eq!(dir, std::path::Path::new("."));
     assert_eq!(prefix, "service");
     assert_eq!(suffix, "log");
+}
+
+#[test]
+fn prepared_file_sink_opens_one_private_unrotated_log() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("worker.log");
+    let LogSink::PreparedFile { file } = prepare_file_sink(&path).unwrap() else {
+        panic!("prepared sink returned the wrong variant")
+    };
+    assert!(file.metadata().unwrap().is_file());
+    assert_eq!(file.metadata().unwrap().permissions().mode() & 0o777, 0o600);
+    assert!(path.is_file());
 }
 
 #[test]

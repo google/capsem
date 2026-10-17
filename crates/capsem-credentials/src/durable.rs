@@ -122,9 +122,13 @@ impl StoreLock {
             .and_then(|name| name.to_str())
             .unwrap_or("credential-store.json");
         let lock_path = parent.join(format!(".{file_name}.lock"));
-        capsem_foundation::unix::lock::acquire(&lock_path, mode)
-            .map(|lock| Self { _lock: lock })
-            .map_err(|error| format!("lock credential store {}: {error}", lock_path.display()))
+        capsem_foundation::unix::lock::acquire_until(
+            &lock_path,
+            mode,
+            std::time::Instant::now() + std::time::Duration::from_secs(5),
+        )
+        .map(|lock| Self { _lock: lock })
+        .map_err(|error| format!("lock credential store {}: {error}", lock_path.display()))
     }
 }
 

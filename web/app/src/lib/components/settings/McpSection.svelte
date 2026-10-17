@@ -10,13 +10,11 @@
   import Prohibit from 'phosphor-svelte/lib/Prohibit';
   import WarningCircle from 'phosphor-svelte/lib/WarningCircle';
 
-  let { profileId } = $props<{ profileId: string }>();
   let servers = $derived(mcpStore.servers);
   let defaultPermission = $derived(mcpStore.defaultPermission);
   let userServers = $derived(servers.filter(s => s.source !== 'builtin'));
   let builtinServers = $derived(servers.filter(s => s.source === 'builtin'));
   let actionError = $state<string | null>(null);
-  let loadedProfileId = $state<string | null>(null);
 
   const PERMISSIONS: { value: ToolPermission; label: string }[] = [
     { value: 'allow', label: 'Allow' },
@@ -38,7 +36,7 @@
     block: {
       label: 'Block',
       icon: Prohibit,
-      tone: 'text-destructive-foreground border-destructive/30 bg-destructive/10',
+      tone: 'text-destructive-text border-destructive/30 bg-destructive/10',
     },
   };
 
@@ -66,17 +64,7 @@
   let saving = $state(false);
 
   onMount(() => {
-    if (profileId) {
-      loadedProfileId = profileId;
-      void mcpStore.load(profileId);
-    }
-  });
-
-  $effect(() => {
-    if (profileId && profileId !== loadedProfileId) {
-      loadedProfileId = profileId;
-      void mcpStore.load(profileId);
-    }
+    void mcpStore.load();
   });
 
   async function setToolPermission(tool: McpToolInfo, action: ToolPermission) {
@@ -174,7 +162,7 @@
   </div>
 
   {#if actionError || mcpStore.error}
-    <div class="border border-destructive/40 rounded-lg p-3 text-sm text-destructive-foreground">
+    <div class="border border-destructive/40 rounded-lg p-3 text-sm text-destructive-text">
       {actionError ?? mcpStore.error}
     </div>
   {/if}

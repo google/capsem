@@ -6,7 +6,7 @@ Two node types:
     - Regular settings: setting_type in (text, number, bool, kv_map, ...)
     - Actions: setting_type="action", metadata.action=ActionKind
 
-MCP runtime configuration is profile-owned and exposed by profile routes, not
+MCP runtime configuration is exposed by the service's MCP routes, not
 authored through settings metadata.
 
 JSON Schema is generated from SettingsRoot.model_json_schema().
@@ -147,7 +147,7 @@ class SettingMetadata(BaseModel):
     - Common: domains, choices, min, max, rules, env_vars, mask, validator, etc.
     - Action-specific: action (ActionKind)
 
-    MCP runtime configuration is profile-owned and should not be authored here.
+    MCP runtime configuration is not authored here.
     """
 
     # -- Common fields (from Rust SettingMetadata) --
@@ -172,7 +172,7 @@ class SettingMetadata(BaseModel):
     # -- Action-specific --
     action: ActionKind | None = None
 
-    # -- Retired MCP metadata; profile routes own runtime MCP configuration. --
+    # -- Retired MCP metadata; the service's MCP routes own its configuration. --
     origin: McpToolOrigin | None = None
 
     transport: McpTransport | None = None

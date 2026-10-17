@@ -2,6 +2,64 @@ use super::*;
 use std::collections::HashMap;
 
 #[test]
+fn enforcing_policy_refuses_any_broken_corporate_file() {
+    let root = tempfile::tempdir().unwrap();
+    let user = root.path().join("settings.toml");
+    let first = root.path().join("system-corp.toml");
+    let second = root.path().join("local-corp.toml");
+    std::fs::write(&user, "[plugins.credential_broker]\nmode = 'rewrite'\n").unwrap();
+    std::fs::write(&first, "[plugins.credential_broker]\nmode = 'disable'\n").unwrap();
+    std::fs::write(&second, "broken = [").unwrap();
+    let paths = [first.clone(), second.clone()];
+    assert!(policy_files_from_paths(Some(&user), &paths).is_err());
+    std::fs::write(&second, "[plugins.credential_broker]\nmode = 'rewrite'\n").unwrap();
+    let (user, corp) = policy_files_from_paths(Some(&user), &paths).unwrap();
+    assert_eq!(
+        crate::net::policy_config::merge_plugin_policy(&user, &corp)["credential_broker"].mode,
+        capsem_config::SecurityPluginMode::Disable
+    );
+    std::fs::write(&first, "broken = [").unwrap();
+    assert!(policy_files_from_paths(None, &paths).is_err());
+}
+
+#[test]
+fn managed_policy_load_preserves_host_settings_and_corp_priority() {
+    let root = tempfile::tempdir().unwrap();
+    let user = root.path().join("settings.toml");
+    let system = root.path().join("system-corp.toml");
+    let local = root.path().join("user-corp.toml");
+    std::fs::write(
+        &user,
+        "[managed_sessions]\nlease_seconds = 900\nrenew_after_seconds = 120\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &system,
+        "[managed_sessions]\nlease_seconds = 180\nrenew_after_seconds = 30\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &local,
+        "[managed_sessions]\nlease_seconds = 600\nrenew_after_seconds = 100\n",
+    )
+    .unwrap();
+    let paths = [system.clone(), local];
+    let policy = managed_session_policy_from_paths(Some(&user), &paths).unwrap();
+    assert_eq!(policy.lease_seconds, 180);
+    assert_eq!(policy.renew_after_seconds, 30);
+    assert_eq!(policy.tombstone_seconds, 86_400);
+    let file = load_local_settings_file(&user).unwrap();
+    write_settings_file(&user, &file).unwrap();
+    assert_eq!(
+        load_local_settings_file(&user).unwrap().managed_sessions,
+        file.managed_sessions
+    );
+    // A malformed corporate constraint cannot silently become an empty policy.
+    std::fs::write(&system, "[managed_sessions]\nlease_seconds = 0\n").unwrap();
+    assert!(managed_session_policy_from_paths(Some(&user), &paths).is_err());
+}
+
+#[test]
 fn load_settings_file_missing_returns_default() {
     let result = load_settings_file(Path::new("/nonexistent/path/settings.toml"));
     assert!(result.is_ok());
@@ -47,20 +105,50 @@ fn write_then_load_roundtrip() {
 }
 
 #[test]
-fn load_local_settings_file_rejects_profile_behavior() {
+fn load_local_settings_file_accepts_behavior_settings() {
+    // The settings.toml of #289: a git identity refused as "owned by corp"
+    // failed every `capsem run` at "load the policy inputs".
     let tmp = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(
         tmp.path(),
         r#"
-[settings."vm.resources.cpu_count"]
-value = 8
-modified = "2026-06-11T00:00:00Z"
+[settings]
+"repository.git.identity.author_name" = { value = "Test User", modified = "2026-01-01T00:00:00Z" }
+"security.services.registry.npm.allow" = { value = false, modified = "2026-01-01T00:00:00Z" }
+"vm.resources.cpu_count" = { value = 8, modified = "2026-01-01T00:00:00Z" }
 "#,
     )
     .unwrap();
 
-    let error = load_local_settings_file(tmp.path()).expect_err("profile behavior rejected");
-    assert!(error.contains("owned by profile"), "{error}");
+    let file = load_local_settings_file(tmp.path()).expect("behavior settings load from settings.toml");
+    assert_eq!(
+        file.settings["repository.git.identity.author_name"].value.as_text(),
+        Some("Test User")
+    );
+    assert_eq!(
+        file.settings["security.services.registry.npm.allow"].value,
+        SettingValue::Bool(false)
+    );
+    assert_eq!(file.settings["vm.resources.cpu_count"].value, SettingValue::Number(8));
+}
+
+#[test]
+fn load_local_settings_file_still_refuses_corp_only_sections() {
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(
+        tmp.path(),
+        r#"
+[corp.rules.block_example]
+name = "block_example"
+action = "block"
+priority = -10
+match = 'http.host == "example.invalid"'
+"#,
+    )
+    .unwrap();
+
+    let error = load_local_settings_file(tmp.path()).expect_err("corp rules stay corp-only");
+    assert!(error.contains("settings.toml cannot define corp.rules"), "{error}");
 }
 
 #[test]
@@ -81,7 +169,8 @@ modified = "2026-06-11T00:00:00Z"
 }
 
 #[test]
-fn load_corp_settings_file_rejects_ui_preferences() {
+fn corp_file_loads_ui_preferences() {
+    // Corp may set any registry id, and a corp-set id is locked for the user.
     let tmp = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(
         tmp.path(),
@@ -93,12 +182,12 @@ modified = "2026-06-11T00:00:00Z"
     )
     .unwrap();
 
-    let error = load_corp_settings_file(tmp.path()).expect_err("ui setting rejected");
-    assert!(error.contains("owned by settings"), "{error}");
+    let file = load_settings_file(tmp.path()).expect("corp may set a ui preference");
+    assert_eq!(file.settings["app.auto_update"].value, SettingValue::Bool(true));
 }
 
 #[test]
-fn load_corp_settings_file_accepts_constraints() {
+fn corp_file_loads_constraints() {
     let tmp = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(
         tmp.path(),
@@ -118,7 +207,7 @@ match = 'http.host == "example.invalid"'
     )
     .unwrap();
 
-    let file = load_corp_settings_file(tmp.path()).expect("corp constraints load");
+    let file = load_settings_file(tmp.path()).expect("corp constraints load");
     assert!(file.settings.contains_key("vm.resources.cpu_count"));
     assert!(file.corp.rules.contains_key("block_example"));
 }
@@ -292,13 +381,13 @@ fn env_var_path_resolution() {
         Some(std::path::PathBuf::from("/tmp/custom-capsem-home/settings.toml"))
     );
 
-    // Corp override via env.
+    // Corp override via env, exclusive of every other corp path.
     std::env::set_var("CAPSEM_CORP_CONFIG", "/tmp/custom-corp.toml");
-    assert_eq!(corp_config_path(), std::path::PathBuf::from("/tmp/custom-corp.toml"));
+    assert_eq!(
+        corp_config_paths(),
+        vec![std::path::PathBuf::from("/tmp/custom-corp.toml")]
+    );
     std::env::remove_var("CAPSEM_CORP_CONFIG");
-
-    // Corp default (env unset).
-    assert_eq!(corp_config_path(), std::path::PathBuf::from("/etc/capsem/corp.toml"));
 
     // Restore any prior values.
     match prev_corp {
@@ -374,6 +463,32 @@ local__echo = "block"
         std::fs::write(&path, retired).unwrap();
         let error = load_settings_file(&path).unwrap_err();
         assert!(error.contains("retired MCP policy key"), "unexpected error: {error}");
+    }
+}
+
+/// The document is parsed once, so retired `ai.*` ids are found on the typed
+/// map: still refused, and always the first by name, whether or not the rest
+/// of the file parses.
+#[test]
+fn load_settings_file_rejects_retired_ai_setting_ids() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.toml");
+    let retired = r#"
+[settings."ai.openai.allow"]
+value = true
+modified = "2026-01-01T00:00:00Z"
+
+[settings."ai.anthropic.allow"]
+value = true
+modified = "2026-01-01T00:00:00Z"
+"#;
+    for content in [retired.to_string(), format!("{retired}\nunknown_section = 1\n")] {
+        std::fs::write(&path, content).unwrap();
+        let error = load_settings_file(&path).unwrap_err();
+        assert!(
+            error.contains("retired AI setting id ai.anthropic.allow"),
+            "unexpected error: {error}"
+        );
     }
 }
 

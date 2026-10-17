@@ -36,7 +36,7 @@ the transaction.
 
 The complete `capsem update --yes` transaction must run in a fixed, sibling
 transient user service. Wrapping only apt leaves the parent unable to activate
-profiles or record the audit result. `--pipe` is forbidden because the reader
+the runtime or record the audit result. `--pipe` is forbidden because the reader
 dies with capsem.service and can SIGPIPE the surviving updater. The fixed unit
 name also prevents the restarted service from launching a duplicate update.
 `INVOCATION_ID` is inherited, so it must be paired with `SYSTEMD_EXEC_PID`

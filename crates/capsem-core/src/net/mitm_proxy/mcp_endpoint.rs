@@ -5,7 +5,8 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::warn;
 
-use crate::net::policy_config::{SecurityRuleSet, SharedPluginPolicy};
+use crate::net::policy_config::{snapshot_plugin_policy, PluginPolicySnapshot, SecurityRuleSet, SharedPluginPolicy};
+use crate::net::proxy_engine::ProxyPolicyHandle;
 use capsem_logger::DbWriter;
 use capsem_proto::mcp_aggregator::AggregatorClient;
 use capsem_proto::mcp_contracts::{builtin_ledger, parse_namespaced, JsonRpcRequest, JsonRpcResponse, McpToolDef};
@@ -63,12 +64,19 @@ pub struct McpEndpointState {
     pub aggregator: AggregatorClient,
     builtin_ledger: Option<Arc<DbWriter>>,
     builtin_servers: std::sync::RwLock<BTreeSet<String>>,
-    pub security_rules: Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
-    pub plugin_policy: SharedPluginPolicy,
+    policy: McpEndpointPolicy,
     pub inflight: Arc<tokio::sync::Semaphore>,
     pub timeouts: McpTimeouts,
     scoped_tools: Option<Arc<dyn ScopedMcpTools>>,
     tool_timeout_overrides: RwLock<HashMap<String, Duration>>,
+}
+
+enum McpEndpointPolicy {
+    Legacy {
+        security_rules: Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
+        plugin_policy: SharedPluginPolicy,
+    },
+    Unified(ProxyPolicyHandle),
 }
 
 /// Tools implemented by the current VM owner rather than an MCP subprocess.
@@ -98,12 +106,50 @@ impl McpEndpointState {
             aggregator,
             builtin_ledger: None,
             builtin_servers: std::sync::RwLock::new(BTreeSet::new()),
-            security_rules,
-            plugin_policy,
+            policy: McpEndpointPolicy::Legacy {
+                security_rules,
+                plugin_policy,
+            },
             inflight,
             timeouts,
             scoped_tools: None,
             tool_timeout_overrides: RwLock::new(HashMap::new()),
+        }
+    }
+
+    /// Build an endpoint whose rules and plugins are read from one atomic
+    /// proxy-policy revision for each security decision.
+    pub fn with_proxy_policy(
+        aggregator: AggregatorClient,
+        policy: ProxyPolicyHandle,
+        inflight: Arc<tokio::sync::Semaphore>,
+        timeouts: McpTimeouts,
+    ) -> Self {
+        Self {
+            aggregator,
+            builtin_ledger: None,
+            builtin_servers: std::sync::RwLock::new(BTreeSet::new()),
+            policy: McpEndpointPolicy::Unified(policy),
+            inflight,
+            timeouts,
+            scoped_tools: None,
+            tool_timeout_overrides: RwLock::new(HashMap::new()),
+        }
+    }
+
+    pub(super) fn policy_snapshot(&self) -> (Arc<SecurityRuleSet>, PluginPolicySnapshot) {
+        match &self.policy {
+            McpEndpointPolicy::Legacy {
+                security_rules,
+                plugin_policy,
+            } => (
+                security_rules.read().unwrap().clone(),
+                snapshot_plugin_policy(plugin_policy),
+            ),
+            McpEndpointPolicy::Unified(policy) => {
+                let snapshot = policy.snapshot();
+                (Arc::clone(snapshot.security_rules()), Arc::clone(snapshot.plugins()))
+            }
         }
     }
 

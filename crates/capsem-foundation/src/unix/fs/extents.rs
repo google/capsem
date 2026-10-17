@@ -40,6 +40,50 @@ pub fn copy_sparse(source: &File, dest: &File) -> io::Result<()> {
     dest.set_len(len)
 }
 
+/// Next allocated extent in an exact validated window of an open regular file.
+/// Changes the file cursor; read returned ranges with positioned I/O. A
+/// filesystem without extent support conservatively returns the whole window.
+#[cfg(target_os = "linux")]
+pub fn next_data_range(source: &File, start: u64, end: u64) -> io::Result<Option<std::ops::Range<u64>>> {
+    use nix::unistd::Whence;
+    if start > end || end > i64::MAX as u64 {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid extent window"));
+    }
+    if super::super::fd::regular_file_size(source.as_fd())? < end {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "extent window escapes regular file",
+        ));
+    }
+    if start == end {
+        return Ok(None);
+    }
+    let seek = |offset, whence| loop {
+        match platform::seek(source, offset, whence) {
+            Err(Errno::EINTR) => {}
+            result => break result,
+        }
+    };
+    let data = match seek(start, Whence::SeekData) {
+        Ok(data) if data < end => data,
+        Ok(_) | Err(Errno::ENXIO) => return Ok(None),
+        Err(Errno::EINVAL | Errno::ENOSYS | Errno::ENOTTY | Errno::EOPNOTSUPP) => return Ok(Some(start..end)),
+        Err(error) => return Err(errno::io(error)),
+    };
+    let hole = match seek(data, Whence::SeekHole) {
+        Ok(hole) => hole.min(end),
+        Err(Errno::ENXIO | Errno::EINVAL | Errno::ENOSYS | Errno::ENOTTY | Errno::EOPNOTSUPP) => end,
+        Err(error) => return Err(errno::io(error)),
+    };
+    if data < start || hole <= data {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "filesystem returned an invalid extent",
+        ));
+    }
+    Ok(Some(data..hole))
+}
+
 #[cfg(target_os = "macos")]
 mod platform {
     use std::ffi::CString;
@@ -147,7 +191,7 @@ mod platform {
         Ok(())
     }
 
-    fn seek(file: &File, offset: u64, whence: Whence) -> nix::Result<u64> {
+    pub(super) fn seek(file: &File, offset: u64, whence: Whence) -> nix::Result<u64> {
         let offset = offset.try_into().map_err(|_| Errno::EOVERFLOW)?;
         let position = lseek(file.as_raw_fd(), offset, whence)?;
         u64::try_from(position).map_err(|_| Errno::EOVERFLOW)

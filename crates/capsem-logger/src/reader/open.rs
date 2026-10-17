@@ -41,7 +41,7 @@ impl DbReader {
         // Route SQL is a fixed set of statements polled on a timer; compiling
         // each one again on every poll was a measurable share of a route's
         // CPU. Room for every polled route's statements, as the writer has.
-        conn.set_prepared_statement_cache_capacity(64);
+        conn.set_prepared_statement_cache_capacity(capsem_proto::CACHE_SQLITE_PREPARED_STATEMENTS);
         Self {
             conn,
             sync: Default::default(),

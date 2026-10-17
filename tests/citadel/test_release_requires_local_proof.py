@@ -54,11 +54,22 @@ FORBIDDEN = (
     r"optional (?:complete|reusable|whole)[- ](?:local|world|system)",
     r"local full run is optional",
     r"optional before (?:a )?(?:release|publication)",
+    r"not required before (?:a )?(?:release|publication)",
+    r"candidate produces optional local qualification",
     r"just test (?:<[^>]*> )?is optional",
     r"(?:is )?not a (?:release )?prerequisite",
-    r"(?:must not|do not|does not|never) (?:require or )?(?:consume|require) "
-    r"(?:a |the |this |that )?(?:developer-machine |machine-local |optional |local )*"
-    r"(?:just test|journal|complete run)",
+    (
+        r"(?:must not|do not|does not|never) (?:require or )?(?:consume|require) "
+        r"(?:a |the |this |that )?(?:developer-machine |machine-local |optional |local )*"
+        r"(?:just test|journal|complete run)"
+    ),
+    # The hosted lane qualifies artifacts independently; the public dispatcher
+    # accepts local proof. Scope the singular wording to that dispatcher.
+    (
+        r"release (?:command|dispatcher) never consumes "
+        r"(?:a |the |this |that )?(?:developer-machine |machine-local |local )*"
+        r"(?:just test|journal|complete run)"
+    ),
     r"ignore machine-local (?:candidate )?journals",
 )
 PATTERN = re.compile("|".join(f"(?:{item})" for item in FORBIDDEN), re.IGNORECASE)
@@ -134,6 +145,15 @@ def test_no_agent_facing_text_says_a_release_can_skip_just_test() -> None:
         "Release commands MUST NOT\nconsume that machine-local journal.",
         "It is diagnostic evidence, not a\nprerequisite consumed by either release dispatcher.",
         "dispatches its **self-qualifying** hosted lane",
+        (
+            "It is not required before release: the hosted release lane owns "
+            "qualification and never consumes the local journal."
+        ),
+        (
+            "Candidate produces optional local qualification; release commands dispatch "
+            "hosted qualification."
+        ),
+        "The release command never consumes the local journal.",
     ),
 )
 def test_every_old_spelling_is_caught(text: str) -> None:
@@ -145,11 +165,21 @@ def test_every_old_spelling_is_caught(text: str) -> None:
     "text",
     (
         "Optional hands-on local testing; never a release prerequisite\njust install",
-        "A passing `just test <source-commit>` for the exact commit is required "
-        "before either release command.",
+        (
+            "A passing `just test <source-commit>` for the exact commit is required "
+            "before either release command."
+        ),
         "Release commands require it but never run it.",
         "Nightly consumes no local journal: its scheduler runs unattended.",
         "`--force` never waives the `just test` journal.",
+        (
+            "Hosted release qualification cannot consume local proof and MUST run "
+            "its own complete artifact-family pairing."
+        ),
+        (
+            "The hosted release lane never consumes the local journal; "
+            "the public release command requires it before dispatch."
+        ),
     ),
 )
 def test_the_new_model_is_not_flagged(text: str) -> None:

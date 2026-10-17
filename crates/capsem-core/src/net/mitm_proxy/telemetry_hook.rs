@@ -29,9 +29,8 @@ use super::hooks::{ChunkCtx, ChunkEndFuture, ChunkHook};
 use super::interpreter_hook::LlmEventStream;
 use super::util::is_llm_api_path;
 use crate::credential_broker::{
-    broker_and_log_observations, detect_http_body_credentials, log_brokered_injections,
-    redact_observed_credentials_in_bytes, redact_observed_credentials_in_text, CredentialInjection,
-    CredentialObservation,
+    broker_and_log_observations_with_credentials, detect_http_body_credentials, log_brokered_injections,
+    CredentialInjection, CredentialObservation,
 };
 use crate::net::ai_traffic::events::{
     collect_summary, parse_non_streaming_response_summary, parse_non_streaming_tool_calls, parse_non_streaming_usage,
@@ -39,8 +38,9 @@ use crate::net::ai_traffic::events::{
 };
 use crate::net::ai_traffic::pricing::PricingTable;
 use crate::net::ai_traffic::provider::{extract_model_from_path, tool_origin, ModelProtocol, ProviderKind};
-use crate::net::ai_traffic::{request_parser, TraceState};
-use crate::net::policy_config::{snapshot_plugin_policy, PluginPolicySnapshot, SecurityRuleSet, SharedPluginPolicy};
+use crate::net::ai_traffic::{request_parser, TraceHintSink, TraceState};
+use crate::net::policy_config::{PluginPolicySnapshot, SecurityRuleSet};
+use crate::net::proxy_engine::{ProxyCredentials, ProxyPolicySnapshot};
 use crate::security_engine::{
     emit_evaluated_security_rules, emit_security_write, HttpSecurityEvent, IpSecurityEvent, ModelSecurityEvent,
     RuntimeSecurityEventType, SecurityEvent, TcpSecurityEvent,
@@ -53,6 +53,8 @@ use capsem_telemetry::mitm as m;
 /// the request head and upstream response head have been observed,
 /// before the body wrapper begins iterating chunks.
 pub struct TelemetryRequestContext {
+    /// The exact active-policy revision that admitted this request.
+    pub policy_snapshot: Arc<ProxyPolicySnapshot>,
     pub domain: String,
     pub process_name: Option<String>,
     pub ai_provider: Option<ProviderKind>,
@@ -107,10 +109,9 @@ pub struct TelemetryResponseStats {
 /// derivable from the per-request context.
 pub struct TelemetryDeps {
     pub db: Arc<DbWriter>,
+    pub credentials: Arc<dyn ProxyCredentials>,
     pub pricing: Arc<PricingTable>,
     pub trace_state: Arc<Mutex<TraceState>>,
-    pub security_rules: Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
-    pub plugin_policy: SharedPluginPolicy,
 }
 
 /// Sync `ChunkHook` that tracks response bytes/preview and, on
@@ -118,10 +119,12 @@ pub struct TelemetryDeps {
 /// `ModelCall` for the request just completed.
 pub struct TelemetryHook {
     deps: Arc<TelemetryDeps>,
+    trace_hint_sink: Option<Arc<dyn TraceHintSink>>,
 }
 
 struct PendingTelemetryCompletion {
     db: Arc<DbWriter>,
+    credentials: Arc<dyn ProxyCredentials>,
     rules: Arc<SecurityRuleSet>,
     plugin_policy: PluginPolicySnapshot,
     net_event: NetEvent,
@@ -129,12 +132,14 @@ struct PendingTelemetryCompletion {
     model_call: Option<ModelCall>,
     credential_observations: Vec<CredentialObservation>,
     credential_injections: Vec<CredentialInjection>,
+    trace_hints: Option<(Arc<dyn TraceHintSink>, String, Vec<String>)>,
 }
 
 impl PendingTelemetryCompletion {
     async fn run(self) {
         let Self {
             db,
+            credentials,
             rules,
             plugin_policy,
             net_event,
@@ -142,8 +147,16 @@ impl PendingTelemetryCompletion {
             model_call,
             credential_observations,
             credential_injections,
+            trace_hints,
         } = self;
 
+        if let Some((sink, trace_id, paths)) = trace_hints {
+            if let Err(error) = sink.register(&trace_id, &paths).await {
+                warn!(%error, "proxy trace-hint capability stopped");
+            }
+        }
+
+        let model_was_denied = net_event.decision == Decision::Denied;
         if let Some(event_id) = emit_security_write(&db, WriteOp::NetEvent(net_event)).await {
             emit_evaluated_security_rules(
                 Arc::clone(&db),
@@ -158,7 +171,10 @@ impl PendingTelemetryCompletion {
             .await;
         }
         if let Some(model_call) = model_call {
-            let model_security_event = security_event_from_model_call(&model_call);
+            let mut model_security_event = security_event_from_model_call(&model_call);
+            if model_was_denied {
+                model_security_event.request_decision(crate::security_engine::SecurityDecisionKind::Block);
+            }
             if let Some(event_id) = emit_security_write(&db, WriteOp::ModelCall(model_call)).await {
                 emit_evaluated_security_rules(
                     Arc::clone(&db),
@@ -176,14 +192,22 @@ impl PendingTelemetryCompletion {
 
         if !credential_observations.is_empty() || !credential_injections.is_empty() {
             log_brokered_injections(&db, &rules, credential_injections).await;
-            broker_and_log_observations(&db, &rules, credential_observations).await;
+            broker_and_log_observations_with_credentials(&db, &rules, credentials, credential_observations).await;
         }
     }
 }
 
 impl TelemetryHook {
     pub fn new(deps: Arc<TelemetryDeps>) -> Self {
-        Self { deps }
+        Self {
+            deps,
+            trace_hint_sink: None,
+        }
+    }
+
+    pub fn with_trace_hint_sink(mut self, trace_hint_sink: Arc<dyn TraceHintSink>) -> Self {
+        self.trace_hint_sink = Some(trace_hint_sink);
+        self
     }
 }
 
@@ -267,26 +291,44 @@ impl ChunkHook for TelemetryHook {
         if !credential_observations.is_empty() {
             let redact = |text: &mut Option<String>| {
                 if let Some(text) = text {
-                    *text = redact_observed_credentials_in_text(text, &credential_observations);
+                    *text = self.deps.credentials.redact_text(text, &credential_observations);
                 }
             };
             redact(&mut req_ctx.request_headers);
             redact(&mut req_ctx.response_headers);
             let mut stats = req_ctx.request_body_stats.lock().expect("req body stats lock");
-            stats.preview = redact_observed_credentials_in_bytes(&stats.preview, &credential_observations);
+            stats.preview = self
+                .deps
+                .credentials
+                .redact_bytes(&stats.preview, &credential_observations);
             drop(stats);
-            resp_stats.preview = redact_observed_credentials_in_bytes(&resp_stats.preview, &credential_observations);
+            resp_stats.preview = self
+                .deps
+                .credentials
+                .redact_bytes(&resp_stats.preview, &credential_observations);
         }
         record_telemetry_stage(stage_started, "credential_detect_and_redact");
 
         let stage_started = Instant::now();
-        let model_call = maybe_build_model_call(
+        let model_call = maybe_build_model_call_with_hints(
             &req_ctx,
             &resp_stats,
             &llm_events,
             &self.deps.pricing,
             &self.deps.trace_state,
         );
+        let (model_call, trace_hints) = match model_call {
+            Some((model_call, paths)) => {
+                let trace_hints = self
+                    .trace_hint_sink
+                    .as_ref()
+                    .zip(model_call.trace_id.clone())
+                    .filter(|_| !paths.is_empty())
+                    .map(|(sink, trace_id)| (Arc::clone(sink), trace_id, paths));
+                (Some(model_call), trace_hints)
+            }
+            None => (None, None),
+        };
         record_telemetry_stage(stage_started, "model_call_build");
 
         let stage_started = Instant::now();
@@ -305,8 +347,9 @@ impl ChunkHook for TelemetryHook {
 
         let stage_started = Instant::now();
         let db = Arc::clone(&self.deps.db);
-        let rules = Arc::clone(&self.deps.security_rules.read().unwrap());
-        let plugin_policy = snapshot_plugin_policy(&self.deps.plugin_policy);
+        let credentials = Arc::clone(&self.deps.credentials);
+        let rules = Arc::clone(req_ctx.policy_snapshot.security_rules());
+        let plugin_policy = Arc::clone(req_ctx.policy_snapshot.plugins());
         let credential_injections = req_ctx.credential_injections;
         record_telemetry_stage(stage_started, "ledger_deps_clone");
 
@@ -320,6 +363,7 @@ impl ChunkHook for TelemetryHook {
         let has_model_call = model_call.is_some();
         *ctx.state::<Option<PendingTelemetryCompletion>>(|| None) = Some(PendingTelemetryCompletion {
             db,
+            credentials,
             rules,
             plugin_policy,
             net_event,
@@ -327,6 +371,7 @@ impl ChunkHook for TelemetryHook {
             model_call,
             credential_observations,
             credential_injections,
+            trace_hints,
         });
         record_telemetry_stage(stage_started, "ledger_handoff");
         record_telemetry_response_end(response_end_started, has_model_call);
@@ -455,17 +500,22 @@ fn security_event_from_net_event(event: &NetEvent) -> SecurityEvent {
 }
 
 fn security_event_from_model_call(call: &ModelCall) -> SecurityEvent {
-    let security_event = SecurityEvent::new(RuntimeSecurityEventType::ModelCall).with_model(ModelSecurityEvent {
-        provider: Some(call.provider.clone()),
-        name: call.model.clone(),
-        request_body: lossy_text(call.request_body.as_deref()),
-        response_body: call.text_content.clone(),
-        tool_calls: if call.tool_calls.is_empty() {
-            None
-        } else {
-            Some(serde_json::to_string(&call.tool_calls).unwrap_or_else(|_| "[]".to_string()))
-        },
-    });
+    let security_event = SecurityEvent::new(RuntimeSecurityEventType::ModelCall)
+        .with_model(ModelSecurityEvent {
+            provider: Some(call.provider.clone()),
+            name: call.model.clone(),
+            request_body: lossy_text(call.request_body.as_deref()),
+            response_body: call.text_content.clone(),
+            tool_calls: if call.tool_calls.is_empty() {
+                None
+            } else {
+                Some(serde_json::to_string(&call.tool_calls).unwrap_or_else(|_| "[]".to_string()))
+            },
+        })
+        .with_process(crate::security_engine::ProcessSecurityEvent {
+            name: call.process_name.clone(),
+            ..Default::default()
+        });
     apply_security_event_trace(security_event, call.trace_id.clone())
 }
 
@@ -494,9 +544,23 @@ pub fn maybe_build_model_call(
     pricing: &PricingTable,
     trace_state: &Arc<Mutex<TraceState>>,
 ) -> Option<ModelCall> {
+    maybe_build_model_call_with_hints(req_ctx, resp_stats, llm_events, pricing, trace_state)
+        .map(|(model_call, _)| model_call)
+}
+
+fn maybe_build_model_call_with_hints(
+    req_ctx: &TelemetryRequestContext,
+    resp_stats: &TelemetryResponseStats,
+    llm_events: &[crate::net::ai_traffic::events::LlmEvent],
+    pricing: &PricingTable,
+    trace_state: &Arc<Mutex<TraceState>>,
+) -> Option<(ModelCall, Vec<String>)> {
     let provider = req_ctx.ai_provider?;
     let protocol = req_ctx.ai_protocol?;
-    if req_ctx.method == "HEAD" || !(req_ctx.model_traffic || is_llm_api_path(protocol, &req_ctx.path)) {
+    if req_ctx.method == "HEAD"
+        || (req_ctx.status_code == Some(101) && !req_ctx.model_traffic)
+        || !(req_ctx.model_traffic || is_llm_api_path(protocol, &req_ctx.path))
+    {
         return None;
     }
     let duration_ms = req_ctx.start_time.elapsed().as_millis() as u64;
@@ -520,7 +584,7 @@ pub fn maybe_build_model_call(
     };
 
     // Streaming detection: explicit body field OR URL path keyword.
-    let stream = req_meta.stream || req_ctx.path.contains("stream");
+    let stream = req_meta.stream || req_ctx.path.contains("stream") || !llm_events.is_empty();
 
     let stop_reason_str = summary
         .as_ref()
@@ -624,14 +688,14 @@ pub fn maybe_build_model_call(
     // non-tool-use stop completes the trace.
     let tool_response_ids: Vec<String> = req_meta.tool_results.iter().map(|tr| tr.call_id.clone()).collect();
     let tool_call_ids: Vec<String> = tool_calls.iter().map(|tc| tc.call_id.clone()).collect();
-    let trace_id = {
+    let (trace_id, file_hints) = {
         let mut state = trace_state.lock().unwrap_or_else(|e| e.into_inner());
         let tid = state.lookup(&tool_response_ids).unwrap_or_else(|| {
             if tool_call_ids.is_empty() {
                 capsem_foundation::telemetry::ambient_capsem_trace_id()
-                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+                    .unwrap_or_else(|| capsem_crypto::uuid_v4().to_string())
             } else {
-                uuid::Uuid::new_v4().to_string()
+                capsem_crypto::uuid_v4().to_string()
             }
         });
         let is_tool_use = !tool_call_ids.is_empty()
@@ -639,16 +703,21 @@ pub fn maybe_build_model_call(
                 .as_deref()
                 .map(|r| r.contains("tool") || r == "tool_use")
                 .unwrap_or(false);
-        if is_tool_use && !tool_call_ids.is_empty() {
+        let correlation = if is_tool_use && !tool_call_ids.is_empty() {
             state.register_tool_calls(&tid, &tool_call_ids);
-            state.register_tool_file_hints(
+            let hints = state.register_tool_file_hints(
                 &tid,
                 tool_calls.iter().filter_map(|tool_call| tool_call.arguments.as_deref()),
             );
+            (tid, hints)
         } else if !is_tool_use {
             state.complete_trace(&tid);
-        }
-        tid
+            (tid, Vec::new())
+        } else {
+            (tid, Vec::new())
+        };
+        drop(state);
+        correlation
     };
     for tool_call in &mut tool_calls {
         if tool_call.trace_id.is_none() {
@@ -722,7 +791,7 @@ pub fn maybe_build_model_call(
         );
     }
 
-    Some(model_call)
+    Some((model_call, file_hints))
 }
 
 /// Per-request log line, mirrors what `TelemetryEmitter::emit` does.

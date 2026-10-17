@@ -15,9 +15,9 @@ foreign UID reproduces it here, and works on macOS too because git compares
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 
+from .. import crypto as hashlib
 from ..cache.dockerimages import repository_name
 from .actions import Action
 from .cachecontrol import CacheControl

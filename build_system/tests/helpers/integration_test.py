@@ -7,7 +7,7 @@ Exercises:
   3. tool_calls   -- run capsem-doctor MCP tests and record tool invocations
   4. model_calls  -- call the local OpenAI-compatible mock fixture
   5. tool_calls   -- validate tool-call ledger shape when model fixtures emit it
-  6. main.db      -- rollup counters match session.db actuals
+  6. host ledger  -- the session was created then stopped, chain intact
 
 Usage:
     uv run --project build_system --frozen python build_system/scripts/test/integration_test.py              # uses cache/target/cargo/debug/capsem
@@ -37,6 +37,11 @@ import time
 from pathlib import Path
 
 from capsem_builder.cache.config import load_paths
+from capsem_builder.gate.tools.doctor.host_ledger import (
+    host_ledger_path,
+    read_host_events,
+    verify_chain,
+)
 
 from .mock_server import local_fixture_env, start_mock_server, stop_process
 
@@ -86,22 +91,10 @@ RESET = "\033[0m"
 
 CAPSEM_HOME = INTEGRATION_HOME
 PERSISTENT_DIR = INTEGRATION_RUN_DIR / "persistent"
-# The service keeps main.db in its home, never beside the run directory.
-MAIN_DB = CAPSEM_HOME / "sessions" / "main.db"
+# The service keeps its host ledger in its home, never beside the run directory.
+HOST_LEDGER = host_ledger_path(CAPSEM_HOME)
 SERVICE_SOCKET = INTEGRATION_RUN_DIR / "service.sock"
 SERVICE_PIDFILE = INTEGRATION_RUN_DIR / "service.pid"
-
-
-def default_materialized_profiles_dir() -> str:
-    """Return the generated profile catalog used by packages, CI, and install."""
-    return os.environ.get(
-        "CAPSEM_PROFILES_DIR",
-        str(PROJECT_ROOT / "cache" / "target" / "config" / "profiles"),
-    )
-
-
-def _profile_env() -> dict[str, str]:
-    return {"CAPSEM_PROFILES_DIR": default_materialized_profiles_dir()}
 
 
 def _service_assets_dir(assets_dir: str) -> str:
@@ -113,13 +106,10 @@ def _service_assets_dir(assets_dir: str) -> str:
     return str(native if native.is_dir() else root)
 
 
-def _profile_run_prefix(
-    binary: str, profile: str, *, timeout: int | None = None
-) -> list[str]:
+def _run_prefix(binary: str, *, timeout: int | None = None) -> list[str]:
     command = [binary, "run"]
     if timeout is not None:
         command.extend(["--timeout", str(timeout)])
-    command.extend(["--profile", profile])
     return command
 
 
@@ -322,7 +312,6 @@ def _start_service_with_test_config(
 
     env = {
         **os.environ,
-        **_profile_env(),
         **_test_isolation_env(),
         **_integration_runtime_env(),
         "CAPSEM_CORP_CONFIG": str(project_root / corp_config),
@@ -400,7 +389,7 @@ def _print_vm_failure_diagnostics(
                 print(process_tail)
 
 
-def run_vm(binary: str, assets_dir: str, profile: str) -> tuple[bool, int]:
+def run_vm(binary: str, assets_dir: str) -> tuple[bool, int]:
     """Run telemetry proof in a named session, stop to flush, inspect, delete.
 
     Successful `capsem run` sessions are destroyed by contract. The telemetry
@@ -410,7 +399,6 @@ def run_vm(binary: str, assets_dir: str, profile: str) -> tuple[bool, int]:
     """
     env = {
         **os.environ,
-        **_profile_env(),
         **_test_isolation_env(),
         **_integration_runtime_env(),
         "CAPSEM_ASSETS_DIR": assets_dir,
@@ -444,8 +432,8 @@ def run_vm(binary: str, assets_dir: str, profile: str) -> tuple[bool, int]:
         # Pass deterministic local fixture settings via --env so they reach the
         # VM through the service. Do not inject proxy variables: guest traffic
         # must prove the iptables-nft redirect rail.
-        session_name = f"integration-{profile}-{os.getpid()}"
-        create = [binary, "create", "--name", session_name, "--profile", profile]
+        session_name = f"integration-{os.getpid()}"
+        create = [binary, "create", "--name", session_name]
         for key, value in local_fixture_env(
             mock_base_url,
             ready.get("https_base_url"),
@@ -852,63 +840,22 @@ def verify_session(session_id: str, session_dir: Path) -> bool:
 
     conn.close()
 
-    # ── main.db rollup ───────────────────────────────────────────────
-    print(f"\n{BOLD}main.db rollup{RESET}")
-    if MAIN_DB.exists():
-        mconn = sqlite3.connect(str(MAIN_DB))
-        mconn.row_factory = sqlite3.Row
-        row = mconn.execute(
-            "SELECT * FROM sessions WHERE id = ?", (session_id,)
-        ).fetchone()
-        if row:
-            r.check(
-                row["status"] == "stopped",
-                f"main.db status = {row['status']}",
-                f"main.db status = {row['status']} (expected stopped)",
-            )
-            r.check(
-                row["total_file_events"] > 0,
-                f"main.db total_file_events = {row['total_file_events']}",
-                "main.db total_file_events = 0 (rollup failed)",
-            )
-            r.check(
-                row["total_requests"] > 0,
-                f"main.db total_requests = {row['total_requests']}",
-                "main.db total_requests = 0 (rollup failed)",
-            )
-            r.check(
-                row["total_tool_calls"] > 0,
-                f"main.db total_tool_calls = {row['total_tool_calls']}",
-                "main.db total_tool_calls = 0 (rollup failed)",
-            )
-
-            # Cross-check: main.db rollup matches session.db actuals.
-            sconn = sqlite3.connect(str(session_dir / "session.db"))
-            actual_fs = sconn.execute("SELECT COUNT(*) FROM fs_events").fetchone()[0]
-            actual_net = sconn.execute("SELECT COUNT(*) FROM net_events").fetchone()[0]
-            actual_tools = sconn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0]
-            sconn.close()
-
-            r.check(
-                row["total_file_events"] == actual_fs,
-                f"main.db total_file_events ({row['total_file_events']}) matches session.db ({actual_fs})",
-                f"main.db total_file_events ({row['total_file_events']}) != session.db ({actual_fs})",
-            )
-            r.check(
-                row["total_requests"] == actual_net,
-                f"main.db total_requests ({row['total_requests']}) matches session.db ({actual_net})",
-                f"main.db total_requests ({row['total_requests']}) != session.db ({actual_net})",
-            )
-            r.check(
-                row["total_tool_calls"] == actual_tools,
-                f"main.db total_tool_calls ({row['total_tool_calls']}) matches session.db ({actual_tools})",
-                f"main.db total_tool_calls ({row['total_tool_calls']}) != session.db ({actual_tools})",
-            )
-        else:
-            r.fail(f"session {session_id} not found in main.db")
-        mconn.close()
+    # ── host ledger ──────────────────────────────────────────────────
+    print(f"\n{BOLD}host ledger{RESET}")
+    if HOST_LEDGER.exists():
+        events = read_host_events(HOST_LEDGER)
+        try:
+            r.ok(f"host ledger chain intact over {verify_chain(events)} events")
+        except ValueError as error:
+            r.fail(str(error))
+        kinds = [event["kind"] for event in events if event["session_id"] == session_id]
+        r.check(
+            kinds[:1] == ["session_created"] and kinds[-1:] == ["session_stopped"],
+            f"host ledger records {session_id}: {', '.join(kinds)}",
+            f"host ledger records {session_id} as {kinds} (expected created ... stopped)",
+        )
     else:
-        r.fail(f"main.db not found at {MAIN_DB}")
+        r.fail(f"host ledger not found at {HOST_LEDGER}")
 
     # ── log files ─────────────────────────────────────────────────────
     print(f"\n{BOLD}log files{RESET}")
@@ -1060,12 +1007,11 @@ PERSISTENCE_CHECK_CMD = (
 )
 
 
-def check_persistence(binary: str, assets_dir: str, profile: str) -> bool:
+def check_persistence(binary: str, assets_dir: str) -> bool:
     """Boot two consecutive VMs; verify a file written in the first is gone in the second."""
     print(f"\n{BOLD}=== Ephemeral model check ==={RESET}")
     env = {
         **os.environ,
-        **_profile_env(),
         **_integration_runtime_env(),
         "CAPSEM_ASSETS_DIR": assets_dir,
         "RUST_LOG": "capsem=warn",
@@ -1081,7 +1027,7 @@ def check_persistence(binary: str, assets_dir: str, profile: str) -> bool:
     try:
         print("  Invocation 1: writing sentinel file...")
         proc1 = subprocess.run(
-            [*_profile_run_prefix(binary, profile), PERSISTENCE_WRITE_CMD],
+            [*_run_prefix(binary), PERSISTENCE_WRITE_CMD],
             env=env, capture_output=True, text=True, timeout=120,
         )
         output1 = proc1.stdout + "\n" + proc1.stderr
@@ -1093,7 +1039,7 @@ def check_persistence(binary: str, assets_dir: str, profile: str) -> bool:
 
         print("  Invocation 2: checking sentinel is absent...")
         proc2 = subprocess.run(
-            [*_profile_run_prefix(binary, profile), PERSISTENCE_CHECK_CMD],
+            [*_run_prefix(binary), PERSISTENCE_CHECK_CMD],
             env=env, capture_output=True, text=True, timeout=120,
         )
         output2 = proc2.stdout + "\n" + proc2.stderr
@@ -1131,20 +1077,15 @@ def main():
         default="cache/target/assets",
         help="Path to VM assets directory (default: cache/target/assets)",
     )
-    parser.add_argument(
-        "--profile",
-        default=os.environ.get("CAPSEM_TEST_PROFILE", "code"),
-        help="Manifest profile to exercise (default: CAPSEM_TEST_PROFILE or code)",
-    )
     args = parser.parse_args()
 
-    telemetry_ok, exit_code = run_vm(args.binary, args.assets, args.profile)
+    telemetry_ok, exit_code = run_vm(args.binary, args.assets)
 
     if exit_code != 0:
         print(f"{RED}FAIL: VM integration workload exited with code {exit_code}{RESET}")
         sys.exit(1)
 
-    ephemeral_ok = check_persistence(args.binary, args.assets, args.profile)
+    ephemeral_ok = check_persistence(args.binary, args.assets)
     sys.exit(0 if (telemetry_ok and ephemeral_ok) else 1)
 
 

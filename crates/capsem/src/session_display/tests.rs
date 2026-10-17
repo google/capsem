@@ -4,7 +4,6 @@ use crate::client;
 fn session(status: client::VmLifecycleState) -> SessionInfo {
     SessionInfo {
         id: "vm1".into(),
-        profile_id: "code".into(),
         name: Some("dev".into()),
         pid: 0,
         status,
@@ -28,6 +27,7 @@ fn session(status: client::VmLifecycleState) -> SessionInfo {
         last_error: None,
         can_resume: false,
         resume_blocked_reason: None,
+        ..SessionInfo::new(String::new(), 0, status, true)
     }
 }
 

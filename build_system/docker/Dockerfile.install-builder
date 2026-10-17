@@ -16,6 +16,7 @@ COPY sdk/rust/Cargo.toml /prefetch/sdk/rust/Cargo.toml
 COPY build_system/pyproject.toml build_system/uv.lock /prefetch/build_system/
 COPY build_system/release_site/package.json build_system/release_site/pnpm-lock.yaml \
     build_system/release_site/pnpm-workspace.yaml /prefetch/build_system/release_site/
+COPY build_system/patches /prefetch/build_system/patches
 
 WORKDIR /prefetch
 RUN mkdir -p /prefetch/sdk/rust/src \

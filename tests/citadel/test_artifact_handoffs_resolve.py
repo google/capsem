@@ -99,11 +99,7 @@ def _has_cross_run_resolver(job: dict) -> bool:
     """The job proves which immutable prior run may supply artifacts."""
     commands = [step.get("run") or "" for step in _steps(job)]
     return any(
-        isinstance(command, str)
-        and (
-            "verify-release-recovery-run.py" in command
-            or "resolve-reusable-profile-assets.py" in command
-        )
+        isinstance(command, str) and "verify-release-recovery-run.py" in command
         for command in commands
     )
 
@@ -206,7 +202,7 @@ def test_cross_run_download_requires_an_immutable_run_resolver() -> None:
 
 
 def test_cross_run_download_accepts_a_verified_upstream_matrix_reuse() -> None:
-    producer = {"steps": [{"run": "python3 build_system/scripts/build/resolve-reusable-profile-assets.py"}]}
+    producer = {"steps": [{"run": "python3 build_system/scripts/release/verify-release-recovery-run.py"}]}
     consumer = {
         "needs": ["resolve"],
         "strategy": {"matrix": {"arch": ["arm64", "x86_64"]}},

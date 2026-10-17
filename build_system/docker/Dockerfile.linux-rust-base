@@ -59,6 +59,7 @@ RUN cd /src/sdk/typescript \
     && pnpm run build
 
 COPY web/app /src/web/app
+COPY build_system/patches /src/build_system/patches
 RUN cd /src/web/app \
     && CI=true pnpm install --frozen-lockfile \
     && pnpm run build \

@@ -1,8 +1,8 @@
-//! `capsem.bench.v1`: the one shape every benchmark records.
+//! `capsem.bench.v2`: the one shape every benchmark records.
 //!
 //! Eleven archive categories carried about ten mutually incompatible shapes.
 //! `version` meant the measuring tool's semver in some files and a schema tag
-//! in others; some carried `arch`, some `profile`, some neither; time was
+//! in others; some carried `arch`, some did not; time was
 //! `timestamp` on the guest clock, `host_recorded_at` on the host clock, or
 //! absent. Exactly eight metrics across two of eleven categories were
 //! machine-addressable, through dotted paths hardcoded in the ratchet.
@@ -17,7 +17,7 @@ use crate::stats::Summary;
 
 /// Bumped only when a reader must change. Records name it so an old file is
 /// recognised rather than mis-parsed.
-pub const SCHEMA: &str = "capsem.bench.v1";
+pub const SCHEMA: &str = "capsem.bench.v2";
 
 /// What is being measured. One variant per collector.
 ///
@@ -38,6 +38,8 @@ pub enum Dimension {
     Resources,
     Vsock,
     Criterion,
+    /// CPU hashing and cached EROFS verification, through the crypto owner.
+    Crypto,
     Protocol,
     /// Members of a private network, VM to VM through the network's switch.
     Network,
@@ -48,6 +50,8 @@ pub enum Dimension {
     Startup,
     McpLoad,
     MitmLoad,
+    /// Aggregate HTTPS interception throughput as independent VMs fan out.
+    MitmScale,
     DnsLoad,
 }
 
@@ -64,6 +68,7 @@ impl Dimension {
         Dimension::Resources,
         Dimension::Vsock,
         Dimension::Criterion,
+        Dimension::Crypto,
         Dimension::Protocol,
         Dimension::Network,
         Dimension::Disk,
@@ -72,6 +77,7 @@ impl Dimension {
         Dimension::Startup,
         Dimension::McpLoad,
         Dimension::MitmLoad,
+        Dimension::MitmScale,
         Dimension::DnsLoad,
     ];
 
@@ -87,6 +93,7 @@ impl Dimension {
             Dimension::Resources => "resources",
             Dimension::Vsock => "vsock",
             Dimension::Criterion => "criterion",
+            Dimension::Crypto => "crypto",
             Dimension::Protocol => "protocol",
             Dimension::Network => "network",
             Dimension::Disk => "disk",
@@ -95,6 +102,7 @@ impl Dimension {
             Dimension::Startup => "startup",
             Dimension::McpLoad => "mcp-load",
             Dimension::MitmLoad => "mitm-load",
+            Dimension::MitmScale => "mitm-scale",
             Dimension::DnsLoad => "dns-load",
         }
     }
@@ -103,7 +111,7 @@ impl Dimension {
     pub fn needs_vm(self) -> bool {
         !matches!(
             self,
-            Dimension::Criterion | Dimension::Protocol | Dimension::Routes | Dimension::Websocket
+            Dimension::Criterion | Dimension::Crypto | Dimension::Protocol | Dimension::Routes | Dimension::Websocket
         )
     }
 
@@ -185,7 +193,6 @@ pub struct Record {
     pub recorded_at: String,
     pub release: Release,
     pub host: Host,
-    pub profile: String,
     /// Reduced-sample dev-loop run. Never promotable to evidence.
     pub quick: bool,
     pub metrics: Vec<Metric>,

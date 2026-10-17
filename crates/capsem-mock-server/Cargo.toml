@@ -14,6 +14,7 @@ name = "capsem-mock-server"
 path = "src/main.rs"
 
 [dependencies]
+capsem-crypto = { path = "../capsem-crypto", default-features = false, features = ["tls"] }
 anyhow.workspace = true
 base64.workspace = true
 bytes.workspace = true
@@ -24,11 +25,9 @@ futures.workspace = true
 http-body-util.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
-rcgen.workspace = true
 rustls.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-sha1 = "0.10"
 tokio.workspace = true
 tokio-rustls.workspace = true
 tracing.workspace = true

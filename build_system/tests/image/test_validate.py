@@ -21,34 +21,13 @@ materialize_network = "default"
 [build.rootfs]
 max_uncompressed_bytes = 2500000000
 max_erofs_bytes = 900000000
-forbidden_path_prefixes = ["usr/lib/ollama/cuda_"]
+runtime_apt_packages = ["runc"]
 
 [build.asset_dependencies]
 tag_template = "capsem-{template}-dependencies-{arch}:{digest}"
 rootfs_template = "Dockerfile.rootfs-dependencies.j2"
 kernel_template = "Dockerfile.kernel-dependencies.j2"
 source_build_network = "none"
-
-[build.asset_dependencies.architectures.arm64.node]
-version = "24.19.0"
-url = "https://example.test/node-v24.19.0-linux-arm64.tar.xz"
-sha256 = "1111111111111111111111111111111111111111111111111111111111111111"
-npm_version = "11.17.0"
-
-[build.asset_dependencies.architectures.arm64.uv]
-version = "1.2.3"
-url = "https://example.test/uv-1.2.3-linux-arm64"
-sha256 = "2222222222222222222222222222222222222222222222222222222222222222"
-
-[build.asset_dependencies.architectures.arm64.claude]
-version = "1.2.3"
-url = "https://example.test/claude-1.2.3-linux-arm64"
-sha256 = "3333333333333333333333333333333333333333333333333333333333333333"
-
-[build.asset_dependencies.architectures.arm64.ollama]
-version = "1.2.3"
-url = "https://example.test/ollama-1.2.3-linux-arm64"
-sha256 = "4444444444444444444444444444444444444444444444444444444444444444"
 
 [build.kernel]
 version = "9.9.9"
@@ -70,6 +49,10 @@ debian_security_snapshot_base = "http://snapshot.example/debian-security"
 debian_snapshot_id = "20260810T000000Z"
 materialize_network = "default"
 runtime_network = "none"
+
+[build.asset_tools.erofs_source]
+url = "https://example.test/erofs.tar.gz"
+sha256 = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
 
 [build.asset_tools.architectures.arm64.cdxgen]
 url = "https://example.test/cdxgen-arm64"
@@ -140,20 +123,6 @@ lang = "C"
 ca_bundle = "/etc/ssl/certs/ca-certificates.crt"
 """
 
-PYTHON_PACKAGES_TOML = """\
-[python]
-name = "Python Packages"
-manager = "uv"
-install_cmd = "uv pip install --system"
-packages = ["pytest", "requests"]
-
-[python.network]
-name = "PyPI"
-domains = ["pypi.org"]
-allow_get = true
-"""
-
-
 @pytest.fixture
 def guest_valid(tmp_path: Path) -> Path:
     config = tmp_path / "guest" / "config"
@@ -172,10 +141,6 @@ def guest_valid(tmp_path: Path) -> Path:
     vm.mkdir()
     (vm / "resources.toml").write_text(VM_RESOURCES_TOML)
     (vm / "environment.toml").write_text(VM_ENVIRONMENT_TOML)
-
-    pkg = config / "packages"
-    pkg.mkdir()
-    (pkg / "python.toml").write_text(PYTHON_PACKAGES_TOML)
 
     kernel = config / "kernel"
     kernel.mkdir()
@@ -237,32 +202,6 @@ def test_legacy_per_arch_kernel_branch_is_e003(guest_valid: Path) -> None:
     assert "E003" in _codes(validate_guest(guest_valid))
 
 
-def test_empty_package_list_is_e004(guest_valid: Path) -> None:
-    (guest_valid / "config" / "packages" / "python.toml").write_text(
-        textwrap.dedent("""\
-        [python]
-        name = "Python"
-        manager = "uv"
-        install_cmd = "uv pip install"
-        packages = []
-    """)
-    )
-    assert "E004" in _codes(validate_guest(guest_valid))
-
-
-def test_invalid_package_manager_is_e005(guest_valid: Path) -> None:
-    (guest_valid / "config" / "packages" / "python.toml").write_text(
-        textwrap.dedent("""\
-        [python]
-        name = "Python"
-        manager = "conda"
-        install_cmd = "conda install"
-        packages = ["numpy"]
-    """)
-    )
-    assert "E005" in _codes(validate_guest(guest_valid))
-
-
 @pytest.mark.parametrize(
     "domain", ["https://example.com", "example.com/path", "example.com:443", "   "]
 )
@@ -281,9 +220,8 @@ def test_invalid_web_domain_is_e006(guest_valid: Path, domain: str) -> None:
     assert "E006" in _codes(validate_guest(guest_valid))
 
 
-def test_duplicate_mcp_and_package_keys_are_e008(guest_valid: Path) -> None:
+def test_duplicate_mcp_keys_are_e008(guest_valid: Path) -> None:
     (guest_valid / "config" / "mcp" / "capsem2.toml").write_text(CAPSEM_MCP_TOML)
-    (guest_valid / "config" / "packages" / "python2.toml").write_text(PYTHON_PACKAGES_TOML)
     codes = _codes(validate_guest(guest_valid))
     assert "E008" in codes
 
@@ -293,6 +231,21 @@ def test_missing_kernel_defconfig_is_e300(guest_valid: Path) -> None:
     assert "E300" in _codes(validate_guest(guest_valid))
 
 
+def test_missing_kernel_patch_is_e303(guest_valid: Path) -> None:
+    build = guest_valid / "config" / "build.toml"
+    build.write_text(
+        build.read_text().replace(
+            "[build.kernel]\n",
+            '[build.kernel]\npatches = ["kernel/patches/0001-absent.patch"]\n',
+        )
+    )
+    assert "E303" in _codes(validate_guest(guest_valid))
+    patch = guest_valid / "config" / "kernel" / "patches" / "0001-absent.patch"
+    patch.parent.mkdir()
+    patch.write_text("--- a/x\n+++ b/x\n")
+    assert "E303" not in _codes(validate_guest(guest_valid))
+
+
 def test_artifact_validation_checks_required_files(guest_valid: Path, tmp_path: Path) -> None:
     artifacts = tmp_path / "artifacts"
     artifacts.mkdir()
@@ -300,24 +253,6 @@ def test_artifact_validation_checks_required_files(guest_valid: Path, tmp_path: 
     codes = _codes(diags)
     assert "E301" in codes
     assert "E302" in codes
-
-
-def test_missing_registry_for_package_set_is_w001(guest_valid: Path) -> None:
-    (guest_valid / "config" / "security" / "web.toml").write_text("[web]\n")
-    assert "W001" in _codes(validate_guest(guest_valid))
-
-
-def test_dev_package_warning_is_w002(guest_valid: Path) -> None:
-    (guest_valid / "config" / "packages" / "python.toml").write_text(
-        textwrap.dedent("""\
-        [python]
-        name = "Python"
-        manager = "uv"
-        install_cmd = "uv pip install"
-        packages = ["openssl-dev"]
-    """)
-    )
-    assert "W002" in _codes(validate_guest(guest_valid))
 
 
 def test_secret_in_mcp_or_shell_is_w003(guest_valid: Path) -> None:
@@ -333,19 +268,6 @@ def test_secret_in_mcp_or_shell_is_w003(guest_valid: Path) -> None:
     assert "W003" in _codes(validate_guest(guest_valid))
 
 
-def test_package_set_without_network_is_w004(guest_valid: Path) -> None:
-    (guest_valid / "config" / "packages" / "python.toml").write_text(
-        textwrap.dedent("""\
-        [python]
-        name = "Python"
-        manager = "uv"
-        install_cmd = "uv pip install"
-        packages = ["pytest"]
-    """)
-    )
-    assert "W004" in _codes(validate_guest(guest_valid))
-
-
 def test_broad_web_wildcard_is_w007(guest_valid: Path) -> None:
     (guest_valid / "config" / "security" / "web.toml").write_text(
         textwrap.dedent("""\
@@ -359,19 +281,6 @@ def test_broad_web_wildcard_is_w007(guest_valid: Path) -> None:
     """)
     )
     assert "W007" in _codes(validate_guest(guest_valid))
-
-
-def test_shell_metacharacter_in_install_cmd_is_w009(guest_valid: Path) -> None:
-    (guest_valid / "config" / "packages" / "python.toml").write_text(
-        textwrap.dedent("""\
-        [python]
-        name = "Python"
-        manager = "uv"
-        install_cmd = "uv pip install; rm -rf /"
-        packages = ["pytest"]
-    """)
-    )
-    assert "W009" in _codes(validate_guest(guest_valid))
 
 
 def test_bad_path_is_w010(guest_valid: Path) -> None:
@@ -396,11 +305,6 @@ def test_unknown_rust_target_is_w012(guest_valid: Path) -> None:
     assert "W012" in _codes(validate_guest(guest_valid))
 
 
-def test_runtime_config_is_profile_owned_and_guest_config_stays_retired() -> None:
+def test_image_config_lives_in_config_docker_and_guest_config_stays_retired() -> None:
     assert not (PROJECT_ROOT / "guest" / "config").exists()
-    for profile_id in ("code", "co-work"):
-        profile_dir = PROJECT_ROOT / "config" / "profiles" / profile_id
-        assert (profile_dir / "profile.toml").is_file()
-        assert (profile_dir / "enforcement.toml").is_file()
-        assert (profile_dir / "detection.yaml").is_file()
-        assert (profile_dir / "mcp.json").is_file()
+    assert (PROJECT_ROOT / "config" / "docker" / "image" / "build.toml").is_file()

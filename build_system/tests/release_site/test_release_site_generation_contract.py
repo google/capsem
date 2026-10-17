@@ -4,12 +4,12 @@ from test_release_site_generated_from_json import (
     RELEASE_SITE_DIST,
     build_release_site_from_fixture,
     fixture_graph,
-    test_no_profile_catalog_side_channel,
+    test_no_catalog_side_channel,
 )
 
 
-def test_release_site_forbids_profile_catalog_side_channel() -> None:
-    test_no_profile_catalog_side_channel()
+def test_release_site_forbids_catalog_side_channel() -> None:
+    test_no_catalog_side_channel()
 
 
 def test_human_pages_expose_one_canonical_manifest_fetch_url() -> None:

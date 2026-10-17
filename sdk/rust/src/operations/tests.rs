@@ -38,31 +38,60 @@ macro_rules! operation {
 
 operation!(get_hypervisor_info, "getHypervisorInfo");
 operation!(get_hypervisor_logs, "getHypervisorLogs", GetHypervisorLogsParams);
-operation!(list_profiles, "listProfiles");
-operation!(get_profile_mcp_info, "getProfileMcpInfo", GetProfileMcpInfoParams);
+operation!(get_asset_status, "getAssetStatus");
+operation!(inject_credential, "injectCredential", InjectCredentialParams);
+operation!(list_connections, "listConnections", ListConnectionsParams);
 operation!(
-    list_profile_mcp_servers,
-    "listProfileMcpServers",
-    ListProfileMcpServersParams
+    authorize_google_connection,
+    "authorizeGoogleConnection",
+    AuthorizeGoogleConnectionParams
 );
 operation!(
-    get_profile_mcp_default,
-    "getProfileMcpDefault",
-    GetProfileMcpDefaultParams
+    get_connection_authorization,
+    "getConnectionAuthorization",
+    GetConnectionAuthorizationParams
 );
-operation!(list_profile_mcp_tools, "listProfileMcpTools", ListProfileMcpToolsParams);
 operation!(
-    refresh_profile_mcp_server,
-    "refreshProfileMcpServer",
-    RefreshProfileMcpServerParams
+    cancel_connection_authorization,
+    "cancelConnectionAuthorization",
+    CancelConnectionAuthorizationParams
 );
-operation!(call_profile_mcp_tool, "callProfileMcpTool", CallProfileMcpToolParams);
+operation!(get_connection, "getConnection", GetConnectionParams);
+operation!(
+    disconnect_connection,
+    "disconnectConnection",
+    DisconnectConnectionParams
+);
+operation!(
+    list_session_credential_grants,
+    "listSessionCredentialGrants",
+    ListSessionCredentialGrantsParams
+);
+operation!(
+    create_session_credential_grant,
+    "createSessionCredentialGrant",
+    CreateSessionCredentialGrantParams
+);
+operation!(
+    revoke_session_credential_grant,
+    "revokeSessionCredentialGrant",
+    RevokeSessionCredentialGrantParams
+);
+operation!(get_mcp_info, "getMcpInfo");
+operation!(list_mcp_servers, "listMcpServers");
+operation!(get_mcp_default, "getMcpDefault");
+operation!(list_mcp_tools, "listMcpTools", ListMcpToolsParams);
+operation!(refresh_mcp_server, "refreshMcpServer", RefreshMcpServerParams);
+operation!(call_mcp_tool, "callMcpTool", CallMcpToolParams);
 operation!(run_vm, "runVm", RunVmParams);
 operation!(purge_vms, "purgeVms", PurgeVmsParams);
 operation!(get_panics, "getPanics", GetPanicsParams);
 operation!(get_triage, "getTriage", GetTriageParams);
 operation!(get_update_status, "getUpdateStatus");
 operation!(update_hypervisor, "updateHypervisor", UpdateHypervisorParams);
+operation!(create_proxy, "createProxy", CreateProxyParams);
+operation!(heartbeat_proxy, "heartbeatProxy", HeartbeatProxyParams);
+operation!(stop_proxy, "stopProxy", StopProxyParams);
 operation!(create_network, "createNetwork", CreateNetworkParams);
 operation!(list_networks, "listNetworks");
 operation!(get_network, "getNetwork", GetNetworkParams);
@@ -71,6 +100,8 @@ operation!(attach_network_member, "attachNetworkMember", AttachNetworkMemberPara
 operation!(detach_network_member, "detachNetworkMember", DetachNetworkMemberParams);
 operation!(get_network_logs, "getNetworkLogs", GetNetworkLogsParams);
 operation!(create_vm, "createVm", CreateVmParams);
+operation!(claim_managed_session, "claimManagedSession", ClaimManagedSessionParams);
+operation!(close_managed_session, "closeManagedSession", CloseManagedSessionParams);
 operation!(list_vms, "listVms");
 operation!(delete_vm, "deleteVm", DeleteVmParams);
 operation!(exec_vm, "execVm", ExecVmParams);
@@ -92,6 +123,8 @@ operation!(get_vm_stats_detail, "getVmStatsDetail", GetVmStatsDetailParams);
 operation!(get_vm_stats_summary, "getVmStatsSummary", GetVmStatsSummaryParams);
 operation!(get_vm_status, "getVmStatus", GetVmStatusParams);
 operation!(get_vm_container, "getVmContainer", GetVmContainerParams);
+operation!(list_images, "listImages", ListImagesParams);
+operation!(pull_image, "pullImage", PullImageParams);
 operation!(list_vm_exposures, "listVmExposures", ListVmExposuresParams);
 operation!(create_vm_exposure, "createVmExposure", CreateVmExposureParams);
 operation!(delete_vm_exposure, "deleteVmExposure", DeleteVmExposureParams);

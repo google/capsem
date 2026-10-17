@@ -1,7 +1,7 @@
 //! This VM's network cables: one per network it is plugged into.
 //!
 //! When the service plugs the VM into a network it says so over IPC
-//! (`LinkAttach`): this VM's profile decides once, the owner gives the
+//! (`LinkAttach`): this VM's policy decides once, the owner gives the
 //! network a cable id and tells the guest to bring that cable up with the
 //! network's address (`PlugCable`), and the token it answers with is
 //! presented on the handoff socket, where the reply is a duplicate of that
@@ -42,6 +42,7 @@ const TOKEN_LIFETIME: Duration = Duration::from_secs(8);
 /// How long a presented token waits for the pump to connect: a VM plugged
 /// at creation is still booting.
 const GUEST_DEADLINE: Duration = Duration::from_secs(60);
+const ADOPTION_DEADLINE: Duration = Duration::from_secs(5);
 const MAX_PENDING: usize = 16;
 
 struct PendingPlug {
@@ -148,7 +149,7 @@ impl Cables {
     }
 
     /// The service is plugging this VM into `network` with `address`: the
-    /// profile decides once, the network's cable is brought up in the guest,
+    /// policy decides once, the network's cable is brought up in the guest,
     /// and an allowed plug waits under `token` for the service to present it.
     pub(crate) async fn expect(
         &self,
@@ -171,7 +172,7 @@ impl Cables {
                 .record(RuntimeSecurityEventType::NetworkConnectResult, reason, 0, 0)
                 .await?;
             anyhow::bail!(
-                "this VM's profile {} the link",
+                "this VM's policy {} the link",
                 if action == SecurityEnforcementAction::Ask {
                     "holds for approval"
                 } else {
@@ -333,6 +334,18 @@ impl Cables {
             .send(&seat_frame(SEAT_LINK, token), &[stream.as_raw_fd()])
             .await
             .context("answer the service with the guest stream")?;
+        let receiver = Receiver::new(socket.try_clone()?)?;
+        let receipt = tokio::time::timeout(ADOPTION_DEADLINE, receiver.recv())
+            .await
+            .context("service did not adopt the cable in time")??;
+        let (kind, adopted) = decode_seat_frame(&receipt.bytes).map_err(anyhow::Error::msg)?;
+        ensure!(
+            kind == SEAT_LINK && adopted == token && receipt.fds.is_empty(),
+            "invalid cable adoption receipt"
+        );
+        drop(receiver);
+        // The cable table can replace its own reference while we are sending.
+        // Keep this owner until the service has validated the exact grant.
         drop(stream);
         plug.audit
             .record(

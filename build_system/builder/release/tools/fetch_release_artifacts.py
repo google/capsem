@@ -1,4 +1,4 @@
-"""Fetch and verify immutable package or profile inputs from a release manifest."""
+"""Fetch and verify immutable package or runtime inputs from a release manifest."""
 
 from __future__ import annotations
 
@@ -163,7 +163,7 @@ def fetch_release_inputs(
     *,
     local_publication_base: str | None = None,
     local_publication_dir: Path | None = None,
-    allow_empty_profiles: bool = False,
+    allow_empty_runtime: bool = False,
     allow_empty_packages: bool = False,
     bootstrap_manifest_url: str | None = None,
     architecture: str | None = None,
@@ -172,14 +172,14 @@ def fetch_release_inputs(
 ) -> dict[str, Any]:
     if (local_publication_base is None) != (local_publication_dir is None):
         raise ValueError("local publication base and directory must be supplied together")
-    if local_publication_base is not None and kind != "profiles":
-        raise ValueError("local publication overrides are profile-only")
+    if local_publication_base is not None and kind != "runtime":
+        raise ValueError("local publication overrides are runtime-only")
     if local_publication_base is not None:
         parsed_base = urlparse(local_publication_base)
         if parsed_base.scheme != "https" or not parsed_base.netloc:
             raise ValueError("local publication base must be an absolute HTTPS URL")
-    if architecture is not None and kind != "profiles":
-        raise ValueError("architecture filtering is profile-only")
+    if architecture is not None and kind != "runtime":
+        raise ValueError("architecture filtering is runtime-only")
     if prune_cache and cache_dir is None:
         raise ValueError("cache pruning requires a cache directory")
     if cache_dir is not None:
@@ -198,10 +198,8 @@ def fetch_release_inputs(
         if bootstrap_manifest_url is None:
             raise
         manifest_bytes, manifest = _read_manifest(bootstrap_manifest_url)
-        if manifest.get("profiles") != {}:
-            raise ValueError(
-                "bootstrap release-input fallback requires explicit empty profiles"
-            ) from None
+        if manifest.get("runtime") is not None:
+            raise ValueError("bootstrap release-input fallback requires no runtime") from None
         _assert_public_channel_absent(manifest_url, manifest)
         manifest_url = bootstrap_manifest_url
 
@@ -214,7 +212,7 @@ def fetch_release_inputs(
         manifest,
         manifest_url,
         kind,
-        allow_empty_profiles=allow_empty_profiles,
+        allow_empty_runtime=allow_empty_runtime,
         allow_empty_packages=allow_empty_packages,
         architecture=architecture,
     )
@@ -248,7 +246,7 @@ def fetch_release_inputs(
         path.write_bytes(payload)
     if local_publication_dir is not None:
         if not local_paths:
-            raise ValueError("local publication base does not match any manifest profile artifact")
+            raise ValueError("local publication base does not match any manifest runtime artifact")
         source = local_publication_dir.resolve() / f"channel-source-{manifest.get('channel')}.json"
         if not source.is_file() or source.read_bytes() != manifest_bytes:
             raise ValueError(
@@ -258,7 +256,7 @@ def fetch_release_inputs(
             manifest,
             manifest_url,
             kind,
-            allow_empty_profiles=allow_empty_profiles,
+            allow_empty_runtime=allow_empty_runtime,
             allow_empty_packages=allow_empty_packages,
         )
         publication_paths = {
@@ -291,8 +289,8 @@ def fetch_release_inputs(
         "output": str(output),
         "artifacts": fetched,
     }
-    if allow_empty_profiles:
-        report["allow_empty_profiles"] = True
+    if allow_empty_runtime:
+        report["allow_empty_runtime"] = True
     if allow_empty_packages:
         report["allow_empty_packages"] = True
     if architecture is not None:
@@ -311,11 +309,11 @@ def fetch_release_inputs(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest-url", required=True)
-    parser.add_argument("--kind", choices=("packages", "profiles"), required=True)
+    parser.add_argument("--kind", choices=("packages", "runtime"), required=True)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--local-publication-base")
     parser.add_argument("--local-publication-dir", type=Path)
-    parser.add_argument("--allow-empty-profiles", action="store_true")
+    parser.add_argument("--allow-empty-runtime", action="store_true")
     parser.add_argument("--allow-empty-packages", action="store_true")
     parser.add_argument("--bootstrap-manifest-url")
     parser.add_argument("--architecture", choices=("arm64", "x86_64"))
@@ -329,7 +327,7 @@ def main() -> int:
             args.output,
             local_publication_base=args.local_publication_base,
             local_publication_dir=args.local_publication_dir,
-            allow_empty_profiles=args.allow_empty_profiles,
+            allow_empty_runtime=args.allow_empty_runtime,
             allow_empty_packages=args.allow_empty_packages,
             bootstrap_manifest_url=args.bootstrap_manifest_url,
             architecture=args.architecture,

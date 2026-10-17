@@ -69,7 +69,8 @@ Fixes land test-first. No exceptions.
   - Cross-cutting Rust: `just test`
   - Frontend: `pnpm run check` (fail-on-warnings) + `pnpm test` where relevant
   - VM behavior: `just exec "capsem-doctor -k <category>"` or the targeted diagnostic
-  - Telemetry: `python3 build_system/scripts/doctor/check_session.py`
+  - Telemetry: inspect live evidence through typed timeline/ledger routes; use
+    `check_session.py --db` only on a quiesced preserved copy
 - Fix every warning surfaced. Warnings are errors (CLAUDE.md).
 
 ## Phase 5: Summarize, commit, changelog

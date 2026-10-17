@@ -13,6 +13,7 @@ authors.workspace = true
 capsem-assets = { path = "../capsem-assets" }
 capsem-core = { path = "../capsem-core" }
 capsem-foundation = { path = "../capsem-foundation" }
+capsem-guard = { path = "../capsem-guard" }
 capsem-logger = { path = "../capsem-logger" }
 capsem-telemetry = { path = "../capsem-telemetry", features = ["export"] }
 capsem-proto = { path = "../capsem-proto" }
@@ -24,6 +25,10 @@ serde_json.workspace = true
 toml.workspace = true
 clap.workspace = true
 futures.workspace = true
+http.workspace = true
+bytes.workspace = true
+opentelemetry-http = { version = "0.33", default-features = false }
+async-trait = "0.1"
 
 [dev-dependencies]
 axum = { workspace = true, features = ["ws"] }

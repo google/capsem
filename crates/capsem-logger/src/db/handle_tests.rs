@@ -84,7 +84,7 @@ pub(super) fn make_net_event(domain: &str, decision: Decision) -> NetEvent {
 }
 
 fn blake3_test_ref(value: &str) -> String {
-    format!("blake3:{}", blake3::hash(value.as_bytes()).to_hex())
+    format!("blake3:{}", capsem_crypto::blake3::hash(value.as_bytes()).to_hex())
 }
 
 fn query_json(raw: &str) -> serde_json::Value {

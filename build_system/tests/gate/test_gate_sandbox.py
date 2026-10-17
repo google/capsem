@@ -73,6 +73,8 @@ ONLINE_FAST = {
     # Exact lockfile dependency materialization. The paired install is
     # explicitly offline and stays inside the kernel boundary.
     "sdk.python.prewarm",
+    "fast.sdk.typescript.package-prewarm",
+    "fast.mcp.typescript.package-prewarm",
     "fast.toolchain.node",
     "fast.toolchain.rust",
 }
@@ -182,21 +184,19 @@ def test_fast_gate_proves_hosted_linux_sandbox_before_dependency_work() -> None:
     names = [step.get("name") for step in steps]
     prepare = next(step for step in steps if step.get("name") == "Prove Linux sandbox boundary")
 
-    assert prepare["run"] == ("python3 build_system/scripts/bootstrap/prepare-linux-sandbox.py --repair-hosted-runner")
+    assert prepare["run"] == (
+        "python3 build_system/scripts/bootstrap/prepare-linux-sandbox.py --repair-hosted-runner"
+    )
     assert "continue-on-error" not in prepare
     assert names.index("Prove Linux sandbox boundary") < names.index(
         "Materialize locked qualification dependencies"
     )
-    assert names.index("Prove Linux sandbox boundary") < names.index(
-        "Run the complete fast gate"
-    )
+    assert names.index("Prove Linux sandbox boundary") < names.index("Run the complete fast gate")
     assert_unmasked_step("fast-gate.yaml", workflow, "static", "Prove Linux sandbox boundary")
 
 
 def test_fast_gate_warms_sdk_python_in_the_policy_owned_cache() -> None:
-    workflow = yaml.safe_load(
-        (PROJECT_ROOT / ".github/workflows/fast-gate.yaml").read_text()
-    )
+    workflow = yaml.safe_load((PROJECT_ROOT / ".github/workflows/fast-gate.yaml").read_text())
     step = next(
         step
         for step in workflow["jobs"]["static"]["steps"]
@@ -209,7 +209,7 @@ def test_fast_gate_warms_sdk_python_in_the_policy_owned_cache() -> None:
 
 
 def test_every_hosted_linux_job_entering_a_gate_module_proves_the_boundary_first() -> None:
-    """A package/profile pairing job is just as sandboxed as the fast gate.
+    """A package/runtime pairing job is just as sandboxed as the fast gate.
 
     Installing Bubblewrap does not prove that an Ubuntu runner may create the
     namespace or configure loopback.  GitHub's AppArmor restriction can allow
@@ -269,7 +269,7 @@ def test_every_hosted_linux_job_entering_a_gate_module_proves_the_boundary_first
 
     assert callers == {
         ("fast-gate.yaml", "static"),
-        ("release-assets.yaml", "test-profile-pairing"),
+        ("release-assets.yaml", "test-runtime-pairing"),
         ("release.yaml", "test-binary-pairing"),
     }
 
@@ -686,7 +686,9 @@ def test_the_sandbox_is_applied_before_any_resource_is_held() -> None:
     """
     import ast
 
-    source = (PROJECT_ROOT / "build_system" / "builder" / "gate" / "command.py").read_text(encoding="utf-8")
+    source = (PROJECT_ROOT / "build_system" / "builder" / "gate" / "command.py").read_text(
+        encoding="utf-8"
+    )
     tree = ast.parse(source)
     execute = next(
         node
@@ -870,10 +872,7 @@ def test_parallel_egress_callers_queue_before_the_single_command_broker(
         ("test-static", ()),
         ("candidate", ()),
         ("release-binaries", (("channel", "nightly"),)),
-        (
-            "release-profile",
-            (("channel", "nightly"), ("profile", "code")),
-        ),
+        ("release-assets", (("channel", "nightly"),)),
     ],
 )
 def test_only_named_dependency_inputs_cross_the_fast_gate_network_boundary(
@@ -899,10 +898,8 @@ def test_only_named_dependency_inputs_cross_the_fast_gate_network_boundary(
         if name == "release-binaries":
             expected.add("channel-source")
     else:
-        expected = (
-            ONLINE_FAST if name != "test-static" else {"static.toolchain.node"}
-        )
-    if name not in {"test-fast", "release-binaries", "release-profile"}:
+        expected = ONLINE_FAST if name != "test-static" else {"static.toolchain.node"}
+    if name not in {"test-fast", "release-binaries", "release-assets"}:
         expected |= {
             "host-image",
             "install.materialize",
@@ -922,10 +919,7 @@ def test_only_named_dependency_inputs_cross_the_fast_gate_network_boundary(
         ("test-fast", ()),
         ("candidate", ()),
         ("release-binaries", (("channel", "nightly"),)),
-        (
-            "release-profile",
-            (("channel", "nightly"), ("profile", "code")),
-        ),
+        ("release-assets", (("channel", "nightly"),)),
     ],
 )
 def test_every_fast_gate_entrypoint_prepares_one_scoped_egress_capability(
@@ -1027,9 +1021,10 @@ def test_cancelling_the_outer_runner_reaps_the_bubblewrap_session(tmp_path: Path
 def test_only_named_self_confining_children_replace_the_inherited_profile(report):
     text = sandbox.profile(CONFIG, report=report)
     handoffs = [line for line in text.splitlines() if "no-sandbox" in line]
-    assert len(handoffs) == 2
-    assert any("/capsem\\-router$" in line for line in handoffs)
-    assert any("/capsem\\-router\\-confinement\\-test$" in line for line in handoffs)
+    executables = CONFIG.sandbox.self_confined_executables
+    assert len(handoffs) == len(executables)
+    for executable in executables:
+        assert any(f"/{re.escape(executable)}$" in line for line in handoffs)
     assert all("(regex" in line for line in handoffs)
     if not report:
         assert "(deny network*)" in text

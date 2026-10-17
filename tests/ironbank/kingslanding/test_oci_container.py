@@ -12,7 +12,7 @@ import re
 from pathlib import Path
 
 import pytest
-from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import (
     ServiceInstance,
     vm_name,
@@ -38,7 +38,6 @@ def oci_vm():
             "/vms/create",
             {
                 "name": name,
-                "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
             },
@@ -139,7 +138,6 @@ def test_fresh_session_does_not_inherit_container_files(oci_vm):
         "/vms/create",
         {
             "name": other,
-            "profile_id": CODE_PROFILE_ID,
             "ram_mb": DEFAULT_RAM_MB,
             "cpus": DEFAULT_CPUS,
         },

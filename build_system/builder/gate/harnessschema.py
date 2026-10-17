@@ -192,6 +192,7 @@ class RunLogConfig(Strict):
     events: str
     event_schema: str
     step_log_dir: str
+    resource_log: str
     summary: str
     latest_link: str
     #: Trees each run watches for filesystem faults, relative to the checkout.
@@ -200,6 +201,8 @@ class RunLogConfig(Strict):
     observer_survey_seconds: PositiveFloat
     #: Trees where identical bytes are a third party's doing, not ours.
     duplicate_content_exempt: tuple[str, ...]
+    #: Product roots whose same relative files intentionally share source bytes.
+    duplicate_content_mirrors: tuple[tuple[str, ...], ...]
     #: Exact frozen source replicas: copied inputs, not authored artifacts.
     source_replica_roots: tuple[str, ...]
     #: How Linux names the path behind a file descriptor, so a `dir_fd`-relative
@@ -283,12 +286,9 @@ class PytestConfig(Strict):
     benchmark_baseline: str
     benchmark_deselect: str
     managed_restart: str
+    managed_restart_driver: str
     run_id_variable: str
     require_artifacts: str
-    profile_variable: str
-    base_profile: str
-    materialized_profiles: str
-    test_manifest: str
 
 
 class SuitesConfig(Strict):

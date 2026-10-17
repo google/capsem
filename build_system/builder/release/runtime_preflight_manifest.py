@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import sys
 import time
@@ -16,6 +15,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
 
+from .. import crypto as hashlib
 from . import release_retirement as retirement
 from .release_source_bootstrap import validate_source_manifest
 

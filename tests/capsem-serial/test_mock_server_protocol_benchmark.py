@@ -21,7 +21,12 @@ from helpers.benchmark_output import benchmark_output_dir
 from helpers.body_archive import archived_bodies
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.mock_server import start_mock_server, stop_process
-from helpers.service import ServiceInstance, exec_output_text, vm_session_db_path, wait_exec_ready
+from helpers.service import (
+    ServiceInstance,
+    exec_output_text,
+    vm_session_db_path,
+    wait_exec_ready,
+)
 
 pytestmark = [pytest.mark.serial, pytest.mark.benchmark]
 
@@ -188,7 +193,6 @@ def test_mock_server_protocol_benchmark_artifact():
     try:
         client.post("/vms/create", {
             "name": name,
-            "profile_id": "code",
             "ram_mb": DEFAULT_RAM_MB,
             "cpus": DEFAULT_CPUS,
         })
@@ -200,6 +204,8 @@ def test_mock_server_protocol_benchmark_artifact():
             [
                 "capsem-bench-rs",
                 "protocol",
+                "--lane",
+                "guest_capsem",
                 "--base-url",
                 base_url,
                 "--dns-udp-addr",

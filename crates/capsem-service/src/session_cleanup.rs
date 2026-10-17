@@ -71,24 +71,30 @@ pub(super) async fn finalize_one_shot_session(
     }
     let session_dir = shutdown_result
         .map(|(path, _, _)| path)
-        .unwrap_or_else(|| state.run_dir.join("sessions").join(id));
-    if !session_dir.exists() {
-        return Ok(None);
+        .unwrap_or_else(|| state.run_dir.join("sessions").join(&id));
+    if session_dir.exists() {
+        let delete_state = Arc::clone(&state);
+        tokio::task::spawn_blocking(move || delete_state.delete_session_dir(&session_dir))
+            .await
+            .map_err(|error| {
+                AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("one-shot cleanup task failed: {error}"),
+                )
+            })?
+            .map_err(|error| {
+                AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("one-shot cleanup failed: {error:#}"),
+                )
+            })?;
     }
-    tokio::task::spawn_blocking(move || state.delete_session_dir(&session_dir))
-        .await
-        .map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("one-shot cleanup task failed: {error}"),
-            )
-        })?
-        .map_err(|error| {
-            AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("one-shot cleanup failed: {error:#}"),
-            )
-        })?;
+    state.ledger_workers.retire(&id).await.map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("one-shot checkpoint cleanup failed: {error:#}"),
+        )
+    })?;
     Ok(None)
 }
 
@@ -96,7 +102,7 @@ pub(super) async fn handle_preserve_failure(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let shutdown_result = shutdown_vm_process(&state, &id, ShutdownMode::Retain).await?;
+    let shutdown_result = shutdown_vm_process(&state, &id, ShutdownMode::Retain, None).await?;
     let _preserved = ensure_failed_session_preserved(Arc::clone(&state), id.clone(), shutdown_result)
         .await?
         .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?;

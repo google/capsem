@@ -9,6 +9,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
+from helpers.bounded import bounded
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BUILD_SCRIPT = REPO_ROOT / "crates" / "capsem" / "build.rs"
@@ -86,13 +87,13 @@ def _embedded_hash(repo: Path, target_dir: Path) -> str:
     env = os.environ.copy()
     env["CARGO_TARGET_DIR"] = str(target_dir)
     return _run(
-        [
+        bounded([
             "cargo",
             "run",
             "--quiet",
             "--manifest-path",
             "crates/capsem/Cargo.toml",
-        ],
+        ], 120, env={"CARGO_TARGET_DIR": str(target_dir)}),
         cwd=repo,
         env=env,
     ).stdout.strip()

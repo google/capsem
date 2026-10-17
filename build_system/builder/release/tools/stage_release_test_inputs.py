@@ -9,20 +9,13 @@ import platform
 import shutil
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 from typing import Any, cast
-from urllib.parse import urljoin
+from urllib.parse import unquote, urljoin, urlparse
 
-from capsem_builder.image.tools.build.stage_profile_assets import (
-    active_profile_architectures,
-    configured_evidence_artifacts,
-    finalize_profile,
-    local_file,
-    stage_profile_architecture_assets,
-)
-
+from . import repository_root
 from .package_payload import deb_payload_files
-from .profile_root_payload import stage_legacy_root
 from .release_cohort import REQUIRED_LINUX_RELEASE_BINARIES
 from .release_inputs import (
     load_verified_release_inputs,
@@ -30,6 +23,11 @@ from .release_inputs import (
     safe_relative,
     verify_payload,
 )
+
+ROOT = repository_root()
+
+#: The logical names the service boots from, by manifest image kind.
+IMAGE_NAMES = {"kernel": "vmlinuz", "initrd": "initrd.img", "rootfs": "rootfs.erofs"}
 
 
 def _host_arch() -> str:
@@ -84,138 +82,156 @@ def _reset_staging_directory(path: Path, label: str) -> None:
     path.mkdir(parents=True)
 
 
-def _validated_shared_config_sources(
-    shared_config_root: Path,
-    *staging_roots: Path,
-) -> list[tuple[Path, str]]:
-    # Settings/corp policy are not publication bytes; the isolated gate still
-    # needs their defaults to materialize and validate manifest-owned profiles.
-    if shared_config_root.is_symlink() or not shared_config_root.is_dir():
-        raise ValueError(f"shared config root is missing or unsafe: {shared_config_root}")
-    shared_resolved = shared_config_root.resolve()
-    for staging_root in staging_roots:
-        staging_resolved = staging_root.resolve()
-        if (
-            shared_resolved == staging_resolved
-            or shared_resolved in staging_resolved.parents
-            or staging_resolved in shared_resolved.parents
-        ):
-            raise ValueError(
-                "shared config root and release staging roots must not overlap: "
-                f"{shared_resolved} / {staging_resolved}"
-            )
-
-    sources: list[tuple[Path, str]] = []
-    for name in ("settings", "corp"):
-        source = shared_config_root / name
-        if source.is_symlink() or not source.is_dir():
-            raise ValueError(f"shared config subtree is missing or unsafe: {source}")
-        for child in source.rglob("*"):
-            if child.is_symlink():
-                raise ValueError(f"shared config must not contain symlinks: {child}")
-            if not child.is_dir() and not child.is_file():
-                raise ValueError(f"shared config contains an unsupported entry: {child}")
-        sources.append((source, name))
-
-    for relative in ("settings/settings.toml", "corp/corp.toml"):
-        required = shared_config_root / relative
-        if not required.is_file():
-            raise ValueError(f"shared config is missing required file: {required}")
-    return sources
+def hash_filename(logical_name: str, digest: str) -> str:
+    prefix = digest[:16]
+    if "." in logical_name:
+        stem, extension = logical_name.split(".", 1)
+        return f"{stem}-{prefix}.{extension}"
+    return f"{logical_name}-{prefix}"
 
 
-def _stage_shared_config(
-    sources: list[tuple[Path, str]],
-    config_root: Path,
+def configured_evidence_artifacts(config_root: Path) -> dict[str, str]:
+    """Map manifest evidence kinds to config-owned runtime filenames."""
+    gate_config = config_root / "gate.toml"
+    try:
+        document = tomllib.loads(gate_config.read_text(encoding="utf-8"))
+        configured = document["assets"]["evidence_artifacts"]
+    except (OSError, tomllib.TOMLDecodeError, KeyError, TypeError) as error:
+        raise ValueError(f"read configured asset evidence from {gate_config}: {error}") from error
+    if not isinstance(configured, list) or not configured:
+        raise ValueError("assets.evidence_artifacts must be a non-empty list")
+    by_kind: dict[str, str] = {}
+    for value in configured:
+        logical_name = safe_component(value, "configured evidence artifact")
+        kind = logical_name.split(".", 1)[0].replace("-", "_")
+        if kind in by_kind:
+            raise ValueError(f"configured evidence artifacts repeat manifest kind {kind}")
+        by_kind[kind] = logical_name
+    return by_kind
+
+
+def local_file(url: object, label: str) -> Path:
+    if not isinstance(url, str):
+        raise ValueError(f"{label} lacks a staged URL")
+    parsed = urlparse(url)
+    if parsed.scheme != "file":
+        raise ValueError(f"{label} was not resolved to a local immutable input")
+    return Path(unquote(parsed.path))
+
+
+def _stage_file(arch_dir: Path, logical_name: str, record: dict[str, Any], label: str) -> None:
+    """Stage one verified input under its content-addressed and logical names."""
+    digest = record.get("digest", {}).get("blake3")
+    if not isinstance(digest, str):
+        raise ValueError(f"{label} lacks BLAKE3")
+    source = local_file(record.get("url"), label)
+    shutil.copy2(source, arch_dir / hash_filename(logical_name, digest))
+    shutil.copy2(source, arch_dir / logical_name)
+
+
+def _active_runtime_architecture(manifest: dict[str, Any], arch: str) -> dict[str, Any]:
+    runtime = manifest.get("runtime")
+    if not isinstance(runtime, dict):
+        raise ValueError("release manifest contains no runtime")
+    if runtime.get("status") == "revoked":
+        raise ValueError("release manifest runtime is revoked")
+    source_commit = runtime.get("source_commit")
+    if source_commit is not None and (
+        not isinstance(source_commit, str)
+        or len(source_commit) != 40
+        or any(char not in "0123456789abcdef" for char in source_commit)
+    ):
+        raise ValueError("release runtime has malformed source_commit")
+    matches = [
+        candidate
+        for candidate in runtime.get("architectures", [])
+        if isinstance(candidate, dict) and candidate.get("architecture") == arch
+    ]
+    if len(matches) != 1:
+        raise ValueError(f"release runtime must have exactly one {arch} architecture")
+    return matches[0]
+
+
+def _stage_runtime_architecture(
+    architecture: dict[str, Any],
+    *,
+    arch: str,
+    arch_dir: Path,
+    evidence_artifacts: dict[str, str],
 ) -> None:
-    for source, name in sources:
-        shutil.copytree(source, config_root / name)
+    """Stage boot images and the complete config-owned evidence closure."""
+    images = architecture.get("images")
+    if not isinstance(images, list):
+        raise ValueError(f"release runtime/{arch} images are malformed")
+    staged_images: set[str] = set()
+    for index, value in enumerate(images):
+        if not isinstance(value, dict):
+            raise ValueError(f"release runtime/{arch} image[{index}] is malformed")
+        record = cast(dict[str, Any], value)
+        if record.get("status") == "revoked" or record.get("kind") not in IMAGE_NAMES:
+            continue
+        kind = cast(str, record["kind"])
+        if kind in staged_images:
+            raise ValueError(f"release runtime/{arch} repeats {kind} image")
+        staged_images.add(kind)
+        logical_name = safe_component(
+            record.get("name") or IMAGE_NAMES[kind], f"runtime/{arch} {kind} image name"
+        )
+        _stage_file(arch_dir, logical_name, record, f"release runtime/{arch} {kind}")
+    missing_images = set(IMAGE_NAMES) - staged_images
+    if missing_images:
+        raise ValueError(f"release runtime/{arch} lacks images: {sorted(missing_images)}")
+
+    evidence = architecture.get("evidence")
+    if not isinstance(evidence, list):
+        raise ValueError(f"release runtime/{arch} evidence is malformed")
+    staged_evidence: set[str] = set()
+    for index, value in enumerate(evidence):
+        if not isinstance(value, dict):
+            raise ValueError(f"release runtime/{arch} evidence[{index}] is malformed")
+        record = cast(dict[str, Any], value)
+        if record.get("status") == "revoked":
+            continue
+        kind = record.get("kind")
+        logical_name = evidence_artifacts.get(kind) if isinstance(kind, str) else None
+        if logical_name is None:
+            continue
+        if logical_name in staged_evidence:
+            raise ValueError(f"release runtime/{arch} repeats {logical_name}")
+        staged_evidence.add(logical_name)
+        _stage_file(arch_dir, logical_name, record, f"release runtime/{arch} {logical_name}")
+    missing_evidence = set(evidence_artifacts.values()) - staged_evidence
+    if missing_evidence:
+        raise ValueError(
+            f"release runtime/{arch} lacks configured evidence: {sorted(missing_evidence)}"
+        )
 
 
-def stage_profiles(
-    input_dir: Path,
-    assets_dir: Path,
-    config_root: Path = Path("cache/target/release/staging/config"),
-    shared_config_root: Path = Path("config"),
-) -> Path:
+def stage_runtime(input_dir: Path, assets_dir: Path) -> Path:
+    """Stage the host architecture's verified runtime and its local manifest."""
     report, manifest = _load(input_dir)
-    if report.get("kind") != "profiles":
-        raise ValueError("profile staging requires profile release inputs")
-    shared_sources = _validated_shared_config_sources(
-        shared_config_root,
-        assets_dir,
-        config_root,
-    )
-    host_arch = _host_arch()
+    if report.get("kind") != "runtime":
+        raise ValueError("runtime staging requires runtime release inputs")
+    arch = _host_arch()
     selected_arch = report.get("architecture")
-    if selected_arch is not None and selected_arch != host_arch:
-        raise ValueError(f"profile release inputs select {selected_arch}, not host {host_arch}")
-    replacements = _local_url_map(input_dir, report)
+    if selected_arch is not None and selected_arch != arch:
+        raise ValueError(f"runtime release inputs select {selected_arch}, not host {arch}")
     manifest_url = report.get("manifest_url")
     if not isinstance(manifest_url, str):
         raise ValueError("release input report lacks its manifest URL")
-    _rewrite_urls(manifest, replacements, manifest_url)
-    if assets_dir.resolve() == config_root.resolve():
-        raise ValueError("profile assets and config staging roots must differ")
-    _reset_staging_directory(assets_dir, "profile asset")
-    _reset_staging_directory(config_root, "profile config")
-    _stage_shared_config(shared_sources, config_root)
+    _rewrite_urls(manifest, _local_url_map(input_dir, report), manifest_url)
+    architecture = _active_runtime_architecture(manifest, arch)
+    evidence_artifacts = configured_evidence_artifacts(ROOT / "config")
+    _reset_staging_directory(assets_dir, "runtime asset")
     manifest_path = assets_dir / "manifest.json"
     manifest_path.write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
-    arch = host_arch
     arch_dir = assets_dir / arch
-    arch_dir.mkdir(parents=True, exist_ok=True)
-    evidence_artifacts = configured_evidence_artifacts(shared_config_root)
-    for profile_index, (profile_id, legacy, architecture) in enumerate(
-        active_profile_architectures(manifest, arch)
-    ):
-        configs = architecture.get("config")
-        if not isinstance(configs, list) or not configs:
-            raise ValueError(f"release profile {profile_id}/{arch} has no config")
-        staged_config_paths: set[Path] = set()
-        for index, record in enumerate(configs):
-            if not isinstance(record, dict):
-                raise ValueError(
-                    f"release profile {profile_id}/{arch} config[{index}] is malformed"
-                )
-            record = cast(dict[str, Any], record)
-            if record.get("status") == "revoked":
-                continue
-            relative = safe_relative(
-                record.get("path"),
-                f"profile {profile_id}/{arch} config[{index}] path",
-            )
-            if len(relative.parts) < 3 or relative.parts[:2] != (
-                "profiles",
-                profile_id,
-            ):
-                raise ValueError(
-                    f"profile {profile_id}/{arch} config path escapes its profile: {relative}"
-                )
-            if relative in staged_config_paths:
-                raise ValueError(f"profile {profile_id}/{arch} repeats config path {relative}")
-            staged_config_paths.add(relative)
-            source = local_file(record.get("url"), f"profile {profile_id}/{arch} config[{index}]")
-            destination = config_root / relative
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, destination)
-        expected_profile = Path("profiles") / profile_id / "profile.toml"
-        if expected_profile not in staged_config_paths:
-            raise ValueError(f"release profile {profile_id}/{arch} lacks {expected_profile}")
-        finalize_profile(
-            config_root / expected_profile, arch, profile_id, staged_config_paths, legacy=legacy
-        )
-        stage_legacy_root(shared_config_root, config_root, profile_id, staged_config_paths)
-        stage_profile_architecture_assets(
-            architecture,
-            profile_id=profile_id,
-            profile_index=profile_index,
-            arch=arch,
-            arch_dir=arch_dir,
-            evidence_artifacts=evidence_artifacts,
-        )
+    arch_dir.mkdir(parents=True)
+    _stage_runtime_architecture(
+        architecture, arch=arch, arch_dir=arch_dir, evidence_artifacts=evidence_artifacts
+    )
     return manifest_path
 
 
@@ -269,7 +285,7 @@ def functional_binary_cohort_readiness(input_dir: Path) -> dict[str, Any]:
     if report.get("allow_empty_packages") and not report.get("artifacts"):
         # A channel being cold-started has no published package to pair with,
         # so there is nothing to run the functional modules against. That is an
-        # answer, not an error: the profile stages deferred and the binary
+        # answer, not an error: the runtime stages deferred and the binary
         # release that follows publishes this channel's packages and activates.
         return {
             "ready": False,
@@ -303,8 +319,10 @@ def _extract_binaries(package_path: Path, extract_dir: Path) -> None:
         shutil.rmtree(extract_dir)
     extract_dir.mkdir(parents=True)
     payloads = deb_payload_files(
-        package_path, select=lambda name: name.startswith("/usr/bin/capsem")
-        and "/" not in name.removeprefix("/usr/bin/"),
+        package_path,
+        select=lambda name: (
+            name.startswith("/usr/bin/capsem") and "/" not in name.removeprefix("/usr/bin/")
+        ),
     )
     for name, payload in payloads.items():
         target = extract_dir / safe_relative(name.removeprefix("/"), "package binary path")
@@ -401,16 +419,6 @@ def main() -> int:
     source.add_argument("--package-file", type=Path)
     parser.add_argument("--assets-dir", type=Path, default=Path("cache/target/assets"))
     parser.add_argument("--binary-dir", type=Path, default=Path("cache/target/cargo/debug"))
-    parser.add_argument(
-        "--config-root",
-        type=Path,
-        default=Path("cache/target/release/staging/config"),
-    )
-    parser.add_argument(
-        "--shared-config-root",
-        type=Path,
-        default=Path("config"),
-    )
     parser.add_argument("--print-package-path", action="store_true")
     parser.add_argument("--check-functional-cohort", action="store_true")
     parser.add_argument("--github-output", type=Path)
@@ -434,15 +442,8 @@ def main() -> int:
             result = stage_candidate_package(args.package_file, args.binary_dir)
         else:
             report, _ = _load(args.input_dir)
-            if report.get("kind") == "profiles":
-                result = [
-                    stage_profiles(
-                        args.input_dir,
-                        args.assets_dir,
-                        args.config_root,
-                        args.shared_config_root,
-                    )
-                ]
+            if report.get("kind") == "runtime":
+                result = [stage_runtime(args.input_dir, args.assets_dir)]
             elif report.get("kind") == "packages":
                 result = stage_package_binaries(args.input_dir, args.binary_dir)
             else:

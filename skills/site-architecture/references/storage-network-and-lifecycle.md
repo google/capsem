@@ -11,14 +11,27 @@ Selected by kernel cmdline `capsem.storage=virtiofs` (default) or absence (block
 **VirtioFS mode** (default):
 ```
 ~/.capsem/sessions/{id}/
-  guest/                     # the only VirtioFS share (guest can rewrite anything here)
+  guest/                     # the read-write VirtioFS share, tag `capsem` (guest can rewrite anything here)
     workspace/               # VirtioFS files for /root (host-visible)
   workspace -> guest/workspace   # compat symlink
+  image/                     # the read-only VirtioFS share, tag `capsem-image`: one image's blobs
   system/rootfs.img          # host-only: ext4 (2GB sparse) attached as /dev/vdb, overlayfs upper
   session.db                 # host-only, outside the share
 ```
 
-Boot sequence: profile-selected read-only rootfs asset -> VirtioFS mount -> ext4 on /dev/vdb -> overlayfs -> bind-mount workspace.
+`image/` is attached to every VM, read-only at the device (Apple VZ
+`VZSharedDirectory` `readOnly`, the KVM FUSE server's `read_only`), because a
+device cannot be added after boot and an image is pulled only once the VM's
+owner admits it. It holds nothing but the image's blobs, each a 0444 file named
+by its SHA-256 and hard-linked from the service's private pull
+(`capsem_core::session::publish_image_share`). The container launcher mounts it
+read-only in its own mount namespace while it unpacks, and verifies every blob
+against the manifest digest the host pinned in `options.json`; the workspace
+stage (`/root/.capsem-image`) holds only that file, `launch.py` and the
+launcher's markers. Forks link the source's `image/`; a restart reuses it, and
+never needs it at all once the unpacked root is on the overlay.
+
+Boot sequence: read-only runtime rootfs asset -> VirtioFS mount -> ext4 on /dev/vdb -> overlayfs -> bind-mount workspace.
 
 The overlay image is attached by path, so it must never sit where the guest can
 write: in the share, a root guest could replace it with a symlink to a host
@@ -39,6 +52,7 @@ Why ext4 loopback: Apple VZ's VirtioFS doesn't support `mknod` (whiteout creatio
   persistent/{vm_id}/
     system/                  # CoW clone of source VM's rootfs overlay (host-only)
     guest/workspace/         # CoW clone of workspace files
+    image/                   # hard links to the source's image blobs (host-only)
     session.db               # SQLite-consistent copy of the source ledger
 ```
 
@@ -182,10 +196,12 @@ expose class) and never a path between VMs.
 ### Network/security policy
 
 - Corp config owns enterprise constraints, reporting endpoints, and locked
-  rule/plugin policy.
-- Profile config owns VM assets, MCP config, rules, detections, plugins, and
-  defaults for sessions created from that profile.
-- Settings config owns UI/app preferences only.
+  rule/plugin policy. Corp wins, and its locks are respected.
+- The user's `~/.capsem/settings.toml` owns MCP config, rules, detections,
+  plugins, and UI/app preferences, layered over built-in defaults.
+- The service merges the three into each session's `vm/active_policy.toml` at
+  every boot. Policy never selects VM assets: every session boots the one
+  runtime.
 - All enforcement and detection compiles into one `SecurityRuleSet` over
   `SecurityEvent`; there is no domain-policy, HTTP-policy, or MCP-policy
   decision provider.
@@ -221,11 +237,12 @@ columns are schema-contract failures, not empty data.
 
 **Block mode**: `mke2fs` runs unconditionally at boot. Overlay upper is always tmpfs.
 
-**Sessions run profiles.** Session workspace and overlay state are session
-state; image contents come from the profile asset contract. Never make the
-overlay upper layer a hidden image-authoring rail. To add packages, edit the
-profile-owned package files under `config/profiles/<id>/` and rebuild through
-the profile-derived asset rail.
+Session workspace and overlay state are session
+state; runtime contents come from the runtime asset contract and application
+contents from OCI images. Never make the overlay upper layer a hidden
+image-authoring rail. To add a tool, put it in an OCI image under `images/`;
+only Capsem's own guest machinery belongs in the runtime package set (see
+`/build-images`).
 
 **Fork images** extend the session model with reusable templates. `capsem fork
 <session> <image-name>` clones a session through
@@ -235,8 +252,8 @@ tree with descriptor-relative no-follow operations
 setuid/setgid/sticky bits are dropped; a non-regular `rootfs.img` is refused.
 File contents share extents via APFS `clonefile` or Linux `FICLONE`, falling
 back to a sparse copy. Forks stay tied
-to their profile asset contract. Deleting any image is always safe; asset
-cleanup protects referenced profile assets.
+to their runtime asset contract. Deleting any image is always safe; asset
+cleanup protects referenced runtime assets.
 
 ## Installation and service lifecycle
 
@@ -246,13 +263,13 @@ let the package install service files plus manifest URL provenance.
 
 Package install handles service registration, records manifest metadata metadata,
 and hydrates the live manifest through `capsem update --assets --manifest
-<URL>`. Profile configuration handles security rules, plugins, MCP, assets, and
-packaged root content; credentials are brokered at runtime.
+<URL>`. Settings and corp configuration handle security rules, plugins, and MCP;
+credentials are brokered at runtime.
 
 **Install layout** (`~/.capsem/`):
 - `bin/` -- capsem, capsem-service, capsem-process, capsem-mcp-aggregator, capsem-mcp-builtin, capsem-gateway, capsem-tray
 - `@capsem/mcp` -- separately installed npm host MCP package
-- `assets/` -- manifest.json, manifest-metadata.json, and profile-selected VM
+- `assets/` -- manifest.json, manifest-metadata.json, and the runtime VM
   assets such as `vmlinuz`, `initrd.img`, and EROFS rootfs images
 - `run/` -- service.sock, service.pid, gateway.token, gateway.port, gateway.pid, instances/{id}.sock
 

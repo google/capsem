@@ -1,24 +1,17 @@
 use anyhow::{Context, Result};
-use base64::Engine as _;
 use bytes::Bytes;
 use clap::Parser;
 use flate2::{write::GzEncoder, Compression};
 use futures::future;
 use http_body_util::{combinators::BoxBody, BodyExt, Full};
 use hyper::body::Incoming;
-use hyper::header::{
-    CONNECTION, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET_KEY, UPGRADE,
-};
+use hyper::header::{CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, UPGRADE};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
-use hyper::upgrade::Upgraded;
 use hyper::{HeaderMap, Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
-use rcgen::generate_simple_self_signed;
-use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use serde::Serialize;
 use serde_json::{json, Value};
-use sha1::{Digest, Sha1};
 use std::convert::Infallible;
 use std::fs::{File, OpenOptions};
 use std::io::Write as _;
@@ -29,12 +22,21 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::net::{TcpListener, UdpSocket};
 use tokio_rustls::TlsAcceptor;
 
+mod agent_mcp;
+mod anthropic;
 mod dns;
 mod limits;
+mod responses;
+mod responses_mcp;
+mod targets;
+mod websocket;
 #[cfg(test)]
-use dns::dns_response;
-use dns::{serve_dns_tcp, serve_dns_udp, DNS_FIXTURES};
-use limits::{generated_size_refusal, parse_generated_size, read_ws_frame, write_ws_frame};
+use dns::{dns_response, dns_response_for};
+use dns::{serve_dns_tcp, serve_dns_udp, DnsAnswers, DNS_FIXTURES};
+use limits::{generated_size_refusal, parse_generated_size};
+#[cfg(test)]
+use targets::{find_hex32, find_target_txt_path};
+use targets::{shell_write_command, target_dir, write_target};
 
 const TINY_BODY: &[u8] = b"capsem-mock-server:tiny\n";
 const EXPECTED_POEM: &str = "Capsem ironbank poem\nledgers count the sparks\nno secret crosses raw";
@@ -57,6 +59,8 @@ const ENDPOINTS: &[&str] = &[
     "/v1/images/generations",
     "/v1/responses",
     "/v1/messages",
+    "/api/hello",
+    "/v1/oauth/hello",
     "/v1internal:listExperiments",
     "/v1internal:loadCodeAssist",
     "/v1internal:fetchAvailableModels",
@@ -92,11 +96,16 @@ struct Args {
     /// Launcher PID. When present, the server exits as soon as that parent dies.
     #[arg(long)]
     parent_pid: Option<u32>,
+    /// What the DNS fixtures answer: `routable` for clients in a container
+    /// workload, which cannot reach the VM's loopback.
+    #[arg(long, value_enum, default_value_t)]
+    dns_answers: DnsAnswers,
 }
 
 #[derive(Clone)]
 struct State {
     request_log: Option<Arc<Mutex<File>>>,
+    dns_answers: DnsAnswers,
 }
 
 #[derive(Serialize)]
@@ -109,6 +118,8 @@ struct ReadyPayload {
     dns_udp_addr: String,
     dns_tcp_addr: String,
     dns_fixtures: Vec<&'static str>,
+    /// What the provider and model fixtures resolve to.
+    dns_answer_ip: String,
     endpoints: Vec<&'static str>,
     request_log: Option<String>,
 }
@@ -119,7 +130,7 @@ async fn main() -> Result<()> {
         .with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_| "capsem_mock_server=warn".to_string()))
         .with_writer(std::io::stderr)
         .init();
-    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let _ = capsem_crypto::tls::provider().install_default();
 
     let args = Args::parse();
     if args.parent_pid.is_some() {
@@ -140,7 +151,10 @@ async fn main() -> Result<()> {
         }
         None => None,
     };
-    let state = State { request_log };
+    let state = State {
+        request_log,
+        dns_answers: args.dns_answers,
+    };
 
     let http_listener = TcpListener::bind(args.addr).await.context("bind HTTP")?;
     let http_addr = http_listener.local_addr().context("read HTTP addr")?;
@@ -164,6 +178,7 @@ async fn main() -> Result<()> {
         dns_udp_addr: dns_udp_addr.to_string(),
         dns_tcp_addr: dns_tcp_addr.to_string(),
         dns_fixtures,
+        dns_answer_ip: args.dns_answers.provider_answer(),
         endpoints: ENDPOINTS.to_vec(),
         request_log: args.request_log.as_ref().map(|path| path.display().to_string()),
     };
@@ -228,10 +243,8 @@ async fn serve_https(listener: TcpListener, state: State, acceptor: TlsAcceptor)
 }
 
 fn tls_acceptor() -> Result<TlsAcceptor> {
-    let cert = generate_simple_self_signed(vec!["127.0.0.1".to_string(), "localhost".to_string()])
+    let (cert_der, key_der) = capsem_crypto::tls::self_signed(vec!["127.0.0.1".to_string(), "localhost".to_string()])
         .context("generate self-signed mock cert")?;
-    let cert_der = CertificateDer::from(cert.cert.der().to_vec());
-    let key_der = PrivateKeyDer::from(PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der()));
     let config = rustls::ServerConfig::builder()
         .with_no_client_auth()
         .with_single_cert(vec![cert_der], key_der)
@@ -242,8 +255,15 @@ fn tls_acceptor() -> Result<TlsAcceptor> {
 async fn handle_request(mut req: Request<Incoming>, state: State, tls: bool) -> Result<Response<RespBody>, Infallible> {
     let method = req.method().clone();
     let path = req.uri().path().to_string();
-    if path.starts_with("/ws/") {
-        let response = handle_ws(req, path).await;
+    if path.starts_with("/ws/")
+        || (method == Method::GET
+            && path == "/v1/responses"
+            && req
+                .headers()
+                .get(UPGRADE)
+                .is_some_and(|value| value.as_bytes().eq_ignore_ascii_case(b"websocket")))
+    {
+        let response = websocket::upgrade(req, path, state).await;
         return Ok(response);
     }
 
@@ -282,6 +302,12 @@ async fn route(
             response_with_len(StatusCode::OK, Bytes::new(), "text/plain; charset=utf-8", TINY_BODY.len())
         }
         (&Method::GET, "/") => response(StatusCode::OK, Bytes::new(), "text/plain; charset=utf-8"),
+        (&Method::HEAD, "/api/hello") => response(StatusCode::OK, Bytes::new(), "text/plain"),
+        (&Method::GET, "/api/hello") | (&Method::GET, "/v1/oauth/hello") => response(
+            StatusCode::OK,
+            Bytes::from_static(b"capsem-mock-server:anthropic-ready\n"),
+            "text/plain",
+        ),
         (&Method::GET, "/tiny") => response(
             StatusCode::OK,
             Bytes::from_static(TINY_BODY),
@@ -403,6 +429,9 @@ event: model.done\ndata: {\"finish_reason\":\"stop\"}\n\n",
         }
         (&Method::POST, "/v1/chat/completions") => {
             let payload = parse_json(&request_body);
+            if let Some(response) = openai_sdk_control(&payload).await {
+                return response;
+            }
             if payload.get("stream").and_then(Value::as_bool) == Some(true) {
                 response(StatusCode::OK, openai_chat_stream(), "text/event-stream")
             } else {
@@ -422,15 +451,10 @@ event: model.done\ndata: {\"finish_reason\":\"stop\"}\n\n",
         })),
         (&Method::POST, "/v1/responses") => {
             let payload = parse_json(&request_body);
-            if payload.get("stream").and_then(Value::as_bool) == Some(true) {
-                response(
-                    StatusCode::OK,
-                    responses_stream(&payload, payload_has_function_call_output(&payload)),
-                    "text/event-stream",
-                )
-            } else {
-                json_response(responses_response(payload))
+            if let Some(response) = openai_sdk_control(&payload).await {
+                return response;
             }
+            responses::reply(payload)
         }
         (&Method::POST, "/model/shape") => json_response(json!({
             "id": "chatcmpl_shape_fixture",
@@ -468,14 +492,7 @@ event: model.done\ndata: {\"finish_reason\":\"stop\"}\n\n",
             }],
             "usage": {"prompt_tokens": 26, "completion_tokens": 52, "total_tokens": 78}
         })),
-        (&Method::POST, "/v1/messages") => {
-            let payload = parse_json(&request_body);
-            if payload.get("stream").and_then(Value::as_bool) == Some(true) {
-                response(StatusCode::OK, anthropic_stream(payload), "text/event-stream")
-            } else {
-                json_response(anthropic_response(payload))
-            }
-        }
+        (&Method::POST, "/v1/messages") => anthropic::reply(parse_json(&request_body)),
         (&Method::POST, "/api/chat") => {
             let payload = parse_json(&request_body);
             json_response(json!({
@@ -554,6 +571,26 @@ event: model.done\ndata: {\"finish_reason\":\"stop\"}\n\n",
     }
 }
 
+async fn openai_sdk_control(payload: &Value) -> Option<Response<RespBody>> {
+    match payload.get("model").and_then(Value::as_str) {
+        Some("capsem-sdk-cancel") => {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            None
+        }
+        Some("capsem-sdk-upstream-error") => Some(json_response_with_status(
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({
+                "error": {
+                    "message": "hermetic upstream unavailable",
+                    "type": "server_error",
+                    "code": "fixture_unavailable"
+                }
+            }),
+        )),
+        _ => None,
+    }
+}
+
 fn parse_json(bytes: &[u8]) -> Value {
     serde_json::from_slice(bytes).unwrap_or_else(|_| json!({}))
 }
@@ -582,8 +619,12 @@ fn echo_response(query: Option<&str>, headers: &HeaderMap, body_size: usize) -> 
 }
 
 fn json_response(value: Value) -> Response<RespBody> {
+    json_response_with_status(StatusCode::OK, value)
+}
+
+fn json_response_with_status(status: StatusCode, value: Value) -> Response<RespBody> {
     response(
-        StatusCode::OK,
+        status,
         Bytes::from(serde_json::to_vec(&value).unwrap_or_else(|_| b"{}".to_vec())),
         "application/json",
     )
@@ -741,197 +782,6 @@ data: [DONE]\n\n",
     )
 }
 
-fn responses_response(payload: Value) -> Value {
-    let model = payload.get("model").and_then(Value::as_str).unwrap_or("mock-local");
-    let has_tool_output = serde_json::to_string(&payload)
-        .map(|raw| raw.contains("function_call_output"))
-        .unwrap_or(false);
-    if !has_tool_output {
-        return json!({
-            "id": "resp_ironbank_tool_01",
-            "object": "response",
-            "created_at": 1781205836_u64,
-            "status": "completed",
-            "model": model,
-            "output": [{
-                "id": "fc_codex_write_poem",
-                "type": "function_call",
-                "status": "completed",
-                "call_id": "call_codex_write_poem",
-                "name": "exec_command",
-                "arguments": "{\"cmd\":\"printf '%s\\\\n' 'Capsem ironbank poem\\\\nledgers count the sparks\\\\nno secret crosses raw' > /root/codex-cli-output.txt\",\"yield_time_ms\":1000,\"max_output_tokens\":2000}"
-            }],
-            "usage": {"input_tokens": 31, "output_tokens": 17, "total_tokens": 48}
-        });
-    }
-    json!({
-        "id": "resp_ironbank_01",
-        "object": "response",
-        "created_at": 1781205836_u64,
-        "status": "completed",
-        "model": model,
-        "output": [{
-            "id": "msg_ironbank_01",
-            "type": "message",
-            "status": "completed",
-            "role": "assistant",
-            "content": [{"type": "output_text", "text": EXPECTED_POEM, "annotations": []}]
-        }],
-        "output_text": EXPECTED_POEM,
-        "usage": {
-            "input_tokens": 7,
-            "output_tokens": 5,
-            "total_tokens": 12,
-            "output_tokens_details": {"reasoning_tokens": 2}
-        }
-    })
-}
-
-fn payload_has_function_call_output(payload: &Value) -> bool {
-    payload
-        .get("input")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .any(|item| item.get("type").and_then(Value::as_str) == Some("function_call_output"))
-        })
-        .unwrap_or(false)
-}
-
-fn responses_stream(payload: &Value, final_turn: bool) -> Bytes {
-    if final_turn {
-        let (token, _) = write_target(payload, "openai-responses");
-        return Bytes::from(
-            format!(
-                "event: response.reasoning_summary_text.delta\ndata: {{\"type\":\"response.reasoning_summary_text.delta\",\"delta\":\"ledger reasoning\"}}\n\n\
-event: response.output_text.delta\ndata: {{\"type\":\"response.output_text.delta\",\"delta\":\"{token}\"}}\n\n\
-event: response.output_text.done\ndata: {{\"type\":\"response.output_text.done\",\"text\":\"{token}\"}}\n\n\
-event: response.completed\ndata: {{\"type\":\"response.completed\",\"response\":{{\"id\":\"resp_capsem_mock\",\"status\":\"completed\",\"model\":\"gpt-5-nano\",\"usage\":{{\"input_tokens\":7,\"output_tokens\":5,\"total_tokens\":12,\"output_tokens_details\":{{\"reasoning_tokens\":2}}}}}}}}\n\n"
-            ),
-        );
-    }
-    let (token, path) = write_target(payload, "openai-responses");
-    let call_id = format!("call_{}", &token[..token.len().min(12)]);
-    let arguments = json_compact(json!({
-        "cmd": shell_write_command(&token, &path),
-        "yield_time_ms": 1000,
-        "max_output_tokens": 2000
-    }));
-    let arguments_json = json_compact(json!(arguments));
-    Bytes::from(format!(
-        "event: response.output_item.added\ndata: {{\"type\":\"response.output_item.added\",\"item\":{{\"type\":\"reasoning\",\"id\":\"rs_capsem_mock\"}}}}\n\n\
-event: response.output_item.added\ndata: {{\"type\":\"response.output_item.added\",\"item\":{{\"type\":\"function_call\",\"id\":\"fc_capsem_mock\",\"call_id\":\"{call_id}\",\"name\":\"exec_command\",\"arguments\":{arguments_json}}}}}\n\n\
-event: response.function_call_arguments.delta\ndata: {{\"type\":\"response.function_call_arguments.delta\",\"delta\":{arguments_json}}}\n\n\
-event: response.function_call_arguments.done\ndata: {{\"type\":\"response.function_call_arguments.done\",\"arguments\":{arguments_json}}}\n\n\
-event: response.output_item.done\ndata: {{\"type\":\"response.output_item.done\",\"item\":{{\"type\":\"function_call\",\"id\":\"fc_capsem_mock\",\"status\":\"completed\",\"call_id\":\"{call_id}\",\"name\":\"exec_command\",\"arguments\":{arguments_json}}}}}\n\n\
-event: response.completed\ndata: {{\"type\":\"response.completed\",\"response\":{{\"id\":\"resp_capsem_mock\",\"status\":\"completed\",\"model\":\"gpt-5-nano\",\"usage\":{{\"input_tokens\":31,\"output_tokens\":17,\"total_tokens\":48,\"output_tokens_details\":{{\"reasoning_tokens\":2}}}}}}}}\n\n"
-    ))
-}
-
-fn anthropic_response(payload: Value) -> Value {
-    let has_tool_result = serde_json::to_string(&payload)
-        .map(|raw| raw.contains("\"type\":\"tool_result\""))
-        .unwrap_or(false);
-    let (token, path) = write_target(&payload, "claude");
-    let model = payload
-        .get("model")
-        .and_then(Value::as_str)
-        .unwrap_or("claude-sonnet-4-6");
-    if has_tool_result {
-        return json!({
-            "id": "msg_capsem_mock_final",
-            "type": "message",
-            "role": "assistant",
-            "model": model,
-            "content": [
-                {"type": "thinking", "thinking": "ledger reasoning"},
-                {"type": "text", "text": token}
-            ],
-            "stop_reason": "end_turn",
-            "usage": {"input_tokens": 7, "output_tokens": 17}
-        });
-    }
-
-    let command = shell_write_command(&token, &path);
-    json!({
-        "id": "msg_capsem_mock",
-        "type": "message",
-        "role": "assistant",
-        "model": model,
-        "content": [
-            {"type": "thinking", "thinking": "Plan file write"},
-            {"type": "tool_use", "id": "toolu_capsem_write_poem", "name": "exec_command", "input": {"cmd": command}},
-            {"type": "text", "text": token}
-        ],
-        "stop_reason": "tool_use",
-        "usage": {"input_tokens": 33, "output_tokens": 27}
-    })
-}
-
-fn anthropic_stream(payload: Value) -> Bytes {
-    let has_tool_result = serde_json::to_string(&payload)
-        .map(|raw| raw.contains("\"type\":\"tool_result\""))
-        .unwrap_or(false);
-    if has_tool_result {
-        let (token, _) = write_target(&payload, "claude");
-        let message = json!({
-            "id": "msg_ironbank_final",
-            "type": "message",
-            "role": "assistant",
-            "model": payload.get("model").and_then(Value::as_str).unwrap_or("claude-sonnet-4-6"),
-            "content": [],
-            "usage": {"input_tokens": 7, "output_tokens": 1}
-        });
-        return Bytes::from(format!(
-            "event: message_start\ndata: {}\n\n\
-event: content_block_start\ndata: {{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{{\"type\":\"thinking\",\"thinking\":\"\"}}}}\n\n\
-event: content_block_delta\ndata: {{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{{\"type\":\"thinking_delta\",\"thinking\":\"ledger reasoning\"}}}}\n\n\
-event: content_block_stop\ndata: {{\"type\":\"content_block_stop\",\"index\":0}}\n\n\
-event: content_block_start\ndata: {{\"type\":\"content_block_start\",\"index\":1,\"content_block\":{{\"type\":\"text\",\"text\":\"\"}}}}\n\n\
-event: content_block_delta\ndata: {{\"type\":\"content_block_delta\",\"index\":1,\"delta\":{{\"type\":\"text_delta\",\"text\":\"{token}\"}}}}\n\n\
-event: message_delta\ndata: {{\"type\":\"message_delta\",\"delta\":{{\"stop_reason\":\"end_turn\"}},\"usage\":{{\"output_tokens\":17}}}}\n\n\
-event: message_stop\ndata: {{\"type\":\"message_stop\"}}\n\n",
-            json_compact(json!({"type": "message_start", "message": message}))
-        ));
-    }
-    if payload.get("tools").is_none() {
-        let model = payload
-            .get("model")
-            .and_then(Value::as_str)
-            .unwrap_or("claude-sonnet-4-6");
-        return Bytes::from(format!(
-            "event: message_start\ndata: {{\"type\":\"message_start\",\"message\":{{\"id\":\"msg_ironbank_stream_text\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"{model}\",\"content\":[],\"usage\":{{\"input_tokens\":25,\"output_tokens\":5}}}}}}\n\n\
-event: content_block_start\ndata: {{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{{\"type\":\"text\",\"text\":\"\"}}}}\n\n\
-event: content_block_delta\ndata: {{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{{\"type\":\"text_delta\",\"text\":\"Hello \"}}}}\n\n\
-event: content_block_delta\ndata: {{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{{\"type\":\"text_delta\",\"text\":\"world!\"}}}}\n\n\
-event: content_block_stop\ndata: {{\"type\":\"content_block_stop\",\"index\":0}}\n\n\
-event: message_delta\ndata: {{\"type\":\"message_delta\",\"delta\":{{\"stop_reason\":\"end_turn\"}},\"usage\":{{\"output_tokens\":5}}}}\n\n\
-event: message_stop\ndata: {{\"type\":\"message_stop\"}}\n\n"
-        ));
-    }
-
-    let (token, path) = write_target(&payload, "claude");
-    let command = shell_write_command(&token, &path);
-    let partial = json_compact(json!({
-        "command": command,
-        "description": "write ironbank token"
-    }));
-    let model = payload
-        .get("model")
-        .and_then(Value::as_str)
-        .unwrap_or("claude-sonnet-4-6");
-    Bytes::from(format!(
-        "event: message_start\ndata: {{\"type\":\"message_start\",\"message\":{{\"id\":\"msg_ironbank_01\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"{model}\",\"content\":[],\"usage\":{{\"input_tokens\":31,\"output_tokens\":1}}}}}}\n\n\
-event: content_block_start\ndata: {{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{{\"type\":\"tool_use\",\"id\":\"toolu_capsem_write_poem\",\"name\":\"Bash\",\"input\":{{}}}}}}\n\n\
-event: content_block_delta\ndata: {{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{{\"type\":\"input_json_delta\",\"partial_json\":{}}}}}\n\n\
-event: content_block_stop\ndata: {{\"type\":\"content_block_stop\",\"index\":0}}\n\n\
-event: message_delta\ndata: {{\"type\":\"message_delta\",\"delta\":{{\"stop_reason\":\"tool_use\",\"stop_sequence\":null}},\"usage\":{{\"output_tokens\":17}}}}\n\n\
-event: message_stop\ndata: {{\"type\":\"message_stop\"}}\n\n",
-        json_compact(json!(partial))
-    ))
-}
-
 /// The code-assist fixtures, carried in the binary rather than read at run time.
 ///
 /// These used to be read through `CARGO_MANIFEST_DIR`, which is an absolute
@@ -1043,7 +893,7 @@ fn google_code_assist_stream(payload: Value) -> Bytes {
                             "id": call_id,
                             "args": {
                                 "CommandLine": shell_write_command(&token, &path),
-                                "Cwd": "/root",
+                                "Cwd": target_dir(&path),
                                 "WaitMsBeforeAsync": 1000,
                                 "toolSummary": "Write proof",
                                 "toolAction": "Writing file"
@@ -1175,45 +1025,6 @@ fn google_model_from_path(path: &str) -> String {
         .filter(|model| !model.is_empty())
         .unwrap_or("gemini-3.5-flash")
         .to_string()
-}
-
-fn write_target(payload: &Value, default_prefix: &str) -> (String, String) {
-    let raw = serde_json::to_string(payload).unwrap_or_default();
-    let token = find_hex32(&raw).unwrap_or_else(|| EXPECTED_POEM.to_string());
-    let path = find_root_txt_path(&raw).unwrap_or_else(|| format!("/root/{default_prefix}-output.txt"));
-    (token, path)
-}
-
-fn find_hex32(raw: &str) -> Option<String> {
-    raw.as_bytes()
-        .windows(32)
-        .find(|window| window.iter().all(u8::is_ascii_hexdigit))
-        .and_then(|window| std::str::from_utf8(window).ok())
-        .map(ToOwned::to_owned)
-}
-
-fn find_root_txt_path(raw: &str) -> Option<String> {
-    raw.match_indices("/root/")
-        .filter_map(|(start, _)| {
-            let tail = &raw[start..];
-            let end = tail
-                .char_indices()
-                .find_map(|(index, ch)| {
-                    let allowed = ch.is_ascii_alphanumeric() || matches!(ch, '/' | '.' | '_' | '-');
-                    (!allowed).then_some(index)
-                })
-                .unwrap_or(tail.len());
-            let candidate = &tail[..end];
-            candidate.find(".txt").map(|index| {
-                let end = index + 4;
-                candidate[..end].replace("\\/", "/")
-            })
-        })
-        .last()
-}
-
-fn shell_write_command(token: &str, path: &str) -> String {
-    format!("printf '%s\\n' {token} > {path}")
 }
 
 fn json_compact(value: Value) -> String {
@@ -1349,66 +1160,6 @@ fn log_request(
     });
     if let Ok(mut file) = file.lock() {
         let _ = writeln!(file, "{record}");
-    }
-}
-
-async fn handle_ws(mut req: Request<Incoming>, path: String) -> Response<RespBody> {
-    let key = req
-        .headers()
-        .get(SEC_WEBSOCKET_KEY)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("")
-        .to_string();
-    if key.is_empty() {
-        return response(StatusCode::BAD_REQUEST, Bytes::new(), "text/plain");
-    }
-    let accept = websocket_accept(&key);
-    let on_upgrade = hyper::upgrade::on(&mut req);
-    tokio::spawn(async move {
-        if let Ok(upgraded) = on_upgrade.await {
-            let io = TokioIo::new(upgraded);
-            handle_ws_stream(io, path).await;
-        }
-    });
-    Response::builder()
-        .status(StatusCode::SWITCHING_PROTOCOLS)
-        .header(UPGRADE, "websocket")
-        .header(CONNECTION, "Upgrade")
-        .header(SEC_WEBSOCKET_ACCEPT, accept)
-        .body(full(Bytes::new()))
-        .expect("build websocket upgrade")
-}
-
-fn websocket_accept(key: &str) -> String {
-    let mut hasher = Sha1::new();
-    hasher.update(key.as_bytes());
-    hasher.update(b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
-    base64::engine::general_purpose::STANDARD.encode(hasher.finalize())
-}
-
-async fn handle_ws_stream(mut io: TokioIo<Upgraded>, path: String) {
-    if path == "/ws/close" {
-        let _ = write_ws_frame(&mut io, 0x8, &[]).await;
-        return;
-    }
-    if path == "/ws/ping" {
-        let _ = write_ws_frame(&mut io, 0x9, b"capsem-ping").await;
-        return;
-    }
-    while let Ok(Some((opcode, payload))) = read_ws_frame(&mut io).await {
-        match opcode {
-            0x1 | 0x2 => {
-                let _ = write_ws_frame(&mut io, opcode, &payload).await;
-            }
-            0x8 => {
-                let _ = write_ws_frame(&mut io, 0x8, &[]).await;
-                return;
-            }
-            0x9 => {
-                let _ = write_ws_frame(&mut io, 0xA, &payload).await;
-            }
-            _ => {}
-        }
     }
 }
 

@@ -3,6 +3,14 @@
 from __future__ import annotations
 
 HERMETIC_LOCAL_OLLAMA_MODEL = "gemma4:latest"
+
+#: The local-model endpoint a workload's clients reach. A local model belongs
+#: to the workload, which cannot reach the VM's loopback: the mock DNS answers
+#: this name routably (`dns_answers="routable"`), the VM proxy intercepts the
+#: port, and an upstream override routes it to the mock upstream.
+WORKLOAD_OLLAMA_HOST = "ollama.capsem.test"
+WORKLOAD_OLLAMA_PORT = 3713
+WORKLOAD_OLLAMA_URL = f"http://{WORKLOAD_OLLAMA_HOST}:{WORKLOAD_OLLAMA_PORT}"
 HERMETIC_OPENAI_COMPAT_MODEL = HERMETIC_LOCAL_OLLAMA_MODEL
 HERMETIC_OPENAI_PRICED_MODEL = "gpt-5-nano"
 HERMETIC_ANTHROPIC_MODEL = "claude-sonnet-4-6"

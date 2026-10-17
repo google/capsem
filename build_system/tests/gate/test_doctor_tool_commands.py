@@ -19,23 +19,23 @@ def test_session_report_public_entrypoint_stays_stable() -> None:
     assert check_session.check_session is check_session_report.check_session
 
 
-def test_doctor_ledger_public_entrypoint_delegates_with_main_db(
+def test_doctor_ledger_public_entrypoint_delegates_with_the_host_ledger(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session_dir = tmp_path / "session"
-    main_db = tmp_path / "main.db"
+    host_ledger = tmp_path / "host.db"
     seen: list[tuple[str, Path, Path]] = []
 
-    def fake_verify(session_id: str, path: Path, *, main_db: Path) -> bool:
-        seen.append((session_id, path, main_db))
+    def fake_verify(session_id: str, path: Path, *, host_ledger: Path) -> bool:
+        seen.append((session_id, path, host_ledger))
         return True
 
-    monkeypatch.setattr(doctor_session_test, "MAIN_DB", main_db)
+    monkeypatch.setattr(doctor_session_test, "HOST_LEDGER", host_ledger)
     monkeypatch.setattr(doctor_session_test, "_verify_session", fake_verify)
 
     assert doctor_session_test.verify_session("vm-123", session_dir)
-    assert seen == [("vm-123", session_dir, main_db)]
+    assert seen == [("vm-123", session_dir, host_ledger)]
 
 
 def test_session_list_preserves_empty_ledger_failure_status(
@@ -53,19 +53,7 @@ def test_session_list_preserves_empty_ledger_failure_status(
 def test_session_list_success_returns_zero_status(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    row = {
-        "id": "vm-123",
-        "mode": "persistent",
-        "status": "stopped",
-        "created_at": "2026-08-29T00:00:00Z",
-        "allowed_requests": 2,
-        "total_requests": 3,
-        "total_input_tokens": 4,
-        "total_output_tokens": 5,
-        "total_estimated_cost": 0.0,
-        "total_tool_calls": 6,
-        "total_file_events": 7,
-    }
+    row = {"id": "vm-123", "status": "stopped", "created_at_ms": 1, "stopped_at_ms": 2}
     monkeypatch.setattr(check_session, "list_recent_sessions", lambda _count: [row])
     monkeypatch.setattr(sys, "argv", ["check_session.py", "--list"])
 

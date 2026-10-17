@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import hashlib
 import time
 from enum import StrEnum
 from pathlib import Path
 
+from .. import crypto as hashlib
 from . import config as gate_config
 from . import imagecache, installbuilder, installreceipt, sourcecapture
 from .actions import Action
@@ -80,7 +80,7 @@ def _smoke(runner: Runner, config: GateConfig, *, image: str) -> None:
         f"{settings.source_cli} version; "
         f"{python} -m pytest -c build_system/pyproject.toml --rootdir . -q "
         f"-o cache_dir={settings.guest_user.pytest_cache} "
-        "tests/test_materialize_config_http.py"
+        "build_system/tests/packaging/test_install_manifest_request.py"
     )
     passed = Docker(runner).probe(
         image=image,

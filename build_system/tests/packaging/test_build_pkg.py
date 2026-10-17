@@ -20,6 +20,8 @@ REQUIRED_BINARIES = [
     "capsem",
     "capsem-service",
     "capsem-process",
+    "capsem-ledger",
+    "capsem-proxy",
     "capsem-router",
     "capsem-tui",
 
@@ -66,13 +68,6 @@ def _seed_binaries(bin_dir: Path) -> None:
         path = bin_dir / name
         path.write_text(f"#!/bin/sh\necho {name}\n")
         path.chmod(0o755)
-
-
-def _seed_config(config_dir: Path) -> None:
-    profile = config_dir / "profiles" / "code"
-    profile.mkdir(parents=True)
-    (profile / "profile.toml").write_text('id = "code"\n')
-    (profile / "enforcement.toml").write_text("# enforcement\n")
 
 
 def _seed_manifest_and_local_assets(manifest: Path, assets_dir: Path) -> None:
@@ -164,13 +159,11 @@ def test_macos_pkg_payload_is_closed_and_manifest_only_for_assets(tmp_path: Path
     app = tmp_path / "Capsem.app"
     bin_dir = tmp_path / "bin"
     assets_dir = tmp_path / "assets"
-    config_dir = tmp_path / "target-config"
     manifest = tmp_path / "manifest.json"
 
     version = "9.9.9-test"
     _seed_app(app, version)
     _seed_binaries(bin_dir)
-    _seed_config(config_dir)
     _seed_manifest_and_local_assets(manifest, assets_dir)
 
     output_pkg = REPO_ROOT / "cache" / "target" / "packages" / f"Capsem-{version}.pkg"
@@ -184,7 +177,6 @@ def test_macos_pkg_payload_is_closed_and_manifest_only_for_assets(tmp_path: Path
                 str(app),
                 str(bin_dir),
                 str(assets_dir),
-                str(config_dir),
                 version,
             ],
             cwd=tmp_path,
@@ -239,7 +231,6 @@ def test_macos_pkg_payload_is_closed_and_manifest_only_for_assets(tmp_path: Path
 
         for name in REQUIRED_BINARIES:
             assert (share / "bin" / name).is_file()
-        assert (share / "profiles" / "code" / "profile.toml").is_file()
 
         unexpected = []
         for path in share.rglob("*"):
@@ -249,8 +240,6 @@ def test_macos_pkg_payload_is_closed_and_manifest_only_for_assets(tmp_path: Path
             if rel.startswith("bin/") and rel.removeprefix("bin/") in REQUIRED_BINARIES:
                 continue
             if rel == "assets/manifest-metadata.json":
-                continue
-            if rel.startswith("profiles/"):
                 continue
             if rel == "entitlements.plist":
                 continue
@@ -265,12 +254,10 @@ def test_macos_pkg_rejects_retired_keychain_payload_binaries(tmp_path: Path) -> 
     app = tmp_path / "Capsem.app"
     bin_dir = tmp_path / "bin"
     assets_dir = tmp_path / "assets"
-    config_dir = tmp_path / "target-config"
     manifest = tmp_path / "manifest.json"
 
     _seed_app(app, "9.9.11-keychain-test")
     _seed_binaries(bin_dir)
-    _seed_config(config_dir)
     _seed_manifest_and_local_assets(manifest, assets_dir)
     (bin_dir / "capsem-service").write_text(
         "#!/bin/sh\n"
@@ -290,7 +277,6 @@ def test_macos_pkg_rejects_retired_keychain_payload_binaries(tmp_path: Path) -> 
                 str(app),
                 str(bin_dir),
                 str(assets_dir),
-                str(config_dir),
                 version,
             ],
             cwd=tmp_path,
@@ -312,13 +298,11 @@ def test_macos_pkg_rejects_bare_manifest_path(tmp_path: Path) -> None:
     app = tmp_path / "Capsem.app"
     bin_dir = tmp_path / "bin"
     assets_dir = tmp_path / "assets"
-    config_dir = tmp_path / "target-config"
     manifest = tmp_path / "manifest.json"
 
     version = "9.9.12-bare-path-test"
     _seed_app(app, version)
     _seed_binaries(bin_dir)
-    _seed_config(config_dir)
     _seed_manifest_and_local_assets(manifest, assets_dir)
 
     res = subprocess.run(
@@ -329,7 +313,6 @@ def test_macos_pkg_rejects_bare_manifest_path(tmp_path: Path) -> None:
             str(app),
             str(bin_dir),
             str(assets_dir),
-            str(config_dir),
             "9.9.12-bare-path-test",
         ],
         cwd=tmp_path,
@@ -346,12 +329,10 @@ def test_macos_pkg_rejects_app_version_mismatch(tmp_path: Path) -> None:
     app = tmp_path / "Capsem.app"
     bin_dir = tmp_path / "bin"
     assets_dir = tmp_path / "assets"
-    config_dir = tmp_path / "target-config"
     manifest = tmp_path / "manifest.json"
 
     _seed_app(app, "9.9.13-version-mismatch-actual")
     _seed_binaries(bin_dir)
-    _seed_config(config_dir)
     _seed_manifest_and_local_assets(manifest, assets_dir)
 
     version = "9.9.13-version-mismatch-expected"
@@ -363,7 +344,6 @@ def test_macos_pkg_rejects_app_version_mismatch(tmp_path: Path) -> None:
             str(app),
             str(bin_dir),
             str(assets_dir),
-            str(config_dir),
             version,
         ],
         cwd=tmp_path,
@@ -380,14 +360,12 @@ def test_macos_pkg_remote_manifest_override_records_source_only(tmp_path: Path) 
     app = tmp_path / "Capsem.app"
     bin_dir = tmp_path / "bin"
     assets_dir = tmp_path / "assets"
-    config_dir = tmp_path / "target-config"
     manifest_root = tmp_path / "remote"
     manifest = manifest_root / "corp-manifest.json"
 
     version = "9.9.10-remote-test"
     _seed_app(app, version)
     _seed_binaries(bin_dir)
-    _seed_config(config_dir)
     manifest_root.mkdir()
     manifest.write_text(
         json.dumps(
@@ -419,8 +397,7 @@ def test_macos_pkg_remote_manifest_override_records_source_only(tmp_path: Path) 
                     str(app),
                     str(bin_dir),
                     str(assets_dir),
-                    str(config_dir),
-                    version,
+                        version,
                 ],
                 cwd=tmp_path,
                 capture_output=True,

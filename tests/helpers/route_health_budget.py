@@ -25,14 +25,11 @@ BudgetName = Literal[
     "aggregate_ledger",
     "assets_status",
     "default",
-    "evaluate",
     "latest",
     "ledger",
     "mcp_default",
     "mcp_servers",
     "plugin_info",
-    "profiles",
-    "rules",
     "stats",
     "stats_detail",
     "status",
@@ -167,8 +164,6 @@ def hot_route_budget(path: str, *, gateway: bool = False) -> RouteBudget:
         budget_name = "vm_scalar"
     elif path == "/vms/list":
         budget_name = "vms_list"
-    elif path in {"/profiles/list", "/profiles/status"}:
-        budget_name = "profiles"
     elif "/stats/detail" in path:
         budget_name = "stats_detail"
     elif any(
@@ -202,12 +197,8 @@ def hot_route_budget(path: str, *, gateway: bool = False) -> RouteBudget:
         budget_name = "mcp_default"
     elif path.endswith("/mcp/servers/list"):
         budget_name = "mcp_servers"
-    elif path.endswith("/rules/list"):
-        budget_name = "rules"
     elif path.endswith("/latest"):
         budget_name = "latest"
-    elif path.endswith("/evaluate"):
-        budget_name = "evaluate"
     elif "/plugins/" in path and path.endswith(("/info", "/credentials/info")):
         budget_name = "plugin_info"
     elif path == "/stats":

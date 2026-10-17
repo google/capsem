@@ -37,11 +37,9 @@ Detection survived the burn -- `security_event_types::assert_current` runs the
 same `sql.contains(...)` test the rebuild used to trigger on, and fails naming
 the table instead of rewriting it.
 
-`session_index.rs` is out of scope, and that is not an exemption from this
-rule but a different file under a different one: it is the cross-session
-`main.db` in `~/.capsem`, which outlives every build on a developer's machine
-and is the one ledger that genuinely has to migrate. Its steps are versioned
-against `user_version`, run in order, and check their results.
+No ledger migrates. The cross-session index that used to (`main.db`, with
+versioned `ALTER TABLE` steps) is gone; the host ledger that replaced it is a
+v4 ledger declared in ddl.rs like every other.
 
 See CLAUDE.md 'Logger DB Boundary' and skills/dev-session-debug.
 """
@@ -66,8 +64,6 @@ builds, so an older file fails at create_tables/ready() naming what it lacks.
 Any form counts. `RENAME TO` is how the last one was written: it renamed three
 security ledgers out of the way, rebuilt them, copied the rows back and reset
 the AUTOINCREMENT sequence so the ids looked untouched.
-
-main.db is the ledger that migrates, and its steps live in session_index.rs.
 
 Test modules are out of scope: they build an older shape on purpose, so that
 the loud failure has something to be loud about.
@@ -113,27 +109,21 @@ def test_the_session_schema_exists() -> None:
     """A guard over a file nobody has asserts nothing."""
     assert SCHEMA.is_file(), f"{SCHEMA} is missing; this guard is vacuous"
     ddl = SCHEMA_DIR / "ddl.rs"
-    assert "CREATE TABLE" in ddl.read_text(), f"{ddl} no longer declares the schema; this guard is vacuous"
+    assert "CREATE TABLE" in ddl.read_text(), (
+        f"{ddl} no longer declares the schema; this guard is vacuous"
+    )
 
 
 def test_the_session_schema_has_no_alter_table() -> None:
     violations: list[str] = []
     for source in session_schema_sources():
-        violations.extend(alter_table_violations(str(source.relative_to(PROJECT_ROOT)), source.read_text()))
+        violations.extend(
+            alter_table_violations(
+                str(source.relative_to(PROJECT_ROOT)), source.read_text()
+            )
+        )
 
     assert not violations, NO_SESSION_ALTER_RATIONALE + "\n" + "\n".join(violations)
-
-
-def test_main_db_is_the_ledger_that_migrates() -> None:
-    """The exemption, asserted rather than assumed.
-
-    If `session_index.rs` ever stops migrating, this guard's rationale is
-    wrong and the exemption should go with it.
-    """
-    index = PROJECT_ROOT / "crates/capsem-logger/src/session_index.rs"
-    text = index.read_text()
-    assert "ALTER TABLE" in text, "main.db no longer migrates; revisit this guard's exemption"
-    assert "user_version" in text, "main.db's migrations must be versioned"
 
 
 def test_the_detection_survived_the_rebuild_it_replaced() -> None:
@@ -151,9 +141,9 @@ def test_the_detection_survived_the_rebuild_it_replaced() -> None:
     )
     text = checker.read_text()
     assert "SECURITY_EVENT_TYPE_CHECK" in text, "the stale-ledger test is gone"
-    assert not alter_table_violations(
-        str(checker.relative_to(PROJECT_ROOT)), text
-    ), "the check must read, not rewrite"
+    assert not alter_table_violations(str(checker.relative_to(PROJECT_ROOT)), text), (
+        "the check must read, not rewrite"
+    )
 
 
 def test_the_predicate_flags_the_migration_that_was_burned() -> None:
@@ -183,7 +173,9 @@ fn rebuild(conn: &Connection, schema: &str, table: &str, ddl: &str) -> rusqlite:
     conn.execute_batch(&format!("ALTER TABLE {schema}.{old} RENAME TO {table}_archived"))
 }
 """
-    found = alter_table_violations("crates/capsem-logger/src/schema/network_types.rs", revived)
+    found = alter_table_violations(
+        "crates/capsem-logger/src/schema/network_types.rs", revived
+    )
     assert len(found) == 2, found
 
 
@@ -204,4 +196,6 @@ CREATE TABLE IF NOT EXISTS tool_calls (
 );
 CREATE INDEX IF NOT EXISTS idx_tool_calls_turn_id ON tool_calls(turn_id);
 """
-    assert alter_table_violations("crates/capsem-logger/src/schema/ddl.rs", honest) == []
+    assert (
+        alter_table_violations("crates/capsem-logger/src/schema/ddl.rs", honest) == []
+    )

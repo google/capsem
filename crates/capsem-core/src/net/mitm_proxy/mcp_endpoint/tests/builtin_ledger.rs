@@ -79,6 +79,7 @@ async fn call(method: &str, params: serde_json::Value, result: serde_json::Value
         Arc::clone(&db),
         json_request(method, params),
         "codex".to_string(),
+        crate::net::mitm_proxy::McpTransport::VsockFrame,
     )
     .await
     .expect("a request gets a response");

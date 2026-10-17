@@ -1,0 +1,18 @@
+[package]
+name = "capsem-cache"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Bounded, observable cache primitives for Capsem"
+homepage.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+capsem-telemetry = { path = "../capsem-telemetry" }
+metrics = "0.24"
+quick_cache = { version = "0.7", features = ["stats"] }
+
+[lints]
+workspace = true

@@ -15,16 +15,36 @@ pub struct StopResponse {
     pub persistent: bool,
 }
 
+/// Validate a VM name or identifier (`1..=64` ASCII `[A-Za-z0-9_-]` characters,
+/// starting with an ASCII letter or digit) so service paths and gateway routes
+/// enforce one rule.
+pub fn validate_name(kind: &str, value: &str) -> Result<(), String> {
+    let Some(first) = value.chars().next() else {
+        return Err(format!("{kind} cannot be empty"));
+    };
+    if value.len() > 64 {
+        return Err(format!("{kind} too long (max 64 characters)"));
+    }
+    if !first.is_ascii_alphanumeric() {
+        return Err(format!("{kind} must start with a letter or digit"));
+    }
+    if !value.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err(format!(
+            "{kind} must contain only letters, digits, hyphens, and underscores"
+        ));
+    }
+    Ok(())
+}
+
+/// Unknown fields are refused rather than ignored.
 #[derive(Serialize, Deserialize, Debug, Clone, Default, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ProvisionRequest {
     pub name: Option<String>,
-    pub profile_id: String,
-    /// RAM in megabytes. If absent, service resolves from the selected
-    /// profile's VM resources.
+    /// RAM in megabytes. If absent, the service's default (12 GiB).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ram_mb: Option<u64>,
-    /// CPU count. If absent, service resolves from the selected profile's VM
-    /// resources.
+    /// CPU count. If absent, the service's default (4).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cpus: Option<u32>,
     /// When true, the VM is persistent (named VMs). Ephemeral VMs are destroyed on stop.
@@ -43,6 +63,9 @@ pub struct ProvisionRequest {
     /// OCI image the service pulls, stages and starts as this VM's workload.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub container: Option<crate::ContainerSpec>,
+    /// Optional finite ownership for an unnamed ephemeral SDK session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub managed: Option<crate::ManagedSessionCreate>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
@@ -63,13 +86,35 @@ pub struct ForkResponse {
 pub struct ProvisionResponse {
     pub id: String,
     pub name: String,
-    pub profile_id: String,
     pub status: VmLifecycleState,
     #[serde(default)]
     pub persistent: bool,
     #[serde(default)]
     pub can_resume: bool,
     pub available_actions: Vec<VmAction>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ownership: Option<crate::ManagedSessionOwnership>,
+}
+
+impl ProvisionResponse {
+    pub fn new(
+        id: String,
+        name: String,
+        status: VmLifecycleState,
+        persistent: bool,
+        can_resume: bool,
+        available_actions: Vec<VmAction>,
+    ) -> Self {
+        Self {
+            id,
+            name,
+            status,
+            persistent,
+            can_resume,
+            available_actions,
+            ownership: None,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, ToSchema)]
@@ -149,7 +194,6 @@ pub struct SessionDbStatus {
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct SandboxInfo {
     pub id: String,
-    pub profile_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     pub pid: u32,
@@ -216,12 +260,12 @@ pub struct SandboxInfo {
     /// requiring a separate `capsem logs <id>` round-trip.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
-    /// True only when an inactive persistent VM can be started/resumed with
-    /// the currently installed profile and pinned assets.
+    /// True only when an inactive persistent VM can be started/resumed: its
+    /// pinned boot assets are installed and its shape is current.
     #[serde(default)]
     pub can_resume: bool,
     /// Human-readable reason `can_resume` is false for an inactive persistent
-    /// VM, e.g. profile payload hash drift after an upgrade.
+    /// VM, e.g. a pinned boot asset that is no longer installed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resume_blocked_reason: Option<String>,
     pub available_actions: Vec<VmAction>,
@@ -229,11 +273,10 @@ pub struct SandboxInfo {
 
 impl SandboxInfo {
     /// Construct with only the core fields; all telemetry fields default to None.
-    pub fn new(id: String, profile_id: String, pid: u32, status: VmLifecycleState, persistent: bool) -> Self {
+    pub fn new(id: String, pid: u32, status: VmLifecycleState, persistent: bool) -> Self {
         let available_actions = status.available_actions(false);
         Self {
             id,
-            profile_id,
             name: None,
             pid,
             status,

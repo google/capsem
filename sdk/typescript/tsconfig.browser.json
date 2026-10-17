@@ -1,5 +1,8 @@
 {
   "extends": "./tsconfig.json",
-  "compilerOptions": {"types": [], "noEmit": true, "customConditions": ["browser"]},
+  "compilerOptions": {
+    "types": [], "noEmit": true, "customConditions": ["browser"],
+    "paths": {"#local": ["./src/local-browser.ts"]}
+  },
   "exclude": ["src/local-node.ts"]
 }

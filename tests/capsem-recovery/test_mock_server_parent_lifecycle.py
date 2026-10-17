@@ -26,7 +26,8 @@ def test_mock_server_exits_when_its_launcher_dies() -> None:
     launcher_code = """
 import os
 import sys
-from build_system.tests.helpers.mock_server import start_mock_server
+sys.path.insert(0, "tests")
+from helpers.mock_server import start_mock_server
 
 child, _ready = start_mock_server(addr=sys.argv[1], timeout_s=5)
 print(child.pid, flush=True)

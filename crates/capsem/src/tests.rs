@@ -70,7 +70,7 @@ fn base_update_status() -> UpdateStatusResponse {
         checked_at: Some(1_718_444_400),
         channel_url: Some("https://release.capsem.org/health.json".into()),
         channel_hash: None,
-        validation_status: Some("valid".into()),
+        validation_status: Some(capsem_api::ValidationStatus::Valid),
         validation_error: None,
         stale: false,
         last_error: None,
@@ -81,7 +81,6 @@ fn base_update_status() -> UpdateStatusResponse {
             UpdateTrackState::Current,
             false,
         ),
-        profiles: update_track(Some("profiles-1"), Some("profiles-1"), UpdateTrackState::Current, false),
         images: update_track(None, None, UpdateTrackState::NotPublished, false),
         supply_chain: client::SupplyChainEvidence::default(),
     }
@@ -91,12 +90,6 @@ fn base_update_status() -> UpdateStatusResponse {
 fn update_status_lines_separate_available_and_blocked_tracks() {
     let mut status = base_update_status();
     status.binary = update_track(Some("1.4.0"), Some("1.4.1"), UpdateTrackState::UpdateAvailable, true);
-    status.profiles = update_track(
-        Some("profiles-1"),
-        Some("profiles-2"),
-        UpdateTrackState::UpdateAvailable,
-        true,
-    );
     status.assets.blocked_reason = Some("requires binary 1.4.1 or newer".into());
     status.images.blocked_reason = Some("image catalog not published".into());
 
@@ -104,7 +97,7 @@ fn update_status_lines_separate_available_and_blocked_tracks() {
 
     assert_eq!(
         lines[0],
-        "Updates:   available (binary 1.4.0 -> 1.4.1; profiles profiles-1 -> profiles-2); blocked (assets, images)"
+        "Updates:   available (binary 1.4.0 -> 1.4.1); blocked (assets, images)"
     );
     assert!(lines.contains(&"Channel:   https://release.capsem.org/health.json".into()));
     assert!(lines.contains(&"Assets:    blocked (requires binary 1.4.1 or newer)".into()));
@@ -140,43 +133,10 @@ fn parse_create_with_name() {
     match cli.command.unwrap() {
         Commands::Session(SessionCommands::Create(crate::create_command::CreateArgs { name, ram, cpu, .. })) => {
             assert_eq!(name, Some("my-vm".into()));
-            assert_eq!(ram, None, "unset RAM is the profile's");
-            assert_eq!(cpu, None, "unset CPUs are the profile's");
+            assert_eq!(ram, None, "unset RAM is the service default");
+            assert_eq!(cpu, None, "unset CPUs are the service default");
         }
         _ => panic!("expected Create"),
-    }
-}
-
-#[test]
-fn cli_create_accepts_profile() {
-    let cli = Cli::parse_from(["capsem", "create", "--profile", "co-work"]);
-    match cli.command.unwrap() {
-        Commands::Session(SessionCommands::Create(crate::create_command::CreateArgs { profile, .. })) => {
-            assert_eq!(profile, "co-work");
-        }
-        _ => panic!("expected Create"),
-    }
-}
-
-#[test]
-fn cli_mcp_commands_accept_profile() {
-    let cases = [
-        vec!["capsem", "mcp", "servers", "--profile", "co-work"],
-        vec!["capsem", "mcp", "tools", "--profile", "co-work"],
-        vec!["capsem", "mcp", "refresh", "--profile", "co-work"],
-        vec!["capsem", "mcp", "call", "server__tool", "--profile", "co-work"],
-    ];
-
-    for args in cases {
-        let cli = Cli::parse_from(args);
-        let profile = match cli.command.unwrap() {
-            Commands::Mcp(McpCommands::Servers { profile })
-            | Commands::Mcp(McpCommands::Tools { profile, .. })
-            | Commands::Mcp(McpCommands::Refresh { profile })
-            | Commands::Mcp(McpCommands::Call { profile, .. }) => profile,
-            _ => panic!("expected MCP command"),
-        };
-        assert_eq!(profile, "co-work");
     }
 }
 
@@ -480,7 +440,7 @@ fn service_control_commands_do_not_cross_service_api_boundary() {
         let command = cli.command.as_ref().expect("parsed command");
         assert!(
             command_is_handled_before_service_api(command),
-            "{args:?} must be handled before UDS/service API construction so service control cannot depend on profile, status, or credential-store readiness"
+            "{args:?} must be handled before UDS/service API construction so service control cannot depend on asset, status, or credential-store readiness"
         );
     }
 }
@@ -522,6 +482,38 @@ fn parse_uds_path_default_none() {
     assert_eq!(cli.uds_path, None);
 }
 
+#[test]
+fn parse_proxy_defaults_and_explicit_listener() {
+    let cli = Cli::parse_from(["capsem", "proxy"]);
+    let Some(Commands::Proxy(defaults)) = cli.command else {
+        panic!("expected Proxy");
+    };
+    assert_eq!(defaults.provider, "openai");
+    assert_eq!(defaults.bind, "127.0.0.1".parse::<std::net::IpAddr>().unwrap());
+    assert_eq!(defaults.port, 0);
+
+    let cli = Cli::parse_from([
+        "capsem",
+        "proxy",
+        "--provider",
+        "local",
+        "--bind",
+        "0.0.0.0",
+        "--port",
+        "8080",
+    ]);
+    let Some(Commands::Proxy(explicit)) = cli.command else {
+        panic!("expected Proxy");
+    };
+    assert_eq!(explicit.provider, "local");
+    assert_eq!(explicit.bind, "0.0.0.0".parse::<std::net::IpAddr>().unwrap());
+    assert_eq!(explicit.port, 8080);
+    assert_eq!(
+        direct_service_lifetime(&Commands::Proxy(explicit)),
+        client::DirectServiceLifetime::BoundToCommand
+    );
+}
+
 // RAM conversion
 
 #[test]
@@ -535,35 +527,26 @@ fn ram_gb_to_mb_conversion() {
 #[test]
 fn parse_exec() {
     let cli = Cli::parse_from(["capsem", "exec", "my-vm", "echo hello"]);
-    match cli.command.unwrap() {
-        Commands::Session(SessionCommands::Exec {
-            session,
-            command,
-            timeout,
-        }) => {
-            assert_eq!(session, "my-vm");
-            assert_eq!(command, "echo hello");
-            assert_eq!(timeout, None);
-        }
-        _ => panic!("expected Exec"),
-    }
+    let Some(Commands::Session(SessionCommands::Exec(args))) = cli.command else {
+        panic!("expected Exec");
+    };
+    assert_eq!((args.session.as_str(), args.command.as_str()), ("my-vm", "echo hello"));
+    // No target: the service picks the workload for an image session.
+    assert_eq!((args.timeout, args.target), (None, None));
 }
 
 #[test]
 fn parse_exec_with_timeout() {
-    let cli = Cli::parse_from(["capsem", "exec", "--timeout", "120", "my-vm", "make build"]);
-    match cli.command.unwrap() {
-        Commands::Session(SessionCommands::Exec {
-            session,
-            command,
-            timeout,
-        }) => {
-            assert_eq!(session, "my-vm");
-            assert_eq!(command, "make build");
-            assert_eq!(timeout, Some(120));
-        }
-        _ => panic!("expected Exec"),
-    }
+    let cli = Cli::parse_from(["capsem", "exec", "--timeout", "120", "--target", "vm", "my-vm", "make"]);
+    let Some(Commands::Session(SessionCommands::Exec(args))) = cli.command else {
+        panic!("expected Exec");
+    };
+    assert_eq!((args.session.as_str(), args.command.as_str()), ("my-vm", "make"));
+    assert_eq!(
+        (args.timeout, args.target),
+        (Some(120), Some(container_run::ExecTarget::Vm))
+    );
+    assert!(Cli::try_parse_from(["capsem", "exec", "--target", "container", "my-vm", "true"]).is_err());
 }
 
 #[test]
@@ -815,101 +798,54 @@ fn parse_setup_is_removed() {
 fn parse_assets_status() {
     let cli = Cli::parse_from(["capsem", "assets", "status"]);
     match cli.command.unwrap() {
-        Commands::Assets(AssetsCommands::Status { profile, json }) => {
-            assert_eq!(profile, "code");
-            assert!(!json);
-        }
+        Commands::Assets(AssetsCommands::Status { json }) => assert!(!json),
         _ => panic!("expected assets status"),
     }
 }
 
-#[test]
-fn cli_default_profile_is_primary_profile() {
-    assert_eq!(DEFAULT_PROFILE_ID, "code");
-}
-
-#[test]
-fn status_asset_lines_are_derived_from_profiles_status_payload() {
-    let payload = serde_json::json!({
-        "source": "installed",
-        "profile_count": 1,
-        "ready_count": 1,
-        "asset_manifest": {
+fn asset_status(ready: bool, downloading: bool, errors: &[&str]) -> AssetStatus {
+    serde_json::from_value(serde_json::json!({
+        "ready": ready,
+        "downloading": downloading,
+        "current_arch": "arm64",
+        "assets": [],
+        "errors": errors,
+        "manifest": {
             "origin": "package",
             "path": "/tmp/manifest.json",
-            "blake3": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "assets_current": "2026.0609.1",
-            "binaries_current": "1.3.0"
-        },
-        "profiles": [
-            {
-                "id": "code",
-                "name": "Code",
-                "ready": true,
-                "current_arch": "arm64",
-                "profile_payload_hash": "bbbbbbbbbbbb",
-                "missing_assets": []
-            }
-        ]
-    });
-
-    let lines = profile_status_summary_lines(&payload);
-
-    assert!(lines.iter().any(|line| line == "Profiles:  1/1 ready (installed)"));
-    assert!(lines
-        .iter()
-        .any(|line| line == "Manifest:  package (/tmp/manifest.json)"));
-    assert!(lines.iter().any(|line| line == "  assets:  2026.0609.1"));
-    assert!(lines
-        .iter()
-        .any(|line| line == "  - code: Code (ready, arch arm64, hash bbbbbbbbbbbb)"));
+            "validation_status": "valid"
+        }
+    }))
+    .unwrap()
 }
 
 #[test]
-fn health_issues_are_derived_from_profiles_status_payload() {
-    let payload = serde_json::json!({
-        "profile_count": 1,
-        "profiles": [
-            {
-                "id": "code",
-                "ready": false,
-                "missing_assets": ["initrd.img"],
-                "invalid_assets": ["rootfs.erofs"],
-                "invalid_files": ["profiles/code/enforcement.toml"]
-            }
-        ]
-    });
-
-    let issues = profile_status_issues(&payload);
-
-    assert_eq!(issues.len(), 1);
-    assert!(issues[0].contains("Profile code is not ready"));
-    assert!(issues[0].contains("missing assets: initrd.img"));
-    assert!(issues[0].contains("invalid assets: rootfs.erofs"));
-    assert!(issues[0].contains("invalid profile files: profiles/code/enforcement.toml"));
+fn health_issues_are_derived_from_the_asset_status() {
+    assert!(asset_status_issues(&asset_status(true, false, &[])).is_empty());
+    assert!(
+        asset_status_issues(&asset_status(false, true, &["vmlinuz is missing"])).is_empty(),
+        "a reconciliation in flight is not yet a health issue"
+    );
+    assert_eq!(
+        asset_status_issues(&asset_status(
+            false,
+            false,
+            &["vmlinuz is missing", "rootfs.erofs is missing"]
+        )),
+        vec!["VM assets are not ready (vmlinuz is missing; rootfs.erofs is missing)".to_string()]
+    );
+    assert_eq!(
+        asset_status_issues(&asset_status(false, false, &[])),
+        vec!["VM assets are not ready".to_string()]
+    );
 }
 
 #[test]
 fn parse_assets_ensure_json() {
     let cli = Cli::parse_from(["capsem", "assets", "ensure", "--json"]);
     match cli.command.unwrap() {
-        Commands::Assets(AssetsCommands::Ensure { profile, json }) => {
-            assert_eq!(profile, "code");
-            assert!(json);
-        }
+        Commands::Assets(AssetsCommands::Ensure { json }) => assert!(json),
         _ => panic!("expected assets ensure"),
-    }
-}
-
-#[test]
-fn parse_assets_status_profile() {
-    let cli = Cli::parse_from(["capsem", "assets", "status", "--profile", "analysis"]);
-    match cli.command.unwrap() {
-        Commands::Assets(AssetsCommands::Status { profile, json }) => {
-            assert_eq!(profile, "analysis");
-            assert!(!json);
-        }
-        _ => panic!("expected assets status"),
     }
 }
 
@@ -939,6 +875,273 @@ fn parse_uninstall_yes() {
     match cli.command.unwrap() {
         Commands::Misc(MiscCommands::Uninstall { yes }) => assert!(yes),
         _ => panic!("expected Uninstall"),
+    }
+}
+
+#[test]
+fn parse_update() {
+    let cli = Cli::parse_from(["capsem", "update"]);
+    match cli.command.unwrap() {
+        Commands::Misc(MiscCommands::Update {
+            yes,
+            check,
+            assets,
+            channel,
+            manifest,
+            install_manifest_stdin,
+            corp,
+        }) => {
+            assert!(!yes);
+            assert!(!check);
+            assert!(!assets);
+            assert_eq!(channel, None);
+            assert_eq!(manifest, None);
+            assert!(!install_manifest_stdin);
+            assert_eq!(corp, None);
+        }
+        _ => panic!("expected Update"),
+    }
+}
+
+#[test]
+fn parse_update_yes() {
+    let cli = Cli::parse_from(["capsem", "update", "--yes"]);
+    match cli.command.unwrap() {
+        Commands::Misc(MiscCommands::Update {
+            yes,
+            check,
+            assets,
+            channel,
+            manifest,
+            install_manifest_stdin,
+            corp,
+        }) => {
+            assert!(yes);
+            assert!(!check);
+            assert!(!assets);
+            assert_eq!(channel, None);
+            assert_eq!(manifest, None);
+            assert!(!install_manifest_stdin);
+            assert_eq!(corp, None);
+        }
+        _ => panic!("expected Update"),
+    }
+}
+
+#[test]
+fn parse_update_check() {
+    let cli = Cli::parse_from(["capsem", "update", "--check"]);
+    match cli.command.unwrap() {
+        Commands::Misc(MiscCommands::Update {
+            yes,
+            check,
+            assets,
+            channel,
+            manifest,
+            install_manifest_stdin,
+            corp,
+        }) => {
+            assert!(!yes);
+            assert!(check);
+            assert!(!assets);
+            assert_eq!(channel, None);
+            assert_eq!(manifest, None);
+            assert!(!install_manifest_stdin);
+            assert_eq!(corp, None);
+        }
+        _ => panic!("expected Update"),
+    }
+}
+
+#[test]
+fn parse_update_check_rejects_mutating_options() {
+    for args in [
+        vec!["capsem", "update", "--check", "--yes"],
+        vec!["capsem", "update", "--check", "--assets"],
+        vec![
+            "capsem",
+            "update",
+            "--check",
+            "--manifest",
+            "https://release.capsem.org/assets/stable/manifest.json",
+        ],
+        vec![
+            "capsem",
+            "update",
+            "--check",
+            "--corp",
+            "https://corp.example/capsem/corp.json",
+        ],
+    ] {
+        assert!(
+            Cli::try_parse_from(args.clone()).is_err(),
+            "expected {args:?} to be rejected"
+        );
+    }
+}
+
+#[test]
+fn parse_hidden_install_manifest_stdin_requires_the_exact_asset_handoff_shape() {
+    let cli = Cli::parse_from([
+        "capsem",
+        "update",
+        "--assets",
+        "--manifest",
+        "https://release.capsem.org/assets/nightly/manifest.json",
+        "--install-manifest-stdin",
+    ]);
+    match cli.command.unwrap() {
+        Commands::Misc(MiscCommands::Update {
+            assets,
+            manifest,
+            install_manifest_stdin,
+            ..
+        }) => {
+            assert!(assets);
+            assert!(manifest.is_some());
+            assert!(install_manifest_stdin);
+        }
+        _ => panic!("expected Update"),
+    }
+
+    for args in [
+        vec!["capsem", "update", "--install-manifest-stdin"],
+        vec![
+            "capsem",
+            "update",
+            "--manifest",
+            "file:///tmp/manifest.json",
+            "--install-manifest-stdin",
+        ],
+        vec![
+            "capsem",
+            "update",
+            "--assets",
+            "--manifest",
+            "file:///tmp/manifest.json",
+            "--install-manifest-stdin",
+            "--corp",
+            "file:///tmp/corp.toml",
+        ],
+    ] {
+        assert!(Cli::try_parse_from(args).is_err());
+    }
+    let help = match Cli::try_parse_from(["capsem", "update", "--help"]) {
+        Err(error) => error.to_string(),
+        Ok(_) => panic!("--help must stop parsing"),
+    };
+    assert!(!help.contains("install-manifest-stdin"));
+}
+
+#[test]
+fn parse_update_assets() {
+    let cli = Cli::parse_from(["capsem", "update", "--assets"]);
+    match cli.command.unwrap() {
+        Commands::Misc(MiscCommands::Update {
+            yes,
+            check,
+            assets,
+            channel,
+            manifest,
+            install_manifest_stdin,
+            corp,
+        }) => {
+            assert!(!yes);
+            assert!(!check);
+            assert!(assets);
+            assert_eq!(channel, None);
+            assert_eq!(manifest, None);
+            assert!(!install_manifest_stdin);
+            assert_eq!(corp, None);
+        }
+        _ => panic!("expected Update"),
+    }
+}
+
+#[test]
+fn parse_update_named_channel_for_check_and_asset_switch() {
+    for args in [
+        ["capsem", "update", "--check", "--channel", "nightly"],
+        ["capsem", "update", "--assets", "--channel", "stable"],
+    ] {
+        let cli = Cli::parse_from(args);
+        match cli.command.unwrap() {
+            Commands::Misc(MiscCommands::Update { channel, .. }) => {
+                assert!(matches!(channel.as_deref(), Some("nightly" | "stable")));
+            }
+            _ => panic!("expected Update"),
+        }
+    }
+}
+
+#[test]
+fn parse_update_rejects_invalid_or_ambiguous_channel_selection() {
+    for args in [
+        vec!["capsem", "update", "--channel", "../nightly"],
+        vec![
+            "capsem",
+            "update",
+            "--channel",
+            "nightly",
+            "--manifest",
+            "https://release.capsem.org/assets/stable/manifest.json",
+        ],
+    ] {
+        assert!(Cli::try_parse_from(args).is_err());
+    }
+}
+
+#[test]
+fn parse_update_rejects_assets_with_corp_policy() {
+    let err = match Cli::try_parse_from([
+        "capsem",
+        "update",
+        "--assets",
+        "--corp",
+        "https://corp.example/capsem/corp.toml",
+    ]) {
+        Ok(_) => panic!("--corp provisions policy config and must not combine with --assets"),
+        Err(err) => err,
+    };
+    let message = err.to_string();
+    assert!(message.contains("cannot be used with"), "{message}");
+    assert!(message.contains("--assets"), "{message}");
+}
+
+#[test]
+fn parse_update_url_overrides_reject_bare_paths() {
+    for flag in ["--manifest", "--corp"] {
+        for source in ["/tmp/capsem/manifest.json", "assets/stable/manifest.json"] {
+            let err = match Cli::try_parse_from(["capsem", "update", "--assets", flag, source]) {
+                Ok(_) => panic!("update source overrides must reject bare filesystem paths"),
+                Err(err) => err,
+            };
+            let message = err.to_string();
+            assert!(message.contains(&format!("{flag} must be a URL")), "{message}");
+            assert!(message.contains("https://..."), "{message}");
+            assert!(message.contains("http://..."), "{message}");
+            assert!(message.contains("file:///absolute/path"), "{message}");
+        }
+    }
+}
+
+#[test]
+fn parse_update_url_overrides_reject_url_shorthand_paths() {
+    for flag in ["--manifest", "--corp"] {
+        for (source, expected) in [
+            ("file:assets/stable/manifest.json", "file URL must start with file://"),
+            (
+                "https:release.capsem.org/assets/stable/manifest.json",
+                "must use https://, http://, or file:// URLs",
+            ),
+        ] {
+            let err = match Cli::try_parse_from(["capsem", "update", "--assets", flag, source]) {
+                Ok(_) => panic!("update source overrides must reject URL shorthand paths"),
+                Err(err) => err,
+            };
+            let message = err.to_string();
+            assert!(message.contains(expected), "{message}");
+        }
     }
 }
 
@@ -1034,23 +1237,5 @@ fn shell_with_session_focuses_tui_session() {
             "--session".to_string(),
             "profile-v2".to_string()
         ]
-    );
-}
-
-#[test]
-fn gateway_runtime_url_rejects_cross_instance_fallbacks() {
-    let run_dir = tempfile::tempdir().unwrap();
-    assert!(gateway_url_from_runtime(run_dir.path()).is_none());
-
-    std::fs::write(run_dir.path().join("gateway.port"), "not-a-port\n").unwrap();
-    assert!(gateway_url_from_runtime(run_dir.path()).unwrap().is_err());
-
-    std::fs::write(run_dir.path().join("gateway.port"), "0\n").unwrap();
-    assert!(gateway_url_from_runtime(run_dir.path()).unwrap().is_err());
-
-    std::fs::write(run_dir.path().join("gateway.port"), "49152\n").unwrap();
-    assert_eq!(
-        gateway_url_from_runtime(run_dir.path()).unwrap().unwrap(),
-        "http://127.0.0.1:49152"
     );
 }

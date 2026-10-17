@@ -1,6 +1,6 @@
 //! Metadata FUSE operations: INIT, LOOKUP, GETATTR, SETATTR, STATFS, FORGET.
 
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::OpenOptionsExt;
 
 use super::FuseProcessor;
 use crate::hypervisor::fuse::{self, *};
@@ -75,10 +75,10 @@ impl FuseProcessor {
             nodeid: ino,
             generation: 0,
             entry_valid: 1,
-            attr_valid: 1,
+            attr_valid: fuse::ATTR_CACHE_SECONDS,
             entry_valid_nsec: 0,
             attr_valid_nsec: 0,
-            attr: fuse::metadata_to_fuse_attr(ino, &meta),
+            attr: fuse::metadata_to_fuse_attr(ino, &meta, header),
         };
         fuse::success_response(header.unique, fuse::as_bytes(&entry))
     }
@@ -94,10 +94,10 @@ impl FuseProcessor {
         };
 
         let attr_out = FuseAttrOut {
-            attr_valid: 1,
+            attr_valid: fuse::ATTR_CACHE_SECONDS,
             attr_valid_nsec: 0,
             dummy: 0,
-            attr: fuse::metadata_to_fuse_attr(header.nodeid, &meta),
+            attr: fuse::metadata_to_fuse_attr(header.nodeid, &meta, header),
         };
         fuse::success_response(header.unique, fuse::as_bytes(&attr_out))
     }
@@ -127,7 +127,7 @@ impl FuseProcessor {
             if is_symlink {
                 return fuse::error_response(header.unique, -libc::EPERM);
             }
-            if let Err(e) = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(attr_in.mode)) {
+            if let Err(e) = self.set_guest_mode(&path, attr_in.mode) {
                 return fuse::error_response(header.unique, -fuse::io_error_to_errno(&e));
             }
         }
@@ -149,50 +149,33 @@ impl FuseProcessor {
         }
         // Ownership is not part of the share: every entry reads back as 0:0,
         // and the guest never changes host ownership. A chown is accepted
-        // without effect, as tools running as guest root (cp -a, tar -x, the
-        // profile seed copy) require; it used to reach an unprivileged host
+        // without effect, as tools running as guest root (cp -a, tar -x)
+        // require; it used to reach an unprivileged host
         // lchown and fail with EPERM.
-        if attr_in.valid & (FATTR_ATIME | FATTR_MTIME) != 0 {
-            let c_path = match std::ffi::CString::new(path.as_os_str().as_encoded_bytes()) {
-                Ok(c) => c,
-                Err(_) => return fuse::error_response(header.unique, -libc::EINVAL),
+        if attr_in.valid & (FATTR_ATIME | FATTR_MTIME | FATTR_ATIME_NOW | FATTR_MTIME_NOW) != 0 {
+            use capsem_proto::upstream_grant::GuestFileTime;
+            let atime = if attr_in.valid & FATTR_ATIME_NOW != 0 {
+                GuestFileTime::Now
+            } else if attr_in.valid & FATTR_ATIME != 0 {
+                GuestFileTime::Exact {
+                    seconds: attr_in.atime as i64,
+                    nanoseconds: attr_in.atimensec,
+                }
+            } else {
+                GuestFileTime::Omit
             };
-            let times = [
-                libc::timespec {
-                    tv_sec: if attr_in.valid & FATTR_ATIME != 0 {
-                        attr_in.atime as i64
-                    } else {
-                        0
-                    },
-                    tv_nsec: if attr_in.valid & FATTR_ATIME != 0 {
-                        i64::from(attr_in.atimensec)
-                    } else {
-                        libc::UTIME_OMIT
-                    },
-                },
-                libc::timespec {
-                    tv_sec: if attr_in.valid & FATTR_MTIME != 0 {
-                        attr_in.mtime as i64
-                    } else {
-                        0
-                    },
-                    tv_nsec: if attr_in.valid & FATTR_MTIME != 0 {
-                        i64::from(attr_in.mtimensec)
-                    } else {
-                        libc::UTIME_OMIT
-                    },
-                },
-            ];
-            if unsafe {
-                libc::utimensat(
-                    libc::AT_FDCWD,
-                    c_path.as_ptr(),
-                    times.as_ptr(),
-                    libc::AT_SYMLINK_NOFOLLOW,
-                )
-            } != 0
-            {
-                return fuse::error_response(header.unique, -fuse::errno());
+            let mtime = if attr_in.valid & FATTR_MTIME_NOW != 0 {
+                GuestFileTime::Now
+            } else if attr_in.valid & FATTR_MTIME != 0 {
+                GuestFileTime::Exact {
+                    seconds: attr_in.mtime as i64,
+                    nanoseconds: attr_in.mtimensec,
+                }
+            } else {
+                GuestFileTime::Omit
+            };
+            if let Err(error) = self.set_guest_times(&path, atime, mtime) {
+                return fuse::error_response(header.unique, -fuse::io_error_to_errno(&error));
             }
         }
 

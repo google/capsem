@@ -87,6 +87,18 @@ def test_repository_context_copies_name_the_moved_helpers() -> None:
     assert "COPY swap-dev-libs.sh /usr/local/bin/swap-dev-libs" in host
 
 
+def test_node_dependency_images_receive_the_declared_patch_inputs() -> None:
+    for filename, destination, install in (
+        ("Dockerfile.package-builder", "/prefetch/build_system/patches", "RUN cd web/app"),
+        ("Dockerfile.install-builder", "/prefetch/build_system/patches", "RUN cd build_system/release_site"),
+        ("Dockerfile.linux-rust-base", "/src/build_system/patches", "RUN cd /src/web/app"),
+    ):
+        source = (OWNER / filename).read_text()
+        copy = "COPY build_system/patches " + destination
+        assert copy in source, "locked pnpm patch bytes must reach dependency materialization"
+        assert source.index(copy) < source.index(install)
+
+
 def test_network_open_apt_layers_persist_partial_snapshot_downloads() -> None:
     """A failed immutable snapshot request must not discard completed bytes."""
     config = (ROOT / "config/gate.toml").read_text(encoding="utf-8")

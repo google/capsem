@@ -8,9 +8,16 @@ from .execution import Kind, Needs, Speed, Step, step
 from .plan import Plan
 from .testmodules import InWorkspace
 
+#: The `[functional.<section>]` pins every kingslanding run verifies first.
+PINNED_IMAGES = ("debug_image", "reference_image")
+
 
 def prefetch(config: GateConfig) -> Step:
+    """Every pinned image the suites serve: Redis and iperf3, capsem-debug and
+    the reference image, whose layouts are verified in the shared cache and
+    pulled by digest only when absent."""
     settings = config.functional.kingslanding
+    platform = config.host_arch().docker_platform
     return step(
         "prefetch",
         Script(
@@ -19,8 +26,20 @@ def prefetch(config: GateConfig) -> Step:
             "--output",
             settings.fixture_dir,
             "--platform",
-            config.host_arch().docker_platform,
+            platform,
             outside_sandbox=True,
+        ),
+        *(
+            Script(
+                config,
+                getattr(config.functional, section).script,
+                section,
+                "prepare",
+                "--platform",
+                platform,
+                outside_sandbox=True,
+            )
+            for section in PINNED_IMAGES
         ),
         contends=(config.exclusive("docker_daemon"),),
         kind=Kind.COMPILE,
@@ -29,34 +48,31 @@ def prefetch(config: GateConfig) -> Step:
     )
 
 
-def greyjoy_suite(config: GateConfig, *, profile: str) -> pytestsuite.Suite:
+def greyjoy_suite(config: GateConfig) -> pytestsuite.Suite:
     """The chaos suite: the same fixture, its own owner, adversaries only."""
     return pytestsuite.Suite(
-        label=f"pytest.greyjoy.{profile}",
+        label="pytest.greyjoy",
         paths=(config.functional.greyjoy.suite_path,),
-        profile=profile,
         contends=pytestsuite.sharing(config),
     )
 
 
-def suite(config: GateConfig, *, profile: str, benchmark: bool = True) -> pytestsuite.Suite:
+def suite(config: GateConfig, *, benchmark: bool = True) -> pytestsuite.Suite:
     """The acceptance suite; with its measurement files it needs the machine alone."""
     settings = config.functional.kingslanding
     return pytestsuite.Suite(
-        label=f"pytest.kingslanding.{profile}",
+        label="pytest.kingslanding",
         paths=(settings.suite_path,),
         ignores=() if benchmark else settings.benchmark_paths,
-        profile=profile,
         contends=pytestsuite.measuring(config) if benchmark else pytestsuite.sharing(config),
     )
 
 
-def benchmark_suite(config: GateConfig, *, profile: str) -> pytestsuite.Suite:
+def benchmark_suite(config: GateConfig) -> pytestsuite.Suite:
     """Kingslanding's measurement files, split out so the rest can share the machine."""
     return pytestsuite.Suite(
-        label=f"pytest.kingslanding-benchmark.{profile}",
+        label="pytest.kingslanding-benchmark",
         paths=config.functional.kingslanding.benchmark_paths,
-        profile=profile,
         contends=pytestsuite.measuring(config),
     )
 
@@ -84,9 +100,7 @@ class KingslandingModule(
         phase = plan.phase("kingslanding")
         fixture = phase.add(prefetch(self._config), after=ready)
         phase.add(
-            suite(self._config, profile=self._config.suites.pytest.base_profile).as_step(
-                self._config
-            ),
+            suite(self._config).as_step(self._config),
             after=(fixture,),
         )
         return plan
@@ -115,9 +129,7 @@ class GreyjoyModule(
         phase = plan.phase("greyjoy")
         fixture = phase.add(prefetch(self._config), after=ready)
         phase.add(
-            greyjoy_suite(self._config, profile=self._config.suites.pytest.base_profile).as_step(
-                self._config
-            ),
+            greyjoy_suite(self._config).as_step(self._config),
             after=(fixture,),
         )
         return plan

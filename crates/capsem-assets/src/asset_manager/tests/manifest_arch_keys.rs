@@ -56,23 +56,19 @@ fn a_release_graph_manifest_gets_the_same_arch_key_check() {
         "version": "1.0.142",
         "status": "current",
         "packages": [{"name": "Capsem-1.5.1.pkg", "version": "1.5.1", "status": "current"}],
-        "profiles": {
-            "co-work": {
-                "name": "Co-work",
-                "description": "Shared profile.",
-                "revision": "2026.0703.2",
-                "status": "current",
-                "min_capsem_version": "1.5.0",
-                "architectures": [{
-                    "architecture": "../../../../etc/pwn",
-                    "image_revision": "2026.0714.18",
-                    "images": [
-                        {"kind": "kernel", "name": "vmlinuz", "bytes": 10, "status": "current", "digest": digest('a')},
-                        {"kind": "initrd", "name": "initrd.img", "bytes": 20, "status": "current", "digest": digest('b')},
-                        {"kind": "rootfs", "name": "rootfs.erofs", "bytes": 30, "status": "current", "digest": digest('c')}
-                    ]
-                }]
-            }
+        "runtime": {
+            "revision": "2026.0714.18",
+            "status": "current",
+            "min_capsem_version": "1.5.0",
+            "architectures": [{
+                "architecture": "../../../../etc/pwn",
+                "image_revision": "2026.0714.18",
+                "images": [
+                    {"kind": "kernel", "name": "vmlinuz", "bytes": 10, "status": "current", "digest": digest('a')},
+                    {"kind": "initrd", "name": "initrd.img", "bytes": 20, "status": "current", "digest": digest('b')},
+                    {"kind": "rootfs", "name": "rootfs.erofs", "bytes": 30, "status": "current", "digest": digest('c')}
+                ]
+            }]
         }
     });
     let error = ManifestV2::from_json(&graph.to_string()).expect_err("traversal architecture must be refused");

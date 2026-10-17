@@ -15,6 +15,7 @@ import importlib.util
 import io
 import json
 import os
+import shlex
 import shutil
 import socketserver
 import subprocess
@@ -35,6 +36,7 @@ from capsem_builder.release.tools import (
 from capsem_builder.release.tools import (
     check_channel_deploy_freshness as DEPLOY_FRESHNESS,
 )
+from helpers.bounded import bounded
 from helpers.release_site import build_release_channel_site
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -106,9 +108,18 @@ def test_deploy_workflow_preview_proves_exact_bytes_and_restores_prior_productio
     assert "PREVIEW_URL: ${{ steps.preview.outputs.deployment-url }}" in workflow
     assert "PREVIEW_URL: ${{ inputs.release_site_url }}" not in workflow
     assert "inputs.activate_production && steps.preview.outputs.deployment-url" not in workflow
-    assert "--snapshot-out cache/target/release/staging/channel-deployment/candidate-release.json" in workflow
-    assert "--expect-snapshot cache/target/release/staging/channel-deployment/candidate-release.json" in workflow
-    assert "--expect-snapshot cache/target/release/staging/channel-deployment/prior-release.json" in workflow
+    assert (
+        "--snapshot-out cache/target/release/staging/channel-deployment/candidate-release.json"
+        in workflow
+    )
+    assert (
+        "--expect-snapshot cache/target/release/staging/channel-deployment/candidate-release.json"
+        in workflow
+    )
+    assert (
+        "--expect-snapshot cache/target/release/staging/channel-deployment/prior-release.json"
+        in workflow
+    )
     prior_step = workflow[prior_snapshot:preview]
     rollback_step = workflow[rollback_check:verdict]
     assert "--snapshot-only" in prior_step
@@ -140,6 +151,22 @@ def test_deploy_workflow_preview_proves_exact_bytes_and_restores_prior_productio
     assert "--without-binary-files" not in staging
 
 
+def test_asset_staging_rehearsal_compiles_under_the_machine_lease() -> None:
+    source = (PROJECT_ROOT / "build_system/scripts/release/rehearse-asset-channel-staging.sh").read_text()
+    commands = [
+        shlex.split(line)
+        for line in source.replace("\\\n", " ").splitlines()
+        if "cargo run -p capsem-admin" in line
+    ]
+    assert len(commands) == 2
+    for command in commands:
+        assert command[:3] == [
+            "python3", "build_system/scripts/ci/run-bounded-command.py", "--timeout-seconds",
+        ], "source-contract rehearsals must lease shared Cargo builds instead of bypassing an active gate"
+        assert int(command[3]) > 0
+        assert command[4:8] == ["--", "cargo", "run", "-p"]
+
+
 def test_asset_staging_rehearsal_builds_a_complete_public_shape(tmp_path: Path) -> None:
     fixture = tmp_path / "fixture"
     dist = tmp_path / "dist"
@@ -157,7 +184,7 @@ def test_asset_staging_rehearsal_builds_a_complete_public_shape(tmp_path: Path) 
 
     manifest = json.loads((dist / "assets" / "staging" / "manifest.json").read_text())
     assert manifest["packages"]
-    assert manifest["profiles"]
+    assert manifest["runtime"]
     assert (evidence / "candidate-release.json").is_file()
 
     replay = subprocess.run(
@@ -176,14 +203,16 @@ def test_staging_workflows_keep_mutable_outputs_outside_cargo_cache() -> None:
         name: (PROJECT_ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
         for name in ("release-channel-staging.yaml", "release-binary-staging.yaml")
     }
-    cache_action = (
-        PROJECT_ROOT / ".github" / "actions" / "rust-cache" / "action.yaml"
-    ).read_text(encoding="utf-8")
+    cache_action = (PROJECT_ROOT / ".github" / "actions" / "rust-cache" / "action.yaml").read_text(
+        encoding="utf-8"
+    )
 
     for name, workflow in workflows.items():
         assert "./.github/actions/rust-cache" in workflow
         assert "$RUNNER_TEMP/" in workflow
-        assert "cache/target/release/distribution" not in workflow, f"{name} stages into Cargo's cache"
+        assert "cache/target/release/distribution" not in workflow, (
+            f"{name} stages into Cargo's cache"
+        )
 
     assert "Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32" in cache_action
     assert "workspaces: . -> cache/target/cargo" in cache_action
@@ -214,11 +243,11 @@ def test_binary_staging_proof_rejects_vm_asset_drift(tmp_path: Path) -> None:
     root = tmp_path / "binary-channel"
     root.mkdir()
     before = {
-        "profiles": {"code": {"revision": "1.2.3"}},
+        "runtime": {"revision": "1.2.3"},
         "packages": [{"version": "1.3.0"}],
     }
     after = {
-        "profiles": before["profiles"],
+        "runtime": dict(before["runtime"]),
         "packages": [{"version": "1.4.0"}],
     }
     (root / "manifest.before.json").write_text(json.dumps(before), encoding="utf-8")
@@ -235,7 +264,7 @@ def test_binary_staging_proof_rejects_vm_asset_drift(tmp_path: Path) -> None:
     assert proof["binary_version"] == "1.4.0"
     assert proof["asset_version"] == "1.2.3"
 
-    after["profiles"]["code"]["revision"] = "9.9.9"
+    after["runtime"]["revision"] = "9.9.9"
     (root / "manifest.json").write_text(json.dumps(after), encoding="utf-8")
     drift = subprocess.run(
         command,
@@ -245,7 +274,7 @@ def test_binary_staging_proof_rejects_vm_asset_drift(tmp_path: Path) -> None:
         check=False,
     )
     assert drift.returncode != 0
-    assert "binary dry-run changed profile image metadata" in drift.stderr
+    assert "binary dry-run changed runtime image metadata" in drift.stderr
 
     legacy_before = {
         "assets": {"current": "1.2.3"},
@@ -275,7 +304,9 @@ def test_binary_staging_proof_rejects_vm_asset_drift(tmp_path: Path) -> None:
     assert "binary dry-run changed VM asset metadata" in legacy_drift.stderr
 
 
-def test_binary_staging_artifacts_are_deterministic_and_recordable(tmp_path: Path) -> None:
+def test_binary_staging_artifacts_are_deterministic_and_recordable(
+    tmp_path: Path,
+) -> None:
     version = "1.4.9999999999"
     runs = []
     for name, umask in (("first", "022"), ("second", "077")):
@@ -484,7 +515,9 @@ def test_release_snapshot_requires_catalog_and_manifest_evidence() -> None:
         SNAPSHOT.release_fetch_snapshot(checker, "https://release.capsem.org")
 
 
-def test_prior_distribution_snapshot_ignores_broken_external_references(tmp_path: Path) -> None:
+def test_prior_distribution_snapshot_ignores_broken_external_references(
+    tmp_path: Path,
+) -> None:
     site = "https://release.capsem.org"
     checker = SimpleNamespace(_FETCH_BYTES_CACHE={})
 
@@ -634,7 +667,9 @@ def test_preview_checks_all_dist_bytes_but_snapshots_only_contract_evidence(
     assert set(entries) == {"/channels.json", "/assets/stable/manifest.json"}
 
 
-def test_contract_only_snapshot_still_rejects_wrong_preview_dist_bytes(tmp_path: Path) -> None:
+def test_contract_only_snapshot_still_rejects_wrong_preview_dist_bytes(
+    tmp_path: Path,
+) -> None:
     dist = tmp_path / "dist"
     manifest = dist / "assets" / "stable" / "manifest.json"
     manifest.parent.mkdir(parents=True)
@@ -668,7 +703,9 @@ def test_contract_only_snapshot_still_rejects_wrong_preview_dist_bytes(tmp_path:
         )
 
 
-def test_contract_only_snapshot_does_not_absorb_dist_files_after_retry(tmp_path: Path) -> None:
+def test_contract_only_snapshot_does_not_absorb_dist_files_after_retry(
+    tmp_path: Path,
+) -> None:
     dist = tmp_path / "dist"
     manifest = dist / "assets" / "stable" / "manifest.json"
     manifest.parent.mkdir(parents=True)
@@ -965,13 +1002,11 @@ def test_complete_dist_preserves_untouched_channel_manifest_version() -> None:
     stable = {
         "channel": "stable",
         "version": "1.0.7",
-        "profiles": {},
         "packages": [],
     }
     nightly = {
         "channel": "nightly",
         "version": "1.0.8",
-        "profiles": {},
         "packages": [],
     }
 
@@ -998,7 +1033,7 @@ def test_complete_dist_preserves_untouched_channel_manifest_version() -> None:
         BUILD_COMPLETE.manifest_version_for_channel(
             channel="nightly",
             primary_channel="stable",
-            document={"channel": "nightly", "profiles": {}, "packages": []},
+            document={"channel": "nightly", "packages": []},
             primary_version="1.0.9",
         )
 
@@ -1083,11 +1118,10 @@ def _run(
     env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(
-        command,
+        bounded(command, timeout),
         cwd=PROJECT_ROOT,
         text=True,
         capture_output=True,
-        timeout=timeout,
         check=False,
         env={**os.environ, **env} if env else None,
     )
@@ -1270,8 +1304,6 @@ def _build_release_channel(
         source_manifest.resolve().as_uri(),
         "--assets-dir",
         str(assets_dir),
-        "--profiles-dir",
-        str(PROJECT_ROOT / "config/profiles"),
         "--channel",
         CHANNEL,
         "--out-dir",
@@ -1305,11 +1337,13 @@ def _build_release_channel(
     if asset_source_base is not None:
         command.extend(["--asset-source-base", asset_source_base])
     _run_admin(*command)
-    shutil.copytree(
-        graph_source / "profiles" / "releases",
-        dist / "profiles" / "releases",
-        dirs_exist_ok=True,
-    )
+    # A remote asset source publishes no runtime bytes beside the graph.
+    if asset_source_base is None:
+        shutil.copytree(
+            graph_source / "runtime" / "releases",
+            dist / "runtime" / "releases",
+            dirs_exist_ok=True,
+        )
     build_release_channel_site(dist)
     _run_admin("assets", "channel", "check", "--channel", CHANNEL, "--dist", str(dist))
 
@@ -1587,22 +1621,20 @@ def test_generated_release_channel_passes_public_contract(
     assert (release_channel_dist / "health.json").is_file()
     assert (release_channel_dist / "_headers").is_file()
     assert (release_channel_dist / "assets" / CHANNEL / "manifest.json").is_file()
-    assert (release_channel_dist / "profiles" / "releases").is_dir()
+    assert (release_channel_dist / "runtime" / "releases").is_dir()
     assert not (release_channel_dist / "assets" / "releases").exists()
-    assert (release_channel_dist / "profiles" / "releases").is_dir()
     channels = json.loads((release_channel_dist / "channels.json").read_text())
     selected_manifest_url = channels["channels"][CHANNEL]["manifests"][0]["url"]
     assert selected_manifest_url == f"/assets/{CHANNEL}/manifest.json"
     assert (release_channel_dist / selected_manifest_url.lstrip("/")).is_file()
-    assert "profile_catalog" not in channels["channels"][CHANNEL]
+
     manifest = json.loads((release_channel_dist / selected_manifest_url.lstrip("/")).read_text())
     assert "assets" not in manifest
     assert "binaries" not in manifest
     assert manifest["packages"]
-    assert manifest["profiles"]
-    for profile in manifest["profiles"].values():
-        assert "current_binary" not in profile
-        assert "current_assets" not in profile
+    assert manifest["runtime"]
+    assert "current_binary" not in manifest["runtime"]
+    assert "current_assets" not in manifest["runtime"]
 
     with _serve_release_channel(release_channel_dist) as url:
         assert _validate_release_site(url, capsys=capsys) == 0
@@ -1628,7 +1660,7 @@ def test_fresh_install_assets_generate_release_channel_evidence(
     vm_oboms = health["evidence"]["vm_oboms"]
     attestations = health["evidence"]["attestations"]
     assert vm_oboms
-    assert vm_oboms[0]["url"].startswith("/profiles/releases/")
+    assert vm_oboms[0]["url"].startswith("/runtime/releases/")
     assert vm_oboms[0]["url"].endswith("/obom.cdx.json")
     vm_attestation = next(
         item for item in attestations if item["name"] == "github_attestations_vm_assets"
@@ -1723,25 +1755,11 @@ def test_local_channel_copy_fails_closed_on_asset_byte_mutation(tmp_path: Path) 
     )
     (assets_dir / arch / rootfs_name).write_bytes(b"tampered but locally present\n")
     result = subprocess.run(
-        [
-            "cargo",
-            "run",
-            "-p",
-            "capsem-admin",
-            "--quiet",
-            "--",
-            "assets",
-            "channel",
-            "build",
-            "--manifest",
-            manifest_path.resolve().as_uri(),
-            "--assets-dir",
-            str(assets_dir),
-            "--channel",
-            CHANNEL,
-            "--out-dir",
-            str(dist),
-        ],
+        bounded([
+            "cargo", "run", "-p", "capsem-admin", "--quiet", "--",
+            "assets", "channel", "build", "--manifest", manifest_path.resolve().as_uri(),
+            "--assets-dir", str(assets_dir), "--channel", CHANNEL, "--out-dir", str(dist),
+        ], 180),
         cwd=PROJECT_ROOT,
         text=True,
         capture_output=True,
@@ -1762,12 +1780,12 @@ def test_release_channel_contract_rejects_swapped_manifest(
     shutil.copytree(release_channel_dist, dist)
     manifest_path = dist / "assets" / CHANNEL / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
-    profile = next(iter(manifest["profiles"].values()))
-    image = profile["architectures"][0]
+    image = manifest["runtime"]["architectures"][0]
     image["images"][0]["url"] = image["images"][0]["url"].replace(
-        "/profiles/releases/stable/",
-        "/profiles/releases/nightly/",
+        "/runtime/releases/stable/",
+        "/runtime/releases/nightly/",
     )
+
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
 
     with _serve_release_channel(dist) as url:

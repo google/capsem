@@ -19,25 +19,15 @@ fn status(state: &str, digest: Option<&str>) -> serde_json::Value {
 }
 
 #[tokio::test]
-async fn provision_leaves_resources_to_the_profile_when_unset() {
+async fn provision_leaves_resources_to_the_service_when_unset() {
     let service = FakeService::start();
     service.route(
         "POST",
         "/vms/create",
         200,
-        json!({"id": "vm-1", "name": "vm-1", "profile_id": "code", "status": "Running", "available_actions": []}),
+        json!({"id": "vm-1", "name": "vm-1", "status": "Running", "available_actions": []}),
     );
-    let request = ProvisionRequest {
-        name: None,
-        profile_id: "code".into(),
-        ram_mb: None,
-        cpus: None,
-        persistent: false,
-        env: None,
-        from: None,
-        networks: vec![],
-        container: None,
-    };
+    let request = ProvisionRequest::default();
     assert_eq!(provision(&service.client, &request).await.unwrap().id, "vm-1");
     let body = service.find("POST", "/vms/create")[0].json();
     assert!(
@@ -84,7 +74,25 @@ async fn the_spec_refuses_what_it_cannot_name_before_any_vm_exists() {
     };
     let workload = Workload::of(&args, &[]).unwrap().unwrap();
     let error = workload.spec(false).await.err().unwrap();
-    assert!(format!("{error:#}").contains("--image expects"), "{error:#}");
+    assert!(
+        format!("{error:#}").contains("--image: expects a catalog name"),
+        "{error:#}"
+    );
+}
+
+/// `capsem create --image codex-cli` sends the name; the service resolves
+/// it, so the CLI never decides what a name means.
+#[tokio::test]
+async fn a_catalog_name_reaches_the_service_as_given() {
+    for name in ["codex-cli", "redis"] {
+        let args = ImageArgs {
+            image: vec![name.into()],
+            ..ImageArgs::default()
+        };
+        let spec = Workload::of(&args, &[]).unwrap().unwrap().spec(false).await.unwrap();
+        assert_eq!(spec.image, name);
+        assert!(spec.args.is_empty());
+    }
 }
 
 #[test]

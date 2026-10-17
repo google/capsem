@@ -24,8 +24,8 @@ def validate_source_manifest(payload: bytes, channel: str) -> dict[str, Any]:
         raise ValueError(
             f"source manifest declares channel {manifest.get('channel')!r}, expected {channel!r}"
         )
-    if not isinstance(manifest.get("profiles"), dict):
-        raise ValueError("source manifest profiles must be an object")
+    if manifest.get("runtime") is not None and not isinstance(manifest["runtime"], dict):
+        raise ValueError("source manifest runtime must be an object")
     if not isinstance(manifest.get("packages"), list):
         raise ValueError("source manifest packages must be an array")
     return manifest
@@ -33,9 +33,9 @@ def validate_source_manifest(payload: bytes, channel: str) -> dict[str, Any]:
 
 def validate_binary_source_manifest(payload: bytes, channel: str) -> dict[str, Any]:
     manifest = validate_source_manifest(payload, channel)
-    if not manifest["profiles"]:
+    if manifest.get("runtime") is None:
         raise ValueError(
-            f"source manifest for {channel} has no staged profiles; run release-profile first"
+            f"source manifest for {channel} has no staged runtime; run release-assets first"
         )
     return manifest
 
@@ -43,7 +43,6 @@ def validate_binary_source_manifest(payload: bytes, channel: str) -> dict[str, A
 def bootstrap_source_manifest(
     *,
     channel: FirstPartyChannel,
-    profile: str,
     source_commit: str,
     input_payload: bytes,
     output: Path,
@@ -70,8 +69,6 @@ def bootstrap_source_manifest(
         "release",
         "--channel",
         channel.value,
-        "--profile",
-        profile,
         "--source-commit",
         str(source_commit),
     ]

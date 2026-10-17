@@ -13,8 +13,8 @@ def test_release_site_builds_from_release_graph_fixture() -> None:
     package_detail = (
         dist / "channels" / "stable" / "packages" / "capsem-1-4-0-pkg" / "index.html"
     ).read_text(encoding="utf-8")
-    profile = (
-        dist / "channels" / "stable" / "profiles" / "co-work" / "index.html"
+    runtime = (
+        dist / "channels" / "stable" / "runtime" / "index.html"
     ).read_text(encoding="utf-8")
 
     assert "/assets/stable/manifest.json" in index
@@ -30,6 +30,8 @@ def test_release_site_builds_from_release_graph_fixture() -> None:
     assert "SPDXRef-File-capsem" not in stable
     assert "SPDXRef-File-capsem" in package_detail
     assert "rootfs.erofs" not in stable
-    assert "1.0.0-stable.20260702" in profile
-    assert "Minimum Capsem" in profile
-    assert "ABOM" in profile
+    assert "1.0.0-stable.20260702" in stable
+    assert "1.0.0-stable.20260702" in runtime
+    assert "Minimum Capsem" in runtime
+    assert "ABOM" in runtime
+    assert "rootfs.erofs" in runtime

@@ -49,6 +49,9 @@ fn sample(schema: &Value, full: bool) -> Value {
         "array" => json!([]), // Recursive file children remain bounded.
         "string" if schema["enum"].is_array() => schema["enum"][0].clone(),
         "string" if schema["format"] == "ipv4" => json!("10.128.0.2"),
+        "string" if schema["format"] == "uuid" => json!("fc120782-2272-4b3d-a2e6-a26ee2f8ab61"),
+        "string" if schema["format"] == "date-time" => json!("2026-10-14T12:34:56.123456789+01:30"),
+        "string" if schema["pattern"] == "^[0-9a-f]{64}$" => json!("af".repeat(32)),
         "string" => json!("sample /?&é"),
         "integer" => json!(3),
         "number" => json!(3.5),
@@ -151,11 +154,13 @@ impl Case {
             );
             media.clone()
         });
-        let success_status = if operation["responses"].get("200").is_some() {
-            200
-        } else {
-            202
-        };
+        let success_status = operation["responses"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .filter_map(|status| status.parse::<u16>().ok())
+            .find(|status| (200..300).contains(status))
+            .expect("declared successful response");
         let content = &operation["responses"][success_status.to_string()]["content"];
         let response_media = if content.get("application/gzip").is_some() {
             "application/gzip"

@@ -1,8 +1,7 @@
 //! Capsem protocol types for host/guest communication over vsock.
 //!
 //! Defines disjoint `HostToGuest` and `GuestToHost` message enums with
-//! MessagePack framing. No platform-specific dependencies, so this crate
-//! cross-compiles for both macOS host and aarch64-linux-musl guest.
+//! MessagePack framing with no platform dependencies for macOS and aarch64-linux-musl.
 //!
 //! # Security invariant (RFC T14)
 //!
@@ -10,20 +9,37 @@
 //! `HostToGuest`. This is enforced at the type level by having separate
 //! encode/decode function pairs.
 
+pub mod credential_injection;
 pub mod credential_reference;
 mod exec_stream;
+mod file_path;
+pub use file_path::{validate_file_path, validate_file_path_safe};
 pub mod forensic;
+pub mod gateway_grant;
 pub mod handshake;
+pub mod host_session;
 pub mod ipc;
+pub mod ledger;
+pub mod ledger_commitment;
+pub mod ledger_control;
 pub mod ledger_counters;
 pub mod mcp;
 pub mod mcp_aggregator;
 pub mod mcp_contracts;
+pub mod mcp_worker;
 pub mod poll;
 pub mod privatelink;
+pub mod proxy_control;
+pub mod proxy_credentials;
+pub mod proxy_mcp;
+pub mod proxy_metrics;
+pub mod proxy_policy;
+pub mod proxy_private_names;
+pub mod proxy_trace_hints;
 pub mod repeated;
 pub mod router;
 mod sparse;
+pub mod upstream_grant;
 mod wire_bytes;
 
 /// Where the guest mounts the host-visible workspace share: every VM sees its
@@ -36,8 +52,6 @@ pub use exec_stream::{
 };
 pub use handshake::{HandshakeError, Hello};
 
-use std::path::Path;
-
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
@@ -47,7 +61,6 @@ use serde::{Deserialize, Serialize};
 /// guest control channel. Keep this bounded, but large enough that legitimate
 /// file import/export requests do not tear down the agent control stream.
 pub const MAX_FRAME_SIZE: u32 = 2 * 1024 * 1024;
-
 /// Maximum number of env vars allowed during boot handshake.
 pub const MAX_BOOT_ENV_VARS: usize = 128;
 
@@ -73,9 +86,12 @@ pub const MAX_BOOT_FILES: usize = 64;
 /// credentials and descriptor handoff admission. Version 10 omits default
 /// fields from named MessagePack maps while decoding their absence as defaults.
 /// Version 11 removes the workspace snapshot status query and the unused
-/// service-to-owner freeze messages, and adds the owner-run `CloneState` for
-/// forks.
-pub const PROTOCOL_VERSION: u16 = 11;
+/// service-to-owner freeze messages, and adds `CloneState` for forks.
+/// Version 12 makes cloning a coordinator operation bracketed by the owner's
+/// guest freeze, so no destination path crosses into the VM owner.
+/// Version 13 fixes suspend to the owner's confined checkpoint location.
+/// Version 14 adds host-only credential injection; version 15 carries active-policy bytes.
+pub const PROTOCOL_VERSION: u16 = 15;
 
 /// Guest loopback port of the agent's DNS proxy (port 53 is redirected here).
 pub const GUEST_DNS_PROXY_PORT: u16 = 1053;
@@ -187,9 +203,7 @@ pub const BLOCKED_ENV_VARS: &[&str] = &[
     "PS4",
 ];
 
-// ---------------------------------------------------------------------------
 // Vsock port constants (shared between host and guest)
-// ---------------------------------------------------------------------------
 
 /// vsock port for structured control messages (resize, heartbeat, exec, file I/O).
 pub const VSOCK_PORT_CONTROL: u32 = 5000;
@@ -203,10 +217,12 @@ pub const VSOCK_PORT_LIFECYCLE: u32 = 5004;
 pub const VSOCK_PORT_EXEC: u32 = 5005;
 /// vsock port for kernel audit stream (execve events from auditd via guest agent).
 pub const VSOCK_PORT_AUDIT: u32 = 5006;
-/// vsock port for the DNS proxy (T3): the guest agent's `capsem-dns-proxy`
-/// listener forwards each DNS query to the host's hickory-backed handler
-/// over an `rmp-serde` length-framed envelope.
+/// vsock port for the guest-to-host, length-framed DNS proxy.
 pub const VSOCK_PORT_DNS_PROXY: u32 = 5007;
+include!(concat!(env!("OUT_DIR"), "/runtime_limits.rs"));
+/// Per-session DNS bound. Two sessions cover the A+AAAA burst from every
+/// supported concurrent client without shedding either address family.
+pub const DNS_SESSION_MAX_IN_FLIGHT: usize = NETWORK_CLIENT_CAPACITY;
 /// Guest-initiated data connections for explicitly published container TCP ports.
 pub const VSOCK_PORT_PUBLICATION: u32 = 5008;
 /// Network cables: each guest `capsem-tun` pumps one cable's ethernet frames
@@ -705,7 +721,7 @@ pub enum GuestToHost {
     BootTiming { stages: Vec<BootStage> },
     // -- Terminal --
     /// Exec started: handshake on the dedicated exec connection. The default
-    /// keeps immutable pre-streaming profile assets compatible.
+    /// keeps immutable pre-streaming guest images compatible.
     ExecStarted {
         id: u64,
         #[serde(default, skip_serializing_if = "crate::sparse::is_default")]
@@ -918,74 +934,6 @@ pub fn validate_env_value(value: &str) -> Result<()> {
             value.len()
         );
     }
-    Ok(())
-}
-
-/// Validate a file path for boot file injection.
-///
-/// Rejects: empty paths, paths containing NUL bytes, parent-directory components.
-pub fn validate_file_path(path: &str) -> Result<()> {
-    if path.is_empty() {
-        bail!("file path is empty");
-    }
-    if path.contains('\0') {
-        bail!("file path contains NUL byte: {path:?}");
-    }
-    if Path::new(path)
-        .components()
-        .any(|component| component == std::path::Component::ParentDir)
-    {
-        bail!("file path contains a parent-directory component: {path:?}");
-    }
-    Ok(())
-}
-
-/// Validate a file path for runtime file I/O inside the guest workspace.
-///
-/// Extends [`validate_file_path`] with symlink and containment checks:
-/// 1. String-level validation (empty, NUL, parent-directory components)
-/// 2. Rejects paths that are themselves symlinks
-/// 3. Canonicalizes the resolved path and verifies it stays within `workspace_root`
-///
-/// For new files (path does not exist yet), the parent directory is checked.
-pub fn validate_file_path_safe(path: &str, workspace_root: &Path) -> Result<()> {
-    validate_file_path(path)?;
-
-    let full = Path::new(path);
-
-    // Reject if the path itself is a symlink.
-    if full
-        .symlink_metadata()
-        .map(|m| m.file_type().is_symlink())
-        .unwrap_or(false)
-    {
-        bail!("path is a symlink: {path:?}");
-    }
-
-    let ws_resolved = workspace_root
-        .canonicalize()
-        .with_context(|| format!("cannot canonicalize workspace root: {}", workspace_root.display()))?;
-
-    if full.exists() {
-        // Existing path: canonicalize and check containment.
-        let resolved = full
-            .canonicalize()
-            .with_context(|| format!("cannot canonicalize path: {path:?}"))?;
-        if !resolved.starts_with(&ws_resolved) {
-            bail!("path resolves outside workspace: {path:?}");
-        }
-    } else if let Some(parent) = full.parent() {
-        // New file: canonicalize parent and check containment.
-        if parent.exists() {
-            let resolved_parent = parent
-                .canonicalize()
-                .with_context(|| format!("cannot canonicalize parent: {}", parent.display()))?;
-            if !resolved_parent.starts_with(&ws_resolved) {
-                bail!("parent resolves outside workspace: {path:?}");
-            }
-        }
-    }
-
     Ok(())
 }
 

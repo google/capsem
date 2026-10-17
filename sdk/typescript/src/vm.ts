@@ -1,10 +1,12 @@
 import {Client} from './client.js';
-import {commandDeadlineMs} from './execution.js';
+import {CredentialGrants} from './connections.js';
+import {commandDeadlineMs, createDeadlineMs} from './execution.js';
 import * as api from './operations/index.js';
 import * as models from './models/index.js';
 import type {HistoryOptions, LogOptions, TimelineOptions, VmSelector} from './options.js';
 import {Container, Files, Ports, Stats, VmNetworks, type VmContext} from './resources.js';
 import {HttpError, Transport, type CallOptions, type TransportOptions} from './transport.js';
+import {ExecRequestSchema} from './validation/ExecRequest.js';
 
 export class VM extends Client {
   #id: string | undefined;
@@ -15,6 +17,7 @@ export class VM extends Client {
   readonly stats: Stats;
   readonly container: Container;
   readonly ports: Ports;
+  readonly credentialGrants: CredentialGrants;
 
   constructor(url: string, token: string, selector: VmSelector, options?: TransportOptions);
   /** @internal */
@@ -36,6 +39,7 @@ export class VM extends Client {
     this.stats = new Stats(context);
     this.container = new Container(context);
     this.ports = new Ports(context, call => this.portTarget(call));
+    this.credentialGrants = new CredentialGrants(context);
   }
   /** @internal */
   static bind(transport: Transport, id: string, name: string, hasContainer?: boolean): VM {
@@ -75,15 +79,18 @@ export class VM extends Client {
     const {transport, id} = await this.context(options);
     return api.getVmInfo(transport, {id}, options);
   }
-  async exec(command: string, options: CallOptions & {timeout_secs?: number} = {}): Promise<models.ExecResponse> {
+  async exec(command: string, options: CallOptions & {timeout_secs?: number; target?: models.ExecTarget | null} = {}): Promise<models.ExecResponse> {
+    const body = ExecRequestSchema.parse({command, timeout_secs: options.timeout_secs ?? null,
+      ...(options.target == null ? {} : {target: options.target})});
     const {transport, id} = await this.context(options);
-    return api.execVm(transport, {id, body: {command, timeout_secs: options.timeout_secs ?? null}}, {
+    return api.execVm(transport, {id, body}, {
       ...options, timeoutMs: options.timeoutMs ?? commandDeadlineMs(transport.timeoutMs, options.timeout_secs),
     });
   }
   async start(options: CallOptions = {}): Promise<models.ProvisionResponse> {
     const {transport, id} = await this.context(options);
-    return api.startVm(transport, {id}, options);
+    return api.startVm(transport, {id}, {...options,
+      timeoutMs: options.timeoutMs ?? createDeadlineMs(transport.timeoutMs)});
   }
   async persist(name: string, options: CallOptions = {}): Promise<models.PersistResponse> {
     const {transport, id} = await this.context(options);
@@ -99,7 +106,8 @@ export class VM extends Client {
   }
   async resume(options: CallOptions = {}): Promise<models.ProvisionResponse> {
     const {transport, id} = await this.context(options);
-    return api.resumeVm(transport, {id}, options);
+    return api.resumeVm(transport, {id}, {...options,
+      timeoutMs: options.timeoutMs ?? createDeadlineMs(transport.timeoutMs)});
   }
   async delete(options: CallOptions = {}): Promise<models.VmActionResponse> {
     const {transport, id} = await this.context(options);

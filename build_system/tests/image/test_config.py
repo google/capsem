@@ -18,7 +18,7 @@ from capsem_builder.image.config import (
     load_guest_config,
     parse_toml,
 )
-from capsem_builder.image.models import ErofsCompression, GuestImageConfig, PackageManager
+from capsem_builder.image.models import ErofsCompression, GuestImageConfig
 from capsem_builder.image.schema import McpTransport
 from pydantic import ValidationError
 
@@ -59,27 +59,6 @@ rootfs_template = "Dockerfile.rootfs-dependencies.j2"
 kernel_template = "Dockerfile.kernel-dependencies.j2"
 source_build_network = "none"
 
-[build.asset_dependencies.architectures.arm64.node]
-version = "24.19.0"
-url = "https://example.test/node-v24.19.0-linux-arm64.tar.xz"
-sha256 = "1111111111111111111111111111111111111111111111111111111111111111"
-npm_version = "11.17.0"
-
-[build.asset_dependencies.architectures.arm64.uv]
-version = "1.2.3"
-url = "https://example.test/uv-1.2.3-linux-arm64"
-sha256 = "2222222222222222222222222222222222222222222222222222222222222222"
-
-[build.asset_dependencies.architectures.arm64.claude]
-version = "1.2.3"
-url = "https://example.test/claude-1.2.3-linux-arm64"
-sha256 = "3333333333333333333333333333333333333333333333333333333333333333"
-
-[build.asset_dependencies.architectures.arm64.ollama]
-version = "1.2.3"
-url = "https://example.test/ollama-1.2.3-linux-arm64"
-sha256 = "4444444444444444444444444444444444444444444444444444444444444444"
-
 [build.erofs]
 enabled = true
 compression = "lz4hc"
@@ -88,7 +67,7 @@ compression_level = 12
 [build.rootfs]
 max_uncompressed_bytes = 2500000000
 max_erofs_bytes = 900000000
-forbidden_path_prefixes = ["usr/lib/ollama/cuda_"]
+runtime_apt_packages = ["runc"]
 
 [build.kernel]
 version = "9.9.9"
@@ -111,6 +90,10 @@ debian_snapshot_id = "20260810T000000Z"
 materialize_network = "default"
 runtime_network = "none"
 
+[build.asset_tools.erofs_source]
+url = "https://example.test/erofs.tar.gz"
+sha256 = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+
 [build.asset_tools.architectures.arm64.cdxgen]
 url = "https://example.test/cdxgen-arm64"
 sha256 = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
@@ -127,19 +110,6 @@ rust_target = "aarch64-unknown-linux-musl"
 kernel_image = "arch/arm64/boot/Image"
 defconfig = "kernel/defconfig.arm64"
 node_major = 24
-"""
-
-PYTHON_PACKAGES_TOML = """\
-[python]
-name = "Python Packages"
-manager = "uv"
-install_cmd = "uv pip install --system --break-system-packages"
-packages = ["pytest", "numpy", "requests"]
-
-[python.network]
-name = "PyPI"
-domains = ["pypi.org", "files.pythonhosted.org"]
-allow_get = true
 """
 
 CAPSEM_MCP_TOML = """\
@@ -191,7 +161,7 @@ VM_ENVIRONMENT_TOML = """\
 [environment.shell]
 term = "xterm-256color"
 home = "/root"
-path = "/opt/ai-clis/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+path = "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 lang = "C"
 
 [environment.shell.bashrc]
@@ -227,10 +197,6 @@ def guest_full(tmp_path):
     config = tmp_path / "guest" / "config"
     config.mkdir(parents=True)
     (config / "build.toml").write_text(MINIMAL_BUILD_TOML)
-
-    pkg = config / "packages"
-    pkg.mkdir()
-    (pkg / "python.toml").write_text(PYTHON_PACKAGES_TOML)
 
     mcp = config / "mcp"
     mcp.mkdir()
@@ -277,7 +243,7 @@ def test_load_guest_config_accepts_current_image_config_dir():
     assert "arm64" in cfg.build.architectures
     assert cfg.build.architectures["arm64"].rust_target == "aarch64-unknown-linux-musl"
     assert "x86_64" in cfg.build.architectures
-    assert cfg.profile_root_seed is False
+    assert cfg.build.rootfs.runtime_apt_packages[:2] == ("runc", "umoci")
 
 
 # ---------------------------------------------------------------------------
@@ -304,7 +270,6 @@ class TestLoadGuestConfigMinimal:
 
     def test_defaults_for_optional_sections(self, guest_minimal):
         cfg = load_guest_config(guest_minimal)
-        assert cfg.package_sets == {}
         assert cfg.mcp_servers == {}
         assert cfg.web_security.http_upstream_ports == [80, 3128, 3713, 8080, 11434]
         assert cfg.vm_resources.cpu_count == 4
@@ -319,20 +284,10 @@ class TestLoadGuestConfigMinimal:
 class TestLoadGuestConfigFull:
     def test_loads_all(self, guest_full):
         cfg = load_guest_config(guest_full)
-        assert len(cfg.package_sets) == 1
         assert len(cfg.mcp_servers) == 1
         assert len(cfg.web_security.search) == 1
         assert len(cfg.web_security.registry) == 1
         assert len(cfg.web_security.repository) == 1
-
-    def test_package_sets_loaded(self, guest_full):
-        cfg = load_guest_config(guest_full)
-        assert "python" in cfg.package_sets
-        ps = cfg.package_sets["python"]
-        assert ps.manager is PackageManager.UV
-        assert "pytest" in ps.packages
-        assert ps.network is not None
-        assert ps.network.name == "PyPI"
 
     def test_mcp_servers_loaded(self, guest_full):
         cfg = load_guest_config(guest_full)
@@ -439,55 +394,13 @@ materialize_network = "default"
 [build.rootfs]
 max_uncompressed_bytes = 2500000000
 max_erofs_bytes = 900000000
-forbidden_path_prefixes = ["usr/lib/ollama/cuda_"]
+runtime_apt_packages = ["runc"]
 
 [build.asset_dependencies]
 tag_template = "capsem-{template}-dependencies-{arch}:{digest}"
 rootfs_template = "Dockerfile.rootfs-dependencies.j2"
 kernel_template = "Dockerfile.kernel-dependencies.j2"
 source_build_network = "none"
-
-[build.asset_dependencies.architectures.arm64.node]
-version = "24.19.0"
-url = "https://example.test/node-v24.19.0-linux-arm64.tar.xz"
-sha256 = "1111111111111111111111111111111111111111111111111111111111111111"
-npm_version = "11.17.0"
-
-[build.asset_dependencies.architectures.arm64.uv]
-version = "1.2.3"
-url = "https://example.test/uv-1.2.3-linux-arm64"
-sha256 = "2222222222222222222222222222222222222222222222222222222222222222"
-
-[build.asset_dependencies.architectures.arm64.claude]
-version = "1.2.3"
-url = "https://example.test/claude-1.2.3-linux-arm64"
-sha256 = "3333333333333333333333333333333333333333333333333333333333333333"
-
-[build.asset_dependencies.architectures.arm64.ollama]
-version = "1.2.3"
-url = "https://example.test/ollama-1.2.3-linux-arm64"
-sha256 = "4444444444444444444444444444444444444444444444444444444444444444"
-
-[build.asset_dependencies.architectures.x86_64.node]
-version = "24.19.0"
-url = "https://example.test/node-v24.19.0-linux-x64.tar.xz"
-sha256 = "5555555555555555555555555555555555555555555555555555555555555555"
-npm_version = "11.17.0"
-
-[build.asset_dependencies.architectures.x86_64.uv]
-version = "1.2.3"
-url = "https://example.test/uv-1.2.3-linux-x64"
-sha256 = "6666666666666666666666666666666666666666666666666666666666666666"
-
-[build.asset_dependencies.architectures.x86_64.claude]
-version = "1.2.3"
-url = "https://example.test/claude-1.2.3-linux-x64"
-sha256 = "7777777777777777777777777777777777777777777777777777777777777777"
-
-[build.asset_dependencies.architectures.x86_64.ollama]
-version = "1.2.3"
-url = "https://example.test/ollama-1.2.3-linux-x64"
-sha256 = "8888888888888888888888888888888888888888888888888888888888888888"
 
 [build.kernel]
 version = "9.9.9"
@@ -509,6 +422,10 @@ debian_security_snapshot_base = "http://snapshot.example/debian-security"
 debian_snapshot_id = "20260810T000000Z"
 materialize_network = "default"
 runtime_network = "none"
+
+[build.asset_tools.erofs_source]
+url = "https://example.test/erofs.tar.gz"
+sha256 = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
 
 [build.asset_tools.architectures.arm64.cdxgen]
 url = "https://example.test/cdxgen-arm64"
@@ -690,7 +607,7 @@ class TestGenerateDefaultsJsonConformance:
                 )
 
     def test_mcp_servers_do_not_reappear(self, generated, current_defaults):
-        """Profile MCP declarations must not be exported through settings metadata."""
+        """MCP declarations must not be exported through settings metadata."""
         assert "mcp" not in generated
         assert "mcp" not in current_defaults
 

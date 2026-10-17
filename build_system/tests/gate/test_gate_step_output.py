@@ -271,17 +271,51 @@ def test_a_failure_carries_its_own_tail(tmp_path: Path) -> None:
 
 
 def test_a_command_outside_any_step_still_runs(tmp_path: Path) -> None:
-    """Resources acquire and release outside the step graph.
-
-    There is no step to attribute their output to, and refusing to run them
-    would be a worse answer than not filing the log.
-    """
+    """Resource commands retain both streams and independently readable spans."""
     import sys
 
-    config = _checkout(tmp_path)
+    from capsem_builder.gate.runhistory import read
+
+    config = _checkout(tmp_path, resource_log='"fixture-resources.txt"')
     with RunLog.open(config, "test") as log:
         runner = GuardedRunner(Runner(config.root), journal=log)
-        assert runner.run([sys.executable, "-c", "print('loose')"]) == 0
+        for marker in ("acquire", "release"):
+            assert runner.run([sys.executable, "-c", f"import sys; print('{marker}'); {BOTH}"]) == 0
+        written = log.step_output()
+
+    assert written is not None, "resource command output must survive terminal loss"
+    assert written.is_file()
+    assert written.name == "fixture-resources.txt", "the filename belongs to config"
+    body = written.read_bytes()
+    commands = [entry for entry in read(log.directory, log.settings) if "output" in entry]
+    assert len(commands) == 2
+    for entry, marker in zip(commands, ("acquire", "release"), strict=True):
+        assert entry["step"] == "", "resource commands must not invent a graph step"
+        span = entry["output"]
+        assert span is not None and span["file"] == written.name
+        output = body[span["offset"] : span["offset"] + span["length"]].decode()
+        assert sorted(output.splitlines()) == sorted([marker, "OUT-MARKER", "ERR-MARKER"])
+
+
+def test_resource_failure_retains_its_diagnostic_tail(tmp_path: Path) -> None:
+    """Compiler startup can fail before the first step; exit 101 is not a cause."""
+    import sys
+
+    config = _checkout(tmp_path, failure_tail_lines=2)
+    script = (
+        "import sys; [print(f'noise-{n}') for n in range(30)]; sys.stdout.flush(); "
+        "print('RESOURCE-' + 'STARTUP-FAILED', file=sys.stderr); sys.exit(101)"
+    )
+    with RunLog.open(config, "test") as log:
+        runner = GuardedRunner.sized_by(Runner(config.root), config, journal=log)
+        with pytest.raises(GateError) as raised:
+            runner.run([sys.executable, "-c", script], console=ConsoleMode.LOG_ONLY)
+        message = _after_command_line(raised.value)
+        assert "RESOURCE-STARTUP-FAILED" in message
+        assert "noise-0" not in message
+        assert len(re.findall(r"noise-\d+", message)) <= 2
+        written = log.step_output()
+        assert written is not None and "noise-0" in written.read_text(encoding="utf-8")
 
 
 def test_captured_output_is_still_returned_to_its_caller(tmp_path: Path) -> None:

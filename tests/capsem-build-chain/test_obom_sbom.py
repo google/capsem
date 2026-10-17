@@ -24,20 +24,19 @@ def test_release_workflows_generate_binary_sbom_and_asset_obom() -> None:
     assert "id-token: write" in asset_workflow
     assert "CAPSEM_CDXGEN_CMD" not in asset_workflow
     assert "asset-channel-preview" in asset_workflow
-    assert "Publish immutable GitHub profile release" in asset_workflow
+    assert "Publish immutable GitHub runtime release" in asset_workflow
     assert "Attest VM asset provenance" in asset_workflow
     assert "actions/attest-build-provenance@" in asset_workflow
-    publish_profile = asset_workflow.split("  publish-profile-release:", maxsplit=1)[1].split(
+    publish_runtime = asset_workflow.split("  publish-runtime-release:", maxsplit=1)[1].split(
         "  deploy-channel:", maxsplit=1
     )[0]
-    assert "needs.author-profile-release.outputs.release_needed == 'true'" in publish_profile
-    assert "needs.test-profile-pairing.result == 'success'" in publish_profile
-    assert "if: ${{ inputs.dry_run == false }}" in publish_profile
-    assert "build_system/scripts/release/stage-profile-publication.py" in asset_workflow
-    assert "build_system/scripts/release/verify-profile-publication.py" in asset_workflow
-    assert "subject-path: cache/target/asset-release/profile-*/*" in asset_workflow
-    assert publish_profile.index("Attest VM asset provenance") < publish_profile.index(
-        "Publish immutable GitHub profile release"
+    assert "needs: [author-runtime-release, test-runtime-pairing" in publish_runtime
+    assert "if: ${{ inputs.dry_run == false }}" in publish_runtime
+    assert "build_system/scripts/release/stage-runtime-publication.py" in asset_workflow
+    assert "build_system/scripts/release/verify-runtime-publication.py" in asset_workflow
+    assert "subject-path: cache/target/asset-release/runtime-*/*" in asset_workflow
+    assert publish_runtime.index("Attest VM asset provenance") < publish_runtime.index(
+        "Publish immutable GitHub runtime release"
     )
     assert (
         'for key in ("vm_oboms", "host_sboms", "host_binary_files", "attestations")'
@@ -163,45 +162,9 @@ def test_cdxgen_is_digest_pinned_in_the_one_asset_helper() -> None:
     assert "CAPSEM_CDXGEN_CMD" not in asset_workflow
 
 
-def test_admin_materialization_and_service_routes_expose_verified_obom_evidence() -> None:
-    admin = _read("crates/capsem-admin/src/main.rs")
-    profile_images = _read("crates/capsem-admin/src/profile_images.rs")
-    service_router = _read("crates/capsem-service/src/router_runtime.rs")
-    profile_routes = _read("crates/capsem-service/src/profile_routes.rs")
-    obom_routes = _read("crates/capsem-service/src/profile_routes/obom.rs")
-    api = _read("crates/capsem-service/src/api.rs")
-
-    assert "materialize_profile_obom_descriptor" in profile_images
-    assert 'manifest_assets.get("obom.cdx.json")' in profile_images
-    assert (
-        "check_local_asset(assets_dir, arch, logical_name, hash, size)"
-        in profile_images
-    )
-    assert "read_obom_generator" in profile_images
-    assert "ProfileMaterializedObomReport" in admin
-    assert 'scope: "base_image"' in profile_images
-    assert (
-        "source profile {location} must not contain generated obom pins"
-        in profile_images
-    )
-
-    assert (
-        'route("/profiles/{profile_id}/obom", get(handle_profile_obom))'
-        in service_router
-    )
-    assert "mod obom;" in profile_routes
-    assert "fn profile_obom_info" in obom_routes
-    assert "read_local_profile_obom" in obom_routes
-    assert "profile OBOM hash mismatch" in obom_routes
-    assert "profile OBOM size mismatch" in obom_routes
-    assert "rootfs_hash" in api
-    assert "generator_version" in api
-
-
 def test_docs_describe_scope_without_claiming_user_runtime_inventory() -> None:
     build_verification = _read("web/docs/src/content/docs/security/build-verification.md")
     build_system = _read("web/docs/src/content/docs/architecture/build-system.md")
-    service_api = _read("web/docs/src/content/docs/architecture/service-api.md")
 
     assert "Host binaries publish a Software Bill of Materials" in build_verification
     assert "VM base images publish an Operations Bill of Materials" in build_verification
@@ -213,5 +176,3 @@ def test_docs_describe_scope_without_claiming_user_runtime_inventory() -> None:
     assert "installed base-image package/component truth" in build_system
     assert "post-boot state" in build_system
     assert "debug evidence" in build_system
-
-    assert "`/profiles/{profile_id}/obom`" in service_api

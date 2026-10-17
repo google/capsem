@@ -6,6 +6,7 @@ use std::{
 };
 
 use anyhow::{ensure, Context, Result};
+use capsem_crypto::Sha256;
 use futures::{stream, StreamExt, TryStreamExt};
 use oci_client::{
     client::{Certificate, CertificateEncoding, ClientConfig, ClientProtocol},
@@ -14,22 +15,84 @@ use oci_client::{
     Client, Reference, RegistryOperation,
 };
 use serde_json::json;
-use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
-use super::{cache::BlobCache, digest_hex, image_reference, verify_platform};
+use super::receipts::{BlobKind, BlobRef, CacheReceipt, RootReceipt};
+use super::{
+    cache::BlobCache,
+    catalog::{Catalog, CATALOG_MEDIA_TYPE},
+    digest_hex, image_reference,
+    selector::Digest as ContentDigest,
+    verify_platform, CacheIdentity, ImageReference, METADATA_LIMIT, PULL_TIMEOUT, RUNTIME_CONTRACT,
+};
 
-const METADATA_LIMIT: usize = 4 * 1024 * 1024;
 const LAYER_LIMIT: u64 = 2 * 1024 * 1024 * 1024;
 const IMAGE_LIMIT: u64 = 4 * 1024 * 1024 * 1024;
-const PULL_TIMEOUT: Duration = Duration::from_secs(300);
+const CATALOG_LIMIT: u64 = 1024 * 1024;
+
+pub(super) fn validate_architecture(architecture: &str) -> Result<()> {
+    ensure!(
+        matches!(architecture, "arm64" | "amd64"),
+        "unsupported container architecture"
+    );
+    Ok(())
+}
+
+mod offline;
+mod owner;
+mod readiness;
+mod reconcile;
+
+#[derive(Clone, Copy)]
+enum BlobUse {
+    Private,
+    PublishedRoot,
+    CacheOnly,
+    PublishedRootCacheOnly,
+}
+/// The CI-produced filesystem artifact and its sole layer use the same type.
+pub const ROOTFS_MEDIA_TYPE: &str = "application/vnd.capsem.rootfs.erofs.v2";
+
+/// Verified, opaque read-only filesystem bytes. Its staging link may retain
+/// an immutable cache generation; dropping the layout reclaims only the link.
+pub struct RootfsLayout {
+    directory: tempfile::TempDir,
+    digest: ContentDigest,
+    integrity: String,
+    receipt: RootReceipt,
+}
+
+impl RootfsLayout {
+    /// A private link keeps the verified bytes alive; the host never unpacks them.
+    pub fn path(&self) -> PathBuf {
+        self.directory
+            .path()
+            .join(self.digest.as_str().trim_start_matches("sha256:"))
+    }
+
+    pub fn digest(&self) -> &ContentDigest {
+        &self.digest
+    }
+
+    pub fn integrity(&self) -> &str {
+        &self.integrity
+    }
+}
 
 /// A disposable OCI layout. Keeping this value alive keeps its files alive.
 pub struct ImageLayout {
     directory: tempfile::TempDir,
     /// Digest of the original platform manifest, before OCI media normalization.
     pub source_digest: String,
+    /// Digest of what the reference resolved to: the multi-platform index
+    /// when the registry served one (the identity catalogs and pinned
+    /// references name), otherwise the platform manifest itself.
+    pub image_digest: String,
     files: Vec<PathBuf>,
+    cache_identity: CacheIdentity,
+    materialization: CacheReceipt,
+    /// Protect cache dependencies while the caller stages this layout.
+    _permit: Option<super::cache::MaterializationLease>,
 }
 
 impl ImageLayout {
@@ -39,6 +102,11 @@ impl ImageLayout {
     /// Relative paths; all blob names have been validated as SHA-256 digests.
     pub fn files(&self) -> &[PathBuf] {
         &self.files
+    }
+
+    /// The actual immutable image identity, even when a moving tag was requested.
+    pub fn cache_identity(&self) -> &CacheIdentity {
+        &self.cache_identity
     }
 }
 
@@ -73,10 +141,7 @@ impl Puller {
         protocol: ClientProtocol,
         certificate: Option<&[u8]>,
     ) -> Result<Self> {
-        ensure!(
-            matches!(architecture, "arm64" | "amd64"),
-            "unsupported container architecture"
-        );
+        validate_architecture(architecture)?;
         let secure = matches!(protocol, ClientProtocol::Https);
         let roots = certificate
             .map(reqwest::Certificate::from_pem_bundle)
@@ -119,12 +184,139 @@ impl Puller {
     }
 
     pub async fn pull(&self, reference: &str, parent: &Path) -> Result<ImageLayout> {
-        tokio::time::timeout(PULL_TIMEOUT, self.pull_inner(reference, parent))
+        tokio::time::timeout(PULL_TIMEOUT, self.pull_inner(reference, parent, false))
             .await
             .context("OCI pull exceeded five minutes")?
     }
 
-    async fn pull_inner(&self, reference: &str, parent: &Path) -> Result<ImageLayout> {
+    fn resolved_cache_identity(&self, reference: &Reference, digest: &str) -> Result<CacheIdentity> {
+        CacheIdentity::from_resolved(
+            ImageReference::try_from(reference)?.resolve(ContentDigest::parse(digest)?)?,
+            &self.architecture,
+            RUNTIME_CONTRACT,
+        )
+    }
+
+    /// Fetch and validate the image catalog at `reference`, usually
+    /// `ghcr.io/google/capsem/catalog:<channel>`. The manifest is re-read on
+    /// every call because the channel tag moves; the returned digest names
+    /// this catalog version. The layer is verified against its descriptor and
+    /// shares the image blob cache. `parent` holds the disposable staging.
+    pub async fn fetch_catalog(&self, reference: &str, parent: &Path) -> Result<(ContentDigest, Catalog)> {
+        tokio::time::timeout(PULL_TIMEOUT, self.fetch_catalog_inner(reference, parent))
+            .await
+            .context("catalog fetch exceeded five minutes")?
+    }
+
+    /// Fetch a catalog-pinned filesystem attached to the selected platform
+    /// image. The caller supplies that image's verified original manifest
+    /// digest, rather than its multi-platform index or normalized layout.
+    pub async fn fetch_rootfs(&self, reference: &str, subject: &ContentDigest, parent: &Path) -> Result<RootfsLayout> {
+        tokio::time::timeout(PULL_TIMEOUT, self.fetch_rootfs_inner(reference, subject, parent, false))
+            .await
+            .context("rootfs fetch exceeded five minutes")?
+    }
+
+    async fn fetch_rootfs_inner(
+        &self,
+        reference: &str,
+        expected_subject: &ContentDigest,
+        parent: &Path,
+        cache_only: bool,
+    ) -> Result<RootfsLayout> {
+        let reference = image_reference(reference)?;
+        ensure!(reference.digest().is_some(), "rootfs artifact must be pinned by digest");
+        if let Some(cache) = &self.cache {
+            cache.prepare().await?;
+        }
+        let token = if cache_only {
+            None
+        } else {
+            self.registry
+                .auth(&reference, &self.authentication, RegistryOperation::Pull)
+                .await?
+        };
+        let bytes = if cache_only {
+            self.cached_manifest(&reference).await?
+        } else {
+            self.manifest(&reference, token.as_deref()).await?
+        };
+        let manifest: OciImageManifest = serde_json::from_slice(&bytes).context("expected rootfs artifact manifest")?;
+        ensure!(
+            manifest.schema_version == 2
+                && manifest.media_type.as_deref() == Some(OCI_IMAGE_MEDIA_TYPE)
+                && manifest.artifact_type.as_deref() == Some(ROOTFS_MEDIA_TYPE),
+            "unsupported rootfs artifact schema or media type"
+        );
+        let subject = manifest.subject.context("rootfs artifact has no image subject")?;
+        ensure!(
+            matches!(
+                subject.media_type.as_str(),
+                OCI_IMAGE_MEDIA_TYPE | IMAGE_MANIFEST_MEDIA_TYPE
+            ) && subject.size > 0
+                && subject.size <= METADATA_LIMIT as i64
+                && subject.urls.as_ref().is_none_or(Vec::is_empty)
+                && subject.digest == expected_subject.as_str(),
+            "rootfs artifact subject does not match the selected platform image"
+        );
+        ensure!(
+            manifest.config.media_type == "application/vnd.oci.empty.v1+json"
+                && manifest.config.size == 2
+                && manifest.config.digest == sha256(b"{}")
+                && manifest.config.urls.as_ref().is_none_or(Vec::is_empty),
+            "rootfs artifact must have the empty OCI config"
+        );
+        let [layer] = manifest.layers.as_slice() else {
+            anyhow::bail!("rootfs artifact must contain exactly one layer");
+        };
+        ensure!(
+            layer.media_type == ROOTFS_MEDIA_TYPE
+                && layer.size > 0
+                && layer.size as u64 <= IMAGE_LIMIT
+                && layer.urls.as_ref().is_none_or(Vec::is_empty),
+            "unsupported rootfs layer media type, size or external URLs"
+        );
+        let integrity = manifest
+            .annotations
+            .as_ref()
+            .and_then(|annotations| annotations.get("org.capsem.rootfs.blake3"))
+            .context("rootfs artifact has no BLAKE3 integrity identity")?
+            .clone();
+        capsem_crypto::verify::blake3_digest(&integrity)?;
+        let digest = ContentDigest::parse(&layer.digest)?;
+        let directory = staging(parent).await?;
+        let usage = if cache_only {
+            BlobUse::PublishedRootCacheOnly
+        } else {
+            BlobUse::PublishedRoot
+        };
+        self.blob(&reference, layer, directory.path(), usage, Some(&integrity))
+            .await?;
+        if !cache_only {
+            if let Some(cache) = &self.cache {
+                cache
+                    .for_repository(&reference)
+                    .publish_metadata(&sha256(&bytes), &bytes)
+                    .await?;
+            }
+        }
+        Ok(RootfsLayout {
+            receipt: RootReceipt {
+                origin: reference.to_string(),
+                subject: expected_subject.to_string(),
+                subject_size: u64::try_from(subject.size)?,
+                blobs: vec![
+                    BlobRef::new(&sha256(&bytes), bytes.len() as u64, BlobKind::Metadata)?,
+                    BlobRef::new(&layer.digest, u64::try_from(layer.size)?, BlobKind::ImmutableRoot)?,
+                ],
+            },
+            directory,
+            digest,
+            integrity,
+        })
+    }
+
+    async fn fetch_catalog_inner(&self, reference: &str, parent: &Path) -> Result<(ContentDigest, Catalog)> {
         let reference = image_reference(reference)?;
         if let Some(cache) = &self.cache {
             cache.prepare().await?;
@@ -133,9 +325,72 @@ impl Puller {
             .registry
             .auth(&reference, &self.authentication, RegistryOperation::Pull)
             .await?;
-        let first = self.manifest(&reference, token.as_deref()).await?;
+        let bytes = self.manifest(&reference, token.as_deref()).await?;
+        let identity = ContentDigest::parse(&sha256(&bytes))?;
+        let manifest: OciImageManifest =
+            serde_json::from_slice(&bytes).context("catalog must be a single OCI artifact manifest")?;
+        ensure!(manifest.schema_version == 2, "unsupported catalog manifest schema");
+        let [layer] = manifest.layers.as_slice() else {
+            anyhow::bail!(
+                "catalog manifest must have exactly one layer, found {}",
+                manifest.layers.len()
+            );
+        };
+        ensure!(
+            layer.media_type == CATALOG_MEDIA_TYPE,
+            "catalog layer media type is {:?}, expected {CATALOG_MEDIA_TYPE}",
+            layer.media_type
+        );
+        ensure!(
+            layer.size > 0 && layer.size as u64 <= CATALOG_LIMIT,
+            "catalog layer size {} is outside the 1 MiB limit",
+            layer.size
+        );
+        ensure!(
+            layer.urls.as_ref().is_none_or(Vec::is_empty),
+            "external catalog URLs are unsupported"
+        );
+        let directory = staging(parent).await?;
+        self.blob(&reference, layer, directory.path(), BlobUse::Private, None)
+            .await?;
+        let document = tokio::fs::read(directory.path().join(digest_hex(&layer.digest)?)).await?;
+        Ok((identity, Catalog::parse(&document)?))
+    }
+
+    async fn pull_inner(&self, reference: &str, parent: &Path, cache_only: bool) -> Result<ImageLayout> {
+        let reference = image_reference(reference)?;
+        if let Some(cache) = &self.cache {
+            cache.prepare().await?;
+        }
+        let mut permit = match (&self.cache, reference.digest()) {
+            (Some(cache), Some(digest)) => Some(
+                cache
+                    .materialization_lease(&self.resolved_cache_identity(&reference, digest)?.key())
+                    .await?,
+            ),
+            _ => None,
+        };
+        let token = if cache_only {
+            None
+        } else {
+            self.registry
+                .auth(&reference, &self.authentication, RegistryOperation::Pull)
+                .await?
+        };
+        let first = if cache_only {
+            self.cached_manifest(&reference).await?
+        } else {
+            self.manifest(&reference, token.as_deref()).await?
+        };
+        let image_digest = sha256(&first);
+        let cache_identity = self.resolved_cache_identity(&reference, &image_digest)?;
+        if permit.is_none() {
+            if let Some(cache) = &self.cache {
+                permit = Some(cache.materialization_lease(&cache_identity.key()).await?);
+            }
+        }
         let bytes = match serde_json::from_slice::<OciManifest>(&first)? {
-            OciManifest::Image(_) => first,
+            OciManifest::Image(_) => first.clone(),
             OciManifest::ImageIndex(index) => {
                 ensure!(index.schema_version == 2, "unsupported OCI index schema");
                 let selected = index
@@ -163,7 +418,11 @@ impl Puller {
                     reference.repository().into(),
                     selected.digest.clone(),
                 );
-                let bytes = self.manifest(&pinned, token.as_deref()).await?;
+                let bytes = if cache_only {
+                    self.cached_manifest(&pinned).await?
+                } else {
+                    self.manifest(&pinned, token.as_deref()).await?
+                };
                 ensure!(bytes.len() == selected.size as usize, "manifest size mismatch");
                 bytes
             }
@@ -172,17 +431,15 @@ impl Puller {
         let mut manifest: OciImageManifest =
             serde_json::from_slice(&bytes).context("expected platform image manifest")?;
         validate_manifest(&mut manifest)?;
-        let parent = parent.to_owned();
-        let directory = tokio::task::spawn_blocking(move || {
-            tempfile::Builder::new()
-                .prefix("oci-")
-                .permissions(std::fs::Permissions::from_mode(0o700))
-                .tempdir_in(parent)
-        })
-        .await??;
+        let directory = staging(parent).await?;
         let blob_dir = directory.path().join("blobs/sha256");
         tokio::fs::create_dir_all(&blob_dir).await?;
-        self.blob(&reference, &manifest.config, &blob_dir).await?;
+        let usage = if cache_only {
+            BlobUse::CacheOnly
+        } else {
+            BlobUse::Private
+        };
+        self.blob(&reference, &manifest.config, &blob_dir, usage, None).await?;
         let config = tokio::fs::read(blob_dir.join(digest_hex(&manifest.config.digest)?)).await?;
         verify_platform(&config, &self.architecture)?;
         // Deduplicate shared layer descriptors before concurrent, create-new writes.
@@ -193,7 +450,7 @@ impl Puller {
             .collect();
         let downloads: Vec<_> = layers
             .values()
-            .map(|layer| self.blob(&reference, layer, &blob_dir))
+            .map(|layer| self.blob(&reference, layer, &blob_dir, usage, None))
             .collect();
         stream::iter(downloads)
             .buffer_unordered(4)
@@ -216,9 +473,42 @@ impl Puller {
         {
             files.push(PathBuf::from("blobs/sha256").join(digest_hex(digest)?));
         }
+        let mut required = vec![BlobRef::new(&image_digest, first.len() as u64, BlobKind::Metadata)?];
+        if image_digest != source_digest {
+            required.push(BlobRef::new(&source_digest, bytes.len() as u64, BlobKind::Metadata)?);
+        }
+        for descriptor in std::iter::once(&manifest.config).chain(layers.values().copied()) {
+            required.push(BlobRef::new(
+                &descriptor.digest,
+                u64::try_from(descriptor.size)?,
+                BlobKind::Private,
+            )?);
+        }
+        let materialization = CacheReceipt::new(
+            cache_identity.clone(),
+            &reference,
+            ContentDigest::parse(&source_digest)?,
+            required,
+        )?;
+        if let Some(cache) = &self.cache {
+            let cache = cache.for_repository(&reference);
+            if !cache_only {
+                cache.publish_metadata(&source_digest, &bytes).await?;
+                if image_digest != source_digest {
+                    cache.publish_metadata(&image_digest, &first).await?;
+                }
+            }
+            if !cache_only || cache.read_receipt(&cache_identity.key()).await?.is_none() {
+                cache.publish_receipt(materialization.clone()).await?;
+            }
+        }
         Ok(ImageLayout {
+            cache_identity,
+            materialization,
+            _permit: permit,
             directory,
             source_digest,
+            image_digest,
             files,
         })
     }
@@ -280,23 +570,51 @@ impl Puller {
         Ok(body)
     }
 
-    async fn blob(&self, reference: &Reference, descriptor: &OciDescriptor, directory: &Path) -> Result<()> {
+    async fn blob(
+        &self,
+        reference: &Reference,
+        descriptor: &OciDescriptor,
+        directory: &Path,
+        usage: BlobUse,
+        integrity: Option<&str>,
+    ) -> Result<()> {
         let destination = directory.join(digest_hex(&descriptor.digest)?);
         let cache = self.cache.as_ref().map(|cache| cache.for_repository(reference));
         let _lease = match &cache {
             Some(cache) => {
-                let lease = cache.lease(&descriptor.digest).await?;
-                if cache
-                    .copy_hit(&descriptor.digest, descriptor.size as u64, &destination)
-                    .await?
-                {
+                let mut lease = Some(cache.lease(&descriptor.digest).await?);
+                let hit = match usage {
+                    BlobUse::Private | BlobUse::CacheOnly => {
+                        cache
+                            .copy_hit_with_lease(&descriptor.digest, descriptor.size as u64, &destination, &mut lease)
+                            .await?
+                    }
+                    BlobUse::PublishedRoot | BlobUse::PublishedRootCacheOnly => {
+                        cache
+                            .link_root_hit(
+                                &descriptor.digest,
+                                descriptor.size as u64,
+                                &destination,
+                                integrity.context("published root requires BLAKE3 integrity")?,
+                            )
+                            .await?
+                    }
+                };
+                if hit {
                     tracing::debug!(digest = %descriptor.digest, "OCI blob cache hit");
                     return Ok(());
                 }
-                Some(lease)
+                if lease.is_none() {
+                    lease = Some(cache.lease(&descriptor.digest).await?);
+                }
+                lease
             }
             None => None,
         };
+        ensure!(
+            !matches!(usage, BlobUse::CacheOnly | BlobUse::PublishedRootCacheOnly),
+            "required OCI blob is missing or corrupt in the local cache"
+        );
         let mut chunks = self.registry.pull_blob_stream(reference, descriptor).await?;
         ensure!(
             chunks.content_length.is_none_or(|size| size == descriptor.size as u64),
@@ -309,10 +627,14 @@ impl Puller {
             .await?;
         let mut count = 0u64;
         let mut digest = Sha256::new();
+        let mut root_integrity = integrity.map(capsem_crypto::verify::Verifier::new).transpose()?;
         while let Some(chunk) = chunks.try_next().await? {
             count += chunk.len() as u64;
             ensure!(count <= descriptor.size as u64, "blob exceeds declared size");
             digest.update(&chunk);
+            if let Some(verifier) = &mut root_integrity {
+                verifier.update(&chunk);
+            }
             file.write_all(&chunk).await?;
         }
         ensure!(count == descriptor.size as u64, "blob size mismatch");
@@ -320,13 +642,54 @@ impl Puller {
             format!("sha256:{:x}", digest.finalize()) == descriptor.digest,
             "blob digest mismatch"
         );
+        ensure!(
+            root_integrity.is_none_or(capsem_crypto::verify::Verifier::finish),
+            "rootfs BLAKE3 integrity mismatch"
+        );
         file.flush().await?;
         drop(file);
+        if matches!(usage, BlobUse::PublishedRoot) {
+            tokio::task::spawn_blocking({
+                let destination = destination.clone();
+                move || -> std::io::Result<()> {
+                    use capsem_foundation::unix::{
+                        contained::{ContainedDir, ContainedOpenOptions},
+                        fs,
+                    };
+                    use std::os::fd::AsFd;
+                    let directory = ContainedDir::open_root(destination.parent().expect("blob has parent"))?;
+                    let file = directory.open_file(
+                        destination.file_name().expect("blob has name"),
+                        ContainedOpenOptions::read_only(),
+                    )?;
+                    fs::set_mode(file.as_fd(), 0o444)
+                }
+            })
+            .await??;
+        }
         if let Some(cache) = &cache {
-            cache.publish(&descriptor.digest, &destination).await?;
+            match usage {
+                BlobUse::Private => cache.publish(&descriptor.digest, &destination).await?,
+                BlobUse::PublishedRoot => cache.publish_root(&descriptor.digest, &destination).await?,
+                BlobUse::CacheOnly | BlobUse::PublishedRootCacheOnly => {
+                    anyhow::bail!("cache-only materialization cannot publish a download")
+                }
+            }
         }
         Ok(())
     }
+}
+
+/// A private, disposable directory under `parent` for verified downloads.
+async fn staging(parent: &Path) -> Result<tempfile::TempDir> {
+    let parent = parent.to_owned();
+    Ok(tokio::task::spawn_blocking(move || {
+        tempfile::Builder::new()
+            .prefix("oci-")
+            .permissions(std::fs::Permissions::from_mode(0o700))
+            .tempdir_in(parent)
+    })
+    .await??)
 }
 
 fn sha256(bytes: &[u8]) -> String {
@@ -381,4 +744,4 @@ fn validate_manifest(manifest: &mut OciImageManifest) -> Result<()> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(in crate::oci) mod tests;

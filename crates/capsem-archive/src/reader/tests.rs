@@ -257,7 +257,7 @@ fn descriptor_reader_pins_identity_and_never_crosses_captured_extents() {
     ));
 
     let wrong = FileHeader {
-        generation_id: crate::GenerationId::new_v4(),
+        generation_id: crate::GenerationId::generate(),
         ..header
     };
     assert!(matches!(

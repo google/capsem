@@ -3,25 +3,14 @@ use std::time::Duration;
 use crate::client::Client;
 use crate::{
     models, operations as api,
-    resources::{Debug, Networks, Profiles},
-    CreateOptions, Error, LogOptions, Result, RunOptions, VmSelector, VM,
+    resources::{Debug, Mcp, Networks},
+    CreateOptions, Error, Images, LogOptions, Result, RunOptions, VmSelector, VM,
 };
 
 /// A gateway connection. Clones and VM handles share the HTTP connection pool.
 #[derive(Debug, Clone)]
 pub struct Hypervisor {
     client: Client,
-    /// The catalog's defaults, resolved once per handle.
-    default_profiles: tokio::sync::OnceCell<models::ProfileDefaults>,
-}
-
-/// What a created sandbox runs, which decides whose default profile applies.
-/// A container brings its own userland, so its default is the catalog's to
-/// answer separately from the VM's.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Runtime {
-    Vm,
-    Container,
 }
 
 impl Hypervisor {
@@ -52,7 +41,6 @@ impl Hypervisor {
     pub fn new(url: &str, token: &str) -> Result<Self> {
         Ok(Self {
             client: Client::new(url, token)?,
-            default_profiles: tokio::sync::OnceCell::new(),
         })
     }
 
@@ -64,44 +52,6 @@ impl Hypervisor {
 
     pub async fn info(&self) -> Result<models::HypervisorInfo> {
         api::get_hypervisor_info(&self.client.transport, self.client.options).await
-    }
-
-    /// The profile the gateway's catalog uses for this runtime when a call
-    /// names none, read from `GET /status` on first use and cached for this
-    /// handle, so no profile name is compiled into the SDK.
-    pub async fn default_profile_id(&self, runtime: Runtime) -> Result<String> {
-        let defaults = self
-            .default_profiles
-            .get_or_try_init(|| async {
-                Ok::<_, Error>(
-                    self.info()
-                        .await?
-                        .profiles
-                        .map(|catalog| catalog.defaults)
-                        .unwrap_or_default(),
-                )
-            })
-            .await?;
-        match runtime {
-            Runtime::Vm => defaults.vm.clone(),
-            Runtime::Container => defaults.container.clone(),
-        }
-        .filter(|id| !id.is_empty())
-        .ok_or(match runtime {
-            Runtime::Vm => Error::InvalidInput(
-                "the gateway profile catalog names no default VM profile; pass a profile from profiles().list()",
-            ),
-            Runtime::Container => Error::InvalidInput(
-                "the gateway profile catalog names no default container profile; pass a profile from profiles().list()",
-            ),
-        })
-    }
-
-    async fn profile_id(&self, profile: Option<models::ProfileSummary>, runtime: Runtime) -> Result<String> {
-        match profile {
-            Some(profile) => Ok(profile.id),
-            None => self.default_profile_id(runtime).await,
-        }
     }
 
     /// Restart an idle managed service. Reconnect with a fresh gateway token.
@@ -121,15 +71,28 @@ impl Hypervisor {
         Networks(&self.client)
     }
 
-    pub fn profiles(&self) -> Profiles<'_> {
-        Profiles(&self.client)
+    pub fn images(&self) -> Images<'_> {
+        Images(&self.client)
+    }
+
+    pub fn credentials(&self) -> crate::Credentials<'_> {
+        crate::Credentials(&self.client)
+    }
+
+    pub fn connections(&self) -> crate::Connections<'_> {
+        crate::Connections(&self.client)
+    }
+
+    /// The MCP servers every VM runs, from settings and corp config.
+    pub fn mcp(&self) -> Mcp<'_> {
+        Mcp(&self.client)
     }
 
     pub fn debug(&self) -> Debug<'_> {
         Debug(&self.client)
     }
 
-    pub async fn create(&self, options: CreateOptions) -> Result<VM> {
+    pub(crate) fn provision_request(options: CreateOptions) -> Result<models::ProvisionRequest> {
         if options.cpus == Some(0) {
             return Err(Error::InvalidInput("cpus must be positive"));
         }
@@ -137,7 +100,6 @@ impl Hypervisor {
             return Err(Error::InvalidInput("container command and registry require an image"));
         }
         let name = options.name.filter(|name| !name.is_empty());
-        let has_container = options.image.is_some();
         let (env, container) = match options.image {
             Some(image) if !image.is_empty() => (
                 None,
@@ -155,26 +117,29 @@ impl Hypervisor {
         // Every local check first: an invalid argument must be refused before
         // the client asks the gateway anything.
         let ram_mb = Self::memory_mb(options.memory)?;
-        let body = models::ProvisionRequest {
-            profile_id: self
-                .profile_id(
-                    options.profile,
-                    if has_container { Runtime::Container } else { Runtime::Vm },
-                )
-                .await?,
+        Ok(models::ProvisionRequest {
             persistent: name.is_some(),
             name,
             cpus: options.cpus,
             ram_mb,
             env,
-            from: None,
             networks: options.networks.into_iter().map(|network| network.name).collect(),
             container,
-        };
+            ..Default::default()
+        })
+    }
+
+    pub(crate) fn managed_client(&self) -> Client {
+        self.client.clone()
+    }
+
+    pub async fn create(&self, options: CreateOptions) -> Result<VM> {
+        let has_container = options.image.is_some();
+        let body = Self::provision_request(options)?;
         let result = api::create_vm(
             &self.client.transport,
             &api::CreateVmParams { body },
-            self.client.options,
+            self.client.create_options(),
         )
         .await?;
         VM::created(self.client.clone(), result.id, result.name, Some(has_container))
@@ -196,13 +161,11 @@ impl Hypervisor {
         }
         let call = self.client.command_options(options.timeout_secs);
         let ram_mb = Self::memory_mb(options.memory)?;
-        let profile_id = self.profile_id(options.profile, Runtime::Vm).await?;
         api::run_vm(
             &self.client.transport,
             &api::RunVmParams {
                 body: models::RunRequest {
                     command: command.into(),
-                    profile_id,
                     timeout_secs: options.timeout_secs,
                     ram_mb,
                     cpus: options.cpus,

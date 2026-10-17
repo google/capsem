@@ -10,23 +10,21 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 FIXTURE_GRAPH = (
-    PROJECT_ROOT
-    / "tests"
-    / "capsem-release"
-    / "fixtures"
-    / "release-graph-stable-nightly.json"
+    PROJECT_ROOT / "tests" / "capsem-release" / "fixtures" / "release-graph-stable-nightly.json"
 )
 DIFF_POLICY = PROJECT_ROOT / "build_system" / "scripts" / "release" / "check-release-graph-diff.py"
 
 
-def test_binary_update_does_not_touch_profiles(tmp_path: Path) -> None:
+def test_binary_update_does_not_touch_the_runtime(tmp_path: Path) -> None:
     old = _fixture_graph()
     new = deepcopy(old)
     channel = "stable"
     version = _current_manifest_version(new, channel)
-    old_profiles = _stable_profile_payloads(old, channel, version)
+    old_runtime = _payload(old["manifests"][channel][version]["runtime"])
 
     package = new["manifests"][channel][version]["packages"][0]
     package["version"] = "1.4.1"
@@ -41,7 +39,7 @@ def test_binary_update_does_not_touch_profiles(tmp_path: Path) -> None:
     package["binaries"][0]["digest"] = _digest("stable-package-1.4.1-capsem-app")
     new["channels"][channel]["manifests"][0]["digest"] = _digest("stable-manifest-after-1.4.1")
 
-    assert _stable_profile_payloads(new, channel, version) == old_profiles
+    assert _payload(new["manifests"][channel][version]["runtime"]) == old_runtime
     assert new["manifests"]["nightly"] == old["manifests"]["nightly"]
     assert new["channels"]["nightly"] == old["channels"]["nightly"]
 
@@ -50,109 +48,52 @@ def test_binary_update_does_not_touch_profiles(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
 
 
-def test_profile_update_does_not_touch_packages(tmp_path: Path) -> None:
+@pytest.mark.parametrize(("channel", "other"), [("stable", "nightly"), ("nightly", "stable")])
+def test_runtime_update_touches_neither_packages_nor_the_other_channel(
+    tmp_path: Path, channel: str, other: str
+) -> None:
+    old = _fixture_graph()
+    new = deepcopy(old)
+    version = _current_manifest_version(new, channel)
+    old_packages = _payload(old["manifests"][channel][version]["packages"])
+    old_other = _payload(old["manifests"][other])
+
+    runtime = new["manifests"][channel][version]["runtime"]
+    runtime["revision"] = f"1.0.1-{channel}.20260703"
+    for architecture in runtime["architectures"]:
+        arch = architecture["architecture"]
+        architecture["image_revision"] = runtime["revision"]
+        architecture["package_inventory_revision"] = runtime["revision"]
+        architecture["images"][0]["digest"] = _digest(f"{channel}-{arch}-kernel-1.0.1")
+        architecture["software"][0]["version"] = "3.12.12"
+        architecture["software"][0]["digest"] = _digest(f"{channel}-{arch}-python-3.12.12")
+        architecture["evidence"][0]["digest"] = _digest(f"{channel}-{arch}-abom-1.0.1")
+    new["channels"][channel]["manifests"][0]["digest"] = _digest(
+        f"{channel}-manifest-after-runtime-1.0.1"
+    )
+
+    assert _payload(new["manifests"][channel][version]["packages"]) == old_packages
+    assert _payload(new["manifests"][other]) == old_other
+    assert new["channels"][other] == old["channels"][other]
+
+    result = _run_policy(tmp_path, old, new, "--lane", "runtime", "--channel", channel)
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_runtime_lane_refuses_a_package_change(tmp_path: Path) -> None:
+    """The runtime lane may not carry a binary change along with it."""
     old = _fixture_graph()
     new = deepcopy(old)
     channel = "stable"
-    profile_id = "co-work"
     version = _current_manifest_version(new, channel)
-    old_packages = _stable_package_payloads(old, channel, version)
-    old_other_profile = json.dumps(
-        old["manifests"][channel][version]["profiles"]["code"],
-        sort_keys=True,
-        separators=(",", ":"),
-    )
+    new["manifests"][channel][version]["runtime"]["revision"] = "1.0.1-stable.20260703"
+    new["manifests"][channel][version]["packages"][0]["version"] = "1.4.1"
 
-    profile = new["manifests"][channel][version]["profiles"][profile_id]
-    profile["revision"] = "1.1.1-stable"
-    profile["version"] = "1.1.1-stable"
-    architecture = profile["architectures"][0]
-    architecture["images"][0]["digest"] = _digest("stable-co-work-arm64-rootfs-1.1.1")
-    architecture["config"][0]["digest"] = _digest("stable-co-work-arm64-profile-1.1.1")
-    architecture["evidence"][0]["digest"] = _digest("stable-co-work-arm64-abom-1.1.1")
-    new["channels"][channel]["manifests"][0]["digest"] = _digest(
-        "stable-manifest-after-co-work-profile-1.1.1"
-    )
+    result = _run_policy(tmp_path, old, new, "--lane", "runtime", "--channel", channel)
 
-    assert _stable_package_payloads(new, channel, version) == old_packages
-    assert (
-        json.dumps(
-            new["manifests"][channel][version]["profiles"]["code"],
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        == old_other_profile
-    )
-    assert new["manifests"]["nightly"] == old["manifests"]["nightly"]
-    assert new["channels"]["nightly"] == old["channels"]["nightly"]
-
-    result = _run_policy(
-        tmp_path,
-        old,
-        new,
-        "--lane",
-        "profile",
-        "--channel",
-        channel,
-        "--profile",
-        profile_id,
-    )
-
-    assert result.returncode == 0, result.stderr
-
-
-def test_cowork_nightly_isolated_update(tmp_path: Path) -> None:
-    old = _fixture_graph()
-    new = deepcopy(old)
-    channel = "nightly"
-    profile_id = "co-work"
-    version = _current_manifest_version(new, channel)
-    old_stable = json.dumps(old["manifests"]["stable"], sort_keys=True, separators=(",", ":"))
-    old_packages = _stable_package_payloads(old, channel, version)
-    old_code_profile = _profile_payload(old, channel, version, "code")
-    old_cowork_x86_64 = _profile_architecture_payload(
-        old,
-        channel,
-        version,
-        profile_id,
-        "x86_64",
-    )
-
-    profile = new["manifests"][channel][version]["profiles"][profile_id]
-    profile["revision"] = "1.0.1-nightly.20260703"
-    profile["version"] = "1.0.1-nightly.20260703"
-    architecture = _profile_architecture(profile, "arm64")
-    architecture["images"][0]["digest"] = _digest("nightly-co-work-arm64-rootfs-1.2.0")
-    architecture["config"][0]["digest"] = _digest("nightly-co-work-arm64-profile-1.2.0")
-    architecture["software"][0]["version"] = "3.12.12"
-    architecture["software"][0]["digest"] = _digest("nightly-co-work-arm64-python-3.12.12")
-    architecture["evidence"][0]["digest"] = _digest("nightly-co-work-arm64-abom-1.2.0")
-    new["channels"][channel]["manifests"][0]["digest"] = _digest(
-        "nightly-manifest-after-co-work-arm64-1.2.0"
-    )
-
-    assert json.dumps(new["manifests"]["stable"], sort_keys=True, separators=(",", ":")) == old_stable
-    assert _stable_package_payloads(new, channel, version) == old_packages
-    assert _profile_payload(new, channel, version, "code") == old_code_profile
-    assert (
-        _profile_architecture_payload(new, channel, version, profile_id, "x86_64")
-        == old_cowork_x86_64
-    )
-    assert new["channels"]["stable"] == old["channels"]["stable"]
-
-    result = _run_policy(
-        tmp_path,
-        old,
-        new,
-        "--lane",
-        "profile",
-        "--channel",
-        channel,
-        "--profile",
-        profile_id,
-    )
-
-    assert result.returncode == 0, result.stderr
+    assert result.returncode != 0
+    assert "packages" in result.stdout + result.stderr
 
 
 def test_stable_nightly_switch_keeps_channel_state_independent() -> None:
@@ -168,10 +109,10 @@ def test_stable_nightly_switch_keeps_channel_state_independent() -> None:
     assert nightly_version == "1.0.2"
     assert stable["packages"][0]["version"] == "1.4.0"
     assert nightly["packages"][0]["version"] == "1.5.0-nightly.20260702"
-    assert stable["profiles"]["co-work"]["revision"] == "1.0.0-stable.20260702"
-    assert nightly["profiles"]["co-work"]["revision"] == "1.0.0-nightly.20260702"
+    assert stable["runtime"]["revision"] == "1.0.0-stable.20260702"
+    assert nightly["runtime"]["revision"] == "1.0.0-nightly.20260702"
     assert stable["packages"] != nightly["packages"]
-    assert stable["profiles"]["co-work"] != nightly["profiles"]["co-work"]
+    assert stable["runtime"] != nightly["runtime"]
 
 
 def test_manifest_version_independence() -> None:
@@ -192,25 +133,22 @@ def test_manifest_version_independence() -> None:
         stable["packages"][0]["binaries"][0]["version"],
         nightly["packages"][0]["binaries"][0]["version"],
     }
-    profile_versions = {
-        stable["profiles"]["co-work"]["revision"],
-        nightly["profiles"]["co-work"]["revision"],
-        stable["profiles"]["co-work"]["architectures"][0]["image_revision"],
-        nightly["profiles"]["co-work"]["architectures"][0]["image_revision"],
-        stable["profiles"]["co-work"]["architectures"][0]["package_inventory_revision"],
-        nightly["profiles"]["co-work"]["architectures"][0]["package_inventory_revision"],
+    runtime_revisions = {
+        revision
+        for manifest in (stable, nightly)
+        for revision in (
+            manifest["runtime"]["revision"],
+            manifest["runtime"]["architectures"][0]["image_revision"],
+            manifest["runtime"]["architectures"][0]["package_inventory_revision"],
+        )
     }
 
     assert package_versions == {"1.4.0", "1.5.0-nightly.20260702"}
-    assert profile_versions == {
-        "1.0.0-stable.20260702",
-        "1.0.0-nightly.20260702",
-        "1.1.0",
-    }
+    assert runtime_revisions == {"1.0.0-stable.20260702", "1.0.0-nightly.20260702"}
     assert stable_version not in package_versions
     assert nightly_version not in package_versions
-    assert stable_version not in profile_versions
-    assert nightly_version not in profile_versions
+    assert stable_version not in runtime_revisions
+    assert nightly_version not in runtime_revisions
 
 
 def test_manifest_history_audit_records() -> None:
@@ -249,60 +187,8 @@ def _current_manifest_version(graph: dict[str, Any], channel: str) -> str:
     )
 
 
-def _stable_profile_payloads(
-    graph: dict[str, Any],
-    channel: str,
-    version: str,
-) -> dict[str, str]:
-    profiles = graph["manifests"][channel][version]["profiles"]
-    return {
-        profile_id: json.dumps(profile, sort_keys=True, separators=(",", ":"))
-        for profile_id, profile in profiles.items()
-    }
-
-
-def _stable_package_payloads(
-    graph: dict[str, Any],
-    channel: str,
-    version: str,
-) -> str:
-    return json.dumps(
-        graph["manifests"][channel][version]["packages"],
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-
-
-def _profile_payload(
-    graph: dict[str, Any],
-    channel: str,
-    version: str,
-    profile_id: str,
-) -> str:
-    return json.dumps(
-        graph["manifests"][channel][version]["profiles"][profile_id],
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-
-
-def _profile_architecture_payload(
-    graph: dict[str, Any],
-    channel: str,
-    version: str,
-    profile_id: str,
-    architecture: str,
-) -> str:
-    profile = graph["manifests"][channel][version]["profiles"][profile_id]
-    return json.dumps(
-        _profile_architecture(profile, architecture),
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-
-
-def _profile_architecture(profile: dict[str, Any], architecture: str) -> dict[str, Any]:
-    return next(item for item in profile["architectures"] if item["architecture"] == architecture)
+def _payload(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
 
 def _run_policy(

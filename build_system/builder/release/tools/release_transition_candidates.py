@@ -9,8 +9,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
-from .release_glowup import tamper_profile_artifact_digest, validate_installed_evidence
+from .release_glowup import tamper_runtime_artifact_digest, validate_installed_evidence
 from .release_transition import validate_transition_verdict
+
+UPDATED_MAX_CAPSEM_VERSION = "9999.0.0"
 
 
 @dataclass(frozen=True)
@@ -52,20 +54,14 @@ def _manifest(path: Path) -> dict[str, object]:
     return cast(dict[str, object], value)
 
 
-def _selected_profile(manifest: dict[str, object]) -> tuple[str, dict[str, object]]:
-    profiles = manifest.get("profiles")
-    if not isinstance(profiles, dict) or not profiles:
-        raise RuntimeError("release transition manifest has no profiles")
-    for profile_id in sorted(profiles):
-        profile = profiles[profile_id]
-        profile_object = cast(dict[str, object], profile) if isinstance(profile, dict) else None
-        if (
-            isinstance(profile_id, str)
-            and profile_object is not None
-            and str(profile_object.get("status") or "current").lower() != "revoked"
-        ):
-            return profile_id, profile_object
-    raise RuntimeError("release transition manifest has no usable profile")
+def _runtime(manifest: dict[str, object]) -> dict[str, object]:
+    runtime = manifest.get("runtime")
+    if not isinstance(runtime, dict):
+        raise RuntimeError("release transition manifest has no runtime")
+    runtime_fields = cast(dict[str, object], runtime)
+    if str(runtime_fields.get("status") or "current").lower() == "revoked":
+        raise RuntimeError("release transition manifest runtime is revoked")
+    return runtime_fields
 
 
 def _write(path: Path, manifest: dict[str, object]) -> None:
@@ -80,26 +76,24 @@ def stage_transition_candidates(
     authority: Path,
     destination: Path,
 ) -> TransitionCandidates:
-    """Stage a real metadata update and two failures without mutating authority."""
+    """Stage a real metadata update and two failures without mutating authority.
+
+    The update widens the runtime's compatible Capsem range: a metadata-only
+    change every installed binary accepts, which still yields new manifest bytes.
+    """
 
     authority_bytes = authority.read_bytes()
     original = _manifest(authority)
     updated = copy.deepcopy(original)
-    profile_id, profile = _selected_profile(updated)
-    description = profile.get("description", "")
-    if not isinstance(description, str):
-        raise RuntimeError(f"release profile {profile_id} description must be a string")
-    profile["description"] = f"{description} [installed transition proof]".strip()
+    runtime = _runtime(updated)
+    if runtime.get("max_capsem_version") == UPDATED_MAX_CAPSEM_VERSION:
+        raise RuntimeError("release transition runtime already declares the proof bound")
+    runtime["max_capsem_version"] = UPDATED_MAX_CAPSEM_VERSION
 
     tampered = copy.deepcopy(updated)
-    tamper_profile_artifact_digest(
-        tampered,
-        profile_ids=(profile_id,),
-        architecture="arm64",
-    )
+    tamper_runtime_artifact_digest(tampered, architecture="arm64")
     incompatible = copy.deepcopy(updated)
-    _, incompatible_profile = _selected_profile(incompatible)
-    incompatible_profile["min_capsem_version"] = "9999.0.0"
+    _runtime(incompatible)["min_capsem_version"] = "9999.0.0"
 
     candidates = TransitionCandidates(
         updated=destination / "updated-manifest.json",
@@ -145,7 +139,7 @@ def validate_complete_verdicts(
     )
     validate_transition_verdict(
         update,
-        kind="profile_only",
+        kind="runtime_only",
         result="activated",
         source=source,
         candidate_manifest_sha256=updated_sha256,
@@ -154,7 +148,7 @@ def validate_complete_verdicts(
         raise RuntimeError("macOS transition candidates do not identify four distinct payloads")
     for verdict, kind, digest in (
         (tamper, "tampered_artifact", tampered_sha256),
-        (incompatible, "incompatible_profile", incompatible_sha256),
+        (incompatible, "incompatible_runtime", incompatible_sha256),
     ):
         validate_transition_verdict(
             verdict,

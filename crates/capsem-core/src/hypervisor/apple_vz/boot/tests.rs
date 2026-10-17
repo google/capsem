@@ -17,10 +17,7 @@ fn creates_boot_loader_with_kernel_only() {
     let loader = create_boot_loader(&config).unwrap();
 
     let cmdline = unsafe { loader.commandLine() };
-    assert_eq!(
-        cmdline.to_string(),
-        "console=hvc0 root=/dev/vda ro init_on_alloc=1 slab_nomerge page_alloc.shuffle=1"
-    );
+    assert_eq!(cmdline.to_string(), crate::vm::config::KERNEL_CMDLINE);
     let initrd = unsafe { loader.initialRamdiskURL() };
     assert!(initrd.is_none());
 }

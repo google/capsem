@@ -13,7 +13,7 @@ from pathlib import Path
 
 from .actions import Call
 from .command import GateCommand
-from .content import ProfileContent
+from .content import RuntimeContent
 from .debproof import DebProof
 from .execution import Kind, Needs, Speed, step
 from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
@@ -21,9 +21,9 @@ from .plan import Plan
 from .sourcecommit import source_commit_for_checkout
 
 
-def _content(config, value: str) -> ProfileContent:
+def _content(config, value: str) -> RuntimeContent:
     root = Path(value)
-    return ProfileContent.isolated(config, root if root.is_absolute() else config.path(value))
+    return RuntimeContent.isolated(config, root if root.is_absolute() else config.path(value))
 
 
 class ProveDebCommand(

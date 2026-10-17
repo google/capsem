@@ -14,13 +14,12 @@ everything downstream of it is the real thing. The manifest is authored by
 `capsem-admin`, the same binary a release uses. The fetch is
 `fetch-release-artifacts.py`, the same script the workflow's composite action
 calls, reading `file://` URLs it already supports. The staging is
-`stage-release-test-inputs.py` and `materialize-config.sh`, the same two the
-pairing job runs. Only the URLs are local, and only because a local run has
-nowhere else to put bytes it has not published.
+`stage-release-test-inputs.py`, the same script the pairing job runs. Only the
+URLs are local, and only because a local run has nowhere else to put bytes it
+has not published.
 
 What this deliberately does not do is fake the shape. A hand-written manifest
-would satisfy the verifier and prove nothing about what `capsem-admin` emits,
-which is where the profile-publication duplicates came from in the first place.
+would satisfy the verifier and prove nothing about what `capsem-admin` emits.
 """
 
 from __future__ import annotations

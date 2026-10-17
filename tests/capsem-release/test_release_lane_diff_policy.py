@@ -14,11 +14,7 @@ import blake3
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = PROJECT_ROOT / "build_system" / "scripts" / "release" / "check-release-graph-diff.py"
 FIXTURE_GRAPH = (
-    PROJECT_ROOT
-    / "tests"
-    / "capsem-release"
-    / "fixtures"
-    / "release-graph-stable-nightly.json"
+    PROJECT_ROOT / "tests" / "capsem-release" / "fixtures" / "release-graph-stable-nightly.json"
 )
 
 
@@ -27,34 +23,22 @@ def test_binary_allowed_diff(tmp_path: Path) -> None:
     new = deepcopy(old)
     new["channels"]["stable"]["manifests"][0]["digest"]["sha256"] = "c" * 64
     new["manifests"]["stable"]["1.0.2"]["packages"][0]["digest"]["sha256"] = "d" * 64
-    new["manifests"]["stable"]["1.0.2"]["packages"][0]["binaries"][0]["digest"][
-        "blake3"
-    ] = "e" * 64
+    new["manifests"]["stable"]["1.0.2"]["packages"][0]["binaries"][0]["digest"]["blake3"] = "e" * 64
 
     result = _run_policy(tmp_path, old, new, "--lane", "binary", "--channel", "stable")
 
     assert result.returncode == 0, result.stderr
 
 
-def test_profile_allowed_diff(tmp_path: Path) -> None:
+def test_runtime_allowed_diff(tmp_path: Path) -> None:
     old = _graph()
     new = deepcopy(old)
     new["channels"]["nightly"]["manifests"][0]["digest"]["sha256"] = "c" * 64
-    new["manifests"]["nightly"]["1.0.2"]["profiles"]["co-work"][
-        "architectures"
-    ][0]["images"][0]["digest"]["blake3"] = "d" * 64
+    new["manifests"]["nightly"]["1.0.2"]["runtime"]["architectures"][0]["images"][0]["digest"][
+        "blake3"
+    ] = "d" * 64
 
-    result = _run_policy(
-        tmp_path,
-        old,
-        new,
-        "--lane",
-        "profile",
-        "--channel",
-        "nightly",
-        "--profile",
-        "co-work",
-    )
+    result = _run_policy(tmp_path, old, new, "--lane", "runtime", "--channel", "nightly")
 
     assert result.returncode == 0, result.stderr
 
@@ -63,49 +47,44 @@ def test_cross_channel_change_rejected_without_allowance(tmp_path: Path) -> None
     old = _graph()
     new = deepcopy(old)
     new["channels"]["stable"]["manifests"][0]["digest"]["sha256"] = "c" * 64
-    new["manifests"]["stable"]["1.0.2"]["profiles"]["co-work"]["revision"] = "1.1.1"
-    new["manifests"]["nightly"]["1.0.2"]["profiles"]["co-work"]["revision"] = (
-        "1.1.1"
-    )
+    new["manifests"]["stable"]["1.0.2"]["runtime"]["revision"] = "1.1.1"
+    new["manifests"]["nightly"]["1.0.2"]["runtime"]["revision"] = "1.1.1"
 
-    result = _run_policy(
-        tmp_path,
-        old,
-        new,
-        "--lane",
-        "profile",
-        "--channel",
-        "nightly",
-        "--profile",
-        "co-work",
-    )
+    result = _run_policy(tmp_path, old, new, "--lane", "runtime", "--channel", "nightly")
 
     assert result.returncode == 1
     assert "channels.stable.manifests.0.digest.sha256" in result.stderr
-    assert "manifests.stable.1.0.2.profiles.co-work.revision" in result.stderr
-    assert "manifests.nightly.1.0.2.profiles.co-work.revision" not in result.stderr
+    assert "manifests.stable.1.0.2.runtime.revision" in result.stderr
+    assert "manifests.nightly.1.0.2.runtime.revision" not in result.stderr
 
 
-def test_binary_lane_rejects_profile_changes(tmp_path: Path) -> None:
+def test_runtime_lane_rejects_package_changes(tmp_path: Path) -> None:
     old = _graph()
     new = deepcopy(old)
-    new["manifests"]["stable"]["1.0.2"]["profiles"]["co-work"]["revision"] = "1.1.1"
+    new["manifests"]["nightly"]["1.0.2"]["packages"][0]["digest"]["sha256"] = "d" * 64
+
+    result = _run_policy(tmp_path, old, new, "--lane", "runtime", "--channel", "nightly")
+
+    assert result.returncode == 1
+    assert "manifests.nightly.1.0.2.packages.0.digest.sha256" in result.stderr
+
+
+def test_binary_lane_rejects_runtime_changes(tmp_path: Path) -> None:
+    old = _graph()
+    new = deepcopy(old)
+    new["manifests"]["stable"]["1.0.2"]["runtime"]["revision"] = "1.1.1"
 
     result = _run_policy(tmp_path, old, new, "--lane", "binary", "--channel", "stable")
 
     assert result.returncode == 1
-    assert "manifests.stable.1.0.2.profiles.co-work.revision" in result.stderr
+    assert "manifests.stable.1.0.2.runtime.revision" in result.stderr
 
 
 def test_binary_lane_rejects_other_channel_binary_changes(tmp_path: Path) -> None:
     old = _graph()
     new = deepcopy(old)
-    new["manifests"]["stable"]["1.0.2"]["packages"][0]["binaries"][0]["digest"][
-        "sha256"
-    ] = "c" * 64
-    new["manifests"]["nightly"]["1.0.2"]["packages"][0]["digest"][
-        "sha256"
-    ] = "d" * 64
+    new["manifests"]["stable"]["1.0.2"]["packages"][0]["binaries"][0]["digest"]["sha256"] = "c" * 64
+    new["manifests"]["nightly"]["1.0.2"]["packages"][0]["digest"]["sha256"] = "d" * 64
 
     result = _run_policy(tmp_path, old, new, "--lane", "binary", "--channel", "stable")
 
@@ -114,25 +93,15 @@ def test_binary_lane_rejects_other_channel_binary_changes(tmp_path: Path) -> Non
     assert "manifests.stable.1.0.2.packages.0.binaries.0.digest.sha256" not in result.stderr
 
 
-def test_fixture_can_mutate_nightly_co_work_only(tmp_path: Path) -> None:
+def test_fixture_can_mutate_nightly_runtime_only(tmp_path: Path) -> None:
     old = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
     new = deepcopy(old)
     new["channels"]["nightly"]["manifests"][0]["digest"]["sha256"] = "f" * 64
-    new["manifests"]["nightly"]["1.0.2"]["profiles"]["co-work"][
-        "architectures"
-    ][0]["images"][0]["digest"]["sha256"] = "e" * 64
+    new["manifests"]["nightly"]["1.0.2"]["runtime"]["architectures"][0]["images"][0]["digest"][
+        "sha256"
+    ] = "e" * 64
 
-    result = _run_policy(
-        tmp_path,
-        old,
-        new,
-        "--lane",
-        "profile",
-        "--channel",
-        "nightly",
-        "--profile",
-        "co-work",
-    )
+    result = _run_policy(tmp_path, old, new, "--lane", "runtime", "--channel", "nightly")
 
     assert result.returncode == 0, result.stderr
     assert new["channels"]["stable"] == old["channels"]["stable"]
@@ -147,7 +116,15 @@ def _run_policy(
     old_path.write_text(json.dumps(old), encoding="utf-8")
     new_path.write_text(json.dumps(new), encoding="utf-8")
     return subprocess.run(
-        [sys.executable, str(SCRIPT), "--old", str(old_path), "--new", str(new_path), *args],
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--old",
+            str(old_path),
+            "--new",
+            str(new_path),
+            *args,
+        ],
         check=False,
         text=True,
         capture_output=True,
@@ -202,20 +179,18 @@ def _manifest(channel: str, version: str) -> dict:
                 ],
             }
         ],
-        "profiles": {"co-work": _profile(channel)},
+        "runtime": _runtime(channel),
     }
 
 
-def _profile(channel: str) -> dict:
+def _runtime(channel: str) -> dict:
     return {
-        "id": "co-work",
         "revision": f"1.1.0-{channel}",
         "min_capsem_version": "1.4.0",
         "architectures": [
             {
                 "architecture": "arm64",
                 "software": [],
-                "config": [],
                 "images": [{"kind": "rootfs", "digest": _digest("a")}],
                 "evidence": [{"kind": "abom", "digest": _digest("b")}],
             }

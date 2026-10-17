@@ -109,7 +109,7 @@ where
         let mut file = tokio::fs::File::create(&tmp)
             .await
             .with_context(|| format!("create {}", tmp.display()))?;
-        let mut hasher = blake3::Hasher::new();
+        let mut hasher = capsem_crypto::blake3::Hasher::new();
         let mut bytes_done: u64 = 0;
         let mut stream = resp.bytes_stream();
 

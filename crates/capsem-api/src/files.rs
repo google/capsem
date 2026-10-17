@@ -66,4 +66,6 @@ pub struct LogsResponse {
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct ErrorResponse {
     pub error: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
 }

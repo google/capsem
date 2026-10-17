@@ -5,8 +5,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
-import blake3
-
+from .. import crypto as blake3
 from . import auditfs, prefix, resume
 from .actions import Action
 from .config import GateConfig

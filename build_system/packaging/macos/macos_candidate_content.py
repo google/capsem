@@ -8,8 +8,6 @@ import os
 import shutil
 from pathlib import Path
 
-GUEST_PROFILE_ROOT = "file:///Volumes/My%20Shared%20Files/capsem-profiles"
-
 
 def hardlink_or_copy(source: Path, destination: Path) -> None:
     """Stage immutable bytes cheaply, copying only across filesystems."""
@@ -53,37 +51,15 @@ def stage_candidate_assets(
     return destination_root
 
 
-def localize_candidate_profile_urls(manifest_path: Path) -> None:
-    """Point generated profile config rows at the Tart profile share."""
-
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    rewritten = 0
-    profiles = manifest.get("profiles")
-    if not isinstance(profiles, dict):
-        raise RuntimeError("candidate release manifest has no profiles")
-    for profile in profiles.values():
-        if not isinstance(profile, dict):
-            continue
-        architectures = profile.get("architectures")
-        if not isinstance(architectures, list):
-            continue
-        for architecture in architectures:
-            if not isinstance(architecture, dict):
-                continue
-            config = architecture.get("config")
-            if not isinstance(config, list):
-                continue
-            for row in config:
-                url = row.get("url") if isinstance(row, dict) else None
-                if isinstance(url, str) and url.startswith("/profiles/releases/"):
-                    row["url"] = f"{GUEST_PROFILE_ROOT}{url}"
-                    rewritten += 1
-    if rewritten == 0:
-        raise RuntimeError("candidate release manifest has no profile URLs to localize")
-    manifest_path.write_text(
-        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+def stage_release_site(manifest: Path, asset_share: Path, candidate: Path, channel: str) -> None:
+    """Lay the candidate out as the release site does: the channel manifest in
+    its channel directory, and every runtime blob under the site's releases
+    directory as `<asset_version>/<arch>-<name>` -- where an installed service
+    repairs a missing asset from, since the runtime document names no other
+    asset base."""
+    stage_file(manifest, candidate / "assets" / channel / "manifest.json")
+    for blob in sorted(path for path in asset_share.rglob("*") if path.is_file()):
+        stage_file(blob, candidate / "assets" / "releases" / blob.relative_to(asset_share))
 
 
 def stage_file(source: Path, destination: Path) -> None:
@@ -101,9 +77,14 @@ def stage_guest_scripts(root: Path, share: Path) -> None:
     # Launchers share their real release implementation; the clean guest has
     # neither an editable builder install nor the repository bootstrap path.
     for name in (
-        "__init__.py", "release/__init__.py", "release/tools/__init__.py",
-        "release/tools/release_fixture_server.py", "release/tools/release_glowup.py",
-        "release/tools/release_transition.py", "release/tools/verify_installed_release.py",
+        "__init__.py",
+        "crypto.py",
+        "release/__init__.py",
+        "release/tools/__init__.py",
+        "release/tools/release_fixture_server.py",
+        "release/tools/release_glowup.py",
+        "release/tools/release_transition.py",
+        "release/tools/verify_installed_release.py",
     ):
         stage_file(root / "build_system/builder" / name, share / "capsem_builder" / name)
     stage_file(root / "build_system/packaging/macos" / "macos_tart_guest.sh", share / "guest.sh")

@@ -159,14 +159,8 @@ def generated_settings(config: GateConfig) -> Step:
     './mock-settings.generated'` -- which is how this was found, on the first
     real run from a prefix.
 
-    Before the surfaces and after the Rust toolchain, because the script needs
-    `cargo run -p capsem-core --bin mcp_export`. That cost is not new work in
-    this lane: clippy builds the same workspace a few steps later.
-
-    Which is also why it claims `workspace_binaries`. It shares that target
-    directory with `web.release-channel`, the two can overlap, and cargo's own
-    lock would serialise them anyway -- as execution time, inside a step, where
-    no instrument the gate has can see it. Declared, the wait is measured.
+    It compiles nothing: the script only renders the settings registry through
+    Python, so it claims no Rust target directory.
     """
     return step(
         "audit.generated-settings",
@@ -181,8 +175,7 @@ def generated_settings(config: GateConfig) -> Step:
                 str(config.path(config.devloop.generated_settings_scratch)),
             ]
         ),
-        contends=(config.exclusive("workspace_binaries"),),
-        kind=Kind.COMPILE,
+        kind=Kind.LINT,
         speed=Speed.FAST,
     )
 

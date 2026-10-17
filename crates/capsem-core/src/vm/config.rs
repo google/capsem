@@ -1,5 +1,6 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 
 use thiserror::Error;
@@ -10,21 +11,36 @@ const MAX_CPU: u32 = 8;
 const MIN_RAM: u64 = 256 * 1024 * 1024; // 256 MB
 const MAX_RAM: u64 = 16 * 1024 * 1024 * 1024; // 16 GB
 
-/// Default kernel command line (arch-dependent console device).
-fn default_kernel_cmdline() -> &'static str {
-    #[cfg(target_arch = "aarch64")]
-    {
-        "console=hvc0 root=/dev/vda ro init_on_alloc=1 slab_nomerge page_alloc.shuffle=1"
-    }
-    #[cfg(target_arch = "x86_64")]
-    {
-        "console=ttyS0 root=/dev/vda ro init_on_alloc=1 slab_nomerge page_alloc.shuffle=1"
-    }
-    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
-    {
-        "console=hvc0 root=/dev/vda ro init_on_alloc=1 slab_nomerge page_alloc.shuffle=1"
-    }
+/// Every flag the guest kernel boots with, after the console.
+///
+/// - `root=/dev/vda ro`: the rootfs is the read-only system image.
+/// - `loglevel=4 quiet`: kernel warnings and errors still reach the serial
+///   console the test fixtures keep. At `loglevel=1` a guest whose every
+///   VSOCK link ended in one millisecond left a console that said nothing.
+/// - `init_on_alloc=0 init_on_free=0`: guest heap wiping is disabled, including
+///   kernels with allocation wiping enabled by default. Fresh host memory is
+///   already zero-initialized; guest boot must not eagerly touch all VM RAM.
+/// - `slab_nomerge`: every slab cache stays separate, so an overflow in one
+///   object type cannot reach objects of another merged into its cache.
+/// - `page_alloc.shuffle=1`: page allocation order is randomized.
+/// - `oops=panic`: a kernel oops ends the VM instead of leaving it running on
+///   a kernel in an unknown state, where a failed exploit could be retried.
+/// - `random.trust_cpu=1`: the CPU's RNG seeds the pool at boot.
+macro_rules! guest_kernel_flags {
+    () => {
+        "root=/dev/vda ro loglevel=4 quiet init_on_alloc=0 init_on_free=0 slab_nomerge \
+         page_alloc.shuffle=1 oops=panic random.trust_cpu=1"
+    };
 }
+
+/// The guest kernel command line: the one every Capsem VM boots with.
+#[cfg(target_arch = "x86_64")]
+// 2048 two-KiB slabs: 4 MiB initially, with CONFIG_SWIOTLB_DYNAMIC growth.
+// The x86 guest's 64-bit VirtIO devices normally need no bouncing.
+pub const KERNEL_CMDLINE: &str = concat!("console=ttyS0 swiotlb=2048 ", guest_kernel_flags!());
+/// The guest kernel command line: the one every Capsem VM boots with.
+#[cfg(not(target_arch = "x86_64"))]
+pub const KERNEL_CMDLINE: &str = concat!("console=hvc0 ", guest_kernel_flags!());
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
@@ -54,8 +70,20 @@ pub enum ConfigError {
     ArchMismatch(String),
 }
 
+/// Trusted authority for metadata operations a confined KVM owner cannot
+/// safely perform itself.
+pub trait GuestMetadataAuthority: Send + Sync {
+    fn set_mode(&self, relative_path: &[u8], mode: u16) -> std::io::Result<()>;
+    fn set_times(
+        &self,
+        relative_path: &[u8],
+        atime: capsem_proto::upstream_grant::GuestFileTime,
+        mtime: capsem_proto::upstream_grant::GuestFileTime,
+    ) -> std::io::Result<()>;
+}
+
 /// A VirtioFS shared directory to expose to the guest via virtio-fs.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct VirtioFsShare {
     /// Mount tag visible in guest (e.g., "capsem"). Max 36 ASCII bytes.
     pub tag: String,
@@ -63,6 +91,20 @@ pub struct VirtioFsShare {
     pub host_path: PathBuf,
     /// If true, guest cannot write to this share.
     pub read_only: bool,
+    /// Coordinator broker for permission changes on a writable KVM share.
+    pub metadata_authority: Option<Arc<dyn GuestMetadataAuthority>>,
+}
+
+impl std::fmt::Debug for VirtioFsShare {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("VirtioFsShare")
+            .field("tag", &self.tag)
+            .field("host_path", &self.host_path)
+            .field("read_only", &self.read_only)
+            .field("metadata_authority", &self.metadata_authority.is_some())
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -134,7 +176,7 @@ impl Default for VmConfigBuilder {
             disk_path: None,
             scratch_disk_path: None,
             virtio_fs_shares: Vec::new(),
-            kernel_cmdline: default_kernel_cmdline().to_string(),
+            kernel_cmdline: KERNEL_CMDLINE.to_string(),
             expected_kernel_hash: None,
             expected_initrd_hash: None,
             checkpoint_path: None,
@@ -181,7 +223,13 @@ impl VmConfigBuilder {
             tag: tag.into(),
             host_path: path.as_ref().to_path_buf(),
             read_only,
+            metadata_authority: None,
         });
+        self
+    }
+
+    pub fn virtio_fs_share_config(mut self, share: VirtioFsShare) -> Self {
+        self.virtio_fs_shares.push(share);
         self
     }
 
@@ -268,7 +316,7 @@ impl VmConfigBuilder {
             .map(PathBuf::from)
             .unwrap_or_else(|| std::env::temp_dir().join("capsem-asset-hash-cache"));
         let cache_key_path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-        let digest = blake3::hash(cache_key_path.to_string_lossy().as_bytes())
+        let digest = capsem_crypto::blake3::hash(cache_key_path.to_string_lossy().as_bytes())
             .to_hex()
             .to_string();
         root.join(format!("{}-{name}.capsem-hash-ok", &digest[..16]))
@@ -299,7 +347,7 @@ impl VmConfigBuilder {
     /// The blake3 hex digest an expected-hash value denotes.
     ///
     /// Two spellings reach boot for the same digest: asset manifests carry
-    /// bare hex, while release-graph digests and the profile pins derived from
+    /// bare hex, while release-graph digests and the asset pins derived from
     /// them carry `blake3:<hex>`. Both are accepted here, in the one place
     /// that decides what an expected hash means, so no caller has to remember
     /// which spelling it holds.
@@ -327,7 +375,7 @@ impl VmConfigBuilder {
         }
 
         let mut file = std::fs::File::open(path)?;
-        let mut hasher = blake3::Hasher::new();
+        let mut hasher = capsem_crypto::blake3::Hasher::new();
         let mut buffer = vec![0; 65536];
         loop {
             let n = file.read(&mut buffer)?;

@@ -30,13 +30,13 @@ the one that never announces itself.
 
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Annotated, Literal
 
 from pydantic import Field
 
+from .. import crypto as hashlib
 from .configschema import Strict
 
 #: Long enough that a reason has to be a sentence. Short enough that a real one

@@ -2,6 +2,72 @@ use super::*;
 use crate::gateway::{UpdateCompatibilityState, UpdateStatusResponse, UpdateTrackState, UpdateTrackStatus};
 use muda::MenuId;
 
+#[test]
+fn lifecycle_menu_uses_service_authority_instead_of_inferring_from_running_status() {
+    let vm: VmSummary = serde_json::from_value(serde_json::json!({
+        "id": "opaque-id", "name": "display-alias", "status": "Running", "persistent": true,
+        "available_actions": ["delete"]
+    }))
+    .unwrap();
+    let ids = submenu_child_ids(&vm_submenu_spec(&vm));
+    assert_eq!(ids, vec!["connect:opaque-id", "delete:opaque-id"]);
+}
+
+#[test]
+fn stopped_startable_image_has_start_but_blocked_suspended_image_has_no_resume() {
+    let startable: VmSummary = serde_json::from_value(serde_json::json!({
+        "id": "stopped", "name": "image-session", "status": "Stopped", "persistent": true,
+        "available_actions": ["start", "fork", "delete"]
+    }))
+    .unwrap();
+    assert_eq!(
+        submenu_child_ids(&vm_submenu_spec(&startable)),
+        vec!["start:stopped", "fork:stopped", "delete:stopped"]
+    );
+    let blocked: VmSummary = serde_json::from_value(serde_json::json!({
+        "id": "blocked", "name": null, "status": "Suspended", "persistent": true,
+        "available_actions": ["fork", "delete"], "resume_blocked_reason": "Image checkpoint incompatible"
+    }))
+    .unwrap();
+    let MenuEntry::Sub { items, .. } = vm_submenu_spec(&blocked) else {
+        panic!()
+    };
+    assert!(!collect_ids(&items).iter().any(|id| id.starts_with("resume:")));
+    assert!(items.iter().any(|entry| matches!(entry, MenuEntry::Item { label, enabled: false, .. } if label.contains("checkpoint incompatible"))));
+}
+
+#[test]
+fn incompatible_session_shows_only_advertised_delete_and_its_error() {
+    let vm: VmSummary = serde_json::from_value(serde_json::json!({
+        "id": "bad", "name": "failed-image", "status": "Incompatible", "persistent": true,
+        "available_actions": ["delete"], "last_error": "Image runtime is incompatible"
+    }))
+    .unwrap();
+    let MenuEntry::Sub { items, .. } = vm_submenu_spec(&vm) else {
+        panic!()
+    };
+    assert!(!collect_ids(&items).iter().any(|id| id.starts_with("fork:")));
+    assert!(items.iter().any(|entry| matches!(entry, MenuEntry::Item { label, enabled: false, .. } if label.contains("runtime is incompatible"))));
+}
+
+#[test]
+fn action_feedback_preserves_session_update_and_disconnected_truth() {
+    let mut status = make_status(vec![named_vm("box", "display", "running")]);
+    status.action_error = Some("Resume failed: checkpoint incompatible".into());
+    status.update_error = Some("updates unavailable".into());
+    let spec = menu_spec(&status);
+    assert!(collect_ids(&spec).contains(&"connect:box".into()));
+    assert!(collect_ids(&spec).contains(&"updates".into()));
+    assert!(spec.iter().any(|entry| matches!(entry, MenuEntry::Item { id, label, enabled: false } if id == "action-error" && label.contains("checkpoint incompatible"))));
+    status.service = "unavailable".into();
+    let disconnected = menu_spec(&status);
+    assert!(!collect_ids(&disconnected).contains(&"connect:box".into()));
+    assert!(matches!(&disconnected[0], MenuEntry::Item { label, .. } if label == "Disconnected"));
+    assert!(collect_ids(&disconnected).contains(&"action-error".into()));
+    status.action_error = None;
+    assert!(!collect_ids(&menu_spec(&status)).contains(&"action-error".into()));
+}
+
 fn make_status(vms: Vec<VmSummary>) -> StatusResponse {
     let vm_count = vms.len() as u32;
     StatusResponse {
@@ -11,6 +77,7 @@ fn make_status(vms: Vec<VmSummary>) -> StatusResponse {
         latency_ms: Some(5),
         updates: None,
         update_error: None,
+        action_error: None,
     }
 }
 
@@ -23,6 +90,7 @@ fn make_service_status(service: &str, vms: Vec<VmSummary>) -> StatusResponse {
         latency_ms: Some(5),
         updates: None,
         update_error: None,
+        action_error: None,
     }
 }
 
@@ -67,7 +135,6 @@ fn update_status() -> UpdateStatusResponse {
         last_error: None,
         binary: current_track(),
         assets: current_track(),
-        profiles: current_track(),
         images: current_track(),
     }
 }
@@ -88,6 +155,9 @@ fn named_vm(id: &str, name: &str, status: &str) -> VmSummary {
         name: Some(name.into()),
         status: status.into(),
         persistent: true,
+        available_actions: actions(status),
+        last_error: None,
+        resume_blocked_reason: None,
     }
 }
 
@@ -97,6 +167,19 @@ fn temp_vm(id: &str, status: &str) -> VmSummary {
         name: None,
         status: status.into(),
         persistent: false,
+        available_actions: actions(status),
+        last_error: None,
+        resume_blocked_reason: None,
+    }
+}
+
+fn actions(status: &str) -> Vec<capsem_api::VmAction> {
+    use capsem_api::VmLifecycleState;
+    match status.to_ascii_lowercase().as_str() {
+        "running" => VmLifecycleState::Running.available_actions(false),
+        "suspended" => VmLifecycleState::Suspended.available_actions(true),
+        "stopped" => VmLifecycleState::Stopped.available_actions(false),
+        _ => VmLifecycleState::Defunct.available_actions(false),
     }
 }
 
@@ -180,6 +263,14 @@ fn parse_resume() {
 }
 
 #[test]
+fn parse_start() {
+    assert_eq!(
+        parse_action(&MenuId::new("start:opaque-id")),
+        Some(Action::Start("opaque-id".into()))
+    );
+}
+
+#[test]
 fn parse_new_session() {
     assert_eq!(parse_action(&MenuId::new("new-session")), Some(Action::NewSession));
 }
@@ -233,6 +324,9 @@ fn label_short_unnamed_id() {
         name: None,
         status: "stopped".into(),
         persistent: false,
+        available_actions: vec![capsem_api::VmAction::Delete],
+        last_error: None,
+        resume_blocked_reason: None,
     };
     assert_eq!(vm_label(&vm), "ab -- stopped");
 }
@@ -280,10 +374,9 @@ fn spec_binary_update_shows_update_indicator() {
 }
 
 #[test]
-fn spec_asset_profile_and_image_updates_share_indicator() {
+fn spec_asset_and_image_updates_share_indicator() {
     let mut updates = update_status();
     updates.assets = available_track("assets-1", "assets-2");
-    updates.profiles = available_track("profiles-1", "profiles-2");
     updates.images = available_track("images-1", "images-2");
 
     let spec = menu_spec(&with_updates(make_status(vec![]), updates));
@@ -291,7 +384,7 @@ fn spec_asset_profile_and_image_updates_share_indicator() {
     assert!(spec.iter().any(|entry| matches!(
         entry,
         MenuEntry::Item { id, label, enabled: false }
-            if id == "updates" && label == "Updates: VM assets, Profiles, Images"
+            if id == "updates" && label == "Updates: VM assets, Images"
     )));
 }
 
@@ -311,24 +404,6 @@ fn spec_mixed_binary_and_asset_updates_share_indicator() {
 }
 
 #[test]
-fn spec_blocked_profile_update_shows_blocked_indicator() {
-    let mut updates = update_status();
-    updates.profiles = blocked_track(
-        "profiles-2030.0101.0",
-        "profiles-2030.0101.1",
-        "requires binary 1.4.1 or newer",
-    );
-
-    let spec = menu_spec(&with_updates(make_status(vec![]), updates));
-
-    assert!(spec.iter().any(|entry| matches!(
-        entry,
-        MenuEntry::Item { id, label, enabled: false }
-            if id == "updates" && label == "Updates blocked: Profiles"
-    )));
-}
-
-#[test]
 fn spec_blocked_asset_update_shows_blocked_indicator() {
     let mut updates = update_status();
     updates.assets = blocked_track("2026.0627.1", "2030.0101.1", "requires binary 99.99.99 or newer");
@@ -343,21 +418,17 @@ fn spec_blocked_asset_update_shows_blocked_indicator() {
 }
 
 #[test]
-fn spec_binary_update_keeps_blocked_profile_visible() {
+fn spec_binary_update_keeps_blocked_assets_visible() {
     let mut updates = update_status();
     updates.binary = available_track("1.4.0", "1.4.1");
-    updates.profiles = blocked_track(
-        "profiles-2030.0101.0",
-        "profiles-2030.0101.1",
-        "requires binary 1.4.1 or newer",
-    );
+    updates.assets = blocked_track("2030.0101.0", "2030.0101.1", "requires binary 1.4.1 or newer");
 
     let spec = menu_spec(&with_updates(make_status(vec![]), updates));
 
     assert!(spec.iter().any(|entry| matches!(
         entry,
         MenuEntry::Item { id, label, enabled: false }
-            if id == "updates" && label == "Updates: Binary; blocked: Profiles"
+            if id == "updates" && label == "Updates: Binary; blocked: VM assets"
     )));
 }
 
@@ -407,7 +478,7 @@ fn persistent_running_vm_has_connect_stop_fork_delete() {
     let spec = menu_spec(&make_status(vec![named_vm("n1", "prod", "running")]));
     let sub = spec.iter().find(|e| matches!(e, MenuEntry::Sub { .. })).unwrap();
     let ids = submenu_child_ids(sub);
-    assert_eq!(ids, vec!["connect:n1", "stop:n1", "fork:n1", "delete:n1"]);
+    assert_eq!(ids, vec!["connect:n1", "suspend:n1", "stop:n1", "fork:n1", "delete:n1"]);
 }
 
 #[test]
@@ -417,7 +488,7 @@ fn ephemeral_running_vm_has_connect_save_delete() {
     let spec = menu_spec(&make_status(vec![temp_vm("t1", "running")]));
     let sub = spec.iter().find(|e| matches!(e, MenuEntry::Sub { .. })).unwrap();
     let ids = submenu_child_ids(sub);
-    assert_eq!(ids, vec!["connect:t1", "save:t1", "delete:t1"]);
+    assert_eq!(ids, vec!["connect:t1", "suspend:t1", "save:t1", "delete:t1"]);
 }
 
 #[test]

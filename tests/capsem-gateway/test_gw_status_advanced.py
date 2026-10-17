@@ -1,32 +1,40 @@
 """Advanced gateway /status endpoint tests.
 
-Tests cache TTL expiry, response schema, and edge cases through the
-real gateway binary.
+Tests refresh behavior, response schema, and edge cases through the real
+gateway binary.
 """
-
-import time
 
 import pytest
 
 pytestmark = pytest.mark.gateway
 
 
-class TestStatusCacheBehavior:
+class TestStatusRefreshBehavior:
 
-    def test_status_cache_expires_after_ttl(self, gw_client):
-        """After 2s TTL, /status fetches fresh data from service."""
+    def test_status_reads_fresh_service_state(self, gw_client, mock_vms):
+        """Every /status request begins a fresh service read."""
         resp1 = gw_client.get("/status")
         assert resp1 is not None
 
-        # Wait longer than the 2s cache TTL
-        time.sleep(2.5)
+        vm_id = "33333333-3333-4333-8333-333333333333"
+        mock_vms[vm_id] = {
+            "id": vm_id,
+            "pid": 300,
+            "name": "fresh",
+            "status": "Running",
+            "persistent": False,
+            "ram_mb": 1024,
+            "cpus": 1,
+            "version": "0.16.1",
+        }
+        try:
+            resp2 = gw_client.get("/status")
+        finally:
+            mock_vms.pop(vm_id)
 
-        resp2 = gw_client.get("/status")
         assert resp2 is not None
-        # Both should show the same data (mock doesn't change),
-        # but the second one was a fresh fetch, not a cache hit.
         assert resp2["service"] == "running"
-        assert resp2["vm_count"] == resp1["vm_count"]
+        assert resp2["vm_count"] == resp1["vm_count"] + 1
 
     def test_status_version_is_semver(self, gw_client):
         """gateway_version field is a valid semver string."""

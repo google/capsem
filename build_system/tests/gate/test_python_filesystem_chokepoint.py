@@ -1,7 +1,7 @@
 """Hardlinking from Python goes through one audited place.
 
 The Rust sibling of this contract is `test_rust_filesystem_chokepoint.py`, and
-it exists because `capsem-admin` staged profile payloads with a hardlink and
+it exists because `capsem-admin` staged release payloads with a hardlink and
 put 48 checked-in `config/` files inside published release output -- one inode
 each, so a `chmod` on the artifact rewrote tracked source and no content digest
 noticed.
@@ -62,15 +62,15 @@ def test_a_tracked_file_is_copied_not_linked(tmp_path: Path) -> None:
 
     repo = tmp_path / "repo"
     (repo / "config").mkdir(parents=True)
-    source = repo / "config" / "profile.toml"
+    source = repo / "config" / "settings.toml"
     source.write_text("x", encoding="utf-8")
 
     import subprocess
 
-    for argv in (["git", "init", "--quiet"], ["git", "add", "config/profile.toml"]):
+    for argv in (["git", "init", "--quiet"], ["git", "add", "config/settings.toml"]):
         subprocess.run(argv, cwd=repo, check=True, capture_output=True)
 
-    published = tmp_path / "out" / "profile.toml"
+    published = tmp_path / "out" / "settings.toml"
     auditfs.stage(source, published)
 
     assert published.read_text(encoding="utf-8") == "x"

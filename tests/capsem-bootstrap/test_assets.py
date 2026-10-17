@@ -23,11 +23,9 @@ def test_manifest_schema_accepts_release_graph() -> None:
         "channel": "nightly",
         "status": "current",
         "packages": [{"status": "current"}],
-        "profiles": {
-            "code": {
-                "status": "current",
-                "architectures": [{"architecture": _host_arch()}],
-            }
+        "runtime": {
+            "status": "current",
+            "architectures": [{"architecture": _host_arch()}],
         },
     }
 
@@ -39,8 +37,8 @@ def test_manifest_schema_accepts_release_graph() -> None:
     [
         {},
         {"format": 2, "assets": {}, "binaries": {}},
-        {"channel": "nightly", "packages": [], "profiles": {}},
-        {"channel": ["nightly"], "packages": [{}], "profiles": {"code": {}}},
+        {"channel": "nightly", "packages": [], "runtime": {}},
+        {"channel": ["nightly"], "packages": [{}], "runtime": {"architectures": []}},
     ],
 )
 def test_manifest_schema_rejects_incomplete_documents(manifest: dict) -> None:
@@ -69,11 +67,9 @@ def test_bootstrap_manifest_contract_accepts_a_selected_release_graph(
                         "status": "current",
                     }
                 ],
-                "profiles": {
-                    "code": {
-                        "status": "current",
-                        "architectures": [{"architecture": _host_arch()}],
-                    }
+                "runtime": {
+                    "status": "current",
+                    "architectures": [{"architecture": _host_arch()}],
                 },
             }
         ),
@@ -105,24 +101,14 @@ def _manifest_schema(data: dict) -> str:
     assert isinstance(data.get("version"), str) and data["version"]
     assert isinstance(data.get("channel"), str) and data["channel"]
     packages = data.get("packages")
-    profiles = data.get("profiles")
+    runtime = data.get("runtime")
     assert isinstance(packages, list) and packages
     assert any(
         isinstance(package, dict) and package.get("status") == "current"
         for package in packages
     )
-    assert isinstance(profiles, dict) and profiles
-    active_profiles = [
-        profile
-        for profile in profiles.values()
-        if isinstance(profile, dict) and profile.get("status") != "revoked"
-    ]
-    assert active_profiles
-    assert all(
-        isinstance(profile.get("architectures"), list)
-        and profile["architectures"]
-        for profile in active_profiles
-    )
+    assert isinstance(runtime, dict) and runtime.get("status") != "revoked"
+    assert isinstance(runtime.get("architectures"), list) and runtime["architectures"]
     return "release_graph"
 
 
@@ -189,19 +175,13 @@ class TestManifest:
                 f"(have: {sorted(arches)})"
             )
         else:
-            missing = []
-            for profile_id, profile in data["profiles"].items():
-                if not isinstance(profile, dict) or profile.get("status") == "revoked":
-                    continue
-                architectures = {
-                    row.get("architecture")
-                    for row in profile["architectures"]
-                    if isinstance(row, dict)
-                }
-                if arch not in architectures:
-                    missing.append(profile_id)
-            assert not missing, (
-                f"Active profiles missing {arch} release artifacts: {sorted(missing)}"
+            architectures = {
+                row.get("architecture")
+                for row in data["runtime"]["architectures"]
+                if isinstance(row, dict)
+            }
+            assert arch in architectures, (
+                f"runtime has no {arch} release artifacts (have: {sorted(map(str, architectures))})"
             )
 
 

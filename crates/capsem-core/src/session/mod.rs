@@ -1,24 +1,40 @@
-//! Session management: unique session IDs, session index DB, and lifecycle.
+//! Session management: unique session IDs, overlays, workspaces, and lifecycle.
 
 mod clone;
+mod image_share;
 mod maintenance;
 mod overlay;
+mod spawn_identity;
+pub mod spawn_owner;
 mod workspace;
 
 #[cfg(test)]
 mod tests;
 
-pub use capsem_logger::{
-    epoch_to_iso, generate_session_id, is_valid_session_id, now_iso, GlobalStats, McpToolSummary, ProviderSummary,
-    SessionIndex, SessionRecord, ToolSummary,
+pub use capsem_logger::{epoch_to_iso, generate_session_id, is_valid_session_id, now_iso};
+pub use clone::{clone_file, clone_sandbox_files, clone_sandbox_state};
+pub use image_share::{
+    carry_image_share, clear_image_share, image_share_blobs, image_share_path, prepare_image_share,
+    publish_image_share, IMAGE_SHARE_DIR, IMAGE_SHARE_TAG,
 };
-pub use clone::{clone_file, clone_sandbox_state};
 pub use maintenance::*;
 pub use overlay::{
     adopt_system_overlay, open_system_overlay, system_overlay_image_path, system_overlay_metadata, SYSTEM_OVERLAY_DIR,
     SYSTEM_OVERLAY_IMAGE,
 };
+pub use spawn_identity::{read_spawn_identity, write_spawn_identity};
 pub use workspace::{open_workspace, WORKSPACE_DIR};
+
+/// Host-only mutable state retained by the VM owner after confinement.
+pub const OWNER_STATE_DIR: &str = "owner";
+
+pub fn prepare_owner_state_dir(session_dir: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+    use std::ffi::OsStr;
+
+    let root = capsem_foundation::unix::contained::ContainedDir::open_root(session_dir)?;
+    root.descend_or_create(OsStr::new(OWNER_STATE_DIR), 0o700)?;
+    Ok(session_dir.join(OWNER_STATE_DIR))
+}
 
 /// Distil a captured `process.log`/`serial.log` tail down to the one line
 /// worth putting in front of a human.

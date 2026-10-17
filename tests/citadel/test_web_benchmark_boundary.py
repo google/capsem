@@ -38,7 +38,7 @@ WEB_PROJECT_ROOTS = (
 )
 REFERENCE_PATTERNS = {
     "app": re.compile(r"(?<![\w-])frontend/|['\"]frontend['\"]"),
-    "docs": re.compile(r"(?<![\w-])docs/|['\"]docs['\"]"),
+    "docs": re.compile(r"(?<![\w-])(?<!web/)docs/|['\"]docs['\"]"),
     "marketing": re.compile(r"(?<![\w-])site/|['\"]site['\"]"),
     "graphics": re.compile(r"(?<![\w/-])graphics/|['\"]graphics['\"]"),
     "collectors": re.compile(r"(?<![\w-])bench/collectors/|['\"]bench['\"]"),
@@ -82,16 +82,40 @@ def _digest(records: tuple[str, ...]) -> str:
     return hashlib.sha256("\0".join(sorted(records)).encode()).hexdigest()
 
 
-def _text_sources(tracked: tuple[str, ...]) -> dict[str, str]:
+#: Third-party trees vendored byte for byte, each with the SHA256SUMS its
+#: crate's build verifies. Their upstream comments are not Capsem path
+#: callers -- an MDN link reads as `docs/` -- and can never be edited to stop
+#: matching, so a file is skipped only while its bytes match its pin; an
+#: edited one is scanned like any other source.
+VENDORED_TREES = ("crates/capsem-gateway/vendor/xpra-html5",)
+BENCHMARK_SOURCE_ROOTS = ("benchmarks/collectors/", "benchmarks/helpers/")
+
+
+def _pinned_vendor_files(root: Path = ROOT) -> dict[str, str]:
+    pinned: dict[str, str] = {}
+    for tree in VENDORED_TREES:
+        sums = (root / tree / "SHA256SUMS").read_text(encoding="utf-8")
+        for line in sums.splitlines():
+            digest, path = line.split("  ", 1)
+            pinned[f"{tree}/www/{path}"] = digest
+    return pinned
+
+
+def _text_sources(
+    tracked: tuple[str, ...], root: Path = ROOT, pinned: dict[str, str] | None = None
+) -> dict[str, str]:
+    pinned = _pinned_vendor_files(root) if pinned is None else pinned
     sources: dict[str, str] = {}
     for path in tracked:
         if path in {SELF, POLICY_PATH} or path.startswith(("sprints/", "tmp/")):
             continue
-        candidate = ROOT / path
+        candidate = root / path
         if candidate.is_symlink() or not candidate.is_file():
             continue
         raw = candidate.read_bytes()
         if b"\0" in raw:
+            continue
+        if pinned.get(path) == hashlib.sha256(raw).hexdigest():
             continue
         try:
             sources[path] = raw.decode()
@@ -207,7 +231,7 @@ def _observe() -> Observed:
         path
         for path in tracked
         if path.startswith("benchmarks/")
-        and not path.startswith(("benchmarks/baselines/", "benchmarks/collectors/"))
+        and not path.startswith(("benchmarks/baselines/", *BENCHMARK_SOURCE_ROOTS))
     )
     graphics = tuple(
         f"{path}->web/graphics/{path.removeprefix('graphics/')}"
@@ -218,7 +242,7 @@ def _observe() -> Observed:
         path
         for path in tracked
         if path.startswith("benchmarks/")
-        and not path.startswith("benchmarks/collectors/")
+        and not path.startswith(BENCHMARK_SOURCE_ROOTS)
     )
     recordings = tuple(
         f"tracked generated recording: {path}"
@@ -347,6 +371,33 @@ def test_legacy_reference_fingerprint_ignores_line_movement_and_source_order() -
     assert _digest(_legacy_references(before)) == _digest(_legacy_references(after))
 
 
+def test_only_vendored_bytes_that_match_their_pin_are_skipped(tmp_path: Path) -> None:
+    pinned_text = "// https://developer.mozilla.org/en-US/docs/Web/API\n"
+    vendored = "crates/capsem-gateway/vendor/xpra-html5/www/js/Pinned.js"
+    edited = "crates/capsem-gateway/vendor/xpra-html5/www/js/Edited.js"
+    own = "crates/capsem-gateway/src/caller.rs"
+    for path, text in {
+        vendored: pinned_text,
+        edited: pinned_text + "read docs/guide here\n",
+        own: pinned_text,
+    }.items():
+        (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / path).write_text(text, encoding="utf-8")
+    digest = hashlib.sha256(pinned_text.encode()).hexdigest()
+    pinned = {vendored: digest, edited: digest}
+
+    sources = _text_sources((vendored, edited, own), root=tmp_path, pinned=pinned)
+
+    assert set(sources) == {edited, own}, "an edited vendored file loses its skip"
+    assert {json.loads(r)["path"] for r in _legacy_references(sources)} == {edited, own}
+
+
+def test_every_vendored_tree_has_its_pinned_checksums() -> None:
+    pinned = _pinned_vendor_files()
+    assert pinned and all(re.fullmatch(r"[0-9a-f]{64}", d) for d in pinned.values())
+    assert all(path.startswith(VENDORED_TREES) for path in pinned)
+
+
 def test_legacy_reference_fingerprint_changes_for_new_debt() -> None:
     before = _legacy_references({"caller.txt": "use frontend/widget here\n"})
     after = _legacy_references(
@@ -419,6 +470,12 @@ def test_tauri_icon_owner_and_duplicate_are_observed_red() -> None:
     problems = _tauri_problems(config, tracked)
     assert any("outside canonical ownership" in problem for problem in problems), RATIONALE
     assert any("duplicate crate-local Tauri icon" in problem for problem in problems), RATIONALE
+
+
+def test_canonical_docs_paths_are_owned_and_retired_roots_still_fail() -> None:
+    assert not _legacy_references({"example.md": "web/docs/src/content/guide.md"}), RATIONALE
+    assert _legacy_references({"example.md": "docs/guide.md"}), RATIONALE
+    assert _legacy_references({"example.md": "../docs/guide.md"}), RATIONALE
 
 
 def test_current_web_benchmark_boundary_is_exact() -> None:

@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import subprocess
+import tomllib
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
-import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
 POLICY = Path(__file__).with_name("repository_surface_ownership.toml")
@@ -34,14 +34,18 @@ EXPECTED_TARGETS = frozenset(
         "build_system/builder/",
         "build_system/docker/",
         "build_system/packaging/",
+        "build_system/patches/",
         "build_system/release_site/",
         "build_system/scripts/",
         "build_system/tests/",
         "benchmarks/collectors/",
         "benchmarks/baselines/",
+        "benchmarks/helpers/",
         "config/",
         "crates/",
         "guest/",
+        "images/",
+        "integrations/inspect-ai/",
         "mcp/",
         "sdk/",
         "skills/",

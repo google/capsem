@@ -3,6 +3,33 @@ use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
 
 use super::*;
 
+#[cfg(target_os = "linux")]
+#[test]
+fn sparse_ranges_are_clipped_to_the_requested_window_and_omit_holes() {
+    use std::os::fd::AsFd;
+    let file = tempfile::tempfile().unwrap();
+    file.set_len(64 * 1024 * 1024).unwrap();
+    super::super::super::fd::write_at(file.as_fd(), b"front", 0).unwrap();
+    super::super::super::fd::write_at(file.as_fd(), b"tail", 63 * 1024 * 1024).unwrap();
+    file.sync_all().unwrap();
+    let start = 2;
+    let end = 64 * 1024 * 1024 - 3;
+    let mut offset = start;
+    let mut ranges = Vec::new();
+    while let Some(range) = next_data_range(&file, offset, end).unwrap() {
+        assert!(range.start >= offset && range.start < range.end && range.end <= end);
+        offset = range.end;
+        ranges.push(range);
+    }
+    assert_eq!(ranges.first().unwrap().start, start);
+    assert!(ranges.iter().any(|range| range.contains(&(63 * 1024 * 1024))));
+    assert!(ranges.iter().all(|range| !range.contains(&(32 * 1024 * 1024))));
+    assert!(next_data_range(&file, end, end).unwrap().is_none());
+    assert!(next_data_range(&file, end, start).is_err());
+    assert!(next_data_range(&file, 0, 65 * 1024 * 1024).is_err());
+    assert!(next_data_range(&file, 0, u64::MAX).is_err());
+}
+
 struct Dirs {
     _tmp: tempfile::TempDir,
     src: std::path::PathBuf,

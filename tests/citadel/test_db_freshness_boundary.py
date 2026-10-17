@@ -9,7 +9,7 @@ already re-syncs on SQLite `data_version`; the file's metadata was a second,
 wrong answer to the same question.
 
 The rule this guard holds: outside capsem-logger, no function that names a
-logger database (`session.db`, `main.db`, `network.db`, a `db_path`) may also
+logger database (`session.db`, `host.db`, `network.db`, a `db_path`) may also
 read filesystem metadata. Ask the `DbHandle` (its read-cache epochs) instead.
 """
 
@@ -30,7 +30,7 @@ FUNCTION_HEADER = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+(\
 #: A freshness fingerprint needs the modification time; a size read alone is
 #: how a bundle or a budget measures a file, and stays allowed.
 MTIME_READS = (".modified()",)
-LOGGER_DB_TOKENS = ("session.db", "main.db", "network.db", "db_path", "session_db")
+LOGGER_DB_TOKENS = ("session.db", "host.db", "network.db", "db_path", "session_db")
 #: The crates that answer ledger reads. A file packer such as the CLI's
 #: support bundle handles session.db as bytes and is out of this rule's scope.
 LEDGER_READER_CRATES = (

@@ -148,6 +148,20 @@ pub(crate) const READY_SCHEMA_COLUMNS: &[(&str, &[&str])] = &[
     ("body_blocks", &["block_offset", "raw_len", "disk_len", "sealed_at"]),
     ("ledger_counters", &["singleton", "counters"]),
     (
+        "ledger_commitments",
+        &[
+            "global_sequence",
+            "generation",
+            "client_id",
+            "producer_role",
+            "producer_sequence",
+            "event_kind",
+            "event_hash",
+            "previous_hash",
+            "commitment_hash",
+        ],
+    ),
+    (
         "fs_events",
         &[
             "action",
@@ -176,6 +190,7 @@ pub(crate) const READY_SCHEMA_COLUMNS: &[(&str, &[&str])] = &[
             "source",
             "stderr_preview",
             "stdout_preview",
+            "target",
             "timestamp",
             "trace_id",
             "turn_id",
@@ -276,7 +291,8 @@ pub(crate) const READY_SCHEMA_COLUMNS: &[(&str, &[&str])] = &[
         &["event_id", "stage", "effective_decision", "credential_ref", "run_id"],
     ),
     ("security_ask_events", &["event_id", "ask_id", "status", "trace_id"]),
-    ("profile_mutation_events", &["mutation_id", "profile_id", "status"]),
+    ("policy_mutation_events", &["mutation_id", "status"]),
+    ("host_events", &["kind", "session_id", "prev_hash", "hash"]),
     (
         "transport_events",
         &[

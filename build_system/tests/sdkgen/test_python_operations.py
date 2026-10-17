@@ -16,8 +16,10 @@ from aiohttp import web
 from capsem_builder.sdkgen.operations import Route, is_binary_media_type, read_operations
 from capsem_builder.sdkgen.python import module_name, render_models, type_name
 from capsem_builder.sdkgen.python_operations import render_operations
-from capsem_builder.sdkgen.schema import Schema, read_schemas
+from capsem_builder.sdkgen.schema import read_schemas
 from pydantic import TypeAdapter, ValidationError
+
+from build_system.tests.sdkgen.test_python import _sample as sample
 
 ROOT = Path(__file__).resolve().parents[3]
 SPEC = ROOT / "sdk/specification/openapi.json"
@@ -25,25 +27,12 @@ SCHEMAS = read_schemas(SPEC)
 ROUTES = read_operations(SPEC)
 
 
-def sample(schema: Schema) -> object:
-    if schema.ref:
-        return sample(SCHEMAS[schema.ref.rsplit("/", 1)[1]])
-    if schema.type is None and not schema.one_of:
-        return {"nested": [True, None, {"number": 3}]}
-    if schema.one_of:
-        return sample(schema.one_of[0])
-    if schema.enum:
-        return schema.enum[0]
-    if isinstance(schema.type, list) or schema.type == "null":
-        return None
-    if schema.type == "object":
-        return {key: sample(schema.properties[key]) for key in schema.required}
-    if schema.type == "array":
-        return []
-    assert schema.type is not None
-    if schema.format == "ipv4":
-        return "10.128.0.2"
-    return {"string": "value", "integer": 0, "number": 0.5, "boolean": True}[schema.type]
+def test_uuid_query_uses_the_shared_alias_and_refuses_invalid_material(package: ModuleType) -> None:
+    async def run() -> None:
+        async with package._transport.Transport("http://127.0.0.1:1", "secret") as transport:
+            with pytest.raises(ValidationError):
+                await package.operations.list_connections(transport, limit=1, cursor="private-query")
+    asyncio.run(run())
 
 
 @pytest.fixture
@@ -164,7 +153,7 @@ def test_invalid_input_fails_before_network_io(package: ModuleType) -> None:
 
 
 def test_invalid_identifiers_and_collisions_fail_generation() -> None:
-    route = ROUTES[0]
+    route = next(route for route in ROUTES if route.operation.parameters)
     invalid = route.operation.model_copy(update={"operation_id": "class"})
     with pytest.raises(ValueError, match="identifier"):
         render_operations([Route(route.path, route.method, invalid)])

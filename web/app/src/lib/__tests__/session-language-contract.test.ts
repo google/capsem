@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { sessionActionError } from '../models/session-action-error';
 
 const dashboard = readFileSync(
   new URL('../components/shell/NewTabPage.svelte', import.meta.url),
@@ -45,7 +46,8 @@ describe('user-facing session language contract', () => {
     expect(dashboard).toContain('Sessions');
     expect(dashboard).toContain('Loading sessions');
     expect(dashboard).toContain('No sessions');
-    expect(dashboard).toContain('Failed to create session');
+    expect(dashboard).toContain('actionError = sessionActionError(error)');
+    expect(sessionActionError(null)).toBe('Failed to create session');
     expect(dashboard).not.toContain('>' + legacyVmPlural + '<');
     expect(dashboard).not.toContain('Customize ' + 'VM');
     expect(dashboard).not.toContain('Loading ' + legacyVmPlural);
@@ -53,32 +55,24 @@ describe('user-facing session language contract', () => {
     expect(dashboard).not.toContain('Failed to create VM');
   });
 
-  it('keeps profile creation controls on each profile card', () => {
-    expect(dashboard).toContain('New');
+  it('keeps one new-session launcher gated on VM asset readiness', () => {
+    expect(dashboard).toContain('New session');
     expect(dashboard).toContain('Customize');
-    expect(dashboard).toContain('openCustomizeProfile');
-    expect(dashboard).toContain('launcher.assets?.ready === true');
-    expect(dashboard).toContain("onclick={() => ready ? createFromProfile(launcher.profile.id) : ensureProfileAssets(launcher.profile.id)}");
-    expect(dashboard).toContain("title={ready ? `New ${launcher.profile.name} session` : profileAssetText(launcher.assets)}");
+    expect(dashboard).toContain('vmStore.openCreateModal()');
+    expect(dashboard).toContain('api.getAssetsStatus()');
+    expect(dashboard).toContain('api.ensureAssets()');
+    expect(dashboard).toContain('let ready = $derived(assets?.ready === true)');
+    expect(dashboard).toContain('onclick={() => ready ? createSession() : downloadAssets()}');
+    expect(dashboard).toContain("title={ready ? 'New session' : assetText(assets)}");
     expect(dashboard).toContain('<DownloadSimple');
     expect(dashboard).toContain('Downloading');
-    expect(dashboard).toContain('refreshDownloadingProfileAssets');
     expect(dashboard).toContain('role="progressbar"');
-    expect(dashboard).toContain('aria-valuenow={profileAssetPercent(launcher.assets)}');
+    expect(dashboard).toContain('aria-valuenow={assetPercent(assets)}');
     expect(dashboard).not.toContain('Customize Session...');
     expect(dashboard).not.toContain('vmStore.showCreateModal = true');
-  });
-
-  it('keeps the Sessions profile picker focused on profiles and descriptions', () => {
-    expect(dashboard).toContain('launcher.profile.name');
-    expect(dashboard).toContain('launcher.profile.description');
     expect(dashboard).not.toContain('getUpdateStatus');
-    expect(dashboard).not.toContain('profileDashboardUpdateRows');
-    expect(dashboard).not.toContain('Profile and image state');
     expect(dashboard).not.toContain('Not published');
-    expect(dashboard).not.toContain('profileAssetChecklist');
-    expect(dashboard).not.toContain('>VM assets<');
-    expect(dashboard).not.toContain("profileAssetText(launcher.assets)}</span>");
+    expect(dashboard).not.toContain('Start</span>');
   });
 
   it('routes About Capsem to a top-level canonical status page', () => {
@@ -91,13 +85,10 @@ describe('user-facing session language contract', () => {
     expect(about).toContain('About Capsem');
     expect(about).toContain('api.getCapsemStatus()');
     expect(about).toContain('api.checkForUpdates()');
-    expect(about).toContain('system?.manifest.profiles');
     expect(about).toContain('system?.manifest.packages');
     expect(about).toContain('system.manifest_metadata.manifest_url');
-    expect(about).toContain('profile.description');
-    expect(about).toContain('profile.revision');
-    expect(about).toContain('live.profile_payload_hash');
-    expect(about).toContain('profileEvidence(id, profile)');
+    expect(about).toContain('system.assets.assets');
+    expect(about).toContain('system?.assets.current_arch');
     expect(about).toContain('packageEvidence(pkg)');
     expect(about).toContain('evidence.url');
     expect(about).toContain('<details');
@@ -105,38 +96,25 @@ describe('user-facing session language contract', () => {
     expect(about).toContain('Channel package differs from installed Capsem');
     expect(about).toContain('packages.filter((pkg) => pkg.platform === platform)');
     expect(about).not.toContain('The installed Capsem version is absent from the installed release manifest.');
-    expect(about).not.toContain('api.getProfileObom');
     expect(about).not.toContain('updates.supply_chain');
     expect(about).not.toContain('Not published');
     expect(about).not.toContain("trackLabel(key: UpdateTrackKey): string");
     expect(about).not.toContain("return 'VM images'");
   });
 
-  it('does not duplicate profile actions in the card header and footer', () => {
-    expect(dashboard).toContain("title={ready ? `New ${launcher.profile.name} session` : profileAssetText(launcher.assets)}");
-    expect(dashboard).not.toContain('aria-label={profileAssetText(launcher.assets)}');
-    expect(dashboard).not.toContain('Start</span>');
-  });
-
-  it('lets the service own quick-create session names and profile resources', () => {
+  it('lets the service own quick-create session names and resources', () => {
     const quickCreateSources = [dashboard, appShell].join('\n');
     expect(quickCreateSources).not.toContain('generatedVmName');
-    expect(quickCreateSources).not.toContain('name: generatedVmName');
-    expect(quickCreateSources).not.toContain('ram_mb: 2048');
-    expect(quickCreateSources).not.toContain('cpus: 2');
-    expect(dashboard).toContain('profile_id: profileId');
+    expect(quickCreateSources).not.toContain('ram_mb');
+    expect(quickCreateSources).not.toContain('cpus:');
+    expect(dashboard).toContain('vmStore.provision({ persistent: true })');
     expect(appShell).toContain('vmStore.openCreateModal()');
-    expect(appShell).not.toContain("profile_id: 'code'");
-    expect(quickCreateSources).toContain('persistent: true');
   });
 
-  it('fails closed when the installed profile catalog cannot be loaded', () => {
-    expect(createDialog).toContain("let profileId = $state('')");
-    expect(createDialog).toContain("profiles[0]?.id ?? ''");
-    expect(createDialog).toContain('Could not load installed profiles');
-    expect(createDialog).toContain('disabled={creating || !profileId}');
-    expect(createDialog).not.toContain("?? 'code'");
-    expect(createDialog).not.toContain('<option value="code">');
+  it('customizes a session from the service defaults', () => {
+    expect(createDialog).toContain('const DEFAULT_RAM_MB = 12288');
+    expect(createDialog).toContain('const DEFAULT_CPUS = 4');
+    expect(createDialog).toContain('disabled={creating}');
   });
 
   it('uses sessions in toolbar controls and keeps build stamp out of visible chrome', () => {

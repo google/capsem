@@ -20,7 +20,7 @@ def _plan(name: str, **args):
     ("name", "args"),
     [
         ("release-binaries", {"channel": "stable"}),
-        ("release-profile", {"channel": "stable", "profile": "code"}),
+        ("release-assets", {"channel": "stable"}),
     ],
 )
 def test_release_plan_freezes_source_then_dispatches_hosted_qualification(
@@ -49,7 +49,7 @@ def test_binary_release_plan_passes_the_same_source_to_precheck_and_dispatch() -
     assert f"release-binaries.py nightly {SOURCE}" in rendered
 
 
-def test_profile_release_plan_passes_the_same_source_to_admin_dispatch() -> None:
-    rendered = _plan("release-profile", channel="nightly", profile="code").describe()
+def test_assets_release_plan_passes_the_same_source_to_admin_dispatch() -> None:
+    rendered = _plan("release-assets", channel="nightly").describe()
 
     assert f"--source-commit {SOURCE}" in rendered

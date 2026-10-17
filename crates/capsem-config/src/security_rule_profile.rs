@@ -4,10 +4,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::condition::{evaluate_condition_with, validate_condition_with, CompiledCondition};
 use crate::types::{default_true, PolicySubject};
-use crate::validation::{validate_identifier, validate_non_empty, validate_profile_target};
+use crate::validation::{validate_identifier, validate_non_empty, validate_policy_target};
 
 mod sigma;
 use sigma::SigmaRule;
+
+#[cfg(test)]
+mod tests;
 
 pub const CORP_PRIORITY_MIN: i32 = -1000;
 pub const CORP_PRIORITY_MAX: i32 = -10;
@@ -186,13 +189,13 @@ impl SecurityRuleManagedTarget {
 
     fn validate(&self, rule_id: &str) -> Result<(), String> {
         match self {
-            Self::McpServer { server, .. } => validate_profile_target("mcp server", server),
+            Self::McpServer { server, .. } => validate_policy_target("mcp server", server),
             Self::McpTool { server, tool, .. } => {
-                validate_profile_target("mcp server", server)?;
-                validate_profile_target("mcp tool", tool)
+                validate_policy_target("mcp server", server)?;
+                validate_policy_target("mcp tool", tool)
             }
             Self::Plugin { plugin, .. } => validate_identifier("plugin id", plugin),
-            Self::Skill { skill, .. } => validate_profile_target("skill id", skill),
+            Self::Skill { skill, .. } => validate_policy_target("skill id", skill),
         }
         .map_err(|error| format!("{rule_id}.managed: {error}"))
     }
@@ -384,18 +387,16 @@ impl SecurityRuleProfile {
 
     pub fn parse_sigma_yaml(input: &str) -> Result<Self, String> {
         let mut profile = Self::default();
-        let mut parsed_any = false;
-        for document in serde_yaml::Deserializer::from_str(input) {
-            let sigma_rule =
-                SigmaRule::deserialize(document).map_err(|error| format!("security rule Sigma YAML: {error}"))?;
+        let documents: Vec<SigmaRule> =
+            serde_saphyr::from_multiple(input).map_err(|error| format!("security rule Sigma YAML: {error}"))?;
+        if documents.is_empty() {
+            return Err("security rule Sigma YAML: no rules found".to_string());
+        }
+        for sigma_rule in documents {
             let (rule_key, rule) = sigma_rule.into_security_rule()?;
             if profile.profiles.rules.insert(rule_key.clone(), rule).is_some() {
                 return Err(format!("duplicate Sigma-derived rule '{rule_key}'"));
             }
-            parsed_any = true;
-        }
-        if !parsed_any {
-            return Err("security rule Sigma YAML: no rules found".to_string());
         }
         profile.validate()?;
         Ok(profile)

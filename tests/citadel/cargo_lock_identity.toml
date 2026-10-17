@@ -1,11 +1,3 @@
-# The Cargo.lock this tree was last qualified with, recorded on purpose.
-#
-# A lock change is the most expensive input in the repository: it changes the
-# identity of the guest Rust builder image, so every guest agent is recompiled
-# inside Docker, the initrd is repacked, and every host binary rebuilds. Four
-# measurement runs in one evening paid that cost because unrelated commits
-# each moved the lock. `test_cargo_lock_changes_are_deliberate` fails until
-# this record matches the lock again, so the cost is chosen, reviewed and
-# batched rather than discovered twenty minutes into a gate.
-sha256 = "f1db6144ddc375b46f556a8ce7a1c3a811e8e72f4999442af6a545f328c5ca7e"
-reason = "release: workspace version 0.6.5 -> 0.6.6 for the post-0.6.5 integration batch (#198 capsem-guard edge already recorded); only first-party package versions move"
+# Deliberately combined dependency graph for #206 on 0.7.
+sha256 = "d5426d97eefe5f1d9edd2357961fd6f92a26425ebffd5bfa105b18019940e476"
+reason = "The native MCP confinement split adds the first-party capsem-mcp-transport owner, replacing the aggregator core edge and sharing existing HTTP/bootstrap dependencies with core, builtin and service. No upstream package version changes. The unified observable cache adds quick_cache 0.7.0. The 0.7 crypto ownership retrofit centralizes first-party hashes, entropy, TLS keys, JWT verification and secret primitives; BLAKE2b/BLAKE2s SIMD 1.0.5 support normal-harness comparisons. Managed-session APIs add zeroizing request capabilities, and Rust managed scopes add SDK edges to existing capsem-crypto random/secrets, futures, humantime and tokio-util rt. Central runtime-limit generation adds capsem-proto's direct toml edge, and exact benchmark reporting adds capsem-bench's direct capsem-proto edge. rustls 0.23.46 fixes RUSTSEC-2026-0346, RUSTSEC-2026-0347, RUSTSEC-2026-0348 and RUSTSEC-2026-0349. The host and sealed guest cohort will be rebuilt and qualified together. Safe SDK local discovery adds SDK edges to existing capsem-foundation and tempfile for metadata and focused tests; no upstream package versions change. Rebase onto shared 0.7 retains the approved time parsing and safe Sigma edges, while preserving the confined worker codecs, shared cache and patched rustls dependencies."

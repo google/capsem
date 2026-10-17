@@ -26,11 +26,16 @@
   },
   "pnpm": {
     "overrides": {
+      "sharp": "^0.35.5",
       "fast-uri": "^3.1.8",
       "nanoid": "^3.3.17",
       "js-yaml": "^4.3.2",
       "svgo": "^4.1.0",
+      "postcss-selector-parser": "^7.1.6",
       "smol-toml": "1.9.0"
+    },
+    "patchedDependencies": {
+      "http-cache-semantics@4.3.0": "../../build_system/patches/http-cache-semantics@4.3.0.patch"
     }
   }
 }

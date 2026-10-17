@@ -9,12 +9,13 @@ from pydantic import StrictStr, TypeAdapter
 from . import _operations as api
 from . import models
 from ._client import Client
+from ._connections import CredentialGrants
 from ._container import Container
 from ._networks import VmNetworks
 from ._ports import Ports
 from ._resources import Files, Stats
 from ._transport import HttpError, Transport
-from .execution import ExecResult, command_deadline
+from .execution import CREATE_READY_SECS, ExecResult, command_deadline
 
 
 class VM(Client):
@@ -24,16 +25,19 @@ class VM(Client):
         self._select(name=name, id=id)
 
     def _select(self, *, name: str | None, id: str | None) -> None:
-        if bool(name) == bool(id):
+        if (name is None) == (id is None):
             raise ValueError("select a VM by exactly one nonempty name or id")
-        self._name = TypeAdapter(StrictStr).validate_python(name) if name else None
-        self._id = TypeAdapter(StrictStr).validate_python(id) if id else None
+        self._name = TypeAdapter(StrictStr).validate_python(name) if name is not None else None
+        self._id = TypeAdapter(StrictStr).validate_python(id) if id is not None else None
+        if self._name == "" or self._id == "":
+            raise ValueError("select a VM by exactly one nonempty name or id")
         self.files = Files(self)
         self.networks = VmNetworks(self)
         self.stats = Stats(self)
         self.container = Container(self)
         self._has_container: bool | None = None
         self.ports = Ports(self)
+        self.credential_grants = CredentialGrants(self)
 
     @classmethod
     def _bind(cls, transport: Transport, *, id: str, name: str | None = None,
@@ -53,9 +57,9 @@ class VM(Client):
     def name(self) -> str | None:
         return self._name
 
-    async def _resolve(self) -> str:
+    async def _resolve(self, *, request_timeout: float | None = None) -> str:
         if self._id is None:
-            response = await api.list_vms(self._transport)
+            response = await api.list_vms(self._transport, request_timeout=request_timeout)
             matches = [vm for vm in response.sandboxes if vm.name == self._name]
             if len(matches) != 1:
                 raise LookupError(f"expected one VM named {self._name!r}, found {len(matches)}")
@@ -77,16 +81,24 @@ class VM(Client):
     async def info(self) -> models.SandboxInfo:
         return await api.get_vm_info(self._transport, id=await self._resolve())
 
-    async def exec(self, command: str, *, timeout_secs: int | None = None) -> ExecResult:
+    async def exec(self, command: str, *, timeout_secs: int | None = None,
+                   target: models.ExecTarget | None = None) -> ExecResult:
+        body = models.ExecRequest.model_validate({
+            "command": command, "timeout_secs": timeout_secs,
+            **({"target": target} if target is not None else {}),
+        })
         response = await api.exec_vm(
             self._transport, id=await self._resolve(),
-            body=models.ExecRequest(command=command, timeout_secs=timeout_secs),
+            body=body,
             request_timeout=command_deadline(self._transport.timeout, timeout_secs),
         )
         return ExecResult.from_wire(response)
 
     async def start(self) -> models.ProvisionResponse:
-        return await api.start_vm(self._transport, id=await self._resolve())
+        return await api.start_vm(
+            self._transport, id=await self._resolve(),
+            request_timeout=command_deadline(self._transport.timeout, CREATE_READY_SECS),
+        )
 
     async def persist(self, name: str) -> models.PersistResponse:
         return await api.persist_vm(
@@ -100,7 +112,10 @@ class VM(Client):
         return await api.pause_vm(self._transport, id=await self._resolve())
 
     async def resume(self) -> models.ProvisionResponse:
-        return await api.resume_vm(self._transport, id=await self._resolve())
+        return await api.resume_vm(
+            self._transport, id=await self._resolve(),
+            request_timeout=command_deadline(self._transport.timeout, CREATE_READY_SECS),
+        )
 
     async def delete(self) -> models.VmActionResponse:
         return await api.delete_vm(self._transport, id=await self._resolve())

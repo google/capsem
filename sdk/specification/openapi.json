@@ -2,9 +2,344 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Capsem Gateway",
-    "version": "2.1.0"
+    "version": "3.3.0"
   },
   "paths": {
+    "/assets/status": {
+      "get": {
+        "operationId": "getAssetStatus",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetStatus"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/connections": {
+      "get": {
+        "operationId": "listConnections",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, at most the host's configured connection capacity. Omission\nuses that capacity; zero and larger values are refused.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Continue after this canonical server-issued connection UUID. Keyset\nordering permits the previous page's last connection to be removed.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionListResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/connections/authorizations/{transaction_id}": {
+      "get": {
+        "operationId": "getConnectionAuthorization",
+        "parameters": [
+          {
+            "name": "transaction_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorizationTransaction"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "cancelConnectionAuthorization",
+        "parameters": [
+          {
+            "name": "transaction_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorizationTransaction"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/connections/google/authorize": {
+      "post": {
+        "operationId": "authorizeGoogleConnection",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthorizeGoogleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorizeGoogleResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/connections/{connection_id}": {
+      "get": {
+        "operationId": "getConnection",
+        "parameters": [
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionSummary"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "disconnectConnection",
+        "parameters": [
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DisconnectResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/credentials/inject": {
+      "post": {
+        "operationId": "injectCredential",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CredentialInjectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialInjectResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/host-logs/{name}": {
       "get": {
         "description": "Send Accept: application/json for the typed response. Without it the route returns plain text.",
@@ -83,6 +418,331 @@
         }
       }
     },
+    "/images": {
+      "get": {
+        "operationId": "listImages",
+        "parameters": [
+          {
+            "name": "refresh",
+            "in": "query",
+            "description": "Read the catalog from its registry now instead of from the copy the\nservice keeps for up to 30 minutes.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageListResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/images/pull": {
+      "post": {
+        "operationId": "pullImage",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImagePullRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImagePullResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mcp/default/info": {
+      "get": {
+        "operationId": "getMcpDefault",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpDefaultPermissionResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mcp/info": {
+      "get": {
+        "operationId": "getMcpInfo",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpInfoResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mcp/servers/list": {
+      "get": {
+        "operationId": "listMcpServers",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpServersListResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mcp/servers/{server_id}/refresh": {
+      "post": {
+        "operationId": "refreshMcpServer",
+        "parameters": [
+          {
+            "name": "server_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpRefreshResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mcp/servers/{server_id}/tools/list": {
+      "get": {
+        "operationId": "listMcpTools",
+        "parameters": [
+          {
+            "name": "server_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpToolsListResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mcp/servers/{server_id}/tools/{tool_id}/call": {
+      "post": {
+        "operationId": "callMcpTool",
+        "parameters": [
+          {
+            "name": "server_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tool_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Value"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Value"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/networks": {
       "get": {
         "operationId": "listNetworks",
@@ -127,7 +787,7 @@
           "required": true
         },
         "responses": {
-          "200": {
+          "201": {
             "description": "Success",
             "content": {
               "application/json": {
@@ -539,298 +1199,14 @@
         }
       }
     },
-    "/profiles/list": {
-      "get": {
-        "operationId": "listProfiles",
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProfilesListResponse"
-                }
-              }
-            }
-          },
-          "default": {
-            "description": "HTTP error; inspect status and error body",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              },
-              "text/plain": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/profiles/{profile_id}/mcp/default/info": {
-      "get": {
-        "operationId": "getProfileMcpDefault",
-        "parameters": [
-          {
-            "name": "profile_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/McpDefaultPermissionResponse"
-                }
-              }
-            }
-          },
-          "default": {
-            "description": "HTTP error; inspect status and error body",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              },
-              "text/plain": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/profiles/{profile_id}/mcp/info": {
-      "get": {
-        "operationId": "getProfileMcpInfo",
-        "parameters": [
-          {
-            "name": "profile_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProfileMcpInfoResponse"
-                }
-              }
-            }
-          },
-          "default": {
-            "description": "HTTP error; inspect status and error body",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              },
-              "text/plain": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/profiles/{profile_id}/mcp/servers/list": {
-      "get": {
-        "operationId": "listProfileMcpServers",
-        "parameters": [
-          {
-            "name": "profile_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/McpServersListResponse"
-                }
-              }
-            }
-          },
-          "default": {
-            "description": "HTTP error; inspect status and error body",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              },
-              "text/plain": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/profiles/{profile_id}/mcp/servers/{server_id}/refresh": {
+    "/proxies": {
       "post": {
-        "operationId": "refreshProfileMcpServer",
-        "parameters": [
-          {
-            "name": "profile_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "server_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/McpRefreshResponse"
-                }
-              }
-            }
-          },
-          "default": {
-            "description": "HTTP error; inspect status and error body",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              },
-              "text/plain": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/profiles/{profile_id}/mcp/servers/{server_id}/tools/list": {
-      "get": {
-        "operationId": "listProfileMcpTools",
-        "parameters": [
-          {
-            "name": "profile_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "server_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/McpToolsListResponse"
-                }
-              }
-            }
-          },
-          "default": {
-            "description": "HTTP error; inspect status and error body",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              },
-              "text/plain": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/call": {
-      "post": {
-        "operationId": "callProfileMcpTool",
-        "parameters": [
-          {
-            "name": "profile_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "server_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "tool_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
+        "operationId": "createProxy",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/Value"
+                "$ref": "#/components/schemas/CreateProxyRequest"
               }
             }
           },
@@ -842,7 +1218,111 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Value"
+                  "$ref": "#/components/schemas/CreateProxyResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/proxies/{id}/heartbeat": {
+      "post": {
+        "operationId": "heartbeatProxy",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProxyLeaseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProxyHeartbeatResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/proxies/{id}/stop": {
+      "post": {
+        "operationId": "stopProxy",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProxyLeaseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StopProxyResponse"
                 }
               }
             }
@@ -1233,6 +1713,110 @@
         }
       }
     },
+    "/vms/managed/{request_id}/claim": {
+      "post": {
+        "operationId": "claimManagedSession",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManagedSessionClaimRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedSessionClaimResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vms/managed/{request_id}/close": {
+      "post": {
+        "operationId": "closeManagedSession",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManagedSessionCloseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedSessionCloseResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/vms/{id}/bodies/export.warc.gz": {
       "get": {
         "operationId": "exportVmBodies",
@@ -1359,6 +1943,148 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ContainerStatusResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vms/{id}/credential-grants": {
+      "get": {
+        "operationId": "listSessionCredentialGrants",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionGrantListResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createSessionCredentialGrant",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSessionGrantRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionGrantSummary"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vms/{id}/credential-grants/{grant_id}": {
+      "delete": {
+        "operationId": "revokeSessionCredentialGrant",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "grant_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevokeSessionGrantResponse"
                 }
               }
             }
@@ -2641,6 +3367,59 @@
           }
         }
       },
+      "AssetFileState": {
+        "type": "string",
+        "enum": [
+          "present",
+          "missing",
+          "invalid"
+        ]
+      },
+      "AssetFileStatus": {
+        "type": "object",
+        "required": [
+          "kind",
+          "name",
+          "path",
+          "status",
+          "expected_hash"
+        ],
+        "properties": {
+          "actual_size": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "expected_hash": {
+            "type": "string"
+          },
+          "expected_size": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "kind": {
+            "type": "string",
+            "description": "`kernel`, `initrd` or `rootfs`."
+          },
+          "name": {
+            "type": "string",
+            "description": "Logical asset name in the manifest, e.g. `vmlinuz`."
+          },
+          "path": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/AssetFileState"
+          }
+        }
+      },
       "AssetManifestStatus": {
         "type": "object",
         "required": [
@@ -2720,6 +3499,94 @@
           },
           "validation_status": {
             "$ref": "#/components/schemas/ValidationStatus"
+          }
+        }
+      },
+      "AssetStatus": {
+        "type": "object",
+        "description": "Whether the one runtime asset set every new VM boots -- kernel, initrd and\nrootfs of the installed manifest's current release -- is on disk.",
+        "required": [
+          "ready",
+          "downloading",
+          "current_arch",
+          "assets",
+          "errors",
+          "manifest"
+        ],
+        "properties": {
+          "asset_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "assets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AssetFileStatus"
+            }
+          },
+          "bytes_done": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "bytes_total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "current_arch": {
+            "type": "string"
+          },
+          "current_asset": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "downloaded": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Assets the last finished reconciliation downloaded.",
+            "minimum": 0
+          },
+          "downloading": {
+            "type": "boolean",
+            "description": "An asset reconciliation (startup or `/assets/ensure`) is running."
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "manifest": {
+            "$ref": "#/components/schemas/AssetManifestStatus"
+          },
+          "ready": {
+            "type": "boolean"
+          },
+          "reconcile_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "started": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Set by `/assets/ensure`: whether this call started a reconciliation."
           }
         }
       },
@@ -2895,12 +3762,125 @@
           }
         }
       },
+      "AuthorizationTransaction": {
+        "type": "object",
+        "required": [
+          "id",
+          "state",
+          "expires_at",
+          "connection_id",
+          "error_code"
+        ],
+        "properties": {
+          "connection_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error_code": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CredentialErrorCode"
+              }
+            ]
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/TransactionState"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AuthorizeGoogleRequest": {
+        "type": "object",
+        "required": [
+          "request_id",
+          "scope_profile_id",
+          "reconnect_connection_id"
+        ],
+        "properties": {
+          "reconnect_connection_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "scope_profile_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AuthorizeGoogleResponse": {
+        "type": "object",
+        "required": [
+          "transaction",
+          "authorization_url"
+        ],
+        "properties": {
+          "authorization_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "transaction": {
+            "$ref": "#/components/schemas/AuthorizationTransaction"
+          }
+        },
+        "additionalProperties": false
+      },
       "BodyEncoding": {
         "type": "string",
         "enum": [
           "utf8",
           "base64"
         ]
+      },
+      "CapabilitySummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "consumer",
+          "required_scopes",
+          "supported"
+        ],
+        "properties": {
+          "consumer": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "required_scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "supported": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
       },
       "CaptureStatus": {
         "type": "string",
@@ -2938,6 +3918,166 @@
           }
         }
       },
+      "CatalogInfo": {
+        "type": "object",
+        "description": "One catalog version, identified by its manifest digest.",
+        "required": [
+          "reference",
+          "digest",
+          "channel"
+        ],
+        "properties": {
+          "channel": {
+            "type": "string",
+            "description": "`stable` or `nightly`."
+          },
+          "digest": {
+            "type": "string",
+            "description": "The catalog version's manifest digest."
+          },
+          "generated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "When the publishing workflow wrote this version, as it recorded it."
+          },
+          "reference": {
+            "type": "string",
+            "description": "The reference the catalog was read from, usually a moving channel tag."
+          }
+        }
+      },
+      "ConnectionListResponse": {
+        "type": "object",
+        "required": [
+          "connections",
+          "scope_profiles",
+          "next_cursor"
+        ],
+        "properties": {
+          "connections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConnectionSummary"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scope_profiles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScopeProfileSummary"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "ConnectionProvider": {
+        "type": "string",
+        "enum": [
+          "google"
+        ]
+      },
+      "ConnectionState": {
+        "type": "string",
+        "enum": [
+          "connected",
+          "reauth_required",
+          "disconnecting",
+          "disconnected",
+          "degraded"
+        ]
+      },
+      "ConnectionSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "provider",
+          "scope_profile_id",
+          "account_label",
+          "state",
+          "revision",
+          "granted_scopes",
+          "available_capabilities",
+          "created_at",
+          "updated_at",
+          "last_refresh_at",
+          "provider_revocation",
+          "error_code"
+        ],
+        "properties": {
+          "account_label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "available_capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "error_code": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CredentialErrorCode"
+              }
+            ]
+          },
+          "granted_scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "id": {
+            "type": "string"
+          },
+          "last_refresh_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/ConnectionProvider"
+          },
+          "provider_revocation": {
+            "$ref": "#/components/schemas/ProviderRevocationState"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 9007199254740991,
+            "minimum": 0
+          },
+          "scope_profile_id": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ConnectionState"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
       "ContainerSpec": {
         "type": "object",
         "description": "An OCI image run as a VM's workload.\n\n`Debug` shows the image and environment names only: arguments and\nenvironment values can carry secrets, and registry access always does.",
@@ -2968,7 +4108,7 @@
           },
           "image": {
             "type": "string",
-            "description": "`docker://IMAGE` or a registry-qualified `registry/repository:tag`."
+            "description": "A catalog name (`codex-cli`), `docker://IMAGE`, or a registry-qualified\n`registry/repository:tag`. A catalog name is looked up first, so a\nname that is also a Docker Hub short name never reaches Docker Hub."
           },
           "registry": {
             "oneOf": [
@@ -3030,10 +4170,61 @@
             "type": "string",
             "description": "The image reference as requested."
           },
+          "resolved": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What the request resolved to, as `repository@digest`, once admitted:\na catalog name or tag pinned, so the session never follows a moved\ntag."
+          },
           "state": {
             "$ref": "#/components/schemas/ContainerState"
+          },
+          "surface": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ContainerSurface",
+                "description": "The graphical surface the image declares, when it declares one."
+              }
+            ]
           }
         }
+      },
+      "ContainerSurface": {
+        "type": "object",
+        "description": "A graphical surface an image declares (`org.capsem.surface`), and the\nbrowser-preview exposure the service granted for it.",
+        "required": [
+          "kind",
+          "port"
+        ],
+        "properties": {
+          "exposure_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The `http_preview` exposure that reaches it, once the workload runs\nand the VM's policy admitted it."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ContainerSurfaceKind"
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Container loopback port the surface listens on\n(`org.capsem.surface.port`).",
+            "minimum": 0
+          }
+        }
+      },
+      "ContainerSurfaceKind": {
+        "type": "string",
+        "description": "How a graphical workload presents itself.",
+        "enum": [
+          "xpra"
+        ]
       },
       "CreateNetworkRequest": {
         "type": "object",
@@ -3045,6 +4236,133 @@
             "type": "string"
           }
         }
+      },
+      "CreateProxyRequest": {
+        "type": "object",
+        "description": "Start one VM-free, OpenAI-compatible model proxy lease.",
+        "required": [
+          "provider",
+          "bind",
+          "port"
+        ],
+        "properties": {
+          "bind": {
+            "type": "string",
+            "description": "Local address on which the unauthenticated data listener binds."
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Requested data-listener port. Zero asks the OS to select one.",
+            "minimum": 0
+          },
+          "provider": {
+            "type": "string",
+            "description": "Provider key from the effective built-in/settings/corp policy."
+          }
+        }
+      },
+      "CreateProxyResponse": {
+        "type": "object",
+        "required": [
+          "session_id",
+          "provider",
+          "bind",
+          "port",
+          "base_url",
+          "lease_token",
+          "lease_expires_unix_ms"
+        ],
+        "properties": {
+          "base_url": {
+            "type": "string",
+            "description": "SDK-compatible URL, including the configured provider path prefix."
+          },
+          "bind": {
+            "type": "string"
+          },
+          "lease_expires_unix_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "lease_token": {
+            "type": "string",
+            "description": "Opaque proof required to renew or stop this lease."
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "provider": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          }
+        }
+      },
+      "CreateSessionGrantRequest": {
+        "type": "object",
+        "required": [
+          "request_id",
+          "expected_owner_generation",
+          "connection_id",
+          "capability_ids",
+          "expires_at"
+        ],
+        "properties": {
+          "capability_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "connection_id": {
+            "type": "string"
+          },
+          "expected_owner_generation": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CredentialErrorCode": {
+        "type": "string",
+        "enum": [
+          "configuration_required",
+          "unsupported_capability",
+          "unknown_scope_profile",
+          "policy_denied",
+          "scope_denied",
+          "connection_unavailable",
+          "reauth_required",
+          "storage_unavailable",
+          "storage_commit_failed",
+          "transaction_expired",
+          "transaction_cancelled",
+          "invalid_callback",
+          "provider_rejected",
+          "provider_timeout",
+          "owner_changed",
+          "session_unavailable",
+          "grant_unavailable",
+          "request_conflict",
+          "revocation_pending"
+        ]
       },
       "CredentialEvent": {
         "type": "object",
@@ -3133,6 +4451,52 @@
           "security.ask"
         ]
       },
+      "CredentialInjectProvider": {
+        "type": "string",
+        "enum": [
+          "anthropic",
+          "google",
+          "openai",
+          "github",
+          "mcp"
+        ]
+      },
+      "CredentialInjectRequest": {
+        "type": "object",
+        "required": [
+          "provider",
+          "value"
+        ],
+        "properties": {
+          "provider": {
+            "$ref": "#/components/schemas/CredentialInjectProvider"
+          },
+          "storage": {
+            "$ref": "#/components/schemas/CredentialStorage"
+          },
+          "value": {
+            "type": "string",
+            "writeOnly": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "CredentialInjectResponse": {
+        "type": "object",
+        "required": [
+          "credential_ref",
+          "storage"
+        ],
+        "properties": {
+          "credential_ref": {
+            "type": "string"
+          },
+          "storage": {
+            "$ref": "#/components/schemas/CredentialStorage"
+          }
+        },
+        "additionalProperties": false
+      },
       "CredentialOutcome": {
         "type": "string",
         "enum": [
@@ -3141,6 +4505,35 @@
           "injected",
           "error"
         ]
+      },
+      "CredentialStorage": {
+        "type": "string",
+        "enum": [
+          "file",
+          "memory"
+        ]
+      },
+      "DisconnectResponse": {
+        "type": "object",
+        "required": [
+          "connection",
+          "revoked_grant_count",
+          "local_authority"
+        ],
+        "properties": {
+          "connection": {
+            "$ref": "#/components/schemas/ConnectionSummary"
+          },
+          "local_authority": {
+            "$ref": "#/components/schemas/LocalCredentialAuthority"
+          },
+          "revoked_grant_count": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
       },
       "DnsEvent": {
         "type": "object",
@@ -3231,6 +4624,13 @@
           }
         }
       },
+      "EnrollmentKind": {
+        "type": "string",
+        "enum": [
+          "owned_oauth_client",
+          "native_consumer_sign_in"
+        ]
+      },
       "ErrorEvent": {
         "type": "object",
         "required": [
@@ -3266,6 +4666,12 @@
           "error"
         ],
         "properties": {
+          "code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "error": {
             "type": "string"
           }
@@ -3394,6 +4800,17 @@
           "command": {
             "type": "string"
           },
+          "target": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExecTarget",
+                "description": "Where the command runs. Absent means the session's workload when it\nruns an image, otherwise the VM."
+              }
+            ]
+          },
           "timeout_secs": {
             "type": [
               "integer",
@@ -3435,6 +4852,14 @@
           "cli",
           "mcp",
           "frontend"
+        ]
+      },
+      "ExecTarget": {
+        "type": "string",
+        "description": "Where an exec runs.",
+        "enum": [
+          "workload",
+          "vm"
         ]
       },
       "ExposureAccess": {
@@ -3726,6 +5151,14 @@
           }
         }
       },
+      "GrantState": {
+        "type": "string",
+        "enum": [
+          "active",
+          "revoked",
+          "expired"
+        ]
+      },
       "HistoryDetails": {
         "oneOf": [
           {
@@ -4005,18 +5438,18 @@
           "vms"
         ],
         "properties": {
-          "gateway_version": {
-            "type": "string"
-          },
-          "profiles": {
+          "assets": {
             "oneOf": [
               {
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/ProfileCatalogStatus"
+                "$ref": "#/components/schemas/AssetStatus"
               }
             ]
+          },
+          "gateway_version": {
+            "type": "string"
           },
           "resource_summary": {
             "oneOf": [
@@ -4050,6 +5483,126 @@
             "items": {
               "$ref": "#/components/schemas/VmSummary"
             }
+          }
+        }
+      },
+      "ImageCacheState": {
+        "type": "string",
+        "description": "The service cache owner's current observation of the selected image's\nlocal bytes. This does not grant execution or describe registry freshness.",
+        "enum": [
+          "unknown",
+          "missing",
+          "partial",
+          "ready"
+        ]
+      },
+      "ImageInfo": {
+        "type": "object",
+        "description": "One catalog entry.",
+        "required": [
+          "name",
+          "description",
+          "architectures",
+          "cached"
+        ],
+        "properties": {
+          "architectures": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Every architecture some version is built for (`arm64`, `amd64`)."
+          },
+          "cached": {
+            "$ref": "#/components/schemas/ImageCacheState"
+          },
+          "description": {
+            "type": "string"
+          },
+          "image": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The newest version this host can run, as `repository@digest`; absent\nwhen no version is built for this host's architecture and runtime."
+          },
+          "name": {
+            "type": "string",
+            "description": "The catalog name, as `capsem create --image` and `POST /images/pull` take it."
+          }
+        }
+      },
+      "ImageListResponse": {
+        "type": "object",
+        "description": "`GET /images`: the catalog entries the current image policy permits.",
+        "required": [
+          "images"
+        ],
+        "properties": {
+          "catalog": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CatalogInfo",
+                "description": "The catalog version listed; absent when the policy turns the catalog\noff or no catalog could ever be read, and then `images` is empty."
+              }
+            ]
+          },
+          "images": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImageInfo"
+            },
+            "description": "Entries in name order."
+          }
+        }
+      },
+      "ImagePullRequest": {
+        "type": "object",
+        "description": "`POST /images/pull`: fetch an image into the host cache ahead of a create.\n`Debug` redacts registry access the way [`RegistryAccess`] does.",
+        "required": [
+          "image"
+        ],
+        "properties": {
+          "image": {
+            "type": "string",
+            "description": "A catalog name, `docker://IMAGE`, or a registry-qualified\n`registry/repository:tag` or `@sha256:` reference."
+          },
+          "registry": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RegistryAccess",
+                "description": "Access to a private registry, used for this pull only and never stored."
+              }
+            ]
+          }
+        }
+      },
+      "ImagePullResponse": {
+        "type": "object",
+        "description": "A pulled and admitted image.",
+        "required": [
+          "image",
+          "resolved",
+          "digest"
+        ],
+        "properties": {
+          "digest": {
+            "type": "string",
+            "description": "The platform manifest pulled for this host."
+          },
+          "image": {
+            "type": "string",
+            "description": "The image as requested."
+          },
+          "resolved": {
+            "type": "string",
+            "description": "What the request resolved to, as `repository@digest`: the pin a\nsession records, never a tag."
           }
         }
       },
@@ -4447,6 +6000,13 @@
           }
         }
       },
+      "LocalCredentialAuthority": {
+        "type": "string",
+        "enum": [
+          "revoking",
+          "revoked"
+        ]
+      },
       "LogsResponse": {
         "type": "object",
         "required": [
@@ -4469,6 +6029,209 @@
             ]
           }
         }
+      },
+      "ManagedSessionClaimRequest": {
+        "type": "object",
+        "required": [
+          "ownership_token"
+        ],
+        "properties": {
+          "ownership_token": {
+            "type": "string",
+            "writeOnly": true,
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ManagedSessionClaimResponse": {
+        "type": "object",
+        "required": [
+          "ownership",
+          "state"
+        ],
+        "properties": {
+          "error": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ManagedSessionFailure"
+              }
+            ]
+          },
+          "ownership": {
+            "$ref": "#/components/schemas/ManagedSessionOwnership"
+          },
+          "session": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ProvisionResponse"
+              }
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/ManagedSessionState"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ManagedSessionCloseRequest": {
+        "type": "object",
+        "required": [
+          "ownership_token",
+          "outcome"
+        ],
+        "properties": {
+          "outcome": {
+            "$ref": "#/components/schemas/ManagedSessionOutcome"
+          },
+          "ownership_token": {
+            "type": "string",
+            "writeOnly": true,
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ManagedSessionCloseResponse": {
+        "type": "object",
+        "required": [
+          "request_id",
+          "generation",
+          "state",
+          "evidence_retained"
+        ],
+        "properties": {
+          "evidence_retained": {
+            "type": "boolean"
+          },
+          "generation": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/ManagedSessionClosedState"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ManagedSessionClosedState": {
+        "type": "string",
+        "enum": [
+          "closed"
+        ]
+      },
+      "ManagedSessionCreate": {
+        "type": "object",
+        "required": [
+          "request_id",
+          "ownership_token"
+        ],
+        "properties": {
+          "ownership_token": {
+            "type": "string",
+            "writeOnly": true,
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ManagedSessionErrorCode": {
+        "type": "string",
+        "enum": [
+          "invalid_request",
+          "forbidden",
+          "not_found",
+          "duplicate_request",
+          "expired",
+          "creation_failed",
+          "cleanup_failed",
+          "recovery_pending",
+          "store_unavailable"
+        ]
+      },
+      "ManagedSessionFailure": {
+        "type": "object",
+        "required": [
+          "code",
+          "error"
+        ],
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/ManagedSessionErrorCode"
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ManagedSessionOutcome": {
+        "type": "string",
+        "enum": [
+          "completed",
+          "failed",
+          "cancelled"
+        ]
+      },
+      "ManagedSessionOwnership": {
+        "type": "object",
+        "required": [
+          "request_id",
+          "generation",
+          "expires_at",
+          "lease_seconds",
+          "renew_after_seconds"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": "string"
+          },
+          "generation": {
+            "type": "string"
+          },
+          "lease_seconds": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "renew_after_seconds": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ManagedSessionState": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "active",
+          "closing",
+          "closed",
+          "failed"
+        ]
       },
       "MaterialClass": {
         "type": "string",
@@ -4494,6 +6257,27 @@
           },
           "source": {
             "type": "string"
+          }
+        }
+      },
+      "McpInfoResponse": {
+        "type": "object",
+        "required": [
+          "server_count",
+          "manual_server_count",
+          "builtin_local_enabled"
+        ],
+        "properties": {
+          "builtin_local_enabled": {
+            "type": "boolean"
+          },
+          "manual_server_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "server_count": {
+            "type": "integer",
+            "minimum": 0
           }
         }
       },
@@ -5161,375 +6945,18 @@
           }
         }
       },
-      "ProfileArtifactIssue": {
-        "type": "object",
-        "required": [
-          "kind",
-          "path"
-        ],
-        "properties": {
-          "kind": {
-            "type": "string",
-            "description": "Profile-owned artifact label, not a lifecycle or permission state."
-          },
-          "path": {
-            "type": "string"
-          },
-          "present": {
-            "type": [
-              "boolean",
-              "null"
-            ]
-          },
-          "valid": {
-            "type": [
-              "boolean",
-              "null"
-            ]
-          }
-        }
-      },
-      "ProfileAvailabilitySummary": {
-        "type": "object",
-        "required": [
-          "web",
-          "shell",
-          "mobile"
-        ],
-        "properties": {
-          "mobile": {
-            "type": "boolean"
-          },
-          "shell": {
-            "type": "boolean"
-          },
-          "web": {
-            "type": "boolean"
-          }
-        }
-      },
-      "ProfileCatalogSource": {
+      "ProviderRevocationState": {
         "type": "string",
         "enum": [
-          "built_in",
-          "profile"
+          "not_started",
+          "pending",
+          "succeeded",
+          "failed"
         ]
-      },
-      "ProfileCatalogStatus": {
-        "type": "object",
-        "required": [
-          "source",
-          "profile_count",
-          "ready_count",
-          "profiles"
-        ],
-        "properties": {
-          "asset_manifest": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/AssetManifestStatus"
-              }
-            ]
-          },
-          "bytes_done": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "minimum": 0
-          },
-          "bytes_total": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64",
-            "minimum": 0
-          },
-          "current_asset": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "defaults": {
-            "$ref": "#/components/schemas/ProfileDefaults",
-            "description": "The profile a client gets when it names none. Clients read it here\ninstead of compiling a profile name in."
-          },
-          "downloaded": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "minimum": 0
-          },
-          "profile_count": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "profiles": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ProfileReadiness"
-            }
-          },
-          "ready_count": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "reconcile_error": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "source": {
-            "$ref": "#/components/schemas/ProfileCatalogSource"
-          }
-        }
-      },
-      "ProfileDefaults": {
-        "type": "object",
-        "description": "The catalog's default profile for each runtime. They are answered\nseparately because they diverge: a container image carries its own\nuserland, so the profile that boots a VM workstation is not what a\ncontainer should get by default.",
-        "properties": {
-          "container": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "vm": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        }
-      },
-      "ProfileExistingVmUpdateSemantics": {
-        "type": "string",
-        "enum": [
-          "pinned_until_recreate"
-        ]
-      },
-      "ProfileMcpInfoResponse": {
-        "type": "object",
-        "required": [
-          "profile_id",
-          "server_count",
-          "manual_server_count",
-          "builtin_local_enabled"
-        ],
-        "properties": {
-          "builtin_local_enabled": {
-            "type": "boolean"
-          },
-          "manual_server_count": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "profile_id": {
-            "type": "string"
-          },
-          "server_count": {
-            "type": "integer",
-            "minimum": 0
-          }
-        }
-      },
-      "ProfileNewSessionUpdateSemantics": {
-        "type": "string",
-        "enum": [
-          "use_current_profile_catalog"
-        ]
-      },
-      "ProfileReadiness": {
-        "type": "object",
-        "required": [
-          "id",
-          "name",
-          "description",
-          "ready",
-          "current_arch",
-          "missing_assets",
-          "invalid_assets",
-          "invalid_files",
-          "errors",
-          "asset_count"
-        ],
-        "properties": {
-          "asset_count": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "current_arch": {
-            "type": "string"
-          },
-          "description": {
-            "type": "string"
-          },
-          "errors": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "id": {
-            "type": "string"
-          },
-          "invalid_assets": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ProfileArtifactIssue"
-            }
-          },
-          "invalid_files": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ProfileArtifactIssue"
-            }
-          },
-          "missing_assets": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ProfileArtifactIssue"
-            }
-          },
-          "name": {
-            "type": "string"
-          },
-          "profile_payload_hash": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "ready": {
-            "type": "boolean"
-          },
-          "revision": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "update_semantics": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/ProfileUpdateSemantics"
-              }
-            ]
-          }
-        }
-      },
-      "ProfileSummary": {
-        "type": "object",
-        "required": [
-          "id",
-          "name",
-          "description",
-          "availability",
-          "source",
-          "rule_count",
-          "default_rule_count",
-          "plugin_count",
-          "mcp_server_count",
-          "update_semantics"
-        ],
-        "properties": {
-          "availability": {
-            "$ref": "#/components/schemas/ProfileAvailabilitySummary"
-          },
-          "default_rule_count": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "description": {
-            "type": "string"
-          },
-          "icon_svg": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "id": {
-            "type": "string"
-          },
-          "mcp_server_count": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "name": {
-            "type": "string"
-          },
-          "plugin_count": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "rule_count": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "source": {
-            "type": "string"
-          },
-          "update_semantics": {
-            "$ref": "#/components/schemas/ProfileUpdateSemantics"
-          }
-        }
-      },
-      "ProfileUpdateSemantics": {
-        "type": "object",
-        "required": [
-          "new_sessions",
-          "existing_vms",
-          "upgrade_action"
-        ],
-        "properties": {
-          "existing_vms": {
-            "$ref": "#/components/schemas/ProfileExistingVmUpdateSemantics"
-          },
-          "new_sessions": {
-            "$ref": "#/components/schemas/ProfileNewSessionUpdateSemantics"
-          },
-          "upgrade_action": {
-            "$ref": "#/components/schemas/ProfileUpgradeAction"
-          }
-        }
-      },
-      "ProfileUpgradeAction": {
-        "type": "string",
-        "enum": [
-          "recreate_vm"
-        ]
-      },
-      "ProfilesListResponse": {
-        "type": "object",
-        "required": [
-          "profiles"
-        ],
-        "properties": {
-          "profiles": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ProfileSummary"
-            }
-          }
-        }
       },
       "ProvisionRequest": {
         "type": "object",
-        "required": [
-          "profile_id"
-        ],
+        "description": "Unknown fields are refused rather than ignored.",
         "properties": {
           "container": {
             "oneOf": [
@@ -5548,7 +6975,7 @@
               "null"
             ],
             "format": "int32",
-            "description": "CPU count. If absent, service resolves from the selected profile's VM\nresources.",
+            "description": "CPU count. If absent, the service's default (4).",
             "minimum": 0
           },
           "env": {
@@ -5571,6 +6998,17 @@
             ],
             "description": "Sandbox to clone state from. If provided, the new sandbox's session will\nbe cloned from this existing persistent sandbox."
           },
+          "managed": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ManagedSessionCreate",
+                "description": "Optional finite ownership for an unnamed ephemeral SDK session."
+              }
+            ]
+          },
           "name": {
             "type": [
               "string",
@@ -5588,26 +7026,23 @@
             "type": "boolean",
             "description": "When true, the VM is persistent (named VMs). Ephemeral VMs are destroyed on stop."
           },
-          "profile_id": {
-            "type": "string"
-          },
           "ram_mb": {
             "type": [
               "integer",
               "null"
             ],
             "format": "int64",
-            "description": "RAM in megabytes. If absent, service resolves from the selected\nprofile's VM resources.",
+            "description": "RAM in megabytes. If absent, the service's default (12 GiB).",
             "minimum": 0
           }
-        }
+        },
+        "additionalProperties": false
       },
       "ProvisionResponse": {
         "type": "object",
         "required": [
           "id",
           "name",
-          "profile_id",
           "status",
           "available_actions"
         ],
@@ -5627,14 +7062,49 @@
           "name": {
             "type": "string"
           },
+          "ownership": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ManagedSessionOwnership"
+              }
+            ]
+          },
           "persistent": {
             "type": "boolean"
           },
-          "profile_id": {
-            "type": "string"
-          },
           "status": {
             "$ref": "#/components/schemas/VmLifecycleState"
+          }
+        }
+      },
+      "ProxyHeartbeatResponse": {
+        "type": "object",
+        "required": [
+          "session_id",
+          "lease_expires_unix_ms"
+        ],
+        "properties": {
+          "lease_expires_unix_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "session_id": {
+            "type": "string"
+          }
+        }
+      },
+      "ProxyLeaseRequest": {
+        "type": "object",
+        "required": [
+          "lease_token"
+        ],
+        "properties": {
+          "lease_token": {
+            "type": "string"
           }
         }
       },
@@ -5797,11 +7267,32 @@
           "accepted"
         ]
       },
+      "RevokeSessionGrantResponse": {
+        "type": "object",
+        "required": [
+          "grant",
+          "local_authority"
+        ],
+        "properties": {
+          "grant": {
+            "$ref": "#/components/schemas/SessionGrantSummary"
+          },
+          "local_authority": {
+            "$ref": "#/components/schemas/RevokedCredentialAuthority"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RevokedCredentialAuthority": {
+        "type": "string",
+        "enum": [
+          "revoked"
+        ]
+      },
       "RunRequest": {
         "type": "object",
         "required": [
-          "command",
-          "profile_id"
+          "command"
         ],
         "properties": {
           "command": {
@@ -5813,7 +7304,7 @@
               "null"
             ],
             "format": "int32",
-            "description": "Guest CPU count. Falls back to the selected profile's VM resources.",
+            "description": "Guest CPU count. If absent, the service's default (4).",
             "minimum": 0
           },
           "env": {
@@ -5829,16 +7320,13 @@
               "type": "string"
             }
           },
-          "profile_id": {
-            "type": "string"
-          },
           "ram_mb": {
             "type": [
               "integer",
               "null"
             ],
             "format": "int64",
-            "description": "Guest RAM in MiB. Falls back to the selected profile's VM resources.",
+            "description": "Guest RAM in MiB. If absent, the service's default (12 GiB).",
             "minimum": 0
           },
           "timeout_secs": {
@@ -5849,13 +7337,13 @@
             "format": "int64",
             "minimum": 0
           }
-        }
+        },
+        "additionalProperties": false
       },
       "SandboxInfo": {
         "type": "object",
         "required": [
           "id",
-          "profile_id",
           "pid",
           "status",
           "available_actions"
@@ -5888,7 +7376,7 @@
           },
           "can_resume": {
             "type": "boolean",
-            "description": "True only when an inactive persistent VM can be started/resumed with\nthe currently installed profile and pinned assets."
+            "description": "True only when an inactive persistent VM can be started/resumed: its\npinned boot assets are installed and its shape is current."
           },
           "cpus": {
             "type": [
@@ -5976,9 +7464,6 @@
             "format": "int32",
             "minimum": 0
           },
-          "profile_id": {
-            "type": "string"
-          },
           "ram_mb": {
             "type": [
               "integer",
@@ -5992,7 +7477,7 @@
               "string",
               "null"
             ],
-            "description": "Human-readable reason `can_resume` is false for an inactive persistent\nVM, e.g. profile payload hash drift after an upgrade."
+            "description": "Human-readable reason `can_resume` is false for an inactive persistent\nVM, e.g. a pinned boot asset that is no longer installed."
           },
           "session_db": {
             "oneOf": [
@@ -6097,6 +7582,48 @@
           }
         }
       },
+      "ScopeProfileSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "enrollment_kind",
+          "label",
+          "application_label",
+          "requested_scopes",
+          "capabilities",
+          "enabled"
+        ],
+        "properties": {
+          "application_label": {
+            "type": "string"
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CapabilitySummary"
+            }
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "enrollment_kind": {
+            "$ref": "#/components/schemas/EnrollmentKind"
+          },
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "requested_scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
       "ServiceAvailability": {
         "type": "string",
         "enum": [
@@ -6128,6 +7655,100 @@
           }
         }
       },
+      "SessionGrantListResponse": {
+        "type": "object",
+        "required": [
+          "session_id",
+          "owner_generation",
+          "grants",
+          "denied_capability_ids"
+        ],
+        "properties": {
+          "denied_capability_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "grants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SessionGrantSummary"
+            }
+          },
+          "owner_generation": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SessionGrantSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "session_id",
+          "owner_generation",
+          "connection_id",
+          "capability_ids",
+          "state",
+          "revision",
+          "created_at",
+          "expires_at",
+          "revoked_at",
+          "runtime_bound"
+        ],
+        "properties": {
+          "capability_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "connection_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string"
+          },
+          "owner_generation": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "maximum": 9007199254740991,
+            "minimum": 0
+          },
+          "revoked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "runtime_bound": {
+            "type": "boolean"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/GrantState"
+          }
+        },
+        "additionalProperties": false
+      },
       "SlowOpEvent": {
         "type": "object",
         "required": [
@@ -6150,6 +7771,21 @@
           },
           "ts": {
             "type": "string"
+          }
+        }
+      },
+      "StopProxyResponse": {
+        "type": "object",
+        "required": [
+          "session_id",
+          "stopped"
+        ],
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "stopped": {
+            "type": "boolean"
           }
         }
       },
@@ -6580,6 +8216,17 @@
           "mcp_proxy"
         ]
       },
+      "TransactionState": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "connected",
+          "denied",
+          "expired",
+          "cancelled",
+          "failed"
+        ]
+      },
       "TriageResponse": {
         "type": "object",
         "required": [
@@ -6698,7 +8345,6 @@
           "stale",
           "binary",
           "assets",
-          "profiles",
           "images",
           "supply_chain"
         ],
@@ -6737,9 +8383,6 @@
               "string",
               "null"
             ]
-          },
-          "profiles": {
-            "$ref": "#/components/schemas/UpdateTrackStatus"
           },
           "stale": {
             "type": "boolean"
@@ -7232,7 +8875,6 @@
           "id",
           "status",
           "persistent",
-          "profile_id",
           "available_actions"
         ],
         "properties": {
@@ -7287,9 +8929,6 @@
           },
           "persistent": {
             "type": "boolean"
-          },
-          "profile_id": {
-            "type": "string"
           },
           "resume_blocked_reason": {
             "type": [

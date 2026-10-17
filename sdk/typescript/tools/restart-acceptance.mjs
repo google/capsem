@@ -13,7 +13,8 @@ try {
   const response = await hv.restart();
   assert.equal(response.status, RestartStatus.ACCEPTED);
   assert.equal(response.authentication, RestartAuthentication.NEW_TOKEN_REQUIRED);
-  assert.equal(response.manager, ServiceManager.LAUNCHD);
+  const expectedManager = process.platform === 'linux' ? ServiceManager.SYSTEMD : ServiceManager.LAUNCHD;
+  assert.equal(response.manager, expectedManager);
 } finally {
   hv.close();
 }

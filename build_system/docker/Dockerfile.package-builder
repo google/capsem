@@ -17,6 +17,7 @@ COPY sdk/rust/Cargo.toml /prefetch/sdk/rust/Cargo.toml
 RUN mkdir -p /prefetch/sdk/rust/src && : > /prefetch/sdk/rust/src/lib.rs
 COPY sdk/typescript/package.json sdk/typescript/pnpm-lock.yaml /prefetch/sdk/typescript/
 COPY web/app/package.json web/app/pnpm-lock.yaml web/app/pnpm-workspace.yaml /prefetch/web/app/
+COPY build_system/patches /prefetch/build_system/patches
 
 WORKDIR /prefetch
 

@@ -22,7 +22,6 @@ import uuid
 
 import pytest
 from helpers.constants import (
-    CODE_PROFILE_ID,
     DEFAULT_CPUS,
     DEFAULT_RAM_MB,
     EXEC_READY_TIMEOUT,
@@ -77,7 +76,6 @@ class TestLoopDeviceAfterResume:
             "/vms/create",
             {
                 "name": name,
-                "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
                 "persistent": True,

@@ -1,7 +1,8 @@
 """No fixture may carry, and no script may construct, an abolished version.
 
-Capsem versions are semver: the binary's patch increments, and every profile
-revision is MAJOR.MINOR.PATCH. Two formats were retired:
+Capsem versions are semver: the binary's patch increments, and every runtime
+revision starts from a MAJOR.MINOR.PATCH workspace version. Two formats were
+retired:
 
     1.6.1785421421      a Unix timestamp in the patch, so a compatibility
                         window could only say "built before/after this instant"
@@ -63,9 +64,7 @@ STAMPING_SOURCES = (
 # separating it from the component being appended.
 CLOCK_COMPONENT = {
     "a shell clock": re.compile(r"[\d}]\.\$\(\(?\s*date\b"),
-    "a Python clock": re.compile(
-        r"[\d}]\.\{[^}]*\b(?:time\.time|datetime\b|utcnow|strftime)"
-    ),
+    "a Python clock": re.compile(r"[\d}]\.\{[^}]*\b(?:time\.time|datetime\b|utcnow|strftime)"),
     "a dotted-date version": re.compile(r"date\s+[\"']?\+%Y[.\-]%m"),
 }
 
@@ -74,9 +73,7 @@ def _docstrings(tree: ast.Module) -> set[int]:
     """Node ids of docstring constants, which may name a retired format."""
     exempt = set()
     for node in ast.walk(tree):
-        if isinstance(
-            node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
-        ):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
             body = getattr(node, "body", [])
             if (
                 body
@@ -346,8 +343,8 @@ def test_the_shipped_pattern_is_recognised_as_stranded(pattern: str) -> None:
     [
         r"^(?P<series>.+?)_(?P<major>\d+)\.(?P<minor>\d+)\.(?P<ts>\d+)",
         r"\d+\.\d+\.\d+",
-        r"[0-9a-f]{40}",          # a git sha is not a version
-        r"\w{6,}",                # six of something else is not six digits
+        r"[0-9a-f]{40}",  # a git sha is not a version
+        r"\w{6,}",  # six of something else is not six digits
     ],
 )
 def test_a_pattern_that_reads_semver_is_left_alone(pattern: str) -> None:

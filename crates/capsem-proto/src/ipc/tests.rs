@@ -58,15 +58,28 @@ fn exec_roundtrip() {
     let msg = ServiceToProcess::Exec {
         id: 42,
         command: "echo hi".into(),
+        target: ExecTarget::Workload,
     };
     let bytes = serde_json::to_vec(&msg).unwrap();
     let msg2: ServiceToProcess = serde_json::from_slice(&bytes).unwrap();
     match msg2 {
-        ServiceToProcess::Exec { id, command } => {
+        ServiceToProcess::Exec { id, command, target } => {
             assert_eq!(id, 42);
             assert_eq!(command, "echo hi");
+            assert_eq!(target, ExecTarget::Workload);
         }
         _ => panic!("wrong variant"),
+    }
+}
+
+/// The target is never implied: a frame without one is refused rather than
+/// run somewhere its sender did not choose.
+#[test]
+fn exec_target_is_required_and_spelled_like_the_ledger() {
+    let missing = serde_json::json!({"Exec": {"id": 1, "command": "true"}});
+    assert!(serde_json::from_value::<ServiceToProcess>(missing).is_err());
+    for target in [ExecTarget::Vm, ExecTarget::Workload] {
+        assert_eq!(serde_json::to_value(target).unwrap(), target.as_str());
     }
 }
 
@@ -355,6 +368,7 @@ fn job_ids_are_distinct() {
     let exec = ServiceToProcess::Exec {
         id: 1,
         command: "a".into(),
+        target: ExecTarget::Vm,
     };
     let write = ServiceToProcess::WriteFile {
         id: 2,
@@ -402,10 +416,16 @@ fn job_ids_are_distinct() {
 
 #[test]
 fn reload_config_roundtrip() {
-    let msg = ServiceToProcess::ReloadConfig { id: 3 };
+    let msg = ServiceToProcess::ReloadConfig {
+        id: 3,
+        active_policy: b"[network]".to_vec(),
+    };
     let bytes = serde_json::to_vec(&msg).unwrap();
     let msg2: ServiceToProcess = serde_json::from_slice(&bytes).unwrap();
-    assert!(matches!(msg2, ServiceToProcess::ReloadConfig { id: 3 }));
+    assert!(matches!(
+        msg2,
+        ServiceToProcess::ReloadConfig { id: 3, active_policy } if active_policy == b"[network]"
+    ));
 }
 
 // -----------------------------------------------------------------------
@@ -414,17 +434,10 @@ fn reload_config_roundtrip() {
 
 #[test]
 fn suspend_roundtrip() {
-    let msg = ServiceToProcess::Suspend {
-        checkpoint_path: "/tmp/checkpoint.vzsave".into(),
-    };
+    let msg = ServiceToProcess::Suspend;
     let bytes = serde_json::to_vec(&msg).unwrap();
     let msg2: ServiceToProcess = serde_json::from_slice(&bytes).unwrap();
-    match msg2 {
-        ServiceToProcess::Suspend { checkpoint_path } => {
-            assert_eq!(checkpoint_path, "/tmp/checkpoint.vzsave");
-        }
-        _ => panic!("wrong variant"),
-    }
+    assert!(matches!(msg2, ServiceToProcess::Suspend));
 }
 
 #[test]
@@ -451,18 +464,32 @@ fn suspend_requested_roundtrip() {
 
 #[test]
 fn clone_state_roundtrip() {
-    let msg = ServiceToProcess::CloneState {
-        id: 12,
-        destination: "/run/persistent/fork".into(),
-    };
+    let msg = ServiceToProcess::CloneState { id: 12 };
     let bytes = serde_json::to_vec(&msg).unwrap();
     match serde_json::from_slice::<ServiceToProcess>(&bytes).unwrap() {
-        ServiceToProcess::CloneState { id, destination } => {
-            assert_eq!(id, 12);
-            assert_eq!(destination, "/run/persistent/fork");
-        }
+        ServiceToProcess::CloneState { id } => assert_eq!(id, 12),
         _ => panic!("wrong variant"),
     }
+    let ready = ProcessToService::CloneStateReady { id: 12 };
+    let bytes = serde_json::to_vec(&ready).unwrap();
+    assert!(matches!(
+        serde_json::from_slice::<ProcessToService>(&bytes).unwrap(),
+        ProcessToService::CloneStateReady { id: 12 }
+    ));
+    let complete = ServiceToProcess::CloneStateComplete {
+        id: 12,
+        size_bytes: Some(4096),
+        error: None,
+    };
+    let bytes = serde_json::to_vec(&complete).unwrap();
+    assert!(matches!(
+        serde_json::from_slice::<ServiceToProcess>(&bytes).unwrap(),
+        ServiceToProcess::CloneStateComplete {
+            id: 12,
+            size_bytes: Some(4096),
+            error: None
+        }
+    ));
     let reply = ProcessToService::CloneStateResult {
         id: 12,
         size_bytes: Some(4096),
@@ -590,6 +617,7 @@ fn mcp_tools_result_roundtrip() {
             namespaced_name: "github__search".into(),
             original_name: "search".into(),
             description: Some("Search repos".into()),
+            input_schema: serde_json::json!({"type": "object"}),
             server_name: "github".into(),
             annotations: None,
         }],

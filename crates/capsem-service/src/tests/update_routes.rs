@@ -59,7 +59,7 @@ async fn update_route_check_live_executes_non_mutating_cli_check() {
     std::env::set_var("CAPSEM_CLI", &cli);
 
     let assets_dir = dir.path().join("assets");
-    write_update_runtime_manifest(&assets_dir, "0.0.0", "profiles-1");
+    write_update_runtime_manifest(&assets_dir, "0.0.0", "assets-1");
     let app = build_service_router(make_asset_state(assets_dir));
     let (status, body) = route_request(app, axum::http::Method::POST, "/update/check", Some(json!({}))).await;
     match previous {
@@ -144,7 +144,7 @@ async fn update_route_apply_confirmed_dispatches_one_atomic_update() {
     std::env::set_var("CAPSEM_CLI", &cli);
 
     let assets_dir = dir.path().join("assets");
-    write_update_runtime_manifest(&assets_dir, "0.0.0", "profiles-1");
+    write_update_runtime_manifest(&assets_dir, "0.0.0", "assets-1");
     let app = build_service_router(make_asset_state(assets_dir));
     let (status, body) = route_request(
         app,
@@ -198,7 +198,7 @@ async fn update_route_live_commands_share_one_serial_lock() {
     std::env::set_var("CAPSEM_CLI", &cli);
 
     let assets_dir = dir.path().join("assets");
-    write_update_runtime_manifest(&assets_dir, "0.0.0", "profiles-1");
+    write_update_runtime_manifest(&assets_dir, "0.0.0", "assets-1");
     let app = build_service_router(make_asset_state(assets_dir));
     let first = route_request(
         app.clone(),
@@ -245,24 +245,24 @@ fn write_update_runtime_manifest(assets_dir: &StdPath, binary: &str, assets: &st
 }
 
 #[tokio::test]
-async fn update_runtime_reloads_profile_only_activation_without_restart() {
+async fn update_runtime_reloads_asset_only_activation_without_restart() {
     let dir = tempfile::tempdir().unwrap();
     let assets_dir = dir.path().join("assets");
     let state = make_asset_state(assets_dir.clone());
-    write_update_runtime_manifest(&assets_dir, "0.0.0", "profiles-2");
+    write_update_runtime_manifest(&assets_dir, "0.0.0", "assets-2");
 
     let disposition = reload_activated_update_runtime(&state).unwrap();
 
     assert_eq!(disposition, UpdateRuntimeDisposition::Reloaded);
     assert_eq!(
         state.manifest.read().unwrap().as_ref().unwrap().assets.current,
-        "profiles-2"
+        "assets-2"
     );
     assert!(
         tokio::time::timeout(std::time::Duration::from_millis(10), state.update_restart.notified())
             .await
             .is_err(),
-        "profile-only activation must not restart a current binary"
+        "asset-only activation must not restart a current binary"
     );
 }
 
@@ -271,7 +271,7 @@ async fn update_runtime_requests_restart_after_binary_activation() {
     let dir = tempfile::tempdir().unwrap();
     let assets_dir = dir.path().join("assets");
     let state = make_asset_state(assets_dir.clone());
-    write_update_runtime_manifest(&assets_dir, "9.9.9", "profiles-2");
+    write_update_runtime_manifest(&assets_dir, "9.9.9", "assets-2");
 
     let disposition = reload_activated_update_runtime(&state).unwrap();
 
@@ -291,7 +291,7 @@ async fn update_runtime_requests_restart_after_binary_activation() {
 fn update_runtime_rejects_invalid_manifest_without_replacing_cached_graph() {
     let dir = tempfile::tempdir().unwrap();
     let assets_dir = dir.path().join("assets");
-    write_update_runtime_manifest(&assets_dir, "0.0.0", "profiles-1");
+    write_update_runtime_manifest(&assets_dir, "0.0.0", "assets-1");
     let state = make_asset_state(assets_dir.clone());
     std::fs::write(assets_dir.join("manifest.json"), b"{not-json").unwrap();
 
@@ -300,7 +300,7 @@ fn update_runtime_rejects_invalid_manifest_without_replacing_cached_graph() {
     assert!(error.1.contains("validate activated update manifest"));
     assert_eq!(
         state.manifest.read().unwrap().as_ref().unwrap().assets.current,
-        "profiles-1"
+        "assets-1"
     );
 }
 
@@ -432,7 +432,7 @@ async fn automatic_update_runs_one_complete_apply_and_reloads_runtime() {
     let assets_dir = capsem_home.join("assets");
     let cli = dir.path().join("capsem");
     let log = dir.path().join("automatic.log");
-    write_update_runtime_manifest(&assets_dir, "0.0.0", "profiles-2");
+    write_update_runtime_manifest(&assets_dir, "0.0.0", "assets-2");
     std::fs::write(
         &cli,
         format!("#!/bin/sh\nprintf '%s\\n' \"$*\" > '{}'\n", log.display()),

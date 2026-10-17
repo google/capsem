@@ -11,6 +11,17 @@ impl SourceCommit {
     pub(crate) fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// The runtime revision a release of this commit publishes.
+    ///
+    /// The workspace version alone would collide across nightly re-releases at
+    /// an unchanged version, so every released commit gets its own immutable
+    /// identity: `<workspace version>-<first 12 hex of the commit>`.
+    /// capsem-admin is built from the released checkout, so its own package
+    /// version is the workspace version being released.
+    pub(crate) fn runtime_revision(&self) -> String {
+        format!("{}-{}", env!("CARGO_PKG_VERSION"), &self.0[..12])
+    }
 }
 
 impl FromStr for SourceCommit {

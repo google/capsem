@@ -3,13 +3,7 @@
 use crate::scenarios::Artifact;
 use crate::{commands, machine, schema, stats};
 
-pub(crate) fn build(
-    artifact: &Artifact,
-    channel: &str,
-    commit: &str,
-    profile: &str,
-    strays: Vec<String>,
-) -> schema::Record {
+pub(crate) fn build(artifact: &Artifact, channel: &str, commit: &str, strays: Vec<String>) -> schema::Record {
     let fitness = machine::examine(
         machine::Judgement::Measurement,
         std::env::consts::ARCH,
@@ -49,7 +43,6 @@ pub(crate) fn build(
             commit: commit.to_string(),
         },
         host: fitness.host,
-        profile: profile.to_string(),
         quick: false,
         metrics,
         sidecar: None,

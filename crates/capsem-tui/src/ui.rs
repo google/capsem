@@ -1,3 +1,8 @@
+mod snapshots;
+use snapshots::buffer_to_svg;
+mod create;
+use create::create_lines;
+
 use anyhow::Result;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
@@ -319,13 +324,22 @@ fn render_inactive_session_surface(frame: &mut Frame<'_>, area: Rect, session: &
             "Press Enter to create a replacement",
             status_base_style().add_modifier(Modifier::BOLD),
         )));
-        lines.push(Line::from(Span::styled(
-            "Alt+d deletes this session; Alt+p purges temporary/broken sessions",
-            muted_style(),
-        )));
+        if session
+            .available_actions
+            .contains(&capsem_sdk::models::VmAction::Delete)
+        {
+            lines.push(Line::from(Span::styled(
+                "Alt+d deletes this session; Alt+p purges temporary/broken sessions",
+                muted_style(),
+            )));
+        }
     } else {
         lines.push(Line::from(Span::styled(
-            "Press Enter to resume",
+            if session.available_actions.contains(&capsem_sdk::models::VmAction::Start) {
+                "Press Enter to start"
+            } else {
+                "Press Enter to resume"
+            },
             status_base_style().add_modifier(Modifier::BOLD),
         )));
     }
@@ -454,7 +468,7 @@ fn render_overlay(
         AppOverlay::Help => help_lines(),
         AppOverlay::Stats => stats_lines(state),
         AppOverlay::Home => home_lines(state),
-        AppOverlay::Create => create_lines(state, create_draft),
+        AppOverlay::Create => create_lines(create_draft),
         AppOverlay::Fork => fork_lines(state, fork_draft),
         AppOverlay::Confirm => confirm_lines(pending_action),
         AppOverlay::None => Vec::new(),
@@ -484,7 +498,7 @@ fn overlay_height(state: &AppState, overlay: AppOverlay) -> u16 {
         AppOverlay::Help => 21,
         AppOverlay::Stats => 12,
         AppOverlay::Home => (state.sessions.len() as u16).saturating_add(5).clamp(7, 16),
-        AppOverlay::Create => (state.profiles.len() as u16).saturating_add(10).clamp(12, 18),
+        AppOverlay::Create => 13,
         AppOverlay::Fork => 8,
         AppOverlay::Confirm => 6,
         AppOverlay::None => 0,
@@ -501,7 +515,7 @@ fn help_lines() -> Vec<Line<'static>> {
         help_row("Alt+1..9", "jump", "global", "select by tab number"),
         help_row("Alt+l", "sessions", "global", "list sessions and status"),
         help_row("Alt+i", "session info", "session", "active session details"),
-        help_row("Alt+n", "new", "global", "create from profile"),
+        help_row("Alt+n", "new", "global", "create a session"),
         help_row("Alt+f", "fork", "session", "fork active session"),
         help_row("Alt+s", "suspend", "session", "warm stop active session"),
         help_row("Alt+c", "checkpoint", "session", "save/checkpoint session"),
@@ -524,49 +538,6 @@ fn confirm_lines(action: Option<&ControlAction>) -> Vec<Line<'static>> {
         overlay_pair("target", action.target()),
         overlay_line("Enter confirms; Esc cancels"),
     ]
-}
-
-fn create_lines(state: &AppState, draft: Option<&CreateDraft>) -> Vec<Line<'static>> {
-    let mut lines = vec![logo_line(), overlay_title("new session")];
-    let name = draft
-        .map(|draft| draft.name.as_str())
-        .filter(|name| !name.is_empty())
-        .unwrap_or(" ");
-    lines.push(focus_pair("name", name));
-    lines.push(overlay_line("active input: name; type to edit; Backspace deletes"));
-    let create_hint = if state.profiles.is_empty() {
-        "profile list unavailable; Enter disabled; Esc cancels"
-    } else {
-        "Up/Down selects profile; Enter creates; Esc cancels"
-    };
-    lines.push(overlay_line(create_hint));
-    lines.push(overlay_line(""));
-    lines.push(overlay_title("profiles"));
-    lines.push(table_header(&["Pick", "Profile", "Name"]));
-
-    if state.profiles.is_empty() {
-        lines.push(focus_line("profiles unavailable"));
-        return lines;
-    }
-
-    let selected = draft
-        .map(|draft| draft.selected_profile)
-        .unwrap_or_default()
-        .min(state.profiles.len().saturating_sub(1));
-    for (index, profile) in state.profiles.iter().take(8).enumerate() {
-        let marker = if index == selected { "▶" } else { " " };
-        let row = format!(
-            "{marker:<4} {:<20} {:<22}",
-            truncate(&profile.id, 20),
-            truncate(&profile.name, 22),
-        );
-        if index == selected {
-            lines.push(focus_line(&row));
-        } else {
-            lines.push(overlay_line(&row));
-        }
-    }
-    lines
 }
 
 fn fork_lines(state: &AppState, draft: Option<&ForkDraft>) -> Vec<Line<'static>> {
@@ -594,7 +565,6 @@ fn stats_lines(state: &AppState) -> Vec<Line<'static>> {
         overlay_title("session info"),
         table_header(&["Field", "Value", "Note", ""]),
         info_row("session", &session.title, &session.id),
-        info_row("profile", &session.profile, session.branch.as_deref().unwrap_or("")),
         info_row("state", session.lifecycle.label(), attention_summary(session)),
         info_row("duration", &format_duration(session.stats.duration), ""),
         info_row("tokens", &format_tokens(session.stats.tokens), ""),
@@ -614,9 +584,7 @@ fn home_lines(state: &AppState) -> Vec<Line<'static>> {
         lines.push(overlay_line("no sessions"));
         return lines;
     }
-    lines.push(table_header(&[
-        "#", "Name", "Profile", "State", "Time", "Tokens", "Cost",
-    ]));
+    lines.push(table_header(&["#", "Name", "State", "Time", "Tokens", "Cost"]));
     for (index, session) in state.sessions.iter().take(10).enumerate() {
         let active = if session.id == state.active_session_id {
             "▶"
@@ -624,10 +592,9 @@ fn home_lines(state: &AppState) -> Vec<Line<'static>> {
             " "
         };
         let row = format!(
-            "{active} {:<2} {:<18} {:<14} {:<10} {:>6} {:>7} ${:<5}",
+            "{active} {:<2} {:<18} {:<10} {:>6} {:>7} ${:<5}",
             index + 1,
             truncate(&session.title, 18),
-            truncate(&profile_inventory_label(session), 14),
             session.lifecycle.label(),
             format_duration(session.stats.duration),
             format_tokens(session.stats.tokens),
@@ -640,16 +607,6 @@ fn home_lines(state: &AppState) -> Vec<Line<'static>> {
         }
     }
     lines
-}
-
-fn profile_inventory_label(session: &SessionSummary) -> String {
-    if resume_blocked_reason(session).is_some() {
-        return session
-            .profile_status
-            .clone()
-            .unwrap_or_else(|| "profile-error".to_string());
-    }
-    session.profile.clone()
 }
 
 fn overlay_title(title: &'static str) -> Line<'static> {
@@ -972,96 +929,6 @@ fn truncate(value: &str, max_chars: usize) -> String {
 
 fn spans_width(spans: &[Span<'_>]) -> usize {
     spans.iter().map(|span| span.content.chars().count()).sum()
-}
-
-fn buffer_to_svg(buffer: &Buffer) -> String {
-    const CHAR_WIDTH: usize = 11;
-    const LINE_HEIGHT: usize = 22;
-    const FONT_SIZE: usize = 16;
-    const PAD: usize = 16;
-
-    let width = buffer.area.width as usize;
-    let height = buffer.area.height as usize;
-    let svg_width = width * CHAR_WIDTH + PAD * 2;
-    let content_height = height * LINE_HEIGHT + PAD * 2;
-    let svg_height = svg_width.max(content_height);
-    let mut svg = String::new();
-    svg.push_str(&format!(
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{svg_width}\" height=\"{svg_height}\" viewBox=\"0 0 {svg_width} {svg_height}\">\n"
-    ));
-    svg.push_str(&format!(
-        "<rect width=\"100%\" height=\"100%\" fill=\"{}\"/>\n",
-        color_hex(PREVIEW_BG)
-    ));
-    svg.push_str(
-        "<style>text{font-family:Menlo,Monaco,Consolas,monospace;dominant-baseline:text-before-edge;}</style>\n",
-    );
-
-    for y in 0..height {
-        for x in 0..width {
-            let cell = &buffer.content()[y * width + x];
-            let bg = if cell.bg == Color::Reset { PREVIEW_BG } else { cell.bg };
-            let rect_x = PAD + x * CHAR_WIDTH;
-            let rect_y = PAD + y * LINE_HEIGHT;
-            svg.push_str(&format!(
-                "<rect x=\"{rect_x}\" y=\"{rect_y}\" width=\"{CHAR_WIDTH}\" height=\"{LINE_HEIGHT}\" fill=\"{}\"/>\n",
-                color_hex(bg)
-            ));
-
-            let symbol = cell.symbol();
-            if symbol == " " {
-                continue;
-            }
-            let fg = if cell.fg == Color::Reset { TEXT } else { cell.fg };
-            let weight = if cell.modifier.contains(Modifier::BOLD) {
-                "700"
-            } else {
-                "400"
-            };
-            svg.push_str(&format!(
-                "<text x=\"{rect_x}\" y=\"{rect_y}\" font-size=\"{FONT_SIZE}\" font-weight=\"{weight}\" fill=\"{}\">{}</text>\n",
-                color_hex(fg),
-                escape_xml(symbol)
-            ));
-        }
-    }
-    svg.push_str("</svg>\n");
-    svg
-}
-
-fn color_hex(color: Color) -> String {
-    match color {
-        Color::Reset => color_hex(TEXT),
-        Color::Black => "#000000".to_string(),
-        Color::Red => "#f38ba8".to_string(),
-        Color::Green => "#a6e3a1".to_string(),
-        Color::Yellow => "#f9e2af".to_string(),
-        Color::Blue => "#89b4fa".to_string(),
-        Color::Magenta => "#cba6f7".to_string(),
-        Color::Cyan => "#89dceb".to_string(),
-        Color::Gray => "#bac2de".to_string(),
-        Color::DarkGray => "#585b70".to_string(),
-        Color::LightRed => "#f38ba8".to_string(),
-        Color::LightGreen => "#a6e3a1".to_string(),
-        Color::LightYellow => "#f9e2af".to_string(),
-        Color::LightBlue => "#89b4fa".to_string(),
-        Color::LightMagenta => "#cba6f7".to_string(),
-        Color::LightCyan => "#89dceb".to_string(),
-        Color::White => "#ffffff".to_string(),
-        Color::Rgb(r, g, b) => format!("#{r:02x}{g:02x}{b:02x}"),
-        Color::Indexed(index) => {
-            let gray = index.max(16);
-            format!("#{gray:02x}{gray:02x}{gray:02x}")
-        }
-    }
-}
-
-fn escape_xml(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
 }
 
 fn buffer_to_string(buffer: &Buffer) -> String {

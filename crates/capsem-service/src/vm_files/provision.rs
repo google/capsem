@@ -2,14 +2,24 @@ use super::*;
 
 pub(crate) async fn handle_provision(
     State(state): State<Arc<ServiceState>>,
-    Json(payload): Json<ProvisionRequest>,
-) -> Result<Json<ProvisionResponse>, AppError> {
+    payload: Result<Json<ProvisionRequest>, axum::extract::rejection::JsonRejection>,
+) -> axum::response::Response {
+    let Json(payload) = match payload {
+        Ok(payload) => payload,
+        Err(_) => return crate::managed_routes::ManagedError::invalid().into_response(),
+    };
+    if payload.managed.is_some() {
+        return crate::managed_routes::create(state, payload).await.into_response();
+    }
+    provision(state, payload).await.into_response()
+}
+
+async fn provision(state: Arc<ServiceState>, payload: ProvisionRequest) -> Result<Json<ProvisionResponse>, AppError> {
     let _launch = state
         .lifecycle
         .admit()
         .map_err(|e| AppError(StatusCode::CONFLICT, e.to_string()))?;
-    let profile_id = validate_profile_route_id(payload.profile_id.clone())?;
-    if let Some(reason) = vm_asset_block_reason(&state, &profile_id) {
+    if let Some(reason) = state.off_worker(|state| vm_asset_block_reason(&state)).await? {
         return Err(AppError(StatusCode::PRECONDITION_FAILED, reason));
     }
 
@@ -17,7 +27,7 @@ pub(crate) async fn handle_provision(
     let name = payload
         .name
         .clone()
-        .unwrap_or_else(|| generate_profile_session_name(&profile_id, existing.iter().map(|s| s.as_str())));
+        .unwrap_or_else(|| generate_session_name(existing.iter().map(|s| s.as_str())));
     let persistent = payload.persistent || payload.name.is_some() || payload.from.is_some();
     if existing.iter().any(|existing| existing == &name) {
         return Err(AppError(
@@ -28,10 +38,7 @@ pub(crate) async fn handle_provision(
     let id = new_persistent_vm_id();
     let networks = network_routes::resolve_network_names(&*state.networks.lock().await, &payload.networks)?;
 
-    let profile = state
-        .cached_profile_config(&profile_id)
-        .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
-    let resources = resolve_profile_vm_resources(&profile, payload.ram_mb, payload.cpus);
+    let resources = resolve_vm_resources(payload.ram_mb, payload.cpus);
     let ram_mb = resources.ram_mb;
     let cpus = resources.cpus;
     let scratch_disk_size_gb = resources.scratch_disk_size_gb;
@@ -57,9 +64,11 @@ pub(crate) async fn handle_provision(
         let state = Arc::clone(&state);
         let id = id_for_loop.clone();
         let name = name.clone();
-        let payload_env = payload.env.clone();
-        let payload_from = payload.from.clone();
-        let payload_profile_id = profile_id.clone();
+        let payload_env = capsem_core::container::session_env(payload.env.clone(), payload.container.is_some());
+        let payload_from = payload.from.clone().map(|source| crate::CloneFrom {
+            source,
+            replace_image: payload.container.is_some(),
+        });
         let payload_persistent = persistent;
         let attempt = attempt_num.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
         async move {
@@ -77,7 +86,17 @@ pub(crate) async fn handle_provision(
                         let _ = state.persistent_registry.lock().unwrap().unregister(&stale_name);
                     })
                     .await;
-                state.instances.lock().unwrap().remove(&id);
+                let generation = {
+                    state
+                        .instances
+                        .lock()
+                        .unwrap()
+                        .get(&id)
+                        .map(|instance| instance.generation)
+                };
+                if let Some(generation) = generation {
+                    state.evict_instance(&id, generation);
+                }
                 warn!(id, attempt, "retrying provision after launchd-cleanup transient");
             }
 
@@ -88,7 +107,6 @@ pub(crate) async fn handle_provision(
                 ram_mb,
                 cpus,
                 scratch_disk_size_gb,
-                payload_profile_id,
                 payload_persistent,
                 payload_env,
                 payload_from,
@@ -108,7 +126,7 @@ pub(crate) async fn handle_provision(
                     "capsem-process exited before reaching ready"
                 );
             } else if let ProvisionAttemptOutcome::ProvisionError(ref e) = outcome {
-                error!(id, error = %e, "provision failed");
+                error!(id, error = format!("{e:#}"), "provision failed");
             }
             match classify_attempt_decision(outcome, &id) {
                 AttemptDecision::Succeed(uds_path) => Some(Ok(uds_path)),
@@ -118,6 +136,10 @@ pub(crate) async fn handle_provision(
         }
     })
     .await;
+
+    // All spawn/retry attempts have published or failed. Image setup has its
+    // own cancellation owner and must not hold shutdown's launch drain.
+    drop(_launch);
 
     match result {
         Ok(Ok(_)) => finish_create(&state, &id, &networks, payload.container).await.map(Json),
@@ -163,63 +185,45 @@ pub(crate) async fn finish_create(
     created
 }
 
-async fn complete_create(
+pub(crate) async fn complete_create(
     state: &Arc<ServiceState>,
     id: &str,
     networks: &[uuid::Uuid],
     container: Option<api::ContainerSpec>,
 ) -> Result<ProvisionResponse, AppError> {
     let response = provision_response_for_running(state, id.to_owned())?;
+    let socket = state
+        .instances
+        .lock()
+        .unwrap()
+        .get(id)
+        .map(|instance| instance.uds_path.clone());
+    if let Some(socket) = socket {
+        crate::credential_routes::sync_memory(state, &socket)
+            .await
+            .map_err(|error| AppError(StatusCode::SERVICE_UNAVAILABLE, error))?;
+    }
     network_routes::attach_provisioned(state, id, networks).await?;
+    if container.is_none() {
+        // A `--from` clone boots its source's staged image, if it had one.
+        container_setup::restore_ready(state, id).await?;
+    }
     if let Some(spec) = container {
         container_setup::start(state, id.to_owned(), spec);
-        let status = container_setup::wait_for_create(state, id).await.map_err(|timed_out| {
-            warn!(vm_id = id, attempts = timed_out.attempts, "container create readiness timed out");
-            AppError(
-                StatusCode::GATEWAY_TIMEOUT,
-                format!(
-                    "container workload for VM {id} did not become ready before the HTTP deadline; setup continues under service ownership"
-                ),
-            )
-        })?;
-        match status.state {
-            api::ContainerState::Running | api::ContainerState::Staged => {}
-            api::ContainerState::Exited | api::ContainerState::Failed => {
-                error!(
-                    vm_id = id,
-                    state = ?status.state,
-                    exit_code = status.exit_code,
-                    "container create reached a terminal failure"
-                );
-                return Err(AppError(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!(
-                        "container workload for VM {id} reached {:?}: {}",
-                        status.state,
-                        status.error.unwrap_or_else(|| status
-                            .exit_code
-                            .map(|code| format!("exit code {code}"))
-                            .unwrap_or_else(|| "no failure detail".into()))
-                    ),
-                ));
-            }
-            api::ContainerState::Pulling | api::ContainerState::Staging | api::ContainerState::Starting => {
-                unreachable!("container readiness returned a pending state")
-            }
-        }
+        container_setup::require_ready(state, id).await?;
     }
     Ok(response)
 }
 
 /// The VM goes and its name is freed, but its ledger and logs are kept as a
 /// failed session: they hold the record of why the create failed -- a
-/// policy-refused pull's audit row lives in this VM's own ledger. Retain, not
-/// Discard: the owner exits cleanly so that ledger is flushed before it moves.
+/// policy-refused pull's audit row lives in this VM's own ledger. The host
+/// owner drains it directly, without waiting for the guest to finish booting.
 async fn discard_failed_create(state: &Arc<ServiceState>, id: &str) {
-    // Resolved first: a teardown that fails -- a ledger too damaged to roll up
-    // into main.db -- must not also lose the ledger it could not read.
+    // Resolved first: a teardown that fails -- a ledger too damaged to read --
+    // must not also lose the ledger it could not read.
     let session_dir = resolve_session_dir(state, id).ok();
-    if let Err(error) = shutdown_vm_process(state, id, ShutdownMode::Retain).await {
+    if let Err(error) = shutdown_vm_process(state, id, ShutdownMode::FailedCreate, None).await {
         error!(vm_id = id, error = %error.1, "failed create did not shut down cleanly");
     }
     if let Some(session_dir) = session_dir {
@@ -237,6 +241,18 @@ async fn discard_failed_create(state: &Arc<ServiceState>, id: &str) {
         }
     }
     network_routes::vm_deleted(state, id).await;
+}
+
+/// The caller's view of a failed provision: the whole cause chain, since the
+/// top context alone ("load the policy inputs") never says why.
+pub(crate) fn provision_failure(e: &anyhow::Error) -> AppError {
+    let message = format!("{e:#}");
+    let status = if message.contains("already exists") {
+        StatusCode::CONFLICT
+    } else {
+        StatusCode::INTERNAL_SERVER_ERROR
+    };
+    AppError(status, format!("provision failed: {message}"))
 }
 
 #[cfg(test)]

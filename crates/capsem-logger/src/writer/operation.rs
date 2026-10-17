@@ -17,9 +17,11 @@ impl WriteOp {
             WriteOp::SecurityRuleEvent(_) => "security_rule_event",
             WriteOp::SecurityAskEvent(_) => "security_ask_event",
             WriteOp::SecurityDecisionEvent(_) => "security_decision_event",
-            WriteOp::ProfileMutationEvent(_) => "profile_mutation_event",
+            WriteOp::PolicyMutationEvent(_) => "policy_mutation_event",
+            WriteOp::HostEvent(_) => "host_event",
             WriteOp::Network(_) => "network",
             WriteOp::NetworkMembership(_) => "network_membership",
+            WriteOp::NetworkDeparture(_) => "network_departure",
         }
     }
 
@@ -40,9 +42,13 @@ impl WriteOp {
             WriteOp::SecurityRuleEvent(event) => Some(event.event_id.clone()),
             WriteOp::SecurityAskEvent(event) => Some(event.event_id.clone()),
             WriteOp::SecurityDecisionEvent(event) => Some(event.event_id.clone()),
-            WriteOp::ProfileMutationEvent(event) => Some(event.mutation_id.clone()),
+            WriteOp::PolicyMutationEvent(event) => Some(event.mutation_id.clone()),
             // Registry rows are state, not events: keyed by their ids, no event id.
-            WriteOp::ExecEventComplete(_) | WriteOp::Network(_) | WriteOp::NetworkMembership(_) => None,
+            WriteOp::ExecEventComplete(_)
+            | WriteOp::HostEvent(_)
+            | WriteOp::Network(_)
+            | WriteOp::NetworkMembership(_)
+            | WriteOp::NetworkDeparture(_) => None,
         }
     }
 
@@ -60,10 +66,26 @@ impl WriteOp {
             WriteOp::SecurityRuleEvent(event) => Some(event.event_id.as_str()),
             WriteOp::SecurityAskEvent(event) => Some(event.event_id.as_str()),
             WriteOp::SecurityDecisionEvent(event) => Some(event.event_id.as_str()),
-            WriteOp::ProfileMutationEvent(event) => Some(event.mutation_id.as_str()),
-            WriteOp::ExecEventComplete(_) | WriteOp::Network(_) | WriteOp::NetworkMembership(_) => None,
+            WriteOp::PolicyMutationEvent(event) => Some(event.mutation_id.as_str()),
+            WriteOp::ExecEventComplete(_)
+            | WriteOp::HostEvent(_)
+            | WriteOp::Network(_)
+            | WriteOp::NetworkMembership(_)
+            | WriteOp::NetworkDeparture(_) => None,
         }
     }
+}
+
+pub fn commitment_event_hash(op: &WriteOp) -> Result<[u8; 32], String> {
+    commitment_event_fingerprint(op).map(|(hash, _)| hash)
+}
+
+pub(crate) fn commitment_event_fingerprint(op: &WriteOp) -> Result<([u8; 32], usize), String> {
+    let encoded = serde_json::to_vec(op).map_err(|error| format!("encode ledger event commitment: {error}"))?;
+    let mut hash = capsem_crypto::blake3::Hasher::new();
+    hash.update(b"capsem-ledger-event-v1\0");
+    hash.update(&encoded);
+    Ok((*hash.finalize().as_bytes(), encoded.len()))
 }
 
 fn ensure_option_event_id(event_id: &mut Option<String>) -> Option<String> {
@@ -116,11 +138,14 @@ pub(super) fn affected_memory_tables(op: &WriteOp, tables: &mut BTreeSet<&'stati
         WriteOp::SecurityDecisionEvent(_) => {
             tables.insert("security_decision_events");
         }
-        WriteOp::ProfileMutationEvent(_) => {
-            tables.insert("profile_mutation_events");
+        WriteOp::PolicyMutationEvent(_) => {
+            tables.insert("policy_mutation_events");
+        }
+        WriteOp::HostEvent(_) => {
+            tables.insert("host_events");
         }
         // Disk-only registry tables: written to main directly, nothing to flush.
-        WriteOp::Network(_) | WriteOp::NetworkMembership(_) => {}
+        WriteOp::Network(_) | WriteOp::NetworkMembership(_) | WriteOp::NetworkDeparture(_) => {}
     }
 }
 

@@ -1,0 +1,12 @@
+# What qualifying this image adds to the mandatory checks every image passes
+# (tests/qualification). It may only add: no manifest removes a mandatory
+# group or supplies startup configuration, which comes from the OCI config.
+capabilities = ["agent", "ollama"]
+
+# One non-interactive turn with the shipped binary and config. Capsem routes
+# api.anthropic.com to the hermetic mock; the key is a test credential.
+[expect]
+turn = ["claude", "--dangerously-skip-permissions", "-p"]
+credential_env = "ANTHROPIC_API_KEY"
+provider = "anthropic"
+path = "/v1/messages"

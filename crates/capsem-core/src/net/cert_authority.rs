@@ -1,27 +1,18 @@
 /// Certificate authority for MITM proxy: loads the static Capsem CA keypair
 /// and mints short-lived leaf certificates on demand for each domain.
 use std::fmt;
-use std::num::NonZeroUsize;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use lru::LruCache;
-
-use rcgen::{CertificateParams, IsCa, KeyPair, SanType};
-use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+use capsem_cache::BoundedCache;
+use capsem_crypto::tls::CertificateIssuer;
+use rustls::pki_types::CertificateDer;
 use rustls::server::ClientHello;
 use rustls::sign::CertifiedKey;
 
-/// Most leaf certificates kept alive at once. The guest chooses the SNI, so
-/// an unbounded map let a loop over random names grow host memory for the
-/// life of the VM; a real workload talks to far fewer hosts than this.
-const LEAF_CACHE_CAPACITY: usize = 1024;
-
 /// Holds the static CA keypair and caches minted leaf certificates.
 pub struct CertAuthority {
-    ca_cert: rcgen::Certificate,
-    ca_key: KeyPair,
-    ca_cert_der: CertificateDer<'static>,
-    cache: Mutex<LruCache<String, Arc<CertifiedKey>>>,
+    issuer: CertificateIssuer,
+    cache: BoundedCache<String, CertifiedKey>,
 }
 
 impl CertAuthority {
@@ -29,20 +20,10 @@ impl CertAuthority {
     ///
     /// Typically called with `include_str!("../../resources/ca/capsem-ca.key")`.
     pub fn load(key_pem: &str, cert_pem: &str) -> anyhow::Result<Self> {
-        let ca_key = KeyPair::from_pem(key_pem)?;
-
-        // Parse the existing CA cert PEM to extract params, then re-sign to get Certificate.
-        let ca_params = CertificateParams::from_ca_cert_pem(cert_pem)?;
-        let ca_cert = ca_params.self_signed(&ca_key)?;
-        let ca_cert_der = CertificateDer::from(ca_cert.der().to_vec());
-
+        let issuer = CertificateIssuer::load(key_pem, cert_pem)?;
         Ok(Self {
-            ca_cert,
-            ca_key,
-            ca_cert_der,
-            cache: Mutex::new(LruCache::new(
-                NonZeroUsize::new(LEAF_CACHE_CAPACITY).expect("leaf cache capacity is non-zero"),
-            )),
+            issuer,
+            cache: BoundedCache::new("core.tls_leaf", capsem_proto::CACHE_TLS_LEAF_ENTRIES),
         })
     }
 
@@ -52,53 +33,23 @@ impl CertAuthority {
     /// happens under the lock rather than racing two mints for one name.
     pub fn certified_key_for_domain(&self, domain: &str) -> anyhow::Result<Arc<CertifiedKey>> {
         let host = crate::net::hostname::normalize_host(domain);
-        let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(key) = cache.get(&host) {
-            return Ok(Arc::clone(key));
-        }
-        let arc = Arc::new(self.mint_leaf(&host)?);
-        cache.put(host, Arc::clone(&arc));
-        drop(cache);
-        Ok(arc)
+        self.cache
+            .get_or_try_insert_with(host.as_str(), || self.mint_leaf(&host))
     }
 
     /// The CA certificate in DER, for a client that must trust minted leaves.
     pub fn ca_cert_der(&self) -> &CertificateDer<'static> {
-        &self.ca_cert_der
+        self.issuer.certificate_der()
     }
 
     /// Number of cached certificates.
     pub fn cache_size(&self) -> usize {
-        self.cache.lock().unwrap_or_else(|e| e.into_inner()).len()
+        self.cache.len()
     }
 
     /// Mint a leaf certificate for the given domain, signed by the CA.
     fn mint_leaf(&self, domain: &str) -> anyhow::Result<CertifiedKey> {
-        let leaf_key = KeyPair::generate()?;
-
-        let mut params = CertificateParams::new(vec![domain.to_string()])?;
-        params.distinguished_name.push(rcgen::DnType::CommonName, domain);
-        params.subject_alt_names = vec![SanType::DnsName(domain.try_into()?)];
-        params.not_before = time::Date::from_calendar_date(2026, time::Month::January, 1)
-            .unwrap()
-            .midnight()
-            .assume_utc();
-        params.not_after = time::OffsetDateTime::now_utc() + time::Duration::days(365);
-        params.is_ca = IsCa::NoCa;
-        params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ServerAuth];
-
-        // Sign the leaf with our CA.
-        let leaf_cert = params.signed_by(&leaf_key, &self.ca_cert, &self.ca_key)?;
-        let leaf_der = CertificateDer::from(leaf_cert.der().to_vec());
-
-        // Build the chain: [leaf, ca].
-        let chain = vec![leaf_der, self.ca_cert_der.clone()];
-
-        // Build the rustls signing key from the leaf's private key.
-        let leaf_key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(leaf_key.serialize_der()));
-        let signing_key = rustls::crypto::aws_lc_rs::sign::any_supported_type(&leaf_key_der)?;
-
-        Ok(CertifiedKey::new(chain, signing_key))
+        self.issuer.mint_server_certificate(domain)
     }
 }
 

@@ -27,9 +27,9 @@ def _summary(values: set[str], *, empty: str) -> str:
 def write_proof(root: Path) -> Path:
     before = _read_json(root / "manifest.before.json")
     after = _read_json(root / "manifest.json")
-    if "profiles" in before and "profiles" in after:
-        if after["profiles"] != before["profiles"]:
-            raise ValueError("binary dry-run changed profile image metadata")
+    if "packages" in before and "packages" in after:
+        if after.get("runtime") != before.get("runtime"):
+            raise ValueError("binary dry-run changed runtime image metadata")
         binary_version = _summary(
             {
                 package["version"]
@@ -38,17 +38,12 @@ def write_proof(root: Path) -> Path:
             },
             empty="not_published",
         )
-        profiles = after["profiles"]
-        if not isinstance(profiles, dict):
-            raise ValueError("binary dry-run profiles must be an object")
-        asset_version = _summary(
-            {
-                profile["revision"]
-                for profile in profiles.values()
-                if isinstance(profile, dict) and isinstance(profile.get("revision"), str)
-            },
-            empty="not_published",
-        )
+        runtime = after.get("runtime")
+        if runtime is not None and not isinstance(runtime, dict):
+            raise ValueError("binary dry-run runtime must be an object")
+        revision = runtime.get("revision") if runtime is not None else None
+        asset_version = revision if isinstance(revision, str) else "not_published"
+
     else:
         if after["assets"] != before["assets"]:
             raise ValueError("binary dry-run changed VM asset metadata")

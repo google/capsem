@@ -6,6 +6,7 @@
 
 mod condition;
 mod lint;
+mod managed_sessions;
 pub mod mcp;
 pub mod model;
 pub mod private_pool;
@@ -19,6 +20,7 @@ mod types;
 mod validation;
 
 pub use lint::*;
+pub use managed_sessions::ManagedSessionPolicy;
 pub use private_pool::{PrivatePool, NETWORK_PREFIX_LEN};
 pub use provider_profile::*;
 pub use resolver::*;
@@ -28,7 +30,8 @@ pub use tree::*;
 pub use types::*;
 #[doc(hidden)]
 pub use validation::{
-    validate_identifier, validate_identifier_shape, validate_non_empty, validate_profile_target, IdentifierError,
+    validate_identifier, validate_identifier_shape, validate_non_empty, validate_policy_target,
+    validate_setting_value_shape, IdentifierError,
 };
 
 /// True when a value has the broker-owned credential reference shape.

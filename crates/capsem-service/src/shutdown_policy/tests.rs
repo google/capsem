@@ -9,16 +9,6 @@ fn discarding_state_does_not_wait_for_a_flush() {
 }
 
 #[test]
-fn discarding_state_does_not_roll_up_the_ledger_being_deleted() {
-    let session_dir = std::path::Path::new("session");
-    assert_eq!(ShutdownMode::Discard.session_dir_for_rollup(session_dir), None);
-    assert_eq!(
-        ShutdownMode::Retain.session_dir_for_rollup(session_dir),
-        Some(session_dir)
-    );
-}
-
-#[test]
 fn retaining_state_waits_long_enough_for_a_slow_disk_to_flush() {
     // The budget exists so the guest can sync before teardown. At five seconds
     // it was sized for an idle developer machine: on a loaded CI runner with
@@ -40,4 +30,23 @@ fn retaining_state_waits_long_enough_for_a_slow_disk_to_flush() {
 #[test]
 fn a_retaining_stop_waits_far_longer_than_a_discarding_one() {
     assert!(ShutdownMode::Retain.exit_timeout() > ShutdownMode::Discard.exit_timeout() * 10);
+}
+
+#[test]
+fn service_stop_keeps_its_original_bounded_guest_grace() {
+    assert!(ShutdownMode::ServiceStop.retains_state());
+    assert_eq!(
+        ShutdownMode::ServiceStop.exit_timeout(),
+        std::time::Duration::from_secs(2)
+    );
+}
+
+#[test]
+fn failed_create_keeps_evidence_without_a_persistent_guest_flush_wait() {
+    assert!(ShutdownMode::FailedCreate.retains_state());
+    assert_eq!(
+        ShutdownMode::FailedCreate.exit_timeout(),
+        ShutdownMode::ServiceStop.exit_timeout()
+    );
+    assert!(ShutdownMode::FailedCreate.exit_timeout() < ShutdownMode::Retain.exit_timeout());
 }

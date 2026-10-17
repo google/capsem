@@ -195,7 +195,7 @@ pub(super) fn insert_model_call(
 /// `new_event_id`: 12 lowercase hex, as the column's CHECK requires.
 fn model_item_event_id(trace_id: Option<&str>, kind: &str, content_hash: &str, call_id: &str) -> String {
     let material = format!("{}\0{kind}\0{content_hash}\0{call_id}", trace_id.unwrap_or_default());
-    blake3::hash(material.as_bytes()).to_hex()[..12].to_string()
+    capsem_crypto::blake3::hash(material.as_bytes()).to_hex()[..12].to_string()
 }
 
 fn insert_model_items(
@@ -326,9 +326,14 @@ fn insert_model_items(
 }
 
 fn model_tool_transport(call: &ModelCall) -> &'static str {
-    if call.stream {
+    if call.method == "GET" && call.status_code == Some(101) {
+        "websocket"
+    } else if call.stream {
         "sse"
     } else {
         "http"
     }
 }
+
+#[cfg(test)]
+mod tests;

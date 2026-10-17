@@ -9,7 +9,7 @@ import stat
 import subprocess
 from pathlib import Path
 
-import blake3
+from capsem_builder import crypto as blake3
 
 ROOT = Path(__file__).resolve().parents[3]
 

@@ -101,7 +101,7 @@ class Run(Action, name="run"):
         """
         rendered = str(self._command)
         if self._command.cwd is not None:
-            rendered = f"(in {self._command.cwd.name}) {rendered}"
+            rendered = f"(in {self._command.cwd}) {rendered}"
         if self._outside_sandbox:
             rendered = f"{rendered} [outside kernel sandbox]"
         return rendered
@@ -167,7 +167,7 @@ class Script(Action, name="script"):
             )
         )
         if self._root is not None:
-            rendered = f"(in {self._root.name}) {rendered}"
+            rendered = f"(in {self._root}) {rendered}"
         if self._outside_sandbox:
             rendered = f"{rendered} [outside kernel sandbox]"
         return rendered

@@ -25,21 +25,6 @@ def test_python_json_roundtrip(output_dir):
     assert loaded == data
 
 
-def test_node_file_roundtrip(output_dir):
-    """Node writes a file, Python reads it back."""
-    test_file = output_dir / "node_roundtrip.json"
-    js_code = (
-        'const fs = require("fs"); '
-        f'fs.writeFileSync("{test_file}", '
-        'JSON.stringify({from: "node", ok: true}));'
-    )
-    result = run(f"node -e '{js_code}'")
-    assert result.returncode == 0, f"node failed: {result.stderr}"
-    data = json.loads(test_file.read_text())
-    assert data["ok"] is True
-    assert data["from"] == "node"
-
-
 def test_pipe_workflow(output_dir):
     """Shell pipe chain writes expected output."""
     test_file = output_dir / "pipe_test.txt"

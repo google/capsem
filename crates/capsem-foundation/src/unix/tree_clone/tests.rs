@@ -277,3 +277,29 @@ fn sparse_images_stay_sparse() {
         meta.blocks() * 512
     );
 }
+
+#[test]
+fn link_file_hard_links_within_one_filesystem() {
+    use std::os::unix::fs::MetadataExt;
+
+    let fixture = fixture();
+    std::fs::write(fixture.src.join("blob"), b"verified").unwrap();
+    let src = ContainedDir::open_root(&fixture.src).unwrap();
+    let dst = ContainedDir::open_root(&fixture.dst).unwrap();
+    let method = link_file(&src, OsStr::new("blob"), &dst, OsStr::new("blob")).unwrap();
+    assert_eq!(method, LinkMethod::HardLink);
+    assert_eq!(
+        std::fs::metadata(fixture.src.join("blob")).unwrap().ino(),
+        std::fs::metadata(fixture.dst.join("blob")).unwrap().ino()
+    );
+}
+
+#[test]
+fn link_file_never_links_or_clones_through_a_symlink() {
+    let fixture = fixture();
+    symlink(&fixture.secret, fixture.src.join("blob")).unwrap();
+    let src = ContainedDir::open_root(&fixture.src).unwrap();
+    let dst = ContainedDir::open_root(&fixture.dst).unwrap();
+    assert!(link_file(&src, OsStr::new("blob"), &dst, OsStr::new("blob")).is_err());
+    assert!(std::fs::symlink_metadata(fixture.dst.join("blob")).is_err());
+}

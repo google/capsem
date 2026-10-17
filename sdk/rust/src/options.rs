@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use std::fmt;
 
-use crate::models::{HistoryLayerFilter, NetworkInfo, ProfileSummary, TimelineLayer};
+use crate::models::{HistoryLayerFilter, NetworkInfo, TimelineLayer};
 
 /// Credentials and optional trust material used for one registry pull.
 #[derive(Clone, Default, PartialEq, Eq)]
@@ -41,10 +41,9 @@ pub enum VmSelector {
     Name(String),
 }
 
-/// Omitted CPU and memory values retain the selected profile's defaults.
+/// Omitted CPU and memory values take the hypervisor's defaults.
 #[derive(Debug, Clone, Default)]
 pub struct CreateOptions {
-    pub profile: Option<ProfileSummary>,
     pub name: Option<String>,
     pub cpus: Option<u32>,
     /// Guest memory in GiB.
@@ -58,7 +57,6 @@ pub struct CreateOptions {
 
 #[derive(Debug, Clone, Default)]
 pub struct RunOptions {
-    pub profile: Option<ProfileSummary>,
     pub timeout_secs: Option<u64>,
     pub cpus: Option<u32>,
     /// Guest memory in GiB.

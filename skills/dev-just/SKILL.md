@@ -29,8 +29,10 @@ allowlist update in the same change.
 | `just install` | Optional hands-on local package testing; never a release prerequisite and never release authority. |
 | `just test [source-commit] [normal\|force] [reason]` | Reusable complete local verification; low-impact repeats route to focused owners, while exceptional force requires a reason. Required, passing, before any release of that source. |
 | `slow` (fourth `test` argument, third `focus-test` argument) | Permission to rebuild host VM assets whose expensive inputs changed: `Cargo.lock`, `build_system/uv.lock`, the toolchain, builder Dockerfiles, the kernel defconfig. Without it a run whose assets went stale that way stops at the first asset step and names the input, since the rebuild is the guest builder image, every agent, the initrd, the images and the host binaries. Source-only staleness (a `capsem-core` edit) rebuilds without asking. |
-| `just release-binaries <channel> <source-commit>` | Dispatch qualification and publication of packages against pulled profiles. |
-| `just release-profile <channel> <profile> <source-commit>` | Dispatch qualification and publication of one profile (or `all`, behind one source proof) against the pulled package. |
+| `just build-assets [arch]` | Build the VM runtime assets (kernel, initrd, rootfs) for one architecture, or every one. |
+| `just qualify-assets <input_dir> <workspace_root> <activation_ready>` | Qualify built runtime assets against the selected binary (the runtime lane's qualification step). |
+| `just release-binaries <channel> <source-commit>` | Dispatch qualification and publication of packages against the pulled runtime. |
+| `just release-assets <channel> <source-commit>` | Dispatch qualification and publication of the VM runtime against the pulled package. |
 
 `just --summary` must print exactly the names in `[just].approved` and nothing
 else. The count is not repeated here on purpose: this line used to say "those
@@ -42,14 +44,14 @@ live recipe list against it.
 ## The Python system replaced shell orchestration
 
 Treat the Justfile as a stable user interface, not as the implementation of a
-command. For `focus-test`, `release-binaries`, and `release-profile`, one recipe
+command. For `focus-test`, `release-binaries`, and `release-assets`, one recipe
 line crosses one exact argv boundary into `capsem-gate`; `install` prints its
 hands-on-only warning before crossing the same boundary. From there:
 
 | Concern | Owner |
 |---|---|
 | Public command name, defaults, and exact argv dispatch | `justfile` plus `config/public-surface.toml` |
-| Command shape and plan graph | `src/capsem/gate/<domain>.py` |
+| Command shape and plan graph | `build_system/builder/gate/<domain>.py` |
 | Shared work | a composable `fragment(...)`, deduplicated with `plan.shared(...)` when necessary |
 | Ordering | explicit graph edges passed through `after=` |
 | Subprocess or filesystem work | `actions.py`, `fileactions.py`, and their typed domain actions |
@@ -86,7 +88,7 @@ rather than advised:
 The old justfile carried roughly 2070 lines of inline `bash` across thirty-five
 recipes, none of it reachable by a test, so every defect in it was found by
 running the forty-minute gate. The ratchet is what matters: do not add shell
-orchestration back. Logic lives in `src/capsem/gate/`; see `/dev-gate` for how
+orchestration back. Logic lives in `build_system/builder/gate/`; see `/dev-gate` for how
 to add or change a command.
 
 The one exception is a single command with no branching -- `cargo build`,
@@ -131,7 +133,7 @@ branching, reporting, cleanup, or resource ownership.
 
 - fail-fast bootstrap and clean install-harness proof;
 - audits, lint, frontend, Rust and Python coverage;
-- both profile/architecture VM asset lanes and real VM boot;
+- both architecture VM runtime asset lanes and real VM boot;
 - four-VM parallel integration;
 - Linux parity and both `.deb` architectures;
 - host package SBOM;
@@ -146,8 +148,8 @@ Release CI calls the checked-in `_test-fast`, `_test-static`,
 `just test` and `just fast-test`; it owns YAML/source syntax, source contracts,
 Clippy, Python and JavaScript checks, and every locked-ecosystem vulnerability
 audit. Callers must reuse it whole rather than duplicating a subset.
-Binary CI builds packages and pulls profiles; profile CI builds one profile and
-pulls packages. Both retain complete functional and glow-up proof before
+Binary CI builds packages and pulls the runtime; runtime CI builds the runtime
+and pulls packages. Both retain complete functional and glow-up proof before
 activation. Do not fork or approximate this graph in another public recipe.
 All checked-in automation enters through the same two public release recipes;
 it must not call their scripts or workflows directly.

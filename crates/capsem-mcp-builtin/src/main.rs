@@ -4,9 +4,8 @@
 //! Exposes HTTP tools (fetch_http, grep_http, http_headers) and
 //! the echo transport probe.
 //!
-//! Config via environment variables:
-//! - CAPSEM_ACTIVE_PROFILE: Session active profile whose security rules/plugins govern tools.
-//! - CAPSEM_SESSION_DIR: Session directory; holds the per-peer singleton lock.
+//! Receives its role/generation and private HTTP capability over connected stdin.
+//! The service owns current policy, DNS, credentials and HTTP admission.
 //!
 //! It writes no ledger. capsem-process is the one writer of a session's
 //! ledger, so what these tools do that only this process can see -- the HTTP
@@ -14,7 +13,6 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::{Context, Result};
 use rmcp::handler::server::{router::Router, wrapper::Parameters, ServerHandler};
@@ -26,12 +24,11 @@ use tracing::info;
 
 use capsem_core::mcp::builtin_tools;
 use capsem_core::mcp::builtin_tools::BuiltinHttpClient;
-use capsem_core::net::policy_config::{ActiveProfileFile, SecurityPluginConfig, SecurityRuleSet};
+use capsem_core::net::policy_config::{SecurityPluginConfig, SecurityRuleSet};
+use capsem_mcp_transport::native_worker::PreparedMcpWorker;
 use capsem_proto::mcp_contracts::builtin_ledger::{self, BuiltinLedgerRecord, BUILTIN_LEDGER_META_KEY};
 use capsem_proto::mcp_contracts::JsonRpcResponse;
-
-const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
-const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+use capsem_proto::mcp_worker::McpHttpRole;
 
 // -- Tool parameter types --
 
@@ -237,99 +234,57 @@ fn extract_text(resp: JsonRpcResponse) -> Result<String, String> {
     }
 }
 
-// -- Startup --
-
-/// Which member of a pooled server this process is; peer 0 is the singleton.
-fn peer_index(raw: Option<String>) -> u32 {
-    raw.and_then(|value| value.parse().ok()).unwrap_or(0)
-}
-
-/// The per-peer singleton lock, so pool members do not fight over one file.
-fn lock_file_name(peer_index: u32) -> String {
-    if peer_index == 0 {
-        "mcp-builtin.lock".to_string()
-    } else {
-        format!("mcp-builtin-{peer_index}.lock")
-    }
-}
-
-/// Read, parse and validate the active profile, naming the file in any error.
-fn load_active_profile(path: &str) -> Result<ActiveProfileFile> {
-    let text = std::fs::read_to_string(path)
-        .map_err(anyhow::Error::new)
-        .with_context(|| format!("read active profile {path}"))?;
-    let profile: ActiveProfileFile = toml::from_str(&text)
-        .map_err(anyhow::Error::new)
-        .with_context(|| format!("parse active profile {path}"))?;
-    profile
-        .validate()
-        .map_err(anyhow::Error::msg)
-        .with_context(|| format!("validate active profile {path}"))?;
-    Ok(profile)
-}
-
 // -- Main --
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
+    let vm_id = std::env::var("CAPSEM_VM_ID").unwrap_or_else(|_| "unknown".into());
+    let trace_id = std::env::var("CAPSEM_TRACE_ID").unwrap_or_else(|_| "unknown".into());
+    // SAFETY: process entry, before runtimes, telemetry or capability channels.
+    unsafe {
+        capsem_foundation::unix::process::clear_inherited_environment();
+        capsem_foundation::unix::fd::close_inherited_descriptors()?;
+    }
     if std::env::args().skip(1).any(|arg| arg == "--version" || arg == "-V") {
         println!("capsem-mcp-builtin {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(run(vm_id, trace_id))
+}
 
+async fn run(vm_id: String, trace_id: String) -> Result<()> {
     let _telemetry_guard = capsem_foundation::telemetry::init(capsem_foundation::telemetry::TelemetryConfig {
         service: "capsem-mcp-builtin",
         sink: capsem_foundation::telemetry::LogSink::Stderr,
         default_filter: "capsem_mcp_builtin=info",
     })?;
 
+    let root_span = tracing::info_span!("builtin", vm_id = %vm_id, trace_id = %trace_id);
+    let _root_span_guard = root_span.enter();
     info!("capsem-mcp-builtin starting");
 
-    let parent_pid = std::env::var("CAPSEM_PARENT_PID")
-        .ok()
-        .and_then(|s| s.parse::<u32>().ok());
-    let session_dir = std::env::var("CAPSEM_SESSION_DIR").ok();
-
-    // Per-peer index for pool members (set by the aggregator's
-    // connect_stdio when spawning peer 1..N of a pooled server). Each
-    // peer gets its own lockfile so they don't fight over the singleton.
-    let peer_index = peer_index(std::env::var("CAPSEM_BUILTIN_PEER_INDEX").ok());
-
-    if let (Some(pid), Some(dir)) = (parent_pid, session_dir) {
-        let lock_path = std::path::PathBuf::from(dir).join(lock_file_name(peer_index));
-        match capsem_guard::install(Some(pid), &lock_path) {
-            Ok(Some(guards)) => {
-                // Keep the guards alive for the process's lifetime.
-                Box::leak(Box::new(guards));
-            }
-            Ok(None) => {
-                info!(lock = %lock_path.display(), "another instance holds the lock; exiting 0");
-                return Ok(());
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "refusing to run without live parent; exiting 0");
-                return Ok(());
-            }
-        }
-    }
-
-    let active_profile_path =
-        std::env::var("CAPSEM_ACTIVE_PROFILE").map_err(|_| anyhow::anyhow!("CAPSEM_ACTIVE_PROFILE is required"))?;
-    let active_profile = load_active_profile(&active_profile_path)?;
-    let security_rules = Arc::new(active_profile.compile_security_rule_set().map_err(anyhow::Error::msg)?);
-    let plugin_policy = Arc::new(active_profile.plugins.clone());
+    let parent = capsem_foundation::unix::process::parent_process_id().context("builtin parent unavailable")?;
+    let worker = PreparedMcpWorker::from_stdin(McpHttpRole::Builtin)
+        .await?
+        .confine_and_ready()
+        .await?;
+    capsem_guard::watch_parent_or_exit(Some(parent.get()))?;
 
     let handler = BuiltinHandler {
-        http_client: BuiltinHttpClient::new(HTTP_REQUEST_TIMEOUT, HTTP_CONNECT_TIMEOUT),
-        security_rules,
-        plugin_policy,
+        http_client: BuiltinHttpClient::brokered(worker.http),
+        // Brokered requests use only the coordinator's receipt; local policy
+        // collections are unused by this mode and never grant permission.
+        security_rules: Arc::new(SecurityRuleSet::new(Vec::new())),
+        plugin_policy: Arc::new(BTreeMap::new()),
     };
 
     let tools = BuiltinHandler::tool_router();
     info!(tool_count = tools.list_all().len(), "registered tools");
 
     let router = Router::new(handler).with_tools(tools);
-    let transport = rmcp::transport::stdio();
+    let transport = worker.control.into_split();
 
     router.serve(transport).await?.waiting().await?;
 

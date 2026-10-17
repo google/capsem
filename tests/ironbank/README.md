@@ -26,5 +26,5 @@ contract and fix the product contract before relying on implementation details.
 
 Kingslanding, under `kingslanding/`, owns container E2E coverage. Run
 `just focus-test kingslanding` for the isolated build, pinned native Redis fixture,
-and hermetic VM tests. The functional gate repeats it for each selected profile.
+and hermetic VM tests. The functional gate runs it against the one runtime.
 See [the container proof](../fixtures/oci/README.md) for coverage and limitations.

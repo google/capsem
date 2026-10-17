@@ -88,7 +88,7 @@ mod against_the_service {
                 "/networks/net-1",
                 200,
                 team(json!([
-                    {"vm_id": "vm-1", "address": "10.0.0.2", "state": "linked", "updated_unix_ms": 2}
+                    {"vm_id": "vm-1", "address": "10.0.0.2", "state": "ready", "updated_unix_ms": 2}
                 ])),
             )
             .route("GET", "/networks", 200, json!({"networks": [team(json!([]))]}))
@@ -101,7 +101,7 @@ mod against_the_service {
                 "/vms/list",
                 200,
                 json!({"sandboxes": [
-                    {"id": "vm-1", "name": "dev", "pid": 1, "status": "Running"}
+                    {"id": "vm-1", "name": "dev", "pid": 1, "available_actions": [], "status": "Running"}
                 ]}),
             );
         service
@@ -209,8 +209,8 @@ mod against_the_service {
         assert_eq!(
             service.calls()[1..],
             [
-                "GET /networks/net-1/logs?limit=1&vm=vm%201&type=network.connect",
-                "GET /networks/net-1/logs?limit=1&cursor=p1&vm=vm%201&type=network.connect",
+                "GET /networks/net-1/logs?limit=1&vm=vm+1&type=network.connect",
+                "GET /networks/net-1/logs?limit=1&cursor=p1&vm=vm+1&type=network.connect",
             ]
         );
     }

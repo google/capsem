@@ -1,6 +1,6 @@
 {
   "name": "@capsem/mcp",
-  "version": "0.6.3",
+  "version": "0.7.0",
   "description": "Capsem MCP server over the authenticated gateway SDK",
   "type": "module",
   "engines": {"node": ">=20"},
@@ -11,10 +11,11 @@
     "check": "tsc --noEmit -p tsconfig.test.json",
     "test": "pnpm run build && pnpm run test:mcp",
     "test:mcp": "vitest run --coverage",
+    "prewarm:packed": "node tools/prewarm-package.mjs",
     "prepack": "pnpm run build"
   },
   "dependencies": {
-    "@capsem/sdk": "workspace:0.6.3",
+    "@capsem/sdk": "workspace:0.7.0",
     "@modelcontextprotocol/sdk": "1.31.0",
     "zod": "4.6.1"
   },

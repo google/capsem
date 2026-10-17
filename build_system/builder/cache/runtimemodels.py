@@ -43,6 +43,8 @@ class RuntimeOperation(StrEnum):
     PRUNE_BUILD_CACHE = "prune-build-cache"
     CLEAR_BUILD_CACHE = "clear-build-cache"
     DELETE_VM = "delete-vm"
+    #: Hand freed blocks back to the host, e.g. trim Colima's VM disk.
+    RELEASE_DISK = "release-disk"
 
 
 class DockerRuntimePolicy(CacheContract):
@@ -60,8 +62,18 @@ class DockerRuntimePolicy(CacheContract):
     build_cache_owned: StrictBool
     maximum_age_hours: PositiveInt
     keep_image_generations: PositiveInt
+    #: Run once after applied removals so the host disk shrinks too. Docker on
+    #: macOS lives in Colima's VM, whose image keeps freed blocks until the
+    #: guest discards them. Skipped where the executable does not exist.
+    disk_release_command: tuple[StrictStr, ...] = ()
 
-    @field_validator("image_prefixes", "container_prefixes", "volume_prefixes", mode="before")
+    @field_validator(
+        "image_prefixes",
+        "container_prefixes",
+        "volume_prefixes",
+        "disk_release_command",
+        mode="before",
+    )
     @classmethod
     def arrays_are_frozen(cls, value: object) -> object:
         return tuple(value) if isinstance(value, list) else value

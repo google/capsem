@@ -24,11 +24,11 @@ this and is released last.
 
 from __future__ import annotations
 
-import hashlib
 import os
 import shutil
 from pathlib import Path
 
+from .. import crypto as hashlib
 from . import pidfiles
 from .config import GateConfig
 from .fileactions import digest_of

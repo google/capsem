@@ -15,12 +15,13 @@ from . import (
     managedrestart,
     module_artifacts,
     platformproof,
+    referenceimage,
     runtimeprepare,
 )
 from .actions import Call, Script
 from .command import GateCommand
 from .config import GateConfig
-from .content import LocalInstallContent, ProfileContent
+from .content import LocalInstallContent, RuntimeContent
 from .execution import Kind, Needs, Speed, Step, step
 from .opacity import CallJustification, OpaqueKind, machine_effects
 from .plan import Plan
@@ -50,19 +51,18 @@ class GlowupModule(
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
+        # The installed proof boots the reference image (`just test` stages it in prefetch).
+        ready = plan.phase("glowup").add(referenceimage.prepare(self._config))
         if self.qualification.pulled:
-            glowup(plan, self._config, qualification=self.qualification)
+            glowup(plan, self._config, qualification=self.qualification, after=(ready,))
         else:
-            built = module_artifacts.artifacts(plan, self._config, qualification=self.qualification)
+            built = module_artifacts.artifacts(plan, self._config, qualification=self.qualification, after=(ready,))
             runtime = None
             if host.on_macos():  # the managed-restart proof runs the signed host binaries
                 runtime = runtimeprepare.prepare(plan, self._config, guest=False, after=(built,)).ready
             glowup(
                 plan, self._config, qualification=self.qualification, after=(built,),
-                local_content=ProfileContent.built_profile(
-                    self._config, self._config.suites.pytest.base_profile,
-                ),
-                materialized=built, runtime=runtime,
+                local_content=RuntimeContent.built(self._config), runtime=runtime,
             )
         return plan
 
@@ -73,39 +73,38 @@ def glowup(
     *,
     qualification: Qualification,
     after: tuple[Step, ...] = (),
-    staged: ProfileContent | None = None,
-    local_content: ProfileContent | None = None,
-    materialized: Step | None = None,
+    staged: RuntimeContent | None = None,
+    local_content: RuntimeContent | None = None,
     runtime: Step | None = None,
 ) -> Step:
     """Build the release packages and prove an install upgrades cleanly."""
     phase = plan.phase("glowup")
     if qualification.pulled:
-        content = staged or ProfileContent.standalone(config)
-        return pulled_package(phase, config, qualification, after, content)
-    content = local_content or ProfileContent.standalone(config)
+        content = staged or RuntimeContent.standalone(config)
+        native = managedrestart.fragment(plan, config, after=after, content=content)
+        return pulled_package(phase, config, qualification, (*after, native), content)
+    content = local_content or RuntimeContent.standalone(config)
     return _build_and_prove(
         plan,
         phase,
         config,
         after,
         content=content,
-        materialized=materialized,
         runtime=runtime,
     )
 
 
-def _content_step(config: GateConfig, content: ProfileContent, *, arches: tuple | None = None) -> Step:
-    """Validate the complete paired cohort before spending time packaging it."""
+def _content_step(config: GateConfig, content: RuntimeContent, *, arches: tuple | None = None) -> Step:
+    """Validate the complete content before spending time packaging it."""
     targets = tuple(config.architectures.values()) if arches is None else arches
     return step(
         "content",
         Call(
-            f"verify paired content {content.root} for {', '.join(arch.name for arch in targets)}",
+            f"verify content {content.root} for {', '.join(arch.name for arch in targets)}",
             lambda _context: content.require_complete(config, arches=targets),
             justification=CallJustification(
                 kind=OpaqueKind.PURE_INSPECTION,
-                reason="glow-up consumes one inseparable assets/config cohort",
+                reason="glow-up consumes one complete asset cohort",
                 effects=machine_effects(),
             ),
         ),
@@ -123,7 +122,7 @@ def pulled_package(
     config: GateConfig,
     qualification: Qualification,
     after: tuple,
-    content: ProfileContent,
+    content: RuntimeContent,
     *,
     work_dir: str | None = None,
     skip_install: bool = False,
@@ -170,7 +169,7 @@ def _glowup_step(
     label: str,
     qualification: Qualification,
     work_dir: str,
-    content: ProfileContent,
+    content: RuntimeContent,
     *,
     clear: tuple = (),
     skip_install: bool = False,
@@ -194,14 +193,10 @@ def _glowup_step(
             qualification.bin_dir,
             "--assets-dir",
             content.assets,
-            "--config-root",
-            content.config,
             "--work-dir",
             work_dir,
             "--evidence-dir",
             f"{config.workspace.evidence_dir}/{label}",
-            "--profile-revision-policy",
-            config.install.profile_revision_policy.value,
             "--package-ready",
             *(("--skip-install",) if skip_install else ()),
             # A workflow exports the pairing; a rehearsal passes it, because it
@@ -209,7 +204,7 @@ def _glowup_step(
             # put the two sides. `clear` wins on the channel-switch run, which
             # must rediscover the channel rather than inherit it -- and the two
             # never overlap, because that step is given no pairing at all.
-            env={**(pairing or {}), **dict.fromkeys(clear, "")},
+            env=referenceimage.environment(config) | (pairing or {}) | dict.fromkeys(clear, ""),
             # Installs a system package, so it needs privileges Bubblewrap
             # denies by construction: `PR_SET_NO_NEW_PRIVS` stops sudo dead on
             # a hosted runner. Not the boundary widened for convenience -- it
@@ -237,15 +232,16 @@ def _build_and_prove(
     config: GateConfig,
     after: tuple,
     *,
-    content: ProfileContent,
-    materialized: Step | None,
+    content: RuntimeContent,
     runtime: Step | None = None,
 ) -> Step:
-    # `previous` chains each architecture behind the last; the first has
-    # nothing before it beyond whatever this phase was given.
-    materialized = materialized or plan.shared(runtimeprepare.materialize_config_step(config))
-    verified = phase.add(_content_step(config, content), after=(materialized, *after))
-    previous: tuple = (verified,)
+    verified = phase.add(_content_step(config, content), after=after)
+    # This proof consumes the prepared host binaries and manifest, not either
+    # cross-compiled package. Reject broken startup before those expensive builds.
+    native = managedrestart.fragment(
+        plan, config, after=(verified, *filter(None, (runtime,))), content=content
+    )
+    previous: tuple = (native,)
     for arch in config.architectures:
         # The final install step below authors a checked local release graph
         # before installing the exact native package and running the broader
@@ -278,6 +274,7 @@ def _build_and_prove(
                         config.modules.macos_glowup_script,
                         "--content-root",
                         content.root,
+                        env=referenceimage.environment(config),
                         outside_sandbox=True,
                     ),
                     contends=(config.exclusive("apple_vz"),),
@@ -288,8 +285,6 @@ def _build_and_prove(
                 after=previous,
             ),
         )
-        previous = (managedrestart.fragment(plan, config, after=(*previous, *filter(None, (runtime,)))),)
-
     sbom = phase.add(hostpackage.sbom_step(config), after=previous)
     exact_install_image = installplan.fragment(plan, config)
     return phase.add(

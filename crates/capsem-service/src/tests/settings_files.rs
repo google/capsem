@@ -9,52 +9,16 @@ pub(super) struct SettingsEnvGuard {
     previous_corp: Option<std::ffi::OsString>,
 }
 
-pub(super) struct EnvVarGuard {
+pub(crate) struct EnvVarGuard {
     key: &'static str,
     previous: Option<std::ffi::OsString>,
-    #[allow(clippy::option_option, reason = "outer is captured-ness, inner is the value")]
-    previous_test_profile_dir_override: Option<Option<PathBuf>>,
-}
-
-/// Make the builtin MCP binary the profile routes look for exist beside the
-/// test executable. The route checks for it on every request.
-///
-/// Never removed: that directory is cargo's shared `deps` output, so every
-/// test process -- nextest's per-test processes, other worktrees' runs --
-/// sees the same file. A guard that deleted the placeholder it had created
-/// pulled it out from under another process mid-request, and the builtin
-/// `local` server vanished from its listing (#226). Created by rename so two
-/// processes racing to create it both succeed.
-pub(super) fn ensure_test_builtin_mcp_binary() {
-    let path = std::env::current_exe()
-        .expect("test binary path")
-        .parent()
-        .expect("test binary parent")
-        .join("capsem-mcp-builtin");
-    if path.exists() {
-        return;
-    }
-    let staged = path.with_extension(format!("tmp-{}", std::process::id()));
-    std::fs::write(&staged, "#!/bin/sh\n").expect("write test builtin MCP binary placeholder");
-    std::fs::rename(&staged, &path).expect("publish test builtin MCP binary placeholder");
 }
 
 impl EnvVarGuard {
-    pub(super) fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+    pub(crate) fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
         let previous = std::env::var_os(key);
-        let previous_test_profile_dir_override = if key == "CAPSEM_PROFILES_DIR" {
-            Some(super::set_test_profile_dir_override(Some(PathBuf::from(
-                value.as_ref(),
-            ))))
-        } else {
-            None
-        };
         std::env::set_var(key, value);
-        Self {
-            key,
-            previous,
-            previous_test_profile_dir_override,
-        }
+        Self { key, previous }
     }
 }
 
@@ -64,9 +28,6 @@ impl Drop for EnvVarGuard {
             std::env::set_var(self.key, previous);
         } else {
             std::env::remove_var(self.key);
-        }
-        if let Some(previous) = self.previous_test_profile_dir_override.take() {
-            super::set_test_profile_dir_override(previous);
         }
     }
 }
@@ -171,55 +132,8 @@ async fn handle_save_settings_rejects_retired_policy_rule_keys_atomically() {
 
 pub(super) fn make_test_state_with_tempdir_at(dir: tempfile::TempDir) -> (Arc<ServiceState>, tempfile::TempDir) {
     let run_dir = dir.path().join("run");
-    let registry_path = run_dir.join("persistent_registry.json");
-    let asset_status_path = asset_status_path_for_run_dir(&run_dir);
-    let state = Arc::new(ServiceState {
-        instances: Mutex::new(HashMap::new()),
-        session_db_handles: Mutex::new(HashMap::new()),
-        persistent_registry: SharedRegistry::new(PersistentRegistry::load(registry_path).expect("registry loads")),
-        networks: tokio::sync::Mutex::new(capsem_core::net::network_registry::NetworkRegistry::new(PathBuf::from(
-            "/nonexistent/networks",
-        ))),
-        process_binary: PathBuf::from("/nonexistent/capsem-process"),
-        assets_dir: run_dir.join("assets"),
-        run_dir: run_dir.clone(),
-        service_socket: PathBuf::from("/nonexistent/service.sock"),
-        switches: switches::Switches::in_process(),
-        job_counter: AtomicU64::new(1),
-        manifest: RwLock::new(None),
-        current_version: "0.0.0".into(),
-        asset_reconcile: Mutex::new(AssetReconcileState::default()),
-        asset_reconcile_inflight: AtomicBool::new(false),
-        asset_status_path,
-        plugin_policy_by_profile: Mutex::new(HashMap::new()),
-        profile_summary_cache: Mutex::new(test_profile_summary_cache()),
-        profile_cache: Mutex::new(test_profile_cache()),
-        profile_status_cache: Mutex::new(None),
-        profile_rule_cache: test_profile_rule_cache(),
-        profile_mcp_default_cache: test_profile_mcp_default_cache(),
-        profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
-        mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
-        profile_mutation_db: test_profile_mutation_db(&run_dir),
-        last_defunct_reconcile_ms: AtomicU64::new(0),
-        stats_response_cache: Mutex::new(None),
-        stats_detail_response_cache: Mutex::new(HashMap::new()),
-        containers: Default::default(),
-        storage_diagnostics_cache: Mutex::new(HashMap::new()),
-        persistent_resume_state_cache: Mutex::new(HashMap::new()),
-        evaluate_rule_cache: Mutex::new(HashMap::new()),
-        profile_rule_response_cache: Mutex::new(HashMap::new()),
-        profile_plugin_response_cache: Mutex::new(HashMap::new()),
-        evaluate_response_cache: Mutex::new(HashMap::new()),
-        list_response_cache: Mutex::new(None),
-        evaluate_last_response_cache: Mutex::new(None),
-        lifecycle: capsem_service::lifecycle::VmLifecycle::default(),
-        shutdown_lock: tokio::sync::Mutex::new(()),
-        update_lock: tokio::sync::Mutex::new(()),
-        policy_mutation: crate::policy_mutation::PolicyMutationLock::default(),
-        update_restart: tokio::sync::Notify::new(),
-        _test_tempdir: None,
-    });
-    (state, dir)
+    let state = test_state(run_dir.clone(), run_dir.join("assets"), None);
+    (Arc::new(state), dir)
 }
 
 // -----------------------------------------------------------------------
@@ -250,11 +164,11 @@ fn resolve_rejects_symlink_escape() {
     state.instances.lock().unwrap().insert(
         "test-vm".into(),
         InstanceInfo {
+            generation: capsem_crypto::uuid_v4(),
+            authority: Default::default(),
+            upstream_policy: upstream_broker::test_policy_publisher(),
             id: "test-vm".into(),
             name: "test-vm".into(),
-            profile_id: "code".into(),
-            profile_revision: test_profile_revision(),
-            profile_payload_hash: test_profile_payload_hash(),
             asset_pins: test_asset_pins(),
             pid: 1,
             uds_path: PathBuf::from("/tmp/test.sock"),
@@ -266,7 +180,6 @@ fn resolve_rejects_symlink_escape() {
             persistent: false,
             env: None,
             forked_from: None,
-            owner_secret: String::new(),
         },
     );
 
@@ -286,11 +199,11 @@ fn resolve_valid_path_inside_workspace() {
     state.instances.lock().unwrap().insert(
         "test-vm".into(),
         InstanceInfo {
+            generation: capsem_crypto::uuid_v4(),
+            authority: Default::default(),
+            upstream_policy: upstream_broker::test_policy_publisher(),
             id: "test-vm".into(),
             name: "test-vm".into(),
-            profile_id: "code".into(),
-            profile_revision: test_profile_revision(),
-            profile_payload_hash: test_profile_payload_hash(),
             asset_pins: test_asset_pins(),
             pid: 1,
             uds_path: PathBuf::from("/tmp/test.sock"),
@@ -302,7 +215,6 @@ fn resolve_valid_path_inside_workspace() {
             persistent: false,
             env: None,
             forked_from: None,
-            owner_secret: String::new(),
         },
     );
 
@@ -537,6 +449,33 @@ fn classify_provision_error_other_returns_500() {
     }
 }
 
+#[test]
+fn classify_provision_error_reports_the_whole_cause_chain() {
+    // #289: the caller saw only "load the policy inputs", never why.
+    let err = anyhow::anyhow!("settings.toml cannot define corp.rules").context("load the policy inputs");
+    match classify_attempt_decision(ProvisionAttemptOutcome::ProvisionError(err), "vm-7") {
+        AttemptDecision::BailWithError(AppError(status, msg)) => {
+            assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+            assert_eq!(
+                msg,
+                "provision failed: load the policy inputs: settings.toml cannot define corp.rules"
+            );
+        }
+        other => panic!("expected BailWithError(500), got {other:?}"),
+    }
+}
+
+#[test]
+fn classify_provision_error_finds_already_exists_below_context() {
+    let err = anyhow::anyhow!("persistent VM \"vm-8\" already exists").context("claim the persistent name");
+    match classify_attempt_decision(ProvisionAttemptOutcome::ProvisionError(err), "vm-8") {
+        AttemptDecision::BailWithError(AppError(status, msg)) => {
+            assert_eq!(status, StatusCode::CONFLICT, "{msg}");
+        }
+        other => panic!("expected BailWithError(409), got {other:?}"),
+    }
+}
+
 // wait_for_vm_ready polls a cheap local sentinel file. Lock the production
 // backoff directly instead of asserting host wall-clock timing, which measures
 // test-runner starvation under parallel LLVM coverage rather than poll delay.
@@ -556,7 +495,7 @@ async fn wait_for_vm_ready_uses_tight_poll_contract_and_detects_ready() {
     let ready_clone = ready_path.clone();
     let creator = std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(200));
-        std::fs::write(&ready_clone, b"").unwrap();
+        std::fs::write(&ready_clone, b"ready\n").unwrap();
     });
 
     wait_for_vm_ready(&uds_path, 30, None, None)
@@ -719,4 +658,68 @@ fn service_pidfile_leaves_a_successors_record_intact() {
         "erasing a successor's pid strands it: every later reap finds no \
          pidfile and reports success while the service keeps running"
     );
+}
+
+#[tokio::test]
+async fn mounted_corp_routes_validate_install_report_and_reload_inline_toml() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let (_settings_guard, _, _) = install_empty_settings_env(&dir);
+    let _home_guard = EnvVarGuard::set("CAPSEM_HOME", dir.path());
+    let app = build_service_router(make_test_state());
+    let corp_toml = r#"
+refresh_policy = "24h"
+
+[corp_rule_files]
+enforcement = "corp/enforcement.toml"
+sigma = "corp/detection.yaml"
+"#;
+
+    let (status, invalid) = route_request(
+        app.clone(),
+        axum::http::Method::POST,
+        "/corp/validate",
+        Some(json!({ "toml": "this is [ broken" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(invalid["error"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("invalid corp TOML"));
+
+    let (status, valid) = route_request(
+        app.clone(),
+        axum::http::Method::POST,
+        "/corp/validate",
+        Some(json!({ "toml": corp_toml })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{valid}");
+    assert_eq!(valid["success"], true);
+
+    let (status, installed) = route_request(
+        app.clone(),
+        axum::http::Method::PUT,
+        "/corp/edit",
+        Some(json!({ "toml": corp_toml })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{installed}");
+    assert_eq!(installed["success"], true);
+    let written = std::fs::read_to_string(dir.path().join("corp.toml")).unwrap();
+    assert!(written.contains("[corp_rule_files]"));
+    assert!(written.contains("enforcement = \"corp/enforcement.toml\""));
+
+    let (status, info) = route_request(app.clone(), axum::http::Method::GET, "/corp/info", None).await;
+    assert_eq!(status, StatusCode::OK, "{info}");
+    assert_eq!(info["installed"], true);
+    assert_eq!(info["source"]["refresh_interval_hours"], 24);
+    assert!(info["source"]["content_hash"].is_string());
+
+    let (status, reload) = route_request(app, axum::http::Method::POST, "/corp/reload", None).await;
+    assert_eq!(status, StatusCode::OK, "{reload}");
+    assert_eq!(reload["success"], true);
+    assert_eq!(reload["reloaded"], 0);
 }

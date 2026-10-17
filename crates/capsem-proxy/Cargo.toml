@@ -1,0 +1,32 @@
+[package]
+name = "capsem-proxy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Confined per-session Capsem proxy worker."
+homepage.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+capsem-core = { path = "../capsem-core" }
+capsem-foundation = { path = "../capsem-foundation" }
+capsem-guard = { path = "../capsem-guard" }
+capsem-logger = { path = "../capsem-logger" }
+capsem-proto = { path = "../capsem-proto" }
+capsem-telemetry = { path = "../capsem-telemetry", features = ["export"] }
+clap = { workspace = true, features = ["derive"] }
+async-trait = "0.1"
+bytes.workspace = true
+http.workspace = true
+opentelemetry-http = { version = "0.33", default-features = false }
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

@@ -46,7 +46,7 @@ fn api_publication(publication: capsem_proto::ipc::PublicationInfo) -> ExposureI
 
 async fn ask_owner(state: &ServiceState, id: &str, request: ServiceToProcess) -> Result<ProcessToService, AppError> {
     let uds_path = running_uds_path(state, id)?;
-    send_ipc_command(&uds_path, request, Some(OWNER_TIMEOUT_SECS))
+    send_ipc_command(state, &uds_path, request, Some(OWNER_TIMEOUT_SECS))
         .await
         .map_err(|e| AppError(StatusCode::BAD_GATEWAY, format!("VM owner unavailable: {e}")))
 }
@@ -64,6 +64,18 @@ pub(crate) async fn handle_create_exposure(
     Path(id): Path<String>,
     Json(request): Json<ExposureRequest>,
 ) -> Result<Json<ExposureInfo>, AppError> {
+    create_exposure(&state, &id, request).await.map(Json)
+}
+
+/// Ask VM `id`'s owner for an exposure. The owner admits it through the VM's
+/// security engine (`network.lifecycle`) before binding anything; this is the
+/// one way an exposure is made, whether a client or an image's declared
+/// surface asks.
+pub(crate) async fn create_exposure(
+    state: &Arc<ServiceState>,
+    id: &str,
+    request: ExposureRequest,
+) -> Result<ExposureInfo, AppError> {
     let target = proto_target(request.target);
     if !target.admits(request.guest_port) {
         return Err(AppError(
@@ -105,13 +117,13 @@ pub(crate) async fn handle_create_exposure(
             }
         }
     };
-    let reply = ask_owner(&state, &id, owner_request).await?;
+    let reply = ask_owner(state, id, owner_request).await?;
     match reply {
         ProcessToService::PortPublished {
             publication: Some(publication),
             error: None,
             ..
-        } => Ok(Json(api_publication(publication))),
+        } => Ok(api_publication(publication)),
         ProcessToService::PortPublished {
             error: Some(error),
             policy_refused: true,
@@ -300,21 +312,24 @@ pub(crate) async fn handle_admit_preview_connection(
     Path((vm_id, exposure_id)): Path<(String, String)>,
     Json(request): Json<PreviewConnectionAdmissionRequest>,
 ) -> Result<Json<PreviewConnectionAdmissionResponse>, AppError> {
+    let handoff = crate::owner_handoff::OwnerHandoff::acquire(&state, &vm_id).await?;
     let kind = match request.kind {
         capsem_api::PreviewAdmissionKind::Request => capsem_proto::PreviewAdmissionKind::Request,
         capsem_api::PreviewAdmissionKind::WebsocketUpgrade => capsem_proto::PreviewAdmissionKind::WebsocketUpgrade,
     };
-    match ask_owner(
+    match send_owner_command(
         &state,
-        &vm_id,
+        &handoff.owner,
         ServiceToProcess::AdmitPreviewConnection {
             id: state.next_job_id(),
             exposure_id,
             session_token: request.session_token,
             kind,
         },
+        Some(OWNER_TIMEOUT_SECS),
     )
-    .await?
+    .await
+    .map_err(|error| AppError(StatusCode::BAD_GATEWAY, format!("VM owner unavailable: {error}")))?
     {
         ProcessToService::PreviewConnectionAdmitted {
             handoff_socket,
@@ -323,9 +338,14 @@ pub(crate) async fn handle_admit_preview_connection(
             error: None,
             ..
         } => Ok(Json(PreviewConnectionAdmissionResponse {
-            handoff_socket,
+            handoff_socket: handoff
+                .validate(&state, &handoff_socket)?
+                .to_string_lossy()
+                .into_owned(),
             handoff_token,
             owner_generation: owner_generation.to_string(),
+            owner_pid: handoff.owner.pid(),
+            owner_uid: handoff.owner.uid(),
         })),
         ProcessToService::PreviewConnectionAdmitted { error: Some(error), .. } => {
             Err(AppError(StatusCode::UNAUTHORIZED, error))

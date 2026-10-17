@@ -131,9 +131,9 @@ Release rules live in root `RELEASE.md`; agent routing lives in `AGENTS.md` and
 
 - `just test` is the complete local all-artifact proof, and a passing run is
   required before either release command dispatches.
-- Binary CI builds packages only, pulls every selected profile, and runs the
+- Binary CI builds packages only, pulls the channel's runtime, and runs the
   shared complete modules against that resolved pairing.
-- Profile CI builds one channel/profile only, pulls the current package, and
+- Runtime CI builds the runtime for one channel only, pulls the current package, and
   runs the same modules against that resolved pairing.
 - Both entry workflows use the identical `capsem-release-${channel}` lock.
 - No pairing becomes public without complete functional and glow-up proof.
@@ -142,14 +142,14 @@ Release rules live in root `RELEASE.md`; agent routing lives in `AGENTS.md` and
 
 The daily scheduler is orchestration, not a third release lane. It freezes the
 event's full source commit, invokes
-`just release-profile nightly <profile> <source-commit>` serially for every
-selected profile, then invokes `just release-binaries nightly <source-commit>`
-even if one profile command failed. Each command identifies and watches its own downstream run, whose
+`just release-assets nightly <source-commit>`, then invokes
+`just release-binaries nightly <source-commit>` even if the runtime command
+failed. Each command identifies and watches its own downstream run, whose
 `capsem-release-nightly` lock owns the channel transaction. The separate
 `capsem-nightly-release-scheduler` lock only prevents two daily orchestrators
 from overlapping.
 
-Nightly profile runs always rebuild assets; exact prior-run asset reuse is
+Nightly runtime runs always rebuild assets; exact prior-run asset reuse is
 stable-retry behavior. Nightly binary runs always rebuild and test native
 packages. When the version tag already exists, CI disables publication after
 the complete package and pairing gates because signed/notarized packages are

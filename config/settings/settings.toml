@@ -1,7 +1,7 @@
 # Capsem UI/application settings.
 #
 # This file intentionally contains only app and appearance preferences.
-# Runtime behavior belongs to profiles and corp policy.
+# Runtime policy is built-in defaults, then user rules here, then corp policy.
 
 [app]
 auto_update = true

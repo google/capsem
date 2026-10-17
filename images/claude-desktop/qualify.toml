@@ -1,0 +1,4 @@
+# What qualifying this image adds to the mandatory checks every image passes
+# (tests/qualification). It may only add: no manifest removes a mandatory
+# group or supplies startup configuration, which comes from the OCI config.
+capabilities = ["surface", "ollama"]

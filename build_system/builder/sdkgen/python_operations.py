@@ -67,8 +67,13 @@ def render_operations(routes: list[Route]) -> dict[str, str]:
         if symbols:
             imports += [f"from pydantic import {', '.join(symbols)}", ""]
         imports += [f"from .._transport import {'MediaType, ' if binary else ''}Method, Transport"]
+        aliases = [symbol for symbol in ("DateTimeString", "JsonValue", "UuidString")
+                   if re.search(rf"\b{symbol}\b", body)]
         dependencies = sorted({ref for schema in schemas for ref in schema.references()})
-        imports += [f"from ..models.{module_name(dep)} import {dep}" for dep in dependencies]
+        model_imports = [f"from ..models.{module_name(dep)} import {dep}" for dep in dependencies]
+        if aliases:
+            model_imports.append(f"from ..models.model_base import {', '.join(aliases)}")
+        imports += sorted(model_imports)
         if name + ".py" in files:
             raise ValueError(f"colliding operation module: {name}")
         files[name + ".py"] = HEADER + "from __future__ import annotations\n\n" + "\n".join(imports) + "\n\n\n" + body

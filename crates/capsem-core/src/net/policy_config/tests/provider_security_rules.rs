@@ -390,7 +390,7 @@ fn integration_corp_rule_beats_profile_default_allow_for_deny_target() {
     assert_eq!(
         enforcement_rules.first(),
         Some(&("corp.rules.block_local_deny_target", SecurityRuleAction::Block, -100)),
-        "corp block must be the first enforcement decision before profile defaults: {enforcement_rules:?}"
+        "corp block must be the first enforcement decision before built-in defaults: {enforcement_rules:?}"
     );
 }
 
@@ -669,11 +669,11 @@ fn load_settings_response_exposes_settings_tree_only() {
     let tree = serialized.get("tree").expect("settings tree is present").to_string();
     assert!(
         !tree.contains("\"mcp\"") && !tree.contains("MCP Servers"),
-        "settings response must not expose profile-owned MCP configuration"
+        "settings response must not expose MCP configuration"
     );
     assert!(
         serialized.get("providers").is_none(),
-        "provider state belongs to profile rules and plugin/runtime status, not settings"
+        "provider state belongs to rules and plugin/runtime status, not settings"
     );
     assert!(
         serialized.get("policy").is_none(),

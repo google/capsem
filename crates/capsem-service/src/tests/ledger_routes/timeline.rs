@@ -31,7 +31,7 @@ async fn timeline_app() -> (axum::Router, tempfile::TempDir) {
         let tx = conn.transaction().unwrap();
         {
             let mut old = tx
-                .prepare("INSERT INTO exec_events (timestamp, exec_id, command) VALUES (?1, ?2, 'old')")
+                .prepare("INSERT INTO exec_events (timestamp, exec_id, command, target) VALUES (?1, ?2, 'old', 'vm')")
                 .unwrap();
             for row in 0..OLD_ROWS {
                 let stamp = format!(
@@ -50,7 +50,8 @@ async fn timeline_app() -> (axum::Router, tempfile::TempDir) {
         )
         .unwrap();
         tx.execute(
-            "INSERT INTO exec_events (timestamp, exec_id, command, trace_id) VALUES (?1, 900000, 'recent', 'trace-a')",
+            "INSERT INTO exec_events (timestamp, exec_id, command, target, trace_id) \
+             VALUES (?1, 900000, 'recent', 'vm', 'trace-a')",
             [ago(50)],
         )
         .unwrap();

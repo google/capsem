@@ -1,7 +1,7 @@
 """What the install gate actually proves, once the container is up.
 
 Staging comes in two shapes, and they are not interchangeable. A release lane
-supplies profile inputs its manifest already resolved and verified; a local
+supplies runtime inputs its manifest already resolved and verified; a local
 gate has only this checkout's freshly built assets and must publish a channel
 from them before anything can install against it. Only the second produces an
 authoritative release graph, which is why only the second hands one over --
@@ -15,7 +15,8 @@ import time
 from pathlib import Path
 
 from . import config as gate_config
-from .content import ProfileContent
+from . import referenceimage
+from .content import RuntimeContent
 from .docker import Docker
 from .errors import GateError
 from .proc import Runner
@@ -59,35 +60,17 @@ class InstallProof:
             cwd=self._mount,
         )
 
-    def stage_content(self, content: ProfileContent) -> None:
-        """Copy the one mounted, prevalidated content pair into writable staging."""
-        self.stage_content_from(
-            assets=self._config.functional.assets_dir,
-            content_config=self._config.functional.config_root,
-        )
+    def stage_content(self, content: RuntimeContent) -> None:
+        """Copy the one mounted, prevalidated asset tree into writable staging."""
+        self.stage_content_from(assets=self._config.functional.assets_dir)
 
-    def stage_content_from(self, *, assets: str, content_config: str) -> None:
-        """Copy a read-only content projection into the proof's writable layout."""
-        profiles = f"{content_config}/{self._config.functional.profiles_subdir}"
-        config_manifest = (
-            f"{content_config}/{self._config.assets.merged_assets_dir}/"
-            f"{self._settings.manifest_name}"
-        )
+    def stage_content_from(self, *, assets: str) -> None:
+        """Copy a read-only asset projection into the proof's writable layout."""
         self._docker.shell(
             self._container,
             f'test -f "{assets}/{self._settings.manifest_name}" '
-            f'&& test -f "{config_manifest}" '
-            f'&& cmp -s "{assets}/{self._settings.manifest_name}" "{config_manifest}"',
-            user=self._guest.name,
-            cwd=self._mount,
-        )
-        self._docker.shell(
-            self._container,
-            f'test -d "{profiles}" '
-            f'&& rm -rf "{self._layout.assets}" '
-            f'"{self._layout.config}" && mkdir -p "{self._layout.assets}" '
-            f'"{self._layout.config}" && cp -R "{assets}/." "{self._layout.assets}/" '
-            f'&& cp -R "{content_config}/." "{self._layout.config}/"',
+            f'&& rm -rf "{self._layout.assets}" && mkdir -p "{self._layout.assets}" '
+            f'&& cp -R "{assets}/." "{self._layout.assets}/"',
             user=self._guest.name,
             cwd=self._mount,
         )
@@ -95,7 +78,7 @@ class InstallProof:
     def start_local_server(self) -> None:
         """Serve the exact local graph over container loopback.
 
-        Selected profile bytes still need this server: the package under test
+        Selected runtime bytes still need this server: the package under test
         is recorded into a fresh checked graph before installation, so its
         postinst never falls back to the packaged public URL while networking
         is denied.
@@ -224,11 +207,9 @@ class InstallProof:
             f"{self._settings.venv_python} {self._suite.glowup_script} "
             f'--input-deb "{package}" '
             f'--bin-dir {self._settings.bin_dir} --assets-dir "{self._layout.assets}" '
-            f'--config-root "{self._layout.config}" '
             f"--work-dir {self._layout.glowup} --package-ready "
             f"--evidence-dir {self._layout.glowup_evidence} "
-            f"--source-commit {self._source_commit} "
-            f"--profile-revision-policy {self._settings.profile_revision_policy.value}"
+            f"--source-commit {self._source_commit}"
         )
         self._docker.shell(
             self._container,
@@ -238,6 +219,7 @@ class InstallProof:
             env={
                 "XDG_RUNTIME_DIR": self._guest.runtime_dir,
                 "UV_PROJECT_ENVIRONMENT": self._settings.venv,
+                **referenceimage.environment(self._config),
             },
         )
         self._runner.note(

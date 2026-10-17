@@ -103,7 +103,10 @@ fn referenced_request_body(body: Option<&str>) -> (Option<&str>, Option<String>,
     }
     (
         Some(&body[..end]),
-        Some(format!("blake3:{}", blake3::hash(body.as_bytes()).to_hex())),
+        Some(format!(
+            "blake3:{}",
+            capsem_crypto::blake3::hash(body.as_bytes()).to_hex()
+        )),
         Some(body.len()),
         end < body.len(),
     )
@@ -238,9 +241,9 @@ pub(super) fn logger_write_credential_ref(op: &WriteOp) -> Option<String> {
         WriteOp::SecurityRuleEvent(event) => event.credential_ref.clone(),
         WriteOp::SecurityAskEvent(_) => None,
         WriteOp::SecurityDecisionEvent(event) => event.credential_ref.clone(),
-        WriteOp::ProfileMutationEvent(_) => None,
+        WriteOp::PolicyMutationEvent(_) | WriteOp::HostEvent(_) => None,
         // Registry rows carry state, not a credential.
-        WriteOp::Network(_) | WriteOp::NetworkMembership(_) => None,
+        WriteOp::Network(_) | WriteOp::NetworkMembership(_) | WriteOp::NetworkDeparture(_) => None,
     }
 }
 
@@ -259,7 +262,8 @@ pub(super) fn logger_write_trace_id(op: &WriteOp) -> Option<String> {
         WriteOp::SecurityRuleEvent(event) => event.trace_id.clone(),
         WriteOp::SecurityAskEvent(event) => event.trace_id.clone(),
         WriteOp::SecurityDecisionEvent(event) => event.trace_id.clone(),
-        WriteOp::ProfileMutationEvent(event) => event.trace_id.clone(),
-        WriteOp::Network(_) | WriteOp::NetworkMembership(_) => None,
+        WriteOp::PolicyMutationEvent(event) => event.trace_id.clone(),
+        WriteOp::HostEvent(event) => event.trace_id.clone(),
+        WriteOp::Network(_) | WriteOp::NetworkMembership(_) | WriteOp::NetworkDeparture(_) => None,
     }
 }

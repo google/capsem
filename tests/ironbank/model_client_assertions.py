@@ -20,11 +20,18 @@ from ironbank.model_ledger import (
 
 
 class ModelClientEnvironment(Protocol):
-    db_path: Path
+    @property
+    def db_path(self) -> Path: ...
+
     upstream_transcript_path: Path
-    log_paths: tuple[Path, ...]
+    @property
+    def log_paths(self) -> tuple[Path, ...]: ...
+
+    dns_answer_ip: str
 
     def run_python(self, script: str, *, timeout_secs: int = 240) -> dict: ...
+
+    def settle_ledger(self) -> Path: ...
 
 
 def assert_imported_script_contains(
@@ -59,7 +66,7 @@ def assert_one_model_client(
     *,
     raw_secrets: tuple[str, ...] = (),
     expected_imported_text: str | None = None,
-) -> None:
+) -> dict:
     result = env.run_python(script)
     assert result["file_matches"] is True, result
     derived_raw_secrets = raw_secrets or _derive_model_client_raw_secrets(result)
@@ -161,11 +168,13 @@ def assert_two_turn_model_client(env: ModelClientEnvironment, script: str) -> di
         credential_provider=result.get("credential_provider") or result["provider"],
     )
     raw_secret = "sk-" + result["credential_nonce"]
+    db_path = env.settle_ledger()
     run = ModelLedgerRun(
-        db_path=env.db_path,
+        db_path=db_path,
         upstream_transcript_path=env.upstream_transcript_path,
         log_paths=env.log_paths,
         raw_secrets=(raw_secret,),
+        dns_answer_ip=env.dns_answer_ip,
     )
     assert_two_turn_model_ledger_exchange(spec, run)
     return result

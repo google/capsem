@@ -3,29 +3,13 @@ use crate::{Cli, Commands, SessionCommands};
 use clap::Parser;
 
 #[test]
-fn cli_run_accepts_profile() {
-    let cli = Cli::parse_from(["capsem", "run", "echo ok", "--profile", "co-work"]);
-    match cli.command.unwrap() {
-        Commands::Session(SessionCommands::Run(RunArgs { profile, .. })) => {
-            assert_eq!(profile, "co-work");
-        }
-        _ => panic!("expected Run"),
-    }
-}
-
-#[test]
 fn parse_run() {
     let cli = Cli::parse_from(["capsem", "run", "echo hello"]);
     match cli.command.unwrap() {
         Commands::Session(SessionCommands::Run(RunArgs {
-            command,
-            profile,
-            timeout,
-            env,
-            ..
+            command, timeout, env, ..
         })) => {
             assert_eq!(command.as_deref(), Some("echo hello"));
-            assert_eq!(profile, "code");
             assert_eq!(timeout, None);
             assert!(env.is_empty());
         }
@@ -38,14 +22,9 @@ fn parse_run_with_timeout() {
     let cli = Cli::parse_from(["capsem", "run", "--timeout", "120", "ls -la"]);
     match cli.command.unwrap() {
         Commands::Session(SessionCommands::Run(RunArgs {
-            command,
-            profile,
-            timeout,
-            env,
-            ..
+            command, timeout, env, ..
         })) => {
             assert_eq!(command.as_deref(), Some("ls -la"));
-            assert_eq!(profile, "code");
             assert_eq!(timeout, Some(120));
             assert!(env.is_empty());
         }
@@ -171,7 +150,7 @@ mod against_the_service {
         assert_eq!(code, 7);
         assert_eq!(
             service.find("POST", "/run")[0].json(),
-            json!({"command": "false", "profile_id": "code", "timeout_secs": 5, "ram_mb": 1024, "env": {"K": "V"}})
+            json!({"command": "false", "timeout_secs": 5, "ram_mb": 1024, "env": {"K": "V"}})
         );
     }
 
@@ -182,7 +161,6 @@ mod against_the_service {
             (vec![], "run needs a shell command, or --image"),
             (vec!["true", "--network", "team"], "--network needs --image"),
             (vec!["true", "-p", "0:80"], "need --image"),
-            (vec!["true", "--profile", "../x"], ""),
         ] {
             let error = run(&service.client, &args(&argv)).await.unwrap_err();
             assert!(format!("{error:#}").contains(expected), "{argv:?}: {error:#}");
@@ -193,9 +171,9 @@ mod against_the_service {
     #[tokio::test]
     async fn a_service_error_is_the_run_error() {
         let service = FakeService::start();
-        service.route("POST", "/run", 503, json!({"error": "profile assets missing"}));
+        service.route("POST", "/run", 503, json!({"error": "VM assets are not ready"}));
         let error = run(&service.client, &args(&["true"])).await.unwrap_err();
-        assert!(format!("{error:#}").contains("profile assets missing"), "{error:#}");
+        assert!(format!("{error:#}").contains("VM assets are not ready"), "{error:#}");
     }
 }
 

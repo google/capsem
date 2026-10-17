@@ -8,8 +8,8 @@ from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
 import pytest
-from helpers.body_archive import served_security_payload
-from helpers.constants import CODE_PROFILE_ID
+from helpers.body_archive import served_security_payload_if_ready
+from helpers.settings_policy import apply_settings_rule
 
 from tests.ironbank.kingslanding.test_publish import redis
 from tests.ironbank.kingslanding.test_run import exec_output_text, service, wait_for
@@ -73,6 +73,7 @@ def _hits(client, vm_id):
     result = client.post(
         f"/vms/{vm_id}/exec",
         {
+            "target": "vm",
             "command": "test ! -f /root/preview-hits && printf 0 || wc -l </root/preview-hits",
             "timeout_secs": 5,
         },
@@ -95,7 +96,7 @@ def _start_server(service, redis):
     )
     result = client.post(
         f"/vms/{vm_id}/exec",
-        {"command": launcher, "timeout_secs": 5},
+        {"target": "vm", "command": launcher, "timeout_secs": 5},
     )
     assert result["exit_code"] == 0, result
 
@@ -105,6 +106,7 @@ def _start_server(service, redis):
         result = client.post(
             f"/vms/{vm_id}/exec",
             {
+                "target": "vm",
                 "command": (
                     "pid=$(cat /var/tmp/capsem-container/workload.pid); "
                     f"nsenter --net=/proc/$pid/ns/net -- python3 -c {shlex.quote(probe)}"
@@ -257,16 +259,14 @@ def test_authenticated_container_preview_streams_and_revokes(redis, service):
     assert _refused(url.port, second["id"], control_cookie)
     assert _hits(client, vm_id) == before
 
-    rule = client.put(
-        f"/profiles/{CODE_PROFILE_ID}/enforcement/rules/preview_test/edit",
-        {
-            "name": "preview_test",
-            "action": "block",
-            "match": 'network.mode == "http_preview" && network.action == "preview_request"',
-            "reason": "Kingslanding preview boundary proof.",
-        },
+    reloaded = apply_settings_rule(
+        service,
+        "preview_test",
+        action="block",
+        match='network.mode == "http_preview" && network.action == "preview_request"',
+        reason="Kingslanding preview boundary proof.",
     )
-    assert rule["rule"]["action"] == "block"
+    assert reloaded["reloaded"] >= 1, reloaded
     assert _refused(url.port, exposure["id"], control_cookie)
     assert _hits(client, vm_id) == before
 
@@ -278,8 +278,14 @@ def test_authenticated_container_preview_streams_and_revokes(redis, service):
         rows[:] = client.get(f"/vms/{vm_id}/security/latest?limit=2000")
         for row in rows:
             if row["event_type"] == "network.connect" and row["event_id"] not in payloads:
-                payloads[row["event_id"]] = served_security_payload(client, vm_id, row["event_id"])
-        events = (payloads[row["event_id"]] for row in rows if row["event_type"] == "network.connect")
+                payload = served_security_payload_if_ready(client, vm_id, row["event_id"])
+                if payload is not None:
+                    payloads[row["event_id"]] = payload
+        events = (
+            payloads[row["event_id"]]
+            for row in rows
+            if row["event_type"] == "network.connect" and row["event_id"] in payloads
+        )
         return any(
             ((event["network"] or {}).get("route") or {}).get("mode") == "preview"
             and (event["decision"] or {}).get("effective") == "block"

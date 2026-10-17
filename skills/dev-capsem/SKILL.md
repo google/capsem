@@ -28,7 +28,10 @@ then lead with a recommendation. The full contract is
 | Crate | What | Key modules |
 |-------|------|-------------|
 | `capsem-foundation` | Dependency-light host primitives shared across product crates. | `paths.rs`, `uds.rs`, `poll.rs`, `telemetry.rs`, `log_layer.rs`, `ipc_handshake.rs` |
+| `capsem-cache` | Bounded observable cache mechanics; callers own freshness policy. | `bounded.rs`, `snapshot.rs`, `telemetry.rs` |
 | `capsem-archive` | Append-only, block-compressed body archive for one session ledger. | `format.rs`, `writer.rs`, `reader.rs` |
+| `capsem-crypto` | Accelerated hashes, integrity verification, randomness, TLS keys, JWT verification, signatures, and secret handling. | `verify.rs`, `random.rs`, `tls.rs`, `jwt.rs`, `secrets.rs` |
+| `capsem-ledger` | Confined session-ledger worker and archive codec executor. | `main.rs`, `codec.rs` |
 | `capsem-telemetry` | Single owner of every `metrics`-facade metric name, kind, unit, and description. Emitters import names from here. | `lib.rs` (`MetricSpec`, `describe_all`), `db.rs`, `dns.rs`, `mitm.rs`, `security.rs`, `virtio_blk.rs` |
 | `capsem-assets` | VM asset lifecycle and manifest compatibility. | `asset_manager.rs`, `manifest_compat.rs` |
 | `capsem-api` | Gateway wire types and OpenAPI contract. | `document.rs`, `hypervisor.rs`, `vm_info.rs` |
@@ -38,14 +41,16 @@ then lead with a recommendation. The full contract is
 | `capsem-core` | VM, hypervisor, security-engine, network-intercept, and session-runtime domain library. | `vm/`, `net/`, `security_engine/`, `mcp/`, `hypervisor/`, `image.rs` |
 | `capsem-service` | Daemon service. Axum HTTP over UDS, VM lifecycle. | `main.rs` (routes, IPC), `api.rs` (request/response types) |
 | `capsem-process` | Per-VM process. Boots VM, bridges vsock, job store. | `main.rs` (vsock setup, IPC handler) |
-| `capsem` | CLI client. HTTP over UDS to service. | `main.rs` (create, resume, shell, list, exec, run, stop, delete, persist, purge, info, logs, restart, version, doctor, fork, image) |
+| `capsem-proxy` | Confined HTTP/DNS proxy worker for VM and standalone traffic. | `main.rs` |
+| `capsem` | CLI client. Rust SDK over authenticated gateway HTTP; local status/asset administration and startup use UDS. | `main.rs` (create, resume, shell, list, exec, run, stop, delete, persist, purge, info, logs, restart, version, doctor, fork, image) |
 | `capsem-tui` | Terminal control UI over the gateway API. | `main.rs`, view/state modules |
-| `capsem-admin` | Profile, asset, and release validation/materialization administration. | `main.rs` |
+| `capsem-admin` | Runtime image build, asset, release, and config validation administration. | `main.rs` |
 | `@capsem/mcp` (`mcp/typescript`) | Separately installed host MCP server for AI agents. Stdio, typed SDK, authenticated gateway HTTP. | `cli.ts`, `server.ts`, tool modules |
 | `capsem-router` | Confined TCP publication companion. Relays declared listeners to granted VSOCK data descriptors; no VM control authority. | `lib.rs`, `main.rs` |
 | `capsem-network` | Private networks between VMs: the u16-framed ethernet frame codec for a cable and the switch's MAC forwarding table. Pure code; the I/O lives in `capsem-router --network`, one L2 switch per network that VMs `plug()` into. | `frames.rs`, `switch.rs` |
-| `capsem-mcp-aggregator` | Low-privilege subprocess. Connects to external MCP servers and routes tool calls. Communicates with `capsem-process` via length-prefixed msgpack on stdio. No VM / DB / FS access. | `main.rs` (frame loop, server manager) |
-| `capsem-mcp-builtin` | Stdio MCP server subprocess exposing built-in tools: HTTP (fetch, grep, headers) and the `echo` transport probe. Managed by the aggregator. | `main.rs` (rmcp handler) |
+| `capsem-mcp-transport` | Connected HTTP capabilities and native role bootstrap; no VM, policy or secret ownership. | `http_transport.rs`, `native_worker.rs` |
+| `capsem-mcp-aggregator` | Low-privilege subprocess. Connects to external MCP servers and routes tool calls. Service supervises it; the VM owner receives connected asynchronous MessagePack RPC. No ambient VM / DB / FS / network access. | `runtime.rs`, `server_manager.rs` |
+| `capsem-mcp-builtin` | Stdio MCP server subprocess exposing built-in tools: HTTP (fetch, grep, headers) and the `echo` transport probe. Service-owned through the aggregator's narrow peer capability. | `main.rs` (rmcp handler) |
 | `capsem-gateway` | TCP-to-UDS HTTP gateway. Frontend + tray connect through this. | `main.rs` (Axum router), `proxy.rs`, `status.rs`, `terminal.rs`, `auth.rs` |
 | `capsem-app` | Thin Tauri webview shell. Points at gateway (`http://127.0.0.1:19222`). 2 IPC commands: `open_url`, `check_for_app_update`. Bundles `web/app/dist` so it can render the service-unavailable screen. Crate name matches directory; binary is `capsem-app`. | `main.rs` |
 | `capsem-tray` | System tray. Polls gateway for VM status, quick actions (open dashboard, quit). | `main.rs`, `menu.rs` |
@@ -75,7 +80,7 @@ hypervisor, security-engine, and host network runtime in `capsem-core`.
 | `cache/target/assets/` | Built VM assets (gitignored, per-arch) | `/build-images` |
 | `web/graphics/` | Brand icons and app icons (source of truth) | `/dev-capsem` |
 | `skills/` | AI agent skills | `/dev-skills`, `/meta-organize-skills` |
-| `config/` | Profile, corp, settings source config and profile payloads | `/site-architecture`, `/build-images` |
+| `config/` | Runtime image source (`docker/image`), corp, and settings config | `/site-architecture`, `/build-images` |
 
 ## Skill map
 
@@ -105,7 +110,7 @@ When working on a specific area, consult the relevant skill:
 ### Build & release
 | Skill | When |
 |-------|------|
-| `/build-images` | profile-derived image builds, rootfs, OBOM |
+| `/build-images` | VM runtime builds: kernel, rootfs, OBOM |
 | `/build-initrd` | Guest binary repack, fast iteration |
 | `/release-process` | Release, CI, signing, docs, changelog |
 
@@ -120,7 +125,7 @@ When working on a specific area, consult the relevant skill:
 
 ```
 AI Agent    -> @capsem/mcp (stdio)     -> authenticated gateway HTTP -> capsem-service -> capsem-process -> vsock -> guest
-User CLI    -> capsem (HTTP/UDS)       -> capsem-service -> capsem-process -> vsock -> guest
+User CLI    -> capsem (Rust SDK)       -> authenticated gateway HTTP -> capsem-service -> capsem-process -> vsock -> guest
 Desktop UI  -> capsem-gateway (TCP)    -> HTTP/UDS -> capsem-service -> capsem-process -> vsock -> guest
 Tray app    -> capsem-gateway (TCP)    -> HTTP/UDS -> capsem-service -> capsem-process -> vsock -> guest
 Guest HTTPS -> iptables -> vsock:5002  -> Host MITM proxy -> upstream
@@ -131,22 +136,23 @@ Vsock ports: 5000 (control), 5001 (terminal), 5002 (MITM + framed guest MCP), 50
 
 ## Config hierarchy
 
-1. Corp config -- enterprise constraints, reporting endpoints, and locked rule/plugin policy
-2. Profile config -- VM assets, rules, detections, MCP, plugins, packaged root, and profile defaults
-3. Settings config -- UI/app preferences only
+1. Corp config (`corp.toml`) -- enterprise constraints, reporting endpoints,
+   and locked rule/plugin policy. Corp wins.
+2. User settings (`~/.capsem/settings.toml`) -- rules, detections, MCP,
+   plugins, and UI/app preferences.
+3. Built-in defaults compiled into the binary.
 
-There is no `user.toml` policy rail. A VM boots a profile; profile/corp own
-security behavior. Settings are not policy.
+The service merges the three into one per-VM policy file,
+`vm/active_policy.toml`, at every boot. There is no `user.toml` policy rail.
 
 Config naming is strict:
 - `schema` validates one contract shape.
-- `catalog` lists profile instances discovered or materialized from profile
-  source.
+- `catalog` lists discovered or materialized instances.
 - UI metadata renders settings only.
 - `admin`, `guest`, and `registry` are not config authority roots.
 - The only top-level config directories are `settings/`, `corp/`,
-  `profiles/`, `docker/`, and `data/`. Adding another root is a contract
-  change and needs a failing guard first.
+  `docker/`, and `data/`. Adding another root is a contract change and needs
+  a failing guard first.
 - `capsem-admin` is a validator/materializer/builder, not an authoring wizard.
   It must not grow `init`, `new`, `add`, provider, registry, or backend
   workspace authoring commands.
@@ -155,17 +161,16 @@ Config naming is strict:
 
 - Guest VM is air-gapped. No real NIC, no real DNS, no direct internet.
 - Guest binaries are read-only (chmod 555). Rootfs mounted read-only.
-- **Sessions run profiles.** A session is created from a profile. The profile
-  selects assets, packaged root files, MCP config, plugins, rules, detections,
-  and UI-facing name/description/icon. Session status must reflect profile
-  readiness and compatibility.
+- **Every session boots the one VM runtime.** Applications come from OCI
+  images; policy comes from corp + settings + built-in defaults; size comes
+  from create flags with fixed defaults.
 - The binary must be codesigned with `com.apple.security.virtualization`.
 - Domain libraries own reusable logic; binary crates keep entrypoints focused
   on parsing, wiring, lifecycle, and presentation. Do not move unrelated logic
   into `capsem-core` merely because more than one caller needs it.
 - **Fork images are first-class objects.** `capsem fork <session> <image-name>`
   clones a session into a reusable template. Forked images depend on the
-  base profile asset set and must remain compatible with the profile contract.
+  runtime asset set and must remain compatible with it.
 - **Public surfaces are approval-gated.** `config/public-surface.toml` is the
   exact allowlist for public Just recipes, Capsem CLI command paths, and
   service HTTP method/path pairs. `tests/test_public_surface_contract.py`
@@ -183,7 +188,7 @@ native-install or release-command fork.
 **Install layout** (`~/.capsem/`):
 - `bin/` -- capsem, capsem-service, capsem-process, capsem-mcp-aggregator, capsem-mcp-builtin, capsem-gateway, capsem-tray
 - `@capsem/mcp` -- separately installed npm package; native installation does not install Node.js or download it
-- `assets/` -- manifest.json and profile-selected VM assets such as `vmlinuz`,
+- `assets/` -- manifest.json and the runtime VM assets such as `vmlinuz`,
   `initrd.img`, and EROFS rootfs images
 - `run/` -- service.sock, service.pid, gateway.token, gateway.port, gateway.pid, instances/
 

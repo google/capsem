@@ -1,4 +1,4 @@
-//! Row inserts for the DNS, audit, substitution, security and profile-mutation
+//! Row inserts for the DNS, audit, substitution, security and policy-mutation
 //! ledgers.
 
 use super::*;
@@ -304,26 +304,25 @@ pub(super) fn insert_security_decision_event(
     Ok(())
 }
 
-pub(super) fn insert_profile_mutation_event(
+pub(super) fn insert_policy_mutation_event(
     conn: &Connection,
-    event: &ProfileMutationEvent,
+    event: &PolicyMutationEvent,
     target: WriteTarget,
 ) -> rusqlite::Result<()> {
     execute_cached(
         conn,
         &format!(
             "INSERT INTO {} (
-            timestamp_unix_ms, mutation_id, profile_id, actor, category, filename,
+            timestamp_unix_ms, mutation_id, actor, category, filename,
             affected_path, target_kind, target_key, operation, rule_id,
             old_hash, old_size, new_hash, new_size, status, error, trace_id
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
-            target.table("profile_mutation_events")
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+            target.table("policy_mutation_events")
         ),
         params![
             event.timestamp_unix_ms,
             event.mutation_id,
-            event.profile_id,
             event.actor,
             event.category,
             event.filename,
@@ -430,6 +429,49 @@ pub(super) fn insert_transport_event(
             event.network_id,
             event.connection_id,
             event.event_json
+        ],
+    )?;
+    Ok(())
+}
+
+/// The newest chain link, in memory first: rows reach disk only at a flush.
+fn last_host_hash(conn: &Connection, target: WriteTarget) -> rusqlite::Result<[u8; 32]> {
+    for table in [target.table("host_events"), "main.host_events".to_string()] {
+        let hash: Option<Vec<u8>> = conn
+            .query_row(
+                &format!("SELECT hash FROM {table} ORDER BY id DESC LIMIT 1"),
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(hash) = hash {
+            return hash
+                .try_into()
+                .map_err(|_| rusqlite::Error::InvalidParameterName("host_events hash is not 32 bytes".into()));
+        }
+    }
+    Ok(crate::events::GENESIS_HASH)
+}
+
+pub(super) fn insert_host_event(conn: &Connection, event: &HostEvent, target: WriteTarget) -> rusqlite::Result<()> {
+    let prev_hash = last_host_hash(conn, target)?;
+    let hash = crate::events::chain_hash(&prev_hash, event);
+    execute_cached(
+        conn,
+        &format!(
+            "INSERT INTO {} (timestamp_unix_ms, kind, session_id, actor, detail, trace_id, prev_hash, hash)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            target.table("host_events")
+        ),
+        params![
+            event.timestamp_unix_ms,
+            event.kind.as_str(),
+            event.session_id,
+            event.actor,
+            event.detail,
+            event.trace_id,
+            prev_hash.as_slice(),
+            hash.as_slice(),
         ],
     )?;
     Ok(())

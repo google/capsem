@@ -13,8 +13,11 @@ use std::path::{Component, Path, PathBuf};
 
 use nix::errno::Errno;
 use nix::fcntl::{openat, readlinkat, renameat, AtFlags, OFlag};
-use nix::sys::stat::{fstatat, mkdirat, Mode, SFlag};
-use nix::unistd::symlinkat;
+use nix::sys::stat::{
+    fchmod, fchmodat, fstatat, futimens, mkdirat, utimensat, FchmodatFlags, Mode, SFlag, UtimensatFlags,
+};
+use nix::sys::time::TimeSpec;
+use nix::unistd::{linkat, symlinkat};
 use nix::unistd::{unlinkat, UnlinkatFlags};
 
 /// A handle on one directory below the containment root.
@@ -31,6 +34,30 @@ pub struct ContainedOpenOptions {
     truncate: bool,
     exclusive: bool,
     mode: u32,
+}
+
+/// One timestamp update applied below a containment root.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FileTimeSpec {
+    Omit,
+    Now,
+    Exact { seconds: i64, nanoseconds: u32 },
+}
+
+impl FileTimeSpec {
+    fn to_time_spec(self) -> io::Result<TimeSpec> {
+        match self {
+            Self::Omit => Ok(TimeSpec::UTIME_OMIT),
+            Self::Now => Ok(TimeSpec::UTIME_NOW),
+            Self::Exact { seconds, nanoseconds } if nanoseconds < 1_000_000_000 => {
+                Ok(TimeSpec::new(seconds, nanoseconds.into()))
+            }
+            Self::Exact { .. } => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "timestamp nanoseconds must be below one second",
+            )),
+        }
+    }
 }
 
 impl ContainedOpenOptions {
@@ -116,6 +143,8 @@ pub struct ContainedEntry {
 /// ctime is strictly older than the moment the first identity was taken.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct EntryIdentity {
+    /// Inode numbers are unique only within this device.
+    pub dev: u64,
     pub ino: u64,
     pub size: u64,
     /// (seconds, nanoseconds) since the epoch.
@@ -126,6 +155,21 @@ pub struct EntryIdentity {
 /// `O_NOFOLLOW` on a symlink fails with `ELOOP` on Linux and macOS alike.
 pub fn is_symlink_refusal(error: &io::Error) -> bool {
     error.raw_os_error() == Some(Errno::ELOOP as i32)
+}
+
+/// Whether [`ContainedDir::hard_link`] failed because a hard link cannot be
+/// made there at all -- another filesystem, one without hard links, or a link
+/// count at its limit -- rather than because of the names involved.
+pub fn is_link_unsupported(error: &io::Error) -> bool {
+    [
+        Errno::EXDEV,
+        Errno::EPERM,
+        Errno::ENOTSUP,
+        Errno::EOPNOTSUPP,
+        Errno::EMLINK,
+    ]
+    .iter()
+    .any(|errno| error.raw_os_error() == Some(*errno as i32))
 }
 
 /// Whether a path component expected to be a directory was another file type.
@@ -190,6 +234,11 @@ impl ContainedDir {
             fd: self.fd.try_clone()?,
             path: self.path.clone(),
         })
+    }
+
+    /// Metadata of the open directory, even if its path has been replaced.
+    pub fn metadata(&self) -> io::Result<std::fs::Metadata> {
+        File::from(self.fd.try_clone()?).metadata()
     }
 
     /// Verify that this opened descriptor names a current-user-owned mode
@@ -270,6 +319,80 @@ impl ContainedDir {
         Ok(metadata.permissions().mode() & 0o7777)
     }
 
+    /// Change one entry's permission bits below this open directory.
+    ///
+    /// Every parent component is opened without following links and the final
+    /// operation uses `AT_SYMLINK_NOFOLLOW`, so a guest cannot redirect a
+    /// metadata request outside the share between validation and mutation.
+    /// An empty relative path names this directory itself.
+    pub fn set_relative_mode(&self, rel: &Path, mode: u32) -> io::Result<()> {
+        let names = rel
+            .components()
+            .map(|component| match component {
+                Component::Normal(name) => Ok(name),
+                _ => Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("relative path may only contain plain names: {}", rel.display()),
+                )),
+            })
+            .collect::<io::Result<Vec<_>>>()?;
+        let Some((name, parents)) = names.split_last() else {
+            return fchmod(self.fd.as_raw_fd(), permission_mode(mode)).map_err(Into::into);
+        };
+        let mut parent = self.try_clone()?;
+        for component in parents {
+            parent = parent.descend(component)?;
+        }
+        if parent.entry_kind(name)? == Some(EntryKind::Other) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("{} is not a file or directory", Path::new(name).display()),
+            ));
+        }
+        fchmodat(
+            Some(parent.fd.as_raw_fd()),
+            *name,
+            permission_mode(mode),
+            FchmodatFlags::NoFollowSymlink,
+        )
+        .map_err(Into::into)
+    }
+
+    /// Change one entry's timestamps below this open directory.
+    ///
+    /// Parent components are opened without following links and the final
+    /// operation uses `AT_SYMLINK_NOFOLLOW`. An empty relative path names this
+    /// directory itself through its already-open descriptor.
+    pub fn set_relative_times(&self, rel: &Path, atime: FileTimeSpec, mtime: FileTimeSpec) -> io::Result<()> {
+        let atime = atime.to_time_spec()?;
+        let mtime = mtime.to_time_spec()?;
+        let names = rel
+            .components()
+            .map(|component| match component {
+                Component::Normal(name) => Ok(name),
+                _ => Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("relative path may only contain plain names: {}", rel.display()),
+                )),
+            })
+            .collect::<io::Result<Vec<_>>>()?;
+        let Some((name, parents)) = names.split_last() else {
+            return futimens(self.fd.as_raw_fd(), &atime, &mtime).map_err(Into::into);
+        };
+        let mut parent = self.try_clone()?;
+        for component in parents {
+            parent = parent.descend(component)?;
+        }
+        utimensat(
+            Some(parent.fd.as_raw_fd()),
+            *name,
+            &atime,
+            &mtime,
+            UtimensatFlags::NoFollowSymlink,
+        )
+        .map_err(Into::into)
+    }
+
     /// Create a symlink child. An existing entry of any type is an error; the
     /// target is stored verbatim and never resolved.
     pub fn symlink(&self, name: &OsStr, target: &OsStr) -> io::Result<()> {
@@ -288,6 +411,42 @@ impl ContainedDir {
         Ok(())
     }
 
+    /// Make `to_name` below `to` a second name for the regular file `name`.
+    ///
+    /// Neither name is resolved. A source that is not a regular file -- a
+    /// link, FIFO or device -- is refused rather than linked, and an existing
+    /// destination of any type is an error. `linkat` without
+    /// `AT_SYMLINK_FOLLOW` links a symlink as itself, so a source swapped for
+    /// one after the check is caught by the destination check and removed.
+    ///
+    /// Both names then share one inode: a writer of either writes the other.
+    /// Link only files no untrusted writer can reach under either name.
+    pub fn hard_link(&self, name: &OsStr, to: &ContainedDir, to_name: &OsStr) -> io::Result<()> {
+        check_component(name)?;
+        check_component(to_name)?;
+        let not_regular = || {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("{} is not a regular file", Path::new(name).display()),
+            )
+        };
+        if self.entry_kind(name)? != Some(EntryKind::File) {
+            return Err(not_regular());
+        }
+        linkat(
+            Some(self.fd.as_raw_fd()),
+            name,
+            Some(to.fd.as_raw_fd()),
+            to_name,
+            AtFlags::empty(),
+        )?;
+        if to.entry_kind(to_name)? != Some(EntryKind::File) {
+            to.remove_non_directory(to_name)?;
+            return Err(not_regular());
+        }
+        Ok(())
+    }
+
     /// Remove the symlink child `name` without following it. Any other entry
     /// type is refused, so a caller retiring a link it made cannot delete
     /// whatever a writer put in its place.
@@ -299,6 +458,15 @@ impl ContainedDir {
                 format!("{} is not a symlink", Path::new(name).display()),
             ));
         }
+        unlinkat(Some(self.fd.as_raw_fd()), name, UnlinkatFlags::NoRemoveDir).map_err(Into::into)
+    }
+
+    /// Remove the child `name` -- a file, a symlink or any other non-directory
+    /// entry -- without following it. A directory is refused. For entries a
+    /// guest writes, where a symlink in place of a file is removed as a link
+    /// and its target is never touched.
+    pub fn remove_non_directory(&self, name: &OsStr) -> io::Result<()> {
+        check_component(name)?;
         unlinkat(Some(self.fd.as_raw_fd()), name, UnlinkatFlags::NoRemoveDir).map_err(Into::into)
     }
 
@@ -359,10 +527,20 @@ impl ContainedDir {
             | OFlag::O_NONBLOCK;
         let fd = openat(Some(self.fd.as_raw_fd()), name, flags, permission_mode(0o600))?;
         let file = File::from(owned(fd));
-        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
-        let metadata = file.metadata()?;
+        let mut metadata = file.metadata()?;
+        // Normal umasks leave an explicitly requested 0600 mode unchanged.
+        // Avoid a redundant fchmod so sandboxed workers can create private
+        // files while permission changes remain outside their authority.
+        if metadata.permissions().mode() & 0o777 != 0o600 {
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+            metadata = file.metadata()?;
+        }
         let uid = super::process::current_uid();
-        if !metadata.is_file() || metadata.uid() != uid || metadata.nlink() != 1 {
+        if !metadata.is_file()
+            || metadata.uid() != uid
+            || metadata.nlink() != 1
+            || metadata.permissions().mode() & 0o777 != 0o600
+        {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 format!("refusing newly created private file {}", Path::new(name).display()),
@@ -413,6 +591,24 @@ impl ContainedDir {
         unlinkat(Some(self.fd.as_raw_fd()), name, UnlinkatFlags::NoRemoveDir).map_err(Into::into)
     }
 
+    /// Remove the child `name` and, when it is a directory, everything below
+    /// it, without following a link at any depth. A symlink is unlinked as
+    /// the link itself, so its target is never touched. Directories are
+    /// entered with `O_NOFOLLOW`: an entry swapped for a link between the
+    /// inspection and the descent is refused, not followed.
+    pub fn remove_tree(&self, name: &OsStr) -> io::Result<()> {
+        check_component(name)?;
+        let stat = fstatat(Some(self.fd.as_raw_fd()), name, AtFlags::AT_SYMLINK_NOFOLLOW)?;
+        if kind_of(stat.st_mode) != EntryKind::Directory {
+            return unlinkat(Some(self.fd.as_raw_fd()), name, UnlinkatFlags::NoRemoveDir).map_err(Into::into);
+        }
+        let child = self.descend(name)?;
+        for entry in child.entries()? {
+            child.remove_tree(&entry.name)?;
+        }
+        unlinkat(Some(self.fd.as_raw_fd()), name, UnlinkatFlags::RemoveDir).map_err(Into::into)
+    }
+
     /// Persist namespace changes made through this directory.
     pub fn sync(&self) -> io::Result<()> {
         File::from(self.fd.try_clone()?).sync_all()
@@ -461,7 +657,12 @@ impl ContainedDir {
 }
 
 fn identity_of(stat: &nix::sys::stat::FileStat) -> EntryIdentity {
+    #[cfg(target_os = "macos")]
+    let dev = u64::from(stat.st_dev.cast_unsigned());
+    #[cfg(not(target_os = "macos"))]
+    let dev = stat.st_dev;
     EntryIdentity {
+        dev,
         ino: stat.st_ino,
         size: u64::try_from(stat.st_size).unwrap_or(0),
         mtime: (stat.st_mtime, stat.st_mtime_nsec),

@@ -47,6 +47,9 @@ pub const SEGMENT_HEADER_BYTES: usize = 52;
 /// Raw deflate (RFC 1951), no zlib or gzip framing; every segment but the
 /// last ends in a sync flush, the last in the stream's end.
 pub const CODEC_DEFLATE: u8 = 1;
+/// Zstandard frame kept open across segments with `ZSTD_e_flush`; native
+/// implementation is supplied only by the confined ledger executable.
+pub const CODEC_ZSTD: u8 = 2;
 /// Flag bit 0 of a segment: this segment ends its block's stream.
 pub const SEGMENT_FINAL: u8 = 0x01;
 /// The four bytes a sync flush ends with: an empty stored block's length and
@@ -78,8 +81,8 @@ macro_rules! identity {
 
         impl $name {
             #[must_use]
-            pub fn new_v4() -> Self {
-                Self(*uuid::Uuid::new_v4().as_bytes())
+            pub fn generate() -> Self {
+                Self(*capsem_crypto::uuid_v4().as_bytes())
             }
 
             pub fn from_bytes(bytes: [u8; 16]) -> Result<Self> {
@@ -176,7 +179,7 @@ pub fn encode_file_header(archive_id: ArchiveId, generation_id: GenerationId) ->
     header[12..16].copy_from_slice(&(FILE_HEADER_BYTES as u32).to_le_bytes());
     header[16..32].copy_from_slice(archive_id.as_bytes());
     header[32..48].copy_from_slice(generation_id.as_bytes());
-    let hash = blake3::hash(&header[..48]);
+    let hash = capsem_crypto::blake3::hash(&header[..48]);
     header[48..].copy_from_slice(hash.as_bytes());
     header
 }
@@ -190,7 +193,7 @@ pub fn decode_file_header(bytes: &[u8]) -> Result<FileHeader> {
         || u16::from_le_bytes([header[8], header[9]]) != FILE_VERSION
         || header[10..12] != [0, 0]
         || u32::from_le_bytes(header[12..16].try_into().expect("4 bytes")) != FILE_HEADER_BYTES as u32
-        || blake3::hash(&header[..48]).as_bytes() != &header[48..]
+        || capsem_crypto::blake3::hash(&header[..48]).as_bytes() != &header[48..]
     {
         return Err(ArchiveError::BadFileHeader);
     }
@@ -225,7 +228,7 @@ pub fn parse_block_header(bytes: &[u8; BLOCK_HEADER_BYTES], block_offset: u64) -
         return Err(ArchiveError::BadBlockHeader(block_offset));
     }
     let codec = bytes[4];
-    if codec != CODEC_DEFLATE || bytes[5] != 0 || bytes[6..8] != [0, 0] {
+    if bytes[5] != 0 || bytes[6..8] != [0, 0] {
         return Err(ArchiveError::UnsupportedCodec { block_offset, codec });
     }
     Ok(codec)

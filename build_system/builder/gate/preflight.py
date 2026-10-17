@@ -18,7 +18,7 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 from . import snapshot
-from .cachecontrol import CargoCacheBound, verify_disk_budget
+from .cachecontrol import CargoCacheBound, MachineCacheBound, verify_disk_budget
 from .cachetooling import CompilerCache
 from .cargotarget import CheckoutBuildRoot
 from .config import GateConfig
@@ -92,11 +92,13 @@ def holdings(
 
     The Cargo bound sits outside every declared resource, so its release
     enforces after the last step and after whatever those resources tear down.
+    Routine retention sits outside everything, so it sees the final state.
     """
     if not exclusive:
         return declared
     bound = (CargoCacheBound(runner),) if compiles(plan, config) else ()
     return (
+        MachineCacheBound(runner),
         StaleProcesses(config, runner),
         CheckoutBuildRoot(config, runner),
         CompilerCache(config, runner),

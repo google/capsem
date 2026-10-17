@@ -14,19 +14,24 @@ use crate::gateway_provider::ActionOutcome;
 pub async fn invoke(hypervisor: &Hypervisor, transport: &Transport, action: &ControlAction) -> Result<ActionOutcome> {
     let vm = |id: &str| hypervisor.vm(VmSelector::Id(id.into()));
     match action {
-        ControlAction::CreateSession { name, profile_id } => {
+        ControlAction::CreateSession { name, image } => {
             // TUI workspaces persist even when the service chooses their name.
             let input = api::CreateVmParams {
                 body: ProvisionRequest {
                     name: name.clone(),
-                    profile_id: profile_id.clone(),
                     persistent: true,
                     ram_mb: None,
                     cpus: None,
                     env: None,
-                    from: None,
                     networks: Vec::new(),
-                    container: None,
+                    container: image.as_ref().map(|image| capsem_sdk::models::ContainerSpec {
+                        image: image.clone(),
+                        args: Vec::new(),
+                        env: Default::default(),
+                        registry: None,
+                        attach: false,
+                    }),
+                    ..Default::default()
                 },
             };
             let vm = api::create_vm(transport, &input, CallOptions::default()).await?;
@@ -43,6 +48,10 @@ pub async fn invoke(hypervisor: &Hypervisor, transport: &Transport, action: &Con
                 message: format!("forked {}", vm.name().unwrap_or(name)),
                 focus_session: vm.id().map(str::to_owned),
             })
+        }
+        ControlAction::Start { id, label } => {
+            vm(id)?.start().await?;
+            Ok(focused(id, format!("started {label}")))
         }
         ControlAction::Resume { id, label } => {
             vm(id)?.resume().await?;

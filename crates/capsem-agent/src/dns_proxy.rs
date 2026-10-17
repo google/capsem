@@ -40,6 +40,7 @@ mod vsock_io;
 mod wire;
 
 use std::io;
+use std::os::fd::AsFd as _;
 use std::process;
 use std::sync::Arc;
 
@@ -62,10 +63,11 @@ const LISTEN_PORT: u16 = capsem_proto::GUEST_DNS_PROXY_PORT;
 /// Maximum bytes for one DNS UDP datagram. RFC 6891 caps practical
 /// EDNS responses at ~4096; standard queries fit in 512. 4096 is what
 /// hickory uses internally.
-const MAX_UDP_DNS_BYTES: usize = 4096;
+const MAX_UDP_DNS_BYTES: usize = capsem_proto::NETWORK_DNS_MAX_UDP_DATAGRAM_BYTES;
 /// UDP listener: read one datagram, forward, send the response back.
 async fn run_udp_listener(forwarder: Arc<DnsForwarder>) -> io::Result<()> {
     let sock = UdpSocket::bind((LISTEN_BIND, LISTEN_PORT)).await?;
+    capsem_foundation::unix::fd::set_receive_buffer(sock.as_fd(), capsem_proto::NETWORK_DNS_UDP_SOCKET_BUFFER_BYTES)?;
     eprintln!("[capsem-dns-proxy] udp listening on {LISTEN_BIND}:{LISTEN_PORT}");
     let sock = std::sync::Arc::new(sock);
     loop {

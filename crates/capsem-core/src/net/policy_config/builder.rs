@@ -19,7 +19,7 @@ fn parse_http_upstream_ports(values: &[i64]) -> Vec<u16> {
 ///
 /// Dynamic keys with prefix `guest.env.` become environment variables.
 /// Brokered credentials and AI/tool config files are deliberately excluded:
-/// profile/runtime plugin plumbing owns those paths, not settings.toml.
+/// runtime plugin plumbing owns those paths, not settings.toml.
 pub fn settings_to_guest_config(resolved: &[ResolvedSetting]) -> GuestConfig {
     use capsem_proto::{validate_env_key, validate_env_value, validate_file_path};
 
@@ -58,7 +58,7 @@ pub fn settings_to_guest_config(resolved: &[ResolvedSetting]) -> GuestConfig {
         }
 
         // Boot files: non-AI File values with non-empty content. AI/tool config
-        // belongs to profile/runtime plugin machinery, not settings.toml.
+        // belongs to runtime plugin machinery, not settings.toml.
         if let SettingValue::File {
             path: file_path,
             content: file_content,
@@ -184,7 +184,7 @@ impl MergedPolicies {
     /// Fails when the security rules or the model endpoint registry do not
     /// compile. The engine allows any event no rule matches, so an empty rule
     /// set is allow-everything; it used to be substituted for a broken one
-    /// behind a warning, and every VM on that profile ran without policy.
+    /// behind a warning, and every VM on that policy ran without it.
     pub fn from_files(user: &SettingsFile, corp: &SettingsFile) -> Result<Self, String> {
         let resolved = resolve_settings(user, corp);
         let security_rules = compile_merged_security_rules(user, corp)?;
@@ -204,7 +204,7 @@ impl MergedPolicies {
     /// files cannot be read or their rules do not compile. The callers here
     /// read network, guest, and VM settings only, never the rule set, so the
     /// fallback cannot widen policy; the rule set reaches a VM only through
-    /// `ActiveProfileFile::compile_security_rule_set`, which fails closed.
+    /// `ActivePolicyFile::compile_security_rule_set`, which fails closed.
     pub fn from_disk() -> Self {
         let (user, corp) = load_settings_and_corp_files();
         Self::from_files(&user, &corp).unwrap_or_else(|error| {
@@ -215,8 +215,9 @@ impl MergedPolicies {
     }
 }
 
-fn merge_plugin_policy(user: &SettingsFile, corp: &SettingsFile) -> BTreeMap<String, SecurityPluginConfig> {
-    let mut plugins = ProviderRuleProfile::builtin_security_defaults().plugins;
+/// Plugin modes as a session runs them: built in, then the user's, then corp's.
+pub fn merge_plugin_policy(user: &SettingsFile, corp: &SettingsFile) -> BTreeMap<String, SecurityPluginConfig> {
+    let mut plugins = ProviderRuleProfile::builtin_security_defaults().plugins.clone();
     for (plugin_id, mode) in &user.plugins {
         plugins.insert(plugin_id.clone(), *mode);
     }

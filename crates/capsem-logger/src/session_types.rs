@@ -1,17 +1,7 @@
+//! Session id and time helpers shared by the service and its tools.
+
 pub use capsem_foundation::time::epoch_to_iso;
 use capsem_foundation::time::epoch_to_parts;
-/// Session management: VM route IDs, session index DB, and lifecycle.
-///
-/// Each VM has an opaque UUID route ID. Human names such as `code-vm1` are
-/// display aliases only and must not be stored as `sessions.id`.
-/// The session index (`main.db`) tracks metadata across sessions. Per-session
-/// telemetry lives in `<session_dir>/session.db`.
-///
-/// Session lifecycle:
-///   running -> stopped    (graceful shutdown, rollup done)
-///   running -> crashed    (ungraceful, backfill on next startup)
-///   stopped/crashed -> terminated (disk artifacts deleted, only main.db record)
-use serde::{de, Deserialize, Deserializer, Serialize};
 
 /// Generate a unique timestamp suffix for archival directories.
 ///
@@ -45,105 +35,6 @@ pub fn is_valid_session_id(s: &str) -> bool {
         && bytes[9..15].iter().all(|b| b.is_ascii_digit())
         && bytes[15] == b'-'
         && bytes[16..20].iter().all(|b| b.is_ascii_hexdigit())
-}
-
-/// A session record stored in main.db.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionRecord {
-    pub id: String,
-    pub mode: String,
-    pub command: Option<String>,
-    pub status: String,
-    pub created_at: String,
-    pub stopped_at: Option<String>,
-    pub scratch_disk_size_gb: u32,
-    pub ram_bytes: u64,
-    pub total_requests: u64,
-    pub allowed_requests: u64,
-    pub denied_requests: u64,
-    pub total_input_tokens: u64,
-    pub total_output_tokens: u64,
-    pub total_estimated_cost: f64,
-    pub total_tool_calls: u64,
-    pub total_file_events: u64,
-    /// "block" (legacy) or "virtiofs" (VirtioFS overlay).
-    pub storage_mode: String,
-    /// BLAKE3 hash of the rootfs asset used by this session.
-    pub rootfs_hash: Option<String>,
-    /// Version string of the rootfs (e.g., "0.9.1").
-    pub rootfs_version: Option<String>,
-    /// If forked from another sandbox, the source sandbox name.
-    pub forked_from: Option<String>,
-    /// True if this session is persistent (named VM).
-    #[serde(default, deserialize_with = "deserialize_sqlite_bool")]
-    pub persistent: bool,
-    /// Number of structured exec commands recorded.
-    #[serde(default)]
-    pub exec_count: u64,
-    /// Number of kernel audit events recorded.
-    #[serde(default)]
-    pub audit_event_count: u64,
-}
-
-fn deserialize_sqlite_bool<'de, D>(deserializer: D) -> Result<bool, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    match serde_json::Value::deserialize(deserializer)? {
-        serde_json::Value::Bool(value) => Ok(value),
-        serde_json::Value::Number(value) => match value.as_i64() {
-            Some(0) => Ok(false),
-            Some(1) => Ok(true),
-            _ => Err(de::Error::custom("expected SQLite boolean 0 or 1")),
-        },
-        other => Err(de::Error::custom(format!(
-            "expected boolean or SQLite boolean integer, got {other}"
-        ))),
-    }
-}
-
-/// Aggregated statistics across all sessions.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GlobalStats {
-    pub total_sessions: u64,
-    pub total_input_tokens: u64,
-    pub total_output_tokens: u64,
-    pub total_estimated_cost: f64,
-    pub total_tool_calls: u64,
-    pub total_file_events: u64,
-    pub total_requests: u64,
-    pub total_allowed: u64,
-    pub total_denied: u64,
-}
-
-/// Per-provider AI usage summary across sessions.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProviderSummary {
-    pub provider: String,
-    pub call_count: u64,
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    pub estimated_cost: f64,
-    pub total_duration_ms: u64,
-}
-
-/// Per-tool usage summary across sessions.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolSummary {
-    pub tool_name: String,
-    pub call_count: u64,
-    pub total_bytes: u64,
-    pub total_duration_ms: u64,
-}
-
-/// Per-MCP-tool usage summary across sessions.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct McpToolSummary {
-    pub tool_name: String,
-    pub server_name: String,
-    pub call_count: u64,
-    pub total_bytes: u64,
-    pub total_duration_ms: u64,
 }
 
 /// Current UTC time as ISO 8601 string.

@@ -11,7 +11,7 @@
 #
 #   CROSS=1  RUST_TARGET is foreign. Emulating its platform to run rustc under
 #            QEMU cost 1194.7s for the six aarch64 guest binaries against 86s
-#            cross-compiling them, and a profile release run compiles that
+#            cross-compiling them, and a runtime release run compiles that
 #            graph three times. On Apple Silicon the emulated lane is the
 #            x86_64 one; the same shape covers it.
 #

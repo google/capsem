@@ -125,8 +125,10 @@ fn kvm_save_state_writes_checkpoint_file() {
     handle.save_state(&path).unwrap();
 
     assert_eq!(handle.state(), VmState::Paused);
-    let meta = std::fs::metadata(path).unwrap();
-    assert_eq!(meta.len(), 44 + 4 + 6952 + 1720 + 4096);
+    let restored_memory = memory::GuestMemory::new(4096).unwrap();
+    let restored = checkpoint::read_checkpoint(&path, &restored_memory, 1, 0).unwrap();
+    assert_eq!(restored.vcpus.len(), 1);
+    assert_eq!(restored.vcpus[0].id, 0);
     handle.resume().unwrap();
     handle.stop().unwrap();
     waiter.join().unwrap();
@@ -519,4 +521,77 @@ fn boot_without_kvm_fails_gracefully() {
         .kernel_path("/nonexistent/vmlinuz")
         .build();
     assert!(config.is_err());
+}
+
+/// The guest must be told of every slot up to the last share: the image share
+/// sits at slot 5 behind the workspace share, and is lost if any earlier
+/// device's absence shortens the count.
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn every_mmio_slot_up_to_the_last_share_is_announced() {
+    let share = |tag: &str| crate::VirtioFsShare {
+        tag: tag.into(),
+        host_path: "/share".into(),
+        read_only: tag == "capsem-image",
+        metadata_authority: None,
+    };
+    let mut config = crate::VmConfig {
+        cpu_count: 1,
+        ram_bytes: 1 << 30,
+        kernel_path: "/vmlinuz".into(),
+        initrd_path: None,
+        disk_path: Some("/rootfs".into()),
+        scratch_disk_path: Some("/system".into()),
+        virtio_fs_shares: vec![share("capsem"), share("capsem-image")],
+        kernel_cmdline: String::new(),
+        expected_kernel_hash: None,
+        expected_initrd_hash: None,
+        checkpoint_path: None,
+        expected_disk_hash: None,
+        machine_identifier_path: None,
+        serial_log_path: None,
+    };
+    assert_eq!(virtio_mmio_device_count(&config, &[1]), 6);
+    config.scratch_disk_path = None;
+    assert_eq!(
+        virtio_mmio_device_count(&config, &[]),
+        6,
+        "the image share keeps slot 5"
+    );
+    config.virtio_fs_shares.clear();
+    assert_eq!(virtio_mmio_device_count(&config, &[1]), 4);
+    assert_eq!(virtio_mmio_device_count(&config, &[]), 2);
+    config.disk_path = None;
+    assert_eq!(virtio_mmio_device_count(&config, &[]), 1);
+}
+
+#[test]
+fn writable_virtiofs_requires_brokered_metadata_authority() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = crate::VmConfig {
+        cpu_count: 1,
+        ram_bytes: 1 << 30,
+        kernel_path: "/vmlinuz".into(),
+        initrd_path: None,
+        disk_path: None,
+        scratch_disk_path: None,
+        virtio_fs_shares: vec![crate::VirtioFsShare {
+            tag: "capsem".into(),
+            host_path: dir.path().into(),
+            read_only: false,
+            metadata_authority: None,
+        }],
+        kernel_cmdline: String::new(),
+        expected_kernel_hash: None,
+        expected_initrd_hash: None,
+        checkpoint_path: None,
+        expected_disk_hash: None,
+        machine_identifier_path: None,
+        serial_log_path: None,
+    };
+
+    let error = require_metadata_authority(&config).unwrap_err();
+    assert!(error.to_string().contains("trusted metadata authority"));
+    config.virtio_fs_shares[0].read_only = true;
+    require_metadata_authority(&config).unwrap();
 }

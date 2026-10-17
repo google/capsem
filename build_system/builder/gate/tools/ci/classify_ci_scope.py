@@ -54,6 +54,8 @@ KNOWN_DIRECTORIES = frozenset(
         "data",
         "docker",
         "guest",
+        "images",
+        "integrations",
         "mcp",
         "scripts",
         "sdk",
@@ -114,6 +116,8 @@ RUST_GUEST_CONFIG_ROOTS = frozenset(
         "crates",
         "data",
         "guest",
+        # Application images: the product lanes boot and test them.
+        "images",
         "security",
     }
 )
@@ -131,6 +135,7 @@ SHARED_ROOTS = frozenset(
         ".github",
         "skills",
         "sprints",
+        "integrations",
         "tests",
         "tmp",
     }
@@ -175,7 +180,7 @@ def _validated_parts(path: str) -> tuple[str, str]:
 
 def _path_scopes(path: str) -> frozenset[str]:
     root, remainder = _validated_parts(path)
-    if path in SHARED_CONTROL_FILES:
+    if path in SHARED_CONTROL_FILES or path.startswith("build_system/patches/"):
         return frozenset({"shared"})
     if scopes := MULTI_OWNER_FILES.get(path):
         return scopes
@@ -191,14 +196,16 @@ def _path_scopes(path: str) -> frozenset[str]:
         scopes = {scope}
     elif root == "build_system":
         subtree, separator, _nested = remainder.partition("/")
-        if subtree == "patches":
-            return frozenset({"build_system", "docs"})
         if subtree == "release_site" or path.startswith("build_system/tests/release_site/"):
             scopes = {"release_site"}
         elif not separator or subtree in BUILD_SYSTEM_SUBTREES:
             scopes = {"build_system"}
         else:
             raise ValueError(f"unowned build_system subtree: {path}")
+    elif root == "integrations":
+        if not remainder.startswith("inspect-ai/"):
+            raise ValueError(f"unowned integrations subtree: {path}")
+        scopes = {"build_system"}
     elif root in BUILD_SYSTEM_ROOTS or path in BUILD_SYSTEM_FILES:
         scopes = {"build_system"}
     elif root in {"bench", "benchmarks"}:

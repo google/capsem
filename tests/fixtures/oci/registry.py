@@ -5,19 +5,78 @@ import gzip
 import hashlib
 import http.server
 import json
+import re
+import shutil
 import ssl
 import subprocess
 import threading
 from pathlib import Path
 
+from tests.fixtures.oci.layout_registry import layout_registry
 from tests.fixtures.oci.prepare_redis import native_pin
+
+__all__ = ["layout_registry"]
 
 FIXTURES = Path(__file__).parent
 IMAGE = FIXTURES.parents[2] / "cache/target/tests/redis-image"
 
 
+def _listed(section: str, key: str) -> set[str]:
+    """The selectors an earlier grant wrote under `[images] <key>`. Only those:
+    `catalog` and `catalog_ca` are quoted too, and are not selectors."""
+    found = re.search(rf"^{key} = \[(.*)\]$", section, re.MULTILINE)
+    return set(re.findall(r'"([^"]+)"', found.group(1))) if found else set()
+
+
+def _grant(
+    home: Path, sources: set[str], admit: set[str], *, catalog=None, certificate=None
+) -> None:
+    """Add selectors to the service's own `[images]` policy in settings.toml,
+    keeping what earlier grants listed."""
+    path = home / "settings.toml"
+    text = path.read_text() if path.exists() else ""
+    section = text.split("[images]", 1)[-1] if "[images]" in text else ""
+    sources |= _listed(section, "sources")
+    admit |= _listed(section, "admit")
+
+    def listed(names: set[str]) -> str:
+        return ", ".join(f'"{name}"' for name in sorted(names))
+
+    if catalog is not None:
+        catalog_config = f'catalog = "{catalog}"\ncatalog_ca = "{certificate}"\n'
+    else:
+        catalog_config = "\n".join(
+            line for line in section.splitlines() if line.startswith(("catalog =", "catalog_ca ="))
+        )
+        catalog_config = catalog_config + "\n" if catalog_config else "catalog = false\n"
+    block = f"[images]\nsources = [{listed(sources)}]\nadmit = [{listed(admit)}]\n{catalog_config}"
+    text = re.sub(r"\[images\]\n(?:[^\[\n][^\n]*\n)*", "", text)
+    path.write_text(text + ("\n" if text and not text.endswith("\n") else "") + block)
+
+
+def grant_image(home: Path, reference: str) -> None:
+    """Allow the test registry as an image source and admit everything it serves.
+
+    A whole-registry grant. The service refuses any image its `[images]` policy
+    does not name (the catalog aside); a test's registry is a fresh localhost
+    port. Product sessions use `grant_exact`; this broad form is for the
+    admission tests and the fixtures that predate them.
+    """
+    authority = reference.split("/", 1)[0]
+    _grant(home, {authority}, {authority})
+
+
+def grant_exact(home: Path, reference: str, *, catalog=None, certificate=None) -> None:
+    """Allow exactly one image: its repository as a source, that repository at
+    that digest as the one image admitted. `reference` must carry its digest."""
+    repository, separator, digest = reference.partition("@")
+    if not separator or not digest.startswith("sha256:"):
+        raise ValueError(f"an exact grant needs a digest reference, not {reference}")
+    _grant(home, {repository}, {reference}, catalog=catalog, certificate=certificate)
+
+
 @contextlib.contextmanager
-def registry(directory, *, image_config=None, image="redis"):
+def registry(directory, *, image_config=None, image="redis", artifacts=None, before_response=None):
     pin = native_pin(image=image)
     metadata = json.loads((IMAGE / f"{image}-image.json").read_text())
     assert all(metadata[key] == value for key, value in pin.items())
@@ -35,8 +94,7 @@ def registry(directory, *, image_config=None, image="redis"):
         {
             "architecture": pin["platform"].split("/")[1],
             "os": "linux",
-            "config": image_config
-            or json.loads((FIXTURES / f"{image}-config.json").read_text()),
+            "config": image_config or json.loads((FIXTURES / f"{image}-config.json").read_text()),
             "rootfs": {"type": "layers", "diff_ids": ["sha256:" + diff_id]},
         },
         sort_keys=True,
@@ -51,19 +109,85 @@ def registry(directory, *, image_config=None, image="redis"):
         },
         sort_keys=True,
     ).encode()
+    with serve(directory, image, manifest, media, blobs.get, artifacts, before_response=before_response) as served:
+        yield served
+
+
+CATALOG_MEDIA = "application/vnd.capsem.catalog.v1+json"
+OCI_MANIFEST = "application/vnd.oci.image.manifest.v1+json"
+OCI_EMPTY = "application/vnd.oci.empty.v1+json"
+
+
+def publish_catalog(artifacts, repository, tag, entries, channel="stable"):
+    """Publish an image catalog into a served registry's `artifacts` as
+    `repository:tag`, shaped as the image workflow pushes it: an OCI manifest
+    with an empty config and one layer of the catalog media type holding the
+    document. Returns the catalog version's manifest digest."""
+    document = json.dumps(
+        {"schema_version": 1, "channel": channel, "entries": entries}, sort_keys=True
+    ).encode()
+
+    def descriptor(data, kind):
+        return {
+            "mediaType": kind,
+            "digest": "sha256:" + hashlib.sha256(data).hexdigest(),
+            "size": len(data),
+        }
+
+    empty = b"{}"
+    manifest = json.dumps(
+        {
+            "schemaVersion": 2,
+            "mediaType": OCI_MANIFEST,
+            "artifactType": CATALOG_MEDIA,
+            "config": descriptor(empty, OCI_EMPTY),
+            "layers": [descriptor(document, CATALOG_MEDIA)],
+        },
+        sort_keys=True,
+    ).encode()
+    for data, kind in ((document, CATALOG_MEDIA), (empty, OCI_EMPTY)):
+        path = f"/v2/{repository}/blobs/{descriptor(data, kind)['digest']}"
+        artifacts[path] = (data, "application/octet-stream")
+    artifacts[f"/v2/{repository}/manifests/{tag}"] = (manifest, OCI_MANIFEST)
+    return "sha256:" + hashlib.sha256(manifest).hexdigest()
+
+
+@contextlib.contextmanager
+def serve(directory, image, manifest, media, fetch, artifacts=None, *, before_response=None):
+    """A TLS registry on localhost serving one manifest and the blobs `fetch`
+    finds; yields (pinned reference, CA certificate, requested paths).
+
+    `artifacts` maps further paths to (body, media type) and is read on every
+    request, so a test can publish into it once it knows the registry's
+    address (see `publish_catalog`). `before_response` can hold a real request
+    at an explicit upstream handshake for cancellation acceptance."""
+    artifacts = {} if artifacts is None else artifacts
     digest = "sha256:" + hashlib.sha256(manifest).hexdigest()
     requests = []
 
     class Handler(http.server.BaseHTTPRequestHandler):
+        def handle(self):
+            with contextlib.suppress(BrokenPipeError, ConnectionResetError, ssl.SSLEOFError):
+                super().handle()
+
         def do_GET(self):
             requests.append(self.path)
-            if self.path == "/v2/":
+            if before_response is not None:
+                before_response(self.path)
+            if self.path in artifacts:
+                body, kind = artifacts[self.path]
+            elif self.path == "/v2/":
                 body, kind = b"{}", "application/json"
             elif self.path.startswith(f"/v2/library/{image}/manifests/"):
                 body, kind = manifest, media
+                # An index names its platform manifests by digest.
+                wanted = self.path.rsplit("/", 1)[1]
+                if wanted != digest and wanted.startswith("sha256:"):
+                    body = fetch(wanted)
+                    kind = json.loads(body)["mediaType"] if body else kind
             elif self.path.startswith(f"/v2/library/{image}/blobs/"):
                 body, kind = (
-                    blobs.get(self.path.rsplit("/", 1)[1]),
+                    fetch(self.path.rsplit("/", 1)[1]),
                     "application/octet-stream",
                 )
             else:
@@ -71,15 +195,21 @@ def registry(directory, *, image_config=None, image="redis"):
             self.send_response(200 if body is not None else 404)
             body = body or b""
             self.send_header("Content-Type", kind)
-            self.send_header("Content-Length", str(len(body)))
+            self.send_header(
+                "Content-Length", str(body.stat().st_size if isinstance(body, Path) else len(body))
+            )
             self.send_header(
                 "Docker-Content-Digest",
-                digest
-                if kind == media
+                "sha256:" + body.name
+                if isinstance(body, Path)
                 else "sha256:" + hashlib.sha256(body).hexdigest(),
             )
             self.end_headers()
-            self.wfile.write(body)
+            if isinstance(body, Path):
+                with body.open("rb") as source:
+                    shutil.copyfileobj(source, self.wfile, 1 << 20)
+            else:
+                self.wfile.write(body)
 
         def log_message(self, format, *args):
             pass

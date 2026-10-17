@@ -12,7 +12,6 @@ export interface UpdateStatusResponse {
   "checked_at"?: number | null;
   "images": UpdateTrackStatus;
   "last_error"?: string | null;
-  "profiles": UpdateTrackStatus;
   "stale": boolean;
   "supply_chain": SupplyChainEvidence;
   "validation_error"?: string | null;

@@ -6,16 +6,14 @@ and the same script a real release runs. Only the URLs are local, because a
 local run has nowhere else to put bytes it has not published.
 
 Split from `release_cohort`, which decides what a cohort *is*. This decides how
-a channel becomes one, and it is where the inputs that keep being got wrong
-live: which profile directory a graph is authored from, and why its manifest has
-to be served rather than named as a file.
+a channel becomes one, and it is where the input that keeps being got wrong
+lives: why its manifest has to be served rather than named as a file.
 """
 
 from __future__ import annotations
 
 import os
 import subprocess
-from pathlib import Path
 
 from capsem_builder.gate.releaseauthoring import author_native_candidate
 from capsem_builder.gate.sourcecommit import source_commit_for_checkout
@@ -28,19 +26,6 @@ PROJECT_ROOT = repository_root()
 def glowup_helpers():
     """Return the package-owned staging helpers used by the real release."""
     return local_release_glowup
-
-
-def _source_profiles(config) -> Path:
-    """The profile directory a release graph is authored from.
-
-    The checkout's, not the materialized copy. A graph records profile config by
-    source path and the site serves those exact bytes from the source ref, so
-    authoring from materialized output produces a channel whose config nothing
-    can reproduce -- and whose staged profiles `materialize-config` then
-    refuses, because they already carry the pins it exists to add. Read off
-    `profiles_glob` rather than spelled again: one value, one answer.
-    """
-    return PROJECT_ROOT / Path(config.assets.profiles_glob).parent.parent
 
 
 def run(command: list[str], *, env: dict[str, str] | None = None) -> None:
@@ -76,7 +61,6 @@ def author_and_fetch(args, config, helpers, *, base_url, dist, paths) -> None:
         runner=lambda command, env=None: run(command, env=env),
         admin=admin,
         assets_dir=args.assets_dir,
-        profiles_dir=_source_profiles(config),
         channel=args.channel,
         version=version,
         source_commit=source_commit_for_checkout(PROJECT_ROOT),
@@ -88,24 +72,6 @@ def author_and_fetch(args, config, helpers, *, base_url, dist, paths) -> None:
         dist=dist,
         graph_manifest=graph,
         manifest_version=config.install.manifest_version,
-        profile_revision_policy=config.install.profile_revision_policy,
-    )
-    # A graph records profile config as site-absolute `/profiles/releases/...`
-    # paths and does not carry the bytes. The deployed site materializes them
-    # from the source ref; here the source is this checkout.
-    run(
-        [
-            "uv",
-            "run",
-            "python",
-            "build_system/scripts/release/materialize-graph-profile-artifacts.py",
-            "--dist",
-            str(dist),
-            "--channel",
-            args.channel,
-            "--source-root",
-            str(PROJECT_ROOT),
-        ]
     )
 
     # From here nothing is rehearsal-specific: this is the composite action the
@@ -120,7 +86,7 @@ def author_and_fetch(args, config, helpers, *, base_url, dist, paths) -> None:
             "--manifest-url",
             f"{base_url}/assets/{args.channel}/{config.install.manifest_name}",
             "--kind",
-            "profiles",
+            "runtime",
             "--architecture",
             config.host_arch().name,
             "--output",

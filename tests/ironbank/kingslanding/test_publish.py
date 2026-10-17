@@ -155,7 +155,7 @@ with socket.socket() as listener:
         assert stream.read(4) == b'FAIL'
         connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
 """
-    # The profile supplies Python3.11 and util-linux. Replace this owned job
+    # The runtime supplies Python3.11 and util-linux. Replace this owned job
     # with nsenter instead of assuming Python3.12's os.setns is available.
     enter = (
         "import os; pid=open('/var/tmp/capsem-container/workload.pid').read().strip(); "
@@ -188,7 +188,7 @@ with socket.socket() as listener:
         running = executor.submit(
             service.client().post,
             f"/vms/{redis['vm']['id']}/exec",
-            {"command": "python3 -c " + shlex.quote(enter), "timeout_secs": 15},
+            {"target": "vm", "command": "python3 -c " + shlex.quote(enter), "timeout_secs": 15},
         )
         wait_for(exchange, "guest TCP reset propagated over VSOCK", timeout=10)
         response = running.result(timeout=20)
@@ -212,6 +212,7 @@ def test_binary_values_and_guest_namespace_isolation(redis, service):
     response = service.client().post(
         f"/vms/{redis['vm']['id']}/exec",
         {
+            "target": "vm",
             "command": 'python3 -c \'import subprocess; subprocess.Popen(["python3", "-m", "http.server", "9099", "--bind", "127.0.0.1"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)\'',
             "timeout_secs": 5,
         },
@@ -222,6 +223,7 @@ def test_binary_values_and_guest_namespace_isolation(redis, service):
         response = service.client().post(
             f"/vms/{redis['vm']['id']}/exec",
             {
+                "target": "vm",
                 "command": "python3 -c 'import urllib.request; assert urllib.request.urlopen(\"http://127.0.0.1:9099\", timeout=1).status == 200'",
                 "timeout_secs": 5,
             },
@@ -249,9 +251,8 @@ def test_port_collision_does_not_replace_a_listener(service, tmp_path):
             timeout=30,
             check=False,
         )
-        assert (
-            result.returncode != 0 and b"bind publication listener" in result.stderr
-        ), result.stderr
+        assert result.returncode != 0, result.stderr
+        assert b"loopback listener grant denied: BindFailed" in result.stderr, result.stderr
         assert service.client().get("/vms/list")["sandboxes"] == []
         with socket.create_connection(("127.0.0.1", port), timeout=2):
             accepted, _ = listener.accept()
@@ -272,7 +273,7 @@ def test_router_crash_cannot_stop_or_control_the_vm(redis, service):
             stream.read(1)
     response = service.client().post(
         f"/vms/{redis['vm']['id']}/exec",
-        {"command": "printf owner-alive", "timeout_secs": 5},
+        {"target": "vm", "command": "printf owner-alive", "timeout_secs": 5},
     )
     assert response["exit_code"] == 0 and exec_output_text(response) == "owner-alive"
     assert redis["process"].poll() is None
