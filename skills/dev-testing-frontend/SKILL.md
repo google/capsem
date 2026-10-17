@@ -12,10 +12,9 @@ Astro 7 + Svelte 5 (runes only) + Tailwind v4 + Capsem-owned semantic CSS + Laye
 ## Running tests
 
 ```bash
-cd web/app
-pnpm run check              # astro check + svelte-check (type errors)
-npx vitest run --coverage   # Unit tests with coverage
-pnpm run build              # Production build (catches bundling issues dev misses)
+pnpm --dir web/app run check              # astro check + svelte-check
+pnpm --dir web/app exec vitest run --coverage
+pnpm --dir web/app run build              # Production bundle
 ```
 
 All three run as part of `just test`. The production build is important -- Tailwind v4's Vite plugin can miss `client:only` components in the SSR module graph, so `@source` directives in `global.css` must explicitly include `.svelte` and `.ts` files.
@@ -28,13 +27,21 @@ Tests live in `web/app/src/lib/__tests__/`. Use vitest with standard patterns:
 import { describe, it, expect } from 'vitest';
 ```
 
-## Mock mode
+## Browser and test data
 
-When `window.__TAURI_INTERNALS__` is absent (browser via `just dev ui`), `api.ts` auto-switches all IPC calls to return fake data from `mock.ts`. Settings data comes from `mock-settings.generated.ts` (auto-generated from `config/settings/ui-metadata.generated.json` by the builder). Other mock data (MCP servers, VM state, logs) lives in `mock.ts`.
+Browser and Tauri sessions both use the real gateway through the SDK in
+`api.ts`. The absence of `window.__TAURI_INTERNALS__` does not enable mock
+responses. Start the real service and gateway for browser acceptance, or
+explicitly supply a hermetic test transport in unit tests.
 
-This means you can test the full UI without a VM by running `just dev ui`.
+`just dev ui` starts the frontend; its API requests use the gateway. Stopped
+fixture sessions can exercise UI states without booting a VM, but cannot
+establish working guest execution or credential connection flows.
 
-**Generated mock data**: `mock-settings.generated.ts` is produced by `build_system/scripts/build/generate_schema.py` from `config/settings/ui-metadata.generated.json`. It runs as part of `just exec` and `just test` via the `_generate-settings` recipe. Never hand-edit this file.
+**Generated test data**: `mock-settings.generated.ts` is produced by
+`build_system/scripts/build/generate_schema.py` from the canonical settings
+metadata. It supports explicit test fixtures, not an automatic browser mode.
+Use the schema-generation owner included in `just test`; never hand-edit it.
 
 ## Visual verification with Chrome DevTools MCP
 
@@ -53,8 +60,8 @@ This means you can test the full UI without a VM by running `just dev ui`.
 ### Settings view
 
 Click through every section (AI Providers, Repositories, Security, VM, Appearance). Verify:
-- All settings from `config/settings/ui-metadata.generated.json` are present
-  (currently 68 leaf settings)
+- All settings from `config/settings/ui-metadata.generated.json` are present;
+  derive the expected settings from that metadata instead of copying a count
 - Provider toggle enables/disables child settings visually
 - API key reveal button works (password <-> text)
 - VM Resources section shows all resource settings including min_content_sessions
@@ -64,7 +71,7 @@ Click through every section (AI Providers, Repositories, Security, VM, Appearanc
 ### After changing TOML configs or generated mock data
 
 When modifying `config/settings/ui-metadata.generated.json` or regenerating `mock-settings.generated.ts`:
-1. Run `just _generate-settings` (or let `just exec`/`just test` do it)
+1. Use the schema-generation owner included in `just test`
 2. Start `just dev ui`
 3. Navigate to Settings view
 4. Screenshot and verify new/changed settings appear correctly
