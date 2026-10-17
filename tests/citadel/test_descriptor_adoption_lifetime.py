@@ -17,6 +17,7 @@ is not adoption. See skills/dev-rust-patterns/SKILL.md, Host Unix boundary.
 
 # These are the actual owned handoff paths that regressed, not a count of drops.
 HANDOFFS = [
+    ("capsem-process/src/cables.rs", "async fn take_within", "stream", "decode_seat_frame"),
     ("capsem-core/src/net/upstream_grant/mcp.rs", "async fn attach_http", "descriptor", "McpHttpAdopted"),
     ("capsem-service/src/gateway_grant.rs", "async fn send_grant", "descriptor", "GatewayGrantRequest::Adopted"),
     ("capsem-service/src/proxy_worker.rs", "async fn grant(&mut self", "descriptors", "ProxyControlEvent::Adopted"),
@@ -84,3 +85,10 @@ def test_aggregator_owner_connection_requires_a_matching_receipt() -> None:
     assert aggregator_receipt_contract(server, client), ADOPTION_RATIONALE
     assert not aggregator_receipt_contract(server.replace("pending_aggregator = Some(descriptor);", ""), client)
     assert not aggregator_receipt_contract(server, client.replace(".await?;", ".await;"))
+
+
+def test_service_checks_cable_answer_identity_before_acknowledging() -> None:
+    source = without_prose((ROOT / "crates/capsem-service/src/switches.rs").read_text())
+    source = re.sub(r"\s+", "", source)
+    assert "answer.bytes==seat_frame(SEAT_LINK,token)" in source, ADOPTION_RATIONALE
+    assert "fd::validate_connected_stream(stream.as_fd())?;" in source, ADOPTION_RATIONALE

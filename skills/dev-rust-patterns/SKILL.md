@@ -144,7 +144,8 @@ The same rule covers startup policy, proxy traffic/MCP/trace hints, ledger
 clients, gateway connections and the aggregator's owner connection. Auditing
 only the native MCP bootstrap missed these paths and left a macOS policy-update
 broken pipe. `tests/citadel/test_descriptor_adoption_lifetime.py` guards the
-early-drop sites; gateway and upstream grant tests also drop the received copy
+early-drop sites, including private cable handoff: its table reference can be
+replaced by a reconnect before adoption. Gateway and upstream grant tests drop the received copy
 before acknowledging to prove the sender still owns its original, then assert
 EOF after adoption to rule out retention leaks.
 
