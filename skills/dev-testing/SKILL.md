@@ -38,6 +38,11 @@ before calling it qualified, and retain the exact-source merge/release gates.
 The bounded wrapper provides timeout and cleanup without a default machine
 lease; reserve `--machine-lease` for explicitly isolated qualification work.
 
+Finish a focused build/test command before editing its inputs. Cargo may have
+already compiled a test when a later edit lands, so its green result can cover
+older bytes. If inputs changed during compilation or execution, that result
+does not verify the final source; rerun the focused regression after the edit.
+
 Focused Ruff commands must select `--config build_system/pyproject.toml`, as
 the gate does. Auto-discovery from a root-level test used a different Python
 version and reversed `tomllib` import grouping, passing locally then failing
