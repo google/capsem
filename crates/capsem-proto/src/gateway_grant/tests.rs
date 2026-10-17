@@ -4,6 +4,7 @@ use super::*;
 fn requests_round_trip_with_bounded_identity() {
     for request in [
         GatewayGrantRequest::OpenService { request_id: 7 },
+        GatewayGrantRequest::Adopted { request_id: 7 },
         GatewayGrantRequest::OpenOwnerHandoff {
             request_id: u64::MAX,
             vm_id: "session-1".into(),

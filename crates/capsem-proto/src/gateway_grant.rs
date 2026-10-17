@@ -21,6 +21,7 @@ const RESERVED_RANGE: std::ops::Range<usize> = VM_ID_RANGE.end..GATEWAY_GRANT_FR
 
 const OPEN_SERVICE: u8 = 1;
 const OPEN_OWNER_HANDOFF: u8 = 2;
+const ADOPTED: u8 = 3;
 const GRANTED: u8 = 101;
 const DENIED: u8 = 102;
 
@@ -28,12 +29,15 @@ const DENIED: u8 = 102;
 pub enum GatewayGrantRequest {
     OpenService { request_id: u64 },
     OpenOwnerHandoff { request_id: u64, vm_id: String },
+    Adopted { request_id: u64 },
 }
 
 impl GatewayGrantRequest {
     pub fn request_id(&self) -> u64 {
         match self {
-            Self::OpenService { request_id } | Self::OpenOwnerHandoff { request_id, .. } => *request_id,
+            Self::OpenService { request_id }
+            | Self::OpenOwnerHandoff { request_id, .. }
+            | Self::Adopted { request_id } => *request_id,
         }
     }
 }
@@ -114,6 +118,7 @@ pub fn encode_gateway_grant_request(request: &GatewayGrantRequest) -> Result<[u8
     let mut frame = base(match request {
         GatewayGrantRequest::OpenService { .. } => OPEN_SERVICE,
         GatewayGrantRequest::OpenOwnerHandoff { .. } => OPEN_OWNER_HANDOFF,
+        GatewayGrantRequest::Adopted { .. } => ADOPTED,
     });
     frame[REQUEST_ID_RANGE].copy_from_slice(&request.request_id().to_be_bytes());
     if let GatewayGrantRequest::OpenOwnerHandoff { vm_id, .. } = request {
@@ -129,9 +134,15 @@ pub fn encode_gateway_grant_request(request: &GatewayGrantRequest) -> Result<[u8
 
 pub fn decode_gateway_grant_request(frame: &[u8; GATEWAY_GRANT_FRAME_SIZE]) -> Result<GatewayGrantRequest> {
     validate(frame)?;
+    if frame[DETAIL_OFFSET] != 0 {
+        bail!("gateway grant request has unexpected detail");
+    }
     let request_id = u64::from_be_bytes(frame[REQUEST_ID_RANGE].try_into().unwrap());
     match frame[KIND_OFFSET] {
         OPEN_SERVICE if frame[VM_ID_LENGTH_OFFSET] == 0 => Ok(GatewayGrantRequest::OpenService { request_id }),
+        ADOPTED if frame[VM_ID_LENGTH_OFFSET] == 0 && frame[VM_ID_RANGE].iter().all(|byte| *byte == 0) => {
+            Ok(GatewayGrantRequest::Adopted { request_id })
+        }
         OPEN_OWNER_HANDOFF => {
             let length = usize::from(frame[VM_ID_LENGTH_OFFSET]);
             if length == 0 || length > MAX_GATEWAY_VM_ID_BYTES {
