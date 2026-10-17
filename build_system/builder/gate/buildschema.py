@@ -43,6 +43,10 @@ class PythonSdkConfig(SdkConfig):
     pytest_scratch: str
 
 
+class TypeScriptSdkConfig(SdkConfig):
+    build_timeout_seconds: PositiveInt
+
+
 class NodePackageConfig(Strict):
     project: str
 

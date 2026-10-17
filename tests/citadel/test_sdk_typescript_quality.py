@@ -8,9 +8,27 @@ from types import SimpleNamespace
 
 import pytest
 from capsem_builder.gate import sdkchecks
+from capsem_builder.gate.context import Context
 from capsem_builder.gate.plan import Plan
 from citadel.test_sdk_quality import CONFIG, ROOT, SDK_RATIONALE
-from helpers.gate import gate_plan
+from helpers.gate import RecordingRunner, gate_plan
+
+BUILD_DEADLINE_RATIONALE = (
+    "SDK compilation needs one config-owned process-group deadline. A hidden "
+    "60-second child timer killed both hosted builds while concurrent type "
+    "checks needed 123 seconds; the gate must own the finite build budget."
+)
+
+
+@pytest.mark.parametrize("seconds", [17, 300])
+def test_typescript_build_deadline_reaches_the_process_runner(seconds: int) -> None:
+    settings = CONFIG.sdk_typescript.model_copy(update={"build_timeout_seconds": seconds})
+    config = CONFIG.model_copy(update={"sdk_typescript": settings})
+    runner = RecordingRunner(ROOT)
+    sdkchecks.typescript_bundle(config).run(Context(runner, config, observing=True))
+    assert len(runner.commands) == 1, BUILD_DEADLINE_RATIONALE
+    assert runner.commands[0].argv == ("pnpm", "run", "build"), BUILD_DEADLINE_RATIONALE
+    assert runner.commands[0].timeout_seconds == seconds, BUILD_DEADLINE_RATIONALE
 
 
 def _assert_quality(source: str, scripts: dict, compiler: dict) -> None:
