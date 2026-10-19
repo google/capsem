@@ -10,7 +10,6 @@ the current source from newer output left by another worktree.
 from __future__ import annotations
 
 import fcntl
-import hashlib
 import json
 import os
 import subprocess
@@ -18,16 +17,14 @@ import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 
+from capsem_builder import crypto
+
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 RECEIPT_SCHEMA = "capsem.local-test-binary.v1"
 
 
 def _digest_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    return crypto.digest_file(path)
 
 
 def _source_digest(
@@ -37,7 +34,7 @@ def _source_digest(
     build_command: Sequence[str],
     env: Mapping[str, str],
 ) -> str:
-    digest = hashlib.sha256()
+    digest = crypto.blake3()
     identity = {
         "build_command": list(build_command),
         "qualified_source": env.get("CAPSEM_GATE_QUALIFIED_SOURCE_COMMIT", ""),
