@@ -22,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Rebuilt the marketing hero as continuous desktop usage: cursor and dock
+  magnification, Terminal installation and VM creation, AGY website work in the
+  real TUI layout, an “Email productivity” session created through Alt+N for
+  Codex, then GUI session terminals and parallel TUI/MCP control. Each of the
+  four chapters opens with its own interstitial.
 - Replaced marketing demo dock glyphs with macOSicons assets and the canonical
   Capsem app icon; aligned the Scale view with the product's Sessions table,
   font and status badges, removing invented chrome and counters.

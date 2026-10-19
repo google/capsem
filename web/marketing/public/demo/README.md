@@ -17,3 +17,11 @@ The Scale scene is a passive excerpt of the Sessions table in
 Toolbar. Session names and usage figures are fictional demo data. Marketing
 labels sit outside the product window. Compact widths show the first three
 columns; larger widths also show uptime, tokens, cost and actions.
+
+The continuous TUI scenes follow `crates/capsem-tui/src/ui.rs`: its exact
+palette, bottom status/session bar, `sessions` overlay, `new session` dialog,
+name input, profile list and Alt+N/Enter shortcuts. The checked-in CLI opens
+the TUI with `capsem shell`. The new Email productivity session selects the
+Co-work profile, then launches Codex inside that VM; the Website session stays
+alive. Dock/window/cursor actions are simulated animation, with pointer targets
+measured from the icon, table row and xterm URL positions.
