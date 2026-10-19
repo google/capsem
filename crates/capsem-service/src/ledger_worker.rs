@@ -726,4 +726,4 @@ fn generation_hex(generation: LedgerGeneration) -> String {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

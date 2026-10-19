@@ -11,7 +11,7 @@ authors.workspace = true
 build = "build.rs"
 
 [dependencies]
-capsem-crypto = { path = "../capsem-crypto", version = "0.7.0", default-features = false }
+capsem-crypto = { path = "../capsem-crypto", version = "0.7.1", default-features = false }
 serde = { workspace = true }
 serde_bytes = { workspace = true }
 serde_json = { workspace = true }

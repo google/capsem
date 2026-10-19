@@ -195,7 +195,7 @@ pub(super) type EffectivePluginPolicy = (BTreeMap<String, SecurityPluginConfig>,
 /// The effective plugin policy from the current files.
 fn effective_plugin_policy() -> Result<EffectivePluginPolicy, AppError> {
     let (settings, corp) = capsem_core::net::policy_config::load_policy_files()
-        .map_err(|error| AppError(StatusCode::BAD_REQUEST, error))?;
+        .map_err(|error| AppError::new(StatusCode::BAD_REQUEST, error))?;
     let mut policy: BTreeMap<_, _> = plugin_catalog()
         .iter()
         .map(|(id, entry)| (id.clone(), entry.default_config))
@@ -256,7 +256,10 @@ async fn plugin_info_from(
     include_runtime: bool,
 ) -> Result<PluginInfo, AppError> {
     let Some(catalog_entry) = plugin_catalog().get(plugin_id).copied() else {
-        return Err(AppError(StatusCode::NOT_FOUND, format!("unknown plugin: {plugin_id}")));
+        return Err(AppError::new(
+            StatusCode::NOT_FOUND,
+            format!("unknown plugin: {plugin_id}"),
+        ));
     };
     let config = policy.get(plugin_id).copied().unwrap_or(catalog_entry.default_config);
     let runtime = if include_runtime {
@@ -341,7 +344,7 @@ async fn plugin_runtime_status(
     let snapshots = match activity::session_counters(state).await {
         Ok(snapshots) => snapshots,
         Err(error) => {
-            status.last_error = Some(format!("failed to read security ledger: {}", error.1));
+            status.last_error = Some(format!("failed to read security ledger: {}", error.body.error));
             return status;
         }
     };
@@ -530,7 +533,10 @@ pub(super) async fn handle_plugin_update(
     Json(update): Json<PluginUpdate>,
 ) -> Result<Json<PluginInfo>, AppError> {
     let Some(catalog_entry) = plugin_catalog().get(&plugin_id).copied() else {
-        return Err(AppError(StatusCode::NOT_FOUND, format!("unknown plugin: {plugin_id}")));
+        return Err(AppError::new(
+            StatusCode::NOT_FOUND,
+            format!("unknown plugin: {plugin_id}"),
+        ));
     };
     let route = MutationRoute {
         name: "plugin_edit",

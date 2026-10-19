@@ -6,6 +6,8 @@ import re
 import tomllib
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG = ROOT / "config/data/runtime-limits.toml"
 
@@ -58,7 +60,7 @@ CONFIG_OWNED_NAMES = {
 
 REQUIRED_WIRING = {
     "crates/capsem-proto/build.rs": (
-        "../../config/data/runtime-limits.toml",
+        f'PathBuf::from("{CONFIG.name}")',
         'get("max_concurrent_clients")',
         "pub const NETWORK_CLIENT_CAPACITY: usize = {capacity}",
         'get("traffic_grants_per_client")',
@@ -214,6 +216,39 @@ def _numeric_limit_declarations(sources: dict[str, str]) -> list[str]:
             if name in CONFIG_OWNED_NAMES:
                 violations.append(f"{path}: numeric {name} = {value}")
     return violations
+
+
+def _package_config_problems(link: Path, authority: Path) -> list[str]:
+    if not link.is_symlink():
+        return ["protocol package config must be a symlink to its single authority"]
+    if link.resolve() != authority.resolve():
+        return ["protocol package config targets a different authority"]
+    return []
+
+
+def test_protocol_package_includes_its_canonical_runtime_limits() -> None:
+    link = ROOT / "crates/capsem-proto" / CONFIG.name
+    assert not _package_config_problems(link, CONFIG), RUNTIME_LIMIT_RATIONALE
+
+
+@pytest.mark.parametrize("mutation", ["absent", "copy", "wrong_target"])
+def test_protocol_package_cannot_copy_or_replace_runtime_authority(
+    tmp_path: Path, mutation: str
+) -> None:
+    authority = tmp_path / CONFIG.name
+    authority.write_text(CONFIG.read_text())
+    link = tmp_path / "package" / CONFIG.name
+    link.parent.mkdir()
+    link.symlink_to(authority)
+    assert not _package_config_problems(link, authority), RUNTIME_LIMIT_RATIONALE
+    link.unlink()
+    if mutation == "copy":
+        link.write_text(authority.read_text())
+    elif mutation == "wrong_target":
+        other = tmp_path / "unrelated.toml"
+        other.write_text(authority.read_text())
+        link.symlink_to(other)
+    assert _package_config_problems(link, authority), RUNTIME_LIMIT_RATIONALE
 
 
 def test_guest_load_benchmarks_do_not_duplicate_a_concurrency_ceiling() -> None:

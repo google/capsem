@@ -40,13 +40,13 @@ impl ServiceState {
         request: CreateProxyRequest,
     ) -> Result<CreateProxyResponse, AppError> {
         let bind_ip = request.bind.parse::<IpAddr>().map_err(|_| {
-            AppError(
+            AppError::new(
                 axum::http::StatusCode::BAD_REQUEST,
                 format!("proxy bind address {:?} is not an IP address", request.bind),
             )
         })?;
         if request.provider.is_empty() || request.provider.len() > 128 {
-            return Err(AppError(
+            return Err(AppError::new(
                 axum::http::StatusCode::BAD_REQUEST,
                 "proxy provider must contain 1 to 128 bytes".to_string(),
             ));
@@ -192,7 +192,7 @@ impl ServiceState {
         let mut proxies = self.standalone_proxies.lock().await;
         let entry = proxies
             .get_mut(session_id)
-            .ok_or_else(|| AppError(axum::http::StatusCode::NOT_FOUND, "proxy session not found".to_string()))?;
+            .ok_or_else(|| AppError::new(axum::http::StatusCode::NOT_FOUND, "proxy session not found".to_string()))?;
         verify_lease(entry, &request)?;
         entry.expires_at = Instant::now() + LEASE_TTL;
         let expires_at = entry.expires_at;
@@ -210,9 +210,9 @@ impl ServiceState {
     ) -> Result<StopProxyResponse, AppError> {
         let entry = {
             let mut proxies = self.standalone_proxies.lock().await;
-            let entry = proxies
-                .get(session_id)
-                .ok_or_else(|| AppError(axum::http::StatusCode::NOT_FOUND, "proxy session not found".to_string()))?;
+            let entry = proxies.get(session_id).ok_or_else(|| {
+                AppError::new(axum::http::StatusCode::NOT_FOUND, "proxy session not found".to_string())
+            })?;
             verify_lease(entry, &request)?;
             proxies.remove(session_id).expect("validated proxy still registered")
         };
@@ -470,7 +470,7 @@ async fn cleanup(state: &ServiceState, session_id: &str, entry: StandaloneProxy)
 
 fn verify_lease(entry: &StandaloneProxy, request: &ProxyLeaseRequest) -> Result<(), AppError> {
     if entry.lease_token != request.lease_token {
-        return Err(AppError(
+        return Err(AppError::new(
             axum::http::StatusCode::FORBIDDEN,
             "proxy lease token is invalid".to_string(),
         ));
@@ -491,7 +491,7 @@ fn expiry_unix_ms(expires_at: Instant) -> u64 {
 }
 
 fn internal(message: String) -> AppError {
-    AppError(axum::http::StatusCode::INTERNAL_SERVER_ERROR, message)
+    AppError::new(axum::http::StatusCode::INTERNAL_SERVER_ERROR, message)
 }
 
 #[cfg(test)]

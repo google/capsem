@@ -65,6 +65,9 @@ class OutputRootsConfig(Strict):
     gate_runs: str
     packages: str
     test_artifacts: str
+    sdk_packages: str
+    inspect_packages: str
+    mcp_packages: str
 
     @field_validator("*")
     @classmethod
@@ -161,6 +164,7 @@ class EnvironmentConfig(Strict):
     run_dir: str
     assets_dir: str
     benchmark_root: str
+    mcp_package_archives: str
     coverage_file: str
     source_checkout: str
     repository_root: str

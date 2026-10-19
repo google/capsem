@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import PurePosixPath
 
 from . import hostclass
 from .actions import Run
@@ -155,6 +156,7 @@ def citadel(config: GateConfig) -> Suite:
 def collection(config: GateConfig) -> Step:
     """Strictly collect Python roots and external source-contract files."""
     settings = config.suites.pytest
+    roots = (settings.root, settings.build_system_root)
     return step(
         "pytest.collection",
         Run(
@@ -162,7 +164,7 @@ def collection(config: GateConfig) -> Step:
                 config,
                 settings.root,
                 settings.build_system_root,
-                *(path for path in config.suites.source_contract if not path.startswith((settings.root, settings.build_system_root))),
+                *(path for path in config.suites.source_contract if not any(PurePosixPath(path).is_relative_to(root) for root in roots)),
                 *settings.collection_flags,
             )
         ),

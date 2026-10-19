@@ -10,15 +10,16 @@ pub(crate) async fn handle_fork(
     let _launch = state
         .lifecycle
         .admit()
-        .map_err(|e| AppError(StatusCode::CONFLICT, e.to_string()))?;
+        .map_err(|e| AppError::new(StatusCode::CONFLICT, e.to_string()))?;
     let name = &payload.name;
-    validate_vm_name(name).map_err(|e| AppError(StatusCode::BAD_REQUEST, e.to_string()))?;
+    validate_vm_name(name).map_err(|e| AppError::new(StatusCode::BAD_REQUEST, e.to_string()))?;
+    validate_vm_labels(payload.labels.as_ref()).map_err(|e| AppError::new(StatusCode::BAD_REQUEST, e.to_string()))?;
 
     // Check name is not taken
     {
         let registry = state.persistent_registry.lock().unwrap();
         if registry.contains(name) {
-            return Err(AppError(
+            return Err(AppError::new(
                 StatusCode::CONFLICT,
                 format!("sandbox '{}' already exists", name),
             ));
@@ -27,7 +28,7 @@ pub(crate) async fn handle_fork(
 
     // Find source: running instance or stopped persistent VM. A fork boots
     // the source's own images, so it inherits the source's asset pins.
-    let (session_dir, asset_pins, ram_mb, cpus, base_version, uds_path) = {
+    let (session_dir, asset_pins, ram_mb, cpus, base_version, source_labels, uds_path) = {
         let instances = state.instances.lock().unwrap();
         if let Some(i) = instances.get(&id) {
             (
@@ -36,22 +37,32 @@ pub(crate) async fn handle_fork(
                 i.ram_mb,
                 i.cpus,
                 i.base_version.clone(),
+                i.labels.clone(),
                 Some(i.uds_path.clone()),
             )
         } else {
             drop(instances);
             let Some(p) = find_persistent_entry_by_route_id(&state, &id) else {
-                return Err(AppError(
-                    StatusCode::NOT_FOUND,
-                    format!("source sandbox not found: {}", id),
-                ));
+                return Err(AppError::vm_not_found(&id));
             };
             // A VM in the old shape is refused, never laundered into a fork.
             state
                 .validate_persistent_entry(&p)
-                .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
-            (p.session_dir, p.asset_pins, p.ram_mb, p.cpus, p.base_version, None)
+                .map_err(|e| AppError::new(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
+            (
+                p.session_dir,
+                p.asset_pins,
+                p.ram_mb,
+                p.cpus,
+                p.base_version,
+                p.labels,
+                None,
+            )
         }
+    };
+    let labels = match payload.labels {
+        Some(labels) => non_empty_labels(Some(labels)),
+        None => non_empty_labels(source_labels),
     };
 
     // Clone state into new persistent sandbox. The route/runtime id is
@@ -95,11 +106,12 @@ pub(crate) async fn handle_fork(
         last_error: None,
         checkpoint_path: None,
         env: None,
+        labels,
     };
     state
         .off_worker(move |state| state.persistent_registry.lock().unwrap().register(entry))
         .await?
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(Json(ForkResponse {
         id: vm_id,

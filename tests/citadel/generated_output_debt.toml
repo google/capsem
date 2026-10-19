@@ -8,6 +8,9 @@ approved_output_probes = [
   "cache/target/tests/benchmarks/.boundary-probe",
   "cache/target/gate-runs/.boundary-probe",
   "cache/target/coverage/.boundary-probe",
+  "cache/target/sdk/.boundary-probe",
+  "cache/target/integrations/inspect-ai/.boundary-probe",
+  "cache/target/mcp/typescript/.boundary-probe",
 ]
 
 allowed_generated_support = [
@@ -31,4 +34,7 @@ prefix_exports = [
   "cache/target/packages",
   "cache/target/tests/evidence",
   "cache/target/tests/benchmarks",
+  "cache/target/sdk",
+  "cache/target/integrations/inspect-ai",
+  "cache/target/mcp/typescript",
 ]

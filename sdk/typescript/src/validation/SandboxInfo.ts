@@ -22,6 +22,7 @@ export const SandboxInfoSchema: z.ZodType<SandboxInfo> = z.object({
   "files": z.union([z.null(), z.lazy(() => VmFilesInfoSchema)]).exactOptional(),
   "forked_from": z.string().nullable().exactOptional(),
   "id": z.string(),
+  "labels": z.record(z.string(), z.string()).nullable().exactOptional(),
   "last_error": z.string().nullable().exactOptional(),
   "model_call_count": z.int().min(0).nullable().exactOptional(),
   "name": z.string().nullable().exactOptional(),

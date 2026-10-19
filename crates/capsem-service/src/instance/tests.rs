@@ -27,7 +27,7 @@ async fn stale_shutdown_binding_leaves_replacement_socket_and_ledger_intact() {
         Some(capsem_crypto::uuid_v4()),
     )
     .await;
-    assert_eq!(result.unwrap_err().0, StatusCode::CONFLICT);
+    assert_eq!(result.unwrap_err().status, StatusCode::CONFLICT);
     assert_eq!(
         state.instances.lock().unwrap().get("replacement").unwrap().generation,
         generation
@@ -155,6 +155,7 @@ fn nil_selected_generation_refuses_provision_before_any_session_side_effect() {
             version_override: None,
             persistent: false,
             env: None,
+            labels: None,
             from: None,
             description: None,
         },

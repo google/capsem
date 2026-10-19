@@ -80,7 +80,7 @@ async fn open(
         GatewayGrantRequest::OpenOwnerHandoff { vm_id, .. } => {
             let handoff = crate::owner_handoff::OwnerHandoff::acquire(state, &vm_id)
                 .await
-                .map_err(|error| match error.0 {
+                .map_err(|error| match error.status {
                     StatusCode::NOT_FOUND => GatewayGrantDenial::NotFound,
                     StatusCode::CONFLICT => GatewayGrantDenial::Revoked,
                     _ => GatewayGrantDenial::Unavailable,

@@ -11,7 +11,7 @@ authors.workspace = true
 
 [dependencies]
 base64.workspace = true
-capsem-crypto = { path = "../capsem-crypto", version = "0.7.0", default-features = false, features = ["secrets"] }
+capsem-crypto = { path = "../capsem-crypto", version = "0.7.1", default-features = false, features = ["secrets"] }
 serde.workspace = true
 serde_json.workspace = true
 utoipa = "5.4"

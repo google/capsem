@@ -38,6 +38,9 @@ distribution = "cache/target/release/distribution"
 gate_runs = "cache/target/gate-runs"
 packages = "cache/target/packages"
 test_artifacts = "cache/target/tests/evidence"
+sdk_packages = "cache/target/sdk"
+inspect_packages = "cache/target/integrations/inspect-ai"
+mcp_packages = "cache/target/mcp/typescript"
 
 [architectures.arm64]
 rust_target = "aarch64-unknown-linux-gnu"
@@ -412,6 +415,7 @@ home = "CAPSEM_HOME"
 run_dir = "CAPSEM_RUN_DIR"
 assets_dir = "CAPSEM_ASSETS_DIR"
 benchmark_root = "CAPSEM_BENCHMARK_OUTPUT_ROOT"
+mcp_package_archives = "CAPSEM_MCP_PACKAGE_ARCHIVES"
 coverage_file = "COVERAGE_FILE"
 # Set by the parent that built a private checkout, and read by the child that
 # runs inside it. This is what stops the re-exec recursing: a process that
@@ -845,18 +849,15 @@ key = "version"
 # ---------------------------------------------------------------------------
 
 [lint]
-python_roots = ["build_system/builder", "build_system/sdist_command.py", "build_system/packaging", "build_system/scripts", "build_system/tests", "tests", "guest", "images", "integrations/inspect-ai"]
+python_roots = ["build_system/builder", "build_system/sdist_command.py", "build_system/packaging", "build_system/scripts", "build_system/tests", "tests", "guest", "images"]
 # Already passes every rule, and must keep doing so.
-strict_roots = ["build_system/builder", "build_system/sdist_command.py", "integrations/inspect-ai"]
-# Resolve the separate carried namespace without treating builder/ as a
-# top-level package root and shadowing its installed capsem_builder identity.
-strict_ty_search_paths = ["integrations/inspect-ai"]
+strict_roots = ["build_system/builder", "build_system/sdist_command.py"]
+strict_ty_search_paths = []
 # Match the import roots exercised by the sole pytest project plus the guest
 # trees and script bootstrap paths that are materialized at runtime. Keeping
 # these explicit lets Ty inspect a conventional capsem-builder install without
 # depending on uv's editable finder.
 ty_search_paths = [
-    "integrations/inspect-ai",
     "build_system/tests/gate",
     "build_system/builder",
     "tests",
@@ -1113,10 +1114,9 @@ must_stay_below_lines = 3000
 "crates/capsem-mock-server/src/main.rs" = 1167
 "crates/capsem-process/src/vsock.rs" = 1239
 "crates/capsem-proto/src/tests.rs" = 1446
-"crates/capsem-service/src/tests/assets_registry.rs" = 1111
-"crates/capsem-service/src/tests/lifecycle.rs" = 1367
-"crates/capsem-service/src/vm_files.rs" = 1031
-"crates/capsem/src/main.rs" = 1979
+"crates/capsem-service/src/tests/assets_registry.rs" = 1070
+"crates/capsem-service/src/tests/lifecycle.rs" = 1315
+"crates/capsem/src/main.rs" = 1972
 "crates/capsem/src/tests.rs" = 1241
 "crates/capsem/src/update.rs" = 2142
 "crates/capsem/src/update/asset_install.rs" = 1125
@@ -1804,6 +1804,7 @@ cache_stage = "audit-results"
 lockfiles = [
     "Cargo.lock",
     "build_system/uv.lock",
+    "integrations/inspect-ai/uv.lock",
     "mcp/typescript/pnpm-lock.yaml",
     "sdk/python/uv.lock",
     "sdk/typescript/pnpm-lock.yaml",
@@ -1897,6 +1898,12 @@ name = "python-sdk"
 pattern = "sdk/python/*.py"
 enforced_by = ["fast.sdk.python.lint", "fast.sdk.python.types"]
 checked_by = ["fast.sdk.python.tests", "fast.sdk.python.build", "fast.sdk.python.generate"]
+
+[[lint_surfaces]]
+name = "inspect-ai"
+pattern = "integrations/inspect-ai/*.py"
+enforced_by = ["fast.integrations.inspect-ai.lint", "fast.integrations.inspect-ai.types"]
+checked_by = ["fast.integrations.inspect-ai.tests", "fast.integrations.inspect-ai.build"]
 
 [[lint_surfaces]]
 name = "typescript-sdk"
@@ -2027,13 +2034,6 @@ building = ["frontend-build", "docs", "site"]
 # neither.
 source_contract = [
     "tests/test_benchmark_routes.py",
-    "integrations/inspect-ai/tests/containers/test_compose_fields.py",
-    "integrations/inspect-ai/tests/containers/test_compose_inputs.py",
-    "integrations/inspect-ai/tests/containers/test_compose_interpolation.py",
-    "integrations/inspect-ai/tests/containers/test_compose_options.py",
-    "integrations/inspect-ai/tests/containers/test_dockerfile_ca.py",
-    "integrations/inspect-ai/tests/containers/test_dockerfile_heredoc.py",
-    "integrations/inspect-ai/tests/containers/test_dockerfile_metadata.py",
     "tests/qualification/test_candidate.py",
     "build_system/tests/gate/test_gate_observation.py",
     "build_system/tests/gate/test_gate_observation_startup.py",
@@ -2220,13 +2220,13 @@ stop_at_first = "--maxfail=5"
 # than half without adding a second concurrency policy.
 parallel_workers = 4
 parallel_distribution = "loadfile"
-coverage_flags = ["--cov=build_system/builder", "--cov=integrations/inspect-ai/inspect_capsem", "--cov-report=xml:cache/target/coverage/python/codecov.xml"]
+coverage_flags = ["--cov=build_system/builder", "--cov-report=xml:cache/target/coverage/python/codecov.xml"]
 # A composed qualification executes source contracts before it builds anything,
 # then appends the VM-owned cohort without executing those files again.  The
 # partial sessions cannot judge the complete floor; the finishing session does.
-coverage_seed_flags = ["--cov=build_system/builder", "--cov=integrations/inspect-ai/inspect_capsem", "--cov-report=", "--cov-fail-under=0"]
-coverage_append_flags = ["--cov=build_system/builder", "--cov=integrations/inspect-ai/inspect_capsem", "--cov-append", "--cov-report=", "--cov-fail-under=0"]
-coverage_finish_flags = ["--cov=build_system/builder", "--cov=integrations/inspect-ai/inspect_capsem", "--cov-append", "--cov-report=xml:cache/target/coverage/python/codecov.xml"]
+coverage_seed_flags = ["--cov=build_system/builder", "--cov-report=", "--cov-fail-under=0"]
+coverage_append_flags = ["--cov=build_system/builder", "--cov-append", "--cov-report=", "--cov-fail-under=0"]
+coverage_finish_flags = ["--cov=build_system/builder", "--cov-append", "--cov-report=xml:cache/target/coverage/python/codecov.xml"]
 
 # Directories the broad suite never collects, each for its own reason.
 #
@@ -2430,7 +2430,7 @@ rust_coverage_crate_floors = { capsem = 50.0, capsem-admin = 71.0, capsem-agent 
 # macOS compiles a different cfg-selected line inventory. Its stronger floors
 # must not raise Linux thresholds using code that Linux cannot compile or test.
 # Overrides may only increase the shared floors; no platform gets an exemption.
-rust_coverage_platform_crate_floors = { Linux = { capsem = 62.67, capsem-agent = 53.91, capsem-api = 95.84, capsem-assets = 93.38, capsem-bench = 56.43, capsem-config = 91.06, capsem-core = 82.12, capsem-foundation = 81.75, capsem-gateway = 82.24, capsem-logger = 92.39, capsem-mcp-aggregator = 66.32, capsem-mcp-transport = 75.96, capsem-mcp-builtin = 57.06, capsem-mock-server = 71.1, capsem-network = 98.0, capsem-process = 49.39, capsem-proto = 90.98, capsem-router = 80.52, capsem-sdk = 97.39, capsem-service = 75.97, capsem-tray = 57.4, capsem-admin = 75.66 }, Darwin = { capsem = 51.27, capsem-agent = 53.13, capsem-api = 95.34, capsem-assets = 90.3, capsem-bench = 50.56, capsem-config = 89.69, capsem-core = 81.0, capsem-foundation = 83.8, capsem-logger = 91.88, capsem-mcp-builtin = 56.56, capsem-mock-server = 58.6, capsem-network = 97.5, capsem-process = 48.12, capsem-proto = 91.54, capsem-router = 79.8, capsem-service = 74.73 } }
+rust_coverage_platform_crate_floors = { Linux = { capsem = 62.75, capsem-agent = 53.91, capsem-api = 95.84, capsem-assets = 93.38, capsem-bench = 56.43, capsem-config = 91.06, capsem-core = 82.12, capsem-foundation = 81.75, capsem-gateway = 82.24, capsem-logger = 92.39, capsem-mcp-aggregator = 66.32, capsem-mcp-transport = 75.96, capsem-mcp-builtin = 57.06, capsem-mock-server = 71.1, capsem-network = 98.0, capsem-process = 49.39, capsem-proto = 90.98, capsem-router = 80.52, capsem-sdk = 97.39, capsem-service = 79.14, capsem-tray = 57.4, capsem-admin = 75.66 }, Darwin = { capsem = 51.27, capsem-agent = 53.13, capsem-api = 95.34, capsem-assets = 90.3, capsem-bench = 50.56, capsem-config = 89.69, capsem-core = 81.0, capsem-foundation = 83.8, capsem-logger = 91.88, capsem-mcp-builtin = 56.56, capsem-mock-server = 58.6, capsem-network = 97.5, capsem-process = 48.12, capsem-proto = 91.54, capsem-router = 79.8, capsem-service = 74.73 } }
 # Nextest reads its profile from the environment; `--profile` on the command
 # line belongs to cargo-llvm-cov and would select a build profile instead.
 rust_test_profile_variable = "NEXTEST_PROFILE"
@@ -2662,7 +2662,7 @@ resumable = ["cache/target/build/install-image"]
 # Run directories cross the prefix through `runtransfer`; its ledger, digest,
 # latest link and active marker are collection state and must never be merged
 # as ordinary build output.
-exports = ["cache/target/assets", "cache/target/coverage", "cache/target/release/distribution", "cache/target/gate-runs", "cache/target/packages", "cache/target/tests/evidence", "cache/target/tests/benchmarks"]
+exports = ["cache/target/assets", "cache/target/coverage", "cache/target/release/distribution", "cache/target/gate-runs", "cache/target/packages", "cache/target/tests/evidence", "cache/target/tests/benchmarks", "cache/target/sdk", "cache/target/integrations/inspect-ai", "cache/target/mcp/typescript"]
 
 # Trees a run writes but nothing publishes. `exports` establishes provenance
 # for everything a release takes out of a prefix; this establishes it for
@@ -3729,7 +3729,15 @@ tests = "sdk/python/tests"
 build_output = "cache/target/sdk/python"
 environment_python = "sdk/python/.venv/bin/python"
 package_build_requirements = "cache/target/sdk/python/package-build-requirements.txt"
-pytest_scratch = "cache/target/sdk/python/pytest"
+pytest_scratch = "cache/target/tests/client-packages/python"
+
+[integrations_inspect_ai]
+project = "integrations/inspect-ai"
+manifest = "integrations/inspect-ai/pyproject.toml"
+source = "integrations/inspect-ai/inspect_capsem"
+tests = "integrations/inspect-ai/tests"
+build_output = "cache/target/integrations/inspect-ai"
+pytest_scratch = "cache/target/tests/client-packages/inspect-ai"
 
 [sdk_rust]
 project = "sdk/rust"
@@ -3752,3 +3760,4 @@ build_timeout_seconds = 300
 
 [mcp_typescript]
 project = "mcp/typescript"
+build_output = "cache/target/mcp/typescript"

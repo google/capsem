@@ -16,9 +16,8 @@ start it on your computer before using the SDK.
 
 ## Usage
 
-Draft: the local-connection example below depends on [SDK local access](https://github.com/google/capsem/issues/344)
-and [decoded command output](https://github.com/google/capsem/issues/345). For the
-currently supported gateway connection, use the [integration guide](https://docs.capsem.org/guides/developers/integrate-the-sdk/#connect-to-a-remote-installation).
+`Hypervisor()` discovers the local running service. For a remote service,
+pass its complete gateway URL and bearer token explicitly.
 
 Once Capsem is running, create a VM and run a command inside it. Use an unused
 VM name in place of `sdk-demo`.
@@ -44,5 +43,12 @@ image or your own OCI image when permitted by your administrator.
 The example runs `echo hello`, displays its output, and leaves `sdk-demo`
 stopped with its work preserved.
 
+Pass `labels={"suite": "eval"}` to `create(...)` to attach advisory metadata.
+VM inventory includes those labels. Forks inherit them by default;
+`fork(name, labels={})` clears them and a nonempty map replaces them.
+
 For more, use the [SDK guides](https://docs.capsem.org/guides/developers/integrate-the-sdk/) or the
 [Python SDK reference](https://docs.capsem.org/sdk/python/).
+
+Use `Hypervisor.connect(run_dir=...)` for an explicit local runtime directory.
+Timeout errors expose structured VM IDs, codes and deadline metadata.

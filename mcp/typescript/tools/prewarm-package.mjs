@@ -1,7 +1,7 @@
 // Warm npm's complete runtime dependency graph before offline acceptance.
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
-import {mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync} from 'node:fs';
+import {mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync} from 'node:fs';
 import {homedir, tmpdir} from 'node:os';
 import {join} from 'node:path';
 import process from 'node:process';
@@ -13,12 +13,14 @@ try {
   const archives = [];
   for (const [owner, source] of [['sdk', join(project, '../../sdk/typescript')], ['mcp', project]]) {
     assert.ok(owner && source);
-    const output = join(fixture, owner);
-    mkdirSync(output);
+    const selectedDirectory = process.env.CAPSEM_MCP_PACKAGE_ARCHIVES;
+    const output = selectedDirectory ?? join(fixture, owner);
+    mkdirSync(output, {recursive: true});
     execFileSync('pnpm', ['pack', '--config.ignore-scripts=true', '--pack-destination', output], {
       cwd: source, stdio: 'pipe', timeout: 15_000, env: {...process.env, HOME: fixture},
     });
-    const names = readdirSync(output).filter(name => name.endsWith('.tgz'));
+    const version = (JSON.parse(readFileSync(join(source, 'package.json'), 'utf8'))).version;
+    const names = readdirSync(output).filter(name => name === `capsem-${owner}-${version}.tgz`);
     assert.equal(names.length, 1);
     assert.ok(names[0]);
     archives.push(join(output, names[0]));

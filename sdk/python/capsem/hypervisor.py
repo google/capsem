@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from pathlib import Path
+from typing import Self
 
 from . import _operations as api
 from . import models
@@ -11,9 +13,9 @@ from ._connections import Connections
 from ._credentials import Credentials
 from ._debug import Debug
 from ._images import Images
-from ._local import local_connection
 from ._mcp import Mcp
 from ._networks import Networks
+from .errors import _create_vm_with_timeout, _exec_with_timeout
 from .execution import (
     CREATE_READY_SECS,
     GATEWAY_REQUEST_BUDGET_SECS,
@@ -23,6 +25,8 @@ from .execution import (
 from .managed import ManagedSession
 from .registry import Registry
 from .vm import VM
+
+__all__ = ["Hypervisor"]
 
 
 def _memory_mb(memory: int | None) -> int | None:
@@ -35,6 +39,7 @@ def _memory_mb(memory: int | None) -> int | None:
 
 def _provision_request(*, name: str = "", cpus: int | None = None,
                        memory: int | None = None, env: dict[str, str] | None = None,
+                       labels: dict[str, str] | None = None,
                        networks: Sequence[models.NetworkInfo] = (), image: str | None = None,
                        command: Sequence[str] = (), registry: Registry | None = None) -> models.ProvisionRequest:
     if cpus is not None and (isinstance(cpus, bool) or not isinstance(cpus, int) or cpus < 1):
@@ -59,7 +64,7 @@ def _provision_request(*, name: str = "", cpus: int | None = None,
         )
     request = models.ProvisionRequest(
         name=name or None, persistent=bool(name), cpus=cpus, ram_mb=_memory_mb(memory),
-        env=env if image is None else None, networks=network_names,
+        env=env if image is None else None, labels=labels, networks=network_names,
     )
     if wire is not None:
         request.container = wire
@@ -67,18 +72,21 @@ def _provision_request(*, name: str = "", cpus: int | None = None,
 
 
 class Hypervisor(Client):
-    def __init__(self, url: str | None = None, token: str | None = None, *, timeout: float = 30) -> None:
-        if url is None and token is None:
-            url, token = local_connection()
-        elif url is None or token is None:
-            raise ValueError("provide both gateway URL and token, or neither for local Capsem")
-        super().__init__(url, token, timeout=timeout)
+    def __init__(self, url: str | None = None, token: str | None = None, *,
+                 run_dir: str | Path | None = None, timeout: float = 30) -> None:
+        super().__init__(url, token, run_dir=run_dir, timeout=timeout)
         self.networks = Networks(self._transport)
         self.mcp = Mcp(self._transport)
         self.debug = Debug(self._transport)
         self.images = Images(self._transport)
         self.credentials = Credentials(self._transport)
         self.connections = Connections(self._transport)
+
+    @classmethod
+    def connect(cls, url: str | None = None, token: str | None = None, *,
+                run_dir: str | Path | None = None, timeout: float = 30) -> Self:
+        """Create a `Hypervisor` client using gateway discovery when `url` or `token` is omitted."""
+        return cls(url, token, run_dir=run_dir, timeout=timeout)
 
     async def info(self) -> models.HypervisorInfo:
         return await api.get_hypervisor_info(self._transport)
@@ -95,24 +103,40 @@ class Hypervisor(Client):
 
     async def create(self, *, name: str = "", cpus: int | None = None,
                      memory: int | None = None, env: dict[str, str] | None = None,
+                     labels: dict[str, str] | None = None,
                      networks: Sequence[models.NetworkInfo] = (), image: str | None = None,
                      command: Sequence[str] = (), registry: Registry | None = None) -> VM:
-        request = _provision_request(name=name, cpus=cpus, memory=memory, env=env, networks=networks,
-                                     image=image, command=command, registry=registry)
+        """Provision a VM or container workload.
+
+        Args:
+            name: Persistent VM name; omit or pass empty string for an ephemeral VM.
+            cpus: Optional vCPU count override.
+            memory: Optional RAM size in GiB.
+            env: Optional environment variables for the VM or container workload.
+            labels: Optional string labels attached at creation.
+            networks: Private networks to attach to the VM at creation.
+            image: Optional OCI image reference to run as a container workload.
+            command: Optional command argv override for the container workload.
+            registry: Optional custom OCI registry configuration for pulling ``image``.
+        """
+        request = _provision_request(name=name, cpus=cpus, memory=memory, env=env, labels=labels,
+                                     networks=networks, image=image, command=command, registry=registry)
         # The service answers only once a container workload is ready, so
         # wait at least as long as it does before giving up on the create.
-        response = await api.create_vm(
-            self._transport, body=request,
-            request_timeout=max(self._transport.timeout, CREATE_READY_SECS + GATEWAY_REQUEST_BUDGET_SECS),
+        request_timeout = max(self._transport.timeout, CREATE_READY_SECS + GATEWAY_REQUEST_BUDGET_SECS)
+        return await _create_vm_with_timeout(
+            api.create_vm(self._transport, body=request, request_timeout=request_timeout),
+            self._transport, bind_vm=VM._bind, name=name,
+            container=image is not None, request_timeout=request_timeout,
         )
-        return VM._bind(self._transport, id=response.id, name=response.name, container=image is not None)
 
     def managed(self, *, cpus: int | None = None, memory: int | None = None,
-                env: dict[str, str] | None = None, networks: Sequence[models.NetworkInfo] = (),
+                env: dict[str, str] | None = None, labels: dict[str, str] | None = None,
+                networks: Sequence[models.NetworkInfo] = (),
                 image: str | None = None, command: Sequence[str] = (), registry: Registry | None = None) -> ManagedSession:
         """An ephemeral ownership scope: renew while entered, await cleanup on exit."""
         return ManagedSession(self._transport, _provision_request(
-            cpus=cpus, memory=memory, env=env, networks=networks, image=image, command=command, registry=registry))
+            cpus=cpus, memory=memory, env=env, labels=labels, networks=networks, image=image, command=command, registry=registry))
 
     async def log(self, source: models.HostLogSource = models.HostLogSource.SERVICE, *,
                   grep: str | None = None, tail: int | None = None,
@@ -122,11 +146,13 @@ class Hypervisor(Client):
     async def run(self, command: str, *, timeout_secs: int | None = None,
                   cpus: int | None = None, memory: int | None = None,
                   env: dict[str, str] | None = None) -> ExecResult:
-        response = await api.run_vm(self._transport, body=models.RunRequest(
+        return await _exec_with_timeout(
+            api.run_vm(self._transport, body=models.RunRequest(
+                command=command, timeout_secs=timeout_secs,
+                cpus=cpus, ram_mb=_memory_mb(memory), env=env,
+            ), request_timeout=command_deadline(self._transport.timeout, timeout_secs)),
             command=command, timeout_secs=timeout_secs,
-            cpus=cpus, ram_mb=_memory_mb(memory), env=env,
-        ), request_timeout=command_deadline(self._transport.timeout, timeout_secs))
-        return ExecResult.from_wire(response)
+        )
 
     async def purge(self, *, all: bool = False) -> models.PurgeResponse:
         return await api.purge_vms(self._transport, body=models.PurgeRequest(all=all))

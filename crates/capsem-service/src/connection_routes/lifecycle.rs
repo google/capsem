@@ -9,7 +9,7 @@ fn canonical(id: &str) -> Option<[u8; 16]> {
 }
 fn unavailable(code: api::CredentialErrorCode) -> AppError {
     warn!(?code, "credential lifecycle metadata remains pending");
-    AppError(
+    AppError::new(
         StatusCode::SERVICE_UNAVAILABLE,
         "credential lifecycle metadata remains pending".into(),
     )
@@ -75,7 +75,10 @@ pub(crate) async fn deletion<'a>(
 ) -> Result<tokio::sync::RwLockWriteGuard<'a, ()>, AppError> {
     let guard = state.lifecycle.vz.write().await;
     if state.instances.lock().unwrap().contains_key(id) {
-        return Err(AppError(StatusCode::CONFLICT, "session resumed during deletion".into()));
+        return Err(AppError::new(
+            StatusCode::CONFLICT,
+            "session resumed during deletion".into(),
+        ));
     }
     state.connections.retire_session(id).await?;
     Ok(guard)

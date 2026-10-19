@@ -10,3 +10,6 @@ httpx==0.28.1
 urllib3>=2.8.0
 # aiohttp's transitive header container must include GHSA-54p9-h82j-f925's fix.
 multidict>=6.9.1
+# aiohttp 3.14.4 fixes GHSA-2g87-pp6c-29x5, GHSA-494j-54xm-rwp3, and
+# GHSA-5wr8-gcqf-gqf3 in the HTTP client used by the debug image.
+aiohttp>=3.14.4

@@ -108,7 +108,7 @@ it('renews finite service ownership and keeps ordinary handle close connection-o
   const service = new Service();
   await gateway(service.handle, async (url, requests) => {
     const hv = new Hypervisor(url, 'gateway-bearer');
-    const scope = await hv.managed({image: 'docker://busybox', env: {MODE: 'owned'}});
+    const scope = await hv.managed({image: 'docker://busybox', env: {MODE: 'owned'}, labels: {suite: 'eval'}});
     await scope.run(async vm => {
       expect(vm.id).toBe(VM_ID);
       expect(JSON.stringify(scope)).not.toContain(service.request?.managed?.ownership_token);
@@ -125,6 +125,7 @@ it('renews finite service ownership and keeps ordinary handle close connection-o
     expect(requests.every(request => !request.url.includes(token) && !JSON.stringify(request.headers).includes(token))).toBe(true);
     expect(service.request?.persistent).toBe(false);
     expect(service.request?.name).toBeNull();
+    expect(service.request?.labels).toEqual({suite: 'eval'});
     expect(service.request?.container?.env).toEqual({MODE: 'owned'});
     expect(service.request?.env).toBeNull();
     hv.close();

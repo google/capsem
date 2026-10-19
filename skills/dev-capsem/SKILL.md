@@ -35,7 +35,7 @@ then lead with a recommendation. The full contract is
 | `capsem-telemetry` | Single owner of every `metrics`-facade metric name, kind, unit, and description. Emitters import names from here. | `lib.rs` (`MetricSpec`, `describe_all`), `db.rs`, `dns.rs`, `mitm.rs`, `security.rs`, `virtio_blk.rs` |
 | `capsem-assets` | VM asset lifecycle and manifest compatibility. | `asset_manager.rs`, `manifest_compat.rs` |
 | `capsem-api` | Gateway wire types and OpenAPI contract. | `document.rs`, `hypervisor.rs`, `vm_info.rs` |
-| `capsem-sdk` (`sdk/rust`) | Async HTTP gateway clients, shared API DTOs, no local discovery. | `transport.rs` |
+| `capsem-sdk` (`sdk/rust`) | Async HTTP gateway clients, shared API DTOs, and bounded local gateway discovery. | `transport.rs`, `hypervisor.rs`, `local.rs` |
 | `capsem-config` | Product config contracts, parsing, validation, and provider/MCP identity. | `types.rs`, `validation.rs`, `provider_profile.rs`, `mcp.rs`, `resolver.rs` |
 | `capsem-credentials` | Credential provider contracts and durable credential storage. | `provider.rs`, `store.rs`, `durable.rs` |
 | `capsem-core` | VM, hypervisor, security-engine, network-intercept, and session-runtime domain library. | `vm/`, `net/`, `security_engine/`, `mcp/`, `hypervisor/`, `image.rs` |

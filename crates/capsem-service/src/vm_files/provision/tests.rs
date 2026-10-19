@@ -163,8 +163,12 @@ async fn a_failed_container_create_discards_the_vm_and_keeps_its_ledger() {
     .expect("a refused create must not spend the persistent-session flush grace")
     .unwrap_err();
     reaper.await.unwrap();
-    assert_eq!(error.0, StatusCode::INTERNAL_SERVER_ERROR, "{}", error.1);
-    assert!(error.1.contains("registry refused the image"), "{}", error.1);
+    assert_eq!(error.status, StatusCode::INTERNAL_SERVER_ERROR, "{}", error.body.error);
+    assert!(
+        error.body.error.contains("registry refused the image"),
+        "{}",
+        error.body.error
+    );
     assert!(
         !state.instances.lock().unwrap().contains_key("box"),
         "the VM stays registered"
