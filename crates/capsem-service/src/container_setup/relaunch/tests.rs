@@ -235,6 +235,12 @@ fn stage_of(session_dir: &std::path::Path) -> std::path::PathBuf {
 fn staged(session_dir: &std::path::Path, markers: &[&str]) {
     let stage = stage_of(session_dir);
     std::fs::create_dir_all(&stage).unwrap();
+    std::fs::write(
+        stage.join("options.json"),
+        serde_json::to_vec(&serde_json::json!({"workspace_owner": "image_user"})).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(stage.join("launch.py"), capsem_core::container::LAUNCHER).unwrap();
     for marker in markers {
         std::fs::write(stage.join(marker), "1\n").unwrap();
     }
@@ -249,10 +255,7 @@ fn a_clone_starts_without_its_sources_run_markers() {
     let dir = tempfile::tempdir().unwrap();
     let (source, clone) = (dir.path().join("source"), dir.path().join("clone"));
     write_record(&source, &record(None));
-    staged(
-        &clone,
-        &[STAGE_READY, "options.json", STAGE_RUNNING, STAGE_FAILED, STAGE_EXITED],
-    );
+    staged(&clone, &[STAGE_READY, STAGE_RUNNING, STAGE_FAILED, STAGE_EXITED]);
 
     carry_launch_record(&source, &clone).unwrap();
 
@@ -260,7 +263,33 @@ fn a_clone_starts_without_its_sources_run_markers() {
         .unwrap()
         .map(|entry| entry.unwrap().file_name().into_string().unwrap())
         .collect();
-    assert_eq!(left, [STAGE_READY, "options.json"].map(String::from).into());
+    assert_eq!(
+        left,
+        [STAGE_READY, "options.json", "launch.py"].map(String::from).into()
+    );
+}
+
+#[test]
+fn forgetting_a_run_upgrades_legacy_stage_before_the_next_boot() {
+    let dir = tempfile::tempdir().unwrap();
+    let session = dir.path().join("session");
+    let stage = stage_of(&session);
+    std::fs::create_dir_all(&stage).unwrap();
+    std::fs::write(stage.join("options.json"), br#"{"env":{"KEEP":"yes"}}"#).unwrap();
+    std::fs::write(stage.join("launch.py"), b"legacy").unwrap();
+    std::fs::write(stage.join(capsem_core::container::STAGE_RUNNING), b"1\n").unwrap();
+
+    forget_previous_run(&session).unwrap();
+
+    let options: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(stage.join("options.json")).unwrap()).unwrap();
+    assert_eq!(options["workspace_owner"], "image_user");
+    assert_eq!(options["env"]["KEEP"], "yes");
+    assert_eq!(
+        std::fs::read(stage.join("launch.py")).unwrap(),
+        capsem_core::container::LAUNCHER
+    );
+    assert!(!stage.join(capsem_core::container::STAGE_RUNNING).exists());
 }
 
 /// The stage is guest-written: a marker replaced by a link is removed as the
