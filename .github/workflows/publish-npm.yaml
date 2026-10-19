@@ -1,0 +1,94 @@
+name: Publish npm SDK and MCP
+
+# Dispatch publication only for a source qualified under RELEASE.md and AGENTS.md.
+# With publish=false this workflow only verifies and retains candidate packages.
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the qualified SDK, then MCP (false builds and tests only)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: capsem-npm-publication
+  cancel-in-progress: false
+
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
+        with:
+          version: 10.34.5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 24
+      - name: Install SDK and MCP workspace
+        run: pnpm --dir mcp/typescript install --frozen-lockfile
+      - name: Build SDK
+        run: pnpm --dir sdk/typescript run build
+      - name: Lint SDK
+        run: pnpm --dir sdk/typescript run lint
+      - name: Type-check SDK
+        run: pnpm --dir sdk/typescript run check
+      - name: Build MCP
+        run: pnpm --dir mcp/typescript run build
+      - name: Type-check MCP
+        run: pnpm --dir mcp/typescript run check
+      - name: Pack SDK candidate
+        run: pnpm --dir sdk/typescript pack --config.ignore-scripts=true --pack-destination "${{ github.workspace }}/cache/target/sdk/typescript"
+      - name: Pack MCP candidate
+        run: pnpm --dir mcp/typescript pack --config.ignore-scripts=true --pack-destination "${{ github.workspace }}/cache/target/sdk/mcp"
+      - name: Warm SDK consumer dependencies
+        run: pnpm --dir sdk/typescript run prewarm:package
+      - name: Warm MCP consumer dependencies
+        run: pnpm --dir mcp/typescript run prewarm:packed
+      - name: Test SDK and clean package consumers
+        run: pnpm --dir sdk/typescript run test:sdk
+      - name: Test MCP and clean package consumers
+        run: pnpm --dir mcp/typescript run test:mcp
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: npm-candidates-${{ github.sha }}
+          path: |
+            cache/target/sdk/typescript/*.tgz
+            cache/target/sdk/mcp/*.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    if: ${{ inputs.publish }}
+    needs: qualify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: npm-candidates-${{ github.sha }}
+          path: candidates
+      - name: Publish exact SDK candidate
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish candidates/typescript/*.tgz --access public --provenance
+      - name: Publish exact MCP candidate after SDK
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish candidates/mcp/*.tgz --access public --provenance
+      - name: Verify SDK is publicly readable
+        run: npm view @capsem/sdk version
+      - name: Verify MCP is publicly readable
+        run: npm view @capsem/mcp version

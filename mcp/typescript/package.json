@@ -1,6 +1,7 @@
 {
   "name": "@capsem/mcp",
   "version": "0.7.0",
+  "repository": {"type": "git", "url": "git+https://github.com/google/capsem.git", "directory": "mcp/typescript"},
   "description": "Capsem MCP server over the authenticated gateway SDK",
   "type": "module",
   "engines": {"node": ">=20"},

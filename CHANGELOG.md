@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add a manually triggered GitHub publisher for the npm SDK and MCP packages, with clean-consumer tests and OIDC provenance before SDK-first publication.
+
 ### Security
 
 - Time-box the new zbus 5 maintenance advisories through 2026-11-18 while
