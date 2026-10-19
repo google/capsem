@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Proxy workers consume their final shutdown acknowledgement before reaping the
+  process, avoiding intermittent clean-shutdown failures on slower hosts.
+
 - Host-ledger diagnostics report malformed binary fields as corruption without
   aborting verification or changing the ledger hash format.
 
