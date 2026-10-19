@@ -620,25 +620,26 @@ async fn setup_stages_the_plan_through_the_import_ledger_then_launches_detached(
     );
     let options: serde_json::Value =
         serde_json::from_slice(&std::fs::read(stage.join("options.json")).unwrap()).unwrap();
-    assert_eq!(
-        options,
-        json!({
-            "manifest": format!("sha256:{MANIFEST_BLOB}"),
-            "args": ["serve"],
-            "env": {"MODE": "test"},
-            "workspace": "/workspace",
-            "capabilities": capsem_core::container::seccomp::WORKLOAD_CAPABILITIES,
-            "seccomp": capsem_core::container::seccomp::workload_seccomp(
-                capsem_core::container::stage::oci_architecture().unwrap(),
-                capsem_core::container::seccomp::Surface::Terminal,
-            )
-            .unwrap(),
-            "id_map": {"containerID": 0, "hostID": 100000, "size": 65536},
-            // The fixture VM's 2048 MiB and 2 CPUs, minus the runtime's share.
-            "resources": {"memory_bytes": 1664u64 * 1024 * 1024, "cpu_millis": 1750, "pids": 4096},
-            "surface": "terminal",
-        })
-    );
+    let mut expected_options = json!({
+        "manifest": format!("sha256:{MANIFEST_BLOB}"),
+        "args": ["serve"],
+        "env": {"MODE": "test"},
+        "workspace": "/workspace",
+        "capabilities": capsem_core::container::seccomp::WORKLOAD_CAPABILITIES,
+        "seccomp": capsem_core::container::seccomp::workload_seccomp(
+            capsem_core::container::stage::oci_architecture().unwrap(),
+            capsem_core::container::seccomp::Surface::Terminal,
+        )
+        .unwrap(),
+        "id_map": {"containerID": 0, "hostID": 100000, "size": 65536},
+        // The fixture VM's 2048 MiB and 2 CPUs, minus the runtime's share.
+        "resources": {"memory_bytes": 1664u64 * 1024 * 1024, "cpu_millis": 1750, "pids": 4096},
+        "surface": "terminal",
+    });
+    if cfg!(target_os = "linux") {
+        expected_options["workspace_owner"] = json!("image_user");
+    }
+    assert_eq!(options, expected_options);
     assert_eq!(
         catalog_reads.load(Ordering::Relaxed),
         1,

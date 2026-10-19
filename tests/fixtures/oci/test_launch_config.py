@@ -43,6 +43,25 @@ SECURITY = {
 }
 
 
+@pytest.mark.parametrize("uid,gid", [(0, 0), (1000, 1000), (1000, 100), (65535, 65535)])
+def test_stable_workspace_owner_maps_to_the_image_user(launcher, uid, gid):
+    mappings = launcher.workspace_mappings(SECURITY["id_map"], {"uid": uid, "gid": gid})
+    assert mappings == {
+        "uid_map": f"0 {100000 + uid} 1\n",
+        "gid_map": f"0 {100000 + gid} 1\n",
+    }
+    assert launcher.workspace_mappings(SECURITY["id_map"], None) == {
+        "uid_map": "0 100000 65536\n", "gid_map": "0 100000 65536\n",
+    }
+
+
+@pytest.mark.parametrize("value", [-1, 65536, True, "1000", None])
+@pytest.mark.parametrize("field", ["uid", "gid"])
+def test_workspace_owner_stays_inside_the_workload_namespace(launcher, field, value):
+    with pytest.raises(ValueError, match="workspace owner"):
+        launcher.workspace_mappings(SECURITY["id_map"], {"uid": 1000, "gid": 1000, field: value})
+
+
 def image():
     return {
         "config": {

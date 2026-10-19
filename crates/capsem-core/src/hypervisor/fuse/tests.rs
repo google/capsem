@@ -131,16 +131,21 @@ fn attr_regular_file() {
     assert_eq!((attr.uid, attr.gid), (0, 0), "VM root owns what it reads");
 }
 
-/// Every entry belongs to whoever asks: the host user's ids never reach the
-/// guest, and an image's unprivileged user owns the workspace it writes to.
+/// One inode has one owner across VM and workload requests. The workload's
+/// mount maps that stable VM owner to the image user.
 #[test]
-fn attr_is_owned_by_the_caller() {
+fn attr_ownership_is_stable_across_callers() {
     let dir = temp_share("meta-caller");
     std::fs::write(dir.join("test.txt"), b"x").unwrap();
     let meta = std::fs::metadata(dir.join("test.txt")).unwrap();
     for (uid, gid) in [(0, 0), (1000, 1000), (1000, 100), (65534, 65534)] {
         let attr = metadata_to_fuse_attr(7, &meta, &caller(uid, gid));
-        assert_eq!((attr.uid, attr.gid), (uid, gid));
+        assert_eq!((attr.uid, attr.gid), (0, 0));
+        assert_eq!(
+            attr.mode,
+            meta.mode(),
+            "ownership mapping must preserve permission bits"
+        );
     }
 }
 

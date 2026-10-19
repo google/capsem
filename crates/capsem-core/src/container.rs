@@ -6,6 +6,7 @@ pub mod admission;
 pub mod publish;
 pub mod seccomp;
 pub mod stage;
+pub mod workspace_owner;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PortMapping {
@@ -39,9 +40,9 @@ pub struct IdMap {
 }
 
 /// The workload's user namespace: container ids 0-65535 are VM ids
-/// 100000-165535, so container root is no uid the VM trusts. The workspace is
-/// idmapped through the same map, so its entries (VM uid 0) are container
-/// root's. The launcher refuses a map below VM id 65536.
+/// 100000-165535, so container root is no uid the VM trusts. The workspace
+/// gets a narrower mount map that translates its stable VM-root ownership to
+/// the image user. The launcher refuses a map below VM id 65536.
 pub const WORKLOAD_ID_MAP: IdMap = IdMap {
     container_id: 0,
     host_id: 100_000,

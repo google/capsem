@@ -43,6 +43,7 @@ pub(crate) fn carry_launch_record(source: &std::path::Path, destination: &std::p
 pub(crate) fn forget_previous_run(session_dir: &std::path::Path) -> Result<(), String> {
     use capsem_core::container::{STAGE, STAGE_EXITED, STAGE_FAILED, STAGE_RUNNING};
     use std::ffi::OsStr;
+    refresh_staged_workspace_owner(session_dir)?;
     let absent = |e: &std::io::Error| e.kind() == std::io::ErrorKind::NotFound;
     let workspace = match capsem_core::session::open_workspace(session_dir) {
         Ok(workspace) => workspace,
@@ -61,6 +62,13 @@ pub(crate) fn forget_previous_run(session_dir: &std::path::Path) -> Result<(), S
         }
     }
     Ok(())
+}
+
+/// Upgrade a staged workload before a new VM owner starts it. A changed
+/// launcher contract also tells resume to reject the previous VM checkpoint.
+pub(crate) fn refresh_staged_workspace_owner(session_dir: &std::path::Path) -> Result<bool, String> {
+    capsem_core::container::workspace_owner::refresh(session_dir)
+        .map_err(|error| format!("refresh the workload stage of {}: {error:#}", session_dir.display()))
 }
 
 /// Put VM `id`'s recorded workload back under this owner: live again, with

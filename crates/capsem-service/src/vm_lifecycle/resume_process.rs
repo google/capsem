@@ -7,6 +7,38 @@ pub(crate) fn configure_resume_storage(command: &mut tokio::process::Command, en
     Ok(())
 }
 
+pub(crate) fn configure_resume_checkpoint(
+    command: &mut tokio::process::Command,
+    entry: &PersistentVmEntry,
+    stage_refreshed: bool,
+) -> bool {
+    if stage_refreshed {
+        info!(
+            name = entry.name,
+            "workload controller changed, cold booting instead of restoring its checkpoint"
+        );
+        return false;
+    }
+    if entry.suspended {
+        if let Some(ref checkpoint) = entry.checkpoint_path {
+            let full_checkpoint = entry.session_dir.join(checkpoint);
+            let complete = checkpoint_complete_path(&full_checkpoint);
+            if full_checkpoint.exists() && complete.exists() {
+                command.arg("--checkpoint-path").arg(&full_checkpoint);
+                info!(name = entry.name, checkpoint = %full_checkpoint.display(), "warm restore from checkpoint");
+                return true;
+            }
+            tracing::warn!(
+                name = entry.name,
+                checkpoint = %full_checkpoint.display(),
+                complete = %complete.display(),
+                "checkpoint incomplete, cold booting"
+            );
+        }
+    }
+    false
+}
+
 impl ServiceState {
     /// Resume a stopped persistent VM by re-spawning capsem-process against its
     /// existing session directory.
@@ -117,22 +149,12 @@ impl ServiceState {
             }
         }
 
-        // Pass checkpoint path for warm restore from suspended state only
-        // when the completion marker proves save_state + fsync finished.
-        let mut warm = false;
-        if entry.suspended {
-            if let Some(ref cp) = entry.checkpoint_path {
-                let full_checkpoint = entry.session_dir.join(cp);
-                let complete = checkpoint_complete_path(&full_checkpoint);
-                if full_checkpoint.exists() && complete.exists() {
-                    child_cmd.arg("--checkpoint-path").arg(&full_checkpoint);
-                    info!(name, checkpoint = %full_checkpoint.display(), "warm restore from checkpoint");
-                    warm = true;
-                } else {
-                    tracing::warn!(name, checkpoint = %full_checkpoint.display(), complete = %complete.display(), "checkpoint incomplete, cold booting");
-                }
-            }
-        }
+        // Refresh a legacy staged controller before deciding whether its old
+        // VM memory is safe to restore. A changed ownership map needs one cold
+        // boot; current stages keep the warm path.
+        let stage_refreshed = crate::container_setup::refresh_staged_workspace_owner(&entry.session_dir)
+            .map_err(|error| anyhow!(error))?;
+        let warm = configure_resume_checkpoint(&mut child_cmd, &entry, stage_refreshed);
         // A cold boot relaunches the workload; the last boot's markers would
         // report it running (or exited) before this boot's launcher starts. A
         // warm restore resumes that same workload, so its markers stay true.
@@ -325,3 +347,6 @@ impl ServiceState {
         Ok(vm_id)
     }
 }
+
+#[cfg(test)]
+mod tests;
