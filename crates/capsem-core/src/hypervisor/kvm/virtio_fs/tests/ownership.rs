@@ -162,11 +162,11 @@ fn chown_alongside_a_mode_change_still_applies_the_mode() {
     assert_eq!(mode & 0o777, 0o640);
 }
 
-/// Ownership is derived from each request's caller, so the kernel must ask
-/// again when a different namespace reaches an inode that VM root touched.
+/// Ownership is stable VM root across callers; the workload mount's idmap
+/// presents that owner as the image user without changing the shared inode.
 #[test]
-fn caller_owned_attributes_are_never_cached() {
-    let dir = temp_share("caller-owned-attributes");
+fn attributes_keep_stable_vm_ownership_across_callers() {
+    let dir = temp_share("stable-vm-ownership");
     std::fs::write(dir.join("f"), b"x").unwrap();
     let mut proc = test_processor(&dir);
 
@@ -176,7 +176,7 @@ fn caller_owned_attributes_are_never_cached() {
     let lookup_response = proc.handle_request(&build_request(&lookup_header, b"f\0"));
     let payload = std::mem::size_of::<FuseOutHeader>();
     let entry: FuseEntryOut = fuse::read_struct(&lookup_response[payload..]).unwrap();
-    assert_eq!((entry.attr.uid, entry.attr.gid), (1000, 1000));
+    assert_eq!((entry.attr.uid, entry.attr.gid), (0, 0));
     assert_eq!(entry.attr_valid, 0);
     assert_eq!(entry.attr_valid_nsec, 0);
 
@@ -185,7 +185,7 @@ fn caller_owned_attributes_are_never_cached() {
     getattr_header.gid = 2000;
     let getattr_response = proc.handle_request(&build_request(&getattr_header, &[]));
     let attr: FuseAttrOut = fuse::read_struct(&getattr_response[payload..]).unwrap();
-    assert_eq!((attr.attr.uid, attr.attr.gid), (2000, 2000));
+    assert_eq!((attr.attr.uid, attr.attr.gid), (0, 0));
     assert_eq!(attr.attr_valid, 0);
     assert_eq!(attr.attr_valid_nsec, 0);
 }
