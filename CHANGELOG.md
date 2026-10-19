@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Replaced marketing demo dock glyphs with macOSicons assets and the canonical
+  Capsem app icon; aligned the Scale view with the product's Sessions table,
+  font and status badges, removing invented chrome and counters.
 - Restored the marketing hero tagline: “The fastest way to ship with AI securely.”
 
 ### Security

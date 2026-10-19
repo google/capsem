@@ -172,10 +172,13 @@
   {/if}
     {#if scale >= 0}<HeroScale active={scale} {surface} />{/if}
     <div class="demo-dock" aria-hidden="true">
-      <span class:current={desktopApp === "terminal"}><span class="demo-dock-terminal">&gt;_</span></span>
-      <span class:current={desktopApp === "browser"}><span class="demo-dock-browser">◈</span></span>
-      <span class:current={desktopApp === "app"}><span class="demo-dock-app"><img src="/logo.svg" alt="" /></span></span>
+      <span class:current={desktopApp === "terminal"}><img src="/demo/terminal.png" width="40" height="40" alt="" /></span>
+      <span class:current={desktopApp === "browser"}><img src="/demo/chrome.png" width="40" height="40" alt="" /></span>
+      <span class:current={desktopApp === "app"}><img src="/demo/capsem.png" width="40" height="40" alt="" /></span>
     </div>
+  </div>
+  <div class="demo-surfaces" class:visible={scale >= 0} role="group" aria-label={demo.scale.controlsLabel} aria-hidden={scale < 0}>
+    {#each demo.scale.surfaces as mode}<span class:current={surface === mode.id}>{mode.label}</span>{/each}
   </div>
   <div class="demo-player">
     <nav class="demo-chapters" aria-label={demo.chaptersLabel}>
