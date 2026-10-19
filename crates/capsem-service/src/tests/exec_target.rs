@@ -109,6 +109,30 @@ fn sleep_reply(msg: &ServiceToProcess) -> FakeProcessReply {
     })
 }
 
+fn shell_quote(value: &std::ffi::OsStr) -> String {
+    format!("'{}'", value.to_string_lossy().replace('\'', "'\"'\"'"))
+}
+
+fn timeout_owner_script(executable: &StdPath, coverage_profile: Option<&std::ffi::OsStr>) -> String {
+    let coverage = coverage_profile
+        .map(|profile| format!("LLVM_PROFILE_FILE={} ", shell_quote(profile)))
+        .unwrap_or_default();
+    format!(
+        "#!/bin/sh\nsocket=\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"--uds-path\" ]; then shift; socket=$1; fi\n  shift\ndone\n{coverage}CAPSEM_EXEC_TIMEOUT_OWNER=\"$socket\" exec {} --exact tests::exec_target::one_shot_timeout_owner_child --nocapture\n",
+        shell_quote(executable.as_os_str())
+    )
+}
+
+#[test]
+fn timeout_owner_script_keeps_coverage_profiles_out_of_the_source_tree() {
+    let script = timeout_owner_script(
+        StdPath::new("/tmp/capsem service test"),
+        Some(std::ffi::OsStr::new("/tmp/coverage/profile-%p-%m.profraw")),
+    );
+    assert!(script.contains("LLVM_PROFILE_FILE='/tmp/coverage/profile-%p-%m.profraw'"));
+    assert!(script.contains("exec '/tmp/capsem service test'"));
+}
+
 #[tokio::test]
 async fn one_shot_timeout_owner_child() {
     let Some(socket) = std::env::var_os("CAPSEM_EXEC_TIMEOUT_OWNER") else {
@@ -130,10 +154,8 @@ async fn exec_timeout_and_missing_vm_routes_return_structured_error_codes() {
     // Serving it in this parent beside an unrelated sleep child correctly
     // fails the worker-authority check before reaching the exec timeout.
     let executable = std::env::current_exe().unwrap();
-    let quoted = format!("'{}'", executable.to_string_lossy().replace('\'', "'\"'\"'"));
-    let script = format!(
-        "#!/bin/sh\nsocket=\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"--uds-path\" ]; then shift; socket=$1; fi\n  shift\ndone\nCAPSEM_EXEC_TIMEOUT_OWNER=\"$socket\" exec {quoted} --exact tests::exec_target::one_shot_timeout_owner_child --nocapture\n"
-    );
+    let coverage_profile = std::env::var_os("LLVM_PROFILE_FILE");
+    let script = timeout_owner_script(&executable, coverage_profile.as_deref());
     std::fs::write(&sleep_bin, script).unwrap();
     #[cfg(unix)]
     std::fs::set_permissions(&sleep_bin, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
