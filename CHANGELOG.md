@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- OCI workspaces retain the workload's full UID/GID range while mapping stable
+  VirtioFS metadata to the image user, so `chown` and archive extraction work.
+
 - Proxy workers consume their final shutdown acknowledgement before reaping the
   process, avoiding intermittent clean-shutdown failures on slower hosts.
 

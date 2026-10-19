@@ -444,7 +444,10 @@ def _syscall_check(result):
 
 
 def workspace_mappings(id_map, user):
-    """Map stable VM-root metadata to the workload's actual uid and gid."""
+    """Map stable VM-root metadata to the workload's actual uid and gid,
+    while keeping every workload identity representable for chown and archive
+    extraction. The first namespace id rotates to the image user's parent id;
+    the remaining ranges fill the gap without overlapping either id space."""
     id_map = checked_id_map(id_map)
     if user is None:
         mapping = f"{id_map['containerID']} {id_map['hostID']} {id_map['size']}\n"
@@ -456,7 +459,14 @@ def workspace_mappings(id_map, user):
         value = user.get(field)
         if type(value) is not int or not 0 <= value < id_map["size"]:
             raise ValueError(f"workspace owner {field} is outside the workload namespace")
-        mappings[field + "_map"] = f"0 {id_map['hostID'] + value} 1\n"
+        if value == 0:
+            mappings[field + "_map"] = f"0 {id_map['hostID']} {id_map['size']}\n"
+            continue
+        lines = [f"0 {id_map['hostID'] + value} 1", f"1 {id_map['hostID']} {value}"]
+        remaining = id_map["size"] - value - 1
+        if remaining:
+            lines.append(f"{value + 1} {id_map['hostID'] + value + 1} {remaining}")
+        mappings[field + "_map"] = "\n".join(lines) + "\n"
     return mappings
 
 

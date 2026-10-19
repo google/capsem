@@ -43,13 +43,29 @@ SECURITY = {
 }
 
 
-@pytest.mark.parametrize("uid,gid", [(0, 0), (1000, 1000), (1000, 100), (65535, 65535)])
-def test_stable_workspace_owner_maps_to_the_image_user(launcher, uid, gid):
+@pytest.mark.parametrize(
+    "uid,gid,uid_map,gid_map",
+    [
+        (0, 0, "0 100000 65536\n", "0 100000 65536\n"),
+        (
+            1000,
+            100,
+            "0 101000 1\n1 100000 1000\n1001 101001 64535\n",
+            "0 100100 1\n1 100000 100\n101 100101 65435\n",
+        ),
+        (
+            65535,
+            65535,
+            "0 165535 1\n1 100000 65535\n",
+            "0 165535 1\n1 100000 65535\n",
+        ),
+    ],
+)
+def test_stable_workspace_owner_maps_every_id_and_rotates_root_to_the_image_user(
+    launcher, uid, gid, uid_map, gid_map
+):
     mappings = launcher.workspace_mappings(SECURITY["id_map"], {"uid": uid, "gid": gid})
-    assert mappings == {
-        "uid_map": f"0 {100000 + uid} 1\n",
-        "gid_map": f"0 {100000 + gid} 1\n",
-    }
+    assert mappings == {"uid_map": uid_map, "gid_map": gid_map}
     assert launcher.workspace_mappings(SECURITY["id_map"], None) == {
         "uid_map": "0 100000 65536\n", "gid_map": "0 100000 65536\n",
     }
