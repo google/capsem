@@ -11,6 +11,8 @@ export interface TerminalStep {
   insert?: "build" | "work" | null;
   codex?: boolean;
   input?: boolean;
+  scale?: number;
+  surface?: "gui" | "tui" | "api" | "mcp";
 }
 
 export const stepDuration = (step: TerminalStep) =>

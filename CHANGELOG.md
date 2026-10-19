@@ -11,11 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Interactive terminal marketing demo showing installation, an AGY image building
   a website with a browser preview, then a fresh Codex VM summarizing email,
-  with chapter playback and “Build fast” / “Switch workflow instantly” interludes.
+  with chapter playback and “Ship fast” / “Swap workflow” interludes.
   The website preview holds for 2.5 seconds; the Codex scene follows the official
   CLI's model/directory box, typing prompt, and context footer.
   Interludes use passive copy, with links and clickable preview chrome removed
   from the animation; playback controls remain below it.
+  The desktop narrative follows Install, Ship fast, Swap workflow and Scale,
+  ending with six parallel agents in Capsem's session UI and GUI, TUI, API,
+  then agent-driven MCP control examples.
 
 ### Fixed
 

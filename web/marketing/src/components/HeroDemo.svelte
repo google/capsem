@@ -3,6 +3,7 @@
   import "@xterm/xterm/css/xterm.css";
   import { HERO_DEMO as demo, HERO_TERMINAL_SCRIPT } from "$lib/data";
   import { terminalPlayback, stepDuration } from "$lib/hero-terminal";
+  import HeroScale from "./HeroScale.svelte";
 
   let duration = 0;
   const chapters = HERO_TERMINAL_SCRIPT.flatMap((step, index) => {
@@ -18,6 +19,9 @@
   let reducedMotion = $state(false);
   let insert = $state<"build" | "work" | null>(null);
   let codex = $state(false);
+  let scale = $state(-1);
+  let surface = $state<"gui" | "tui" | "api" | "mcp">("gui");
+  let desktopApp: "app" | "browser" | "terminal" = $derived(scale >= 0 && surface === "gui" ? "app" : preview ? "browser" : "terminal");
   let input = $state<string | null>(null);
   let position = $state(0);
   let activeChapter = $state(0);
@@ -65,28 +69,29 @@
         if (step.insert !== undefined) insert = step.insert;
         if (step.codex !== undefined) codex = step.codex;
         if (step.chapter !== undefined) activeChapter = step.chapter;
+        if (step.scale !== undefined) scale = step.scale;
+        if (step.surface !== undefined) surface = step.surface;
       }, () => { paused = true; finished = true; }, (milliseconds) => { position = milliseconds; }, (text) => { input = text; });
       const resetView = () => {
-        title = demo.shellTitle; preview = false; insert = null; codex = false; input = null;
+        title = demo.shellTitle; preview = false; insert = null; codex = false; input = null; scale = -1; surface = "gui";
         activeChapter = 0; finished = false;
       };
       restart = () => {
         resetView(); player.reset(); paused = false;
-        if (reducedMotion) showSummary();
+        if (reducedMotion) showFinale();
       };
       seek = (index) => {
         resetView(); player.seek(chapters[index].index); paused = false;
       };
-      const showSummary = () => {
-        resetView(); player.reset(); terminal.write(demo.summary);
-        title = demo.codexTitle; codex = true; position = duration;
+      const showFinale = () => {
+        resetView(); player.reset(); scale = demo.scale.sessions.length; position = duration;
         activeChapter = chapters.length - 1; paused = true; finished = true;
       };
       const motion = matchMedia("(prefers-reduced-motion: reduce)");
       const updateMotion = () => {
         reducedMotion = motion.matches;
         terminal.options.cursorBlink = !motion.matches;
-        if (motion.matches) showSummary();
+        if (motion.matches) showFinale();
       };
       updateMotion();
       motion.addEventListener("change", updateMotion);
@@ -116,7 +121,13 @@
 </script>
 
 <div class="hero-demo" bind:this={container} role="group" aria-label={demo.terminalLabel}>
-  <div class="demo-window">
+  <div class="demo-desktop">
+    <div class="demo-menubar" aria-hidden="true">
+      <img src="/logo.svg" alt="" /><strong>{demo.desktop[desktopApp]}</strong>
+      {#each demo.desktop.menus as menu}<span>{menu}</span>{/each}
+      <time>{demo.desktop.clock}</time>
+    </div>
+  <div class="demo-window" class:demo-window-behind={scale >= 0} aria-hidden={scale >= 0}>
     <div class="demo-titlebar">
       <span class="demo-traffic-lights" aria-hidden="true"><i></i><i></i><i></i></span>
       <span class="demo-window-title">{title}</span>
@@ -159,6 +170,13 @@
 
     </div>
   {/if}
+    {#if scale >= 0}<HeroScale active={scale} {surface} />{/if}
+    <div class="demo-dock" aria-hidden="true">
+      <span class:current={desktopApp === "terminal"}><span class="demo-dock-terminal">&gt;_</span></span>
+      <span class:current={desktopApp === "browser"}><span class="demo-dock-browser">◈</span></span>
+      <span class:current={desktopApp === "app"}><span class="demo-dock-app"><img src="/logo.svg" alt="" /></span></span>
+    </div>
+  </div>
   <div class="demo-player">
     <nav class="demo-chapters" aria-label={demo.chaptersLabel}>
       {#each chapters as chapter, index}
