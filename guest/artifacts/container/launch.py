@@ -443,12 +443,29 @@ def _syscall_check(result):
     return result
 
 
-def idmap_workspace(id_map, target):
+def workspace_mappings(id_map, user):
+    """Map stable VM-root metadata to the workload's actual uid and gid."""
+    id_map = checked_id_map(id_map)
+    if user is None:
+        mapping = f"{id_map['containerID']} {id_map['hostID']} {id_map['size']}\n"
+        return dict.fromkeys(("uid_map", "gid_map"), mapping)
+    if not isinstance(user, dict):
+        raise TypeError("workspace owner must name the image user")
+    mappings = {}
+    for field in ("uid", "gid"):
+        value = user.get(field)
+        if type(value) is not int or not 0 <= value < id_map["size"]:
+            raise ValueError(f"workspace owner {field} is outside the workload namespace")
+        mappings[field + "_map"] = f"0 {id_map['hostID'] + value} 1\n"
+    return mappings
+
+
+def idmap_workspace(id_map, target, user=None):
     """Mount the VM workspace at `target` through the workload's id map.
 
-    The VirtioFS server reports every workspace entry as VM uid 0; through this
-    mount that is container root, so the workload can chown, `tar -x` and
-    `cp -a` there. runc 1.1 makes no idmapped mounts; its bind of this one
+    Stable VM uid 0 becomes the image user's uid, including non-root users.
+    The original map remains available to backends with caller-owned metadata.
+    runc 1.1 makes no idmapped mounts; its bind of this one
     keeps the idmap. The map comes from a user namespace held open by a child
     for as long as the mount is being made.
     """
@@ -467,8 +484,7 @@ def idmap_workspace(id_map, target):
     try:
         if os.read(ready_read, 1) != b"1":
             raise OSError("cannot create the workload's user namespace")
-        mapping = f"{id_map['containerID']} {id_map['hostID']} {id_map['size']}\n"
-        for name in ("uid_map", "gid_map"):
+        for name, mapping in workspace_mappings(id_map, user).items():
             Path(f"/proc/{child}/{name}").write_text(mapping)
         userns = os.open(f"/proc/{child}/ns/user", os.O_RDONLY | os.O_CLOEXEC)
         tree = None
@@ -929,7 +945,11 @@ def run(stage, detached=False):
             bundle, image, unpacked = roots.enter_context(published_root(options, id_map))
         if options.get("workspace") is not None:
             WORKSPACE_VIEW.mkdir(mode=0o700, exist_ok=True)
-            idmap_workspace(id_map, WORKSPACE_VIEW)
+            owner_policy = options.get("workspace_owner")
+            if owner_policy not in (None, "image_user"):
+                raise ValueError("unsupported workspace owner policy")
+            user = unpacked["process"]["user"] if owner_policy == "image_user" else None
+            idmap_workspace(id_map, WORKSPACE_VIEW, user)
         config_path = bundle / "config.json"
         mount_layer(bundle / "rootfs")
         config = configure(unpacked, image, options, detached=detached)

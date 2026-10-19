@@ -15,7 +15,7 @@ pub use protocol::*;
 
 use std::os::unix::fs::MetadataExt;
 
-/// Caller-owned attributes cannot be cached across namespaces sharing an inode.
+/// Host-side edits must remain visible without a separate invalidation channel.
 pub const ATTR_CACHE_SECONDS: u64 = 0;
 
 // ---------------------------------------------------------------------------
@@ -66,8 +66,8 @@ pub fn success_response(unique: u64, body: &[u8]) -> Vec<u8> {
 // Utility functions
 // ---------------------------------------------------------------------------
 
-/// The attributes of `meta` as the guest sees them, owned by the caller.
-pub fn metadata_to_fuse_attr(ino: u64, meta: &std::fs::Metadata, caller: &FuseInHeader) -> FuseAttr {
+/// Stable VM-root ownership; the workload mount maps it to the image user.
+pub fn metadata_to_fuse_attr(ino: u64, meta: &std::fs::Metadata, _caller: &FuseInHeader) -> FuseAttr {
     FuseAttr {
         ino,
         size: meta.size(),
@@ -80,15 +80,11 @@ pub fn metadata_to_fuse_attr(ino: u64, meta: &std::fs::Metadata, caller: &FuseIn
         ctimensec: meta.ctime_nsec() as u32,
         mode: meta.mode(),
         nlink: meta.nlink() as u32,
-        // The backing workspace is owned by the host user, whose ids mean
-        // nothing in the guest. Every entry belongs to whoever asks, as
-        // Apple's VirtioFS server reports it: VM root sees its files as its
-        // own (git's safe.directory check passes), and a user-namespaced
-        // workload, whose kernel sends ids as its own namespace sees them,
-        // owns its workspace through the idmapped mount whether it runs as
-        // container root or as an image's unprivileged user.
-        uid: caller.uid,
-        gid: caller.gid,
+        // One inode cannot have a different owner for each caller: even a
+        // zero attribute TTL leaves inode ownership shared by permission
+        // checks. Namespace-specific ownership belongs in the mount's idmap.
+        uid: 0,
+        gid: 0,
         rdev: meta.rdev() as u32,
         blksize: meta.blksize() as u32,
         flags: 0,

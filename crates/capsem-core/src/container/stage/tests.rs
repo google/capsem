@@ -22,6 +22,10 @@ fn published_root_stage_metadata_is_typed_and_keeps_the_single_stage_path() {
     let options: serde_json::Value = serde_json::from_slice(&plan[0].bytes).unwrap();
     assert_eq!(options["manifest"], MANIFEST);
     assert_eq!(
+        options.get("workspace_owner").and_then(|value| value.as_str()),
+        cfg!(target_os = "linux").then_some("image_user")
+    );
+    assert_eq!(
         options["rootfs"],
         serde_json::json!({"digest": MANIFEST, "integrity": "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "size": 12345})
     );
@@ -72,8 +76,7 @@ fn stage_plan_writes_only_the_options_and_the_launcher() {
     let plan = stage_plan(MANIFEST, &["serve".to_string()], &env, resources, surface).unwrap();
     let names: Vec<&str> = plan.iter().map(|file| file.name.as_str()).collect();
     assert_eq!(names, ["options.json", "launch.py"]);
-    assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&plan[0].bytes).unwrap(),
+    let mut expected =
         // The launcher mounts the VM workspace where the service says the
         // container sees it: one owner for that path, not two.
         // The host decides the workload's capabilities, syscall filter and
@@ -88,7 +91,13 @@ fn stage_plan_writes_only_the_options_and_the_launcher() {
             "id_map": {"containerID": 0, "hostID": 100000, "size": 65536},
             "resources": {"memory_bytes": 1664u64 * 1024 * 1024, "cpu_millis": 1750, "pids": 4096},
             "surface": "terminal",
-        })
+        });
+    if cfg!(target_os = "linux") {
+        expected["workspace_owner"] = serde_json::json!("image_user");
+    }
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&plan[0].bytes).unwrap(),
+        expected
     );
     assert_eq!(super::super::CONTAINER_WORKSPACE, "/workspace");
     assert_eq!(plan[1].bytes, LAUNCHER);

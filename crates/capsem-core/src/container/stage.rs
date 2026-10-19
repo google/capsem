@@ -124,6 +124,9 @@ pub fn stage_plan<'a>(
             super::seccomp::Surface::Xpra => "xpra",
         },
     });
+    if cfg!(target_os = "linux") {
+        options["workspace_owner"] = serde_json::json!("image_user");
+    }
     if let Some(rootfs) = image.rootfs {
         digest_hex(rootfs.digest)?;
         capsem_crypto::verify::blake3_digest(rootfs.integrity)?;

@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep Linux VirtioFS workspace ownership stable across VM and OCI workload
+  metadata reads, including after resuming or cloning an existing image session.
+
 - Private network cable handoffs retain the original socket until service
   adoption, including when a reconnect replaces the cable table entry.
 
