@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Upgrade aiohttp to 3.14.5 across shipped Python locks and the debug image,
+  fixing request-header timeout and connection resource-exhaustion advisories.
+
 - Python gateway discovery requires complete URL/token pairs, keeps remote
   connections from borrowing local credentials, redacts tokens from endpoint
   representations, and refuses unsafe or incomplete local metadata.
