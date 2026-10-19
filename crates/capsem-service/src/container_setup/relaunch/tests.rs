@@ -269,6 +269,7 @@ fn a_clone_starts_without_its_sources_run_markers() {
     );
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn forgetting_a_run_upgrades_legacy_stage_before_the_next_boot() {
     let dir = tempfile::tempdir().unwrap();
