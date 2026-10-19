@@ -22,6 +22,7 @@ pub use overlay::{
     adopt_system_overlay, open_system_overlay, system_overlay_image_path, system_overlay_metadata, SYSTEM_OVERLAY_DIR,
     SYSTEM_OVERLAY_IMAGE,
 };
+#[cfg(target_os = "linux")]
 pub(crate) use spawn_identity::publish as publish_contained_private;
 pub use spawn_identity::{read_spawn_identity, write_spawn_identity};
 pub use workspace::{open_workspace, WORKSPACE_DIR};
