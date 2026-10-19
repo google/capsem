@@ -43,6 +43,26 @@ id = "RUSTSEC-2025-0098"
 ignoreUntil = 2026-12-15T00:00:00Z
 reason = "unic-ucd-version unmaintained, via urlpattern in tauri-utils; no replacement until Tauri moves"
 
+# Maintenance advisories published 2026-10-16 for crates split out of zbus 5.
+# Stable Tauri 2's Linux opener and single-instance plugins require zbus 5;
+# the available Tauri 3 alpha still does too. These crates ship on Linux and
+# have a short maintainer-approved exception while the backends are replaced.
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0371"
+ignoreUntil = 2026-11-18T00:00:00Z
+reason = "zbus_names 4.3.4 unmaintained via zbus 5.19.0 -> stable Tauri 2 opener and single-instance Linux plugins; no stable plugin release has migrated to zbus 6"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0370"
+ignoreUntil = 2026-11-18T00:00:00Z
+reason = "zvariant 5.15.0 unmaintained via zbus 5.19.0 -> stable Tauri 2 opener and single-instance Linux plugins; no stable plugin release has migrated to zbus 6"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0372"
+ignoreUntil = 2026-11-18T00:00:00Z
+reason = "zvariant_derive 5.15.0 unmaintained via zbus 5.19.0 -> stable Tauri 2 opener and single-instance Linux plugins; no stable plugin release has migrated to zbus 6"
+
 # npm advisories published with no patched release anywhere. Both packages
 # run only while building the static sites; neither is in a shipped bundle
 # or binary. Drop each entry as soon as upstream ships a fix.

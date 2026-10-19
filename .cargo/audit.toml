@@ -36,4 +36,13 @@ ignore = [
   "RUSTSEC-2025-0080",
   "RUSTSEC-2025-0100",
   "RUSTSEC-2025-0098",
+
+  # --- zbus 5 split crates unmaintained (Tauri Linux plugins) -----------
+  # The stable Tauri 2 opener and single-instance plugins require zbus 5,
+  # whose names, variant and derive crates moved into zbus 6. These are
+  # maintenance notices, not reported vulnerabilities. No stable Tauri
+  # plugin release removes them; review by 2026-11-18 and drop when it does.
+  "RUSTSEC-2026-0371",
+  "RUSTSEC-2026-0370",
+  "RUSTSEC-2026-0372",
 ]

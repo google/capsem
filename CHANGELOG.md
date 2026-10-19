@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Time-box the new zbus 5 maintenance advisories through 2026-11-18 while
+  stable Tauri's Linux opener and single-instance plugins still require the
+  split crates; the exceptions expire automatically and report no known exploit.
+
 - Private network cable answers require the exact handoff token, frame kind
   and one connected stream descriptor before service adoption or switch grants.
 
