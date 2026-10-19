@@ -68,6 +68,9 @@ def test_generated_output_roots_are_target_owned_and_distinct(
         "gate_runs": "cache/target/gate-runs",
         "packages": "cache/target/packages",
         "test_artifacts": "cache/target/tests/evidence",
+        "sdk_packages": "cache/target/sdk",
+        "inspect_packages": "cache/target/integrations/inspect-ai",
+        "mcp_packages": "cache/target/mcp/typescript",
     }
 
 
@@ -502,7 +505,12 @@ def _source_package_type():
 
 
 def test_source_package_and_sdk_keep_required_fields_and_reviewed_order() -> None:
-    from capsem_builder.gate.buildschema import PythonSdkConfig, SdkConfig, TypeScriptSdkConfig
+    from capsem_builder.gate.buildschema import (
+        PythonPackageConfig,
+        PythonSdkConfig,
+        SdkConfig,
+        TypeScriptSdkConfig,
+    )
 
     source = _source_package_type()
     fields = ("project", "manifest", "source", "tests", "build_output")
@@ -519,11 +527,15 @@ def test_source_package_and_sdk_keep_required_fields_and_reviewed_order() -> Non
     assert tuple(TypeScriptSdkConfig.model_fields) == (*SdkConfig.model_fields, "build_timeout_seconds")
     assert all(field.is_required() for field in TypeScriptSdkConfig.model_fields.values())
     assert gate_config.GateConfig.model_fields["sdk_python"].annotation is PythonSdkConfig
+    assert issubclass(PythonPackageConfig, source)
+    assert tuple(PythonPackageConfig.model_fields) == (*fields, "pytest_scratch")
+    assert all(field.is_required() for field in PythonPackageConfig.model_fields.values())
+    assert gate_config.GateConfig.model_fields["integrations_inspect_ai"].annotation is PythonPackageConfig
     assert tuple(PythonSdkConfig.model_fields) == (
-        *SdkConfig.model_fields,
+        *PythonPackageConfig.model_fields,
+        "specification",
         "environment_python",
         "package_build_requirements",
-        "pytest_scratch",
     )
     assert all(field.is_required() for field in PythonSdkConfig.model_fields.values())
 

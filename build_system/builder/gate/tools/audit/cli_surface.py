@@ -131,11 +131,19 @@ def _nested_subcommand(fields: str) -> tuple[str, bool] | None:
     Without this a command whose subcommands live in a field was one leaf, so
     `images pull` could have shipped without reaching the approved surface.
     """
-    match = re.search(
-        rf"#\[command\(\s*subcommand\s*\)\]\s*(?:pub(?:\([^)]*\))?\s+)?\w+\s*:\s*(Option\s*<\s*)?{TYPE_PATH}",
-        fields,
+    marker = re.search(r"#\[command\(\s*subcommand\s*\)\]", fields)
+    if marker is None:
+        return None
+    # Skip annotations and comments, never another field or its separator.
+    # Attribute strings can themselves contain brackets and commas.
+    intervening = r'(?:\s|//[^\n]*(?:\n|$)|/\*.*?\*/|#\[(?:[^\]"]|"(?:\\.|[^"\\])*")*\])*'
+    match = re.match(
+        rf"{intervening}(?:pub(?:\([^)]*\))?\s+)?\w+\s*:\s*(Option\s*<\s*)?{TYPE_PATH}",
+        fields[marker.end():], re.DOTALL,
     )
-    return (match.group(2), bool(match.group(1))) if match else None
+    if match is None:
+        raise SurfaceError("unparsed subcommand field in CLI surface")
+    return match.group(2), bool(match.group(1))
 
 
 def cli_paths(source: str, enum_name: str, prefix: str = "") -> list[str]:

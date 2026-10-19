@@ -37,10 +37,14 @@ class SdkConfig(SourcePackageConfig):
     specification: str
 
 
-class PythonSdkConfig(SdkConfig):
+class PythonPackageConfig(SourcePackageConfig):
+    pytest_scratch: str
+
+
+class PythonSdkConfig(PythonPackageConfig):
+    specification: str
     environment_python: str
     package_build_requirements: str
-    pytest_scratch: str
 
 
 class TypeScriptSdkConfig(SdkConfig):
@@ -49,6 +53,7 @@ class TypeScriptSdkConfig(SdkConfig):
 
 class NodePackageConfig(Strict):
     project: str
+    build_output: str
 
 
 class HostImageConfig(Strict):

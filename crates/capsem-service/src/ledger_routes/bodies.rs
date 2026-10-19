@@ -129,7 +129,7 @@ pub(crate) fn validate_event_id(raw: &str) -> Result<&str, AppError> {
     if hex {
         return Ok(raw);
     }
-    Err(AppError(
+    Err(AppError::new(
         StatusCode::BAD_REQUEST,
         format!(
             "event id must be exactly {EVENT_ID_LEN} lowercase hex characters; got {} character(s)",

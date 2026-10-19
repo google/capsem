@@ -16,12 +16,18 @@ EXISTING_TOOLS = {
     "check_public_binary_release",
     "check_release_graph_diff",
     "check_remote_release_readiness",
+    "client_consumer_probes",
+    "client_consumers",
+    "client_package_archives",
+    "client_publishers",
+    "client_registry",
     "fetch_channel_source_manifest",
     "fetch_release_artifacts",
     "finalize_binary_staging_fixtures",
     "generate_host_binary_sbom",
     "list_release_manifest_assets",
     "package_payload",
+    "package_rust_sdk",
     "project_first_channel_before",
     "prove_deb_platform_support",
     "prove_release_runtime_assets",
@@ -60,7 +66,7 @@ COMMANDS = {
     "write-release-notes.py": "write_release_notes",
     "write-release-summary.py": "write_release_summary",
 }
-SUPPORT = {"release_pairing_baseline", "remote_ci_gate"}
+SUPPORT = {"public_install_smoke", "release_pairing_baseline", "remote_ci_gate"}
 EXECUTABLES = {
     "local-release-glowup.py",
     "write-binary-channel-staging-proof.py",

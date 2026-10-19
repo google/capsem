@@ -112,6 +112,7 @@ def test_network_open_apt_layers_persist_partial_snapshot_downloads() -> None:
         assert "id=${APT_LISTS_CACHE_ID},target=/var/lib/apt/lists,sharing=locked" in source
         assert "id=${APT_ARCHIVES_CACHE_ID},target=/var/cache/apt,sharing=locked" in source
         assert "rm -f /etc/apt/apt.conf.d/docker-clean" in source
+        assert "rm -f /var/lib/apt/lists/lock /var/cache/apt/archives/lock" in source
 
     for helper in ("materialize-install-os.sh", "swap-dev-libs.sh"):
         source = (OWNER / helper).read_text(encoding="utf-8")

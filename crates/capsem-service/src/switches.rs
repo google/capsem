@@ -372,7 +372,7 @@ async fn handshake(
 ) -> Result<(Arc<SwitchHost>, u64, std::os::unix::net::UnixStream)> {
     let handoff = crate::owner_handoff::OwnerHandoff::acquire(state, vm_id)
         .await
-        .map_err(|error| anyhow!(error.1))?;
+        .map_err(|error| anyhow!(error.body.error))?;
     let summary = state
         .networks
         .lock()
@@ -401,7 +401,7 @@ async fn handshake(
     };
     let handoff_socket = handoff
         .validate(state, &handoff_socket)
-        .map_err(|error| anyhow!(error.1))?;
+        .map_err(|error| anyhow!(error.body.error))?;
     let socket = tokio::net::UnixStream::connect(&handoff_socket)
         .await
         .and_then(|socket| socket.into_std())

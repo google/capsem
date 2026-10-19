@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate import host
+from capsem_builder.gate.actions import Run
 from capsem_builder.gate.content import RuntimeContent
 from capsem_builder.gate.module_glowup import glowup
 from capsem_builder.gate.plan import Plan
@@ -21,6 +22,7 @@ PREPARED = (
     "sdk.python.sync", "functional.sdk.rust.example", "fast.sdk.python.build",
     "fast.sdk.typescript.build", "fast.sdk.typescript.package-prewarm",
     "functional.sdk.python.package-prewarm",
+    "integrations.inspect-ai.sync", "fast.integrations.inspect-ai.build",
 )
 
 
@@ -41,20 +43,35 @@ def test_python_sdk_tests_cannot_start_before_the_archives_they_install_are_buil
         "clean installed-package acceptance must consume this source's wheel and sdist, "
         "not whichever archive a previous run happened to leave"
     )
+    assert {"fast.sdk.python.build", "fast.integrations.inspect-ai.build"} <= _ancestors(
+        plan, "fast.integrations.inspect-ai.tests"
+    ), (
+        "clean installed inspect-capsem acceptance must consume this source's SDK and "
+        "inspect-capsem wheel and sdist archives"
+    )
 
 
-def test_python_sdk_pytest_cannot_empty_the_other_suites_shared_basetemp() -> None:
+def test_python_projects_cannot_empty_each_others_or_the_shared_pytest_scratch() -> None:
     import shlex
 
-    plan = gate_plan("test-fast")
-    argv = shlex.split(plan.step_named("fast.sdk.python.tests").actions[0].render())
-    assert "--basetemp" in argv, (
-        "SDK pytest has a separate project without tests/conftest.py: it must override "
-        "inherited basetemp or it deletes concurrent Citadel tmp_path directories"
-    )
     config = gate_config.load(PROJECT_ROOT)
-    scratch = argv[argv.index("--basetemp") + 1]
-    assert scratch == str(config.path(config.sdk_python.pytest_scratch))
+    plan = gate_plan("test-fast")
+    scratch_paths = []
+    for label, settings in (
+        ("fast.sdk.python.tests", config.sdk_python),
+        ("fast.integrations.inspect-ai.tests", config.integrations_inspect_ai),
+    ):
+        commands = [action for action in plan.step_named(label).actions if isinstance(action, Run)]
+        assert len(commands) == 1
+        argv = shlex.split(commands[0].render())
+        assert "--basetemp" in argv, (
+            "separate Python projects must override inherited basetemp rather than "
+            "deleting concurrent Citadel tmp_path directories"
+        )
+        scratch = argv[argv.index("--basetemp") + 1]
+        assert scratch == str(config.path(settings.pytest_scratch))
+        scratch_paths.append(scratch)
+    assert scratch_paths[0] != scratch_paths[1]
 
 
 def test_typescript_package_acceptance_has_network_prewarm_outside_the_sandbox() -> None:
@@ -83,14 +100,17 @@ def test_functional_installed_sdks_use_current_archives_and_declared_network_pre
 
     plan = gate_plan("test-functional")
     python = "fast.sdk.python.build"
+    inspect_pkg = "fast.integrations.inspect-ai.build"
     npm = "fast.sdk.typescript.build"
     warmed = "fast.sdk.typescript.package-prewarm"
-    assert {python, npm, warmed} <= set(plan.labels), "Braavos needs actual installed SDK artifacts"
+    assert {python, inspect_pkg, npm, warmed} <= set(plan.labels), "Braavos needs actual installed SDK artifacts"
     assert "sdk.python.sync" in _ancestors(plan, python)
+    assert "integrations.inspect-ai.sync" in _ancestors(plan, inspect_pkg)
     assert npm in _ancestors(plan, warmed)
     assert Needs.NETWORK in plan.step_named(warmed).needs
     assert "[outside kernel sandbox]" in plan.step_named(warmed).actions[0].render()
     assert "--no-isolation" in plan.step_named(python).actions[0].render()
+    assert "--no-isolation" in plan.step_named(inspect_pkg).actions[0].render()
 
 
 def test_candidate_rehydrates_python_build_backends_after_cache_enforcement() -> None:
@@ -109,8 +129,8 @@ def test_candidate_rehydrates_python_build_backends_after_cache_enforcement() ->
 def test_composed_sdk_packages_have_one_producer_and_no_dependency_cycle() -> None:
     plan = gate_plan("candidate")
     labels = plan.labels
-    for label in ("fast.sdk.python.build", "fast.sdk.typescript.build",
-                  "fast.sdk.typescript.package-prewarm"):
+    for label in ("fast.sdk.python.build", "fast.integrations.inspect-ai.build",
+                  "fast.sdk.typescript.build", "fast.sdk.typescript.package-prewarm"):
         assert labels.count(label) == 1
 
 
@@ -135,8 +155,11 @@ def test_the_packages_the_suites_drive_are_among_the_installed_workspaces() -> N
 
 def test_sdk_preparation_stays_offline_inside_the_sandbox() -> None:
     plan = gate_plan("test-functional")
-    sync = plan.step_named("sdk.python.sync").actions[0].render()
-    assert "--no-build-isolation" in sync, "an isolated build fetches its backend from the network"
+    for label in ("sdk.python.sync", "integrations.inspect-ai.sync"):
+        sync = plan.step_named(label).actions[0].render()
+        assert "--no-build-isolation" in sync, (
+            "an isolated build fetches its backend from the network"
+        )
     example = plan.step_named("functional.sdk.rust.example").actions[0].render()
     assert "--frozen" in example, "cargo must not reach the registry from inside the sandbox"
 

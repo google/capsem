@@ -22,6 +22,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..policy.dockerpolicy import ContainerNetwork
 from . import config as gate_config
 from . import host, installimage
 from .content import InstallContent, SelectedInstallContent
@@ -155,20 +156,19 @@ class InstallContainer:
 
     def start(self, *, options: list[str]) -> None:
         self._runner.note("Starting systemd container...")
-        cgroup = self._settings.cgroup_path
         image = installimage.require_local_image(self._runner, self._config)
         # A stable name plus a preemptive removal is what recovers from a
         # predecessor that died before its own cleanup -- a cargo SIGTERM under
         # a Colima OOM, for instance.
         self._docker.remove(self.name)
-        self._docker.run_detached(
+        start_systemd_container(
+            self._docker, self._settings,
             network=self._settings.runtime_network,
             name=self.name,
             image=image,
             command=systemd_command(self._settings, self._runtime_user_devices),
-            options=["--privileged", "--cgroupns=host", *options, *self._tmpfs()],
+            options=options,
             mounts=[
-                Mount(cgroup, cgroup, "rw"),
                 Mount.generated(
                     str(self._config.path(self._settings.layout.glowup_evidence)),
                     f"{self._settings.mount}/{self._settings.layout.glowup_evidence}",
@@ -186,8 +186,8 @@ class InstallContainer:
                 *self._content_mounts(),
                 *(Mount.generated(str(path), str(path)) for path in self._inputs),
             ],
+            sleep=self._sleep,
         )
-        self._await_systemd()
         claim_owned_paths(self._docker, self.name, self._settings)
 
     def verify_vm_device_access(self) -> None:
@@ -211,15 +211,6 @@ class InstallContainer:
             mounts.append(Mount.generated(str(root), str(root)))
         return tuple(mounts)
 
-    def _await_systemd(self) -> None:
-        await_systemd(
-            self._docker,
-            self.name,
-            attempts=self._settings.systemd_ready_attempts,
-            interval=self._settings.systemd_ready_interval_seconds,
-            sleep=self._sleep,
-        )
-
     def return_paths(self) -> None:
         """Hand the container's writes back to the host user that owns them."""
         uid, gid = host.user()
@@ -229,9 +220,6 @@ class InstallContainer:
         """Return one host-owned path mid-run, before a host tool reads it."""
         uid, gid = host.user()
         self._docker.shell(self.name, f"mkdir -p {path} && chown -R {uid}:{gid} {path}")
-
-    def _tmpfs(self) -> list[str]:
-        return [flag for path in self._settings.tmpfs_paths for flag in ("--tmpfs", path)]
 
     def stop(self) -> None:
         self._docker.remove(self.name)
@@ -243,6 +231,26 @@ class InstallContainer:
                 self._docker.exec(self.name, list(command), check=False)
             except (GateError, OSError) as error:
                 self._runner.note(f"Install storage diagnostics unavailable: {error}")
+
+
+def start_systemd_container(
+    docker: Docker, settings: InstallConfig, *, name: str, image: str,
+    command: list[str], network: ContainerNetwork,
+    options: list[str] | None = None, mounts: list[Mount] | None = None,
+    attempts: int | None = None,
+    sleep=time.sleep,
+) -> None:
+    """One native-supervisor boot primitive for sealed and public install proofs."""
+    tmpfs = [flag for path in settings.tmpfs_paths for flag in ("--tmpfs", path)]
+    docker.run_detached(
+        name=name, image=image, command=command, network=network,
+        options=["--privileged", "--cgroupns=host", *(options or []), *tmpfs],
+        mounts=[Mount(settings.cgroup_path, settings.cgroup_path, "rw"), *(mounts or [])],
+    )
+    await_systemd(
+        docker, name, attempts=settings.systemd_ready_attempts if attempts is None else attempts,
+        interval=settings.systemd_ready_interval_seconds, sleep=sleep,
+    )
 
 
 def await_systemd(

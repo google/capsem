@@ -148,7 +148,7 @@ async fn replaced_generation_cannot_supply_an_accepted_command_reply() {
     )
     .await;
     owner.await.unwrap();
-    assert!(result.unwrap_err().contains("VM owner changed"));
+    assert!(result.unwrap_err().to_string().contains("VM owner changed"));
 }
 
 #[tokio::test]

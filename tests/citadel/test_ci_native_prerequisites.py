@@ -18,6 +18,11 @@ INSTALL_BINFMT_RATIONALE = (
     "through the existing host bootstrap before entering the gate; CI otherwise fails "
     "assets.preflight after spending twenty minutes building the install environment."
 )
+PREBUILT_BOOTSTRAP_RATIONALE = (
+    "Install the declared prebuilt tools before the complete host bootstrap. "
+    "CI previously spent 18 minutes source-building the same pinned Cargo tools "
+    "that a later step downloaded in 6 seconds. Keep bootstrap's host prerequisites."
+)
 
 
 def native_builds(source: str) -> set[str]:
@@ -78,6 +83,45 @@ def _assert_install_bootstrap(steps) -> None:
 
 def test_source_install_ci_bootstraps_cross_arch_host_before_complete_proof() -> None:
     _assert_install_bootstrap(workflow_jobs(ROOT / ".github/workflows/ci.yaml")["test-install"]["steps"])
+
+
+def _assert_prebuilt_before_bootstrap(steps) -> None:
+    select = next(index for index, step in enumerate(steps) if step.get("id") == "gate_tools")
+    install = next(index for index, step in enumerate(steps)
+                   if step.get("with", {}).get("tool") == "${{ steps.gate_tools.outputs.list }}")
+    bootstrap = next(index for index, step in enumerate(steps)
+                     if step.get("run") == "sh bootstrap.sh --yes")
+    assert select < install < bootstrap, PREBUILT_BOOTSTRAP_RATIONALE
+    for step in (steps[select], steps[install]):
+        assert "if" not in step and not step.get("continue-on-error"), PREBUILT_BOOTSTRAP_RATIONALE
+    assert steps[install]["uses"].startswith("taiki-e/install-action@"), PREBUILT_BOOTSTRAP_RATIONALE
+    _assert_install_bootstrap(steps)
+
+
+def test_source_install_ci_uses_prebuilt_tools_before_bootstrap() -> None:
+    _assert_prebuilt_before_bootstrap(workflow_jobs(ROOT / ".github/workflows/ci.yaml")["test-install"]["steps"])
+
+
+@pytest.mark.parametrize("mutation", ["tools-late", "select-late", "tools-conditional", "select-conditional", "ignored-failure"])
+def test_prebuilt_bootstrap_guard_refuses_disabled_or_late_tools(mutation: str) -> None:
+    steps = deepcopy(workflow_jobs(ROOT / ".github/workflows/ci.yaml")["test-install"]["steps"])
+    _assert_prebuilt_before_bootstrap(steps)
+    select = next(step for step in steps if step.get("id") == "gate_tools")
+    install = next(step for step in steps if step.get("with", {}).get("tool") == "${{ steps.gate_tools.outputs.list }}")
+    if mutation == "tools-late":
+        steps.remove(install)
+        steps.append(install)
+    elif mutation == "select-late":
+        steps.remove(select)
+        steps.append(select)
+    elif mutation == "tools-conditional":
+        install["if"] = "${{ false }}"
+    elif mutation == "select-conditional":
+        select["if"] = "${{ false }}"
+    else:
+        install["continue-on-error"] = True
+    with pytest.raises(AssertionError, match="prebuilt tools"):
+        _assert_prebuilt_before_bootstrap(steps)
 
 
 @pytest.mark.parametrize("mutation", ["missing", "late", "conditional", "duplicate-assets"])

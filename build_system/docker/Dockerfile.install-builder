@@ -54,6 +54,7 @@ RUN test -n "${APT_SNAPSHOT_BASE}" \
 RUN --mount=type=cache,id=${APT_LISTS_CACHE_ID},target=/var/lib/apt/lists,sharing=locked \
     --mount=type=cache,id=${APT_ARCHIVES_CACHE_ID},target=/var/cache/apt,sharing=locked \
     rm -f /etc/apt/apt.conf.d/docker-clean \
+    && rm -f /var/lib/apt/lists/lock /var/cache/apt/archives/lock \
     && materialize-install-os "${APT_SNAPSHOT_BASE}" "${APT_SNAPSHOT_ID}" ${APT_PACKAGES}
 
 # The privileged proof needs a real systemd userspace but must not disturb

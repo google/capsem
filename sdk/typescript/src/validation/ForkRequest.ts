@@ -5,5 +5,6 @@ import type {ForkRequest} from "../models/ForkRequest.js";
 
 export const ForkRequestSchema: z.ZodType<ForkRequest> = z.object({
   "description": z.string().nullable().exactOptional(),
+  "labels": z.record(z.string(), z.string()).nullable().exactOptional(),
   "name": z.string(),
 });

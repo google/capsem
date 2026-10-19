@@ -10,12 +10,12 @@ it('creates bound VM handles with service defaults and shared lifetime', async (
   async (url, received) => {
     const hv = new Hypervisor(url, 'secret');
     const network = {...sample(schemas.NetworkInfo ?? {}) as object, name: 'team'} as NetworkInfo;
-    const vm = await hv.create({name: 'chosen', memory: 8, cpus: 4, networks: [network]});
+    const vm = await hv.create({name: 'chosen', memory: 8, cpus: 4, labels: {suite: 'eval'}, networks: [network]});
     expect(vm).toBeInstanceOf(VM);
     expect(vm.id).toBe('vm-0');
     expect(vm.name).toBe('chosen');
     expect(JSON.parse(received[0]?.body.toString() ?? '')).toEqual({
-      name: 'chosen', persistent: true, cpus: 4, ram_mb: 8192, env: null, networks: ['team'],
+      name: 'chosen', persistent: true, cpus: 4, ram_mb: 8192, env: null, labels: {suite: 'eval'}, networks: ['team'],
     });
     vm.close();
     await expect(vm.info()).rejects.toThrow('closed');
@@ -56,7 +56,7 @@ it('maps every facade method through HTTP and resolves a name once', async () =>
       await vm.log();
       await vm.files.list(); await vm.files.list('/nested', {depth: 2});
       await vm.files.list('/root', {exact: true});
-      const fork = await vm.fork('copy', {description: 'checkpoint'});
+      const fork = await vm.fork('copy', {description: 'checkpoint', labels: {suite: 'fork'}});
       expect(fork.id).toBe('fork-0'); expect(fork.name).toBe('copy');
       fork.close();
       const another = await vm.fork('another'); another.close();
@@ -76,6 +76,13 @@ it('maps every facade method through HTTP and resolves a name once', async () =>
       expect(received.some(request => request.url === '/vms/vm-0/files/list')).toBe(true);
       expect(received.some(request => request.url === '/vms/vm-0/files/list?path=%2Froot&exact=true')).toBe(true);
       expect(received.some(request => request.url.includes('layers=fs%2Cexec'))).toBe(true);
+      const forks = received.filter(request => request.url === '/vms/vm-0/fork');
+      expect(JSON.parse(forks[0]?.body.toString() ?? '')).toEqual({
+        name: 'copy', description: 'checkpoint', labels: {suite: 'fork'},
+      });
+      expect(JSON.parse(forks[1]?.body.toString() ?? '')).toEqual({
+        name: 'another', description: null,
+      });
       await hv.info(); await hv.list(); await hv.log();
       await hv.log({source: HostLogSource.GATEWAY, tail: 2});
       await hv.run('printf ok', {timeout_secs: 4});
@@ -145,9 +152,9 @@ it.each([1, 8])('accepts positive memory in GiB: %s', async memory => {
   await gateway((request, response) => state.handle(request, response), async (url, received) => {
     const hv = new Hypervisor(url, 'secret');
     try {
-      const vm = await hv.create({memory, env: {LANG: 'C'}});
+      const vm = await hv.create({memory, env: {LANG: 'C'}, labels: {}});
       const created = received.find(entry => entry.url === '/vms/create');
-      expect(JSON.parse(created?.body.toString() ?? '')).toMatchObject({ram_mb: memory * 1024, env: {LANG: 'C'}});
+      expect(JSON.parse(created?.body.toString() ?? '')).toMatchObject({ram_mb: memory * 1024, env: {LANG: 'C'}, labels: {}});
       vm.close();
     } finally {hv.close();}
   });

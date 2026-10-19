@@ -1,13 +1,56 @@
 //! One request and its correlated reply over a fresh VM-owner IPC connection.
 use super::*;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum IpcCommandError {
+    Timeout { timeout_secs: u64 },
+    Failed(String),
+}
+
+impl std::fmt::Display for IpcCommandError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Timeout { timeout_secs } => write!(f, "IPC command timed out after {timeout_secs}s"),
+            Self::Failed(msg) => f.write_str(msg),
+        }
+    }
+}
+
+impl From<String> for IpcCommandError {
+    fn from(error: String) -> Self {
+        Self::Failed(error)
+    }
+}
+
+impl From<IpcCommandError> for String {
+    fn from(error: IpcCommandError) -> Self {
+        error.to_string()
+    }
+}
+
+impl IpcCommandError {
+    pub(crate) fn into_exec_app_error(self, prefix_failed: bool) -> AppError {
+        match self {
+            Self::Timeout { timeout_secs } => AppError::exec_timeout(format!("exec failed: {self}"), timeout_secs),
+            Self::Failed(msg) if prefix_failed => {
+                AppError::new(StatusCode::INTERNAL_SERVER_ERROR, format!("exec failed: {msg}"))
+            }
+            Self::Failed(msg) => AppError::new(StatusCode::INTERNAL_SERVER_ERROR, msg),
+        }
+    }
+
+    pub(crate) fn into_internal_app_error(self) -> AppError {
+        AppError::new(StatusCode::INTERNAL_SERVER_ERROR, self.to_string())
+    }
+}
+
 #[tracing::instrument(skip_all, fields(cmd = ?std::mem::discriminant(&cmd), timeout_secs = ?timeout_secs))]
 pub(crate) async fn send_ipc_command(
     state: &ServiceState,
     uds_path: &std::path::Path,
     cmd: ServiceToProcess,
     timeout_secs: Option<u64>,
-) -> Result<ProcessToService, String> {
+) -> Result<ProcessToService, IpcCommandError> {
     let owner = owner_connection::OwnerConnection::acquire(state, uds_path)?;
     send_owner_command(state, &owner, cmd, timeout_secs).await
 }
@@ -17,12 +60,12 @@ pub(crate) async fn send_owner_command(
     owner: &owner_connection::OwnerConnection,
     cmd: ServiceToProcess,
     timeout_secs: Option<u64>,
-) -> Result<ProcessToService, String> {
+) -> Result<ProcessToService, IpcCommandError> {
     let (tx, rx) = owner.open(state, "capsem-service", false).await?;
 
     tx.send(cmd.clone())
         .await
-        .map_err(|e| format!("failed to send IPC command: {e}"))?;
+        .map_err(|e| IpcCommandError::Failed(format!("failed to send IPC command: {e}")))?;
 
     let deadline = timeout_secs.map(|secs| tokio::time::Instant::now() + std::time::Duration::from_secs(secs));
     loop {
@@ -31,18 +74,18 @@ pub(crate) async fn send_owner_command(
                 Ok(Ok(msg)) => msg,
                 Ok(Err(e)) => {
                     error!(?e, "IPC receive error");
-                    return Err(format!("IPC connection closed: {e}"));
+                    return Err(IpcCommandError::Failed(format!("IPC connection closed: {e}")));
                 }
                 Err(_) => {
-                    let secs = timeout_secs.unwrap_or_default();
-                    return Err(format!("IPC command timed out after {secs}s"));
+                    let timeout_secs = timeout_secs.unwrap_or_default();
+                    return Err(IpcCommandError::Timeout { timeout_secs });
                 }
             },
             None => match rx.recv().await {
                 Ok(msg) => msg,
                 Err(e) => {
                     error!(?e, "IPC receive error");
-                    return Err(format!("IPC connection closed: {e}"));
+                    return Err(IpcCommandError::Failed(format!("IPC connection closed: {e}")));
                 }
             },
         };
@@ -60,3 +103,6 @@ pub(crate) async fn send_owner_command(
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -36,6 +36,13 @@ def read_host_events(path: Path) -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
+def _binary(event: dict[str, Any], field: str) -> bytes:
+    value = event[field]
+    if not isinstance(value, (bytes, bytearray, memoryview)):
+        raise ValueError(f"host event {field} must be binary data")
+    return bytes(value)
+
+
 def chain_hash(previous: bytes, event: dict[str, Any]) -> bytes:
     """The Rust `chain_hash`: every field, length-prefixed in a fixed order."""
     hasher = blake3.blake3(previous)
@@ -44,7 +51,7 @@ def chain_hash(previous: bytes, event: dict[str, Any]) -> bytes:
         event["kind"].encode(),
         None if event["session_id"] is None else event["session_id"].encode(),
         event["actor"].encode(),
-        bytes(event["detail"]),
+        _binary(event, "detail"),
         None if event["trace_id"] is None else event["trace_id"].encode(),
     ):
         if value is None:
@@ -58,11 +65,11 @@ def verify_chain(events: list[dict[str, Any]]) -> int:
     """How many events the chain covers; `ValueError` naming the first break."""
     previous = GENESIS_HASH
     for index, event in enumerate(events):
-        if bytes(event["prev_hash"]) != previous or bytes(event["hash"]) != chain_hash(
+        if _binary(event, "prev_hash") != previous or _binary(event, "hash") != chain_hash(
             previous, event
         ):
             raise ValueError(f"host event chain is broken at event {index}")
-        previous = bytes(event["hash"])
+        previous = _binary(event, "hash")
     return len(events)
 
 

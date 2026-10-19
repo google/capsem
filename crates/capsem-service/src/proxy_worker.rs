@@ -470,7 +470,7 @@ impl WorkerProcess {
             .await
             .context("send proxy shutdown")?;
         let stopped = tokio::time::timeout(SHUTDOWN_TIMEOUT, async {
-            match self.recv_event().await? {
+            match self.recv_shutdown_event().await? {
                 ProxyControlEvent::Stopped { generation } if generation == self.generation => {}
                 event => bail!("proxy worker sent {event:?} during shutdown"),
             }
@@ -487,6 +487,23 @@ impl WorkerProcess {
                 let _ = self.child.start_kill();
                 let _ = self.child.wait().await;
                 bail!("proxy worker bounded shutdown timed out")
+            }
+        }
+    }
+
+    async fn recv_shutdown_event(&mut self) -> Result<ProxyControlEvent> {
+        loop {
+            let frame = self
+                .control_events
+                .recv()
+                .await
+                .context("proxy control event pump stopped during shutdown")??;
+            if !frame.fds.is_empty() {
+                bail!("proxy worker returned a descriptor during shutdown");
+            }
+            let event = decode_proxy_control_event(&frame.bytes)?;
+            if !self.absorb_traffic_close(event)? {
+                return Ok(event);
             }
         }
     }

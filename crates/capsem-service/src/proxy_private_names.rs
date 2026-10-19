@@ -52,10 +52,10 @@ pub(crate) async fn serve(state: Arc<ServiceState>, vm_id: String, stream: UnixS
                         }
                     }
                 }
-                Err(error) if error.0 == axum::http::StatusCode::NOT_FOUND => {
+                Err(error) if error.status == axum::http::StatusCode::NOT_FOUND => {
                     ProxyPrivateNameResponse::NotFound { request_id }
                 }
-                Err(error) => rejected(request_id, error.1),
+                Err(error) => rejected(request_id, error.body.error),
             }
         };
         sender

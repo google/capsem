@@ -63,9 +63,67 @@ pub struct LogsResponse {
     pub process_logs: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorCode {
+    VmNotFound,
+    CreateTimeout,
+    ExecTimeout,
+    ConfigurationRequired,
+    UnsupportedCapability,
+    UnknownScopeProfile,
+    PolicyDenied,
+    ScopeDenied,
+    ConnectionUnavailable,
+    ReauthRequired,
+    StorageUnavailable,
+    StorageCommitFailed,
+    TransactionExpired,
+    TransactionCancelled,
+    InvalidCallback,
+    ProviderRejected,
+    ProviderTimeout,
+    OwnerChanged,
+    SessionUnavailable,
+    GrantUnavailable,
+    RequestConflict,
+    RevocationPending,
+}
+
+impl From<crate::connections::CredentialErrorCode> for ErrorCode {
+    fn from(code: crate::connections::CredentialErrorCode) -> Self {
+        use crate::connections::CredentialErrorCode as C;
+        match code {
+            C::ConfigurationRequired => Self::ConfigurationRequired,
+            C::UnsupportedCapability => Self::UnsupportedCapability,
+            C::UnknownScopeProfile => Self::UnknownScopeProfile,
+            C::PolicyDenied => Self::PolicyDenied,
+            C::ScopeDenied => Self::ScopeDenied,
+            C::ConnectionUnavailable => Self::ConnectionUnavailable,
+            C::ReauthRequired => Self::ReauthRequired,
+            C::StorageUnavailable => Self::StorageUnavailable,
+            C::StorageCommitFailed => Self::StorageCommitFailed,
+            C::TransactionExpired => Self::TransactionExpired,
+            C::TransactionCancelled => Self::TransactionCancelled,
+            C::InvalidCallback => Self::InvalidCallback,
+            C::ProviderRejected => Self::ProviderRejected,
+            C::ProviderTimeout => Self::ProviderTimeout,
+            C::OwnerChanged => Self::OwnerChanged,
+            C::SessionUnavailable => Self::SessionUnavailable,
+            C::GrantUnavailable => Self::GrantUnavailable,
+            C::RequestConflict => Self::RequestConflict,
+            C::RevocationPending => Self::RevocationPending,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default, ToSchema)]
 pub struct ErrorResponse {
     pub error: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub code: Option<String>,
+    pub code: Option<ErrorCode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vm_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_secs: Option<u64>,
 }
