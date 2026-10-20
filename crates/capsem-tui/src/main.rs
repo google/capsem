@@ -203,6 +203,9 @@ fn run_loop(
                         if matches!(action, ControlAction::CreateSession { .. }) {
                             app.complete_create(true);
                         }
+                        if matches!(action, ControlAction::CacheImage { .. }) {
+                            app.complete_image_cache(true);
+                        }
                         app.clear_control_progress();
                         app.set_control_message(outcome.message);
                         if let Some(session_id) = outcome.focus_session {
@@ -213,6 +216,9 @@ fn run_loop(
                     ControlEvent::Finished(action, Err(error)) => {
                         if matches!(action, ControlAction::CreateSession { .. }) {
                             app.complete_create(false);
+                        }
+                        if matches!(action, ControlAction::CacheImage { .. }) {
+                            app.complete_image_cache(false);
                         }
                         app.clear_control_progress();
                         app.set_control_message(error);
@@ -332,6 +338,9 @@ fn handle_terminal_event(
                     if matches!(action, ControlAction::CreateSession { .. }) {
                         app.complete_create(false);
                     }
+                    if matches!(action, ControlAction::CacheImage { .. }) {
+                        app.complete_image_cache(false);
+                    }
                     app.set_control_message("fixture action ignored");
                 }
             }
@@ -406,7 +415,7 @@ impl ImageCatalogBridge {
         thread::spawn(move || {
             while let Ok(generation) = requests.recv() {
                 let result = provider
-                    .list_images()
+                    .list_images(true)
                     .map_err(|error| format!("image catalog unavailable: {error}"));
                 if results.send((generation, result)).is_err() {
                     break;

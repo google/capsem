@@ -1,6 +1,79 @@
 use super::*;
 
 #[test]
+fn selected_image_can_be_cached_without_creating_a_session() {
+    let mut app = App::new(fixture_state());
+    app.handle_key(key(KeyCode::Char('n'), KeyModifiers::ALT));
+    let generation = app.take_catalog_request().unwrap();
+    app.apply_image_catalog(generation, Ok(catalog()));
+    app.handle_key(key(KeyCode::Tab, KeyModifiers::NONE));
+    app.handle_key(key(KeyCode::Down, KeyModifiers::NONE));
+    assert_eq!(
+        app.handle_key(key(KeyCode::Char('p'), KeyModifiers::CONTROL)),
+        AppAction::Invoke(ControlAction::CacheImage {
+            image: catalog().images[0].image.clone().unwrap(),
+            name: "code".into(),
+        })
+    );
+    assert_eq!(app.overlay(), AppOverlay::Create);
+    assert_eq!(
+        app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
+        AppAction::Consumed
+    );
+    app.complete_image_cache(false);
+    assert_eq!(app.create_draft().unwrap().selected_image().unwrap().name, "code");
+    assert!(matches!(
+        app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
+        AppAction::Invoke(ControlAction::CreateSession { image: Some(_), .. })
+    ));
+}
+
+#[test]
+fn catalog_retry_preserves_the_choice_and_never_silently_creates_a_plain_vm() {
+    let mut app = App::new(fixture_state());
+    app.handle_key(key(KeyCode::Char('n'), KeyModifiers::ALT));
+    let generation = app.take_catalog_request().unwrap();
+    app.apply_image_catalog(generation, Ok(catalog()));
+    app.handle_key(key(KeyCode::Tab, KeyModifiers::NONE));
+    app.handle_key(key(KeyCode::Down, KeyModifiers::NONE));
+    app.handle_key(key(KeyCode::Char('r'), KeyModifiers::CONTROL));
+    let refreshed = app.take_catalog_request().expect("retry request");
+    assert_ne!(generation, refreshed);
+    app.apply_image_catalog(generation, Ok(catalog()));
+    assert!(matches!(
+        app.create_draft().unwrap().catalog,
+        crate::app::ImageCatalog::Loading
+    ));
+    let mut empty = catalog();
+    empty.images.clear();
+    app.apply_image_catalog(refreshed, Ok(empty));
+    assert_eq!(
+        app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
+        AppAction::Consumed
+    );
+}
+
+#[test]
+fn successful_cache_refreshes_readiness_without_losing_the_selected_image() {
+    let mut app = App::new(fixture_state());
+    app.handle_key(key(KeyCode::Char('n'), KeyModifiers::ALT));
+    let generation = app.take_catalog_request().unwrap();
+    app.apply_image_catalog(generation, Ok(catalog()));
+    app.handle_key(key(KeyCode::Tab, KeyModifiers::NONE));
+    app.handle_key(key(KeyCode::Down, KeyModifiers::NONE));
+    app.handle_key(key(KeyCode::Char('p'), KeyModifiers::CONTROL));
+    app.complete_image_cache(true);
+    let fresh = app.take_catalog_request().unwrap();
+    let mut response = catalog();
+    response.images[0].cached = capsem_sdk::models::ImageCacheState::Ready;
+    response.images.reverse();
+    app.apply_image_catalog(fresh, Ok(response));
+    let selected = app.create_draft().unwrap().selected_image().unwrap();
+    assert_eq!(selected.name, "code");
+    assert_eq!(selected.cached, capsem_sdk::models::ImageCacheState::Ready);
+}
+
+#[test]
 fn create_dialog_offers_an_explicit_image_choice() {
     let mut app = App::new(fixture_state());
     app.handle_key(key(KeyCode::Char('n'), KeyModifiers::ALT));
@@ -161,7 +234,7 @@ async fn catalog_and_oci_create_use_authenticated_typed_gateway_calls() {
     let mut app = App::new(provider.load_async().await.unwrap());
     app.handle_key(key(KeyCode::Char('n'), KeyModifiers::ALT));
     let generation = app.take_catalog_request().unwrap();
-    app.apply_image_catalog(generation, Ok(provider.list_images_async().await.unwrap()));
+    app.apply_image_catalog(generation, Ok(provider.list_images_async(false).await.unwrap()));
     app.handle_key(key(KeyCode::Tab, KeyModifiers::NONE));
     app.handle_key(key(KeyCode::Down, KeyModifiers::NONE));
     let AppAction::Invoke(action) = app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)) else {
@@ -201,7 +274,7 @@ async fn catalog_errors_are_bounded_and_redact_gateway_credentials() {
         }
     });
     let error = GatewayProvider::new(url)
-        .list_images_async()
+        .list_images_async(false)
         .await
         .unwrap_err()
         .to_string();

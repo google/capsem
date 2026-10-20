@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The TUI image chooser caches images with Ctrl-P and refreshes with Ctrl-R,
+  preserving the selected image and failed drafts across catalog changes.
+
 - The desktop lists catalog images with architecture and cache state, supports
   explicit caching and launch selection, and retries catalog failures without
   silently changing a removed image selection into a plain VM.

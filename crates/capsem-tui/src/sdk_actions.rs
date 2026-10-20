@@ -14,6 +14,25 @@ use crate::gateway_provider::ActionOutcome;
 pub async fn invoke(hypervisor: &Hypervisor, transport: &Transport, action: &ControlAction) -> Result<ActionOutcome> {
     let vm = |id: &str| hypervisor.vm(VmSelector::Id(id.into()));
     match action {
+        ControlAction::CacheImage { image, name } => {
+            api::pull_image(
+                transport,
+                &api::PullImageParams {
+                    body: capsem_sdk::models::ImagePullRequest {
+                        image: image.clone(),
+                        registry: None,
+                    },
+                },
+                CallOptions {
+                    timeout: Some(std::time::Duration::from_secs(900)),
+                },
+            )
+            .await?;
+            Ok(ActionOutcome {
+                message: format!("cached {name}"),
+                focus_session: None,
+            })
+        }
         ControlAction::CreateSession { name, image } => {
             // TUI workspaces persist even when the service chooses their name.
             let input = api::CreateVmParams {

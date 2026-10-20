@@ -19,7 +19,7 @@ pub(super) fn create_lines(draft: Option<&CreateDraft>) -> Vec<Line<'static>> {
     lines.push(pair(
         CreateField::Image,
         "image",
-        draft.selected_image().map_or("Plain VM", |image| image.name.as_str()),
+        draft.image_name.as_deref().unwrap_or("Plain VM"),
     ));
     match &draft.catalog {
         ImageCatalog::Loading => lines.push(overlay_line("loading image catalog")),
@@ -53,7 +53,15 @@ pub(super) fn create_lines(draft: Option<&CreateDraft>) -> Vec<Line<'static>> {
             }
         }
     }
+    if draft.caching {
+        lines.push(overlay_line(
+            "caching image; the first download can take several minutes",
+        ));
+    }
     lines.push(overlay_line("Tab changes field; Up/Down chooses an image"));
+    lines.push(overlay_line(
+        "Ctrl-P caches the selected image; Ctrl-R refreshes the catalog",
+    ));
     lines.push(overlay_line("active input: name; type to edit; Backspace deletes"));
     lines.push(overlay_line("Enter creates; Esc cancels"));
     lines

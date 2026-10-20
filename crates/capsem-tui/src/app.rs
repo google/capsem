@@ -34,6 +34,10 @@ pub enum ControlAction {
         name: Option<String>,
         image: Option<String>,
     },
+    CacheImage {
+        image: String,
+        name: String,
+    },
     Fork {
         id: String,
         name: String,
@@ -73,6 +77,7 @@ impl ControlAction {
             Self::StartService => "start service",
             Self::Update => "update",
             Self::CreateSession { .. } => "create",
+            Self::CacheImage { .. } => "cache image",
             Self::Fork { .. } => "fork",
             Self::Start { .. } => "start",
             Self::Resume { .. } => "resume",
@@ -89,6 +94,7 @@ impl ControlAction {
             Self::StartService => "starting service",
             Self::Update => "updating",
             Self::CreateSession { .. } => "creating",
+            Self::CacheImage { .. } => "caching image",
             Self::Fork { .. } => "forking",
             Self::Start { .. } => "starting",
             Self::Resume { .. } => "resuming",
@@ -106,6 +112,7 @@ impl ControlAction {
             Self::Update => "complete verified release",
             Self::CreateSession { name: Some(name), .. } => name,
             Self::CreateSession { name: None, .. } => "new session",
+            Self::CacheImage { name, .. } => name,
             Self::Fork { name, .. } => name,
             Self::Start { label, .. }
             | Self::Resume { label, .. }

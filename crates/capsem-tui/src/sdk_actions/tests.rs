@@ -2,6 +2,47 @@ use crate::app::ControlAction;
 use crate::gateway_provider::GatewayProvider;
 use crate::tests::{read_http_request, write_json_response, write_response};
 
+#[tokio::test]
+async fn cache_image_uses_the_advertised_pin_and_does_not_create_a_session() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let image = format!("registry.example/dev@sha256:{}", "a".repeat(64));
+    let expected = image.clone();
+    let server = tokio::spawn(async move {
+        for path in ["/token", "/images/pull"] {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let request = read_http_request(&mut stream).await;
+            if path == "/token" {
+                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
+            } else {
+                assert!(request.starts_with("POST /images/pull "), "{request}");
+                assert!(request
+                    .to_ascii_lowercase()
+                    .contains("authorization: bearer test-token"));
+                assert_eq!(request_body(&request), serde_json::json!({"image": expected}));
+                write_json_response(
+                    &mut stream,
+                    &serde_json::json!({
+                        "image": expected, "resolved": expected, "digest": format!("sha256:{}", "a".repeat(64))
+                    })
+                    .to_string(),
+                )
+                .await;
+            }
+        }
+    });
+    let outcome = GatewayProvider::new(url)
+        .invoke_async(&ControlAction::CacheImage {
+            image,
+            name: "dev".into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(outcome.message, "cached dev");
+    assert_eq!(outcome.focus_session, None);
+    server.await.unwrap();
+}
+
 async fn invoke_with_response(
     action: ControlAction,
     body: &'static str,

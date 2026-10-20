@@ -150,23 +150,23 @@ impl GatewayProvider {
         invoke_action(&hypervisor, &transport, action).await
     }
 
-    pub fn list_images(&self) -> Result<capsem_sdk::models::ImageListResponse> {
+    pub fn list_images(&self, refresh: bool) -> Result<capsem_sdk::models::ImageListResponse> {
         let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
-        runtime.block_on(self.list_images_async())
+        runtime.block_on(self.list_images_async(refresh))
     }
 
-    pub async fn list_images_async(&self) -> Result<capsem_sdk::models::ImageListResponse> {
-        tokio::time::timeout(Duration::from_secs(30), self.fetch_images())
+    pub async fn list_images_async(&self, refresh: bool) -> Result<capsem_sdk::models::ImageListResponse> {
+        tokio::time::timeout(Duration::from_secs(30), self.fetch_images(refresh))
             .await
             .context("image catalog request timed out")?
     }
 
-    async fn fetch_images(&self) -> Result<capsem_sdk::models::ImageListResponse> {
+    async fn fetch_images(&self, refresh: bool) -> Result<capsem_sdk::models::ImageListResponse> {
         let token = self.token().await?;
         let (_, transport) = self.clients(&token)?;
         capsem_sdk::operations::list_images(
             &transport,
-            &capsem_sdk::operations::ListImagesParams { refresh: Some(false) },
+            &capsem_sdk::operations::ListImagesParams { refresh: Some(refresh) },
             capsem_sdk::transport::CallOptions::default(),
         )
         .await
