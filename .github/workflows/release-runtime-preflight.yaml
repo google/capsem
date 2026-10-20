@@ -44,17 +44,39 @@ jobs:
           fi
           python3 build_system/scripts/bootstrap/select-runtime-preflight-manifest.py "${args[@]}"
 
-      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+      - name: Require an existing runtime or an authorized first-runtime bootstrap
+        env:
+          BOOTSTRAP_MISSING_FIRST_PARTY: ${{ inputs.bootstrap_missing_first_party }}
+          PREFLIGHT_RUNTIME_PRESENT: ${{ steps.manifest.outputs.runtime-present }}
+        run: |
+          case "$PREFLIGHT_RUNTIME_PRESENT" in
+            true) ;;
+            false)
+              if [[ "$BOOTSTRAP_MISSING_FIRST_PARTY" != "true" ]]; then
+                echo "public channel has no runtime and bootstrap is not authorized" >&2
+                exit 1
+              fi
+              ;;
+            *)
+              echo "runtime preflight did not classify runtime presence" >&2
+              exit 1
+              ;;
+          esac
+
+      - if: ${{ steps.manifest.outputs.runtime-present == 'true' }}
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:
           toolchain: 1.97.1
 
-      - uses: ./.github/actions/rust-cache
+      - if: ${{ steps.manifest.outputs.runtime-present == 'true' }}
+        uses: ./.github/actions/rust-cache
         with:
           key: runtime-preflight
 
       # Both serialized release lanes retain this fail-fast proof of the
       # currently public runtime graph before constructing a candidate.
       - name: Check the live release graph with the release command
+        if: ${{ steps.manifest.outputs.runtime-present == 'true' }}
         env:
           PREFLIGHT_MANIFEST_URL: ${{ steps.manifest.outputs.manifest-url }}
         run: |
@@ -62,3 +84,7 @@ jobs:
           mkdir -p cache/target/runtime-preflight
           curl -fsSL "$PREFLIGHT_MANIFEST_URL" -o cache/target/runtime-preflight/manifest.json
           cargo run -p capsem-admin -- manifest check cache/target/runtime-preflight/manifest.json
+
+      - name: Accept the empty graph before its first runtime release
+        if: ${{ steps.manifest.outputs.runtime-present == 'false' && inputs.bootstrap_missing_first_party }}
+        run: echo "channel has no public runtime to validate before its first runtime release"
