@@ -40,6 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Failed desktop terminal connections offer an in-place retry, so resumed
+  image sessions can reconnect without reloading the application.
+
 - Rejected WebSocket upgrades preserve their upstream HTTP error body and
   framing, preventing Codex authentication errors from crashing the VM proxy.
 

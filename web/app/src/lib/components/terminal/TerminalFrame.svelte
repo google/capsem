@@ -28,7 +28,7 @@
 
   let ws: WebSocket | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  let reconnectAttempt = 0;
+  let reconnectAttempt = $state(0);
   let destroyed = false;
   let everConnected = false;
   let outputCoalescer: TerminalOutputCoalescer | null = null;
@@ -94,7 +94,7 @@
     if (destroyed) return;
     postToParent({ type: 'disconnected', reason });
     if (reconnectAttempt >= MAX_RECONNECT) {
-      showOverlay('Connection failed -- reload to retry');
+      showOverlay('Connection failed');
       return;
     }
     const delay = Math.min(500 * Math.pow(2, reconnectAttempt), 5000);
@@ -106,6 +106,12 @@
       reconnectTimer = null;
       void connect();
     }, delay);
+  }
+
+  function retryConnection(): void {
+    reconnectAttempt = 0;
+    showOverlay(everConnected ? 'Reconnecting...' : 'Setting up session...');
+    void connect();
   }
 
   async function connect(): Promise<void> {
@@ -302,12 +308,17 @@
 
 {#if overlayVisible}
   <div class="loading-overlay" role="status" aria-live="polite">
+    {#if reconnectAttempt < MAX_RECONNECT}
     <div class="spinner" aria-hidden="true">
       <div class="dot"></div>
       <div class="dot"></div>
       <div class="dot"></div>
     </div>
+    {/if}
     <div class="loading-text">{overlayText}</div>
+    {#if reconnectAttempt >= MAX_RECONNECT}
+      <button type="button" class="retry-button" onclick={retryConnection}>Retry connection</button>
+    {/if}
   </div>
 {/if}
 
@@ -347,6 +358,20 @@
   .spinner {
     display: flex;
     gap: 0.5rem;
+  }
+
+  .retry-button {
+    border: 1px solid #60a5fa;
+    border-radius: 0.5rem;
+    background: transparent;
+    color: inherit;
+    padding: 0.5rem 1rem;
+    cursor: pointer;
+  }
+
+  .retry-button:focus-visible {
+    outline: 2px solid #60a5fa;
+    outline-offset: 2px;
   }
 
   .spinner .dot {
