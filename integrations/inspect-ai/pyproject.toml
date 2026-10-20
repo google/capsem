@@ -11,6 +11,7 @@ license = "Apache-2.0"
 requires-python = ">=3.11"
 dependencies = [
     "capsem>=0.7.1",
+    "capsem-integrations>=0.1.0",
     "inspect-ai>=0.3.263",
     "pydantic>=2.0.0",
     "pyyaml>=6.0",
@@ -41,6 +42,7 @@ dev = [
 # Resolve `capsem` from the local workspace checkout during development.
 [tool.uv.sources]
 capsem = { path = "../../sdk/python", editable = true }
+capsem-integrations = { path = "../common", editable = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

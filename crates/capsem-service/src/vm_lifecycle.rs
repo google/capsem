@@ -107,6 +107,9 @@ pub(super) fn resolve_session_dir(state: &ServiceState, id: &str) -> Result<Path
     if let Some(entry) = find_persistent_entry_by_route_id(state, id) {
         return Ok(entry.session_dir);
     }
+    if let Some(session_dir) = state.managed.retained_session_dir(id) {
+        return Ok(session_dir);
+    }
     Err(AppError::vm_not_found(id))
 }
 
@@ -554,25 +557,46 @@ pub(super) async fn handle_stop(
     // socket inline -- when it returns, resume can immediately reuse the
     // path without a SO_REUSEADDR-style race. Graceful so persistent VMs
     // get bash history + filesystem sync before teardown.
+    let generation = state
+        .instances
+        .lock()
+        .unwrap()
+        .get(&id)
+        .map(|instance| instance.generation);
     if let Some((session_dir, persistent, _pid)) = shutdown_vm_process(&state, &id, ShutdownMode::Retain, None).await? {
         if !persistent {
-            // Ephemeral stop owns deletion just like DELETE: wait for the
-            // contained cleanup and surface errors before acknowledging it.
-            state
-                .off_worker(move |state| state.delete_session_dir(&session_dir))
-                .await?
-                .map_err(|error| {
+            let managed_owned = if let Some(generation) = generation {
+                if let Ok(binding) = capsem_core::managed_sessions::VmBinding::new(id.clone(), generation) {
+                    state.managed.owns_vm(&binding).await.unwrap_or(false)
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+            if managed_owned {
+                // Lease-owned managed sessions retain their stopped session directory
+                // so the lease holder can export rows/WARC before calling `/close`.
+                state.managed.retain_stopped_session(id.clone(), session_dir);
+            } else {
+                // Ephemeral stop owns deletion just like DELETE: wait for the
+                // contained cleanup and surface errors before acknowledging it.
+                state
+                    .off_worker(move |state| state.delete_session_dir(&session_dir))
+                    .await?
+                    .map_err(|error| {
+                        AppError::new(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            format!("ephemeral session cleanup failed: {error:#}"),
+                        )
+                    })?;
+                state.ledger_workers.retire(&id).await.map_err(|error| {
                     AppError::new(
                         StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("ephemeral session cleanup failed: {error:#}"),
+                        format!("ephemeral checkpoint cleanup failed: {error:#}"),
                     )
                 })?;
-            state.ledger_workers.retire(&id).await.map_err(|error| {
-                AppError::new(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("ephemeral checkpoint cleanup failed: {error:#}"),
-                )
-            })?;
+            }
         }
         Ok(Json(api::StopResponse {
             success: true,
@@ -591,11 +615,14 @@ pub(super) async fn handle_delete(
     // about to be removed, so guest sync() and bash history don't matter.
     let session_dir =
         if let Some((session_dir, _, _pid)) = shutdown_vm_process(&state, &id, ShutdownMode::Discard, None).await? {
+            let _ = state.managed.take_retained_session(&id);
             session_dir
         } else {
-            // Not running -- check persistent registry for stopped VM
+            // Not running -- check persistent registry or retained managed session for stopped VM
             if let Some(entry) = find_persistent_entry_by_route_id(&state, &id) {
                 entry.session_dir
+            } else if let Some(session_dir) = state.managed.take_retained_session(&id) {
+                session_dir
             } else {
                 return Err(AppError::vm_not_found(&id));
             }

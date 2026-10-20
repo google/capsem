@@ -3,7 +3,9 @@
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::ledger_protocol::{LedgerHistoryLayer, LedgerQuery, LedgerRows, LedgerTimelineLayer, LedgerValue};
+use crate::ledger_protocol::{
+    LedgerHistoryLayer, LedgerQuery, LedgerRows, LedgerTimelineLayer, LedgerValue, EXPORTABLE_LEDGER_TABLES,
+};
 use crate::DbHandle;
 
 type Statement = (String, Vec<Value>);
@@ -73,6 +75,72 @@ fn statements(query: LedgerQuery) -> Result<Vec<Statement>, String> {
                 .into(),
             vec![json!(after_global_sequence), json!(limit)],
         )]),
+        LedgerQuery::TableWatermarks { tables } => {
+            if tables.is_empty() {
+                return Err("table watermarks query requires at least one table".to_string());
+            }
+            let mut arms = Vec::with_capacity(tables.len());
+            let mut params = Vec::with_capacity(tables.len());
+            for (index, table) in tables.into_iter().enumerate() {
+                if !EXPORTABLE_LEDGER_TABLES.contains(&table.as_str()) {
+                    return Err(format!("ledger table {table:?} is not exportable"));
+                }
+                let param_idx = index + 1;
+                arms.push(format!(
+                    "SELECT ?{param_idx} AS table_name, COALESCE((SELECT MAX(id) FROM {table}), 0) AS max_id"
+                ));
+                params.push(json!(table));
+            }
+            Ok(vec![(arms.join(" UNION ALL "), params)])
+        }
+        LedgerQuery::TableRows {
+            table,
+            after_id,
+            max_id,
+            limit,
+        } => {
+            if !EXPORTABLE_LEDGER_TABLES.contains(&table.as_str()) {
+                return Err(format!("ledger table {table:?} is not exportable"));
+            }
+            let sql = match table.as_str() {
+                "security_rule_events" => {
+                    "SELECT event.id, event.timestamp_unix_ms, event.event_id, event.event_type, event.rule_id, \
+                     event.rule_action, event.detection_level, COALESCE(event.rule_json, run.rule_json) AS rule_json, \
+                     event.run_id, event.trace_id, event.turn_id, event.credential_ref \
+                     FROM security_rule_events AS event \
+                     LEFT JOIN security_rule_runs AS run ON run.id = event.run_id \
+                     WHERE event.id > ?1 AND (?2 IS NULL OR event.id <= ?2) ORDER BY event.id ASC LIMIT ?3"
+                        .to_string()
+                }
+                "security_decision_events" => {
+                    "SELECT event.id, event.timestamp_unix_ms, event.event_id, event.event_type, \
+                     COALESCE(event.stage, run.stage) AS stage, \
+                     COALESCE(event.actor, run.actor) AS actor, \
+                     COALESCE(event.rule_id, run.rule_id) AS rule_id, \
+                     COALESCE(event.plugin_id, run.plugin_id) AS plugin_id, \
+                     COALESCE(event.previous_decision, run.previous_decision) AS previous_decision, \
+                     COALESCE(event.requested_decision, run.requested_decision) AS requested_decision, \
+                     COALESCE(event.effective_decision, run.effective_decision) AS effective_decision, \
+                     COALESCE(event.reason, run.reason) AS reason, \
+                     event.trace_id, event.turn_id, event.credential_ref, event.run_id \
+                     FROM security_decision_events AS event \
+                     LEFT JOIN security_decision_runs AS run ON run.id = event.run_id \
+                     WHERE event.id > ?1 AND (?2 IS NULL OR event.id <= ?2) ORDER BY event.id ASC LIMIT ?3"
+                        .to_string()
+                }
+                _ => format!(
+                    "SELECT * FROM {table} WHERE id > ?1 AND (?2 IS NULL OR id <= ?2) ORDER BY id ASC LIMIT ?3"
+                ),
+            };
+            Ok(vec![(
+                sql,
+                vec![
+                    json!(after_id),
+                    max_id.map_or(Value::Null, |watermark| json!(watermark)),
+                    json!(limit),
+                ],
+            )])
+        }
     }
 }
 

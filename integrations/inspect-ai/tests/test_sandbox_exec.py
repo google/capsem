@@ -13,9 +13,9 @@ import inspect_capsem._exec as exec_mod
 import inspect_capsem._files as files_mod
 import inspect_capsem.sandbox as sb
 import pytest
+from capsem_integrations._controller import CommandResult
 from inspect_ai.util import OutputLimitExceededError
 from inspect_capsem import CapsemSandboxConfig, CapsemSandboxEnvironment
-from inspect_capsem._controller import CommandResult
 
 from .helpers import (
     LocalFakeCapsemController,

@@ -1,8 +1,12 @@
 """Typed async access to the Capsem HTTP gateway."""
 
+__version__ = "0.7.0"
+
+from . import trace as trace
 from ._connections import Connections as Connections
 from ._connections import CredentialGrants as CredentialGrants
 from ._credentials import Credentials as Credentials
+from ._export import Export as Export
 from ._images import Images as Images
 from ._mcp import Mcp as Mcp
 from ._mcp import McpServer as McpServer

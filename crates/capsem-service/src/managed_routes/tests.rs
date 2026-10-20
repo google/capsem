@@ -245,3 +245,52 @@ async fn startup_recovery_closes_unprepared_reservations_without_replaying_creat
         assert_eq!(replay["code"], "duplicate_request");
     }
 }
+
+#[tokio::test]
+async fn retained_stopped_managed_session_re_adopts_on_restart_and_recover_pending_collects_it() {
+    use crate::managed_routes::Runtime;
+    use std::time::Duration;
+
+    let _env_lock = crate::tests::SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let settings_dir = tempfile::tempdir().unwrap();
+    let (_settings_guard, _, _) = crate::tests::install_empty_settings_env(&settings_dir);
+    let run_dir = dir.path().join("run");
+    let assets_dir = dir.path().join("assets");
+    let vm_id = "20261017-120000-0099".to_string();
+    let session_dir = run_dir.join("sessions").join(&vm_id);
+    std::fs::create_dir_all(&session_dir).unwrap();
+
+    let mut owned1 = crate::tests::test_state(run_dir.clone(), assets_dir.clone(), None);
+    crate::tests::install_test_ledger_worker(&mut owned1, dir.path());
+    let state1 = Arc::new(owned1);
+    state1
+        .managed
+        .retain_stopped_session(vm_id.clone(), session_dir.clone());
+    assert!(session_dir.join(".managed-retained").is_file());
+    assert_eq!(
+        crate::vm_lifecycle::resolve_session_dir(&state1, &vm_id).unwrap(),
+        session_dir
+    );
+    drop(state1);
+
+    let mut owned2 = crate::tests::test_state(run_dir.clone(), assets_dir, None);
+    crate::tests::install_test_ledger_worker(&mut owned2, dir.path());
+    let state2 = Arc::new(owned2);
+    assert_eq!(
+        state2.managed.retained_session_dir(&vm_id),
+        Some(session_dir.clone())
+    );
+    assert_eq!(
+        crate::vm_lifecycle::resolve_session_dir(&state2, &vm_id).unwrap(),
+        session_dir
+    );
+
+    tokio::time::timeout(Duration::from_secs(2), Runtime::recover_pending(Arc::clone(&state2)))
+        .await
+        .unwrap();
+    assert!(state2.managed.retained_session_dir(&vm_id).is_none());
+    assert!(!session_dir.exists());
+    let err = crate::vm_lifecycle::resolve_session_dir(&state2, &vm_id).unwrap_err();
+    assert_eq!(err.status, StatusCode::NOT_FOUND);
+}

@@ -2,6 +2,8 @@ use super::*;
 pub(crate) mod activity;
 pub(crate) mod bodies;
 pub(super) use bodies::{handle_bodies_warc_export, handle_event_bodies};
+pub(crate) mod rows_export;
+pub(super) use rows_export::handle_rows_ndjson_export;
 mod rows;
 use rows::{ledger_rows_to_objects, query_route_typed_rows};
 pub(crate) mod stats_detail;

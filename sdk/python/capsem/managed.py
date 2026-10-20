@@ -103,8 +103,11 @@ class ManagedSession:
             response = await self.__create
             self.__session(response)
             self.__active = True
-            self.__vm = VM._bind(self.__transport, id=response.id, name=response.name,
-                                 container=self.__request.container is not None)
+            self.__vm = VM._bind(
+                self.__transport, id=response.id, name=response.name,
+                container=self.__request.container is not None,
+                managed=True, on_stop=self.__disarm_renewal,
+            )
             return self.__vm
         except BaseException as error:
             outcome = models.ManagedSessionOutcome.CANCELLED if isinstance(error, asyncio.CancelledError) else models.ManagedSessionOutcome.FAILED
@@ -147,6 +150,11 @@ class ManagedSession:
         except Exception as error:
             self.__fail(error)
             raise
+
+    def __disarm_renewal(self) -> None:
+        for task in (self.__renew, self.__expiry):
+            if task is not None and not task.done():
+                task.cancel()
 
     def __fail(self, error: Exception) -> None:
         if self.__failure is not None:

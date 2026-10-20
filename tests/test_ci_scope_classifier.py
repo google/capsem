@@ -32,7 +32,13 @@ def _classifier():
 
 
 def test_carried_inspect_sources_have_python_ci_ownership() -> None:
-    for path in ("integrations/inspect-ai/inspect_capsem/containers/compose.py", "integrations/inspect-ai/tests/containers/test_compose_fields.py"):
+    for path in (
+        "integrations/common/capsem_integrations/containers/compose.py",
+        "integrations/common/tests/containers/test_compose.py",
+        "integrations/inspect-ai/inspect_capsem/_compose.py",
+        "integrations/inspect-ai/tests/test_compose_config.py",
+        "integrations/harbor/harbor_capsem/environment.py",
+    ):
         assert _classifier().ci_scopes((path,)) == {"build_system"}
         assert _classifier().ci_owners((path,)) == _classifier().PRODUCT_JOBS | {"fast-gate", "pr-gate"}
     with pytest.raises(ValueError, match="unowned integrations subtree"):

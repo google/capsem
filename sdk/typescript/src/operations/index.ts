@@ -20,6 +20,7 @@ export {disconnectConnection} from "./disconnectConnection.js";
 export {downloadVmFile} from "./downloadVmFile.js";
 export {execVm} from "./execVm.js";
 export {exportVmBodies} from "./exportVmBodies.js";
+export {exportVmRows} from "./exportVmRows.js";
 export {forkVm} from "./forkVm.js";
 export {getAssetStatus} from "./getAssetStatus.js";
 export {getConnection} from "./getConnection.js";

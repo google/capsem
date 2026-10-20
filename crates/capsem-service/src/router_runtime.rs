@@ -116,6 +116,7 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route("/panics", get(handle_panics))
         .route("/host-logs/{name}", get(handle_host_logs))
         .route("/vms/{id}/bodies/export.warc.gz", get(handle_bodies_warc_export))
+        .route("/vms/{id}/export/rows.ndjson.gz", get(handle_rows_ndjson_export))
         .route("/vms/{id}/bodies/{event_id}", get(handle_event_bodies))
         .route("/vms/{id}/timeline", get(handle_timeline))
         .route("/vms/{id}/security/latest", get(handle_security_latest))

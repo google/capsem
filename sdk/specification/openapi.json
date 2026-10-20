@@ -2201,6 +2201,58 @@
         }
       }
     },
+    "/vms/{id}/export/rows.ndjson.gz": {
+      "get": {
+        "operationId": "exportVmRows",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tables",
+            "in": "query",
+            "description": "Comma-separated list of exportable ledger table names. When omitted,\nexports all non-security ledger tables (`DEFAULT_EXPORT_LEDGER_TABLES`).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Session ledger table rows as a gzipped NDJSON stream (`capsem.rows.v1`)",
+            "content": {
+              "application/gzip": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/vms/{id}/exposures": {
       "get": {
         "operationId": "listVmExposures",

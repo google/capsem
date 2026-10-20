@@ -84,6 +84,15 @@ fn stats_detail_schema_names_every_event_and_uses_booleans() {
             ["schema"]["format"],
         "binary"
     );
+    assert_eq!(
+        doc["paths"]["/vms/{id}/export/rows.ndjson.gz"]["get"]["operationId"],
+        "exportVmRows"
+    );
+    assert_eq!(
+        doc["paths"]["/vms/{id}/export/rows.ndjson.gz"]["get"]["responses"]["200"]["content"]["application/gzip"]
+            ["schema"]["format"],
+        "binary"
+    );
     for invalid in ["invented", ""] {
         let value = serde_json::json!(invalid);
         assert!(serde_json::from_value::<NetworkDecision>(value.clone()).is_err());

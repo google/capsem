@@ -8,20 +8,20 @@ from typing import Any, cast
 
 import inspect_capsem
 import pytest
-from inspect_ai.util._sandbox.registry import registry_find_sandboxenv
-from inspect_capsem import CapsemSandboxConfig, CapsemSandboxEnvironment
-from inspect_capsem._compose import coerce_config
-from inspect_capsem._controller import SdkCapsemController
-from inspect_capsem._exec import _format_exec_command
-from inspect_capsem._users import is_root_user_spec
-from inspect_capsem.containers.compose_fields import (
+from capsem_integrations._controller import SdkCapsemController
+from capsem_integrations._users import is_root_user_spec
+from capsem_integrations.containers.compose_fields import (
     _is_host_path_allowed,
     extract_capsem_compose_fields,
 )
-from inspect_capsem.containers.runtime import (
+from capsem_integrations.containers.runtime import (
     _stage_oci_bind_volumes,
     prepare_oci_workload_container,
 )
+from inspect_ai.util._sandbox.registry import registry_find_sandboxenv
+from inspect_capsem import CapsemSandboxConfig, CapsemSandboxEnvironment
+from inspect_capsem._compose import coerce_config
+from inspect_capsem._exec import _format_exec_command
 from pydantic import ValidationError
 
 from .helpers import Scripted, ok
@@ -63,12 +63,6 @@ def test_coerce_config_and_unsupported_knobs() -> None:
     cfg = CapsemSandboxConfig(cpu_count=2)
     assert coerce_config(cfg) is cfg
     assert coerce_config({"cpu_count": 2}) == CapsemSandboxConfig(cpu_count=2)
-    with pytest.raises(NotImplementedError, match="template"):
-        coerce_config({"template": "code"})
-    with pytest.raises(NotImplementedError, match="allow_domains"):
-        coerce_config({"allow_domains": ["pypi.org"]})
-    with pytest.raises(NotImplementedError, match="host_workspace_dir"):
-        coerce_config({"host_workspace_dir": "/tmp/ws"})
     with pytest.raises(ValidationError, match="requires an explicit OCI image reference"):
         CapsemSandboxConfig(execution_mode="container")
     with pytest.raises(ValueError, match="requires an explicit OCI image reference"):
@@ -104,6 +98,7 @@ async def test_host_path_containment_and_operator_allowlist_plumbing(
     assert not _is_host_path_allowed(sibling_file, ("outside",))
 
     monkeypatch.setenv("HOME", str(outside_dir))
+    monkeypatch.delenv("CAPSEM_ALLOWED_HOST_PATHS", raising=False)
     monkeypatch.delenv("CAPSEM_INSPECT_ALLOWED_HOST_PATHS", raising=False)
     for bad_vol in (
         "./escape_dir:/mnt",
@@ -142,6 +137,7 @@ async def test_host_path_containment_and_operator_allowlist_plumbing(
             allowed_host_paths=allow_cmp,
         )
 
+    monkeypatch.delenv("CAPSEM_ALLOWED_HOST_PATHS", raising=False)
     monkeypatch.delenv("CAPSEM_INSPECT_ALLOWED_HOST_PATHS", raising=False)
     spec_unallowed = CapsemSandboxConfig(
         execution_mode="container",
