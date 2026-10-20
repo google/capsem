@@ -42,7 +42,7 @@ export default defineConfig({
         { label: 'Getting started', items: links('getting-started/intro', 'getting-started/installation', 'getting-started/how-to-use-capsem') },
         { label: 'Guides', items: [
           { slug: 'guides' },
-          { label: 'Users', items: links('guides/users/use-the-terminal', 'guides/users/use-the-proxy', 'guides/users/reuse-your-environment', 'guides/users/run-evaluations', 'guides/users/configure-security') },
+          { label: 'Users', items: links('guides/users/use-the-terminal', 'guides/users/analyze-a-file-with-an-agent', 'guides/users/use-the-proxy', 'guides/users/reuse-your-environment', 'guides/users/run-evaluations', 'guides/users/configure-security') },
           { label: 'Enterprise', items: [
             ...links('guides/enterprise/build-an-image', 'guides/enterprise/deploy-capsem', 'guides/enterprise/configure-a-vm', 'guides/enterprise/enforce-security-policy', 'guides/enterprise/write-detection-rules'),
             { label: 'Observability', items: links('guides/enterprise/investigate-a-vm', 'reference/telemetry') },

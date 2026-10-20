@@ -1,9 +1,10 @@
-// Approved rebuild plus proxy reference/guide approved October 20, 2026.
+// Approved rebuild plus proxy pages and agent triage guide approved October 20, 2026.
 export const approvedDocs = [
   "getting-started/intro.mdx",
   "getting-started/installation.md",
   "getting-started/how-to-use-capsem.md",
   "guides/users/use-the-terminal.md",
+  "guides/users/analyze-a-file-with-an-agent.md",
   "guides/users/use-the-proxy.md",
   "guides/users/reuse-your-environment.md",
   "guides/users/run-evaluations.md",

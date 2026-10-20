@@ -765,6 +765,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add the agent-facing `use-capsem` skill and a static suspicious-file triage
+  guide with a harmless fixture and downloadable report helper.
+
 - TypeScript SDK connection and credential grant resources preserve explicit
   consent, typed refusal codes, ownership checks, deadlines and cancellation.
 
