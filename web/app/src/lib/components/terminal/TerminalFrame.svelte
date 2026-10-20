@@ -179,9 +179,9 @@
       }
       if (!everConnected) {
         everConnected = true;
-        hideOverlay();
         console.log('[terminal] first-data vmId=%s', vmId);
       }
+      hideOverlay();
       outputCoalescer?.push(frame.bytes);
     };
 
