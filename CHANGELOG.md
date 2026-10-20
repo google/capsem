@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Remove the unused LayerChart dependency and its vulnerable braces dependency
+  tree from the desktop frontend.
+
 - Reject WebSocket handshakes carrying HTTP body framing before dialing,
   keeping guest-controlled lengths out of the empty upstream request path.
 
