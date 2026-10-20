@@ -10,7 +10,15 @@ run-name: Official images (${{ inputs.channel || 'nightly' }})
 on:
   push:
     branches: [main]
-    paths: ["images/**"]
+    paths:
+      - "images/**"
+      - ".github/workflows/images.yaml"
+      - "build_system/builder/**"
+      - "build_system/docker/Dockerfile.asset-tools"
+      - "config/docker/image/**"
+      - "config/gate.toml"
+      - "build_system/pyproject.toml"
+      - "build_system/uv.lock"
   schedule:
     - cron: "23 4 * * 1"
   workflow_dispatch:
@@ -182,7 +190,15 @@ jobs:
       - name: Look for the published image
         id: published
         run: |
-          key="$(uv run --project build_system --frozen python images/ci/inputkey.py "images/$IMAGE" --with "$BASE_DIGEST")"
+          # Evidence is part of a published generation. Shared scanner or
+          # recipe changes must not reuse the prior generation's OBOM/rootfs.
+          key="$(uv run --project build_system --frozen python images/ci/inputkey.py \
+            "images/$IMAGE" images/ci/*.py .github/workflows/images.yaml \
+            build_system/builder/*.py build_system/builder/image/*.py \
+            build_system/builder/gate/*.py build_system/builder/release/obom.py \
+            build_system/docker/Dockerfile.asset-tools config/docker/image/build.toml \
+            config/gate.toml build_system/pyproject.toml build_system/uv.lock \
+            --with "$BASE_DIGEST")"
           exists="$(sh images/ci/published.sh "$REGISTRY/$IMAGE:$key")"
           build=false
           if [ "$FORCE" = true ] || [ "$exists" = false ]; then build=true; fi

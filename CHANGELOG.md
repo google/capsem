@@ -34,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Image publishers rebuild on shared scanner, recipe and inventory changes as
+  well as their weekly schedules, keeping catalog evidence current.
+
 - The TUI image chooser caches images with Ctrl-P and refreshes with Ctrl-R,
   preserving the selected image and failed drafts across catalog changes.
 

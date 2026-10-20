@@ -11,6 +11,7 @@ on:
       - ".github/workflows/private-images.yaml"
       - "build_system/docker/**"
       - "build_system/builder/gate/**"
+      - "build_system/builder/privateimages.py"
       - "build_system/builder/image/**"
       - "config/docker/**"
       - "config/gate.toml"
