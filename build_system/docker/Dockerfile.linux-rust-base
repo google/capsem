@@ -93,10 +93,11 @@ RUN cd /src && uv sync --project build_system --frozen
 ENV UV_OFFLINE=1
 ENV CARGO_NET_OFFLINE=true
 
-# The lane writes only its build output and the two Python environment trees
-# retained through `.dockerignore`. Its source arrives through `COPY --chown`
-# in the thin lane image; Cargo sources, Node modules, and the Rust toolchain
-# are immutable inputs. Recursively changing their ~130,000 entries added
+# The lane rebuilds generated SDK/frontend output and writes the two Python
+# environment trees retained through `.dockerignore`. Source arrives through
+# `COPY --chown` in the thin lane image; inherited generated output needs its
+# own writable ownership. Package stores and the Rust toolchain are immutable
+# inputs. Recursively changing their ~130,000 entries added
 # nearly three minutes to every cold export without granting a needed write.
 # A non-root user is required: the suite chmods an asset to 0o000 and demands
 # the read fail, and root ignores permissions. `ubuntu:24.04` already ships a
@@ -104,7 +105,9 @@ ENV CARGO_NET_OFFLINE=true
 # `useradd --uid 1000` exits 4 on a UID that already exists.
 RUN mkdir -p /cargo-target /home/lane /linux-rust-output \
     && chown 1000:1000 /cargo-target /home/lane /linux-rust-output \
-    && chown -R 1000:1000 /src/.uv-cache /src/build_system/.venv
+    && chown -R 1000:1000 /src/.uv-cache /src/build_system/.venv \
+        /src/sdk/typescript/dist /src/web/app/dist \
+        /src/web/app/.astro /src/web/app/node_modules/.astro
 
 # Identity metadata comes after the final filesystem layer so an input-key
 # change never invalidates a filesystem operation.

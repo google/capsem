@@ -1,3 +1,5 @@
+# check=skip=InvalidDefaultArgInFrom
+# BASE is required: the gate supplies the exact materialized helper identity.
 # The lane's source, copied rather than mounted.
 #
 # `-v <repo_root>:/src` let a host step churning hardlinks and this container

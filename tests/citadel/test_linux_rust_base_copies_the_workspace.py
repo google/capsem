@@ -10,8 +10,10 @@ invalidated it failed the complete gate at `warm-base` with "failed to read
 
 from __future__ import annotations
 
-import tomllib
+import re
 from pathlib import Path
+
+import tomllib
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DOCKERFILE = PROJECT_ROOT / "build_system" / "docker" / "Dockerfile.linux-rust-base"
@@ -123,3 +125,41 @@ def test_the_lane_does_not_recursively_rewrite_immutable_dependency_ownership() 
     assert "chown -R 1000:1000 /src " not in source
     assert "/usr/local/cargo /usr/local/rustup" not in source
     assert "/src/.uv-cache /src/build_system/.venv" in source
+
+
+MUTABLE_OUTPUTS = {
+    "/src/sdk/typescript/dist",
+    "/src/web/app/dist",
+    "/src/web/app/.astro",
+    "/src/web/app/node_modules/.astro",
+}
+
+
+def _recursively_owned_paths(source: str) -> set[str]:
+    commands = "\n".join(
+        line
+        for line in source.replace("\\\n", " ").splitlines()
+        if line.startswith("RUN ")
+    )
+    return {
+        path
+        for paths in re.findall(r"chown -R 1000:1000 ([^&\n]+)", commands)
+        for path in paths.split()
+    }
+
+
+def test_nonroot_lane_owns_inherited_generated_outputs() -> None:
+    source = DOCKERFILE.read_text(encoding="utf-8")
+    missing = MUTABLE_OUTPUTS - _recursively_owned_paths(source)
+    assert not missing, (
+        "The uid-1000 lane rebuilds SDK/frontend outputs inherited from a root "
+        "prewarm. COPY --chown does not fix excluded dist/node_modules entries; "
+        f"give only these generated trees recursive ownership: {sorted(missing)}"
+    )
+
+
+def test_removing_each_generated_tree_from_ownership_is_caught() -> None:
+    source = DOCKERFILE.read_text(encoding="utf-8")
+    for path in MUTABLE_OUTPUTS:
+        altered = source.replace(path, "/unowned") + f"\n# chown -R 1000:1000 {path}\n"
+        assert path not in _recursively_owned_paths(altered)
