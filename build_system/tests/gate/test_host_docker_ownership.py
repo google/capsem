@@ -20,6 +20,7 @@ EXPECTED = {
     "Dockerfile.linux-rust-base",
     "Dockerfile.package",
     "Dockerfile.package-builder",
+    "materialize-host-apt.sh",
     "materialize-install-os.sh",
     "sources-multiarch.sh",
     "swap-dev-libs.sh",
@@ -31,11 +32,7 @@ def _toml(path: Path) -> dict[str, object]:
 
 
 def test_host_docker_resources_have_one_exact_owner() -> None:
-    found = {
-        path.relative_to(OWNER).as_posix()
-        for path in OWNER.rglob("*")
-        if path.is_file()
-    }
+    found = {path.relative_to(OWNER).as_posix() for path in OWNER.rglob("*") if path.is_file()}
     assert found == EXPECTED
     assert not (ROOT / "docker").exists()
     assert tracked_source_modes(ROOT, OWNER) == dict.fromkeys(EXPECTED, 0o644)
@@ -72,9 +69,7 @@ def test_gate_and_guest_build_config_resolve_the_new_owner() -> None:
     assert image["guest_rust_builder"]["dockerfile"] == (
         "build_system/docker/Dockerfile.guest-rust-builder"
     )
-    assert image["asset_tools"]["dockerfile"] == (
-        "build_system/docker/Dockerfile.asset-tools"
-    )
+    assert image["asset_tools"]["dockerfile"] == ("build_system/docker/Dockerfile.asset-tools")
 
 
 def test_repository_context_copies_name_the_moved_helpers() -> None:
@@ -84,13 +79,18 @@ def test_repository_context_copies_name_the_moved_helpers() -> None:
     assert "COPY --chmod=555 build_system/docker/materialize-install-os.sh" in install
     assert "COPY --chmod=555 build_system/docker/swap-dev-libs.sh" in package
     assert "COPY sources-multiarch.sh /tmp/" in host
+    assert "COPY --chmod=555 materialize-host-apt.sh" in host
     assert "COPY swap-dev-libs.sh /usr/local/bin/swap-dev-libs" in host
 
 
 def test_node_dependency_images_receive_the_declared_patch_inputs() -> None:
     for filename, destination, install in (
         ("Dockerfile.package-builder", "/prefetch/build_system/patches", "RUN cd web/app"),
-        ("Dockerfile.install-builder", "/prefetch/build_system/patches", "RUN cd build_system/release_site"),
+        (
+            "Dockerfile.install-builder",
+            "/prefetch/build_system/patches",
+            "RUN cd build_system/release_site",
+        ),
         ("Dockerfile.linux-rust-base", "/src/build_system/patches", "RUN cd /src/web/app"),
     ):
         source = (OWNER / filename).read_text()
@@ -114,6 +114,6 @@ def test_network_open_apt_layers_persist_partial_snapshot_downloads() -> None:
         assert "rm -f /etc/apt/apt.conf.d/docker-clean" in source
         assert "rm -f /var/lib/apt/lists/lock /var/cache/apt/archives/lock" in source
 
-    for helper in ("materialize-install-os.sh", "swap-dev-libs.sh"):
+    for helper in ("materialize-host-apt.sh", "materialize-install-os.sh", "swap-dev-libs.sh"):
         source = (OWNER / helper).read_text(encoding="utf-8")
         assert "rm -rf /var/lib/apt/lists" not in source

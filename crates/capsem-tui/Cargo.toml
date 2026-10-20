@@ -24,7 +24,7 @@ reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
-tokio-tungstenite = "0.29.0"
+tokio-tungstenite = "0.30.0"
 vt100 = "0.16.2"
 
 [lints]

@@ -49,6 +49,8 @@ class ImageOperations:
         network: BuildNetwork,
         console: ConsoleMode = ConsoleMode.STREAM,
         no_cache: bool = False,
+        cache_from: tuple[str, ...] = (),
+        timeout_seconds: float | None = None,
     ) -> None:
         """Build an image. The context streams from the CLI, so it does not
         have to be visible inside the Lima VM the way a bind mount does."""
@@ -58,10 +60,12 @@ class ImageOperations:
         argv += ["--network", require_build_network(network)]
         if no_cache:
             argv.append("--no-cache")
+        for image in cache_from:
+            argv += ["--cache-from", image]
         for value in args or []:
             argv += ["--build-arg", value]
         argv.append(context)
-        self._runner.run(argv, console=console)
+        self._runner.run(argv, console=console, timeout_seconds=timeout_seconds)
 
     def read(
         self,
@@ -124,6 +128,26 @@ class ImageOperations:
     def pull(self, image: str, *, platform: str) -> None:
         """Materialize one exact platform image through the Docker daemon."""
         self._runner.run(["docker", "pull", "--platform", platform, image])
+
+    def try_pull(self, image: str, *, platform: str) -> bool:
+        """Try to materialize one exact platform image without hiding failure."""
+        return self._runner.succeeds(["docker", "pull", "--platform", platform, image])
+
+    def tag(self, source: str, target: str) -> None:
+        """Attach another repository-qualified name to an image."""
+        self._runner.run(["docker", "tag", source, target])
+
+    def remove_image(self, *images: str) -> bool:
+        """Best-effort removal for temporary registry aliases."""
+        return self._runner.succeeds(["docker", "image", "rm", *images])
+
+    def manifest_exists(self, image: str) -> bool:
+        """Return whether a remote registry already contains the exact tag."""
+        return self._runner.succeeds(["docker", "manifest", "inspect", image])
+
+    def try_push(self, image: str) -> bool:
+        """Push an immutable generation while preserving the attempt verdict."""
+        return self._runner.succeeds(["docker", "push", image])
 
     def image_id(self, tag: str, *, platform: str | None = None) -> str:
         """The exact image a mutable tag currently names.

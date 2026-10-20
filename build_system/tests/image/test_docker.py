@@ -25,7 +25,6 @@ from capsem_builder.image.docker import (
     GUEST_BINARIES,
     ROOTFS_SCRIPTS,
     _append_build_ledger,
-    _asset_dependency_tag,
     _asset_tools_image,
     _cdx_validate_command,
     _cdxgen_command,
@@ -36,6 +35,7 @@ from capsem_builder.image.docker import (
     _rootfs_config_input_record,
     _scanner_output_command,
     _validate_cyclonedx_obom,
+    asset_dependency_tag,
     build_all_architectures,
     build_image,
     container_compile_agent,
@@ -490,14 +490,14 @@ def test_asset_dependency_materializers_bootstrap_https_trust_before_apt(
 
 
 def test_asset_dependency_identity_changes_with_every_executable_input(real_config):
-    original = _asset_dependency_tag(real_config, "arm64", "rootfs")
+    original = asset_dependency_tag(real_config, "arm64", "rootfs")
     rootfs = real_config.build.rootfs.model_copy(
         update={"runtime_apt_packages": (*real_config.build.rootfs.runtime_apt_packages, "jq")}
     )
     more_packages = real_config.model_copy(
         update={"build": real_config.build.model_copy(update={"rootfs": rootfs})}
     )
-    assert _asset_dependency_tag(more_packages, "arm64", "rootfs") != original
+    assert asset_dependency_tag(more_packages, "arm64", "rootfs") != original
 
     assert assetdependencies.image_tag(
         real_config, "arm64", "kernel", b"first rendered materializer"
@@ -523,7 +523,7 @@ def test_asset_dependency_identity_changes_with_every_executable_input(real_conf
 def test_asset_dependency_require_returns_only_exact_matching_platform_image(
     real_config, monkeypatch: pytest.MonkeyPatch
 ):
-    tag = _asset_dependency_tag(real_config, "arm64", "kernel")
+    tag = asset_dependency_tag(real_config, "arm64", "kernel")
     exact = "sha256:" + "d" * 64
     seen: list[list[str]] = []
 
@@ -1271,7 +1271,13 @@ class TestBuildLedger:
                                             "value": f"{extracted_rootfs}/usr/bin/sendmail",
                                         }
                                     ],
-                                }
+                                },
+                                {
+                                    "type": "library",
+                                    "name": "fonts-bitstream-vera",
+                                    "purl": "pkg:deb/debian/fonts-bitstream-vera@1.10",
+                                    "licenses": [{"license": {"id": "bitstream-vera"}}],
+                                },
                             ],
                         }
                     )
@@ -1363,8 +1369,12 @@ class TestBuildLedger:
                 {"name": "capsem:guest:architecture", "value": "arm64"},
             ],
         }
-        assert document["components"][0]["licenses"][0]["license"]["id"] == "Sendmail"
-        assert document["components"][0]["properties"][0]["value"] == "/usr/bin/sendmail"
+        components = {component["name"]: component for component in document["components"]}
+        assert components["sendmail-bin"]["licenses"][0]["license"]["id"] == "Sendmail"
+        assert (
+            components["fonts-bitstream-vera"]["licenses"][0]["license"]["id"] == "Bitstream-Vera"
+        )
+        assert components["sendmail-bin"]["properties"][0]["value"] == "/usr/bin/sendmail"
 
     def test_validate_cyclonedx_obom_rejects_live_host_inventory(self, tmp_path):
         output = tmp_path / "obom.cdx.json"
@@ -1638,7 +1648,7 @@ class TestBuildLedger:
         mock_extract_inventory.side_effect = fake_inventory
 
         dependency_id = "sha256:" + "d" * 64
-        dependency_tag = _asset_dependency_tag(real_config, "arm64", "rootfs")
+        dependency_tag = asset_dependency_tag(real_config, "arm64", "rootfs")
         dependency = assetdependencies.AssetDependencyImage(
             reference=dependency_tag,
             image_id=dependency_id,
@@ -1718,7 +1728,7 @@ class TestBuildLedger:
         mock_extract.side_effect = fake_extract
 
         dependency_id = "sha256:" + "d" * 64
-        dependency_tag = _asset_dependency_tag(real_config, "arm64", "kernel")
+        dependency_tag = asset_dependency_tag(real_config, "arm64", "kernel")
         dependency = assetdependencies.AssetDependencyImage(
             reference=dependency_tag,
             image_id=dependency_id,

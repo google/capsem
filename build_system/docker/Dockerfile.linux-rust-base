@@ -19,40 +19,24 @@ FROM ${BASE}
 # exists for.
 COPY Cargo.toml Cargo.lock rust-toolchain.toml /src/
 COPY crates /src/crates
+# Workspace crates embed or inspect files from these repository roots at
+# compile time. Copy every such root before prewarming so adding another
+# fixture under an existing root cannot silently turn the warm build cold.
+COPY config /src/config
+COPY tests /src/tests
+COPY guest/artifacts /src/guest/artifacts
+COPY sdk/specification /src/sdk/specification
+COPY web/docs/src/content/docs/security /src/web/docs/src/content/docs/security
+COPY web/graphics /src/web/graphics
 # Every workspace member, or `cargo fetch --locked` cannot load the workspace;
 # tests/citadel/test_linux_rust_base_copies_the_workspace.py holds the list.
 COPY sdk/rust /src/sdk/rust
 
 WORKDIR /src
 
-# `--locked` so a resolution difference fails here, with network, rather than
-# inside a lane that has none.
-RUN cargo fetch --locked
-
-# The dependency graph, compiled. `cargo fetch` gets the sources; this gets
-# the artifacts, which is the part that made a cold run 135s instead of 58s.
-RUN cargo build --locked --workspace --all-targets || true
-
-# Warmed a second time with the coverage instrumentation the lane actually
-# uses. `cargo llvm-cov show-env` is the documented way to get exactly the
-# RUSTFLAGS and target directory the coverage run will use, so a build under
-# them produces artifacts the lane reuses rather than discards.
-#
-# This matters because instrumentation changes every build fingerprint:
-# warming without these flags would leave the lane recompiling the whole
-# dependency graph inside a run that has no network to repair a miss.
-#
-# An earlier attempt used `--no-run`, which is deprecated: it exited in 0.3s
-# with "not found *.profraw files" and `|| true` swallowed the failure, so
-# nothing was compiled at all and three subsequent "fixes" were built on a
-# step that had silently done nothing. Hence `echo` rather than `true`.
-RUN bash -lc 'eval "$(cargo llvm-cov show-env --export-prefix)" \
-    && cargo build --locked --workspace --all-targets' \
-    || echo "prewarm incomplete; the lane will surface anything missing"
-
-# `capsem-app` embeds `web/app/dist`, which imports the compiled TypeScript SDK.
-# Materialize both dependency trees here while the base build has network; the
-# sealed lane rebuilds their current source without fetching.
+# `capsem-app` embeds the current frontend and its Tauri context while Cargo
+# prewarms every target. Materialize both JavaScript dependency trees first;
+# the sealed lane overlays current source and rebuilds both before Rust.
 COPY sdk/typescript /src/sdk/typescript
 RUN cd /src/sdk/typescript \
     && CI=true pnpm install --frozen-lockfile \
@@ -64,6 +48,30 @@ RUN cd /src/web/app \
     && CI=true pnpm install --frozen-lockfile \
     && pnpm run build \
     && test -s /src/web/app/dist/index.html
+
+# `--locked` so a resolution difference fails here, with network, rather than
+# inside a lane that has none.
+RUN cargo fetch --locked
+
+# The dependency graph, compiled. `cargo fetch` gets the sources; this gets
+# the artifacts, which is the part that made a cold run 135s instead of 58s.
+RUN cargo build --locked --workspace --all-targets
+
+# Warmed a second time with the coverage instrumentation the lane actually
+# uses. `cargo llvm-cov show-env` is the documented way to get exactly the
+# RUSTFLAGS and target directory the coverage run will use, so a build under
+# them produces artifacts the lane reuses rather than discards.
+#
+# This matters because instrumentation changes every build fingerprint:
+# warming without these flags would leave the lane recompiling the whole
+# dependency graph inside a run that has no network to repair a miss.
+#
+# An earlier attempt used `--no-run`, which is deprecated: it exited in 0.3s
+# with "not found *.profraw files" and a fallback swallowed the failure, so
+# nothing was compiled at all and three subsequent "fixes" were built on a
+# step that had silently done nothing. A failed prewarm is a failed image.
+RUN bash -lc 'eval "$(cargo llvm-cov show-env --export-prefix)" \
+    && cargo build --locked --workspace --all-targets'
 
 # The build-system Python environment, for the Rust tests that hand an export
 # to a reference reader (`warcio`) through `uv run --project build_system`.
@@ -83,12 +91,23 @@ RUN cd /src && uv sync --project build_system --frozen
 # the project manifest a new mtime, which uv keys the editable rebuild on,
 # so the rebuild happened on every run whose base image was freshly built.
 ENV UV_OFFLINE=1
+ENV CARGO_NET_OFFLINE=true
 
-# Ownership last, so it covers everything every step above created as root.
+# The lane writes only its build output and the two Python environment trees
+# retained through `.dockerignore`. Its source arrives through `COPY --chown`
+# in the thin lane image; Cargo sources, Node modules, and the Rust toolchain
+# are immutable inputs. Recursively changing their ~130,000 entries added
+# nearly three minutes to every cold export without granting a needed write.
 # A non-root user is required: the suite chmods an asset to 0o000 and demands
 # the read fail, and root ignores permissions. `ubuntu:24.04` already ships a
 # uid-1000 account, so this uses the numeric id rather than creating one --
 # `useradd --uid 1000` exits 4 on a UID that already exists.
 RUN mkdir -p /cargo-target /home/lane /linux-rust-output \
-    && chown -R 1000:1000 /src /cargo-target /home/lane /linux-rust-output \
-       /usr/local/cargo /usr/local/rustup
+    && chown 1000:1000 /cargo-target /home/lane /linux-rust-output \
+    && chown -R 1000:1000 /src/.uv-cache /src/build_system/.venv
+
+# Identity metadata comes after the final filesystem layer so an input-key
+# change never invalidates a filesystem operation.
+ARG INPUT_IDENTITY
+LABEL org.capsem.linux-rust-base.input-key="${INPUT_IDENTITY}"
+LABEL org.opencontainers.image.source="https://github.com/google/capsem"

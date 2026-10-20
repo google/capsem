@@ -39,9 +39,13 @@ def _copied_before_the_fetch(dockerfile: str) -> set[str]:
         if line.strip() == FETCH:
             return roots
         words = line.split()
-        if words[:1] == ["COPY"] and not any(word.startswith("--from") for word in words):
+        if words[:1] == ["COPY"] and not any(
+            word.startswith("--from") for word in words
+        ):
             roots.update(word.rstrip("/") for word in words[1:-1])
-    raise AssertionError(f"{DOCKERFILE.name} no longer runs `{FETCH}`; update this guard")
+    raise AssertionError(
+        f"{DOCKERFILE.name} no longer runs `{FETCH}`; update this guard"
+    )
 
 
 def _members_missing_before_the_fetch(dockerfile: str) -> list[str]:
@@ -57,6 +61,31 @@ def _members_missing_before_the_fetch(dockerfile: str) -> list[str]:
 def test_every_workspace_member_is_copied_before_the_fetch() -> None:
     missing = _members_missing_before_the_fetch(DOCKERFILE.read_text(encoding="utf-8"))
     assert not missing, RATIONALE + f"\nnot copied before the fetch: {missing}"
+
+
+def test_external_compile_time_roots_are_copied_before_the_prewarm() -> None:
+    source = DOCKERFILE.read_text(encoding="utf-8")
+
+    for copy in (
+        "COPY config /src/config",
+        "COPY tests /src/tests",
+        "COPY guest/artifacts /src/guest/artifacts",
+        "COPY sdk/specification /src/sdk/specification",
+        "COPY web/docs/src/content/docs/security /src/web/docs/src/content/docs/security",
+        "COPY web/graphics /src/web/graphics",
+    ):
+        assert copy in source
+        assert source.index(copy) < source.index(FETCH)
+
+
+def test_frontend_is_built_before_rust_prewarm_and_failures_are_not_masked() -> None:
+    source = DOCKERFILE.read_text(encoding="utf-8")
+    frontend = "RUN cd /src/web/app"
+    rust = "RUN cargo build --locked --workspace --all-targets"
+
+    assert source.index(frontend) < source.index(rust)
+    assert "prewarm incomplete" not in source
+    assert f"{rust} ||" not in source
 
 
 def test_a_member_copied_after_the_fetch_is_caught() -> None:
@@ -80,6 +109,17 @@ fail inside the lane.
 
 
 def test_the_lane_runs_uv_offline_after_the_environment_is_built() -> None:
-    lines = [line.strip() for line in DOCKERFILE.read_text(encoding="utf-8").splitlines()]
+    lines = [
+        line.strip() for line in DOCKERFILE.read_text(encoding="utf-8").splitlines()
+    ]
     sync = lines.index("RUN cd /src && uv sync --project build_system --frozen")
     assert "ENV UV_OFFLINE=1" in lines[sync + 1 :], UV_OFFLINE_RATIONALE
+
+
+def test_the_lane_does_not_recursively_rewrite_immutable_dependency_ownership() -> None:
+    source = DOCKERFILE.read_text(encoding="utf-8")
+
+    assert "ENV CARGO_NET_OFFLINE=true" in source
+    assert "chown -R 1000:1000 /src " not in source
+    assert "/usr/local/cargo /usr/local/rustup" not in source
+    assert "/src/.uv-cache /src/build_system/.venv" in source

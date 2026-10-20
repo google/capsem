@@ -189,6 +189,25 @@ digest = "sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07
 base = "https://snapshot.ubuntu.com/ubuntu"
 id = "20260810T000000Z"
 configure_script = "build_system/scripts/build/configure-apt-snapshot.sh"
+# Snapshot requests occasionally return a transient 5xx. Every image
+# materializer uses these finite request and operation bounds with persistent
+# BuildKit caches, so a retry resumes downloaded archives.
+update_timeout_seconds = 300
+install_timeout_seconds = 1800
+request_timeout_seconds = 15
+retries = 3
+
+[private_images]
+# Network-open dependency helpers are private build inputs, never release
+# artifacts. A scheduled workflow publishes exact input-keyed generations;
+# gates try them before the deterministic cold-build fallback.
+registry = "ghcr.io/google/capsem-ci"
+source = "https://github.com/google/capsem"
+keep_generations = 3
+# GHCR can accept every layer and transiently deny the final manifest write.
+# Repeating the immutable push only commits that same exact manifest.
+publish_attempts = 3
+manifest = "cache/target/private-images/manifest.json"
 
 [install]
 # The source image, smoke, and privileged systemd runtime are all sealed. The
@@ -1615,6 +1634,7 @@ dockerfile = "build_system/docker/Dockerfile.host-builder"
 context = "build_system/docker/"
 builder_identity_inputs = [
     "build_system/docker/Dockerfile.host-builder",
+    "build_system/docker/materialize-host-apt.sh",
     "build_system/docker/sources-multiarch.sh",
     "build_system/docker/swap-dev-libs.sh",
     "rust-toolchain.toml",
@@ -1869,7 +1889,7 @@ max_lines = 20
 # shrinks updates or removes its entry in the same change.
 [boundary.shell_bodies.oversized_line_counts]
 "release-assets.yaml:publish-runtime-release:14:Publish immutable GitHub runtime release" = 27
-"release.yaml:build-app-macos:21:Verify macOS package installation path policy" = 31
+"release.yaml:build-app-macos:22:Verify macOS package installation path policy" = 31
 "release.yaml:preflight:3:Import Apple certificate (preflight)" = 23
 "release.yaml:test-binary-pairing:21:Activate exact candidate package binaries for functional tests" = 24
 "release.yaml:test-native-linux-package:4:Install and verify exact release deb" = 27
@@ -3491,12 +3511,6 @@ digest = "7538ffecc5da"
 where = "build_system/docker/Dockerfile.install-builder"
 subject = "userdel -r $(getent passwd 1000 | cut -d: -f1)"
 reason = "the base image may not carry a uid-1000 account; absence is the desired end state"
-
-[[boundary.discarded_verdicts]]
-digest = "6b02fa1146cb"
-where = "build_system/docker/Dockerfile.linux-rust-base"
-subject = "cargo build --locked --workspace --all-targets"
-reason = "a cache prewarm, not a proof; the lane that consumes it surfaces anything missing"
 
 [[boundary.discarded_verdicts]]
 digest = "fb3b3fac4613"

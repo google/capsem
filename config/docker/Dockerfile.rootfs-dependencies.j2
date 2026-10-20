@@ -44,3 +44,4 @@ RUN rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/* && \
 # Metadata must not enter the environment of expensive RUN layers.
 ARG INPUT_IDENTITY
 LABEL org.capsem.asset-dependencies.input-key="${INPUT_IDENTITY}"
+LABEL org.opencontainers.image.source="https://github.com/google/capsem"

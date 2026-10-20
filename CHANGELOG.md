@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Refresh the Rust and Python trust stores after the emSign intermediate-key
+  compromise, and update WebSocket TLS dependencies to the patched root cohort.
+
+- Upgrade the MCP SDK to 1.32.0 and pin Vite 8.3.3 across every Node project,
+  fixing task-session authorization and Windows command-argument injection flaws.
+
+- Upgrade Hono to 4.13.11 in the MCP package lock, fixing a double-decoding
+  static-path middleware bypass.
+
 - Upgrade aiohttp to 3.14.5 across shipped Python locks and the debug image,
   fixing request-header timeout and connection resource-exhaustion advisories.
 
@@ -142,6 +151,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Publish the Capsem 0.7 documentation: getting started, task guides, security architecture, and SDK/API references.
 ### Changed
+
+- Local and hosted qualification now reuse exact, validated private GHCR
+  generations for network-open build helpers before the deterministic local
+  fallback; a weekly publisher retains three generations per platform.
 
 - Define diagram colors with shared semantic Tailwind tokens, include color meanings in each Legend, and distinguish process boundaries from permission levels.
 

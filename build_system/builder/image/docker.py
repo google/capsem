@@ -29,6 +29,7 @@ from ..policy.dockerpolicy import (
     require_build_network,
     require_container_network,
 )
+from ..privateimages import SOURCE_LABEL, PrivateImage
 from ..release.obom import ObomSubject, validate_exported_rootfs_obom
 from . import assetdependencies, componentcache, guestbinarycache, guestbuilder
 from .assettools import image_tag as asset_tools_image_tag
@@ -225,11 +226,12 @@ def run_cmd(
     capture: bool = False,
     echo: bool = True,
     timeout: float | None = None,
+    check: bool = True,
 ) -> subprocess.CompletedProcess[str]:
     """Run a subprocess command. Single mock seam for tests."""
     if echo:
         print(f"  -> {' '.join(str(c) for c in cmd)}")
-    kwargs: dict[str, Any] = {"check": True, "text": True}
+    kwargs: dict[str, Any] = {"check": check, "text": True}
     if cwd:
         kwargs["cwd"] = str(cwd)
     if capture:
@@ -381,7 +383,7 @@ def _asset_dependency_template(config: GuestImageConfig, template: str) -> str:
     raise ValueError(f"unsupported asset dependency template: {template}")
 
 
-def _asset_dependency_tag(
+def asset_dependency_tag(
     config: GuestImageConfig,
     arch_name: str,
     template: str,
@@ -406,7 +408,7 @@ def require_asset_dependencies(
     template: str,
 ) -> assetdependencies.AssetDependencyImage:
     """Bind one input-keyed runnable reference to its exact local image ID."""
-    tag = _asset_dependency_tag(config, arch_name, template)
+    tag = asset_dependency_tag(config, arch_name, template)
     arch = config.build.architectures[arch_name]
     result = run_cmd(
         [
@@ -438,12 +440,66 @@ def require_asset_dependencies(
     return assetdependencies.AssetDependencyImage(reference=tag, image_id=image_id)
 
 
+def _try_import_asset_dependencies(
+    runtime: str,
+    image: PrivateImage,
+    *,
+    registry: str | None,
+    source: str | None,
+) -> bool:
+    """Reuse a private exact generation while preserving the cold fallback."""
+    if registry is None or source is None:
+        return False
+    remote = image.remote(registry)
+    pulled = run_cmd(
+        [runtime, "pull", "--platform", image.platform, remote],
+        capture=True,
+        echo=False,
+        check=False,
+    )
+    if pulled.returncode != 0:
+        return False
+    run_cmd([runtime, "tag", remote, image.local])
+    inspected = run_cmd(
+        [
+            runtime,
+            "image",
+            "inspect",
+            "--format",
+            (
+                "{{.Os}}/{{.Architecture}}\t{{.Id}}\t"
+                f'{{{{ index .Config.Labels "{image.identity_label}" }}}}\t'
+                f'{{{{ index .Config.Labels "{SOURCE_LABEL}" }}}}'
+            ),
+            image.local,
+        ],
+        capture=True,
+    ).stdout.strip()
+    fields = inspected.split("\t")
+    valid = (
+        len(fields) == 4
+        and fields[0] == image.platform
+        and fields[1].startswith("sha256:")
+        and fields[2] == image.identity
+        and fields[3] == source
+    )
+    if not valid:
+        remove_image(runtime, image.local)
+        remove_image(runtime, remote)
+        return False
+    remove_image(runtime, remote)
+    print(f"  reused private image generation: {remote}")
+    return True
+
+
 def materialize_asset_dependencies(
     config: GuestImageConfig,
     arch_name: str,
     *,
     template: str,
     repo_root: Path | None = None,
+    private_registry: str | None = None,
+    private_source: str | None = None,
 ) -> assetdependencies.AssetDependencyImage:
     """Build one input-keyed network-open helper before the sealed source lane."""
     import tempfile
@@ -451,7 +507,7 @@ def materialize_asset_dependencies(
     if repo_root is None:
         repo_root = Path.cwd()
     runtime = detect_runtime()
-    tag = _asset_dependency_tag(config, arch_name, template)
+    tag = asset_dependency_tag(config, arch_name, template)
     try:
         run_cmd([runtime, "image", "inspect", tag], capture=True)
     except subprocess.CalledProcessError:
@@ -460,6 +516,20 @@ def materialize_asset_dependencies(
         return require_asset_dependencies(runtime, config, arch_name, template)
 
     arch = config.build.architectures[arch_name]
+    cached = PrivateImage(
+        local=tag,
+        platform=arch.docker_platform,
+        generation=tag.rsplit(":", 1)[1],
+        identity_label=assetdependencies.INPUT_KEY_LABEL,
+        identity=tag,
+    )
+    if _try_import_asset_dependencies(
+        runtime,
+        cached,
+        registry=private_registry,
+        source=private_source,
+    ):
+        return require_asset_dependencies(runtime, config, arch_name, template)
     build_tmp = repo_root / "cache" / "tmp"
     build_tmp.mkdir(parents=True, exist_ok=True)
     dependency_template = _asset_dependency_template(config, template)

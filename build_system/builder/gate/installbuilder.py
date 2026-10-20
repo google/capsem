@@ -19,6 +19,7 @@ from .imageidentity import (
     require_input_key,
 )
 from .invocation import ConsoleMode
+from .privateimagecache import PrivateImage, try_import, try_import_previous
 from .proc import Runner
 
 INPUT_KEY_LABEL = "org.capsem.install-builder.input-key"
@@ -127,31 +128,62 @@ def materialize(runner: Runner, config: GateConfig) -> InstallBuilderIdentity:
     )
     tag = image_tag(config, docker, parent_id=parent_id)
     runner.step(f"Materializing locked install dependencies ({host_arch.name})")
+    if not docker.image_exists(tag, platform=host_arch.docker_platform):
+        try_import(
+            runner,
+            config,
+            PrivateImage(
+                local=tag,
+                platform=host_arch.docker_platform,
+                generation=tag.rsplit(":", 1)[1],
+                identity_label=INPUT_KEY_LABEL,
+                identity=tag,
+            ),
+        )
     if docker.image_exists(tag, platform=host_arch.docker_platform):
         _require_key(docker, tag)
         runner.note(f"install helper input key is already present: {tag}")
     else:
-        docker.build(
-            tag=tag,
-            dockerfile=str(config.path(settings.dockerfile)),
-            context=str(config.root),
-            args=[
-                f"BASE={parent_reference}",
-                f"APT_SNAPSHOT_BASE={config.apt_snapshot.base}",
-                f"APT_SNAPSHOT_ID={config.apt_snapshot.id}",
-                f"APT_PACKAGES={' '.join(_packages(config))}",
-                f"RUST_TARGET={host_arch.rust_target}",
-                f"INSTALL_VENV={config.install.venv}",
-                f"CARGO_STORE={settings.cargo_store}",
-                f"PNPM_STORE={settings.pnpm_store}",
-                f"APT_LISTS_CACHE_ID={settings.apt_lists_cache_id}",
-                f"APT_ARCHIVES_CACHE_ID={settings.apt_archives_cache_id}",
-                f"INPUT_IDENTITY={tag}",
-            ],
+        previous = try_import_previous(
+            runner,
+            config,
+            repository=image_repository(config),
             platform=host_arch.docker_platform,
-            network=settings.materialize_build_network,
-            console=ConsoleMode.LOG_ONLY,
+            identity_label=INPUT_KEY_LABEL,
+            current_generation=tag.rsplit(":", 1)[1],
         )
+        for attempt in range(1, config.apt_snapshot.retries + 1):
+            try:
+                docker.build(
+                    tag=tag,
+                    dockerfile=str(config.path(settings.dockerfile)),
+                    context=str(config.root),
+                    args=[
+                        f"BASE={parent_reference}",
+                        f"APT_SNAPSHOT_BASE={config.apt_snapshot.base}",
+                        f"APT_SNAPSHOT_ID={config.apt_snapshot.id}",
+                        f"APT_PACKAGES={' '.join(_packages(config))}",
+                        f"RUST_TARGET={host_arch.rust_target}",
+                        f"INSTALL_VENV={config.install.venv}",
+                        f"CARGO_STORE={settings.cargo_store}",
+                        f"PNPM_STORE={settings.pnpm_store}",
+                        f"APT_LISTS_CACHE_ID={settings.apt_lists_cache_id}",
+                        f"APT_ARCHIVES_CACHE_ID={settings.apt_archives_cache_id}",
+                        f"INPUT_IDENTITY={tag}",
+                    ],
+                    platform=host_arch.docker_platform,
+                    network=settings.materialize_build_network,
+                    console=ConsoleMode.LOG_ONLY,
+                    cache_from=(previous,) if previous else (),
+                )
+                break
+            except GateError:
+                if attempt >= config.apt_snapshot.retries:
+                    raise
+                runner.note(
+                    "install helper build failed "
+                    f"(attempt {attempt}/{config.apt_snapshot.retries}); retrying"
+                )
         require_exact_image(
             docker,
             parent_reference,

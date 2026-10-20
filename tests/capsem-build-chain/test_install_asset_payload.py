@@ -1484,6 +1484,9 @@ def test_host_builder_bootstraps_https_trust_before_ubuntu_package_fetches() -> 
     host_builder = (
         PROJECT_ROOT / "build_system/docker/Dockerfile.host-builder"
     ).read_text()
+    materializer = (
+        PROJECT_ROOT / "build_system/docker/materialize-host-apt.sh"
+    ).read_text()
 
     trust_stage = (
         "FROM alpine:3.22@sha256:"
@@ -1495,12 +1498,9 @@ def test_host_builder_bootstraps_https_trust_before_ubuntu_package_fetches() -> 
         "/etc/ssl/certs/ca-certificates.crt"
     )
     sources_copy = "COPY sources-multiarch.sh /tmp/"
-    normalized = re.sub(r"\s+", " ", host_builder.replace("\\\n", " "))
-    # Each network phase carries its own bound (see the Dockerfile comment on
-    # the snapshot outage that held this layer for 57 minutes).
-    first_update = (
-        "timeout --signal=TERM --kill-after=5s 300s apt-get update "
-        "&& timeout --signal=TERM --kill-after=5s 600s apt-get install -y --no-install-recommends"
+    materializer_copy = (
+        "COPY --chmod=555 materialize-host-apt.sh "
+        "/usr/local/bin/materialize-host-apt"
     )
     ubuntu_stage = next(
         line
@@ -1514,9 +1514,12 @@ def test_host_builder_bootstraps_https_trust_before_ubuntu_package_fetches() -> 
         host_builder.index(ubuntu_stage)
         < host_builder.index(trust_copy)
         < host_builder.index(sources_copy)
-        < host_builder.index("apt-get update")
+        < host_builder.index(materializer_copy)
+        < host_builder.index("    materialize-host-apt")
     )
-    assert first_update in normalized
+    assert materializer.index('"${APT_UPDATE_TIMEOUT_SECONDS}s" apt-get') < (
+        materializer.index('"$((APT_INSTALL_TIMEOUT_SECONDS / APT_RETRIES))s" apt-get')
+    )
 
 
 def test_cross_arch_tauri_swap_refreshes_indexes_before_removing_native_libs() -> None:
@@ -1533,6 +1536,9 @@ def test_host_builder_uses_shared_apt_authority_without_refetching_for_python() 
     host_builder = (
         PROJECT_ROOT / "build_system/docker/Dockerfile.host-builder"
     ).read_text()
+    materializer = (
+        PROJECT_ROOT / "build_system/docker/materialize-host-apt.sh"
+    ).read_text()
     gate = tomllib.loads((PROJECT_ROOT / "config/gate.toml").read_text())
     native_tools = host_builder.split(
         "# ---- Native build tools + cross-compilation toolchains ----", maxsplit=1
@@ -1542,11 +1548,13 @@ def test_host_builder_uses_shared_apt_authority_without_refetching_for_python() 
     )[0]
 
     assert "python3" in gate["toolchain"]["linux"]["apt_packages"]
-    assert "$WORKSPACE_APT_PACKAGES" in native_tools
-    assert "    python3 \\" not in native_tools
-    assert "python3-venv \\" in native_tools
-    assert native_tools.count("apt-get update") == 1
-    assert host_builder.count("apt-get update") == 1
+    assert "$WORKSPACE_APT_PACKAGES" in materializer
+    assert "    python3 \\" not in materializer
+    assert "python3-venv" in materializer
+    assert "materialize-host-apt" in native_tools
+    assert "apt-get" not in native_tools
+    assert materializer.count("apt-get") == 2
+    assert host_builder.count("apt-get") == 0
     assert "apt-get update" not in python
     assert "COPY --from=uv-runtime /uv /uvx /usr/local/bin/" in python
 

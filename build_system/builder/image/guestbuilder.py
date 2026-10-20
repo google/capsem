@@ -28,6 +28,7 @@ _HOST_ALIASES = {
     "x86_64": "x86_64",
     "amd64": "x86_64",
 }
+INPUT_KEY_LABEL = "org.capsem.guest-rust-builder.input-key"
 
 
 @dataclass(frozen=True)
@@ -136,7 +137,7 @@ def image_repository(build: BuildConfig, arch_name: str) -> str:
     return rendered.rsplit(":", 1)[0]
 
 
-def build_arguments(resolved: BuilderEnvironment) -> list[str]:
+def build_arguments(resolved: BuilderEnvironment, identity: str) -> list[str]:
     """The explicit inputs the shared builder Dockerfile receives.
 
     `CROSS` decides whether the image materializes the target and a C toolchain
@@ -150,4 +151,5 @@ def build_arguments(resolved: BuilderEnvironment) -> list[str]:
         f"HOST_RUST_TARGET={resolved.host_rust_target}",
         f"CROSS={'1' if resolved.cross else '0'}",
         f"CROSS_PACKAGES={' '.join(resolved.cross_packages)}",
+        f"INPUT_IDENTITY={identity}",
     ]

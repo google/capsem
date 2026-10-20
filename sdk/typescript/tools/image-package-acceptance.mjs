@@ -23,14 +23,16 @@ const project = resolve(dirname(fileURLToPath(import.meta.url)));
 assert.ok(!project.startsWith(resolve(sourceRoot) + '/'));
 const packageRoot = join(project, 'node_modules/@capsem/sdk');
 assert.ok(!lstatSync(packageRoot).isSymbolicLink());
-/** @typedef {{name:string,version:string,engines:Record<string,string>,dependencies:Record<string,string>,devDependencies:Record<string,string>,exports:Record<string,{types:string,import:string}>,scripts:Record<string,string>}} Manifest */
+/** @typedef {{name:string,version:string,engines:Record<string,string>,dependencies:Record<string,string>,devDependencies:Record<string,string>,exports:Record<string,{types:string,import:string}>,scripts:Record<string,string>,pnpm?:{overrides:Record<string,string>}}} Manifest */
 /** @param {string} path @returns {unknown} */
 function readJson(path) { return JSON.parse(readFileSync(path, 'utf8')); }
 const manifest = /** @type {Manifest} */ (readJson(join(packageRoot, 'package.json')));
 const sourceManifest = /** @type {Manifest} */ (readJson(join(source, 'sdk/typescript/package.json')));
-// pnpm normalizes publication manifests by omitting the prepack build hook.
+// pnpm normalizes publication manifests by omitting the prepack build hook
+// and the pnpm-only dependency override, neither of which is runtime metadata.
 const packedManifest = {...sourceManifest, scripts: {...sourceManifest.scripts}};
 delete packedManifest.scripts.prepack;
+delete packedManifest.pnpm;
 assert.deepEqual(manifest, packedManifest);
 for (const name of Object.keys(manifest.devDependencies)) {
   assert.ok(!existsSync(join(project, 'node_modules', name)), `runtime contains development dependency: ${name}`);

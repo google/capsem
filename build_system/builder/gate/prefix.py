@@ -86,6 +86,9 @@ def sweep(config: GateConfig) -> list[Path]:
     stale = kept[: max(len(kept) - config.prefix.keep, 0)]
     reclaimed: list[Path] = []
     for path in stale:
+        # A checkout below the cache root is source, never a stale prefix.
+        if path.resolve() == config.root.resolve():
+            continue
         try:
             with lease(config, path):
                 reclaim(config, path)
