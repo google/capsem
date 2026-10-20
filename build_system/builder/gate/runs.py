@@ -111,7 +111,8 @@ class RunsCommand(GateCommand, name="runs", help="list recorded gate runs, or ex
             # `outcome`, so a run that failed while taking the lock or
             # releasing a resource is reachable. Selecting on failed *steps*
             # skipped exactly the runs whose failure was hardest to diagnose.
-            if measure(read(directory, context.config.runlog)).outcome == "failed":
+            # Include interrupted journals that never recorded an outcome.
+            if measure(read(directory, context.config.runlog)).outcome != "ok":
                 return directory
         raise GateError("no recorded run failed; the most recent is " + recorded[0].name)
 
@@ -125,7 +126,7 @@ def _list(context: Context) -> None:
     for directory in recorded:
         recovered = recover(directory, context.config.runlog)
         timing = measure(recovered.events)
-        state = "FAILED" if timing.outcome == "failed" else "ok"
+        state = timing.outcome.upper() if timing.outcome != "ok" else "ok"
         if recovered.torn:
             state += " DAMAGED"
         context.runner.note(f"{directory.name:<34}  {timing.total_ms / 1000:>8.0f}s  {state}")

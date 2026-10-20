@@ -12,6 +12,7 @@
 /// 7. Forward request, stream response back
 /// 8. Emit per-request telemetry (one NetEvent per HTTP request, not per connection)
 pub mod body;
+mod config;
 pub mod decompression_hook;
 pub mod events;
 mod fd_stream;
@@ -19,8 +20,10 @@ pub mod hooks;
 pub mod interpreter_hook;
 mod mcp_endpoint;
 mod mcp_frame;
+mod mcp_http;
 mod mcp_observe;
 pub mod pipeline;
+mod pipeline_factory;
 pub mod protocol;
 pub mod spans;
 pub mod sse_parser_hook;
@@ -28,7 +31,9 @@ pub mod telemetry_hook;
 pub mod tls_server;
 pub use tls_server::make_server_tls_config;
 mod upgrade;
+mod upstream;
 mod util;
+mod websocket;
 
 use std::net::IpAddr;
 use std::os::fd::{AsFd, AsRawFd, OwnedFd};
@@ -36,7 +41,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime};
 
-use capsem_logger::{DbWriter, Decision, McpCall, NetEvent, WriteOp};
+use capsem_logger::{Decision, McpCall, NetEvent, WriteOp};
 use capsem_telemetry::mitm as m;
 use http_body_util::Full;
 use hyper::body::Bytes;
@@ -51,23 +56,29 @@ trait TokioReadWrite: AsyncRead + AsyncWrite {}
 
 impl<T> TokioReadWrite for T where T: AsyncRead + AsyncWrite {}
 
-use super::cert_authority::CertAuthority;
-use super::policy::NetworkMechanics;
 use crate::net::ai_traffic::provider::{route_provider, ModelProtocol, ProviderKind};
-use crate::security_engine::{HttpSecurityEvent, IpSecurityEvent, ModelSecurityEvent, SecurityEvent, TcpSecurityEvent};
+use crate::security_engine::{HttpSecurityEvent, SecurityEvent};
 use body::{BodyStats, ProxyBoxBody, TrackedBody};
 use fd_stream::{AsyncFdStream, ReplayReader};
 use mcp_observe::{observed_mcp_http_request_for_body, should_sniff_mcp_http_body, ObservedMcpHttpRequest};
 use protocol::Protocol;
 use telemetry_hook::TelemetryRequestContext;
+use upstream::{CachedUpstream, UpstreamCache, UpstreamPolicy};
 use util::{
     current_unix_ms, format_headers, format_headers_for_domain, http_upstream_port_allowed, is_anthropic_model_name,
     is_google_model_name, is_llm_api_path, is_openai_model_name, materialize_collected_response_headers,
-    parse_http_host_target, provider_label, request_can_replay_empty_body, split_path_query,
+    model_security_event, parse_http_host_target, provider_label, request_can_replay_empty_body,
+    security_event_with_transport, split_path_query,
 };
 
+pub use config::MitmProxyConfig;
 pub use mcp_endpoint::{McpEndpointState, McpTimeouts, ScopedMcpTools};
-pub use mcp_frame::dispatch_logged_mcp_request;
+pub use mcp_frame::{dispatch_logged_mcp_request, McpTransport};
+pub use pipeline_factory::{make_production_pipeline, make_production_pipeline_with_trace_hints};
+pub use upstream::{
+    GrantedTcpStream, TcpConnectGrantFuture, TcpGrantSelection, TcpResolveGrantFuture, TcpUpstreamGrants,
+    UpstreamTarget,
+};
 
 /// Re-exported so capsem-app can reference the type without depending on rustls.
 pub type UpstreamTlsConfig = rustls::ClientConfig;
@@ -81,48 +92,7 @@ const CREDENTIAL_BODY_CAPTURE_LIMIT: usize = HTTP_BODY_CAPTURE_LIMIT;
 
 static FIRST_NETWORK_READY_EMITTED: AtomicBool = AtomicBool::new(false);
 
-/// Configuration for the MITM proxy.
-pub struct MitmProxyConfig {
-    pub ca: Arc<CertAuthority>,
-    /// Guest-facing TLS config, built once (`make_server_tls_config`): one session cache for all.
-    pub server_tls: Arc<rustls::ServerConfig>,
-    /// Live policy, swappable via RwLock so settings changes take effect
-    /// without restarting the VM. Each HTTP request snapshots the Arc so
-    /// that disabling a provider blocks the next request even on an
-    /// existing keep-alive connection.
-    pub policy: Arc<std::sync::RwLock<Arc<NetworkMechanics>>>,
-    /// Live model endpoint registry from settings/profile provider blocks.
-    /// MITM resolves host -> model protocol once per request and then passes
-    /// that typed metadata to enforcement, hooks, broker substitution, and
-    /// telemetry. Provider hooks must not infer protocol from domains.
-    pub model_endpoints: Arc<std::sync::RwLock<Arc<crate::net::policy_config::ModelEndpointRegistry>>>,
-    pub db: Arc<DbWriter>,
-    /// Cached upstream TLS config (shared across all connections).
-    pub upstream_tls: Arc<rustls::ClientConfig>,
-    /// Telemetry deps shared with the `TelemetryHook` registered in
-    /// `pipeline`. Held here as the same `Arc` so the hook and any
-    /// remaining direct callers (rare; should fold into the hook) read
-    /// the same `pricing` table + `trace_state` mutex. The Arc breaks
-    /// the would-be cycle (config → pipeline → hook → config); the
-    /// hook only points at this `TelemetryDeps`, not the surrounding
-    /// `MitmProxyConfig`.
-    pub telemetry: Arc<telemetry_hook::TelemetryDeps>,
-    /// Hook pipeline. `make_production_pipeline` registers the sync
-    /// ChunkHook chain (decompression → SSE parse →
-    /// provider interpreters → telemetry). `handle_request` dispatches
-    /// L1 events through this pipeline and seeds per-request context
-    /// into the `ChunkDispatchBody`'s `HookState` before serving.
-    pub pipeline: Arc<pipeline::Pipeline>,
-    /// T3 framed MCP endpoint on the MITM listener. Dispatch state lives
-    /// here so the low-privilege aggregator remains DB-free while MITM
-    /// owns policy, timeouts, protocol telemetry, and MCP-origin `tool_calls`.
-    pub mcp_endpoint: Option<Arc<McpEndpointState>>,
-}
-
-/// Build the default (empty) hook pipeline. T1 slices 2 + 3 will
-/// extend this to register the production hook set; until then the
-/// pipeline is wired through `MitmProxyConfig` but no dispatch
-/// happens from `handle_request`.
+/// Build an empty pipeline for callers that do not install production hooks.
 pub fn make_default_pipeline() -> Arc<pipeline::Pipeline> {
     Arc::new(pipeline::Pipeline::builder().build())
 }
@@ -139,56 +109,6 @@ impl Drop for ConnectionGauge {
     }
 }
 
-/// Build the production hook pipeline. Registers the full sync ChunkHook chain
-/// (decompression → SSE parse → provider interpreters → telemetry).
-///
-/// All four ChunkHook stages are pure-sync: per-chunk work runs
-/// inline from `poll_frame` with no `.await`, no channel hop, no
-/// async wrapper. Header mutations needed for decompression
-/// (Content-Encoding / Content-Length strip) happen inline in
-/// `handle_request` before chunk dispatch begins -- the chunk hooks
-/// themselves never see the head.
-pub fn make_production_pipeline(
-    policy: Arc<std::sync::RwLock<Arc<NetworkMechanics>>>,
-    telemetry: Arc<telemetry_hook::TelemetryDeps>,
-) -> Arc<pipeline::Pipeline> {
-    let _ = policy;
-    let p = pipeline::Pipeline::builder()
-        // Chunk-hook order is load-bearing:
-        //   1. DecompressionHook -- gzip detection on first chunk's
-        //      magic; subsequent chunks fed through flate2::Decompress.
-        //   2. SseParserHook -- needs decompressed bytes for AI
-        //      domains.
-        //   3. Interpreter hooks -- drain SseParserHook's queue and
-        //      build LlmEvents. Three providers; only the matching
-        //      one runs.
-        //   4. TelemetryHook -- counts response bytes, captures
-        //      preview, fires NetEvent + optional ModelCall on
-        //      on_response_end.
-        .register_chunk(Arc::new(decompression_hook::DecompressionHook::new()))
-        .register_chunk(Arc::new(sse_parser_hook::SseParserHook::new()))
-        .register_chunk(Arc::new(interpreter_hook::AnthropicInterpreterHook::new()))
-        .register_chunk(Arc::new(interpreter_hook::OpenAiInterpreterHook::new()))
-        .register_chunk(Arc::new(interpreter_hook::GoogleInterpreterHook::new()))
-        .register_chunk(Arc::new(telemetry_hook::TelemetryHook::new(telemetry)))
-        .build();
-    Arc::new(p)
-}
-
-fn ai_provider_for_domain(config: &MitmProxyConfig, domain: &str) -> Option<ProviderKind> {
-    config.model_endpoints.read().unwrap().provider_for_host(domain)
-}
-
-fn ai_provider_for_target(
-    config: &MitmProxyConfig,
-    domain: &str,
-    upstream_port: u16,
-    path: &str,
-) -> Option<ProviderKind> {
-    let registry = config.model_endpoints.read().unwrap();
-    ai_identity_for_target_or_path(&registry, domain, upstream_port, path).provider
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ModelTrafficIdentity {
     /// Endpoint owner used for policy/logging. Example: `ollama` for
@@ -197,6 +117,103 @@ struct ModelTrafficIdentity {
     provider: Option<ProviderKind>,
     /// Wire protocol used to parse request/response payloads.
     protocol: Option<ModelProtocol>,
+}
+
+/// One configured model endpoint exposed through the standalone HTTP adapter.
+///
+/// The trusted policy snapshot supplies every upstream routing field. Client
+/// headers never participate in selecting a host, port, transport, provider,
+/// or wire protocol.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StandaloneModelTarget {
+    provider_id: String,
+    domain: String,
+    port: u16,
+    upstream_protocol: Protocol,
+    base_path: String,
+    provider: ProviderKind,
+    model_protocol: ModelProtocol,
+}
+
+impl StandaloneModelTarget {
+    pub fn from_registry(
+        registry: &crate::net::policy_config::ModelEndpointRegistry,
+        provider_id: &str,
+    ) -> Result<Self, String> {
+        let endpoint = registry
+            .get(provider_id)
+            .ok_or_else(|| format!("model provider {provider_id:?} is not configured"))?;
+        let parsed = reqwest::Url::parse(&endpoint.upstream_url)
+            .map_err(|error| format!("model provider {provider_id:?} has an invalid upstream URL: {error}"))?;
+        let upstream_protocol = match parsed.scheme() {
+            "http" => Protocol::Http,
+            "https" => Protocol::Tls,
+            scheme => {
+                return Err(format!(
+                    "model provider {provider_id:?} uses unsupported upstream URL scheme {scheme:?}"
+                ));
+            }
+        };
+        if !parsed.username().is_empty()
+            || parsed.password().is_some()
+            || parsed.query().is_some()
+            || parsed.fragment().is_some()
+        {
+            return Err(format!(
+                "model provider {provider_id:?} upstream URL must not contain credentials, query, or fragment"
+            ));
+        }
+        let domain = parsed
+            .host_str()
+            .filter(|host| !host.is_empty())
+            .ok_or_else(|| format!("model provider {provider_id:?} upstream URL has no host"))?
+            .to_string();
+        let port = parsed
+            .port_or_known_default()
+            .ok_or_else(|| format!("model provider {provider_id:?} upstream URL has no port"))?;
+        let base_path = parsed.path().trim_end_matches('/');
+        Ok(Self {
+            provider_id: endpoint.provider_id.clone(),
+            domain,
+            port,
+            upstream_protocol,
+            base_path: if base_path.is_empty() {
+                String::new()
+            } else {
+                base_path.to_string()
+            },
+            provider: endpoint.provider_kind,
+            model_protocol: endpoint.protocol,
+        })
+    }
+
+    pub fn provider_id(&self) -> &str {
+        &self.provider_id
+    }
+
+    pub fn domain(&self) -> &str {
+        &self.domain
+    }
+
+    pub const fn port(&self) -> u16 {
+        self.port
+    }
+
+    pub const fn upstream_protocol(&self) -> Protocol {
+        self.upstream_protocol
+    }
+
+    pub fn base_path(&self) -> &str {
+        &self.base_path
+    }
+
+    pub const fn provider(&self) -> ProviderKind {
+        self.provider
+    }
+
+    pub const fn model_protocol(&self) -> ModelProtocol {
+        self.model_protocol
+    }
 }
 
 fn ai_identity_for_target_or_path(
@@ -339,22 +356,6 @@ impl SecurityBoundaryDecisionFields {
     }
 }
 
-fn model_security_event(
-    event_type: RuntimeSecurityEventType,
-    provider: ProviderKind,
-    model: Option<String>,
-    request_body: Option<&[u8]>,
-    response_body: Option<&[u8]>,
-) -> SecurityEvent {
-    SecurityEvent::new(event_type).with_model(ModelSecurityEvent {
-        provider: Some(provider.as_str().to_string()),
-        name: model,
-        request_body: request_body.map(|body| String::from_utf8_lossy(body).to_string()),
-        response_body: response_body.map(|body| String::from_utf8_lossy(body).to_string()),
-        tool_calls: None,
-    })
-}
-
 fn maybe_decompress_gzip_body(body: Bytes, is_gzip: bool) -> anyhow::Result<Bytes> {
     if !is_gzip {
         return Ok(body);
@@ -370,7 +371,7 @@ fn maybe_decompress_gzip_body(body: Bytes, is_gzip: bool) -> anyhow::Result<Byte
 pub fn make_upstream_tls_config() -> Arc<rustls::ClientConfig> {
     let mut root_store = rustls::RootCertStore::empty();
     root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+    let provider = Arc::new(capsem_crypto::tls::provider());
     let config = rustls::ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .expect("TLS config")
@@ -441,6 +442,37 @@ pub async fn handle_connection(vsock_fd: OwnedFd, config: Arc<MitmProxyConfig>) 
             warn!(domain = display_domain, reason, "MITM proxy: connection error");
         }
     }
+}
+
+/// Serve one plaintext OpenAI-compatible client connection while pinning all
+/// upstream routing to a provider selected from the trusted policy snapshot.
+pub async fn handle_standalone_connection(
+    client_fd: OwnedFd,
+    config: Arc<MitmProxyConfig>,
+    target: StandaloneModelTarget,
+) {
+    ::metrics::gauge!(m::ACTIVE_CONNECTIONS).increment(1.0);
+    let _gauge_guard = ConnectionGauge;
+
+    let std_fd = std::fs::File::from(client_fd);
+    if let Err(error) = capsem_foundation::unix::fd::set_nonblocking(std_fd.as_fd(), true) {
+        warn!(%error, "standalone proxy could not configure client socket");
+        return;
+    }
+    let async_fd = match tokio::io::unix::AsyncFd::new(std_fd) {
+        Ok(fd) => fd,
+        Err(error) => {
+            warn!(%error, "standalone proxy could not adopt client socket");
+            return;
+        }
+    };
+    serve_pipeline(
+        TokioIo::new(AsyncFdStream(async_fd)),
+        PipelineTarget::Standalone(target),
+        &config,
+        Arc::new(None),
+    )
+    .await;
 }
 
 /// Inner handler. Returns Ok(domain) on success, Err((domain, decision, reason))
@@ -598,16 +630,7 @@ async fn handle_inner(vsock_fd: OwnedFd, config: &Arc<MitmProxyConfig>) -> Resul
     match detected {
         Protocol::Tls => serve_tls(initial_buf, vsock_stream, config, process_name).await,
         Protocol::Http => serve_plain_http(initial_buf, vsock_stream, config, process_name).await,
-        Protocol::McpFrame => {
-            let Some(endpoint) = &config.mcp_endpoint else {
-                return Err((
-                    "mcp.capsem.internal".to_string(),
-                    Decision::Error,
-                    "framed MCP endpoint disabled".into(),
-                ));
-            };
-            mcp_frame::serve(initial_buf, vsock_stream, Arc::clone(endpoint), Arc::clone(&config.db)).await
-        }
+        Protocol::McpFrame => mcp_frame::serve(initial_buf, vsock_stream, config).await,
         Protocol::Unknown => unreachable!("Protocol::Unknown returned Err earlier"),
     }
 }
@@ -665,7 +688,16 @@ async fn serve_tls(
         .ok_or_else(|| (String::new(), Decision::Denied, "no SNI in ClientHello".into()))?;
 
     let io = TokioIo::new(tls_stream);
-    serve_pipeline(io, domain.clone(), Protocol::Tls, config, process_name).await;
+    serve_pipeline(
+        io,
+        PipelineTarget::Dynamic {
+            connection_domain: domain.clone(),
+            protocol: Protocol::Tls,
+        },
+        config,
+        process_name,
+    )
+    .await;
     Ok(domain)
 }
 
@@ -682,7 +714,16 @@ async fn serve_plain_http(
 ) -> Result<String, (String, Decision, String)> {
     let replay = ReplayReader::new(initial_buf, vsock_stream);
     let io = TokioIo::new(replay);
-    serve_pipeline(io, String::new(), Protocol::Http, config, process_name).await;
+    serve_pipeline(
+        io,
+        PipelineTarget::Dynamic {
+            connection_domain: String::new(),
+            protocol: Protocol::Http,
+        },
+        config,
+        process_name,
+    )
+    .await;
     // Per-request telemetry is emitted by `TelemetryHook`. The
     // connection-level `NetEvent` `handle_connection` would write on
     // an Err-return is intentionally skipped on this path -- there
@@ -697,10 +738,18 @@ async fn serve_plain_http(
 /// * HTTP: parsed from the inbound `Host` header per request; falls
 ///   back to `("", 80)` when the header is missing or malformed,
 ///   producing a 502 downstream once `handle_request` runs.
+#[derive(Clone)]
+enum PipelineTarget {
+    Dynamic {
+        connection_domain: String,
+        protocol: Protocol,
+    },
+    Standalone(StandaloneModelTarget),
+}
+
 async fn serve_pipeline<IO>(
     io: IO,
-    connection_domain: String,
-    protocol: Protocol,
+    target: PipelineTarget,
     config: &Arc<MitmProxyConfig>,
     process_name: Arc<Option<String>>,
 ) where
@@ -713,35 +762,66 @@ async fn serve_pipeline<IO>(
     // serves one upstream via keep-alive, so caching the sender
     // avoids re-establishing TCP[+TLS] for every request on the
     // same connection.
-    let cached_upstream: Arc<tokio::sync::Mutex<Option<hyper::client::conn::http1::SendRequest<ProxyBoxBody>>>> =
-        Arc::new(tokio::sync::Mutex::new(None));
+    let cached_upstream: Arc<UpstreamCache> = Arc::default();
 
     let svc = hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
         let upstream_tls = Arc::clone(&upstream_tls);
-        let connection_domain = connection_domain.clone();
+        let target = target.clone();
         let config_arc = Arc::clone(&config_arc);
         let process_name = Arc::clone(&process_name);
         let cached_upstream = Arc::clone(&cached_upstream);
 
         async move {
-            // Resolve the per-request `(domain, upstream_port)`. TLS
-            // already knows from SNI; HTTP must read the Host header.
-            let (request_domain, upstream_port) = match protocol {
-                Protocol::Tls => (connection_domain, 443u16),
-                Protocol::Http => {
-                    parse_http_host_target(req.headers().get("host")).unwrap_or_else(|| (String::new(), 80))
+            let (request_domain, upstream_port, protocol, upstream_protocol, authoritative_host, fixed_identity) =
+                match target {
+                    PipelineTarget::Dynamic {
+                        connection_domain,
+                        protocol,
+                    } => {
+                        let (domain, port) = match protocol {
+                            Protocol::Tls => (connection_domain, 443u16),
+                            Protocol::Http => {
+                                parse_http_host_target(req.headers().get("host")).unwrap_or_else(|| (String::new(), 80))
+                            }
+                            Protocol::McpFrame => unreachable!("framed MCP bypasses HTTP pipeline"),
+                            Protocol::Unknown => (String::new(), 0),
+                        };
+                        (domain, port, protocol, protocol, protocol == Protocol::Tls, None)
+                    }
+                    PipelineTarget::Standalone(target) => (
+                        target.domain().to_string(),
+                        target.port(),
+                        Protocol::Http,
+                        target.upstream_protocol(),
+                        true,
+                        Some(ModelTrafficIdentity {
+                            provider: Some(target.provider()),
+                            protocol: Some(target.model_protocol()),
+                        }),
+                    ),
+                };
+            if fixed_identity.is_none() {
+                // Capsem's own zone is answered here, before any HTTP policy, body sniff or dial.
+                if let Some(route) = mcp_http::internal_route(&request_domain, upstream_port, protocol) {
+                    let (domain, port) = (&request_domain, upstream_port);
+                    return Ok(mcp_http::serve(req, route, domain, port, protocol, &config_arc, &process_name).await);
                 }
-                Protocol::McpFrame => unreachable!("framed MCP bypasses HTTP pipeline"),
-                Protocol::Unknown => (String::new(), 0),
             };
-            let ai_identity = {
-                let registry = config_arc.model_endpoints.read().unwrap();
-                ai_identity_for_target_or_path(&registry, &request_domain, upstream_port, req.uri().path())
-            };
+            let policy_snapshot = config_arc.engine.policy().snapshot();
+            let ai_identity = fixed_identity.unwrap_or_else(|| {
+                ai_identity_for_target_or_path(
+                    policy_snapshot.model_endpoints(),
+                    &request_domain,
+                    upstream_port,
+                    req.uri().path(),
+                )
+            });
             handle_request(
                 req,
                 &request_domain,
                 protocol,
+                upstream_protocol,
+                authoritative_host,
                 upstream_port,
                 &upstream_tls,
                 &config_arc,
@@ -749,6 +829,7 @@ async fn serve_pipeline<IO>(
                 ai_identity.provider,
                 ai_identity.protocol,
                 &cached_upstream,
+                policy_snapshot,
             )
             .await
         }
@@ -773,6 +854,7 @@ async fn serve_pipeline<IO>(
 
 struct HttpRequestSecurityEventInput<'a> {
     domain: &'a str,
+    upstream_ip: Option<IpAddr>,
     upstream_port: u16,
     method: &'a str,
     path: &'a str,
@@ -801,30 +883,13 @@ fn http_request_security_event(input: HttpRequestSecurityEventInput<'_>) -> Secu
             input.headers,
             input.query,
         ));
-    security_event_with_transport(event, input.domain, input.upstream_port)
-}
-
-fn security_event_with_transport(mut event: SecurityEvent, domain: &str, upstream_port: u16) -> SecurityEvent {
-    event = event.with_tcp(TcpSecurityEvent {
-        port: Some(upstream_port.to_string()),
-    });
-    if let Ok(ip) = domain.parse::<IpAddr>() {
-        event = event.with_ip(IpSecurityEvent {
-            value: Some(ip.to_string()),
-            version: Some(match ip {
-                IpAddr::V4(_) => "4".to_string(),
-                IpAddr::V6(_) => "6".to_string(),
-            }),
-        });
-    }
-
-    event
+    security_event_with_transport(event, input.upstream_ip, input.upstream_port)
 }
 
 /// Handle a single HTTP request within a MITM-proxied connection
 /// (TLS or plain HTTP).
 ///
-/// Reads the live policy from `config.policy` RwLock per-request so that
+/// Reads one live policy revision per request so that
 /// settings changes (e.g. disabling a provider) take effect immediately,
 /// even for in-flight keep-alive connections.
 #[allow(clippy::too_many_arguments)]
@@ -844,13 +909,16 @@ async fn handle_request(
     mut req: hyper::Request<hyper::body::Incoming>,
     domain: &str,
     protocol: Protocol,
+    upstream_protocol: Protocol,
+    authoritative_host: bool,
     upstream_port: u16,
     upstream_tls: &Arc<rustls::ClientConfig>,
     config: &Arc<MitmProxyConfig>,
     process_name: &Option<String>,
     ai_provider: Option<ProviderKind>,
     ai_protocol: Option<ModelProtocol>,
-    cached_upstream: &tokio::sync::Mutex<Option<hyper::client::conn::http1::SendRequest<ProxyBoxBody>>>,
+    cached_upstream: &UpstreamCache,
+    policy_snapshot: Arc<crate::net::proxy_engine::ProxyPolicySnapshot>,
 ) -> Result<hyper::Response<ProxyBoxBody>, anyhow::Error> {
     use http_body_util::BodyExt;
 
@@ -866,10 +934,20 @@ async fn handle_request(
         None
     };
 
-    // Snapshot the live policy for this request (not per-connection) so that
-    // hot-reloaded settings take effect for subsequent requests on the same
-    // keep-alive connection.
-    let policy: Arc<NetworkMechanics> = config.policy.read().unwrap().clone();
+    let policy = policy_snapshot.network();
+    // Resolve before the rules run, so they judge the address the dial reaches.
+    let resolver = &config.upstream_resolver;
+    let target = UpstreamTarget::select(
+        resolver,
+        UpstreamPolicy::from(policy_snapshot.as_ref()),
+        upstream_protocol,
+        domain,
+        upstream_port,
+        cached_upstream,
+        config.upstream_grants.as_deref(),
+    )
+    .await;
+    let upstream_ip = target.judged_ip(domain);
     let log_bodies = policy.log_bodies;
     let max_body = policy.max_body_capture;
 
@@ -945,7 +1023,7 @@ async fn handle_request(
                 domain: domain.to_string(),
                 process_name: process_name.clone(),
                 port: upstream_port,
-                protocol,
+                protocol: upstream_protocol,
                 ai_provider: conn_ai_provider,
                 ai_protocol: conn_ai_protocol,
             },
@@ -963,12 +1041,13 @@ async fn handle_request(
                 parts: &parts,
                 client_upgrade: client_upgrade.expect("websocket upgrade captured before split"),
                 domain,
-                protocol,
+                target: &target,
+                protocol: upstream_protocol,
                 upstream_port,
                 upstream_tls,
                 config,
                 process_name,
-                policy: &policy,
+                policy_snapshot: &policy_snapshot,
                 ai_provider,
                 ai_protocol,
                 method: method.clone(),
@@ -1003,6 +1082,7 @@ async fn handle_request(
         warn!(domain, method, path, error = %error, "MITM proxy: upstream error");
         let body_text = format!("Capsem: upstream error ({error})\n");
         let req_ctx = TelemetryRequestContext {
+            policy_snapshot: Arc::clone(&policy_snapshot),
             domain: domain.to_string(),
             process_name: process_name.clone(),
             ai_provider,
@@ -1151,6 +1231,7 @@ async fn handle_request(
 
     let mut http_security_event = http_request_security_event(HttpRequestSecurityEventInput {
         domain,
+        upstream_ip,
         upstream_port,
         method: &method,
         path: &path,
@@ -1165,7 +1246,7 @@ async fn handle_request(
     if let Some(trace_id) = capsem_foundation::telemetry::ambient_capsem_trace_id() {
         http_security_event = http_security_event.with_trace_id(trace_id);
     }
-    let rules = config.telemetry.security_rules.read().unwrap().clone();
+    let rules = Arc::clone(policy_snapshot.security_rules());
     let actions_span = tracing::debug_span!(
         target: "capsem.mitm",
         spans::MITM_SECURITY_ACTIONS,
@@ -1175,13 +1256,12 @@ async fn handle_request(
         status = tracing::field::Empty,
         error_kind = tracing::field::Empty,
     );
-    let http_evaluation = match actions_span.in_scope(|| {
-        crate::security_engine::evaluate_security_boundary(
-            &rules,
-            config.telemetry.plugin_policy.read().unwrap().clone(),
-            http_security_event,
-        )
-    }) {
+    let http_evaluation = match config
+        .engine
+        .evaluate(&policy_snapshot, http_security_event)
+        .instrument(actions_span.clone())
+        .await
+    {
         Ok(evaluation) => evaluation,
         Err(error) => {
             actions_span.record("decision", "error");
@@ -1218,6 +1298,7 @@ async fn handle_request(
             format!("capsem: HTTP request blocked by security rule: {rule_id}\n")
         };
         let req_ctx = TelemetryRequestContext {
+            policy_snapshot: Arc::clone(&policy_snapshot),
             domain: domain.to_string(),
             process_name: process_name.clone(),
             ai_provider,
@@ -1255,12 +1336,13 @@ async fn handle_request(
     // Host-side plain-HTTP port allowlist. The port came from the guest's Host
     // header; enforce it before any upstream dial so a guest reaching the proxy
     // directly cannot make the host connect to an arbitrary port.
-    if !http_upstream_port_allowed(&policy, protocol, upstream_port) {
+    if !http_upstream_port_allowed(policy, upstream_protocol, upstream_port) {
         actions_span.record("decision", "deny");
         actions_span.record("status", "ok");
         let matched = "security.web.http_upstream_ports";
         let body_text = format!("capsem: HTTP upstream port {upstream_port} blocked by {matched}\n");
         let req_ctx = TelemetryRequestContext {
+            policy_snapshot: Arc::clone(&policy_snapshot),
             domain: domain.to_string(),
             process_name: process_name.clone(),
             ai_provider,
@@ -1297,8 +1379,11 @@ async fn handle_request(
     }
     actions_span.record("decision", "allow");
     actions_span.record("status", "ok");
-    let upstream_materialized = match actions_span
-        .in_scope(|| crate::security_engine::materialize_http_request_for_upstream(&http_evaluation.event))
+    let upstream_materialized = match config
+        .engine
+        .materialize_http_request(http_evaluation.event)
+        .instrument(actions_span.clone())
+        .await
     {
         Ok(materialized) => materialized,
         Err(error) => {
@@ -1342,16 +1427,15 @@ async fn handle_request(
                 status: None,
                 body: observed.request_preview.clone(),
             }),
-            domain,
+            upstream_ip,
             upstream_port,
         );
-        let mcp_evaluation = match mcp_span.in_scope(|| {
-            crate::security_engine::evaluate_security_boundary(
-                &rules,
-                config.telemetry.plugin_policy.read().unwrap().clone(),
-                mcp_event,
-            )
-        }) {
+        let mcp_evaluation = match config
+            .engine
+            .evaluate(&policy_snapshot, mcp_event)
+            .instrument(mcp_span.clone())
+            .await
+        {
             Ok(evaluation) => evaluation,
             Err(error) => {
                 mcp_span.record("decision", "error");
@@ -1388,7 +1472,7 @@ async fn handle_request(
                         status: Some("403".to_string()),
                         body: observed.request_preview.clone(),
                     }),
-                domain,
+                upstream_ip,
                 upstream_port,
             );
             let denied_call = McpCall {
@@ -1430,6 +1514,7 @@ async fn handle_request(
             let mut scrubbed_stats = BodyStats::new(0);
             scrubbed_stats.bytes = observed.bytes_sent;
             let req_ctx = TelemetryRequestContext {
+                policy_snapshot: Arc::clone(&policy_snapshot),
                 domain: domain.to_string(),
                 process_name: process_name.clone(),
                 ai_provider: effective_ai_provider,
@@ -1563,12 +1648,8 @@ async fn handle_request(
                 status: None,
                 body: Some(String::from_utf8_lossy(&body_bytes).to_string()),
             });
-            let model_event = security_event_with_transport(model_event, domain, upstream_port);
-            let model_evaluation = match crate::security_engine::evaluate_security_boundary(
-                &rules,
-                config.telemetry.plugin_policy.read().unwrap().clone(),
-                model_event,
-            ) {
+            let model_event = security_event_with_transport(model_event, upstream_ip, upstream_port);
+            let model_evaluation = match config.engine.evaluate(&policy_snapshot, model_event).await {
                 Ok(evaluation) => evaluation,
                 Err(error) => {
                     model_request_span.record("decision", "error");
@@ -1596,6 +1677,7 @@ async fn handle_request(
                 let mut scrubbed_stats = BodyStats::new(0);
                 scrubbed_stats.bytes = body_bytes.len() as u64;
                 let req_ctx = TelemetryRequestContext {
+                    policy_snapshot: Arc::clone(&policy_snapshot),
                     domain: domain.to_string(),
                     process_name: process_name.clone(),
                     ai_provider: effective_ai_provider,
@@ -1699,7 +1781,9 @@ async fn handle_request(
         .lock()
         .instrument(upstream_prepare_span.clone())
         .await
-        .take();
+        .take()
+        .filter(|cached| cached.serves(domain, upstream_port, &target))
+        .map(|cached| cached.sender);
     let upstream_lock_us = upstream_lock_start.elapsed().as_micros() as u64;
 
     // If we have a cached sender, check it's still alive.
@@ -1717,18 +1801,9 @@ async fn handle_request(
     let mut tcp_us = 0u64;
     let mut tls_us = 0u64;
     let mut handshake_us = 0u64;
-    let upstream_override = policy.find_upstream_override(domain, upstream_port).cloned();
-    let dial_target = upstream_override
-        .as_ref()
-        .map(|route| route.dial.clone())
-        .unwrap_or_else(|| format!("{domain}:{upstream_port}"));
-    let upstream_protocol = upstream_override
-        .as_ref()
-        .map(|route| match route.protocol {
-            crate::net::policy::UpstreamOverrideProtocol::Http => Protocol::Http,
-            crate::net::policy::UpstreamOverrideProtocol::Tls => Protocol::Tls,
-        })
-        .unwrap_or(protocol);
+    let upstream_protocol = target.protocol(upstream_protocol);
+    // What the sender reaches, pinned to the peer once connected: the cache key.
+    let mut connected = target.clone();
 
     // Create a fresh upstream connection if needed. TLS path goes
     // TCP -> TLS handshake -> HTTP/1.1 handshake; HTTP path skips
@@ -1738,12 +1813,13 @@ async fn handle_request(
     } else {
         let dial_start = Instant::now();
         let tcp_start = Instant::now();
-        let upstream_tcp = match tokio::net::TcpStream::connect(&dial_target)
+        let upstream_tcp = match target
+            .connect_with_grants(config.upstream_grants.as_deref(), policy_snapshot.digest())
             .instrument(upstream_prepare_span.clone())
             .await
         {
-            Ok(tcp) => {
-                let _ = tcp.set_nodelay(true);
+            Ok((tcp, pinned)) => {
+                connected = pinned;
                 tcp
             }
             Err(e) => {
@@ -1754,8 +1830,7 @@ async fn handle_request(
                 tracing::debug!(
                     target: "mitm.transport.upstream",
                     domain, port = upstream_port, reused = false,
-                    dial_target = %dial_target,
-                    upstream_override = upstream_override.is_some(),
+                    dial_target = %target,
                     upstream_lock_us, ready_us, tcp_us,
                     error = %e, "upstream TCP connect failed"
                 );
@@ -1898,8 +1973,7 @@ async fn handle_request(
     tracing::debug!(
         target: "mitm.transport.upstream",
         domain, port = upstream_port, reused, upstream_lock_us, ready_us,
-        dial_target = %dial_target,
-        upstream_override = upstream_override.is_some(),
+        dial_target = %target,
         tcp_us, tls_us, handshake_us,
         "upstream sender prepared"
     );
@@ -1922,13 +1996,13 @@ async fn handle_request(
             // HTTP: preserve inbound `host` -- the guest sent it,
             //       and parse_http_host_target already drove our
             //       upstream selection from it.
-            let drop_host = matches!(protocol, Protocol::Tls) && name == "host";
+            let drop_host = authoritative_host && name == "host";
             if drop_host || name == "accept-encoding" {
                 continue;
             }
             builder = builder.header(name.clone(), value.clone());
         }
-        if matches!(protocol, Protocol::Tls) {
+        if authoritative_host {
             builder = builder.header("host", domain);
         }
         // Only accept gzip -- we can decompress it; brotli/zstd we cannot.
@@ -1983,16 +2057,17 @@ async fn handle_request(
             };
             tracing::debug!(
                 target: "mitm.transport.upstream",
-                domain, port = upstream_port, dial_target = %dial_target,
+                domain, port = upstream_port, dial_target = %target,
                 error = %e,
                 "cached upstream sender failed on send; reconnecting replayable request"
             );
-            let upstream_tcp = match tokio::net::TcpStream::connect(&dial_target)
+            let upstream_tcp = match target
+                .connect_with_grants(config.upstream_grants.as_deref(), policy_snapshot.digest())
                 .instrument(upstream_send_span.clone())
                 .await
             {
-                Ok(tcp) => {
-                    let _ = tcp.set_nodelay(true);
+                Ok((tcp, pinned)) => {
+                    connected = pinned;
                     tcp
                 }
                 Err(retry_error) => {
@@ -2102,7 +2177,8 @@ async fn handle_request(
     // Put the sender back in the cache for the next request on this connection.
     // The next request's ready().await will naturally wait until this response
     // body completes (hyper 1.x keep-alive semantics).
-    cached_upstream.lock().await.replace(sender);
+    let cached = CachedUpstream::new(domain, upstream_port, connected, sender);
+    cached_upstream.lock().await.replace(cached);
     let (mut resp_parts, resp_body) = resp.into_parts();
 
     let mut effective_security_decision = request_security_decision.clone();
@@ -2221,12 +2297,8 @@ async fn handle_request(
                 status: Some(resp_status.to_string()),
                 body: Some(String::from_utf8_lossy(&response_body).to_string()),
             });
-            let model_event = security_event_with_transport(model_event, domain, upstream_port);
-            let model_evaluation = match crate::security_engine::evaluate_security_boundary(
-                &rules,
-                config.telemetry.plugin_policy.read().unwrap().clone(),
-                model_event,
-            ) {
+            let model_event = security_event_with_transport(model_event, upstream_ip, upstream_port);
+            let model_evaluation = match config.engine.evaluate(&policy_snapshot, model_event).await {
                 Ok(evaluation) => evaluation,
                 Err(error) => {
                     model_response_span.record("decision", "error");
@@ -2254,6 +2326,7 @@ async fn handle_request(
                     model_evaluation.enforcement.rule_id.as_deref().unwrap_or("unknown")
                 );
                 let req_ctx = TelemetryRequestContext {
+                    policy_snapshot: Arc::clone(&policy_snapshot),
                     domain: domain.to_string(),
                     process_name: process_name.clone(),
                     ai_provider: effective_ai_provider,
@@ -2321,7 +2394,7 @@ async fn handle_request(
                         status: Some(resp_status.to_string()),
                         body: observed.request_preview.clone(),
                     }),
-                domain,
+                upstream_ip,
                 upstream_port,
             );
             let call = McpCall {
@@ -2372,6 +2445,7 @@ async fn handle_request(
     };
 
     let req_ctx = TelemetryRequestContext {
+        policy_snapshot: Arc::clone(&policy_snapshot),
         domain: domain.to_string(),
         process_name: process_name.clone(),
         ai_provider: effective_ai_provider,

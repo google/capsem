@@ -1,6 +1,6 @@
 [project]
 name = "capsem-builder"
-version = "0.6.6"
+version = "0.7.1"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -63,6 +63,7 @@ filterwarnings = ["error"]
 tmp_path_retention_policy = "failed"
 pythonpath = ["..", "../tests", "tests/gate", "tests/release", "tests/release_site"]
 markers = [
+    "capability(name): qualification group selected by the candidate's declared capabilities",
     "mcp: MCP black-box integration tests (require capsem-service + VM assets)",
     "integration: Service/CLI integration tests (require capsem-service + VM)",
     "session: Session.db telemetry tests (require capsem-service + VM + workload)",
@@ -108,6 +109,7 @@ dev = [
     "pytest>=9.0.3",
     "pytest-cov>=6.0",
     "pytest-xdist>=3.8.0",
+    "pyzstd>=0.17.0",
     "requests>=2.34.2",
     "rich>=15.0.0",
     "shellcheck-py>=0.11.0.1",

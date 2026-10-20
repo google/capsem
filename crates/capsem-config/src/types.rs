@@ -395,7 +395,7 @@ impl PolicySubject for serde_json::Value {
 pub struct SettingsFile {
     #[serde(default)]
     pub settings: HashMap<String, SettingEntry>,
-    /// External rule files shared by user profiles and corporate policy.
+    /// External rule files referenced by settings or corporate policy.
     #[serde(default, skip_serializing_if = "RuleFileReferences::is_empty")]
     pub rule_files: RuleFileReferences,
     /// Visible default security rules (`[default.<domain>]`).
@@ -404,7 +404,7 @@ pub struct SettingsFile {
     /// Optional corp provisioning refresh policy metadata, e.g. "24h".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refresh_policy: Option<String>,
-    /// First-principle profile-owned security rules (`[profiles.rules.*]`).
+    /// User security rules (`[profiles.rules.*]`; the namespace outlived VM profiles).
     #[serde(
         default,
         skip_serializing_if = "super::security_rule_profile::SecurityRuleGroup::is_empty"
@@ -425,12 +425,56 @@ pub struct SettingsFile {
     /// Runtime plugin policy (`[plugins]`).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub plugins: BTreeMap<String, super::security_rule_profile::SecurityPluginConfig>,
-    /// MCP server configuration (optional section in profile/corp TOML).
+    /// MCP server configuration (optional section in settings or corp TOML).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mcp: Option<crate::mcp::McpProfileConfig>,
+    pub mcp: Option<crate::mcp::McpConfig>,
     /// Corporate-owned network mechanics such as DNS upstreams.
     #[serde(default, skip_serializing_if = "NetworkConfig::is_empty")]
     pub network: NetworkConfig,
+    /// Which OCI images may be fetched and which may run (`[images]`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub images: Option<ImagePolicyConfig>,
+    /// Finite service-owned lifetimes for SDK-managed ephemeral sessions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub managed_sessions: Option<crate::ManagedSessionPolicy>,
+}
+
+/// Image policy as written: selectors are checked and normalized where the
+/// policy is built (capsem-core `container::admission`), which fails on any
+/// selector it cannot parse.
+///
+/// `sources` say where image bytes may be fetched from and are checked before
+/// any registry access; `admit` says which images may execute and is checked
+/// on the resolved digest. The catalog's supported images are admitted, and
+/// their repositories are sources, without being listed here. A corp
+/// `[images]` replaces the user's, `catalog` included, so an enterprise that
+/// points the catalog at its mirror or turns it off cannot be overridden by a
+/// user setting.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct ImagePolicyConfig {
+    #[serde(default)]
+    pub sources: Vec<String>,
+    #[serde(default)]
+    pub admit: Vec<String>,
+    /// Where the image catalog is read from: an OCI reference (a mirror of
+    /// the official catalog, say), `true` for the official catalog, or
+    /// `false` for none, which leaves exactly `sources` and `admit`. Absent
+    /// means the official catalog.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog: Option<CatalogSetting>,
+    /// An absolute path to a PEM file trusted, beside the public roots, for
+    /// the catalog's registry only (a mirror on a private CA).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog_ca: Option<String>,
+}
+
+/// `[images] catalog`: on, off, or read from a named reference.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum CatalogSetting {
+    Enabled(bool),
+    Reference(String),
 }
 
 impl SettingsFile {
@@ -445,6 +489,9 @@ impl SettingsFile {
             mcp.validate("settings")?;
         }
         self.network.validate()?;
+        if let Some(policy) = &self.managed_sessions {
+            policy.validate()?;
+        }
         Ok(())
     }
 }
@@ -696,7 +743,7 @@ pub fn default_true() -> bool {
     true
 }
 
-/// A declarative MCP server definition from defaults, profile, or corp TOML.
+/// A declarative MCP server definition from defaults, settings, or corp TOML.
 ///
 /// MCP servers are auto-injected into AI agent config files (Claude, Gemini, Codex)
 /// at boot time. Enterprises can add servers via corp.toml.

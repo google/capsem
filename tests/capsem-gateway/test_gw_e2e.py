@@ -7,7 +7,6 @@ Requires capsem-service binary, VM assets, and codesigned binaries.
 
 import pytest
 from helpers.constants import (
-    CODE_PROFILE_ID,
     DEFAULT_CPUS,
     DEFAULT_RAM_MB,
     EXEC_READY_TIMEOUT,
@@ -46,7 +45,6 @@ class TestGatewayE2E:
         # Provision
         resp = e2e_client.post("/vms/create", {
             "name": name,
-            "profile_id": CODE_PROFILE_ID,
             "ram_mb": DEFAULT_RAM_MB,
             "cpus": DEFAULT_CPUS,
         })
@@ -86,7 +84,6 @@ class TestGatewayE2E:
         name = vm_name("gw-st")
         resp = e2e_client.post("/vms/create", {
             "name": name,
-            "profile_id": CODE_PROFILE_ID,
             "ram_mb": DEFAULT_RAM_MB,
             "cpus": DEFAULT_CPUS,
         })
@@ -119,7 +116,6 @@ class TestGatewayE2E:
         name = vm_name("gw-race")
         resp = e2e_client.post("/vms/create", {
             "name": name,
-            "profile_id": CODE_PROFILE_ID,
             "ram_mb": DEFAULT_RAM_MB,
             "cpus": DEFAULT_CPUS,
         })
@@ -157,7 +153,6 @@ class TestGatewayFileIO:
         name = vm_name("gw-file")
         resp = e2e_client.post("/vms/create", {
             "name": name,
-            "profile_id": CODE_PROFILE_ID,
             "ram_mb": DEFAULT_RAM_MB,
             "cpus": DEFAULT_CPUS,
         })
@@ -181,7 +176,6 @@ class TestGatewayFileIO:
         name = vm_name("gw-bin")
         resp = e2e_client.post("/vms/create", {
             "name": name,
-            "profile_id": CODE_PROFILE_ID,
             "ram_mb": DEFAULT_RAM_MB,
             "cpus": DEFAULT_CPUS,
         })
@@ -210,7 +204,6 @@ class TestGatewayPersistence:
         name = vm_name("gw-persist")
         resp = e2e_client.post("/vms/create", {
             "name": name,
-            "profile_id": CODE_PROFILE_ID,
             "ram_mb": DEFAULT_RAM_MB,
             "cpus": DEFAULT_CPUS,
             "persistent": True,
@@ -251,7 +244,6 @@ class TestGatewayPersistence:
         name = vm_name("gw-purge")
         resp = e2e_client.post("/vms/create", {
             "name": name,
-            "profile_id": CODE_PROFILE_ID,
             "ram_mb": DEFAULT_RAM_MB,
             "cpus": DEFAULT_CPUS,
         })
@@ -275,7 +267,6 @@ class TestGatewayLogs:
         name = vm_name("gw-logs")
         resp = e2e_client.post("/vms/create", {
             "name": name,
-            "profile_id": CODE_PROFILE_ID,
             "ram_mb": DEFAULT_RAM_MB,
             "cpus": DEFAULT_CPUS,
         })
@@ -298,7 +289,6 @@ class TestGatewayEnvVars:
         name = vm_name("gw-env")
         resp = e2e_client.post("/vms/create", {
             "name": name,
-            "profile_id": CODE_PROFILE_ID,
             "ram_mb": DEFAULT_RAM_MB,
             "cpus": DEFAULT_CPUS,
             "env": {"GW_TEST_VAR": "hello-from-gateway"},

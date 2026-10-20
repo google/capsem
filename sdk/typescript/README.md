@@ -16,18 +16,21 @@ start it on your computer before using the SDK.
 
 ## Usage
 
+`new Hypervisor()` discovers the local running service in Node.js. For a remote
+service or a browser client, pass its complete gateway URL and bearer token.
+
 Once Capsem is running, create a VM and run a command inside it. Use an unused
 VM name in place of `sdk-demo`.
 
 Use a Node.js ES module with top-level `await`.
 
 ```ts
-import {Hypervisor} from '@capsem/sdk';
+import {decodeExecOutput, Hypervisor} from '@capsem/sdk';
 
 const capsem = new Hypervisor();
 const vm = await capsem.create({name: 'sdk-demo', image: 'claude-code'});
 const result = await vm.exec('echo hello', {timeout_secs: 60});
-console.log(String(result));
+console.log(new TextDecoder().decode(decodeExecOutput(result.stdout)));
 await vm.stop();
 capsem.close();
 ```

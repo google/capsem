@@ -10,6 +10,7 @@ pub enum Action {
     Delete(String),
     Suspend(String),
     Resume(String),
+    Start(String),
     /// Convert an ephemeral VM to persistent. Delegated to the UI because
     /// a tray menu can't prompt for the new name.
     Save(String),
@@ -35,7 +36,7 @@ pub(crate) enum MenuEntry {
 /// Compute the menu structure for a gateway status response.
 pub(crate) fn menu_spec(status: &StatusResponse) -> Vec<MenuEntry> {
     if !service_available(status) {
-        return unavailable_spec();
+        return unavailable_spec_with_error(status.action_error.as_deref());
     }
 
     let mut entries = Vec::new();
@@ -49,6 +50,7 @@ pub(crate) fn menu_spec(status: &StatusResponse) -> Vec<MenuEntry> {
     if let Some(entry) = update_menu_entry(status) {
         entries.push(entry);
     }
+    add_feedback(&mut entries, status.action_error.as_deref());
     entries.push(MenuEntry::Separator);
 
     if !status.vms.is_empty() {
@@ -91,18 +93,25 @@ fn vm_submenu_spec(vm: &VmSummary) -> MenuEntry {
     // use lowercase -- compare case-insensitively.
     let status = vm.status.to_ascii_lowercase();
     let is_running = status == "running";
-    let is_suspended = status == "suspended";
+    let allowed = |action| vm.available_actions.contains(&action);
+    use capsem_api::VmAction;
     let mut items = Vec::new();
 
-    // Reachability: "Connect" for running, "Resume" for suspended, nothing
-    // otherwise (stopped persistent VMs need an explicit resume).
+    // Opening a running session is navigation. Lifecycle mutations come
+    // from the service's advertised actions, including blocked checkpoints.
     if is_running {
         items.push(MenuEntry::Item {
             id: format!("connect:{id}"),
             label: "Connect".into(),
             enabled: true,
         });
-    } else if is_suspended {
+    } else if allowed(VmAction::Start) {
+        items.push(MenuEntry::Item {
+            id: format!("start:{id}"),
+            label: "Start".into(),
+            enabled: true,
+        });
+    } else if allowed(VmAction::Resume) {
         items.push(MenuEntry::Item {
             id: format!("resume:{id}"),
             label: "Resume".into(),
@@ -110,41 +119,67 @@ fn vm_submenu_spec(vm: &VmSummary) -> MenuEntry {
         });
     }
 
+    if allowed(VmAction::Pause) {
+        items.push(MenuEntry::Item {
+            id: format!("suspend:{id}"),
+            label: "Pause".into(),
+            enabled: true,
+        });
+    }
+
     if vm.persistent {
         // Persistent VMs: stop preserves state (only when running); delete
         // is destructive; fork clones to an image.
-        if is_running {
+        if allowed(VmAction::Stop) {
             items.push(MenuEntry::Item {
                 id: format!("stop:{id}"),
                 label: "Stop".into(),
                 enabled: true,
             });
         }
-        items.push(MenuEntry::Item {
-            id: format!("fork:{id}"),
-            label: "Fork...".into(),
-            enabled: true,
-        });
-        items.push(MenuEntry::Item {
-            id: format!("delete:{id}"),
-            label: "Delete".into(),
-            enabled: true,
-        });
+        if allowed(VmAction::Fork) {
+            items.push(MenuEntry::Item {
+                id: format!("fork:{id}"),
+                label: "Fork...".into(),
+                enabled: true,
+            });
+        }
+        if allowed(VmAction::Delete) {
+            items.push(MenuEntry::Item {
+                id: format!("delete:{id}"),
+                label: "Delete".into(),
+                enabled: true,
+            });
+        }
     } else {
         // Ephemeral VMs: no "stop" (stopping == destruction). Save converts
         // to persistent; delete destroys.
-        if is_running {
+        if is_running && allowed(VmAction::Fork) {
             items.push(MenuEntry::Item {
                 id: format!("save:{id}"),
                 label: "Save...".into(),
                 enabled: true,
             });
         }
-        items.push(MenuEntry::Item {
-            id: format!("delete:{id}"),
-            label: "Delete".into(),
-            enabled: true,
-        });
+        if allowed(VmAction::Delete) {
+            items.push(MenuEntry::Item {
+                id: format!("delete:{id}"),
+                label: "Delete".into(),
+                enabled: true,
+            });
+        }
+    }
+    for (kind, reason) in [
+        ("error", vm.last_error.as_ref()),
+        ("blocked", vm.resume_blocked_reason.as_ref()),
+    ] {
+        if let Some(reason) = reason {
+            items.push(MenuEntry::Item {
+                id: format!("{kind}:{id}"),
+                label: reason.replace(['\n', '\r'], " "),
+                enabled: false,
+            });
+        }
     }
 
     MenuEntry::Sub { label, items }
@@ -174,9 +209,6 @@ fn update_status_label(updates: &UpdateStatusResponse) -> Option<String> {
     if updates.assets.update_available {
         labels.push("VM assets");
     }
-    if updates.profiles.update_available {
-        labels.push("Profiles");
-    }
     if updates.images.update_available {
         labels.push("Images");
     }
@@ -187,9 +219,6 @@ fn update_status_label(updates: &UpdateStatusResponse) -> Option<String> {
     }
     if updates.assets.blocked_reason.is_some() {
         blocked.push("VM assets");
-    }
-    if updates.profiles.blocked_reason.is_some() {
-        blocked.push("Profiles");
     }
     if updates.images.blocked_reason.is_some() {
         blocked.push("Images");
@@ -239,6 +268,27 @@ pub(crate) fn unavailable_spec() -> Vec<MenuEntry> {
     ]
 }
 
+fn add_feedback(entries: &mut Vec<MenuEntry>, message: Option<&str>) {
+    if let Some(message) = message {
+        let label = message
+            .chars()
+            .filter(|character| !character.is_control())
+            .take(160)
+            .collect();
+        entries.push(MenuEntry::Item {
+            id: "action-error".into(),
+            label,
+            enabled: false,
+        });
+    }
+}
+
+pub(crate) fn unavailable_spec_with_error(message: Option<&str>) -> Vec<MenuEntry> {
+    let mut entries = unavailable_spec();
+    add_feedback(&mut entries, message);
+    entries
+}
+
 pub(crate) fn service_available(status: &StatusResponse) -> bool {
     status.service.eq_ignore_ascii_case("running")
 }
@@ -282,6 +332,10 @@ pub fn build_unavailable_menu() -> Menu {
     render_menu(&unavailable_spec())
 }
 
+pub fn build_unavailable_menu_with_error(message: Option<&str>) -> Menu {
+    render_menu(&unavailable_spec_with_error(message))
+}
+
 /// Parse a MenuId string into an Action.
 pub fn parse_action(id: &MenuId) -> Option<Action> {
     let s = id.as_ref();
@@ -299,6 +353,9 @@ pub fn parse_action(id: &MenuId) -> Option<Action> {
     }
     if let Some(vm_id) = s.strip_prefix("resume:") {
         return Some(Action::Resume(vm_id.to_string()));
+    }
+    if let Some(vm_id) = s.strip_prefix("start:") {
+        return Some(Action::Start(vm_id.to_string()));
     }
     if let Some(vm_id) = s.strip_prefix("save:") {
         return Some(Action::Save(vm_id.to_string()));

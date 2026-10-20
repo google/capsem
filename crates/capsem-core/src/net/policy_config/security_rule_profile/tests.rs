@@ -571,7 +571,7 @@ fn built_in_defaults_cover_each_runtime_boundary_last() {
         ),
         (
             "profiles.rules.default_unknown_mcp_server",
-            "Detect MCP server activity from observed servers not declared by the active profile.",
+            "Detect MCP server activity from observed servers not declared in settings or corp config.",
         ),
         (
             "profiles.rules.default_file",
@@ -1422,12 +1422,8 @@ match = 'request.host == "example.com"'
 fn every_shipped_rule_field_survives_the_field_contract() {
     for (label, toml_text) in [
         (
-            "code",
-            include_str!("../../../../../../config/profiles/code/enforcement.toml"),
-        ),
-        (
-            "co-work",
-            include_str!("../../../../../../config/profiles/co-work/enforcement.toml"),
+            "corp fixture",
+            include_str!("../../../../../../config/corp/enforcement.toml"),
         ),
         ("provider defaults", DEFAULT_PROVIDER_RULES),
     ] {

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from enum import Enum
 from pathlib import PurePosixPath
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -28,16 +28,6 @@ class ErofsCompression(str, Enum):
     LZ4HC = "lz4hc"
 
 
-class PackageManager(str, Enum):
-    """Package manager for installing packages."""
-
-    APT = "apt"
-    UV = "uv"
-    PIP = "pip"
-    NPM = "npm"
-    CURL = "curl"
-
-
 # ---------------------------------------------------------------------------
 # Build configuration
 # ---------------------------------------------------------------------------
@@ -54,6 +44,9 @@ class ArchConfig(BaseModel):
     rust_target: str
     kernel_image: str
     defconfig: str
+    # The host Node.js major bootstrap and doctor require (read by
+    # build_system/scripts/bootstrap/bootstrap-linux-common.sh). The guest
+    # runtime installs no Node.
     node_major: int = 24
 
 
@@ -64,6 +57,11 @@ class KernelConfig(BaseModel):
 
     version: str = Field(pattern=r"^\d+\.\d+\.\d+$")
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    # Applied in order. Every patch lives in kernel/patches/, which the kernel
+    # Dockerfile copies as one directory.
+    patches: tuple[
+        Annotated[str, Field(pattern=r"^kernel/patches/[0-9]{4}-[a-z0-9-]+\.patch$")], ...
+    ] = ()
 
 
 class GuestRustBuilderConfig(BaseModel):
@@ -104,7 +102,7 @@ class GuestRustBuilderConfig(BaseModel):
 
 
 class AssetToolBinaryConfig(BaseModel):
-    """One upstream standalone binary admitted to the asset helper."""
+    """One upstream binary or source archive admitted to the asset helper."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -133,6 +131,7 @@ class AssetToolsConfig(BaseModel):
     debian_snapshot_id: str = Field(pattern=r"^\d{8}T\d{6}Z$")
     materialize_network: Literal[BuildNetwork.DEFAULT]
     runtime_network: Literal[ContainerNetwork.NONE]
+    erofs_source: AssetToolBinaryConfig
     architectures: dict[str, AssetToolsArchitectureConfig]
 
     @model_validator(mode="after")
@@ -144,40 +143,6 @@ class AssetToolsConfig(BaseModel):
         return self
 
 
-class VersionedDownloadConfig(BaseModel):
-    """One exact third-party download admitted to a dependency helper."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    version: str = Field(min_length=1, pattern=r"^[A-Za-z0-9][A-Za-z0-9.+-]*$")
-    url: str = Field(pattern=r"^https://")
-    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-
-    @model_validator(mode="after")
-    def _url_names_version(self):
-        if self.version not in self.url:
-            raise ValueError("versioned download URL must contain its exact version")
-        return self
-
-
-class NodeDownloadConfig(VersionedDownloadConfig):
-    """Exact Node archive plus the npm version bundled inside it."""
-
-    version: str = Field(pattern=r"^\d+\.\d+\.\d+$")
-    npm_version: str = Field(pattern=r"^\d+\.\d+\.\d+$")
-
-
-class AssetDependencyArchitectureConfig(BaseModel):
-    """Exact network inputs for one guest architecture's rootfs helper."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    node: NodeDownloadConfig
-    uv: VersionedDownloadConfig
-    claude: VersionedDownloadConfig
-    ollama: VersionedDownloadConfig
-
-
 class AssetDependencyConfig(BaseModel):
     """Network-open helpers consumed by sealed kernel/rootfs source builds."""
 
@@ -187,7 +152,6 @@ class AssetDependencyConfig(BaseModel):
     rootfs_template: str
     kernel_template: str
     source_build_network: Literal[BuildNetwork.NONE]
-    architectures: dict[str, AssetDependencyArchitectureConfig]
 
     @model_validator(mode="after")
     def _templates_are_complete(self):
@@ -196,8 +160,6 @@ class AssetDependencyConfig(BaseModel):
                 raise ValueError(f"tag_template must contain {field}")
         if self.rootfs_template == self.kernel_template:
             raise ValueError("rootfs and kernel dependency templates must differ")
-        if not self.architectures:
-            raise ValueError("asset dependency architectures must not be empty")
         return self
 
 
@@ -233,32 +195,24 @@ class ErofsConfig(BaseModel):
 
 
 class RootfsConfig(BaseModel):
-    """Fail-closed composition and size limits for publishable guest rootfs assets."""
+    """Fail-closed size limits and package set for publishable guest rootfs assets."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     max_uncompressed_bytes: int = Field(gt=0)
     max_erofs_bytes: int = Field(gt=0)
-    forbidden_path_prefixes: tuple[str, ...]
+    # Every Debian package the runtime installs. Applications come from OCI
+    # images, never from the runtime rootfs.
+    runtime_apt_packages: tuple[str, ...]
 
     @model_validator(mode="after")
     def _limits_are_safe(self):
+        if not self.runtime_apt_packages or len(set(self.runtime_apt_packages)) != len(
+            self.runtime_apt_packages
+        ):
+            raise ValueError("runtime_apt_packages must be a non-empty list without duplicates")
         if self.max_erofs_bytes >= self.max_uncompressed_bytes:
             raise ValueError("max_erofs_bytes must be smaller than max_uncompressed_bytes")
-        if not self.forbidden_path_prefixes:
-            raise ValueError("forbidden_path_prefixes must not be empty")
-        if len(set(self.forbidden_path_prefixes)) != len(self.forbidden_path_prefixes):
-            raise ValueError("forbidden_path_prefixes must not contain duplicates")
-        for value in self.forbidden_path_prefixes:
-            path = PurePosixPath(value)
-            if (
-                not value
-                or value.strip() != value
-                or path.is_absolute()
-                or path.as_posix() != value
-                or any(part in {".", ".."} for part in path.parts)
-            ):
-                raise ValueError("forbidden_path_prefixes must contain normalized relative paths")
         return self
 
 
@@ -275,7 +229,6 @@ class BuildConfig(BaseModel):
     guest_rust_builder: GuestRustBuilderConfig
     asset_tools: AssetToolsConfig
     architectures: dict[str, ArchConfig]
-    version_commands: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _architectures_non_empty(self):
@@ -283,55 +236,6 @@ class BuildConfig(BaseModel):
             raise ValueError("architectures must have at least one entry")
         if set(self.asset_tools.architectures) != set(self.architectures):
             raise ValueError("asset tool architectures must exactly match build architectures")
-        if set(self.asset_dependencies.architectures) != set(self.architectures):
-            raise ValueError(
-                "asset dependency architectures must exactly match build architectures"
-            )
-        for name, arch in self.architectures.items():
-            node = self.asset_dependencies.architectures[name].node
-            if int(node.version.partition(".")[0]) != arch.node_major:
-                raise ValueError(
-                    f"asset dependency Node major for {name} must match architecture node_major"
-                )
-        return self
-
-
-# ---------------------------------------------------------------------------
-# Package set configuration
-# ---------------------------------------------------------------------------
-
-
-class PackageNetworkConfig(BaseModel):
-    """Network config for a package registry."""
-
-    model_config = ConfigDict(frozen=True)
-
-    name: str
-    domains: list[str]
-    allow_get: bool = True
-
-
-class PackageSetConfig(BaseModel):
-    """Package set definition from packages/{manager}.toml."""
-
-    model_config = ConfigDict(frozen=True)
-
-    name: str
-    manager: PackageManager
-    install_cmd: str
-    packages: list[str]
-    version_commands: dict[str, str] = Field(default_factory=dict)
-    network: PackageNetworkConfig | None = None
-
-    @model_validator(mode="after")
-    def _validate_non_empty(self):
-        if not self.packages:
-            raise ValueError("packages must have at least one entry")
-        if not self.install_cmd:
-            raise ValueError("install_cmd must not be empty")
-        bad = set(self.version_commands) - set(self.packages)
-        if bad:
-            raise ValueError(f"version_commands keys not in packages: {sorted(bad)}")
         return self
 
 
@@ -430,7 +334,7 @@ class ShellConfig(BaseModel):
 
     term: str = "xterm-256color"
     home: str = "/root"
-    path: str = "/opt/ai-clis/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    path: str = "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
     lang: str = "C"
     bashrc: ShellFileConfig | None = None
     tmux_conf: ShellFileConfig | None = None
@@ -487,7 +391,8 @@ class ImageManifestConfig(BaseModel):
 class GuestImageConfig(BaseModel):
     """Top-level config combining the generated backend image workspace.
 
-    Produced by load_guest_config() after capsem-admin materializes a profile.
+    Produced by load_guest_config() after capsem-admin materializes the runtime
+    image workspace.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -495,12 +400,7 @@ class GuestImageConfig(BaseModel):
     build: BuildConfig
     manifest: ImageManifestConfig | None = None
     guest_dir_path: str | None = None
-    package_sets: dict[str, PackageSetConfig] = Field(default_factory=dict)
     mcp_servers: dict[str, McpServerConfig] = Field(default_factory=dict)
     web_security: WebSecurityConfig = Field(default_factory=WebSecurityConfig)
     vm_resources: VmResourcesConfig = Field(default_factory=VmResourcesConfig)
     vm_environment: VmEnvironmentConfig = Field(default_factory=VmEnvironmentConfig)
-    profile_root_seed: bool = False
-    profile_root_seed_path: str | None = None
-    profile_build_script: bool = False
-    profile_build_script_path: str | None = None

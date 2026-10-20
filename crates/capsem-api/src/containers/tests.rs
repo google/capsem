@@ -34,15 +34,8 @@ fn container_spec_debug_never_prints_credentials_args_or_env_values() {
         "env names stay visible for diagnosis: {debug}"
     );
     let request = ProvisionRequest {
-        name: None,
-        profile_id: "code".into(),
-        ram_mb: None,
-        cpus: None,
-        persistent: false,
-        env: None,
-        from: None,
-        networks: Vec::new(),
         container: Some(private_spec()),
+        ..Default::default()
     };
     assert!(!format!("{request:?}").contains("registry-secret"));
 }
@@ -63,11 +56,10 @@ fn container_spec_wire_shape_omits_empty_fields() {
 
 #[test]
 fn provision_request_carries_an_optional_container() {
-    let plain: ProvisionRequest = serde_json::from_value(json!({"profile_id": "code"})).unwrap();
+    let plain: ProvisionRequest = serde_json::from_value(json!({})).unwrap();
     assert!(plain.container.is_none());
     assert!(serde_json::to_value(&plain).unwrap().get("container").is_none());
-    let with: ProvisionRequest =
-        serde_json::from_value(json!({"profile_id": "code", "container": {"image": "docker://redis"}})).unwrap();
+    let with: ProvisionRequest = serde_json::from_value(json!({"container": {"image": "docker://redis"}})).unwrap();
     assert_eq!(with.container.unwrap().image, "docker://redis");
 }
 
@@ -84,4 +76,40 @@ fn container_states_are_snake_case_on_the_wire() {
     ] {
         assert_eq!(serde_json::to_value(state).unwrap(), json!(wire));
     }
+}
+
+#[test]
+fn a_surface_appears_only_for_an_image_that_declares_one() {
+    let terminal = ContainerStatusResponse {
+        state: ContainerState::Running,
+        image: "docker://redis".into(),
+        digest: None,
+        exit_code: None,
+        error: None,
+        surface: None,
+        resolved: None,
+    };
+    assert!(serde_json::to_value(&terminal).unwrap().get("surface").is_none());
+    let pending = ContainerStatusResponse {
+        surface: Some(ContainerSurface {
+            kind: ContainerSurfaceKind::Xpra,
+            port: 14500,
+            exposure_id: None,
+        }),
+        ..terminal
+    };
+    assert_eq!(
+        serde_json::to_value(&pending).unwrap()["surface"],
+        json!({"kind": "xpra", "port": 14500})
+    );
+    let granted: ContainerStatusResponse = serde_json::from_value(json!({
+        "state": "running",
+        "image": "docker://claude-desktop",
+        "surface": {"kind": "xpra", "port": 14500, "exposure_id": "0199df26-d0f2-74f2-a304-ef67b79d1217"},
+    }))
+    .unwrap();
+    assert_eq!(
+        granted.surface.unwrap().exposure_id.as_deref(),
+        Some("0199df26-d0f2-74f2-a304-ef67b79d1217")
+    );
 }

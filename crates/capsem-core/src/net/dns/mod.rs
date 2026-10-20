@@ -42,9 +42,10 @@ mod coalesce;
 pub mod private;
 pub mod resolver;
 pub mod server;
+pub mod session;
 pub mod telemetry;
 
 pub use cache::{DnsAnswerCache, DEFAULT_CAPACITY, DEFAULT_MAX_TTL_SECS};
-pub use resolver::{DnsResolver, DEFAULT_UPSTREAMS};
-pub use server::{DnsHandler, DnsHandlerResult, SharedPolicy};
+pub use resolver::{DnsDatagram, DnsGrantFuture, DnsResolver, DnsUpstreamGrants, DEFAULT_UPSTREAMS};
+pub use server::{DnsHandler, DnsHandlerResult};
 pub use telemetry::{build_dns_event, security_event_from_dns_event};

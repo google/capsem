@@ -10,10 +10,10 @@ async fn failed_run_preservation_noops_when_watcher_wins_after_shutdown_snapshot
     std::fs::write(session_dir.join("process.log"), b"child exited with code 1").unwrap();
     insert_fake_instance_with_session_dir(&state, "code-1", 42, session_dir.clone());
 
-    let shutdown_snapshot = {
+    let (shutdown_snapshot, generation) = {
         let instances = state.instances.lock().unwrap();
         let info = instances.get("code-1").unwrap();
-        let snapshot = (info.session_dir.clone(), info.persistent, info.pid);
+        let snapshot = ((info.session_dir.clone(), info.persistent, info.pid), info.generation);
         drop(instances);
         snapshot
     };
@@ -32,7 +32,7 @@ async fn failed_run_preservation_noops_when_watcher_wins_after_shutdown_snapshot
     .await
     .unwrap();
 
-    let shutdown_claimed = claim_shutdown_instance(&state, "code-1");
+    let shutdown_claimed = claim_shutdown_instance(&state, "code-1", generation);
     assert!(!shutdown_claimed, "a stale snapshot is not shutdown ownership");
     let result = preserve_failed_run_shutdown_result(
         Arc::clone(&state),
@@ -94,7 +94,23 @@ async fn failed_session_route_preserves_runtime_ipc_evidence() {
     let session_dir = state.run_dir.join("sessions").join(id);
     std::fs::create_dir_all(&session_dir).unwrap();
     std::fs::write(session_dir.join("process.log"), b"process channel closed during doctor").unwrap();
-    insert_fake_instance_with_session_dir(&state, id, 0, session_dir.clone());
+    let child = crate::tests::isolated_test_command("sleep")
+        .arg("30")
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    insert_fake_instance_with_session_dir(&state, id, child.id().unwrap(), session_dir.clone());
+    let generation = state.instances.lock().unwrap().get(id).unwrap().generation;
+    let retirement = state.retirements.register(id, generation).unwrap();
+    let reaper = crate::instance_reaper::spawn_exit_reaper(
+        child,
+        id.into(),
+        id.into(),
+        Arc::clone(&state),
+        state.instance_socket_path(id).unwrap(),
+        session_dir.clone(),
+        retirement,
+    );
 
     let (status, body) = route_request(
         build_service_router(Arc::clone(&state)),
@@ -103,6 +119,7 @@ async fn failed_session_route_preserves_runtime_ipc_evidence() {
         None,
     )
     .await;
+    reaper.await.unwrap();
 
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["success"], true);
@@ -122,7 +139,11 @@ async fn one_shot_completion_deletes_success_and_preserves_ipc_failure() {
 
     let clean_id = "code-run-clean";
     let clean_dir = state.run_dir.join("sessions").join(clean_id);
+    let commitments = state.run_dir.join("ledger-commitments");
+    let clean_checkpoints = commitments.join(capsem_crypto::blake3::hash(clean_id.as_bytes()).to_hex().to_string());
     std::fs::create_dir_all(&clean_dir).unwrap();
+    std::fs::create_dir_all(&clean_checkpoints).unwrap();
+    std::fs::write(clean_checkpoints.join("checkpoints.log"), b"trusted").unwrap();
     std::fs::write(clean_dir.join("process.log"), b"command completed").unwrap();
     finalize_one_shot_session(
         Arc::clone(&state),
@@ -133,10 +154,29 @@ async fn one_shot_completion_deletes_success_and_preserves_ipc_failure() {
     .await
     .unwrap();
     assert!(!clean_dir.exists(), "successful one-shot state must be deleted");
+    assert!(
+        !clean_checkpoints.exists(),
+        "successful one-shot checkpoints must be retired"
+    );
+
+    let already_deleted_id = "code-run-already-deleted";
+    let already_deleted_checkpoints = commitments.join(
+        capsem_crypto::blake3::hash(already_deleted_id.as_bytes())
+            .to_hex()
+            .to_string(),
+    );
+    std::fs::create_dir_all(&already_deleted_checkpoints).unwrap();
+    finalize_one_shot_session(Arc::clone(&state), already_deleted_id.to_string(), None, false)
+        .await
+        .unwrap();
+    assert!(!already_deleted_checkpoints.exists());
 
     let failed_id = "code-run-ipc";
     let failed_dir = state.run_dir.join("sessions").join(failed_id);
+    let failed_checkpoints = commitments.join(capsem_crypto::blake3::hash(failed_id.as_bytes()).to_hex().to_string());
     std::fs::create_dir_all(&failed_dir).unwrap();
+    std::fs::create_dir_all(&failed_checkpoints).unwrap();
+    std::fs::write(failed_checkpoints.join("checkpoints.log"), b"trusted").unwrap();
     std::fs::write(failed_dir.join("process.log"), b"exec IPC closed").unwrap();
     finalize_one_shot_session(
         Arc::clone(&state),
@@ -149,6 +189,17 @@ async fn one_shot_completion_deletes_success_and_preserves_ipc_failure() {
     assert!(!failed_dir.exists());
     let preserved = find_failed_session_dir(&state.run_dir, failed_id)
         .expect("one-shot exec IPC loss must retain the process evidence");
+    let preserved_id = preserved.file_name().unwrap().to_str().unwrap();
+    let preserved_checkpoints = commitments.join(
+        capsem_crypto::blake3::hash(preserved_id.as_bytes())
+            .to_hex()
+            .to_string(),
+    );
+    assert!(!failed_checkpoints.exists());
+    assert_eq!(
+        std::fs::read(preserved_checkpoints.join("checkpoints.log")).unwrap(),
+        b"trusted"
+    );
     assert_eq!(
         capsem_foundation::telemetry::read_log_tail(&preserved.join("process.log"), usize::MAX).unwrap(),
         "exec IPC closed"

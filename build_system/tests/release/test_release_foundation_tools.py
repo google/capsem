@@ -21,15 +21,12 @@ def test_unpublished_before_writes_one_empty_verified_cohort(tmp_path: Path) -> 
     assert json.loads(manifest.read_text(encoding="utf-8")) == {
         "channel": "nightly",
         "packages": [],
-        "profiles": {},
     }
-    report = json.loads(
-        (tmp_path / "release-inputs.json").read_text(encoding="utf-8")
-    )
+    report = json.loads((tmp_path / "release-inputs.json").read_text(encoding="utf-8"))
     assert report == {
-        "allow_empty_profiles": True,
+        "allow_empty_runtime": True,
         "artifacts": [],
-        "kind": "profiles",
+        "kind": "runtime",
         "manifest_url": manifest.as_uri(),
         "output": str(tmp_path),
         "schema": "capsem.release_inputs.v1",

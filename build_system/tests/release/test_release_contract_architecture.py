@@ -7,11 +7,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 FIXTURE_GRAPH = (
-    PROJECT_ROOT
-    / "tests"
-    / "capsem-release"
-    / "fixtures"
-    / "release-graph-stable-nightly.json"
+    PROJECT_ROOT / "tests" / "capsem-release" / "fixtures" / "release-graph-stable-nightly.json"
 )
 RELEASE_OUTPUT_DOC = (
     PROJECT_ROOT
@@ -33,29 +29,26 @@ def test_canonical_manifest_url() -> None:
 
         assert current["url"] == f"/assets/{channel}/manifest.json"
         assert not current["url"].startswith(f"/manifests/{channel}/")
-        assert "profile_catalog" not in current
         assert "catalog" not in current
 
         manifest = graph["manifests"][channel][current["version"]]
-        assert "profiles" in manifest
-        assert "profile_catalog" not in manifest
-        assert "catalog" not in manifest
+        assert set(manifest) == {"version", "channel", "status", "packages", "runtime"}
 
 
-def test_no_profile_catalog_side_channel() -> None:
+def test_no_catalog_or_config_side_channel() -> None:
+    """The runtime is images and evidence; nothing else rides along with it."""
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
     serialized = json.dumps(graph, sort_keys=True)
 
-    assert "profile_catalog" not in serialized
-    assert "capsem.profile_catalog" not in serialized
-    assert "catalog.json" not in serialized
+    assert "catalog" not in serialized
+    assert '"config"' not in serialized
 
     for channel, record in graph["channels"].items():
         current = next(item for item in record["manifests"] if item["status"] == "current")
         assert current["url"] == f"/assets/{channel}/manifest.json"
-        manifest = graph["manifests"][channel][current["version"]]
-        assert isinstance(manifest["profiles"], dict)
-        assert manifest["profiles"], channel
+        runtime = graph["manifests"][channel][current["version"]]["runtime"]
+        assert isinstance(runtime, dict)
+        assert runtime["architectures"], channel
 
 
 def test_graph_invariants() -> None:
@@ -64,7 +57,7 @@ def test_graph_invariants() -> None:
     required = [
         "channels.json -> /assets/<channel>/manifest.json",
         "channel -> packages -> binaries",
-        "channel -> profiles -> architecture -> config/software/images",
+        "channel -> runtime -> architectures -> software/images/evidence",
         "There is no `removed` status.",
         "Do not publish HMAC fields in the graph.",
         "The JSON files are the source of truth.",
@@ -77,11 +70,10 @@ def test_independent_versions() -> None:
     doc = RELEASE_OUTPUT_DOC.read_text(encoding="utf-8")
 
     required = [
-        "Manifest versions, package versions, profile revisions, and profile image revisions are independent.",
-        "A package release may change without changing profile revisions or profile images.",
-        "A profile revision may change without changing package versions or other profiles.",
-        "A profile image revision may change for one profile and architecture without changing other profiles, other architectures, or packages.",
-        "A profile may declare `min_capsem_version`; it must not select the current Capsem binary.",
+        "Manifest versions, package versions, and runtime revisions are independent.",
+        "A package release may change without changing the runtime revision or runtime images.",
+        "A runtime revision may change without changing package versions.",
+        "The runtime may declare `min_capsem_version`; it must not select the current Capsem binary.",
     ]
     for phrase in required:
         assert phrase in doc
@@ -94,18 +86,11 @@ def test_manifest_has_independent_version() -> None:
         current = next(item for item in channel["manifests"] if item["status"] == "current")
         assert current["version"].startswith("1.0.")
         assert graph["manifests"][channel_id][current["version"]]["version"] == current["version"]
-        package_versions = {
-            package["version"]
-            for package in graph["manifests"][channel_id][current["version"]]["packages"]
-        }
-        profile_revisions = {
-            profile["revision"]
-            for profile in graph["manifests"][channel_id][current["version"]][
-                "profiles"
-            ].values()
-        }
+        manifest = graph["manifests"][channel_id][current["version"]]
+        package_versions = {package["version"] for package in manifest["packages"]}
         assert current["version"] not in package_versions
-        assert current["version"] not in profile_revisions
+        assert current["version"] != manifest["runtime"]["revision"]
+        assert manifest["runtime"]["revision"] not in package_versions
 
 
 def test_one_status_enum_no_removed() -> None:
@@ -133,14 +118,13 @@ def test_one_status_enum_no_removed() -> None:
                 statuses.extend(binary["status"] for binary in package["binaries"])
                 for item in package.get("evidence", []):
                     collect_status(item)
-            for profile in manifest["profiles"].values():
-                for architecture in profile["architectures"]:
-                    for item in architecture["config"]:
-                        collect_status(item)
-                    for item in architecture["images"]:
-                        collect_status(item)
-                    for item in architecture["evidence"]:
-                        collect_status(item)
+            runtime = manifest["runtime"]
+            statuses.append(runtime["status"])
+            for architecture in runtime["architectures"]:
+                for item in architecture["images"]:
+                    collect_status(item)
+                for item in architecture["evidence"]:
+                    collect_status(item)
 
     assert statuses
     assert set(statuses) <= allowed
@@ -169,9 +153,7 @@ def test_manifest_history_immutable_auditable() -> None:
         historical = [record for record in records if record["status"] != "current"]
         assert historical
         for record in historical:
-            assert record["url"] == (
-                f"/manifests/{channel_id}/{record['version']}/manifest.json"
-            )
+            assert record["url"] == (f"/manifests/{channel_id}/{record['version']}/manifest.json")
 
 
 def _walk_keys(value: object, key: str) -> list[str]:
@@ -210,23 +192,16 @@ def _walk_values(value: object, needle: str) -> list[str]:
     return matches
 
 
-def test_profile_paths_are_channel_profile_arch_payloads() -> None:
+def test_runtime_paths_are_channel_revision_arch_payloads() -> None:
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
 
     for channel, record in graph["channels"].items():
         current = next(item for item in record["manifests"] if item["status"] == "current")
-        manifest = graph["manifests"][channel][current["version"]]
-        for profile_id, profile in manifest["profiles"].items():
-            for architecture in profile["architectures"]:
-                arch = architecture["architecture"]
-                expected_profile_prefix = f"/profiles/releases/{profile['revision']}/{profile_id}/{arch}/"
-                for item in architecture["config"]:
-                    assert item["url"].startswith(expected_profile_prefix), item["url"]
-                for item in architecture["images"]:
-                    assert item["url"].startswith(
-                        ("/assets/releases/", expected_profile_prefix)
-                    ), item["url"]
-                for item in architecture["evidence"]:
-                    assert item["url"].startswith(
-                        ("/assets/releases/", expected_profile_prefix)
-                    ), item["url"]
+        runtime = graph["manifests"][channel][current["version"]]["runtime"]
+        for architecture in runtime["architectures"]:
+            arch = architecture["architecture"]
+            prefix = f"/runtime/releases/{channel}/{runtime['revision']}/{arch}/"
+            for item in (*architecture["images"], *architecture["evidence"]):
+                assert item["url"].startswith(prefix), item["url"]
+            for row in architecture["software"]:
+                assert row["evidence"].startswith(prefix), row["evidence"]

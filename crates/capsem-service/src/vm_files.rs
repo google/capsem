@@ -1,23 +1,27 @@
+mod readiness;
+pub(super) use readiness::{vm_ready_poll_opts, wait_for_vm_ready};
 mod provision;
 use super::*;
 pub(super) use crate::sandbox_info::handle_list;
-pub(crate) use provision::handle_provision;
+pub(crate) use provision::{complete_create, handle_provision, provision_failure};
 
 mod diagnostics;
-mod launch;
+pub(crate) mod launch;
 mod storage;
 pub(crate) use storage::storage_diagnostics;
+mod exec;
+mod file_boundary;
+pub(super) use file_boundary::{log_file_boundary, log_file_boundary_on_owner};
 mod fork;
-mod ipc_command;
+mod list_fingerprint;
+pub(super) use list_fingerprint::list_response_fingerprint;
+pub(crate) mod ipc_command;
 pub(crate) use diagnostics::{handle_host_logs, handle_logs, handle_panics, handle_service_logs, handle_triage};
 #[cfg(test)]
 pub(crate) use diagnostics::{session_db_triage, session_triage_statements};
+pub(super) use exec::{handle_exec, proto_exec_target};
 pub(crate) use fork::{clone_session_state, handle_fork};
-pub(super) use ipc_command::send_ipc_command;
-
-pub(super) fn main_db_path_in(sessions_dir: &StdPath) -> PathBuf {
-    sessions_dir.join("main.db")
-}
+pub(super) use ipc_command::{send_ipc_command, send_owner_command};
 
 pub(super) fn gib(bytes: u64) -> u64 {
     bytes / 1024 / 1024 / 1024
@@ -43,34 +47,6 @@ pub(super) fn session_rootfs_size_gb(entry: &PersistentVmEntry) -> Result<u32> {
     })
 }
 
-pub(super) fn validate_saved_active_profile(path: &StdPath, entry: &PersistentVmEntry) -> Result<()> {
-    let text =
-        std::fs::read_to_string(path).with_context(|| format!("read saved active profile {}", path.display()))?;
-    let active: ActiveProfileFile =
-        toml::from_str(&text).with_context(|| format!("parse saved active profile {}", path.display()))?;
-    active
-        .validate()
-        .map_err(anyhow::Error::msg)
-        .with_context(|| format!("validate saved active profile {}", path.display()))?;
-    if active.id != entry.profile_id {
-        return Err(anyhow!(
-            "saved profile id mismatch for VM '{}': pinned '{}', saved '{}'",
-            entry.name,
-            entry.profile_id,
-            active.id
-        ));
-    }
-    if active.revision != entry.profile_revision {
-        return Err(anyhow!(
-            "saved profile revision mismatch for VM '{}': pinned '{}', saved '{}'",
-            entry.name,
-            entry.profile_revision,
-            active.revision
-        ));
-    }
-    Ok(())
-}
-
 pub(super) fn boot_asset_pin_path(assets_dir: &StdPath, arch: &str, pin: &BootAssetPin) -> PathBuf {
     let bases = [assets_dir.join(arch), assets_dir.to_path_buf()];
     let hash_name = boot_asset_pin_hash_name(pin);
@@ -89,6 +65,13 @@ pub(super) fn boot_asset_pin_path(assets_dir: &StdPath, arch: &str, pin: &BootAs
     bases[0].join(hash_name)
 }
 
+/// Refuse a persistent VM whose pinned boot images the installed release
+/// graph marks revoked.
+///
+/// Every digest under a `"status": "revoked"` object counts, at whatever
+/// depth the graph nests it: a revoked image, or a revoked release that owns
+/// its images. Reading the shape generically keeps revocation in force across
+/// changes to how the graph groups its images.
 pub(super) fn reject_revoked_persistent_pins(assets_dir: &StdPath, entry: &PersistentVmEntry) -> Result<()> {
     let manifest_path = assets_dir.join("manifest.json");
     let Ok(bytes) = std::fs::read(&manifest_path) else {
@@ -96,81 +79,52 @@ pub(super) fn reject_revoked_persistent_pins(assets_dir: &StdPath, entry: &Persi
     };
     let manifest: serde_json::Value = serde_json::from_slice(&bytes)
         .with_context(|| format!("parse installed manifest {}", manifest_path.display()))?;
-    let Some(profile) = manifest
-        .get("profiles")
-        .and_then(|profiles| profiles.get(&entry.profile_id))
-    else {
-        return Ok(());
-    };
-    if profile
-        .get("status")
-        .and_then(serde_json::Value::as_str)
-        .is_some_and(|status| status.eq_ignore_ascii_case("revoked"))
-    {
-        return Err(anyhow!(
-            "profile '{}' is explicitly revoked for persistent VM '{}'",
-            entry.profile_id,
-            entry.name
-        ));
-    }
-
-    let pinned_hashes = [
+    let mut revoked = HashSet::new();
+    collect_revoked_digests(&manifest, false, &mut revoked);
+    for pin in [
         &entry.asset_pins.kernel,
         &entry.asset_pins.initrd,
         &entry.asset_pins.rootfs,
-    ]
-    .into_iter()
-    .map(|pin| pin.hash.strip_prefix("blake3:").unwrap_or(&pin.hash))
-    .collect::<HashSet<_>>();
-    let revoked_hash = profile
-        .get("architectures")
-        .and_then(serde_json::Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|architecture| architecture.get("images"))
-        .filter_map(serde_json::Value::as_array)
-        .flatten()
-        .find_map(|image| {
-            let revoked = image
-                .get("status")
-                .and_then(serde_json::Value::as_str)
-                .is_some_and(|status| status.eq_ignore_ascii_case("revoked"));
-            let hash = image.pointer("/digest/blake3").and_then(serde_json::Value::as_str)?;
-            (revoked && pinned_hashes.contains(hash)).then_some(hash)
-        });
-    if let Some(hash) = revoked_hash {
-        return Err(anyhow!(
-            "persistent VM '{}' pins explicitly revoked image blake3:{}",
-            entry.name,
-            hash
-        ));
+    ] {
+        let hash = pin.hash.strip_prefix("blake3:").unwrap_or(&pin.hash);
+        if revoked.contains(hash) {
+            return Err(anyhow!(
+                "persistent VM '{}' pins explicitly revoked image blake3:{hash}",
+                entry.name
+            ));
+        }
     }
     Ok(())
 }
 
-pub(super) fn profile_asset_pins(profile: &ProfileConfigFile) -> Result<BootAssetPins> {
-    let arch = capsem_core::net::policy_config::current_profile_arch();
-    let arch_assets = profile
-        .assets
-        .current_arch_assets()
-        .ok_or_else(|| anyhow!("profile {} has no assets for architecture {arch}", profile.id))?;
-    Ok(BootAssetPins {
-        kernel: descriptor_pin(&arch_assets.kernel)?,
-        initrd: descriptor_pin(&arch_assets.initrd)?,
-        rootfs: descriptor_pin(&arch_assets.rootfs)?,
-    })
-}
-
-pub(super) fn profile_payload_hash(profile: &ProfileConfigFile) -> Result<String> {
-    let bytes = serde_json::to_vec(profile).context("serialize profile payload for hash")?;
-    Ok(format!("blake3:{}", blake3::hash(&bytes).to_hex()))
-}
-
-pub(super) fn descriptor_pin(asset: &ProfileAssetDescriptor) -> Result<BootAssetPin> {
-    Ok(BootAssetPin {
-        name: asset.name.clone(),
-        hash: required_profile_asset_hash(asset)?.to_string(),
-    })
+fn collect_revoked_digests(value: &serde_json::Value, inside_revoked: bool, revoked: &mut HashSet<String>) {
+    match value {
+        serde_json::Value::Object(object) => {
+            let inside_revoked = inside_revoked
+                || object
+                    .get("status")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|status| status.eq_ignore_ascii_case("revoked"));
+            if inside_revoked {
+                if let Some(hash) = object
+                    .get("digest")
+                    .and_then(|digest| digest.get("blake3"))
+                    .and_then(serde_json::Value::as_str)
+                {
+                    revoked.insert(hash.strip_prefix("blake3:").unwrap_or(hash).to_string());
+                }
+            }
+            for child in object.values() {
+                collect_revoked_digests(child, inside_revoked, revoked);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_revoked_digests(item, inside_revoked, revoked);
+            }
+        }
+        _ => {}
+    }
 }
 
 pub(super) fn validate_asset_file_pin(kind: &str, path: &StdPath, pin: &BootAssetPin) -> Result<()> {
@@ -180,76 +134,9 @@ pub(super) fn validate_asset_file_pin(kind: &str, path: &StdPath, pin: &BootAsse
     Ok(())
 }
 
-pub(super) fn profile_asset_descriptor_path(
-    assets_dir: &StdPath,
-    arch: &str,
-    asset: &ProfileAssetDescriptor,
-) -> Result<PathBuf> {
-    let hash_name = profile_asset_hash_name(asset)?;
-    let bases = [assets_dir.join(arch), assets_dir.to_path_buf()];
-
-    for base in &bases {
-        let path = base.join(&hash_name);
-        if path.exists() {
-            return Ok(path);
-        }
-    }
-    for base in &bases {
-        let path = base.join(&asset.name);
-        if path.exists() {
-            return Ok(path);
-        }
-    }
-
-    Ok(bases[0].join(&asset.name))
-}
-
-pub(super) fn required_profile_asset_hash(asset: &ProfileAssetDescriptor) -> Result<&str> {
-    asset
-        .hash
-        .as_deref()
-        .ok_or_else(|| anyhow!("profile asset '{}' is missing a materialized hash", asset.name))
-}
-
-pub(super) fn required_profile_asset_size(asset: &ProfileAssetDescriptor) -> Result<u64> {
-    asset
-        .size
-        .ok_or_else(|| anyhow!("profile asset '{}' is missing a materialized size", asset.name))
-}
-
-pub(super) fn profile_asset_hash_hex(asset: &ProfileAssetDescriptor) -> Result<&str> {
-    let hash = required_profile_asset_hash(asset)?;
-    Ok(hash.strip_prefix("blake3:").unwrap_or(hash))
-}
-
-pub(super) fn profile_asset_hash_name(asset: &ProfileAssetDescriptor) -> Result<String> {
-    Ok(capsem_assets::asset_manager::hash_filename(
-        &asset.name,
-        profile_asset_hash_hex(asset)?,
-    ))
-}
-
 pub(super) fn boot_asset_pin_hash_name(pin: &BootAssetPin) -> String {
     let hash = pin.hash.strip_prefix("blake3:").unwrap_or(&pin.hash);
     capsem_assets::asset_manager::hash_filename(&pin.name, hash)
-}
-
-pub(super) fn profile_catalog_asset_filenames(catalog: &ProfileCatalog) -> HashSet<String> {
-    let mut filenames = HashSet::new();
-    for profile in catalog.profiles() {
-        for assets in profile.assets.arch.values() {
-            if let Ok(name) = profile_asset_hash_name(&assets.kernel) {
-                filenames.insert(name);
-            }
-            if let Ok(name) = profile_asset_hash_name(&assets.initrd) {
-                filenames.insert(name);
-            }
-            if let Ok(name) = profile_asset_hash_name(&assets.rootfs) {
-                filenames.insert(name);
-            }
-        }
-    }
-    filenames
 }
 
 pub(super) fn persistent_registry_asset_filenames(registry: &PersistentRegistry) -> HashSet<String> {
@@ -260,14 +147,6 @@ pub(super) fn persistent_registry_asset_filenames(registry: &PersistentRegistry)
         filenames.insert(boot_asset_pin_hash_name(&entry.asset_pins.rootfs));
     }
     filenames
-}
-
-pub(super) fn profile_asset_download_target(
-    assets_dir: &StdPath,
-    arch: &str,
-    asset: &ProfileAssetDescriptor,
-) -> Result<PathBuf> {
-    Ok(assets_dir.join(arch).join(profile_asset_hash_name(asset)?))
 }
 
 /// Identify the launchd-cleanup-saturation transient that masquerades
@@ -407,7 +286,7 @@ pub(super) fn workspace_root(state: &ServiceState, id: &str) -> Result<Contained
     let session_dir = resolve_session_dir(state, id)?;
     // Never by path: the guest can replace its workspace with a host link.
     capsem_core::session::open_workspace(&session_dir).map_err(|e| {
-        AppError(
+        AppError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("open workspace of {}: {e}", session_dir.display()),
         )
@@ -419,16 +298,16 @@ pub(super) fn workspace_root(state: &ServiceState, id: &str) -> Result<Contained
 /// directory was expected is a bad request, anything else is the host's.
 pub(super) fn workspace_io_error(e: std::io::Error) -> AppError {
     if is_symlink_refusal(&e) {
-        AppError(
+        AppError::new(
             StatusCode::FORBIDDEN,
             "path leaves the workspace through a symlink".into(),
         )
     } else if e.kind() == std::io::ErrorKind::NotFound {
-        AppError(StatusCode::NOT_FOUND, "path not found".into())
+        AppError::new(StatusCode::NOT_FOUND, "path not found".into())
     } else if e.kind() == std::io::ErrorKind::InvalidInput || is_not_directory(&e) {
-        AppError(StatusCode::BAD_REQUEST, format!("not a workspace path: {e}"))
+        AppError::new(StatusCode::BAD_REQUEST, format!("not a workspace path: {e}"))
     } else {
-        AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("workspace: {e}"))
+        AppError::new(StatusCode::INTERNAL_SERVER_ERROR, format!("workspace: {e}"))
     }
 }
 
@@ -445,7 +324,7 @@ pub(super) fn resolve_workspace_target(
     let rel = StdPath::new(sanitized);
     let name = rel
         .file_name()
-        .ok_or_else(|| AppError(StatusCode::BAD_REQUEST, "path has no file name".into()))?
+        .ok_or_else(|| AppError::new(StatusCode::BAD_REQUEST, "path has no file name".into()))?
         .to_owned();
     let parent_rel = rel.parent().unwrap_or_else(|| StdPath::new(""));
     let root = workspace_root(state, id)?;
@@ -456,7 +335,7 @@ pub(super) fn resolve_workspace_target(
     }
     .map_err(workspace_io_error)?;
     if parent.entry_kind(&name).map_err(workspace_io_error)? == Some(EntryKind::Other) {
-        return Err(AppError(
+        return Err(AppError::new(
             StatusCode::FORBIDDEN,
             "path names a symlink or special file".into(),
         ));
@@ -551,7 +430,7 @@ pub(super) async fn handle_list_files(
     // Directory reads are blocking I/O -- run in spawn_blocking
     let entries = tokio::task::spawn_blocking(move || list_dir_recursive(&target, &rel_path, 1, depth))
         .await
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("list: {e}")))?;
+        .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, format!("list: {e}")))?;
 
     Ok(Json(FileListResponse { entries }))
 }
@@ -566,56 +445,11 @@ pub(super) fn file_security_preview_bytes(data: &[u8]) -> Vec<u8> {
 pub(super) fn active_instance_uds_path(state: &Arc<ServiceState>, id: &str) -> Result<PathBuf, AppError> {
     let instances = state.instances.lock().unwrap();
     instances.get(id).map(|i| i.uds_path.clone()).ok_or_else(|| {
-        AppError(
+        AppError::new(
             StatusCode::CONFLICT,
             "file import/export requires a running sandbox security ledger".into(),
         )
     })
-}
-
-pub(super) async fn log_file_boundary(
-    state: &Arc<ServiceState>,
-    sandbox_id: &str,
-    action: FileBoundaryAction,
-    path: String,
-    data_preview: Vec<u8>,
-    size: u64,
-    mime_type: Option<String>,
-) -> Result<Option<Vec<u8>>, AppError> {
-    let uds_path = active_instance_uds_path(state, sandbox_id)?;
-    wait_for_vm_ready(&uds_path, 30, Some(state), Some(sandbox_id))
-        .await
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    let id = state.next_job_id();
-    let res = send_ipc_command(
-        &uds_path,
-        ServiceToProcess::LogFileBoundary {
-            id,
-            action,
-            path,
-            data: data_preview,
-            size,
-            mime_type,
-        },
-        Some(5),
-    )
-    .await
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    match res {
-        ProcessToService::LogFileBoundaryResult {
-            success: true, data, ..
-        } => Ok(data),
-        ProcessToService::LogFileBoundaryResult { error, .. } => Err(AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            error.unwrap_or_else(|| "failed to log file boundary".into()),
-        )),
-        _ => Err(AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "unexpected IPC response for file boundary log".into(),
-        )),
-    }
 }
 
 pub(super) async fn handle_download_file(
@@ -637,9 +471,9 @@ pub(super) async fn handle_download_file(
         let mut data = Vec::new();
         file.take(MAX_FILE_SIZE + 1)
             .read_to_end(&mut data)
-            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("read: {e}")))?;
+            .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, format!("read: {e}")))?;
         if data.len() as u64 > MAX_FILE_SIZE {
-            return Err(AppError(
+            return Err(AppError::new(
                 StatusCode::PAYLOAD_TOO_LARGE,
                 format!("file too large (max {MAX_FILE_SIZE} bytes)"),
             ));
@@ -654,7 +488,7 @@ pub(super) async fn handle_download_file(
         Ok::<_, AppError>((data, mime_str, safe_name))
     })
     .await
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("task: {e}")))??;
+    .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, format!("task: {e}")))??;
 
     let rewritten = log_file_boundary(
         &state,
@@ -716,11 +550,11 @@ pub(super) async fn handle_upload_file(
             .open_file(&name, ContainedOpenOptions::write_create_truncate(0o644))
             .map_err(workspace_io_error)?;
         file.write_all(&data)
-            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("write: {e}")))?;
+            .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, format!("write: {e}")))?;
         Ok::<_, AppError>(())
     })
     .await
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, format!("task: {e}")))??;
+    .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, format!("task: {e}")))??;
 
     Ok(Json(UploadResponse {
         success: true,
@@ -779,21 +613,14 @@ pub(super) fn classify_attempt_decision(outcome: ProvisionAttemptOutcome, id: &s
         | ProvisionAttemptOutcome::Launched { uds_path }
         | ProvisionAttemptOutcome::StillBootingTimedOut { uds_path } => AttemptDecision::Succeed(uds_path),
         ProvisionAttemptOutcome::LaunchdTransient => AttemptDecision::RetryAfterCleanup,
-        ProvisionAttemptOutcome::BootCrash { tail } => AttemptDecision::BailWithError(AppError(
+        ProvisionAttemptOutcome::BootCrash { tail } => AttemptDecision::BailWithError(AppError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!(
                 "sandbox {id} failed to boot. process.log tail:\n\n{tail}\n\n\
                  (full logs: `capsem logs {id}`)"
             ),
         )),
-        ProvisionAttemptOutcome::ProvisionError(e) => {
-            let status = if e.to_string().contains("already exists") {
-                StatusCode::CONFLICT
-            } else {
-                StatusCode::INTERNAL_SERVER_ERROR
-            };
-            AttemptDecision::BailWithError(AppError(status, format!("provision failed: {e}")))
-        }
+        ProvisionAttemptOutcome::ProvisionError(e) => AttemptDecision::BailWithError(provision_failure(&e)),
     }
 }
 
@@ -802,12 +629,19 @@ pub(super) fn classify_attempt_decision(outcome: ProvisionAttemptOutcome, id: &s
 async fn failed_process_log_tail(state: &Arc<ServiceState>, id: &str) -> String {
     let vm_id = id.to_string();
     state
-        .off_worker(move |state| match find_failed_session_dir(&state.run_dir, &vm_id) {
-            Some(dir) => read_process_log_tail(&dir, 20),
-            None => "(no preserved log found)".to_string(),
+        .off_worker(move |state| {
+            if let Some(entry) = find_persistent_entry_by_route_id(&state, &vm_id) {
+                return entry
+                    .last_error
+                    .unwrap_or_else(|| read_process_log_tail(&entry.session_dir, 20));
+            }
+            match find_failed_session_dir(&state.run_dir, &vm_id) {
+                Some(dir) => read_process_log_tail(&dir, 20),
+                None => "(no preserved log found)".to_string(),
+            }
         })
         .await
-        .unwrap_or_else(|error| format!("(log read failed: {})", error.1))
+        .unwrap_or_else(|error| format!("(log read failed: {})", error.body.error))
 }
 
 pub(super) fn existing_session_names(state: &ServiceState) -> Vec<String> {
@@ -851,10 +685,10 @@ pub(super) async fn provision_attempt(
     ram_mb: u64,
     cpus: u32,
     scratch_disk_size_gb: u32,
-    profile_id: String,
     persistent: bool,
     env: Option<std::collections::HashMap<String, String>>,
-    from: Option<String>,
+    labels: Option<std::collections::HashMap<String, String>>,
+    from: Option<crate::CloneFrom>,
 ) -> ProvisionAttemptOutcome {
     // Creating/starting a VM is an Apple VZ lifecycle operation too. Cold
     // starts take the shared rail so independent boots can overlap, but they
@@ -865,7 +699,7 @@ pub(super) async fn provision_attempt(
         Err(e) => {
             return ProvisionAttemptOutcome::ProvisionError(anyhow::anyhow!(
                 "vz lifecycle lock acquire failed: {}",
-                e.1
+                e.body.error
             ))
         }
     };
@@ -878,13 +712,13 @@ pub(super) async fn provision_attempt(
         state_clone.provision_sandbox(ProvisionOptions {
             id: &id_owned,
             name: &name_owned,
-            profile_id,
             ram_mb,
             cpus,
             scratch_disk_size_gb,
             version_override: Some(version),
             persistent,
             env,
+            labels,
             from,
             description: None,
         })
@@ -919,16 +753,9 @@ pub(super) async fn provision_attempt(
         launch::LaunchWait::Launched => ProvisionAttemptOutcome::Launched { uds_path },
         launch::LaunchWait::TimedOut => ProvisionAttemptOutcome::StillBootingTimedOut { uds_path },
         launch::LaunchWait::Crashed => {
-            // Crash before ready. Prefer the persistent entry's
-            // cached last_error (already computed by the child-exit
-            // handler) to avoid re-reading the log; fall back to
-            // find_failed_session_dir for ephemeral VMs whose dir was
-            // renamed to `-failed-*`.
-            let cached = find_persistent_entry_by_route_id(state, id).and_then(|e| e.last_error);
-            let tail = match cached {
-                Some(tail) => tail,
-                None => failed_process_log_tail(state, id).await,
-            };
+            // The instance may disappear before its persistent last_error is
+            // cached. Read its log during that window; ephemeral evidence lives in `-failed-*`.
+            let tail = failed_process_log_tail(state, id).await;
             if is_launchd_cleanup_transient(&tail) {
                 warn!(
                     id,
@@ -940,73 +767,6 @@ pub(super) async fn provision_attempt(
             }
         }
     }
-}
-
-pub(super) fn append_fingerprint_field(out: &mut String, value: &str) {
-    use std::fmt::Write as _;
-
-    let _ = write!(out, "{}:", value.len());
-    out.push_str(value);
-    out.push('|');
-}
-
-pub(super) fn list_response_fingerprint(state: &ServiceState) -> String {
-    use std::fmt::Write as _;
-
-    let mut fingerprint = String::new();
-    {
-        let instances = state.instances.lock().unwrap();
-        let _ = write!(fingerprint, "running={};", instances.len());
-        for i in instances.values() {
-            append_fingerprint_field(&mut fingerprint, &i.id);
-            append_fingerprint_field(&mut fingerprint, &i.profile_id);
-            append_fingerprint_field(&mut fingerprint, &i.name);
-            let _ = write!(
-                fingerprint,
-                "{}:{}:{}:{}:{};",
-                i.pid,
-                i.persistent,
-                i.ram_mb,
-                i.cpus,
-                i.start_time.elapsed().as_secs()
-            );
-            append_fingerprint_field(&mut fingerprint, &i.base_version);
-            append_fingerprint_field(&mut fingerprint, i.forked_from.as_deref().unwrap_or(""));
-        }
-    }
-    {
-        let registry = state.persistent_registry.lock().unwrap();
-        let instances = state.instances.lock().unwrap();
-        let inactive_entries: Vec<&PersistentVmEntry> = registry
-            .list()
-            .filter(|entry| !instances.contains_key(&persistent_entry_vm_id(entry)))
-            .collect();
-        let _ = write!(fingerprint, "inactive={};", inactive_entries.len());
-        for entry in inactive_entries {
-            append_fingerprint_field(&mut fingerprint, &persistent_entry_vm_id(entry));
-            append_fingerprint_field(&mut fingerprint, &entry.name);
-            append_fingerprint_field(&mut fingerprint, &entry.profile_id);
-            append_fingerprint_field(&mut fingerprint, &entry.profile_revision);
-            append_fingerprint_field(&mut fingerprint, &entry.profile_payload_hash);
-            append_fingerprint_field(&mut fingerprint, &entry.base_version);
-            append_fingerprint_field(&mut fingerprint, entry.forked_from.as_deref().unwrap_or(""));
-            append_fingerprint_field(&mut fingerprint, entry.description.as_deref().unwrap_or(""));
-            append_fingerprint_field(&mut fingerprint, entry.last_error.as_deref().unwrap_or(""));
-            let _ = write!(
-                fingerprint,
-                "{}:{}:{}:{}:{}:{};",
-                entry.ram_mb,
-                entry.cpus,
-                entry.suspended,
-                entry.defunct,
-                entry.session_dir.display(),
-                persistent_resume_state_fingerprint(state, entry)
-            );
-        }
-        drop(instances);
-        drop(registry);
-    }
-    fingerprint
 }
 
 pub(super) async fn handle_info(
@@ -1058,7 +818,7 @@ pub(super) async fn handle_info(
         return Ok(Json(info));
     }
 
-    Err(AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))
+    Err(AppError::vm_not_found(&id))
 }
 
 pub(super) async fn handle_vm_status(
@@ -1134,7 +894,7 @@ pub(super) async fn handle_vm_status(
         }
     }
 
-    Err(AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))
+    Err(AppError::vm_not_found(&id))
 }
 
 pub(super) async fn vm_operation_status(
@@ -1166,9 +926,9 @@ pub(super) async fn handle_vm_fork_status(
     vm_operation_status(state, id, "fork").await
 }
 
-/// GET /stats -- return global stats from the canonical ledger.
+/// GET /stats -- global stats folded from the host ledger and live sessions.
 pub(super) async fn handle_stats(State(state): State<Arc<ServiceState>>) -> Result<impl IntoResponse, AppError> {
-    let body = read_stats_response_from_main_db_handle(&state).await?;
+    let body = state.stats_response().await;
     Ok((
         StatusCode::OK,
         [(axum::http::header::CONTENT_TYPE, "application/json")],
@@ -1199,136 +959,13 @@ pub(super) async fn handle_stats_summary(
     Ok(Json(ledger_routes::activity::stats_summary(&counters)))
 }
 
-/// Wait until a VM signals readiness via a `.ready` sentinel file.
-/// The capsem-process creates this file once the guest handshake completes.
-///
-/// If `state` and `id` are provided, also checks on every poll iteration that
-/// the VM is still in the instance registry. The resume_sandbox / spawn child-
-/// exit handlers remove the instance when capsem-process dies; observing that
-/// removal lets us fail fast (within ~50ms) instead of polling the dead
-/// sentinel for the full timeout. Without this, a capsem-process that crashes
-/// or exits during boot/restore would hang the API for `timeout_secs` (was
-/// reproducibly 30s under heavy suspend/resume churn).
-#[tracing::instrument(skip_all, fields(timeout_secs))]
-pub(super) async fn wait_for_vm_ready(
-    uds_path: &std::path::Path,
-    timeout_secs: u64,
-    state: Option<&Arc<ServiceState>>,
-    id: Option<&str>,
-) -> Result<(), String> {
-    let ready_span = tracing::debug_span!(
-        target: "capsem.launch",
-        capsem_foundation::telemetry::LAUNCH_VSOCK_READY_SPAN,
-        status = tracing::field::Empty,
-    );
-    let ready_path = uds_path.with_extension("ready");
-    // Override the PollOpts::new defaults (50ms / 500ms): VM ready-time is
-    // sub-second in the common case and the sentinel check is a single stat,
-    // so 500ms max_delay overshoots readiness by ~500ms and blows the
-    // exec_ready / boot_ready latency gates. Peer callers (service-connect,
-    // gateway-ready) wait for remote processes with seconds-scale startup
-    // where 500ms is appropriate; this poll is different.
-    let opts = vm_ready_poll_opts(timeout_secs);
-    let died: Arc<std::sync::atomic::AtomicBool> = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let res = capsem_foundation::poll::poll_until(opts, || {
-        let ready = ready_path.clone();
-        let state = state.cloned();
-        let id = id.map(|s| s.to_string());
-        let died = Arc::clone(&died);
-        async move {
-            if ready.exists() {
-                return Some(());
-            }
-            if let (Some(st), Some(name)) = (state.as_ref(), id.as_ref()) {
-                if !st.instances.lock().unwrap().contains_key(name) {
-                    died.store(true, std::sync::atomic::Ordering::Release);
-                    // Returning Some short-circuits the poll loop; the
-                    // outer caller distinguishes via `died`.
-                    return Some(());
-                }
-            }
-            None
-        }
-    })
-    .instrument(ready_span.clone())
-    .await;
-    if died.load(std::sync::atomic::Ordering::Acquire) {
-        ready_span.record("status", "error");
-        return Err("capsem-process exited before signalling ready".into());
-    }
-    match res {
-        Ok(()) => {
-            ready_span.record("status", "ok");
-            Ok(())
-        }
-        Err(error) => {
-            ready_span.record("status", "error");
-            Err(format!("{error}"))
-        }
-    }
-}
-
-pub(super) fn vm_ready_poll_opts(timeout_secs: u64) -> capsem_foundation::poll::PollOpts {
-    capsem_foundation::poll::PollOpts {
-        initial_delay: std::time::Duration::from_millis(5),
-        max_delay: std::time::Duration::from_millis(50),
-        ..capsem_foundation::poll::PollOpts::new("vm-ready", std::time::Duration::from_secs(timeout_secs))
-    }
-}
-
 pub(super) fn running_uds_path(state: &ServiceState, id: &str) -> Result<std::path::PathBuf, AppError> {
     let instances = state.instances.lock().unwrap();
     let path = instances
         .get(id)
-        .ok_or_else(|| AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {id}")))?
+        .ok_or_else(|| AppError::vm_not_found(id))?
         .uds_path
         .clone();
     drop(instances);
     Ok(path)
-}
-
-pub(super) async fn handle_exec(
-    State(state): State<Arc<ServiceState>>,
-    Path(id): Path<String>,
-    Json(payload): Json<ExecRequest>,
-) -> Result<Json<ExecResponse>, AppError> {
-    let timeout_secs =
-        capsem_api::exec_timeout_secs(payload.timeout_secs).map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
-    let uds_path = running_uds_path(&state, &id)?;
-
-    wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&id))
-        .await
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    let id_val = state.next_job_id();
-    let command = payload.command;
-    let res = send_ipc_command(
-        &uds_path,
-        ServiceToProcess::Exec {
-            id: id_val,
-            command: command.clone(),
-        },
-        Some(timeout_secs),
-    )
-    .await
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-    match res {
-        ProcessToService::ExecResult {
-            stdout,
-            stderr,
-            exit_code,
-            truncated,
-            ..
-        } => Ok(Json(ExecResponse {
-            stdout: ExecOutput::from_bytes(stdout),
-            stderr: ExecOutput::from_bytes(stderr),
-            exit_code,
-            truncated,
-        })),
-        _ => Err(AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "unexpected IPC response for exec".to_string(),
-        )),
-    }
 }

@@ -291,7 +291,10 @@ fn archived_v2_bodies(db_path: &std::path::Path, conn: &Connection) -> SourceBod
                 capsem_archive::BlockExtent { disk_len, raw_len },
             )
             .unwrap();
-        assert_eq!(format!("blake3:{}", blake3::hash(&bytes).to_hex()), expected_hash);
+        assert_eq!(
+            format!("blake3:{}", capsem_crypto::blake3::hash(&bytes).to_hex()),
+            expected_hash
+        );
         bodies.insert((source_table, event_id, direction), bytes);
     }
     bodies
@@ -961,7 +964,7 @@ fn recorded_digest(ownership: &str, name: &str) -> Option<String> {
 }
 
 fn assert_recorded_digests(paths: &[std::path::PathBuf]) {
-    use sha2::{Digest, Sha256};
+    use capsem_crypto::Sha256;
 
     let ownership = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/citadel/fixture_ownership.toml")

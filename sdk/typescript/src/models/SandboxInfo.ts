@@ -20,13 +20,13 @@ export interface SandboxInfo {
   "files"?: null | VmFilesInfo;
   "forked_from"?: string | null;
   "id": string;
+  "labels"?: Record<string, string> | null;
   "last_error"?: string | null;
   "model_call_count"?: number | null;
   "name"?: string | null;
   "network"?: null | VmNetworkInfo;
   "persistent"?: boolean;
   "pid": number;
-  "profile_id": string;
   "ram_mb"?: number | null;
   "resume_blocked_reason"?: string | null;
   "session_db"?: null | SessionDbStatus;

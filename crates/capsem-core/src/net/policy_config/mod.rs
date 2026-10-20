@@ -1,35 +1,34 @@
 //! Generic typed UI settings system with corp constraints.
 //!
 //! Each setting has an id, name, description, type, category, default value,
-//! and optional `enabled_by` pointer to a parent toggle. Local UI settings are
-//! stored in `settings.toml`. Corporate constraints live in `corp.toml`.
+//! and optional `enabled_by` pointer to a parent toggle. The user's settings
+//! live in `settings.toml`, which may set any registry id. Corporate
+//! constraints live in `corp.toml`, which may set any id too.
 //!
-//! Merge semantics: corp settings override local settings per-key.
+//! Merge semantics: corp settings override local settings per-key, and an id
+//! corp sets is locked against `/settings/edit`.
 
-mod active_profile_digest;
+mod active_policy;
 mod builder;
 pub mod corp_provision;
 mod lint;
 mod loader;
 mod ownership;
-mod profile_catalog;
-mod profile_contract;
 mod provider_profile;
 mod resolver;
 mod security_rule_profile;
 mod settings_metadata;
+mod settings_policy;
 mod tree;
 mod types;
-mod validation;
 
-pub use active_profile_digest::active_profile_digest;
+pub use active_policy::{active_policy_digest, ActivePolicyFile, CompiledActivePolicy};
 pub use builder::*;
 pub use capsem_config::*;
 pub use lint::load_merged_lint;
 pub use loader::*;
 pub use ownership::*;
-pub use profile_catalog::*;
-pub use profile_contract::*;
+pub use settings_policy::*;
 pub use tree::load_settings_tree;
 
 /// Immutable plugin configuration selected for one runtime generation.

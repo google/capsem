@@ -14,8 +14,9 @@ HOST_BINARIES = (
     "capsem",
     "capsem-service",
     "capsem-process",
+    "capsem-ledger",
+    "capsem-proxy",
     "capsem-tui",
-
     "capsem-router",
     "capsem-mcp-aggregator",
     "capsem-mcp-builtin",
@@ -37,7 +38,9 @@ def packaged_host_binaries(deb: Path) -> tuple[str, ...]:
     """
     shipped = {
         Path(name).name
-        for name in deb_payload_files(deb, select=lambda name: Path(name).parent.as_posix().endswith("usr/bin"))
+        for name in deb_payload_files(
+            deb, select=lambda name: Path(name).parent.as_posix().endswith("usr/bin")
+        )
     }
     return tuple(binary for binary in HOST_BINARIES if binary in shipped)
 
@@ -53,9 +56,13 @@ def packaged_manifest_metadata(deb: Path) -> dict[str, str]:
 
     # Repacked and native packages use different prefixes. Select the one
     # package-owned metadata member without extracting executables or paths.
-    found = deb_payload_files(deb, select=lambda name: name.endswith("/assets/manifest-metadata.json"))
+    found = deb_payload_files(
+        deb, select=lambda name: name.endswith("/assets/manifest-metadata.json")
+    )
     if len(found) != 1:
-        raise SystemExit(f"package must declare exactly one manifest metadata, found {len(found)} in {deb}")
+        raise SystemExit(
+            f"package must declare exactly one manifest metadata, found {len(found)} in {deb}"
+        )
     packaged = json.loads(next(iter(found.values())))
     url = packaged.get("manifest_url")
     channel = packaged.get("channel")
@@ -102,12 +109,11 @@ wait_for_service() {{
   journalctl --user-unit capsem.service --no-pager -n 200 >&2 || true
   return 1
 }}
-wait_for_profile_assets() {{
-  profile="$1"
-  output="$2"
+wait_for_assets() {{
+  output="$1"
   for attempt in $(seq 1 180); do
     if CAPSEM_HOME="$CAPSEM_HOME_DIR" CAPSEM_RUN_DIR="$CAPSEM_HOME_DIR/run" \
-      "$CAPSEM_BIN" assets status --profile "$profile" --json > "$output" \
+      "$CAPSEM_BIN" assets status --json > "$output" \
       && python3 - "$output" <<'PY'
 import json
 from pathlib import Path
@@ -121,7 +127,7 @@ PY
     fi
     sleep 1
   done
-  echo "ERROR: profile $profile assets did not settle after $attempt polls" >&2
+  echo "ERROR: assets did not settle after $attempt polls" >&2
   cat "$output" >&2 || true
   systemctl --user status capsem.service --no-pager -l >&2 || true
   journalctl --user-unit capsem.service --no-pager -n 200 >&2 || true
@@ -194,7 +200,7 @@ probe_installed_transition() {{
   {shlex.quote(sys.executable)} build_system/scripts/build/run-installed-winterfell.py \
     --bin-dir "$CAPSEM_HOME_DIR/bin" \
     --assets-dir "$CAPSEM_HOME_DIR/assets" \
-    --profiles-dir "$CAPSEM_HOME_DIR/profiles" \
+    --image-layout "${{CAPSEM_REFERENCE_IMAGE_LAYOUT:?the installed proof boots the reference image: set CAPSEM_REFERENCE_IMAGE_LAYOUT}}" \
     --evidence-out "$EVIDENCE_DIR/$label-winterfell.json"
 }}
 observe_update_transition() {{
@@ -224,10 +230,12 @@ observe_update_transition() {{
     return 1
   }}
 }}
-installed_profile_tree_digest() {{
-  find "$CAPSEM_HOME_DIR/profiles" -type f -print0 \
-    | sort -z \
-    | xargs -0 sha256sum \
+# Path and size of every installed runtime file: a rejected candidate must not
+# add, drop or resize one. The manifest is compared byte for byte by its caller,
+# and the metadata records the rejection itself, so neither belongs here.
+installed_runtime_digest() {{
+  find "$CAPSEM_HOME_DIR/assets" -type f -not -name 'manifest*.json' -printf '%P %s\\n' \
+    | sort \
     | sha256sum \
     | cut -d' ' -f1
 }}

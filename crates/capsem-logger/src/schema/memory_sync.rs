@@ -8,6 +8,30 @@
 
 use super::*;
 
+// Match ddl.rs's nullable shape expressions exactly: raw IS comparisons only
+// seek the event/stage/actor prefix and scan every candidate snapshot per row.
+pub(super) const COPY_SECURITY_DECISION_OCCURRENCES: &str = "INSERT OR REPLACE INTO main.security_decision_events (
+        id, timestamp_unix_ms, event_id, event_type, stage, actor,
+        rule_id, plugin_id, previous_decision, requested_decision,
+        effective_decision, reason, trace_id, turn_id, credential_ref, run_id
+     )
+     SELECT event.id, event.timestamp_unix_ms, event.event_id, event.event_type,
+            NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+            event.trace_id, event.turn_id, event.credential_ref,
+            (SELECT run.id FROM main.security_decision_runs AS run
+             WHERE run.event_type = event.event_type
+               AND run.stage = event.stage AND run.actor = event.actor
+               AND (CASE WHEN run.rule_id IS NULL THEN 'N' ELSE 'S' || hex(CAST(run.rule_id AS BLOB)) END)
+                 = (CASE WHEN event.rule_id IS NULL THEN 'N' ELSE 'S' || hex(CAST(event.rule_id AS BLOB)) END)
+               AND (CASE WHEN run.plugin_id IS NULL THEN 'N' ELSE 'S' || hex(CAST(run.plugin_id AS BLOB)) END)
+                 = (CASE WHEN event.plugin_id IS NULL THEN 'N' ELSE 'S' || hex(CAST(event.plugin_id AS BLOB)) END)
+               AND run.previous_decision = event.previous_decision
+               AND run.requested_decision = event.requested_decision
+               AND run.effective_decision = event.effective_decision
+               AND (CASE WHEN run.reason IS NULL THEN 'N' ELSE 'S' || hex(CAST(run.reason AS BLOB)) END)
+                 = (CASE WHEN event.reason IS NULL THEN 'N' ELSE 'S' || hex(CAST(event.reason AS BLOB)) END))
+     FROM mem.security_decision_events AS event WHERE event.id > ?1";
+
 /// Tables that live on disk only and never mirror into the memory schema:
 /// the body index and its block table are written straight to disk beside the
 /// archive file they point into, the schema markers are not data, the counter
@@ -17,6 +41,7 @@ use super::*;
 const DISK_ONLY_TABLES: &[&str] = &[
     "archive_state",
     "ledger_counters",
+    "ledger_commitments",
     "event_body_blobs",
     "body_blocks",
     "transport_schema",
@@ -24,6 +49,11 @@ const DISK_ONLY_TABLES: &[&str] = &[
     "network_members",
     "network_schema",
 ];
+
+fn required_hot_table(table: &str) -> rusqlite::Result<&'static str> {
+    canonical_hot_table(table)
+        .ok_or_else(|| rusqlite::Error::InvalidParameterName(format!("unknown ledger table {table}")))
+}
 
 pub(crate) fn is_disk_only_table(name: &str) -> bool {
     DISK_ONLY_TABLES.contains(&name)
@@ -35,6 +65,7 @@ pub(crate) fn is_disk_only_table(name: &str) -> bool {
 /// rebuilt. This function is intentionally DB-owned: route callers neither
 /// inspect nor repair ledger schema.
 pub fn reconcile_memory_tables_from_disk(conn: &Connection) -> rusqlite::Result<()> {
+    integrity::validate(conn)?;
     let mut stmt = conn.prepare(
         "SELECT name, sql
          FROM main.sqlite_master
@@ -88,12 +119,10 @@ pub(crate) fn seed_memory_sequences<'a>(
     tables: impl IntoIterator<Item = &'a str>,
 ) -> rusqlite::Result<()> {
     for table in tables {
-        if is_disk_only_table(table)
-            || !table_exists(conn, "main", table)?
-            || !table_exists(conn, MEMORY_SCHEMA, table)?
-        {
+        if is_disk_only_table(table) {
             continue;
         }
+        let table = required_hot_table(table)?;
         let next: i64 = conn.query_row(
             &format!(
                 "SELECT MAX(
@@ -131,12 +160,7 @@ pub(crate) fn initial_memory_flush_watermarks<'a>(
         if is_disk_only_table(table) {
             continue;
         }
-        if !table_exists(conn, "main", table)? {
-            continue;
-        }
-        let Some(table) = canonical_hot_table(table) else {
-            continue;
-        };
+        let table = required_hot_table(table)?;
         let max_id = max_table_id(conn, "main", table)?;
         watermarks.insert(table, max_id);
     }
@@ -167,12 +191,13 @@ pub fn flush_memory_tables_to_disk<'a>(
         if is_disk_only_table(table) {
             continue;
         }
-        if !table_exists(conn, "main", table)? || !table_exists(conn, MEMORY_SCHEMA, table)? {
-            continue;
-        }
-        let Some(table) = canonical_hot_table(table) else {
-            continue;
-        };
+        let table = required_hot_table(table)?;
+        // Execute the cached probe so a schema-cookie change reparses it.
+        // Even an empty memory table must not hide a missing disk table/id.
+        let _: Option<i64> = conn
+            .prepare_cached(&format!("SELECT id FROM main.{table} WHERE 0"))?
+            .query_row([], |row| row.get(0))
+            .optional()?;
         let last_flushed_id = *watermarks.get(table).unwrap_or(&0);
         let max_memory_id = max_table_id(conn, MEMORY_SCHEMA, table)?;
         if max_memory_id > last_flushed_id {
@@ -208,26 +233,7 @@ pub fn flush_memory_tables_to_disk<'a>(
                 )?;
             } else if table == "security_decision_events" {
                 compact_security_decision_snapshots(conn, last_flushed_id)?;
-                conn.execute(
-                    "INSERT OR REPLACE INTO main.security_decision_events (
-                        id, timestamp_unix_ms, event_id, event_type, stage, actor,
-                        rule_id, plugin_id, previous_decision, requested_decision,
-                        effective_decision, reason, trace_id, turn_id, credential_ref, run_id
-                     )
-                     SELECT event.id, event.timestamp_unix_ms, event.event_id, event.event_type,
-                            NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-                            event.trace_id, event.turn_id, event.credential_ref,
-                            (SELECT run.id FROM main.security_decision_runs AS run
-                             WHERE run.event_type = event.event_type
-                               AND run.stage = event.stage AND run.actor = event.actor
-                               AND run.rule_id IS event.rule_id AND run.plugin_id IS event.plugin_id
-                               AND run.previous_decision = event.previous_decision
-                               AND run.requested_decision = event.requested_decision
-                               AND run.effective_decision = event.effective_decision
-                               AND run.reason IS event.reason)
-                     FROM mem.security_decision_events AS event WHERE event.id > ?1",
-                    [last_flushed_id],
-                )?;
+                conn.execute(COPY_SECURITY_DECISION_OCCURRENCES, [last_flushed_id])?;
             } else {
                 conn.execute(
                     &format!(

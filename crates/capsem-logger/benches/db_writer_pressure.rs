@@ -1,6 +1,8 @@
 use std::time::{Duration, SystemTime};
 
-use capsem_logger::{DbWriter, FileAction, FileEvent, WriteOp};
+use capsem_logger::{
+    DbWriter, FileAction, FileEvent, SecurityDecision, SecurityDecisionEvent, SecurityDecisionStage, WriteOp,
+};
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion, Throughput};
 
 #[path = "support/net_bodies.rs"]
@@ -61,14 +63,23 @@ fn bench_db_writer_body_bursts(c: &mut Criterion) {
     group.sample_size(10);
     group.measurement_time(Duration::from_secs(8));
 
-    for burst_size in [256usize, 1024usize] {
+    // The 4096 exchange case also exercises a large archive-index flush,
+    // whose cost stalls bounded HTTP audit admission during periodic flushes.
+    for (name, burst_size, capacity) in [
+        ("net_bodies_256", 256usize, 256usize),
+        ("net_bodies_1024", 1024, 1024),
+        ("net_bodies_4096", 4096, 4096),
+        ("net_bodies_4096_bounded_1024", 4096, 1024),
+    ] {
+        // Ten measured large bursts took 26 seconds; retain rounded 20% margin.
+        group.measurement_time(Duration::from_secs(if burst_size == 4096 { 35 } else { 8 }));
         group.throughput(Throughput::Elements(burst_size as u64));
-        group.bench_with_input(format!("net_bodies_{burst_size}"), &burst_size, |bench, &burst| {
+        group.bench_with_input(name, &(burst_size, capacity), |bench, &(burst, capacity)| {
             bench.iter_batched(
                 || {
                     let dir = tempfile::tempdir().expect("create temp db dir");
                     let db_path = dir.path().join("session.db");
-                    let writer = DbWriter::open(&db_path, burst.max(128)).expect("open DbWriter");
+                    let writer = DbWriter::open(&db_path, capacity).expect("open DbWriter");
                     let ops = (0..burst).map(net_bodies::net_event).collect::<Vec<_>>();
                     (dir, writer, ops)
                 },
@@ -86,5 +97,62 @@ fn bench_db_writer_body_bursts(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_db_writer_bursts, bench_db_writer_body_bursts);
+/// Hold the event/stage/actor bucket constant while varying the snapshot
+/// reason. This exercises durable decision lookup as the run table grows.
+fn bench_db_writer_decisions(c: &mut Criterion) {
+    let mut group = c.benchmark_group("db_writer_pressure");
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(16));
+    group.throughput(Throughput::Elements(1024));
+    for (name, distinct) in [
+        ("security_decisions_1024_repeated", false),
+        ("security_decisions_1024_distinct", true),
+    ] {
+        group.bench_function(name, |bench| {
+            bench.iter_batched(
+                || {
+                    let dir = tempfile::tempdir().expect("create temp db dir");
+                    let writer = DbWriter::open(&dir.path().join("session.db"), 1024).expect("open DbWriter");
+                    let ops = (0..1024)
+                        .map(|idx| {
+                            WriteOp::SecurityDecisionEvent(SecurityDecisionEvent {
+                                timestamp_unix_ms: idx,
+                                event_id: format!("{idx:012x}"),
+                                event_type: "http.request".into(),
+                                stage: SecurityDecisionStage::Rule,
+                                actor: "rules.http".into(),
+                                rule_id: Some("http".into()),
+                                plugin_id: None,
+                                previous_decision: SecurityDecision::Allow,
+                                requested_decision: SecurityDecision::Block,
+                                effective_decision: SecurityDecision::Block,
+                                reason: Some(format!("decision-{}", if distinct { idx } else { 0 })),
+                                event_json: "{}".into(),
+                                trace_id: None,
+                                turn_id: None,
+                                credential_ref: None,
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    (dir, writer, ops)
+                },
+                |(_dir, writer, ops)| {
+                    for op in ops {
+                        writer.write_blocking(op);
+                    }
+                    writer.shutdown_blocking();
+                },
+                BatchSize::SmallInput,
+            );
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_db_writer_bursts,
+    bench_db_writer_body_bursts,
+    bench_db_writer_decisions
+);
 criterion_main!(benches);

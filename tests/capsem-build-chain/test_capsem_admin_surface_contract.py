@@ -1,4 +1,4 @@
-"""capsem-admin exposes one profile-derived rail, not authoring shortcuts."""
+"""capsem-admin validates and builds config; it never scaffolds it."""
 
 from __future__ import annotations
 
@@ -11,11 +11,8 @@ def test_capsem_admin_has_no_scaffold_or_init_helpers() -> None:
     source = (PROJECT_ROOT / "crates/capsem-admin/src/main.rs").read_text()
 
     forbidden = [
-        "PRIMARY_PROFILE_TEMPLATE",
-        "ProfileInitArgs",
         "InitArgs",
         "init_file_command",
-        "init_profile_command",
     ]
     failures = [needle for needle in forbidden if needle in source]
 

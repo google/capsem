@@ -34,6 +34,8 @@ class StagePolicy(CacheContract):
     managed_globs: tuple[str, ...] = ("*",)
     lease_template: str | None = None
     mutation_locks: tuple[Path, ...] = ()
+    #: Immutable regular files linked into live consumer-owned views.
+    protect_hardlinks: StrictBool = False
 
     @model_validator(mode="after")
     def validate_stage(self) -> StagePolicy:

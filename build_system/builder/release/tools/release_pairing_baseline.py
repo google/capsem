@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 
-from .release_glowup import TransitionKind
+from ... import crypto as hashlib
 
 
 def _record(channel: str, route: str, manifest: Path, blake3: str) -> dict[str, object]:
@@ -48,27 +47,3 @@ def exact_channel_catalog(
         "generated_at": "2030-01-01T00:00:00Z",
         "channels": channels,
     }
-
-
-def validate_selected_profile_scope(
-    *,
-    transition: TransitionKind,
-    selected_profile: str | None,
-    changed_profiles: tuple[str, ...],
-) -> None:
-    """The selected profile must be part of the delta it claims to release.
-
-    It need not be all of it. Profile releases may run one after another before
-    the binary release activates them, so an earlier staged, still-inert
-    profile is a legitimate member of the delta beside the selected one, and a
-    channel switch stages the whole target graph. What a profile release can
-    change is bounded upstream: `capsem-admin release` authors only the
-    selected profile into the staged channel manifest.
-    """
-    if selected_profile is None:
-        return
-    if selected_profile in changed_profiles:
-        return
-    if transition is TransitionKind.CHANNEL_SWITCH:
-        raise SystemExit("exact pairing selected profile is absent from the cross-channel target")
-    raise SystemExit("exact pairing selected profile does not match the classified manifest delta")

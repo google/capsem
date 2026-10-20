@@ -13,7 +13,6 @@ from pathlib import Path
 
 import pytest
 from helpers.body_archive import (
-    SessionArchive,
     archived_bodies,
     ledger_path,
     security_payload,
@@ -21,11 +20,9 @@ from helpers.body_archive import (
 )
 from helpers.constants import (
     ASSETS_DIR,
-    CODE_PROFILE_ID,
     DEFAULT_CPUS,
     DEFAULT_RAM_MB,
     EXEC_READY_TIMEOUT,
-    PROFILES_DIR,
 )
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
 from helpers.service import (
@@ -36,7 +33,7 @@ from helpers.service import (
     vm_session_db_path,
     wait_exec_ready,
 )
-from helpers.session_ledger import open_session_ledger
+from helpers.session_ledger import open_session_ledger, stop_session_for_ledger_read
 from helpers.uds_client import UdsHttpClient
 from log_streams import log_stream_files
 
@@ -198,9 +195,6 @@ def _doctor_failure_diagnostics(service: ServiceInstance) -> str:
 def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
     assert MOCK_SERVER_BINARY.exists(), f"{MOCK_SERVER_BINARY} missing; build capsem-mock-server"
     assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
-    assert PROFILES_DIR.exists(), (
-        f"{PROFILES_DIR} missing; materialize profile config before Ironbank"
-    )
 
     service = ServiceInstance()
     client = None
@@ -227,7 +221,6 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
             "/vms/create",
             {
                 "name": session_id,
-                "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
                 "env": {"CAPSEM_MOCK_SERVER_BASE_URL": mock_base_url},
@@ -299,17 +292,16 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
             for row in security_latest
         )
         assert all(json.loads(row["rule_json"]) for row in security_latest)
-        # The forensic payload left the row for the archive; every match the
-        # route lists must still have one, and it must still parse.
-        with SessionArchive(vm_session_db_path(service.tmp_dir, client, vm_id)) as archive:
-            assert all(archive.security_payload(row["event_id"]) for row in security_latest)
-
-        mcp_default = client.get(f"/profiles/{CODE_PROFILE_ID}/mcp/default/info", timeout=30)
+        mcp_default = client.get("/mcp/default/info", timeout=30)
         assert set(mcp_default) == {"action", "source", "rule_id"}
         assert mcp_default["action"] in {"allow", "ask", "block", "disable"}
-        assert mcp_default["source"]
+        assert mcp_default["source"] in {"corp", "settings", "default"}
 
-        mcp_servers = client.get(f"/profiles/{CODE_PROFILE_ID}/mcp/servers/list", timeout=30)
+        mcp_refresh = client.post("/mcp/servers/local/refresh", timeout=30)
+        assert mcp_refresh["success"] is True
+        assert mcp_refresh["instances"] >= 1
+
+        mcp_servers = client.get("/mcp/servers/list", timeout=30)
         assert isinstance(mcp_servers, list)
         assert mcp_servers
         assert all(set(server) == EXPECTED_MCP_SERVER_FIELDS for server in mcp_servers)
@@ -318,9 +310,10 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
         assert local_server["is_stdio"] is True
         assert local_server["tool_count"] >= 3
         assert local_server["url"] == ""
+        assert local_server["source"] == "builtin"
 
         mcp_tools = client.get(
-            f"/profiles/{CODE_PROFILE_ID}/mcp/servers/local/tools/list",
+            "/mcp/servers/local/tools/list",
             timeout=30,
         )
         assert isinstance(mcp_tools, list)
@@ -334,9 +327,16 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
             assert tool["description"]
             assert tool["pin_changed"] is False
             assert tool["permission_action"] in {"allow", "ask", "block", "disable"}
-            assert tool["permission_source"]
+            assert tool["permission_source"] in {"corp", "settings", "default"}
 
+        # Live routes above read accepted events; offline archive proof needs
+        # every producer and its body indexes drained first.
+        stop_session_for_ledger_read(
+            client, vm_id, vm_session_db_path(service.tmp_dir, client, vm_id)
+        )
         conn = ledgers.enter_context(contextlib.closing(_connect_session_db(service, client, vm_id)))
+        with session_archive(conn) as archive:
+            assert all(archive.security_payload(row["event_id"]) for row in security_latest)
         assert "mcp_calls" not in {
             row["name"]
             for row in conn.execute(
@@ -467,7 +467,7 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
                 if sibling["event_id"] == row["event_id"]
             }
             assert "allow" in sibling_actions
-            assert "profiles.rules.capsem_mock_server" in sibling_rules
+            assert "profiles.rules.default_000_capsem_mock_server" in sibling_rules
 
         informational_rows = [
             row for row in security_rows if row["detection_level"] == "informational"
@@ -653,9 +653,6 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
 
 def test_runtime_plugin_action_matrix_pays_file_import_ledger_debt():
     assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
-    assert PROFILES_DIR.exists(), (
-        f"{PROFILES_DIR} missing; materialize profile config before Ironbank"
-    )
 
     service = ServiceInstance()
     client = None
@@ -667,7 +664,7 @@ def test_runtime_plugin_action_matrix_pays_file_import_ledger_debt():
         client = service.client()
 
         enabled_pre = client.patch(
-            f"/profiles/{CODE_PROFILE_ID}/plugins/dummy_pre_eicar/edit",
+            "/plugins/dummy_pre_eicar/edit",
             {"mode": "block", "detection_level": "critical"},
             timeout=30,
         )
@@ -677,7 +674,7 @@ def test_runtime_plugin_action_matrix_pays_file_import_ledger_debt():
         assert enabled_pre["runtime"]["enabled"] is True
 
         enabled_post = client.patch(
-            f"/profiles/{CODE_PROFILE_ID}/plugins/dummy_post_allow/edit",
+            "/plugins/dummy_post_allow/edit",
             {"mode": "allow", "detection_level": "low"},
             timeout=30,
         )
@@ -690,7 +687,6 @@ def test_runtime_plugin_action_matrix_pays_file_import_ledger_debt():
             "/vms/create",
             {
                 "name": session_id,
-                "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
             },
@@ -718,7 +714,7 @@ def test_runtime_plugin_action_matrix_pays_file_import_ledger_debt():
         assert get_status in {404, 500}
 
         rewrite_pre = client.patch(
-            f"/profiles/{CODE_PROFILE_ID}/plugins/dummy_pre_eicar/edit",
+            "/plugins/dummy_pre_eicar/edit",
             {"mode": "rewrite", "detection_level": "medium"},
             timeout=30,
         )
@@ -748,7 +744,7 @@ def test_runtime_plugin_action_matrix_pays_file_import_ledger_debt():
         assert "EICAR-STANDARD-ANTIVIRUS-TEST-FILE" not in rewrite_content
 
         disabled_pre = client.patch(
-            f"/profiles/{CODE_PROFILE_ID}/plugins/dummy_pre_eicar/edit",
+            "/plugins/dummy_pre_eicar/edit",
             {"mode": "disable", "detection_level": "informational"},
             timeout=30,
         )
@@ -772,6 +768,19 @@ def test_runtime_plugin_action_matrix_pays_file_import_ledger_debt():
         )
         assert read_status == 200
         assert read_body.decode() == EICAR_TEXT
+
+        plugins = client.get("/plugins/list", timeout=30)
+        by_id = {plugin["id"]: plugin for plugin in plugins["plugins"]}
+        assert by_id["dummy_pre_eicar"]["runtime"]["enabled"] is False
+        assert by_id["dummy_post_allow"]["runtime"]["enabled"] is True
+        assert by_id["dummy_post_allow"]["runtime"]["execution_count"] == 0
+        # The info route aggregates the plugin's runtime across sessions.
+        dummy_post_detail = client.get("/plugins/dummy_post_allow/info", timeout=30)
+        assert dummy_post_detail["runtime"]["enabled"] is True
+        assert dummy_post_detail["runtime"]["execution_count"] >= 1
+        # Stop awaits the owner and its DB flush before inspecting disk rows.
+        stopped = client.post(f"/vms/{vm_id}/stop", timeout=60)
+        assert stopped is not None
 
         conn = ledgers.enter_context(contextlib.closing(_connect_session_db(service, client, vm_id)))
         security_rows = conn.execute(
@@ -892,17 +901,6 @@ def test_runtime_plugin_action_matrix_pays_file_import_ledger_debt():
             for row in allowed_security
         )
 
-        plugins = client.get(f"/profiles/{CODE_PROFILE_ID}/plugins/list", timeout=30)
-        by_id = {plugin["id"]: plugin for plugin in plugins["plugins"]}
-        assert by_id["dummy_pre_eicar"]["runtime"]["enabled"] is False
-        assert by_id["dummy_post_allow"]["runtime"]["enabled"] is True
-        assert by_id["dummy_post_allow"]["runtime"]["execution_count"] == 0
-        dummy_post_detail = client.get(
-            f"/profiles/{CODE_PROFILE_ID}/plugins/dummy_post_allow/info",
-            timeout=30,
-        )
-        assert dummy_post_detail["runtime"]["enabled"] is True
-        assert dummy_post_detail["runtime"]["execution_count"] >= 1
     finally:
         ledgers.close()
         if client is not None:

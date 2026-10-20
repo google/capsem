@@ -5,12 +5,9 @@ from __future__ import annotations
 import argparse
 import contextlib
 import errno
-import hashlib
 import json
 import os
 import platform
-import shlex
-import shutil
 import socket
 import subprocess
 import sys
@@ -23,8 +20,10 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, cast
 
+from ... import crypto as hashlib
 from . import repository_root
 from .package_payload import package_payload_files
+from .public_install_smoke import run_docker_install_smoke
 from .release_manifest_rows import dead_rows
 
 PROJECT_ROOT = repository_root()
@@ -111,7 +110,7 @@ def main() -> int:
     )
     parser.add_argument("--stable-manifest-url")
     parser.add_argument("--nightly-manifest-url")
-    parser.add_argument("--docker-image", default="ubuntu:24.04")
+    parser.add_argument("--docker-image", help="Clean prepared systemd image; defaults to the qualified install helper.")
     args = parser.parse_args()
 
     manifest_url = args.manifest_url or (
@@ -559,82 +558,6 @@ def sbom_file_hashes(sbom: dict[str, Any]) -> set[tuple[str, str]]:
             ):
                 rows.add((file_name, checksum["checksumValue"].lower()))
     return rows
-
-
-def run_docker_install_smoke(
-    *,
-    release_base_url: str,
-    install_script_url: str,
-    stable_manifest_url: str,
-    nightly_manifest_url: str,
-    expected_version: str,
-    channel_switch: bool,
-    upgrade: bool,
-    docker_image: str,
-) -> None:
-    if shutil.which("docker") is None:
-        raise OSError("docker is required for --docker-linux-install")
-    install_pipeline = (
-        f"curl -fsSL {shlex.quote(install_script_url)} | "
-        "CAPSEM_CHANNEL=stable "
-        f"CAPSEM_RELEASE_BASE_URL={shlex.quote(release_base_url)} sh"
-    )
-    helper_checks = " ".join(
-        shlex.quote(binary)
-        for binary in (
-            "capsem",
-            "capsem-admin",
-            "capsem-gateway",
-
-            "capsem-router",
-            "capsem-mcp-aggregator",
-            "capsem-mcp-builtin",
-            "capsem-process",
-            "capsem-service",
-            "capsem-tray",
-            "capsem-tui",
-            "capsem-mock-server",
-        )
-    )
-    container_script = f"""
-set -euxo pipefail
-export DEBIAN_FRONTEND=noninteractive
-apt-get update
-apt-get install -y ca-certificates curl sudo
-useradd -m -s /bin/bash capsemtest
-printf '%s\\n' 'capsemtest ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/capsemtest
-chmod 0440 /etc/sudoers.d/capsemtest
-su capsemtest -c {shlex.quote(install_pipeline)}
-su capsemtest -c 'test -x "$HOME/.capsem/bin/capsem"'
-su capsemtest -c '"$HOME/.capsem/bin/capsem" --version' | grep -F {shlex.quote(expected_version)}
-su capsemtest -c 'test -f "$HOME/.capsem/assets/manifest.json"'
-su capsemtest -c 'grep -F {shlex.quote(stable_manifest_url)} "$HOME/.capsem/assets/manifest-metadata.json"'
-dpkg-query -W -f='${{Version}}' capsem | grep -Fx {shlex.quote(expected_version)}
-for bin in {helper_checks}; do
-  su capsemtest -c "test -x \\"\\$HOME/.capsem/bin/$bin\\""
-  su capsemtest -c "\\"\\$HOME/.capsem/bin/$bin\\" --version"
-done
-su capsemtest -c '"$HOME/.capsem/bin/capsem" status' | tee /home/capsemtest/.capsem/service-status.txt
-grep -F "Installed: true" /home/capsemtest/.capsem/service-status.txt
-grep -F "Running:   true" /home/capsemtest/.capsem/service-status.txt
-grep -F "Service:   ok" /home/capsemtest/.capsem/service-status.txt
-grep -F "Gateway:   ok" /home/capsemtest/.capsem/service-status.txt
-"""
-    if channel_switch:
-        container_script += f"""
-su capsemtest -c 'CAPSEM_HOME="$HOME/.capsem" CAPSEM_RUN_DIR="$HOME/.capsem/run" CAPSEM_RELEASE_CHANNELS_URL={shlex.quote(f"{release_base_url.rstrip('/')}/channels.json")} "$HOME/.capsem/bin/capsem" update --assets --channel nightly'
-su capsemtest -c 'grep -F {shlex.quote(nightly_manifest_url)} "$HOME/.capsem/assets/manifest-metadata.json"'
-su capsemtest -c 'CAPSEM_HOME="$HOME/.capsem" CAPSEM_RUN_DIR="$HOME/.capsem/run" CAPSEM_RELEASE_CHANNELS_URL={shlex.quote(f"{release_base_url.rstrip('/')}/channels.json")} "$HOME/.capsem/bin/capsem" update --assets --channel stable'
-su capsemtest -c 'grep -F {shlex.quote(stable_manifest_url)} "$HOME/.capsem/assets/manifest-metadata.json"'
-"""
-    if upgrade:
-        container_script += f"""
-su capsemtest -c 'CAPSEM_HOME="$HOME/.capsem" CAPSEM_RUN_DIR="$HOME/.capsem/run" CAPSEM_RELEASE_CHANNELS_URL={shlex.quote(f"{release_base_url.rstrip('/')}/channels.json")} DEBIAN_FRONTEND=noninteractive "$HOME/.capsem/bin/capsem" update --yes --channel nightly'
-"""
-    subprocess.run(
-        ["docker", "run", "--rm", "--pull=missing", docker_image, "bash", "-lc", container_script],
-        check=True,
-    )
 
 
 def fetch_text(location: str) -> str:

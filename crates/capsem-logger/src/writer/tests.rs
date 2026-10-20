@@ -1,10 +1,9 @@
-//! Tests for `writer` (extracted from inline `mod tests`).
-
 use super::*;
 
 mod bodies;
 mod counters;
 mod headers;
+mod host;
 mod producer;
 mod recording;
 mod security;
@@ -536,20 +535,19 @@ fn write_after_shutdown_is_noop() {
 }
 
 #[tokio::test]
-async fn profile_mutation_event_roundtrip_preserves_profile_ledger() {
+async fn policy_mutation_event_roundtrip_preserves_the_ledger_row() {
     let dir = tempfile::tempdir().unwrap();
-    let db_path = dir.path().join("profile-mutation.db");
+    let db_path = dir.path().join("policy-mutation.db");
     let writer = DbWriter::open(&db_path, 64).unwrap();
 
     writer
-        .write(WriteOp::ProfileMutationEvent(crate::events::ProfileMutationEvent {
+        .write(WriteOp::PolicyMutationEvent(crate::events::PolicyMutationEvent {
             timestamp_unix_ms: 1_789_000_000_000,
             mutation_id: "a1b2c3d4e5f6".into(),
-            profile_id: "code".into(),
             actor: "ui".into(),
             category: "mcp".into(),
-            filename: "enforcement.toml".into(),
-            affected_path: "profiles/code/enforcement.toml".into(),
+            filename: "settings.toml".into(),
+            affected_path: "settings.toml".into(),
             target_kind: "mcp_tool".into(),
             target_key: "capsem/fetch_http".into(),
             operation: "permission".into(),
@@ -558,19 +556,19 @@ async fn profile_mutation_event_roundtrip_preserves_profile_ledger() {
             old_size: 10,
             new_hash: format!("blake3:{}", "2".repeat(64)),
             new_size: 20,
-            status: crate::events::ProfileMutationStatus::Applied,
+            status: crate::events::PolicyMutationStatus::Applied,
             error: None,
-            trace_id: Some("trace_profile".into()),
+            trace_id: Some("trace_policy".into()),
         }))
         .await;
     drop(writer);
 
     let conn = rusqlite::Connection::open(&db_path).unwrap();
-    let row: (String, String, String, String, String, String, String, i64, String) = conn
+    let row: (String, String, String, String, String, String, i64, String) = conn
         .query_row(
-            "SELECT profile_id, actor, category, filename, target_kind, target_key,
+            "SELECT actor, category, filename, target_kind, target_key,
                     rule_id, new_size, status
-             FROM profile_mutation_events WHERE mutation_id = 'a1b2c3d4e5f6'",
+             FROM policy_mutation_events WHERE mutation_id = 'a1b2c3d4e5f6'",
             [],
             |row| {
                 Ok((
@@ -582,7 +580,6 @@ async fn profile_mutation_event_roundtrip_preserves_profile_ledger() {
                     row.get(5)?,
                     row.get(6)?,
                     row.get(7)?,
-                    row.get(8)?,
                 ))
             },
         )
@@ -590,10 +587,9 @@ async fn profile_mutation_event_roundtrip_preserves_profile_ledger() {
     assert_eq!(
         row,
         (
-            "code".into(),
             "ui".into(),
             "mcp".into(),
-            "enforcement.toml".into(),
+            "settings.toml".into(),
             "mcp_tool".into(),
             "capsem/fetch_http".into(),
             "profiles.rules.mcp_capsem_fetch_http_permission".into(),
@@ -604,18 +600,18 @@ async fn profile_mutation_event_roundtrip_preserves_profile_ledger() {
 }
 
 #[test]
-fn profile_mutation_schema_rejects_bad_status_and_hashes() {
+fn policy_mutation_schema_rejects_bad_status_and_hashes() {
     let conn = rusqlite::Connection::open_in_memory().unwrap();
     crate::schema::create_tables(&conn).unwrap();
 
     let bad_status = conn.execute(
-        "INSERT INTO profile_mutation_events (
-            timestamp_unix_ms, mutation_id, profile_id, actor, category, filename,
+        "INSERT INTO policy_mutation_events (
+            timestamp_unix_ms, mutation_id, actor, category, filename,
             affected_path, target_kind, target_key, operation,
             old_hash, old_size, new_hash, new_size, status
          )
-         VALUES (1, 'a1b2c3d4e5f6', 'code', 'ui', 'mcp', 'enforcement.toml',
-            'profiles/code/enforcement.toml', 'mcp_tool', 'capsem/fetch_http',
+         VALUES (1, 'a1b2c3d4e5f6', 'ui', 'mcp', 'settings.toml',
+            'settings.toml', 'mcp_tool', 'capsem/fetch_http',
             'permission', ?1, 1, ?2, 1, 'maybe')",
         rusqlite::params![
             format!("blake3:{}", "1".repeat(64)),
@@ -625,17 +621,17 @@ fn profile_mutation_schema_rejects_bad_status_and_hashes() {
     assert!(bad_status.is_err(), "invalid mutation status must fail");
 
     let bad_hash = conn.execute(
-        "INSERT INTO profile_mutation_events (
-            timestamp_unix_ms, mutation_id, profile_id, actor, category, filename,
+        "INSERT INTO policy_mutation_events (
+            timestamp_unix_ms, mutation_id, actor, category, filename,
             affected_path, target_kind, target_key, operation,
             old_hash, old_size, new_hash, new_size, status
          )
-         VALUES (1, 'a1b2c3d4e5f6', 'code', 'ui', 'mcp', 'enforcement.toml',
-            'profiles/code/enforcement.toml', 'mcp_tool', 'capsem/fetch_http',
+         VALUES (1, 'a1b2c3d4e5f6', 'ui', 'mcp', 'settings.toml',
+            'settings.toml', 'mcp_tool', 'capsem/fetch_http',
             'permission', 'sha256:nope', 1, ?1, 1, 'applied')",
         [format!("blake3:{}", "2".repeat(64))],
     );
-    assert!(bad_hash.is_err(), "non-BLAKE3 profile pins must fail");
+    assert!(bad_hash.is_err(), "non-BLAKE3 file hashes must fail");
 }
 
 #[test]
@@ -679,13 +675,52 @@ fn try_write_on_open_writer_succeeds() {
 #[test]
 fn writer_channel_capacity_applies_backpressure() {
     let (tx, _rx) = writer_channel(1);
-    tx.try_send(WriterMessage::write(file_event_with_credential("/queued", None)))
-        .unwrap();
+    tx.try_send(&mut Some(WriterMessage::write(file_event_with_credential(
+        "/queued", None,
+    ))))
+    .unwrap();
 
     assert!(matches!(
-        tx.try_send(WriterMessage::write(file_event_with_credential("/full", None,))),
-        Err(std::sync::mpsc::TrySendError::Full(_))
+        tx.try_send(&mut Some(WriterMessage::write(file_event_with_credential(
+            "/full", None,
+        )))),
+        Err(WriterTrySendError::Full)
     ));
+}
+
+#[test]
+fn writer_channel_capacity_counts_events_inside_batches() {
+    let (tx, rx) = writer_channel(3);
+    let batch = || {
+        WriterMessage::WriteBatch(vec![
+            WriteEnvelope::plain(file_event_with_credential("/batch/one", None)),
+            WriteEnvelope::plain(file_event_with_credential("/batch/two", None)),
+        ])
+    };
+
+    tx.try_send(&mut Some(batch())).unwrap();
+    assert!(matches!(tx.try_send(&mut Some(batch())), Err(WriterTrySendError::Full)));
+    tx.try_send(&mut Some(WriterMessage::write(file_event_with_credential(
+        "/third", None,
+    ))))
+    .unwrap();
+    drop(rx.recv().unwrap());
+    tx.try_send(&mut Some(batch())).unwrap();
+}
+
+#[test]
+fn queued_write_batch_reaches_one_writer_transaction_batch() {
+    let mut barriers = Barriers::default();
+    let mut batch = Vec::new();
+    let writes = vec![
+        WriteEnvelope::plain(file_event_with_credential("/batch/one", None)),
+        WriteEnvelope::plain(file_event_with_credential("/batch/two", None)),
+    ];
+
+    assert!(!barriers.accept(WriterMessage::WriteBatch(writes), &mut batch));
+    assert_eq!(batch.len(), 2);
+    assert!(matches!(&batch[0].op, WriteOp::FileEvent(event) if event.path == "/batch/one"));
+    assert!(matches!(&batch[1].op, WriteOp::FileEvent(event) if event.path == "/batch/two"));
 }
 
 #[test]
@@ -818,6 +853,7 @@ fn exec_event_insert_then_update_roundtrip() {
                     exec_id: 42,
                     command: "ls -la".into(),
                     source: "mcp".into(),
+                    target: capsem_proto::ipc::ExecTarget::Workload,
                     trace_id: Some("t1".into()),
                     process_name: Some("capsem".into()),
                     credential_ref: None,
@@ -840,41 +876,26 @@ fn exec_event_insert_then_update_roundtrip() {
     }
 
     let conn = rusqlite::Connection::open(&db_path).unwrap();
-    let (command, source, exit, duration, stdout_preview, stderr_preview, stdout_bytes, pid) = conn
+    let row = conn
         .query_row(
-            "SELECT command, source, exit_code, duration_ms, stdout_preview, stderr_preview, stdout_bytes, pid
+            "SELECT command, source, target, exit_code, duration_ms, stdout_preview, stderr_preview, stdout_bytes, pid
          FROM exec_events WHERE exec_id = 42",
             [],
-            |r| {
-                let command: String = r.get(0)?;
-                let source: String = r.get(1)?;
-                let exit: i64 = r.get(2)?;
-                let duration: i64 = r.get(3)?;
-                let stdout_preview: Option<String> = r.get(4)?;
-                let stderr_preview: Option<String> = r.get(5)?;
-                let stdout_bytes: i64 = r.get(6)?;
-                let pid: Option<i64> = r.get(7)?;
-                Ok((
-                    command,
-                    source,
-                    exit,
-                    duration,
-                    stdout_preview,
-                    stderr_preview,
-                    stdout_bytes,
-                    pid,
-                ))
-            },
+            |r| (0..9).map(|i| r.get::<_, Value>(i)).collect::<Result<Vec<_>, _>>(),
         )
         .unwrap();
-    assert_eq!(command, "ls -la");
-    assert_eq!(source, "mcp");
-    assert_eq!(exit, 0);
-    assert_eq!(duration, 120);
-    assert_eq!(stdout_preview.as_deref(), Some("out"));
-    assert_eq!(stderr_preview.as_deref(), Some(""), "silent, not missing");
-    assert_eq!(stdout_bytes, 128);
-    assert_eq!(pid, Some(1234));
+    use rusqlite::types::Value::{self, Integer, Text};
+    // `target` is where it ran, beside what was asked rather than folded into
+    // it; an empty stderr preview is a silent lane, not a missing one.
+    let expected = [
+        Text("ls -la".into()),
+        Text("mcp".into()),
+        Text("workload".into()),
+        Integer(0),
+        Integer(120),
+    ];
+    let output = [Text("out".into()), Text(String::new()), Integer(128), Integer(1234)];
+    assert_eq!(row, [expected.as_slice(), output.as_slice()].concat());
 }
 
 #[test]
@@ -1212,202 +1233,5 @@ fn dns_events_indexed_by_trace_id_for_join() {
     assert_eq!(count, 1, "missing idx_dns_events_trace_id");
 }
 
-fn file_event_with_credential(path: &str, credential_ref: Option<&str>) -> WriteOp {
-    WriteOp::FileEvent(crate::events::FileEvent {
-        event_id: None,
-        timestamp: std::time::SystemTime::now(),
-        action: crate::events::FileAction::Created,
-        path: path.to_string(),
-        size: Some(1),
-        kind: crate::events::FileKind::File,
-        trace_id: None,
-        credential_ref: credential_ref.map(str::to_string),
-    })
-}
-
-/// One row the schema rejects must not take its neighbours down with it.
-///
-/// The write batch is a single transaction for throughput, so a CHECK violation
-/// on one op used to roll back every op batched alongside it -- valid security
-/// telemetry discarded because an unrelated producer built one bad row, and only
-/// a warn line to show for it.
-#[test]
-fn one_rejected_op_does_not_discard_the_rest_of_its_batch() {
-    let tmp = tempfile::tempdir().unwrap();
-    let db_path = tmp.path().join("session.db");
-    let writer = DbWriter::open(&db_path, 64).unwrap();
-    let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
-
-    rt.block_on(async {
-        // Enqueued together so they land in one batch. The middle op carries a
-        // credential_ref the schema CHECK rejects.
-        writer.write(file_event_with_credential("/good/before", None)).await;
-        writer
-            .write(file_event_with_credential(
-                "/bad/malformed",
-                Some("credential:blake3:not-a-real-digest"),
-            ))
-            .await;
-        writer.write(file_event_with_credential("/good/after", None)).await;
-        writer.flush().await;
-    });
-    writer.shutdown_blocking();
-
-    let conn = rusqlite::Connection::open(&db_path).unwrap();
-    let paths = conn
-        .prepare("SELECT path FROM fs_events ORDER BY id")
-        .unwrap()
-        .query_map([], |row| row.get::<_, String>(0))
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
-
-    assert_eq!(
-        paths,
-        vec!["/good/before".to_string(), "/good/after".to_string()],
-        "the two valid rows must survive the one the schema refused"
-    );
-}
-
-fn minimal_model_call(trace_id: &str) -> WriteOp {
-    WriteOp::ModelCall(crate::events::ModelCall {
-        event_id: None,
-        timestamp: std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000),
-        provider: "anthropic".to_string(),
-        protocol: Some("anthropic".to_string()),
-        model: Some("claude-sonnet-4-20250514".to_string()),
-        process_name: None,
-        pid: None,
-        method: "POST".to_string(),
-        path: "/v1/messages".to_string(),
-        stream: false,
-        system_prompt_preview: None,
-        messages_count: 1,
-        tools_count: 0,
-        request_bytes: 16,
-        request_body: None,
-        message_id: Some("msg_salvage".to_string()),
-        status_code: Some(200),
-        text_content: Some("hello".to_string()),
-        thinking_content: None,
-        response_body: None,
-        stop_reason: Some("end_turn".to_string()),
-        input_tokens: Some(1),
-        output_tokens: Some(1),
-        usage_details: std::collections::BTreeMap::new(),
-        duration_ms: 1,
-        response_bytes: 16,
-        estimated_cost_usd: 0.0,
-        trace_id: Some(trace_id.to_string()),
-        credential_ref: None,
-        tool_calls: vec![],
-        tool_responses: vec![],
-    })
-}
-
-#[test]
-fn salvaging_a_failed_batch_preserves_model_items() {
-    let tmp = tempfile::tempdir().unwrap();
-    let db_path = tmp.path().join("session.db");
-    let writer = DbWriter::open(&db_path, 64).unwrap();
-    let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
-
-    rt.block_on(async {
-        writer.write(minimal_model_call("trace_salvage")).await;
-        writer
-            .write(file_event_with_credential(
-                "/bad/malformed",
-                Some("credential:blake3:not-a-real-digest"),
-            ))
-            .await;
-        writer.flush().await;
-    });
-    writer.shutdown_blocking();
-
-    let conn = rusqlite::Connection::open(&db_path).unwrap();
-    let calls: i64 = conn
-        .query_row("SELECT count(*) FROM model_calls", [], |row| row.get(0))
-        .unwrap();
-    let items: i64 = conn
-        .query_row("SELECT count(*) FROM model_items", [], |row| row.get(0))
-        .unwrap();
-
-    assert_eq!(calls, 1, "the model call survives the rejected row beside it");
-    assert!(
-        items > 0,
-        "the model items must survive retrying the rejected batch one row at a time"
-    );
-}
-
-#[test]
-fn a_rejected_op_is_dropped_wherever_it_sits_in_the_batch() {
-    for (label, position) in [("first", 0usize), ("middle", 1), ("last", 2)] {
-        let tmp = tempfile::tempdir().unwrap();
-        let db_path = tmp.path().join("session.db");
-        let writer = DbWriter::open(&db_path, 64).unwrap();
-        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
-
-        rt.block_on(async {
-            for index in 0..3 {
-                if index == position {
-                    writer
-                        .write(file_event_with_credential(
-                            "/bad/malformed",
-                            Some("credential:blake3:not-a-real-digest"),
-                        ))
-                        .await;
-                } else {
-                    writer
-                        .write(file_event_with_credential(&format!("/good/{index}"), None))
-                        .await;
-                }
-            }
-            writer.flush().await;
-        });
-        writer.shutdown_blocking();
-
-        let conn = rusqlite::Connection::open(&db_path).unwrap();
-        let surviving: i64 = conn
-            .query_row("SELECT count(*) FROM fs_events", [], |row| row.get(0))
-            .unwrap();
-        assert_eq!(
-            surviving, 2,
-            "a rejected op in the {label} position must cost only itself"
-        );
-    }
-}
-
-#[test]
-fn a_batch_of_only_rejected_ops_writes_nothing_and_does_not_wedge_the_writer() {
-    let tmp = tempfile::tempdir().unwrap();
-    let db_path = tmp.path().join("session.db");
-    let writer = DbWriter::open(&db_path, 64).unwrap();
-    let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
-
-    rt.block_on(async {
-        for _ in 0..3 {
-            writer
-                .write(file_event_with_credential(
-                    "/bad/malformed",
-                    Some("credential:blake3:not-a-real-digest"),
-                ))
-                .await;
-        }
-        writer.flush().await;
-        // The writer must still accept work after salvaging an all-bad batch.
-        writer.write(file_event_with_credential("/good/after", None)).await;
-        writer.flush().await;
-    });
-    writer.shutdown_blocking();
-
-    let conn = rusqlite::Connection::open(&db_path).unwrap();
-    let paths = conn
-        .prepare("SELECT path FROM fs_events ORDER BY id")
-        .unwrap()
-        .query_map([], |row| row.get::<_, String>(0))
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
-
-    assert_eq!(paths, vec!["/good/after".to_string()]);
-}
+mod salvage;
+use salvage::{file_event_with_credential, minimal_model_call};

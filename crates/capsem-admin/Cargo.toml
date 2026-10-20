@@ -14,6 +14,7 @@ name = "capsem-admin"
 path = "src/main.rs"
 
 [dependencies]
+capsem-crypto = { path = "../capsem-crypto" }
 capsem-assets = { path = "../capsem-assets" }
 capsem-core = { path = "../capsem-core" }
 anyhow.workspace = true
@@ -22,10 +23,8 @@ serde.workspace = true
 serde_json.workspace = true
 reqwest = { workspace = true, features = ["blocking"] }
 semver = "1"
-sha2 = "0.10"
 time = { workspace = true, features = ["formatting"] }
 toml.workspace = true
-blake3 = "1"
 flate2 = "1"
 tar = "0.4"
 zstd = "0.13"

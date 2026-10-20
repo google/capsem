@@ -30,13 +30,13 @@ pub(crate) async fn handle_history_transcript(
     })
     .await
     .map_err(|e| {
-        AppError(
+        AppError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("transcript read task failed: {e}"),
         )
     })?
     .map_err(|e| {
-        AppError(
+        AppError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("failed to read pty.log: {e}"),
         )

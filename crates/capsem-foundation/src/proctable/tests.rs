@@ -37,6 +37,31 @@ fn process_records_carry_real_parent_identity() {
 }
 
 #[test]
+fn process_records_preserve_native_argument_boundaries_and_empty_values() {
+    use std::process::{Command, Stdio};
+    let expected = [
+        "-c",
+        "read ignored",
+        "argv-boundary",
+        "",
+        "--session-dir",
+        "/tmp/capsem owned/sessions/id",
+    ];
+    let mut child = Command::new("sh").args(expected).stdin(Stdio::piped()).spawn().unwrap();
+    let observed = processes()
+        .unwrap()
+        .into_iter()
+        .find(|process| process.pid == child.id())
+        .unwrap();
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert_eq!(
+        observed.argv.iter().skip(1).collect::<Vec<_>>(),
+        expected.iter().map(std::ffi::OsStr::new).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn running_processes_does_not_leak_the_environment() {
     // `KERN_PROCARGS2` returns argv *and* environ. Stopping at argc is what
     // keeps secrets out of a string this service logs and matches against.

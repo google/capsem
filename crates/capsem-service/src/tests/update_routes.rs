@@ -59,7 +59,7 @@ async fn update_route_check_live_executes_non_mutating_cli_check() {
     std::env::set_var("CAPSEM_CLI", &cli);
 
     let assets_dir = dir.path().join("assets");
-    write_update_runtime_manifest(&assets_dir, "0.0.0", "profiles-1");
+    write_update_runtime_manifest(&assets_dir, "0.0.0", "assets-1");
     let app = build_service_router(make_asset_state(assets_dir));
     let (status, body) = route_request(app, axum::http::Method::POST, "/update/check", Some(json!({}))).await;
     match previous {
@@ -144,7 +144,7 @@ async fn update_route_apply_confirmed_dispatches_one_atomic_update() {
     std::env::set_var("CAPSEM_CLI", &cli);
 
     let assets_dir = dir.path().join("assets");
-    write_update_runtime_manifest(&assets_dir, "0.0.0", "profiles-1");
+    write_update_runtime_manifest(&assets_dir, "0.0.0", "assets-1");
     let app = build_service_router(make_asset_state(assets_dir));
     let (status, body) = route_request(
         app,
@@ -198,7 +198,7 @@ async fn update_route_live_commands_share_one_serial_lock() {
     std::env::set_var("CAPSEM_CLI", &cli);
 
     let assets_dir = dir.path().join("assets");
-    write_update_runtime_manifest(&assets_dir, "0.0.0", "profiles-1");
+    write_update_runtime_manifest(&assets_dir, "0.0.0", "assets-1");
     let app = build_service_router(make_asset_state(assets_dir));
     let first = route_request(
         app.clone(),
@@ -245,24 +245,24 @@ fn write_update_runtime_manifest(assets_dir: &StdPath, binary: &str, assets: &st
 }
 
 #[tokio::test]
-async fn update_runtime_reloads_profile_only_activation_without_restart() {
+async fn update_runtime_reloads_asset_only_activation_without_restart() {
     let dir = tempfile::tempdir().unwrap();
     let assets_dir = dir.path().join("assets");
     let state = make_asset_state(assets_dir.clone());
-    write_update_runtime_manifest(&assets_dir, "0.0.0", "profiles-2");
+    write_update_runtime_manifest(&assets_dir, "0.0.0", "assets-2");
 
     let disposition = reload_activated_update_runtime(&state).unwrap();
 
     assert_eq!(disposition, UpdateRuntimeDisposition::Reloaded);
     assert_eq!(
         state.manifest.read().unwrap().as_ref().unwrap().assets.current,
-        "profiles-2"
+        "assets-2"
     );
     assert!(
         tokio::time::timeout(std::time::Duration::from_millis(10), state.update_restart.notified())
             .await
             .is_err(),
-        "profile-only activation must not restart a current binary"
+        "asset-only activation must not restart a current binary"
     );
 }
 
@@ -271,7 +271,7 @@ async fn update_runtime_requests_restart_after_binary_activation() {
     let dir = tempfile::tempdir().unwrap();
     let assets_dir = dir.path().join("assets");
     let state = make_asset_state(assets_dir.clone());
-    write_update_runtime_manifest(&assets_dir, "9.9.9", "profiles-2");
+    write_update_runtime_manifest(&assets_dir, "9.9.9", "assets-2");
 
     let disposition = reload_activated_update_runtime(&state).unwrap();
 
@@ -291,16 +291,16 @@ async fn update_runtime_requests_restart_after_binary_activation() {
 fn update_runtime_rejects_invalid_manifest_without_replacing_cached_graph() {
     let dir = tempfile::tempdir().unwrap();
     let assets_dir = dir.path().join("assets");
-    write_update_runtime_manifest(&assets_dir, "0.0.0", "profiles-1");
+    write_update_runtime_manifest(&assets_dir, "0.0.0", "assets-1");
     let state = make_asset_state(assets_dir.clone());
     std::fs::write(assets_dir.join("manifest.json"), b"{not-json").unwrap();
 
     let error = reload_activated_update_runtime(&state).unwrap_err();
 
-    assert!(error.1.contains("validate activated update manifest"));
+    assert!(error.body.error.contains("validate activated update manifest"));
     assert_eq!(
         state.manifest.read().unwrap().as_ref().unwrap().assets.current,
-        "profiles-1"
+        "assets-1"
     );
 }
 
@@ -432,7 +432,7 @@ async fn automatic_update_runs_one_complete_apply_and_reloads_runtime() {
     let assets_dir = capsem_home.join("assets");
     let cli = dir.path().join("capsem");
     let log = dir.path().join("automatic.log");
-    write_update_runtime_manifest(&assets_dir, "0.0.0", "profiles-2");
+    write_update_runtime_manifest(&assets_dir, "0.0.0", "assets-2");
     std::fs::write(
         &cli,
         format!("#!/bin/sh\nprintf '%s\\n' \"$*\" > '{}'\n", log.display()),
@@ -477,11 +477,17 @@ async fn automatic_update_reports_command_failure_for_backoff() {
     let state = make_test_state();
 
     let outcome = run_automatic_update_once(&state).await;
+    std::fs::write(&cli, "#!/bin/sh\nexit 0\n").unwrap();
+    let reload_outcome = run_automatic_update_once(&state).await;
+    std::env::set_var("CAPSEM_CLI", dir.path().join("missing-capsem"));
+    let spawn_outcome = run_automatic_update_once(&state).await;
 
     match previous_cli {
         Some(value) => std::env::set_var("CAPSEM_CLI", value),
         None => std::env::remove_var("CAPSEM_CLI"),
     }
+    assert!(matches!(reload_outcome, AutomaticUpdateOutcome::Failed(_)));
+    assert!(matches!(spawn_outcome, AutomaticUpdateOutcome::Failed(_)));
     let AutomaticUpdateOutcome::Failed(error) = outcome else {
         panic!("expected automatic update failure");
     };
@@ -490,6 +496,8 @@ async fn automatic_update_reports_command_failure_for_backoff() {
 }
 
 pub(super) async fn decode_response_json<T: serde::de::DeserializeOwned>(response: axum::response::Response) -> T {
+    let status = response.status();
     let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    serde_json::from_slice(&bytes).unwrap()
+    serde_json::from_slice(&bytes)
+        .unwrap_or_else(|error| panic!("HTTP {status}: {}: {error}", String::from_utf8_lossy(&bytes)))
 }

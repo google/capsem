@@ -46,17 +46,37 @@ IN_CONTAINER = 'nsenter -t "$(cat /var/tmp/capsem-container/workload.pid)" -n'
 BENCH = str(BIN_DIR / "capsem-bench-rs")
 
 
-@pytest.fixture
-def evidence():
-    """Where a test's evidence outlives the run: the gate removes its
-    temporary directories, so a log copied to tmp_path was gone before
-    anyone could read it."""
+def benchmark_evidence(prefix: str) -> Path:
+    """Preserve evidence outside pytest's temporary-directory cleanup."""
     return Path(
         tempfile.mkdtemp(
-            prefix="kingslanding-",
+            prefix=prefix,
             dir=benchmark_output_dir(PROJECT_ROOT, "kingslanding"),
         )
     )
+
+
+def qualify_benchmark_host(output: Path) -> None:
+    """Qualify the idle host before a fixture launches measurement processes."""
+    doctor = subprocess.run(
+        [BENCH, "doctor", "--json"], capture_output=True, timeout=15, check=False
+    )
+    (output / "doctor.json").write_bytes(doctor.stdout)
+    (output / "doctor.stderr").write_bytes(doctor.stderr)
+    (output / "doctor.exit").write_text(f"{doctor.returncode}\n")
+    assert doctor.returncode == 0, doctor.stdout.decode() + doctor.stderr.decode()
+
+
+@pytest.fixture
+def evidence():
+    return benchmark_evidence("kingslanding-")
+
+
+@pytest.fixture(autouse=True)
+def benchmark_host(evidence):
+    # Keep fitness local to this benchmark module: other suites import the
+    # ordinary evidence fixture and may legitimately share the machine.
+    qualify_benchmark_host(evidence)
 
 
 @pytest.fixture
@@ -99,6 +119,14 @@ def container(service, tmp_path, evidence):
             for name in ("process.log", "serial.log", ".capsem-agent-stdio.log"):
                 for log in service.tmp_dir.rglob(name):
                     (evidence / name).write_bytes(log.read_bytes())
+            # `capsem run` deletes its VM, logs and all, as soon as the
+            # workload's attach ends. Its own streams and exit status are then
+            # the only record of why: the workload's exit, or the stream error.
+            (evidence / "cli-exit.txt").write_text(f"{process.poll()}\n")
+            for name in ("stdout", "stderr"):
+                (evidence / f"cli-{name}.log").write_bytes(
+                    (tmp_path / name).read_bytes()
+                )
             print(f"KINGSLANDING EVIDENCE: {evidence}")
             if process.poll() is None:
                 process.terminate()
@@ -114,7 +142,7 @@ def container(service, tmp_path, evidence):
 def guest(service, vm_id, shell, timeout=40, check=True):
     response = service.client().post(
         f"/vms/{vm_id}/exec",
-        {"command": shell, "timeout_secs": timeout},
+        {"target": "vm", "command": shell, "timeout_secs": timeout},
         timeout=timeout + 5,
     )
     if check:
@@ -164,16 +192,10 @@ def client_args(direction, streams, seconds=SECONDS):
     ]
 
 
-def test_published_port_transport_samples(
-    container, service, evidence
-):
+def test_published_port_transport_samples(container, service, evidence):
     output = evidence
-    doctor = subprocess.run(
-        [BENCH, "doctor", "--json"], capture_output=True, timeout=15, check=False
-    )
-    (output / "doctor.json").write_bytes(doctor.stdout)
     identity = {
-        "doctor_exit": doctor.returncode,
+        "doctor_exit": int((output / "doctor.exit").read_text()),
         "source_commit": subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=PROJECT_ROOT, timeout=5, text=True
         ).strip(),

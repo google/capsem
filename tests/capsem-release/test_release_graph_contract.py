@@ -15,11 +15,7 @@ import rust_sources
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RELEASE_GRAPH = PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "release_graph.rs"
 FIXTURE_GRAPH = (
-    PROJECT_ROOT
-    / "tests"
-    / "capsem-release"
-    / "fixtures"
-    / "release-graph-stable-nightly.json"
+    PROJECT_ROOT / "tests" / "capsem-release" / "fixtures" / "release-graph-stable-nightly.json"
 )
 
 
@@ -65,13 +61,13 @@ def test_channels_json_lists_all_manifest_records() -> None:
     assert "release_graph_channels_catalog_rejects_duplicate_manifest_versions" in tests
 
 
-def test_graph_verifier_rejects_tampered_profile_ref() -> None:
+def test_graph_verifier_rejects_tampered_runtime_ref() -> None:
     source = _source()
 
     assert "pub fn verify_bytes" in source
     assert "sha256 mismatch" in source
     assert "blake3 mismatch" in source
-    assert "release_graph_digest_verifier_rejects_tampered_profile_ref" in _tests()
+    assert "release_graph_digest_verifier_rejects_tampered_runtime_ref" in _tests()
 
 
 def test_revoked_manifest_is_listed_but_not_selectable() -> None:
@@ -100,8 +96,7 @@ def test_fixture_has_stable_and_nightly() -> None:
     assert nightly["packages"][0]["name"] == "Capsem-1.5.0-nightly.20260702.pkg"
     assert "binaries" not in stable
     stable_binary_refs = {
-        binary["name"]: binary["sbom_component_ref"]
-        for binary in stable["packages"][0]["binaries"]
+        binary["name"]: binary["sbom_component_ref"] for binary in stable["packages"][0]["binaries"]
     }
     assert stable_binary_refs == {
         "capsem": "SPDXRef-File-capsem",
@@ -116,13 +111,10 @@ def test_fixture_has_stable_and_nightly() -> None:
         "capsem-tray": "SPDXRef-File-capsem-tray",
         "capsem-tui": "SPDXRef-File-capsem-tui",
     }
-    assert "-nightly." in nightly["profiles"]["co-work"]["revision"]
-    assert "-stable." in stable["profiles"]["co-work"]["revision"]
-    assert nightly["profiles"]["co-work"]["min_capsem_version"] == "1.4.0"
-    assert (
-        nightly["profiles"]["co-work"]["architectures"][0]["evidence"][0]["kind"]
-        == "abom"
-    )
+    assert "-nightly." in nightly["runtime"]["revision"]
+    assert "-stable." in stable["runtime"]["revision"]
+    assert nightly["runtime"]["min_capsem_version"] == "1.4.0"
+    assert nightly["runtime"]["architectures"][0]["evidence"][0]["kind"] == "abom"
 
 
 def test_ledger_is_derived_not_authoritative() -> None:
@@ -137,24 +129,28 @@ def test_ledger_is_derived_not_authoritative() -> None:
         "manifest" if graph["channels"]["stable"]["manifests"] else "",
         "package" if stable["packages"] else "",
         "binary" if stable["packages"][0]["binaries"] else "",
-        "profile" if stable["profiles"] else "",
-        "profile_image" if stable["profiles"]["co-work"]["architectures"] else "",
+        "runtime" if stable["runtime"] else "",
+        "runtime_image" if stable["runtime"]["architectures"] else "",
     }
-    assert derived_kinds == {"manifest", "package", "binary", "profile", "profile_image"}
+    assert derived_kinds == {
+        "manifest",
+        "package",
+        "binary",
+        "runtime",
+        "runtime_image",
+    }
 
 
 def test_health_json_not_release_truth() -> None:
     release_site_loader = (
         PROJECT_ROOT / "build_system" / "release_site" / "src" / "lib" / "release-data.ts"
     ).read_text(encoding="utf-8")
-    release_site_index = (
-        PROJECT_ROOT / "build_system" / "release_site" / "src" / "pages" / "index.astro"
-    ).read_text(encoding="utf-8")
-    release_site_profile = (
-        PROJECT_ROOT / "build_system" / "release_site" / "src" / "pages" / "profiles" / "[id].astro"
-    ).read_text(encoding="utf-8")
+    pages = sorted(
+        (PROJECT_ROOT / "build_system" / "release_site" / "src" / "pages").rglob("*.astro")
+    )
 
     assert "channels.json" in release_site_loader
     assert "health.json" not in release_site_loader
-    assert "data.health" not in release_site_index
-    assert "data.health" not in release_site_profile
+    assert pages
+    for page in pages:
+        assert "data.health" not in page.read_text(encoding="utf-8"), page

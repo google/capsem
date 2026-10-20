@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import time
 
 from .models import CachePolicy
@@ -29,6 +30,7 @@ def _argv(
         RuntimeOperation.REMOVE_VOLUME,
         RuntimeOperation.PRUNE_BUILD_CACHE,
         RuntimeOperation.CLEAR_BUILD_CACHE,
+        RuntimeOperation.RELEASE_DISK,
     }
     if action.operation in docker_operations and not isinstance(runtime, DockerRuntimePolicy):
         raise ValueError(f"{action.operation} requires a Docker runtime")
@@ -61,6 +63,10 @@ def _argv(
         return tuple(command)
     if action.operation is RuntimeOperation.CLEAR_BUILD_CACHE:
         return (runtime.command, "builder", "prune", "--all", "--force")
+    if action.operation is RuntimeOperation.RELEASE_DISK:
+        if not isinstance(runtime, DockerRuntimePolicy):  # narrowed for the type checker
+            raise AssertionError("validated Docker operation lost its runtime type")
+        return runtime.disk_release_command
     if action.operation is RuntimeOperation.DELETE_VM:
         return (runtime.command, "delete", action.target)
     raise ValueError(f"unsupported runtime operation: {action.operation}")
@@ -77,13 +83,19 @@ def apply_runtime_prune(
     if not reason.strip():
         raise ValueError("runtime cache mutation reason must be non-empty")
     results = []
-    for action in plan.actions:
+
+    def run(action: RuntimePruneAction) -> None:
         runtime = policy.runtimes[action.runtime_id]
         command = runner(_argv(action, runtime), runtime.mutation_timeout_seconds)
         output = "\n".join(part for part in (command.stdout, command.stderr) if part)
         results.append(
             RuntimeActionResult(action=action, returncode=command.returncode, output=output)
         )
+
+    for action in plan.actions:
+        run(action)
+    for action in _disk_releases(policy, results):
+        run(action)
     values = tuple(results)
     if not values:
         return RuntimeApplyResult(results=(), journal=None)
@@ -103,3 +115,27 @@ def apply_runtime_prune(
         with journal.open("a", encoding="utf-8") as stream:
             stream.write(event.model_dump_json() + "\n")
     return RuntimeApplyResult(results=values, journal=sorted(journals)[0])
+
+
+def _disk_releases(
+    policy: CachePolicy, results: list[RuntimeActionResult]
+) -> tuple[RuntimePruneAction, ...]:
+    """One release per Docker runtime that removed something, where it can run."""
+    removed = {result.action.runtime_id for result in results if result.returncode == 0}
+    releases = []
+    for runtime_id in sorted(removed):
+        runtime = policy.runtimes[runtime_id]
+        if not isinstance(runtime, DockerRuntimePolicy) or not runtime.disk_release_command:
+            continue
+        if shutil.which(runtime.disk_release_command[0]) is None:
+            continue
+        releases.append(
+            RuntimePruneAction(
+                runtime_id=runtime_id,
+                operation=RuntimeOperation.RELEASE_DISK,
+                target="host disk",
+                logical_bytes=0,
+                reason="return the blocks the removals freed to the host",
+            )
+        )
+    return tuple(releases)

@@ -1,0 +1,275 @@
+#!/usr/bin/env python3
+"""Measure aggregate HTTPS interception while independent VMs fan out."""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import json
+import os
+import shlex
+import sys
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+import psutil
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT / "tests"))
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from capsem_builder.gate import config as gate_config
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
+from helpers.mock_server import start_mock_server, stop_process
+from helpers.process_resources import ProcessTreeSampler
+from helpers.service import ServiceInstance, exec_output_text, wait_exec_ready
+
+from benchmarks.helpers.guest_measurements import (
+    mitm_runtime_failures,
+    resource_samples,
+)
+from benchmarks.helpers.guest_runtime import (
+    MITM_FIXTURE_TARGET,
+    mitm_fixture_corp_toml,
+    process_tree_sampler,
+)
+
+ARTIFACT_PATH = "/tmp/capsem-benchmark.json"
+SETTINGS = gate_config.load(PROJECT_ROOT).benchmark.mitm_scale
+
+
+def guest_load_command(
+    concurrency: int,
+    duration_seconds: int,
+    target: str = MITM_FIXTURE_TARGET,
+) -> str:
+    """Pin one identical load cohort inside each VM."""
+    return shlex.join(
+        [
+            "env",
+            f"CAPSEM_BENCH_CONCURRENCY={concurrency}",
+            f"CAPSEM_BENCH_DURATION_S={duration_seconds}",
+            f"CAPSEM_BENCH_MITM_TARGET={target}",
+            "capsem-bench",
+            "mitm-load",
+        ]
+    )
+
+
+def _single_row(document: dict, concurrency: int) -> dict:
+    section = document.get("mitm_load", document)
+    rows = section.get("concurrency_levels", [])
+    if len(rows) != 1 or rows[0].get("concurrency") != concurrency:
+        raise RuntimeError(
+            "MITM scale VM returned the wrong concurrency cohort: "
+            f"expected={concurrency} rows={rows!r}"
+        )
+    row = rows[0]
+    if int(row.get("errors", 0)):
+        raise RuntimeError(f"MITM scale VM reported failed requests: {row!r}")
+    if int(row.get("total_requests", 0)) < concurrency:
+        raise RuntimeError(
+            "MITM scale VM starved client loops: "
+            f"concurrency={concurrency} row={row!r}"
+        )
+    return row
+
+
+def level_metrics(
+    vm_count: int,
+    concurrency: int,
+    documents: list[dict],
+) -> dict[str, dict]:
+    """Aggregate throughput while retaining each VM's latency observation."""
+    if len(documents) != vm_count:
+        raise RuntimeError(
+            f"MITM scale expected {vm_count} VM results, received {len(documents)}"
+        )
+    rows = [_single_row(document, concurrency) for document in documents]
+    prefix = f"levels.{vm_count}"
+    metrics = {
+        f"{prefix}.vms": {"unit": "count", "samples": [vm_count]},
+        f"{prefix}.aggregate_rps": {
+            "unit": "requests_per_second",
+            "samples": [sum(float(row["rps"]) for row in rows)],
+        },
+        f"{prefix}.per_vm_rps": {
+            "unit": "requests_per_second",
+            "samples": [float(row["rps"]) for row in rows],
+        },
+        f"{prefix}.requests": {
+            "unit": "count",
+            "samples": [sum(int(row["total_requests"]) for row in rows)],
+        },
+        f"{prefix}.errors": {
+            "unit": "count",
+            "samples": [sum(int(row["errors"]) for row in rows)],
+        },
+    }
+    for percentile in ("p50_ms", "p95_ms", "p99_ms", "p999_ms"):
+        metrics[f"{prefix}.per_vm_{percentile}"] = {
+            "unit": "milliseconds",
+            "samples": [float(row[percentile]) for row in rows],
+        }
+    return metrics
+
+
+def _run_vm_load(
+    service: ServiceInstance,
+    vm_id: str,
+    command: str,
+    timeout: int,
+) -> dict:
+    client = service.client()
+    result = client.post(
+        f"/vms/{vm_id}/exec",
+        {"target": "vm", "command": command, "timeout_secs": timeout},
+        timeout=timeout + 10,
+    )
+    if not result or result.get("exit_code") != 0:
+        raise RuntimeError(
+            f"MITM scale load failed in {vm_id}: "
+            f"exit={None if not result else result.get('exit_code')} "
+            f"response={json.dumps(result)[:2000]}"
+        )
+    artifact = client.post(
+        f"/vms/{vm_id}/exec",
+        {"target": "vm", "command": f"cat {ARTIFACT_PATH}", "timeout_secs": 15},
+        timeout=25,
+    )
+    if not artifact or artifact.get("exit_code") != 0:
+        raise RuntimeError(f"read MITM scale artifact from {vm_id} failed: {artifact!r}")
+    return json.loads(exec_output_text(artifact))
+
+
+def _run_level(
+    service: ServiceInstance,
+    vm_ids: list[str],
+    concurrency: int,
+    duration_seconds: int,
+) -> list[dict]:
+    command = guest_load_command(concurrency, duration_seconds)
+    timeout = max(60, duration_seconds + 30)
+    with ThreadPoolExecutor(max_workers=len(vm_ids)) as executor:
+        futures = [
+            executor.submit(_run_vm_load, service, vm_id, command, timeout)
+            for vm_id in vm_ids
+        ]
+        return [future.result() for future in futures]
+
+
+def add_resource_metrics(
+    measured: dict[str, dict],
+    vm_count: int,
+    resources: dict[str, dict],
+    *,
+    namespace: str | None = None,
+) -> None:
+    prefix = f"levels.{vm_count}"
+    if namespace:
+        prefix = f"{prefix}.{namespace}"
+    measured.update(
+        {f"{prefix}.{name}": measurement for name, measurement in resources.items()}
+    )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--quick", action="store_true", help="unused; this lane boots VMs")
+    parser.parse_args()
+
+    service = ServiceInstance()
+    client = service.client()
+    mock_proc = None
+    vm_ids: list[str] = []
+    logical_cpus = os.cpu_count() or 1
+    physical_cores = psutil.cpu_count(logical=False) or logical_cpus
+    measured: dict[str, dict] = {
+        "host.logical_cpus": {"unit": "count", "samples": [logical_cpus]},
+        "host.physical_cores": {"unit": "count", "samples": [physical_cores]},
+    }
+    sidecar = {"settings": SETTINGS.model_dump(), "levels": {}}
+    service_log = ""
+    try:
+        mock_proc, ready = start_mock_server()
+        corp_path = service.tmp_dir / "bench-corp.toml"
+        corp_path.write_text(mitm_fixture_corp_toml(ready), encoding="utf-8")
+        os.environ["CAPSEM_CORP_CONFIG"] = str(corp_path)
+        service.start()
+
+        for vm_count in SETTINGS.vm_counts:
+            for vm_id in reversed(vm_ids):
+                client.delete(f"/vms/{vm_id}/delete")
+            vm_ids.clear()
+            for _ in range(vm_count):
+                name = f"bench-mitm-scale-{uuid.uuid4().hex[:8]}"
+                created = client.post(
+                    "/vms/create",
+                    {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS},
+                )
+                if not created or not created.get("id"):
+                    raise RuntimeError(f"provision {name} failed: {created!r}")
+                vm_id = created["id"]
+                vm_ids.append(vm_id)
+            for vm_id in vm_ids:
+                if not wait_exec_ready(client, vm_id, timeout=EXEC_READY_TIMEOUT):
+                    raise RuntimeError(f"{vm_id} never became exec-ready")
+
+            sampler = process_tree_sampler(service)
+            fixture_sampler = ProcessTreeSampler(psutil.Process(mock_proc.pid))
+            sampler.start()
+            fixture_sampler.start()
+            resources = {}
+            fixture_resources = {}
+            try:
+                documents = _run_level(
+                    service,
+                    vm_ids,
+                    SETTINGS.per_vm_concurrency,
+                    SETTINGS.duration_seconds,
+                )
+            finally:
+                resources = sampler.stop()
+                fixture_resources = fixture_sampler.stop()
+            measured.update(
+                level_metrics(vm_count, SETTINGS.per_vm_concurrency, documents)
+            )
+            add_resource_metrics(measured, vm_count, resources)
+            add_resource_metrics(
+                measured,
+                vm_count,
+                fixture_resources,
+                namespace="fixture",
+            )
+            sidecar["levels"][str(vm_count)] = {
+                "documents": documents,
+                "resources": resource_samples(resources),
+                "fixture_resources": resource_samples(fixture_resources),
+            }
+    finally:
+        for vm_id in reversed(vm_ids):
+            with contextlib.suppress(Exception):
+                client.delete(f"/vms/{vm_id}/delete")
+        with contextlib.suppress(Exception):
+            service_log = service.stop_and_read_log()
+        service.stop()
+        if mock_proc is not None:
+            stop_process(mock_proc)
+
+    refusals = mitm_runtime_failures(service_log)
+    if refusals:
+        raise RuntimeError(
+            f"MITM scale saw {len(refusals)} hidden proxy traffic refusals: "
+            f"{refusals[:5]!r}"
+        )
+    measured["internal.proxy_traffic_refusals"] = {
+        "unit": "count",
+        "samples": [0],
+    }
+    print(json.dumps({"metrics": measured, "sidecar": json.dumps(sidecar)}))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

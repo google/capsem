@@ -13,7 +13,6 @@ manifest, and the three files a bootable tree is made of.
 
 from __future__ import annotations
 
-from enum import StrEnum
 from pathlib import PurePosixPath
 from typing import Literal
 
@@ -25,7 +24,6 @@ from .configschema import SafeToken, Strict
 
 class InstallLayout(Strict):
     assets: str
-    config: str
     channel: str
     packages: str
     glowup: str
@@ -38,7 +36,6 @@ class InstallLayout(Strict):
             f"{mount}/{path}"
             for path in (
                 self.assets,
-                self.config,
                 self.channel,
                 self.packages,
                 self.glowup,
@@ -91,13 +88,6 @@ class AptSnapshotConfig(Strict):
     configure_script: str
 
 
-class ProfileRevisionPolicy(StrEnum):
-    """Whether a local graph authors new revisions or imports selected bytes."""
-
-    STRICT = "strict"
-    SELECTED_INPUT = "selected-input"
-
-
 class InstallBuilderConfig(Strict):
     dockerfile: str
     tag_template: str
@@ -127,7 +117,6 @@ class InstallConfig(Strict):
     mount: str
     runtime_network: Literal[ContainerNetwork.NONE]
     channel: str
-    profile_revision_policy: ProfileRevisionPolicy
     manifest_version: str
     local_macos_package_script: str
     local_macos_installer: tuple[str, ...]
@@ -163,7 +152,6 @@ class InstallConfig(Strict):
     selected_inputs_dir: str
     proof_content_mount: str
     proof_assets_name: str
-    proof_config_name: str
     package_runtime_packages: tuple[str, ...]
     layout: InstallLayout
     guest_user: GuestUser
@@ -202,10 +190,6 @@ class InstallConfig(Strict):
     @property
     def proof_assets_mount(self) -> str:
         return str(PurePosixPath(self.proof_content_mount) / self.proof_assets_name)
-
-    @property
-    def proof_config_mount(self) -> str:
-        return str(PurePosixPath(self.proof_content_mount) / self.proof_config_name)
 
 
 class PackageProof(Strict):

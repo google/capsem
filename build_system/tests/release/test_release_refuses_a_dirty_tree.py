@@ -30,7 +30,7 @@ COMMIT = SourceCommit("0" * 40)
 
 RELEASES = {
     "release-binaries": {"channel": "stable"},
-    "release-profile": {"channel": "stable", "profile": "code"},
+    "release-assets": {"channel": "stable"},
 }
 
 

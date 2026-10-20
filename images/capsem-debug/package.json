@@ -1,0 +1,8 @@
+{
+  "name": "capsem-debug-agent-clis",
+  "private": true,
+  "dependencies": {
+    "@google/gemini-cli": "0.55.1",
+    "@openai/codex": "0.147.0"
+  }
+}

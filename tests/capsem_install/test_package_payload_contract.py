@@ -1,8 +1,8 @@
 """Release package payload contract.
 
-The package may carry host binaries, service metadata, UI assets, profile
-configuration, and the manifest/provenance ledger. It must not carry VM asset
-blobs such as rootfs, initrd, kernels, EROFS, QCOW, or squashfs images.
+The package may carry host binaries, service metadata, UI assets, and the
+manifest/provenance ledger. It must not carry VM asset blobs such as rootfs,
+initrd, kernels, EROFS, QCOW, or squashfs images.
 """
 
 from __future__ import annotations

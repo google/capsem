@@ -4,7 +4,7 @@
 A channel that has never served a working binary graph has no predecessor to
 upgrade from. The lane already reaches that conclusion by itself: a retired
 public graph resolves to `bootstrap`, and the projected public-before manifest
-then declares no packages and no profiles. What was missing is that the
+then declares no packages and no runtime. What was missing is that the
 installed-product proof still demanded a predecessor package anyway, so the lane
 refused the very release it had just classified as the first one -- which is how
 this line's first binary release died on `expected one current Linux
@@ -19,9 +19,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from collections.abc import Mapping
 from pathlib import Path
-from typing import cast
 
 from . import repository_root
 from .release_glowup import (
@@ -36,46 +34,43 @@ from .release_glowup import (
 ROOT = repository_root()
 
 
-def _profile_map(manifest_bytes: bytes, label: str) -> Mapping[str, object]:
-    manifest = load_manifest_bytes(manifest_bytes)
-    profiles = manifest.get("profiles")
-    if not isinstance(profiles, dict):
-        raise GlowupContractError(f"{label} manifest profiles must be an object")
-    if not all(isinstance(profile_id, str) for profile_id in profiles):
-        raise GlowupContractError(f"{label} manifest profile ids must be strings")
-    return cast(Mapping[str, object], profiles)
+def _runtime(manifest_bytes: bytes, label: str) -> object:
+    runtime = load_manifest_bytes(manifest_bytes).get("runtime")
+    if runtime is not None and not isinstance(runtime, dict):
+        raise GlowupContractError(f"{label} manifest runtime must be an object or null")
+    return runtime
 
 
 def public_before_is_unpublished(before_manifest_bytes: bytes) -> bool:
     """Whether the public-before graph offers nothing a user could have installed.
 
-    Both halves have to be empty. A graph with profiles but no packages is not a
-    first release -- it is a broken one, and calling it fresh would skip the
+    Both halves have to be empty. A graph with a runtime but no packages is not
+    a first release -- it is a broken one, and calling it fresh would skip the
     upgrade proof for a channel that really does have a predecessor.
     """
     manifest = load_manifest_bytes(before_manifest_bytes)
     packages = manifest.get("packages")
     if not isinstance(packages, list):
         raise GlowupContractError("public-before manifest packages must be an array")
-    return not packages and not _profile_map(before_manifest_bytes, "public-before")
+    return not packages and _runtime(before_manifest_bytes, "public-before") is None
 
 
-def activates_first_profiles(
+def activates_first_runtime(
     *,
     transition: TransitionKind,
     before_manifest_bytes: bytes,
 ) -> bool:
-    """Whether this pairing activates a profile set onto a channel that had none.
+    """Whether this pairing activates a runtime onto a channel that had none.
 
     True for a first release, and also for a channel that published packages
-    before it published any profile. Both cases install the candidate directly
+    before it published a runtime. Both cases install the candidate directly
     rather than upgrading onto it, so neither has a predecessor to boot first.
     """
     if transition is TransitionKind.FRESH_INSTALL:
         return True
-    return not _profile_map(before_manifest_bytes, "public-before") and transition in {
-        TransitionKind.PROFILE_ONLY,
-        TransitionKind.PROFILE_THEN_BINARY,
+    return _runtime(before_manifest_bytes, "public-before") is None and transition in {
+        TransitionKind.RUNTIME_ONLY,
+        TransitionKind.RUNTIME_THEN_BINARY,
     }
 
 
@@ -103,26 +98,22 @@ def resolve_public_before_package(
     return package, artifact_identity_from_manifest_package(before_manifest_bytes, package)
 
 
-def verify_candidate_profile_publication(
+def verify_candidate_runtime_publication(
     *,
     after_manifest: Path,
-    profile: object,
     publication_base: object,
     release_dir: object,
 ) -> None:
     """Prove a staged candidate publication is the one its manifest selects.
 
-    The profile-only and profile-then-binary pairings ask this identical
-    question, and used to ask it through two identical copies of the same
-    subprocess call -- so a fix to one would have left the other behind.
+    Every pairing that stages a runtime asks this identical question through
+    this one subprocess call, so a fix cannot leave a copy behind.
     """
     command = [
         sys.executable,
-        str(ROOT / "build_system" / "scripts" / "release" / "verify-profile-publication.py"),
+        str(ROOT / "build_system" / "scripts" / "release" / "verify-runtime-publication.py"),
         "--manifest",
         str(after_manifest),
-        "--profile",
-        str(profile),
         "--publication-base",
         str(publication_base),
         "--release-dir",
@@ -133,7 +124,7 @@ def verify_candidate_profile_publication(
         subprocess.run(command, cwd=ROOT, check=True)
     except subprocess.CalledProcessError as error:
         raise SystemExit(
-            "exact pairing candidate profile publication failed verification"
+            "exact pairing candidate runtime publication failed verification"
         ) from error
 
 
@@ -145,44 +136,32 @@ def classify_pairing_inputs(
     after_manifest_bytes: bytes,
     before_artifact: ArtifactIdentity | None,
     after_artifact: ArtifactIdentity,
-) -> tuple[TransitionKind, tuple[str, ...]]:
-    """Classify an exact release pairing and return its changed profile set."""
+) -> TransitionKind:
+    """Classify an exact release pairing by what it changes."""
 
-    before_profile_map = _profile_map(before_manifest_bytes, "public-before")
-    after_profile_map = _profile_map(after_manifest_bytes, "candidate-after")
     first_release = public_before_is_unpublished(before_manifest_bytes)
     baseline = baseline_channel or channel
 
     if first_release and baseline != channel:
-        raise GlowupContractError(
-            f"{channel} release has no published {baseline} baseline channel"
-        )
+        raise GlowupContractError(f"{channel} release has no published {baseline} baseline channel")
     if first_release:
+        if _runtime(after_manifest_bytes, "candidate-after") is None:
+            raise GlowupContractError("a first release must publish a runtime")
         transition_kind = TransitionKind.FRESH_INSTALL
-        # Every profile the candidate declares is staged, because none of them
-        # were ever served: there is no unchanged remainder to leave alone.
-        changed = sorted(after_profile_map)
-        if not changed:
-            raise GlowupContractError("a first release must publish at least one profile")
     elif baseline != channel:
         transition_kind = TransitionKind.CHANNEL_SWITCH
-        changed = sorted(after_profile_map)
+    elif _runtime(before_manifest_bytes, "public-before") == _runtime(
+        after_manifest_bytes, "candidate-after"
+    ):
+        transition_kind = TransitionKind.BINARY_ONLY
+    elif (
+        before_artifact is not None
+        and before_artifact.version == after_artifact.version
+        and before_artifact.sha256 == after_artifact.sha256
+    ):
+        transition_kind = TransitionKind.RUNTIME_ONLY
     else:
-        changed = sorted(
-            profile_id
-            for profile_id in set(before_profile_map) | set(after_profile_map)
-            if before_profile_map.get(profile_id) != after_profile_map.get(profile_id)
-        )
-        if not changed:
-            transition_kind = TransitionKind.BINARY_ONLY
-        elif (
-            before_artifact is not None
-            and before_artifact.version == after_artifact.version
-            and before_artifact.sha256 == after_artifact.sha256
-        ):
-            transition_kind = TransitionKind.PROFILE_ONLY
-        else:
-            transition_kind = TransitionKind.PROFILE_THEN_BINARY
+        transition_kind = TransitionKind.RUNTIME_THEN_BINARY
 
     validate_pairing_inputs(
         kind=transition_kind,
@@ -192,6 +171,5 @@ def classify_pairing_inputs(
         after_manifest_bytes=after_manifest_bytes,
         before_artifact=before_artifact,
         after_artifact=after_artifact,
-        changed_profiles=changed,
     )
-    return transition_kind, tuple(changed)
+    return transition_kind

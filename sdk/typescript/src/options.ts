@@ -1,21 +1,19 @@
-import type {HistoryLayerFilter, HostLogSource, NetworkInfo, ProfileSummary, TimelineLayer} from './models/index.js';
+import type {HistoryLayerFilter, HostLogSource, NetworkInfo, TimelineLayer} from './models/index.js';
 import type {CallOptions} from './transport.js';
-
-/**
- * What a created sandbox runs. A container brings its own userland, so the
- * catalog answers its default profile apart from a VM's.
- */
-export type Runtime = 'vm' | 'container';
 
 export type VmSelector = {id: string; name?: never} | {name: string; id?: never};
 export interface Registry {username?: string; password?: string; ca_pem?: string}
+export interface ImageListOptions extends CallOptions {refresh?: boolean}
+export interface ImagePullOptions extends CallOptions {registry?: Registry}
 export interface CreateOptions extends CallOptions {
-  profile?: ProfileSummary; name?: string; cpus?: number; memory?: number;
-  env?: Record<string, string>; networks?: readonly NetworkInfo[];
+  name?: string; cpus?: number; memory?: number;
+  env?: Record<string, string>; labels?: Record<string, string>; networks?: readonly NetworkInfo[];
   image?: string; command?: readonly string[]; registry?: Registry;
 }
+/** Managed ownership is always unnamed and ephemeral. */
+export type ManagedCreateOptions = Omit<CreateOptions, 'name'> & {name?: never};
 export interface RunOptions extends CallOptions {
-  profile?: ProfileSummary; timeout_secs?: number; cpus?: number; memory?: number; env?: Record<string, string>;
+  timeout_secs?: number; cpus?: number; memory?: number; env?: Record<string, string>;
 }
 export interface DiagnosticOptions extends CallOptions {since?: string; limit?: number}
 export interface TriageOptions extends DiagnosticOptions {vm_id?: string}

@@ -15,17 +15,36 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 #: Where the service and the gateway define what a client has to wait for.
 SERVICE_CEILING = ("crates/capsem-api/src/execution.rs", r"MAX_EXEC_TIMEOUT_SECS: u64 = (.+?);")
-GATEWAY_BUDGET = ("crates/capsem-gateway/src/proxy.rs", r"REQUEST_TIMEOUT: Duration = Duration::from_secs\((\d+)\)")
-#: Each client's copy of those two numbers, in seconds.
+GATEWAY_BUDGET = (
+    "crates/capsem-gateway/src/proxy.rs",
+    r"REQUEST_TIMEOUT: Duration = Duration::from_secs\((\d+)\)",
+)
+SERVICE_CREATE_READY = (
+    "crates/capsem-service/src/container_setup.rs",
+    r"CREATE_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs\((.+?)\)",
+)
+PROVISION_CREATE_WAIT = (
+    "crates/capsem-service/src/vm_files/provision.rs",
+    r"container_setup::require_ready\(state, id\)",
+)
+API_BODY_LIMIT = ("crates/capsem-api/src/files.rs", r"MAX_REQUEST_BODY_BYTES: usize = (.+?);")
+#: Each client's copy of those numbers, in seconds or bytes.
 CLIENT_CEILINGS = (
     ("sdk/python/capsem/execution.py", r"EXEC_TIMEOUT_CEILING_SECS = (.+)"),
     ("sdk/typescript/src/execution.ts", r"EXEC_TIMEOUT_CEILING_SECS = (.+?);"),
-    ("sdk/rust/src/client.rs", r"EXEC_TIMEOUT_CEILING: Duration = Duration::from_secs\((.+?)\)"),
 )
 CLIENT_BUDGETS = (
     ("sdk/python/capsem/execution.py", r"GATEWAY_REQUEST_BUDGET_SECS = (.+)"),
     ("sdk/typescript/src/execution.ts", r"GATEWAY_REQUEST_BUDGET_SECS = (.+?);"),
-    ("sdk/rust/src/client.rs", r"GATEWAY_REQUEST_BUDGET: Duration = Duration::from_secs\((.+?)\)"),
+    ("sdk/rust/src/transport.rs", r"\.saturating_add\(Duration::from_secs\((.+?)\)\)"),
+)
+CLIENT_CREATE_READY = (
+    ("sdk/python/capsem/execution.py", r"CREATE_READY_SECS = (.+)"),
+    ("sdk/typescript/src/execution.ts", r"CREATE_READY_SECS = (.+?);"),
+)
+CLIENT_BODY_LIMITS = (
+    ("sdk/python/capsem/execution.py", r"MAX_REQUEST_BODY_BYTES = (.+)"),
+    ("sdk/typescript/src/execution.ts", r"MAX_REQUEST_BODY_BYTES = (.+?);"),
 )
 #: The desktop UI waits at least as long as the gateway does.
 WEB_BUDGET = ("web/app/src/lib/gateway-sdk.ts", r"GATEWAY_REQUEST_BUDGET_MS = (.+?);")
@@ -41,7 +60,8 @@ started a second build.
 
 Every SDK now stretches its per-call deadline to the same two numbers, so the
 numbers must be the same numbers. Change the service or gateway value and this
-guard names every client that still holds the old one.
+guard names every client that still holds the old one. Rust imports the service
+ceiling directly; guard that reference rather than requiring a duplicate value.
 """
 
 
@@ -67,13 +87,63 @@ def constant(source: tuple[str, str]) -> int:
 def test_every_client_waits_for_the_service_exec_ceiling() -> None:
     expected = constant(SERVICE_CEILING)
     drifted = {path: constant((path, pattern)) for path, pattern in CLIENT_CEILINGS}
-    assert set(drifted.values()) == {expected}, f"service ceiling is {expected}s: {drifted}.\n\n{DEADLINE_RATIONALE}"
+    assert set(drifted.values()) == {expected}, (
+        f"service ceiling is {expected}s: {drifted}.\n\n{DEADLINE_RATIONALE}"
+    )
+
+
+def rust_uses_shared_command_ceiling(source: str) -> bool:
+    code = re.sub(r"\s+", "", re.sub(r"(?m)^\s*//.*$", "", source))
+    return (
+        "pubfncommand_timeout(timeout_secs:Option<u64>)->Duration{"
+        "Duration::from_secs(timeout_secs.unwrap_or(capsem_api::MAX_EXEC_TIMEOUT_SECS))"
+        ".saturating_add("
+    ) in code
+
+
+def test_rust_transport_reads_the_service_ceiling_directly() -> None:
+    source = (PROJECT_ROOT / "sdk/rust/src/transport.rs").read_text()
+    assert rust_uses_shared_command_ceiling(source), DEADLINE_RATIONALE
+
+
+@pytest.mark.parametrize("replacement", ["30", "3600", "capsem_api::OTHER_TIMEOUT", "0"])
+def test_rust_ceiling_guard_rejects_copies_and_unrelated_contracts(replacement: str) -> None:
+    source = (PROJECT_ROOT / "sdk/rust/src/transport.rs").read_text()
+    assert "capsem_api::MAX_EXEC_TIMEOUT_SECS" in source
+    assert not rust_uses_shared_command_ceiling(
+        source.replace("capsem_api::MAX_EXEC_TIMEOUT_SECS", replacement)
+    ), DEADLINE_RATIONALE
 
 
 def test_every_client_adds_the_gateway_request_budget() -> None:
     expected = constant(GATEWAY_BUDGET)
     drifted = {path: constant((path, pattern)) for path, pattern in CLIENT_BUDGETS}
-    assert set(drifted.values()) == {expected}, f"gateway budget is {expected}s: {drifted}.\n\n{DEADLINE_RATIONALE}"
+    assert set(drifted.values()) == {expected}, (
+        f"gateway budget is {expected}s: {drifted}.\n\n{DEADLINE_RATIONALE}"
+    )
+
+
+def test_every_client_waits_for_the_service_create_ready_timeout() -> None:
+    provision_path, provision_pattern = PROVISION_CREATE_WAIT
+    assert re.search(provision_pattern, (PROJECT_ROOT / provision_path).read_text()), (
+        f"{provision_path} no longer calls {provision_pattern!r}.\n\n{DEADLINE_RATIONALE}"
+    )
+    expected = constant(SERVICE_CREATE_READY)
+    drifted = {path: constant((path, pattern)) for path, pattern in CLIENT_CREATE_READY}
+    assert set(drifted.values()) == {expected}, (
+        f"service create-ready timeout is {expected}s: {drifted}.\n\n{DEADLINE_RATIONALE}"
+    )
+
+
+def test_every_client_mirrors_the_api_request_body_limit() -> None:
+    expected = constant(API_BODY_LIMIT)
+    drifted = {path: constant((path, pattern)) for path, pattern in CLIENT_BODY_LIMITS}
+    assert set(drifted.values()) == {expected}, (
+        f"API request body limit is {expected} bytes: {drifted}.\n\n{DEADLINE_RATIONALE}"
+    )
+    assert "pub use capsem_api as models;" in (PROJECT_ROOT / "sdk/rust/src/lib.rs").read_text(), (
+        DEADLINE_RATIONALE
+    )
 
 
 def test_the_desktop_ui_waits_at_least_as_long_as_the_gateway() -> None:

@@ -23,21 +23,25 @@ just exec "capsem-doctor -x"           # Stop on first failure
 just exec "capsem-doctor -v"           # Extra verbose
 ```
 
-## Test categories (11 files)
+## Test categories
 
 | File | What it validates |
 |------|-------------------|
 | `test_sandbox.py` | Read-only rootfs, binary permissions (chmod 555), no setuid/setgid, kernel hardening (no modules, no debugfs, no IPv6, no swap, no kallsyms), process integrity (pty-agent, dnsmasq running; no systemd, sshd, cron), network isolation (dummy0, fake DNS, iptables, no real NICs) |
-| `test_network.py` | MITM CA in system store + certifi, curl without -k works, Python urllib HTTPS, CA env vars set (SSL_CERT_FILE, REQUESTS_CA_BUNDLE, NODE_EXTRA_CA_CERTS), HTTP/80 blocked, non-443 ports blocked, direct IP blocked, multi-domain DNS faking, AI provider domains reachable |
+| `test_network.py` | MITM CA in system store, curl without -k works, Python urllib HTTPS, CA env vars set (SSL_CERT_FILE, REQUESTS_CA_BUNDLE, NODE_EXTRA_CA_CERTS), HTTP/80 blocked, non-443 ports blocked, direct IP blocked, multi-domain DNS faking, AI provider domains reachable |
 | `test_environment.py` | TERM/HOME/PATH env vars correct, shell is bash, kernel version, aarch64 arch, mount points (/proc, /sys, /dev, /dev/pts), tmpfs verification |
-| `test_runtimes.py` | Python3, Node.js, npm, pip3, git version checks; Python file I/O; Node file I/O; git init+commit workflow |
-| `test_utilities.py` | ~36 unix utilities available (coreutils, text processing, network, system tools, capsem-bench) |
-| `test_workflows.py` | Text write/read, JSON roundtrip (Python + Node), shell pipes, large file (10MB) |
-| `test_ai_cli.py` | claude, gemini, codex installed and executable without crashing |
+| `test_runtimes.py` | python3/pip3 versions; hermetic pip install into the venv; hermetic apt install of a local .deb; apt sandbox TLS trust; Python file I/O |
+| `test_workflows.py` | Text write/read, Python JSON roundtrip, shell pipes, large file (10MB) |
 | `test_virtiofs.py` | VirtioFS root mount, ext4 loopback upper, loop device active, workspace write/read/large file/subdir, system overlay writable, pip install works, file delete+recreate (skipped in block mode) |
 | `test_mcp.py` | Guest MCP endpoint tool routing, domain blocking via MCP |
 | `test_injection.py` | Security injection tests |
-| `conftest.py` | Test infrastructure (auto-skip outside VM, `run()` helper, output dir fixture) |
+| `test_lifecycle.py` | capsem-sysutil lifecycle symlinks, read-only sysutil, VM identity env vars, hostname |
+| `test_storage_write_probes.py` | Bounded create/read/delete probes on package-manager and workspace paths, `_apt` partial cache |
+| `conftest.py` | Test infrastructure (auto-skip outside VM, output dir fixture); `run()` lives in `diagnostic_support.py` |
+
+The runtime rootfs is minimal (Debian base plus runc, umoci, python3, iptables, iproute2,
+curl, procps, pytest, rich, venv). Tests may only use those: node, uv, git, AI CLIs and pip
+packages like certifi or fastmcp live in the OCI images under `images/`, proven by `tests/images/`.
 
 ## Infrastructure (conftest.py)
 
@@ -73,7 +77,7 @@ def output_dir():
 
 ## Writing good diagnostic tests
 
-- Test one thing per function. Name clearly: `test_readonly_rootfs`, `test_ca_in_certifi`
+- Test one thing per function. Name clearly: `test_readonly_rootfs`, `test_mitm_ca_in_system_bundle`
 - Use `run()` for shell commands, check `.returncode` and `.stdout`/`.stderr`
 - Set reasonable timeouts (default 10s). Network tests may need longer.
 - Think adversarially: test what should be blocked, not just what should work

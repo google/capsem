@@ -21,9 +21,12 @@ pub struct PersistentVmEntry {
     #[serde(default)]
     pub id: String,
     pub name: String,
-    pub profile_id: String,
-    pub profile_revision: String,
-    pub profile_payload_hash: String,
+    /// The VM profile an entry written before profiles were removed was
+    /// created from. It marks the old shape: such a VM is refused at resume
+    /// with this name in the error, never adapted. It is written back so a
+    /// later save cannot launder the entry into the current shape.
+    #[serde(default, rename = "profile_id", skip_serializing_if = "Option::is_none")]
+    pub legacy_profile_id: Option<String>,
     pub asset_pins: BootAssetPins,
     pub ram_mb: u64,
     pub cpus: u32,
@@ -57,6 +60,9 @@ pub struct PersistentVmEntry {
     /// guest sees the same environment after stop+resume cycles.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub env: Option<HashMap<String, String>>,
+    /// Key-value metadata labels attached at creation.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub labels: Option<HashMap<String, String>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -274,7 +280,7 @@ impl RegistryGuard<'_> {
 }
 
 pub fn new_persistent_vm_id() -> String {
-    uuid::Uuid::new_v4().to_string()
+    capsem_crypto::uuid_v4().to_string()
 }
 
 #[cfg(test)]

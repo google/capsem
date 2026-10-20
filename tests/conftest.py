@@ -168,8 +168,9 @@ def _thread_exception_hook(args: threading.ExceptHookArgs) -> None:
     possible in real-time test output, not only at session end.
     """
     _CAUGHT_THREAD_EXCEPTIONS.append(args)
+    thread_name = args.thread.name if args.thread is not None else "<unknown>"
     print(
-        f"\n@@@ UNHANDLED THREAD EXCEPTION in {args.thread.name} @@@",
+        f"\n@@@ UNHANDLED THREAD EXCEPTION in {thread_name} @@@",
         file=sys.stderr,
     )
     traceback.print_exception(args.exc_type, args.exc_value, args.exc_traceback, file=sys.stderr)
@@ -199,7 +200,7 @@ _GATE_SOURCE_COMMIT_VARIABLE = _GATE_CONFIG.environment.source_commit
 _GATE_QUALIFICATION_VARIABLES = (
     _GATE_CONFIG.modules.release_input_dir,
     _GATE_CONFIG.modules.release_package,
-    _GATE_CONFIG.modules.release_profile,
+    _GATE_CONFIG.modules.release_runtime,
     _GATE_CONFIG.modules.release_bin_dir,
 )
 _ARCH = "arm64" if os.uname().machine == "arm64" else "x86_64"
@@ -219,14 +220,6 @@ _REQUIRED_ARTIFACTS = {
     / "build"
     / "linux-agent"
     / _ARCH,
-    # Seven checked-in tests read this directly rather than through
-    # `CAPSEM_PROFILES_DIR`, and they are not wrong to: a test should not have
-    # to know whether this run materialized its profiles or was handed them.
-    # Unregistered, a lane that did not provide them failed fifteen minutes in
-    # on `assert {'co-work', 'code'} <= set()`, which names neither the missing
-    # directory nor the lane that owed it. Declared here it is a collection
-    # error naming the path, before anything boots.
-    "cache/target/config/profiles": _PROJECT_ROOT / "cache" / "target" / "config" / "profiles",
 }
 
 _DEFAULT_TEST_NOFILE_LIMIT = 8192
@@ -261,7 +254,7 @@ def _required_artifacts_for_run(
 
     Local ``just test`` owns source-build intermediates such as
     ``cache/target/build/linux-agent``. A release functional lane instead consumes an
-    already-verified package and profile input cohort. Requiring the source
+    already-verified package and runtime input cohort. Requiring the source
     intermediate there would force an unrelated rebuild and would not prove
     the pulled package. Keep the manifest-derived release inputs and exact
     staged binary mandatory in that mode.
@@ -360,11 +353,11 @@ def pytest_sessionstart(session):
         if os.environ.get("CAPSEM_RELEASE_INPUT_DIR", "").strip():
             guidance = (
                 "The release lane must stage the manifest-selected package, "
-                "binary inventory, and verified profile inputs before invoking pytest."
+                "binary inventory, and verified runtime inputs before invoking pytest."
             )
         else:
             guidance = (
-                "Run `just build-assets code` (for assets/) and "
+                "Run `just build-assets` (for assets/) and "
                 "`uv run --project build_system --frozen capsem-builder agent` "
                 "(for cache/target/build/linux-agent/) "
                 "before invoking pytest. Locally, unset the env var to let "
@@ -524,13 +517,16 @@ def check_leaks(request):
         if not _is_pytest_descendant(pid):
             continue
         _FIRST_SEEN[pid] = (nodeid, info)
+        cmdline = info["cmdline"]
+        if len(cmdline) > 3000:
+            cmdline = cmdline[:3000] + "...<truncated>"
         new_records.append(
             {
                 "pid": pid,
                 "nodeid": nodeid,
                 "worker": worker,
                 "name": info["name"],
-                "cmdline": info["cmdline"],
+                "cmdline": cmdline,
             }
         )
     if new_records:
@@ -540,8 +536,6 @@ def check_leaks(request):
         LEAK_ATTRIBUTION_LOG.parent.mkdir(parents=True, exist_ok=True)
         with open(LEAK_ATTRIBUTION_LOG, "a") as f:
             for rec in new_records:
-                if len(rec["cmdline"]) > 3000:
-                    rec["cmdline"] = rec["cmdline"][:3000] + "...<truncated>"
                 f.write(json.dumps(rec) + "\n")
 
 
@@ -583,8 +577,9 @@ def pytest_sessionfinish(session, exitstatus):
             file=sys.stderr,
         )
         for args in _CAUGHT_THREAD_EXCEPTIONS:
+            thread_name = args.thread.name if args.thread is not None else "<unknown>"
             print(
-                f"  {args.exc_type.__name__}: {args.exc_value} (thread={args.thread.name})",
+                f"  {args.exc_type.__name__}: {args.exc_value} (thread={thread_name})",
                 file=sys.stderr,
             )
         session.exitstatus = 1
@@ -592,8 +587,14 @@ def pytest_sessionfinish(session, exitstatus):
     if os.environ.get("PYTEST_XDIST_WORKER") is not None:
         return  # worker: attribution was flushed in check_leaks
 
+    # Select our processes before spending their shutdown grace. An unrelated
+    # suite's active VMs must not add 15s to every focused local check.
+    attribution = _load_attribution()
+    for pid, (nodeid, info) in _FIRST_SEEN.items():
+        attribution.setdefault(pid, {"nodeid": nodeid, "worker": "master", **info})
     suspects = {
         pid: info for pid, info in get_capsem_processes().items() if pid not in _BASELINE_PIDS
+        and (pid in attribution or _is_pytest_descendant(pid))
     }
     if not suspects:
         return
@@ -607,12 +608,6 @@ def pytest_sessionfinish(session, exitstatus):
     leaks = _settle_suspects(suspects, total_budget_s=15.0, initial_delay_s=0.05, max_delay_s=0.5)
     if not leaks:
         return
-
-    # Attribution sources: _FIRST_SEEN for same-process runs, jsonl for the
-    # xdist controller.
-    attribution = _load_attribution()
-    for pid, (nodeid, info) in _FIRST_SEEN.items():
-        attribution.setdefault(pid, {"nodeid": nodeid, "worker": "master", **info})
 
     lines = []
     for pid, info in sorted(leaks.items()):

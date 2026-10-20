@@ -1,23 +1,18 @@
 """A plan is built from source, not from whatever the last run left behind.
 
-`module_functional` asked `profiles.selected(config)` for its axis while the
-plan was being *constructed*, and that reads `cache/target/config/profiles` -- build
-output. So the same commit produced one plan on a warm tree and a different
-one on a cold checkout.
+`module_functional` once read build output while the plan was being
+*constructed*, so the same commit produced one plan on a warm tree and a
+different one on a cold checkout.
 
-That is not a theoretical hazard. `just release-profile nightly code` passed a
-57-minute gate locally, pushed, dispatched, and CI failed with 94 tests all
-reporting `no materialized profiles found under cache/target/config/profiles`. The
-local run had been green partly on leftovers, and `source.record` /
-`source.verify` could not have caught it: they digest tracked source, and this
-input is not tracked source.
+That is not a theoretical hazard. A release passed a 57-minute gate locally,
+pushed, dispatched, and CI failed with 94 tests that had been green locally
+partly on leftovers, and `source.record` / `source.verify` could not have
+caught it: they digest tracked source, and build output is not tracked source.
 
-No step ordering fixes it. Plan construction is deliberately pure -- see
-`command.py::_describe`, which builds against a runner that refuses every
-invocation -- so a step's output cannot exist by the time the plan is built.
-The axis has to come from `config/profiles/`, which is checked in, present on
-every clone, and covered by the source digest. Agreement between that and what
-was materialized is a *step*, and it runs after the step that materializes.
+Plan construction is deliberately pure -- see `command.py::_describe`, which builds
+against a runner that refuses every invocation -- so a step's output cannot
+exist by the time the plan is built. Whether the content a phase boots is
+complete is a *step*, and it runs after the step that produces the content.
 """
 
 from __future__ import annotations
@@ -36,15 +31,16 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 #: What each command needs beyond the common flags. Release lanes take a
-#: channel; the profile lane also takes a profile.
+#: channel and the exact source commit.
 ARGUMENTS: dict[str, dict[str, str]] = {
     "release-binaries": {"channel": "nightly", "source_commit": SourceCommit("0" * 40)},
-    "release-profile": {
-        "channel": "nightly",
-        "profile": "code",
-        "source_commit": SourceCommit("0" * 40),
-    },
+    "release-assets": {"channel": "nightly", "source_commit": SourceCommit("0" * 40)},
 }
+
+
+def _built(config) -> Path:
+    """The built runtime a warm tree has and a fresh clone does not."""
+    return config.path(config.functional.assets_dir)
 
 
 def _plan_labels(name: str) -> tuple[str, ...]:
@@ -62,24 +58,24 @@ def test_the_functional_plan_is_the_same_shape_on_a_cold_tree(
 ) -> None:
     """The 94-failure bug, stated as an equality.
 
-    Move the materialized profiles out of the way -- which is what a fresh
-    clone and every CI runner look like -- and the plan must not change.
+    Move the built runtime out of the way -- which is what a fresh clone and
+    every CI runner look like -- and the plan must not change.
     """
     config = gate_config.load(PROJECT_ROOT)
-    materialized = config.path(config.suites.pytest.materialized_profiles)
+    built = _built(config)
 
     warm = _plan_labels("test-functional")
 
-    stash = tmp_path / "profiles"
-    moved = materialized.exists()
+    stash = tmp_path / "assets"
+    moved = built.exists() or built.is_symlink()
     if moved:
-        shutil.move(str(materialized), str(stash))
+        shutil.move(str(built), str(stash))
     try:
         cold = _plan_labels("test-functional")
     finally:
         if moved:
-            materialized.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(stash), str(materialized))
+            built.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(stash), str(built))
 
     assert cold == warm, (
         "the plan changed shape because build output was missing; a fresh "
@@ -89,64 +85,61 @@ def test_the_functional_plan_is_the_same_shape_on_a_cold_tree(
 
 
 @pytest.mark.parametrize(
-    "name", ["test-functional", "test-candidate", "release-binaries", "release-profile"]
+    "name", ["test-functional", "test-candidate", "release-binaries", "release-assets"]
 )
 def test_a_plan_builds_without_any_build_output(
     name: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Every command whose plan reaches the functional axis.
+    """Every command whose plan reaches the functional suites.
 
     Parametrized rather than looped so a regression names which command broke,
     not merely that one did.
     """
     config = gate_config.load(PROJECT_ROOT)
-    materialized = config.path(config.suites.pytest.materialized_profiles)
+    built = _built(config)
 
-    stash = tmp_path / f"profiles-{name}"
-    moved = materialized.exists()
+    stash = tmp_path / f"assets-{name}"
+    moved = built.exists() or built.is_symlink()
     if moved:
-        shutil.move(str(materialized), str(stash))
+        shutil.move(str(built), str(stash))
     try:
         labels = _plan_labels(name)
     finally:
         if moved:
-            materialized.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(stash), str(materialized))
+            built.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(stash), str(built))
 
     assert labels, f"{name} produced an empty plan"
 
 
-def test_the_axis_agreement_is_a_step_and_runs_after_materialization() -> None:
+def test_the_content_check_is_a_step_and_runs_after_the_content_is_built() -> None:
     """The check does not disappear, it moves to where it can run.
 
-    Materialized, declared and source axes still have to agree -- a materialized
-    catalog that differs from the manifest means the gate would prove a pairing
-    nobody is shipping. That is a run-time question, so it is a step, and it
-    depends on the step that materializes.
+    The complete gate boots the runtime IronBank built, so that the pair it
+    points every suite at is complete is a run-time question: a step, after
+    the assembly that produces it and before the first suite that boots it.
     """
     from helpers.gate import gate_labels
 
-    # The standalone functional owner must materialize its own runtime before
-    # checking the axis; otherwise it only passes on a warm checkout.
-    alone = gate_labels("test-functional")
-    assert "functional.axis" in alone, alone
-    assert alone.index("prepare.materialize-config") < alone.index("functional.axis"), alone
-
-    # In the complete gate it must come after the step that materializes --
-    # asserted as ordering rather than a direct edge, because the intervening
-    # shape is the plan's business and pinning it would break on any reshuffle.
     whole = gate_labels("test-candidate")
-    assert whole.index("prepare.materialize-config") < whole.index("functional.axis"), (
-        "the axis is checked before anything materializes it"
+    assert "functional.content" in whole, whole
+    assert whole.index("assets.assemble") < whole.index("functional.content"), (
+        "the content is checked before anything built it"
     )
+    assert whole.index("functional.content") < whole.index("functional.pytest.broad")
+
+    # The standalone owner boots the checkout's own runtime, so it must
+    # prepare that first; otherwise it only passes on a warm checkout.
+    alone = gate_labels("test-functional")
+    assert alone.index("initrd.manifest") < alone.index("functional.pytest.broad"), alone
 
 
-@pytest.mark.parametrize("name", ["release-binaries", "release-profile"])
+@pytest.mark.parametrize("name", ["release-binaries", "release-assets"])
 def test_the_release_plan_is_byte_identical_without_build_output(name: str, tmp_path: Path) -> None:
     """Stronger than "it builds": the plan must be the *same* plan.
 
     A release lane that merely plans on a cold tree could still plan something
-    different -- fewer profiles, a skipped lane -- and publish on the strength
+    different -- a skipped lane, a missing suite -- and publish on the strength
     of a proof that never ran. Verified once by cloning to a directory with no
     `cache/target/` and diffing the dry run (zero lines); asserted here so it stays
     true without a clone.
@@ -154,7 +147,7 @@ def test_the_release_plan_is_byte_identical_without_build_output(name: str, tmp_
     from helpers.gate import RecordingRunner
 
     config = gate_config.load(PROJECT_ROOT)
-    materialized = config.path(config.suites.pytest.materialized_profiles)
+    built = _built(config)
 
     def described() -> str:
         command = GateCommand.registry[name](
@@ -165,14 +158,14 @@ def test_the_release_plan_is_byte_identical_without_build_output(name: str, tmp_
 
     warm = described()
     stash = tmp_path / f"cold-{name}"
-    moved = materialized.exists()
+    moved = built.exists() or built.is_symlink()
     if moved:
-        shutil.move(str(materialized), str(stash))
+        shutil.move(str(built), str(stash))
     try:
         cold = described()
     finally:
         if moved:
-            materialized.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(stash), str(materialized))
+            built.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(stash), str(built))
 
     assert cold == warm, f"{name} plans a different release without build output"

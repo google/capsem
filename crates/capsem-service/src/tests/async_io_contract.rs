@@ -47,13 +47,11 @@ const BLOCKING_HELPERS: &[&str] = &[
     "storage_diagnostics(",
     "persistent_entry_resume_state_cached(",
     "persistent_entry_resume_state(",
-    "read_local_profile_obom(",
     "read_installed_status_document(",
     "read_manifest_metadata_status_document(",
     "update_status_response(",
-    "refresh_active_profiles(",
-    "refresh_profile_rule_cache(",
-    "refresh_profile_plugin_policy_cache(",
+    "refresh_active_policies(",
+    "asset_status(",
     "settle_persistent_session_dir(",
     "claim_persistent_name(",
     "forget_persistent_entry(",
@@ -61,11 +59,13 @@ const BLOCKING_HELPERS: &[&str] = &[
     "archive_failed_restore_checkpoint(",
     "clear_resume_checkpoint(",
     "preserve_failed_session_dir(",
+    "persist_spawn_identity(",
+    "persist_native_exit(",
 ];
 
 /// Startup runs before the service accepts a request; a stall there delays
 /// readiness, not another caller. `off_worker` is the door itself.
-const EXEMPT_FUNCTIONS: &[&str] = &["run_service", "spawn_companions", "off_worker"];
+const EXEMPT_FUNCTIONS: &[&str] = &["run_service", "start_and_serve", "spawn_companions", "off_worker"];
 
 fn source_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
     for entry in std::fs::read_dir(dir).expect("read service sources").flatten() {

@@ -26,6 +26,10 @@ coverage:
         target: 90%
         flags:
           - python-sdk
+      inspect-ai:
+        target: 90%
+        flags:
+          - inspect-ai
       typescript-sdk:
         target: 90%
         flags:
@@ -50,6 +54,10 @@ flags:
     paths:
       - sdk/python/capsem/**
     carryforward: true
+  inspect-ai:
+    paths:
+      - integrations/inspect-ai/inspect_capsem/**
+    carryforward: true
   mcp-server:
     paths:
       - mcp/typescript/src/**
@@ -62,6 +70,7 @@ flags:
       - build_system/release_site/scripts/**
       - build_system/release_site/src/**
       - build_system/builder/**
+      - integrations/inspect-ai/inspect_capsem/**
     carryforward: true
   integration:
     paths:
@@ -98,6 +107,11 @@ component_management:
       paths:
         - sdk/python/capsem/**
 
+    - component_id: inspect-ai
+      name: Inspect AI Extension
+      paths:
+        - integrations/inspect-ai/inspect_capsem/**
+
     # MITM HTTPS proxy, TLS, cert authority, domain/HTTP policy,
     # AI traffic parsing (SSE, providers, pricing). All of net/
     # except policy_config.
@@ -106,6 +120,9 @@ component_management:
       paths:
         - crates/capsem-core/src/net/mod.rs
         - crates/capsem-core/src/net/hostname.rs
+        - crates/capsem-core/src/net/upstream_address.rs
+        - crates/capsem-core/src/net/upstream_grant.rs
+        - crates/capsem-core/src/net/upstream_grant/**
         - crates/capsem-core/src/net/ai_traffic/**
         - crates/capsem-core/src/net/cert_authority.rs
         - crates/capsem-core/src/net/decompress.rs
@@ -114,6 +131,7 @@ component_management:
         - crates/capsem-core/src/net/mitm_proxy/**
         - crates/capsem-core/src/net/parsers/**
         - crates/capsem-core/src/net/policy.rs
+        - crates/capsem-core/src/net/proxy_engine.rs
         - crates/capsem-core/src/net/address_pool.rs
         - crates/capsem-core/src/net/network_registry.rs
         - crates/capsem-core/src/net/network_registry/**
@@ -135,9 +153,8 @@ component_management:
         - crates/capsem-core/src/auditfs.rs
         - crates/capsem-core/src/contained_fs.rs
         - crates/capsem-core/src/fs_monitor.rs
-        - crates/capsem-core/src/bin/mcp_export.rs
 
-    # Logger DB, session index/maintenance, log layer, tracing bootstrap.
+    # Logger DB, host ledger, session maintenance, log layer, tracing bootstrap.
     # Future: OTEL, reporting, SSH session recording.
     - component_id: monitoring
       name: Monitoring
@@ -158,6 +175,8 @@ component_management:
         - crates/capsem-core/src/host_state.rs
         - crates/capsem-core/src/container.rs
         - crates/capsem-core/src/container/**
+        - crates/capsem-core/src/managed_sessions.rs
+        - crates/capsem-core/src/managed_sessions/**
 
     - component_id: port-router
       name: Confined Port Router
@@ -195,7 +214,7 @@ component_management:
       paths:
         - sdk/rust/src/**
 
-    # Pure settings, provider, profile, MCP, and security-rule contracts.
+    # Pure settings, provider, MCP, and security-rule contracts.
     - component_id: config
       name: Configuration
       paths:
@@ -214,6 +233,18 @@ component_management:
       name: Host Foundation
       paths:
         - crates/capsem-foundation/src/**
+
+    # Shared bounded cache primitives and metrics used across runtime owners.
+    - component_id: cache
+      name: Cache
+      paths:
+        - crates/capsem-cache/src/**
+
+    # Shared hashing, secret handling, and TLS cryptography primitives.
+    - component_id: crypto
+      name: Cryptography
+      paths:
+        - crates/capsem-crypto/src/**
 
     # Cross-cutting capsem-core primitives every other component builds on:
     # crate root, ~/.capsem path resolution, UDS helpers, IPC handshake and
@@ -253,8 +284,20 @@ component_management:
       paths:
         - crates/capsem-process/src/**
 
-    # Admin/profile tooling: manifest generation, profile materialization,
-    # image build orchestration, and release asset validation.
+    # Per-session network policy enforcement and capability handling.
+    - component_id: proxy
+      name: Proxy
+      paths:
+        - crates/capsem-proxy/src/**
+
+    # Per-session database ownership and descriptor-only ledger RPC.
+    - component_id: ledger
+      name: Ledger
+      paths:
+        - crates/capsem-ledger/src/**
+
+    # Admin tooling: manifest generation, image build orchestration, and
+    # release asset validation.
     - component_id: admin
       name: Admin
       paths:
@@ -271,6 +314,11 @@ component_management:
       name: MCP Server
       paths:
         - mcp/typescript/src/**
+
+    - component_id: mcp-transport
+      name: MCP Transport
+      paths:
+        - crates/capsem-mcp-transport/src/**
 
     # MCP aggregator binary.
     - component_id: mcp-aggregator
@@ -290,7 +338,7 @@ component_management:
       paths:
         - crates/capsem-gateway/src/**
 
-    # Terminal UI: profile/session control over the service API.
+    # Terminal UI: session control over the service API.
     - component_id: tui
       name: TUI
       paths:

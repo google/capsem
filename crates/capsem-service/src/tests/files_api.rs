@@ -83,13 +83,13 @@ pub(super) fn setup_vm_with_workspace_and_uds(
     state.instances.lock().unwrap().insert(
         vm_id.into(),
         InstanceInfo {
+            generation: capsem_crypto::uuid_v4(),
+            authority: Default::default(),
+            upstream_policy: upstream_broker::test_policy_publisher(),
             id: vm_id.into(),
             name: vm_id.into(),
-            profile_id: "code".into(),
-            profile_revision: test_profile_revision(),
-            profile_payload_hash: test_profile_payload_hash(),
             asset_pins: test_asset_pins(),
-            pid: 1,
+            pid: std::process::id(),
             uds_path,
             session_dir,
             ram_mb: 2048,
@@ -98,8 +98,8 @@ pub(super) fn setup_vm_with_workspace_and_uds(
             base_version: "0.0.0".into(),
             persistent: false,
             env: None,
+            labels: None,
             forked_from: None,
-            owner_secret: String::new(),
         },
     );
 }
@@ -132,6 +132,7 @@ async fn exec_response_preserves_non_utf8_output() {
         Json(ExecRequest {
             command: "binary-output".to_string(),
             timeout_secs: Some(5),
+            target: None,
         }),
     )
     .await
@@ -423,8 +424,8 @@ async fn upload_does_not_write_workspace_file_when_import_ledger_fails() {
     .await
     .expect_err("failed import ledger write must fail closed");
 
-    assert_eq!(err.0, StatusCode::INTERNAL_SERVER_ERROR);
-    assert!(err.1.contains("security ledger rejected import"));
+    assert_eq!(err.status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(err.body.error.contains("security ledger rejected import"));
     let msg = ipc.await.unwrap();
     assert!(matches!(msg, ServiceToProcess::LogFileBoundary { .. }));
     assert!(
@@ -546,7 +547,7 @@ fn download_nonexistent_file_resolves_but_does_not_open() {
     let (parent, name) = resolve_workspace_target(&state, "404-vm", "nonexistent.txt", false).unwrap();
     assert_eq!(parent.entry_kind(&name).unwrap(), None);
     let err = parent.open_file(&name, ContainedOpenOptions::read_only()).unwrap_err();
-    assert_eq!(workspace_io_error(err).0, StatusCode::NOT_FOUND);
+    assert_eq!(workspace_io_error(err).status, StatusCode::NOT_FOUND);
 }
 
 // is_launchd_cleanup_transient identifies the misleading "missing
@@ -607,7 +608,7 @@ async fn upload_refuses_a_dangling_symlink_target() {
     .await
     .expect_err("an upload through a guest symlink must be refused");
 
-    assert_eq!(err.0, StatusCode::FORBIDDEN, "{}", err.1);
+    assert_eq!(err.status, StatusCode::FORBIDDEN, "{}", err.body.error);
     assert!(!planted.exists(), "the symlink target must not be created on the host");
 }
 
@@ -630,7 +631,7 @@ async fn upload_refuses_a_symlinked_parent_even_when_the_leaf_directory_is_missi
     .await
     .expect_err("an upload below a guest symlink must be refused");
 
-    assert_eq!(err.0, StatusCode::FORBIDDEN, "{}", err.1);
+    assert_eq!(err.status, StatusCode::FORBIDDEN, "{}", err.body.error);
     assert!(
         !tree.outside.join("sub").exists(),
         "no directory may be created outside the workspace"
@@ -655,7 +656,7 @@ async fn download_refuses_a_symlink_to_a_host_file() {
     .await
     .expect_err("a download through a guest symlink must be refused");
 
-    assert_eq!(err.0, StatusCode::FORBIDDEN, "{}", err.1);
+    assert_eq!(err.status, StatusCode::FORBIDDEN, "{}", err.body.error);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -676,7 +677,7 @@ async fn listing_neither_follows_nor_shows_a_symlinked_directory() {
     )
     .await
     .expect_err("listing through a guest symlink must be refused");
-    assert_eq!(err.0, StatusCode::FORBIDDEN, "{}", err.1);
+    assert_eq!(err.status, StatusCode::FORBIDDEN, "{}", err.body.error);
 
     let root = handle_list_files(
         State(state),
@@ -757,4 +758,202 @@ async fn exec_timeout_above_the_ceiling_is_refused_before_touching_the_vm() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+}
+
+#[tokio::test]
+async fn handle_provision_attaches_labels_and_list_fingerprint_tracks_label_changes() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let settings_dir = tempfile::tempdir().unwrap();
+    let (_settings_guard, _, _) = install_empty_settings_env(&settings_dir);
+    let script = dir.path().join("fake-capsem-process");
+    std::fs::write(
+        &script,
+        "#!/bin/sh\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"--uds-path\" ]; then printf launched > \"${2%.sock}.launched\"; shift 2; else shift; fi\ndone\nexec sleep 30\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let mut owned = test_state(dir.path().join("run"), dir.path().join("assets"), None);
+    owned.process_binary = script;
+    install_test_ledger_worker(&mut owned, dir.path());
+    let state = Arc::new(owned);
+    install_test_runtime_assets(&state);
+
+    let labels = HashMap::from([
+        ("suite".to_string(), "eval".to_string()),
+        ("inspect-capsem-prefix".to_string(), "pass-1".to_string()),
+    ]);
+    let created: ProvisionResponse = decode_response_json(
+        handle_provision(
+            State(Arc::clone(&state)),
+            Ok(Json(ProvisionRequest {
+                name: Some("labeled-vm".into()),
+                persistent: true,
+                labels: Some(labels.clone()),
+                ..Default::default()
+            })),
+        )
+        .await,
+    )
+    .await;
+
+    let list: ListResponse = decode_response_json(handle_list(State(Arc::clone(&state))).await).await;
+    let listed = list.sandboxes.iter().find(|s| s.id == created.id).unwrap();
+    assert_eq!(listed.labels.as_ref(), Some(&labels));
+
+    let Json(info) = handle_info(State(Arc::clone(&state)), Path(created.id.clone()))
+        .await
+        .unwrap();
+    assert_eq!(info.labels.as_ref(), Some(&labels));
+    assert_eq!(
+        state
+            .persistent_registry
+            .lock()
+            .unwrap()
+            .get("labeled-vm")
+            .and_then(|e| e.labels.clone()),
+        Some(labels.clone())
+    );
+
+    let fp_before = list_response_fingerprint(&state);
+    state.instances.lock().unwrap().get_mut(&created.id).unwrap().labels =
+        Some(HashMap::from([("suite".to_string(), "other".to_string())]));
+    let fp_after = list_response_fingerprint(&state);
+    assert_ne!(
+        fp_before, fp_after,
+        "changing labels must change list_response_fingerprint"
+    );
+
+    let _ = shutdown_vm_process(&state, &created.id, ShutdownMode::Discard, None).await;
+    if let Some(entry) = state.persistent_registry.lock().unwrap().get_mut("labeled-vm") {
+        entry.defunct = false;
+        entry.last_error = None;
+    }
+
+    let stopped_list: ListResponse = decode_response_json(handle_list(State(Arc::clone(&state))).await).await;
+    let stopped_listed = stopped_list.sandboxes.iter().find(|s| s.id == created.id).unwrap();
+    assert_eq!(
+        stopped_listed.labels.as_ref(),
+        Some(&labels),
+        "stopped persistent VM in /vms/list must preserve labels"
+    );
+    let Json(stopped_info) = handle_info(State(Arc::clone(&state)), Path(created.id.clone()))
+        .await
+        .unwrap();
+    assert_eq!(
+        stopped_info.labels.as_ref(),
+        Some(&labels),
+        "stopped persistent VM in /vms/{{id}}/info must preserve labels"
+    );
+
+    let fp_stopped_before = list_response_fingerprint(&state);
+    state
+        .persistent_registry
+        .lock()
+        .unwrap()
+        .get_mut("labeled-vm")
+        .unwrap()
+        .labels = Some(HashMap::from([("suite".to_string(), "stopped-other".to_string())]));
+    let fp_stopped_after = list_response_fingerprint(&state);
+    assert_ne!(
+        fp_stopped_before, fp_stopped_after,
+        "changing stopped persistent entry labels must change list_response_fingerprint"
+    );
+
+    if let Some(entry) = state.persistent_registry.lock().unwrap().get_mut("labeled-vm") {
+        let rootfs = capsem_core::session::system_overlay_image_path(&entry.session_dir);
+        std::fs::create_dir_all(rootfs.parent().unwrap()).unwrap();
+        std::fs::File::create(rootfs)
+            .unwrap()
+            .set_len(64 * 1024 * 1024 * 1024)
+            .unwrap();
+        entry.labels = Some(labels.clone());
+        entry.defunct = false;
+        entry.last_error = None;
+    }
+    let resumed_id = created.id.clone();
+    let resumed = state
+        .off_worker(move |state| state.resume_sandbox(&resumed_id, None, None))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(resumed, created.id);
+    assert_eq!(
+        state
+            .instances
+            .lock()
+            .unwrap()
+            .get(&created.id)
+            .and_then(|i| i.labels.clone()),
+        Some(labels),
+        "resumed InstanceInfo must preserve persistent entry labels"
+    );
+    let _ = shutdown_vm_process(&state, &created.id, ShutdownMode::Discard, None).await;
+
+    let empty_created: ProvisionResponse = decode_response_json(
+        handle_provision(
+            State(Arc::clone(&state)),
+            Ok(Json(ProvisionRequest {
+                name: Some("empty-labels-vm".into()),
+                persistent: true,
+                labels: Some(HashMap::new()),
+                ..Default::default()
+            })),
+        )
+        .await,
+    )
+    .await;
+    let Json(empty_info) = handle_info(State(Arc::clone(&state)), Path(empty_created.id.clone()))
+        .await
+        .unwrap();
+    assert_eq!(empty_info.labels, None, "empty labels map must normalize to None");
+    assert_eq!(
+        state
+            .persistent_registry
+            .lock()
+            .unwrap()
+            .get("empty-labels-vm")
+            .and_then(|e| e.labels.clone()),
+        None
+    );
+    let _ = shutdown_vm_process(&state, &empty_created.id, ShutdownMode::Discard, None).await;
+}
+
+#[tokio::test]
+async fn handle_provision_rejects_invalid_labels_with_bad_request() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let mut too_many = HashMap::new();
+    for i in 0..65 {
+        too_many.insert(format!("k{i}"), "v".to_string());
+    }
+    let invalid_cases = [
+        too_many,
+        HashMap::from([(String::new(), "v".to_string())]),
+        HashMap::from([("k".repeat(65), "v".to_string())]),
+        HashMap::from([("-leading".to_string(), "v".to_string())]),
+        HashMap::from([("dot.key".to_string(), "v".to_string())]),
+        HashMap::from([("bad key".to_string(), "v".to_string())]),
+        HashMap::from([("k".to_string(), "v".repeat(256))]),
+        HashMap::from([("k".to_string(), "bad\nval".to_string())]),
+    ];
+    for bad_labels in invalid_cases {
+        let resp = handle_provision(
+            State(Arc::clone(&state)),
+            Ok(Json(ProvisionRequest {
+                labels: Some(bad_labels.clone()),
+                ..Default::default()
+            })),
+        )
+        .await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "expected 400 for {bad_labels:?}"
+        );
+    }
 }

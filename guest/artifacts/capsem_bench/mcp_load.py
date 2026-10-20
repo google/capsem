@@ -4,7 +4,7 @@ Drives `local__echo` (the diagnostic builtin tool that returns input
 verbatim with zero I/O) at multiple concurrency levels so we can
 characterize the MCP transport overhead end-to-end:
 
-    Python fastmcp.Client (in guest)
+    the stdlib JSON-RPC client in mcp_transport (in guest)
       -> stdio -> /run/capsem-mcp-server (guest agent's MCP server)
       -> framed MCP over vsock:5002 -> capsem-process MITM MCP endpoint
       -> capsem-mcp-aggregator (host)
@@ -26,13 +26,13 @@ import time
 from .helpers import console
 from .load_harness import (
     DurationLoadConfig,
+    capacity_concurrency_levels,
     render_load_table,
     summarize_load_level,
 )
-from .mcp_transport import Client, StdioTransport
+from .mcp_transport import McpError, StdioClient
 
 MCP_SERVER = "/run/capsem-mcp-server"
-DEFAULT_CONCURRENCY = (1, 10, 50, 200)
 DEFAULT_DURATION_S = 10.0
 DEFAULT_PAYLOAD = "ping"
 
@@ -58,7 +58,7 @@ async def _drive_at_concurrency(client, concurrency, duration_s, payload):
                 ms = (time.monotonic() - t0) * 1000
                 async with lat_lock:
                     latencies.append(ms)
-            except Exception:
+            except (McpError, OSError):
                 errors += 1
 
     await asyncio.gather(*(worker() for _ in range(concurrency)))
@@ -71,12 +71,10 @@ def _summarize(latencies, errors, concurrency, duration_s):
 
 async def _run_async(concurrency_levels, duration_s, payload):
     rows = []
-    # FastMCP's stdio transport treats `env` as the subprocess
-    # environment. Pass the current env through explicitly so benchmark
-    # gates can select duration/payload knobs without losing the guest
-    # default framed transport.
-    transport = StdioTransport(command=MCP_SERVER, args=[], env=dict(os.environ))
-    async with Client(transport) as client:
+    # Pass the current env through explicitly so benchmark gates can select
+    # duration/payload knobs without losing the guest default framed
+    # transport.
+    async with StdioClient(MCP_SERVER, env=dict(os.environ)) as client:
         # Warm-up call so subprocess/handshake cost doesn't pollute the
         # first concurrency level.
         await client.call_tool("local__echo", {"text": "warmup"})
@@ -92,9 +90,10 @@ async def _run_async(concurrency_levels, duration_s, payload):
 
 def mcp_load_bench(concurrency_levels=None, duration_s=None, payload=None):
     """Drive local__echo at each concurrency level; return the result dict."""
+    default_concurrency = capacity_concurrency_levels() if concurrency_levels is None else ()
     config = DurationLoadConfig.from_inputs(
         "mcp-load",
-        default_concurrency=DEFAULT_CONCURRENCY,
+        default_concurrency=default_concurrency,
         default_duration_s=DEFAULT_DURATION_S,
         concurrency_levels=concurrency_levels,
         duration_s=duration_s,

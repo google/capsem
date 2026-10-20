@@ -77,20 +77,15 @@ def test_benchmark_owner_prepares_every_collector_input() -> None:
     plan = _plan(bench.BenchCommand)
     labels = [step.label for step in plan.steps]
 
-    for label in (
-        "prepare.materialize-config",
-        "prepare.bench.build",
-        "prepare.bench.sign",
-    ):
+    for label in ("prepare.bench.build", "prepare.bench.sign"):
         assert labels.index(label) < labels.index("bench.run")
     assert any(label.startswith("initrd.") for label in labels)
 
 
 def test_quick_benchmark_prepares_host_inputs_without_guest_work() -> None:
-    """The quick lane needs profiles and binaries but keeps its no-guest promise."""
+    """The quick lane needs binaries but keeps its no-guest promise."""
     labels = [step.label for step in _plan(bench.BenchCommand, quick=True).steps]
 
-    assert "prepare.materialize-config" in labels
     assert "prepare.bench.build" in labels
     assert "prepare.bench.sign" in labels
     assert not any(label.startswith(("assets.", "initrd.")) for label in labels)
@@ -229,7 +224,7 @@ def test_a_linked_worktree_reads_binaries_where_cargo_writes_them(tmp_path: Path
     Every exclusive command in a linked worktree compiled into the shared build
     root while its steps named `cache/target/cargo/debug/...` under the checkout,
     so `prepare.bench.build` failed with "cannot hash ... it is not a file"
-    before anything was measured. The checkout's profile directories must
+    before anything was measured. The checkout's Cargo profile directories must
     resolve to the build root the compiler was given, as a prefix's do.
     """
     from capsem_builder.gate import cargotarget, preflight
@@ -267,7 +262,7 @@ def test_the_checkout_that_owns_the_build_root_and_observers_are_left_alone(tmp_
     assert not (observed.root / "cache").exists(), "interrogating a plan must not touch the checkout"
 
 
-def test_a_real_profile_directory_in_a_worktree_is_named_not_overwritten(tmp_path: Path) -> None:
+def test_a_real_cargo_profile_directory_in_a_worktree_is_named_not_overwritten(tmp_path: Path) -> None:
     from capsem_builder.gate import cargotarget
     from capsem_builder.gate.errors import GateError
 

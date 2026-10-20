@@ -177,7 +177,7 @@ def test_release_commands_require_source_commit_without_a_parallel_just_surface(
         assert f"\n{retired}:" not in justfile
         assert f"\n{retired} " not in justfile
     assert '\nrelease-binaries channel source_commit force="false":' in justfile
-    assert '\nrelease-profile channel profile source_commit force="false":' in justfile
+    assert '\nrelease-assets channel source_commit force="false":' in justfile
 
 
 def test_binary_release_recipe_uses_one_adversarial_script() -> None:

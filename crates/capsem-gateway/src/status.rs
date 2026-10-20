@@ -39,13 +39,13 @@ impl StatusCache {
 }
 
 pub use capsem_api::{
-    HypervisorInfo as StatusResponse, ProfileCatalogStatus, ResourceSummary, ServiceAvailability, UpdateStatusResponse,
+    AssetStatus, HypervisorInfo as StatusResponse, ResourceSummary, ServiceAvailability, UpdateStatusResponse,
     VmAction, VmLifecycleState, VmSummary,
 };
 
 /// GET /status -- aggregated system health for tray polling.
 ///
-/// Every request reads the authoritative service `/vms/list` endpoint.
+/// Every request reads the authoritative service gateway snapshot.
 ///
 /// VM mutations are made directly over the service UDS, so a gateway TTL
 /// cache can return a pre-mutation snapshot immediately after `capsem create`
@@ -95,12 +95,15 @@ async fn broadcast_transitions(state: &AppState, resp: &StatusResponse) {
 struct ListResponse {
     #[serde(rename = "sandboxes")]
     sessions: Vec<SessionInfo>,
+    #[serde(default)]
+    assets: Option<AssetStatus>,
+    #[serde(default)]
+    updates: Option<UpdateStatusResponse>,
 }
 
 #[derive(Deserialize)]
 struct SessionInfo {
     id: String,
-    profile_id: String,
     #[serde(default)]
     name: Option<String>,
     status: VmLifecycleState,
@@ -147,16 +150,11 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
         vm_count: 0,
         vms: vec![],
         resource_summary: None,
-        profiles: None,
+        assets: None,
         updates: None,
     };
 
-    let (list_body, profiles, updates) = tokio::join!(
-        uds_get(&state.service_client, "/vms/list"),
-        fetch_profiles_status(state),
-        fetch_update_status(state),
-    );
-    let list = match list_body {
+    let list = match uds_get(&state.service_client, "/internal/gateway/status").await {
         Ok(body) => match serde_json::from_slice::<ListResponse>(&body) {
             Ok(l) => l,
             Err(_) => return unavailable,
@@ -190,7 +188,6 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
             name: sess.name.clone(),
             status: sess.status,
             persistent: sess.persistent,
-            profile_id: sess.profile_id.clone(),
             uptime_secs: sess.uptime_secs,
             total_input_tokens: sess.total_input_tokens,
             total_output_tokens: sess.total_output_tokens,
@@ -220,32 +217,9 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
             stopped_count: stopped,
             suspended_count: suspended,
         }),
-        profiles,
-        updates,
+        assets: list.assets,
+        updates: list.updates,
     }
-}
-
-async fn fetch_profiles_status(state: &AppState) -> Option<ProfileCatalogStatus> {
-    parse_section(
-        "/profiles/status",
-        &uds_get(&state.service_client, "/profiles/status").await.ok()?,
-    )
-}
-
-async fn fetch_update_status(state: &AppState) -> Option<UpdateStatusResponse> {
-    parse_section(
-        "/update/status",
-        &uds_get(&state.service_client, "/update/status").await.ok()?,
-    )
-}
-
-/// A section the service answered but this gateway cannot read is left out of
-/// `/status`, which must still answer. It is said out loud: dropping it
-/// silently hid a renamed enum variant behind a missing section.
-fn parse_section<T: serde::de::DeserializeOwned>(path: &str, body: &[u8]) -> Option<T> {
-    serde_json::from_slice(body)
-        .map_err(|error| tracing::warn!(path, %error, "service status section does not parse; omitting it"))
-        .ok()
 }
 
 /// One GET to the service over the pooled client, bounded in time and size.

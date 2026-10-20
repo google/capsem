@@ -142,9 +142,18 @@ def test_no_setgid_binaries():
 
 
 def test_no_kernel_modules():
-    """Kernel module loading must be disabled (CONFIG_MODULES=n)."""
-    result = run("modprobe dummy 2>&1")
-    assert result.returncode != 0, "modprobe should fail with CONFIG_MODULES=n"
+    """Kernel module loading must be compiled out (CONFIG_MODULES=n).
+
+    Asked of the kernel rather than of `modprobe`: the runtime ships no kmod,
+    and a missing tool failing would prove nothing. The module loader's
+    sysctl and /proc/modules exist only when the kernel can load modules.
+    """
+    assert not os.path.exists("/proc/sys/kernel/modprobe"), (
+        "kernel/modprobe sysctl exists: the kernel was built with CONFIG_MODULES"
+    )
+    assert not os.path.exists("/proc/modules"), (
+        "/proc/modules exists: the kernel was built with CONFIG_MODULES"
+    )
 
 
 def test_no_dev_mem():
@@ -253,7 +262,7 @@ def test_allowed_domain():
 
 
 def test_denied_domain():
-    """Public deny proof requires an explicit deny-rule profile."""
+    """Public deny proof requires an explicit deny rule."""
     result = run(
         "curl -skI --connect-timeout 5 https://evil-never-allowed.invalid 2>&1", timeout=15
     )
@@ -380,11 +389,40 @@ def test_no_kallsyms():
 # -- Kernel cmdline hardening --
 
 
-def test_init_on_alloc():
-    """Kernel cmdline must include init_on_alloc=1 for heap zeroing."""
+def test_guest_heap_wiping_is_explicitly_disabled():
+    """Explicit zeros override kernel defaults without touching every RAM page."""
     result = run("cat /proc/cmdline")
     assert result.returncode == 0
-    assert "init_on_alloc=1" in result.stdout, f"init_on_alloc=1 not in cmdline: {result.stdout}"
+    flags = result.stdout.split()
+    for name in ("init_on_alloc", "init_on_free"):
+        values = [flag for flag in flags if flag.startswith(f"{name}=")]
+        assert values == [f"{name}=0"], result.stdout
+
+
+def test_guest_heap_wiping_is_off_in_the_running_kernel():
+    """Both guest heap wiping settings are off, not only on the cmdline.
+
+    The kernel reports what it applied in one boot line, e.g.
+    "mem auto-init: stack:all(zero), heap alloc:off, heap free:off".
+    """
+    result = run("dmesg")
+    assert result.returncode == 0, f"dmesg failed: {result.stderr}"
+    lines = [line for line in result.stdout.splitlines() if "mem auto-init:" in line]
+    assert any("heap alloc:off" in line and "heap free:off" in line for line in lines), lines
+
+
+def test_guest_boot_does_not_eagerly_clear_system_memory():
+    """Sparse VM memory must not be faulted in by an eager boot-time wipe."""
+    result = run("dmesg")
+    assert result.returncode == 0, f"dmesg failed: {result.stderr}"
+    assert "clearing system memory may take some time" not in result.stdout, result.stdout
+
+
+def test_an_oops_panics_the_vm():
+    """oops=panic: a kernel oops ends the VM instead of leaving it running."""
+    result = run("cat /proc/sys/kernel/panic_on_oops")
+    assert result.returncode == 0
+    assert result.stdout.strip() == "1", f"panic_on_oops={result.stdout.strip()}"
 
 
 def test_slab_nomerge():
@@ -407,3 +445,68 @@ def test_seccomp_available():
     """Seccomp must be available (CONFIG_SECCOMP=y)."""
     result = run("grep '^Seccomp:' /proc/self/status")
     assert result.returncode == 0, "Seccomp line not found in /proc/self/status"
+
+
+def test_guest_services_cannot_create_user_namespaces():
+    """The kernel has user namespaces, and guest services cannot create one.
+
+    CONFIG_USER_NS is on so the OCI workload holds its capabilities over a
+    mapped uid range rather than over the VM. Only the container launcher,
+    which moves /newroot to / in its own mount namespace, may create one:
+    every guest service and everything it spawns runs under
+    `chroot /newroot`, and the kernel refuses CLONE_NEWUSER from a chroot
+    with EPERM. Without CONFIG_USER_NS the answer would be EINVAL instead.
+    """
+    probe = (
+        "import ctypes, errno; "
+        "libc = ctypes.CDLL(None, use_errno=True); "
+        "rc = libc.unshare(0x10000000); "
+        "print(rc, errno.errorcode.get(ctypes.get_errno(), '-'))"
+    )
+    result = run(f'python3 -c "{probe}"')
+    assert result.returncode == 0, f"probe failed: {result.stderr}"
+    assert result.stdout.split() == ["-1", "EPERM"], (
+        f"unshare(CLONE_NEWUSER) from a guest service: {result.stdout.strip()} "
+        "(EINVAL: kernel lacks CONFIG_USER_NS; 0: guest services can create "
+        "user namespaces)"
+    )
+
+
+# -- Boot-time hardening sysctls (capsem-init) --
+
+HARDENED_SYSCTLS = {
+    "kernel/kptr_restrict": "2",
+    "kernel/dmesg_restrict": "1",
+    "kernel/randomize_va_space": "2",
+    "kernel/yama/ptrace_scope": "1",
+    "fs/protected_symlinks": "1",
+    "fs/protected_hardlinks": "1",
+    "fs/protected_fifos": "1",
+    "fs/protected_regular": "1",
+    "fs/suid_dumpable": "0",
+    "vm/mmap_min_addr": "65536",
+    "dev/tty/ldisc_autoload": "0",
+    "dev/tty/legacy_tiocsti": "0",
+    "net/ipv4/conf/all/accept_redirects": "0",
+    "net/ipv4/conf/all/secure_redirects": "0",
+    "net/ipv4/conf/all/send_redirects": "0",
+    "net/ipv4/conf/all/accept_source_route": "0",
+    "net/ipv4/icmp_echo_ignore_broadcasts": "1",
+    "net/ipv4/tcp_syncookies": "1",
+    "net/ipv4/tcp_rfc1337": "1",
+}
+
+
+@pytest.mark.parametrize("name", sorted(HARDENED_SYSCTLS))
+def test_hardening_sysctl_holds(name):
+    """capsem-init sets each value before any service starts."""
+    with open(f"/proc/sys/{name}") as handle:
+        assert handle.read().strip() == HARDENED_SYSCTLS[name], name
+
+
+def test_perf_events_are_denied_where_the_kernel_has_them():
+    """x86 cannot compile perf_event_open out; unprivileged use is denied."""
+    path = "/proc/sys/kernel/perf_event_paranoid"
+    if os.path.exists(path):
+        with open(path) as handle:
+            assert int(handle.read()) >= 2

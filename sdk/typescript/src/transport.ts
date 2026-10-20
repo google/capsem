@@ -1,4 +1,6 @@
 /** One authenticated fetch transport, with bounded requests and explicit cancellation. */
+import {CredentialErrorCode} from './models/CredentialErrorCode.js';
+
 export enum Method {GET = 'GET', POST = 'POST', PUT = 'PUT', DELETE = 'DELETE'}
 export enum MediaType {JSON = 'application/json', BINARY = 'application/octet-stream', GZIP = 'application/gzip'}
 
@@ -21,6 +23,17 @@ export class HttpError extends Error {
   override readonly name = 'HttpError';
   constructor(readonly status: number, readonly body: string) {
     super(`HTTP ${status}: ${body}`);
+  }
+
+  /** Future/non-JSON refusal envelopes retain their HTTP status and raw body. */
+  get credentialCode(): CredentialErrorCode | undefined {
+    try {
+      const envelope: unknown = JSON.parse(this.body);
+      if (envelope !== null && typeof envelope === 'object' && 'code' in envelope) {
+        return Object.values(CredentialErrorCode).find(code => code === envelope.code);
+      }
+    } catch { /* Non-JSON HTTP errors carry no credential code. */ }
+    return undefined;
   }
 }
 

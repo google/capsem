@@ -46,9 +46,8 @@ def _written(log: Path | None) -> int:
 def _span(log: Path | None, offset: int) -> OutputSpan | None:
     """The byte range one command contributed to its step's log.
 
-    Absent when nothing filed the output: a captured command is data its caller
-    parses rather than narration, and a command issued outside any step has no
-    step log to sit in.
+    Absent when nothing filed the output: captured commands return data their
+    callers parse rather than narration. Resources use their own log.
     """
     if log is None or not log.is_file():
         return None

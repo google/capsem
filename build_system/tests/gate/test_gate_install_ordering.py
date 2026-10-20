@@ -21,17 +21,16 @@ from pathlib import Path
 
 import pytest
 from capsem_builder.gate import config as gate_config
-from capsem_builder.gate.content import LocalInstallContent, ProfileContent, SelectedInstallContent
+from capsem_builder.gate.content import LocalInstallContent, RuntimeContent, SelectedInstallContent
 from capsem_builder.gate.docker import Docker
 from capsem_builder.gate.errors import GateError
 from capsem_builder.gate.install import InstallGate
 from capsem_builder.gate.installproof import InstallProof
-from capsem_builder.gate.productschema import ProfileRevisionPolicy
 from capsem_builder.gate.releaseauthoring import author_binary_graph, author_native_candidate
 from capsem_builder.gate.releasegraph import ReleaseGraph
 from capsem_builder.gate.sourcecommit import SourceCommit
 from helpers.gate import RecordingRunner
-from profile_content import materialize_required_artifacts
+from runtime_content import materialize_required_artifacts
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -40,6 +39,28 @@ LAYOUT = INSTALL.layout
 SERVE_READY_FILE = INSTALL.serve_ready_file
 PREINSTALL_ADMIN = INSTALL.preinstall_admin
 SOURCE_COMMIT = SourceCommit("0" * 40)
+
+
+@pytest.mark.parametrize("channel", [INSTALL.channel, *CONFIG.package.channels])
+def test_exact_package_graph_uses_the_requested_channel_through_handoff(channel: str) -> None:
+    runner = RecordingRunner(PROJECT_ROOT)
+    graph = ReleaseGraph(Docker(runner), CONFIG, source_commit=SOURCE_COMMIT)
+    graph.author_exact_package(
+        package="/src/cache/target/packages/Capsem_9.9.9_amd64.deb",
+        version="9.9.9",
+        assets_manifest=f"{LAYOUT.assets}/{INSTALL.manifest_name}",
+        candidate_base=f"{INSTALL.mount}/{LAYOUT.packages}",
+        assets_dir=LAYOUT.assets,
+        channel=channel,
+        manifest_version=INSTALL.manifest_version,
+        out_dir=LAYOUT.channel,
+    )
+
+    expected = f"{LAYOUT.channel}/assets/{channel}/{INSTALL.manifest_name}"
+    record = runner.matching(r"assets channel record-binary")[0]
+    assert f"--manifest-path {expected}" in record
+    assert graph.handed_off == f"file://{INSTALL.mount}/{expected}"
+    assert all(f"--channel {channel}" in command for command in runner.matching(r"channel build"))
 
 
 def test_every_binary_authoring_path_builds_a_graph_before_recording_provenance() -> None:
@@ -78,7 +99,6 @@ def test_native_candidate_records_only_the_graph_and_rebuilds_catalogs(tmp_path:
         runner=runner,
         admin=tmp_path / "capsem-admin",
         assets_dir=tmp_path / "assets",
-        profiles_dir=tmp_path / "config" / "profiles",
         channel="stable",
         version="9.9.9",
         source_commit=SOURCE_COMMIT,
@@ -90,7 +110,6 @@ def test_native_candidate_records_only_the_graph_and_rebuilds_catalogs(tmp_path:
         dist=dist,
         graph_manifest=graph,
         manifest_version="1.0.0",
-        profile_revision_policy=ProfileRevisionPolicy.SELECTED_INPUT,
     )
 
     assert result == graph
@@ -101,19 +120,13 @@ def test_native_candidate_records_only_the_graph_and_rebuilds_catalogs(tmp_path:
     ]
     first_build, record, second_build = (command for command, _env in commands)
     assert first_build[first_build.index("--manifest") + 1] == source.resolve().as_uri()
-    assert first_build[first_build.index("--profile-revision-policy") + 1] == "selected-input"
     assert record[record.index("--manifest-path") + 1] == str(graph)
     assert record[record.index("--source-commit") + 1] == str(SOURCE_COMMIT)
     assert second_build[second_build.index("--manifest") + 1] == graph.resolve().as_uri()
-    assert second_build[second_build.index("--profile-revision-policy") + 1] == "selected-input"
     assert all(
         env == {CONFIG.environment.release_site.url: "https://release.invalid/stable"}
         for _, env in commands
     )
-
-
-def test_selected_profile_revision_policy_is_a_typed_install_authority() -> None:
-    assert INSTALL.profile_revision_policy is ProfileRevisionPolicy.SELECTED_INPUT
 
 
 VERSION = "9.9.9"
@@ -125,7 +138,7 @@ members = ["crates/capsem"]
 version = "{VERSION}"
 """
 
-AUTHORITATIVE = f"{LAYOUT.channel}/{INSTALL.graph_manifest}"
+AUTHORITATIVE = f"{LAYOUT.channel}/{INSTALL.graph_manifest.format(channel=INSTALL.channel)}"
 
 
 def _checkout(tmp_path: Path, *, dpkg_arch: str) -> Path:
@@ -149,12 +162,12 @@ def _checkout(tmp_path: Path, *, dpkg_arch: str) -> Path:
     return tmp_path
 
 
-def _local_content(root: Path) -> ProfileContent:
+def _local_content(root: Path) -> RuntimeContent:
     """One internally consistent local cohort, separate from canonical paths."""
     config = gate_config.load(root)
-    content = ProfileContent.isolated(
+    content = RuntimeContent.isolated(
         config,
-        root / config.assets.test_root / config.suites.pytest.base_profile,
+        root / config.assets.test_root,
     )
     manifest = {
         "assets": {
@@ -168,12 +181,6 @@ def _local_content(root: Path) -> ProfileContent:
     content.assets.mkdir(parents=True)
     (content.assets / config.install.manifest_name).write_bytes(payload)
     materialize_required_artifacts(config, content.assets)
-    config_manifest = content.config_manifest(config)
-    config_manifest.parent.mkdir(parents=True)
-    config_manifest.write_bytes(payload)
-    profile = content.profiles(config) / config.suites.pytest.base_profile / "profile.toml"
-    profile.parent.mkdir(parents=True)
-    profile.write_text("name = 'code'\n")
     return content
 
 
@@ -183,8 +190,8 @@ def _selected_content(root: Path) -> SelectedInstallContent:
     content = _local_content(root)
     inputs = content.root / config.install.selected_inputs_dir
     inputs.mkdir()
-    payload = inputs / "profile-payload.bin"
-    payload.write_bytes(b"selected profile bytes")
+    payload = inputs / "runtime-payload.bin"
+    payload.write_bytes(b"selected runtime bytes")
     manifest = {
         "assets": {
             "current": "test",
@@ -196,7 +203,6 @@ def _selected_content(root: Path) -> SelectedInstallContent:
     }
     manifest_bytes = json.dumps(manifest).encode()
     (content.assets / config.install.manifest_name).write_bytes(manifest_bytes)
-    content.config_manifest(config).write_bytes(manifest_bytes)
     (inputs / config.install.manifest_name).write_bytes(manifest_bytes)
     (inputs / config.package.release_inputs_name).write_text("{}\n")
     return SelectedInstallContent(content)
@@ -324,7 +330,6 @@ def test_the_graph_exists_before_anything_points_at_it(
     assert f"--manifest-path {AUTHORITATIVE}" in record[0]
     assert f"/{LAYOUT.assets}/{INSTALL.manifest_name}" in builds[0]
     assert f"/{AUTHORITATIVE}" in builds[1]
-    assert runner.ran(r"--profile-revision-policy selected-input")
 
 
 def test_the_admin_that_authors_the_graph_is_extracted_not_installed(
@@ -415,7 +420,7 @@ def test_the_legacy_runtime_projection_is_refused(tmp_path: Path) -> None:
     graph = ReleaseGraph(Docker(runner), CONFIG, source_commit=SOURCE_COMMIT)
 
     with pytest.raises(GateError, match="not the legacy runtime projection"):
-        graph.hand_off(f"{LAYOUT.assets}/manifest.json")
+        graph.hand_off(f"{LAYOUT.assets}/manifest.json", channel=INSTALL.channel)
 
     assert not runner.ran(r"install-manifest-request"), (
         "the refusal must happen before anything is written"
@@ -430,7 +435,7 @@ def test_a_handoff_target_that_does_not_exist_is_refused(tmp_path: Path) -> None
     graph = ReleaseGraph(Docker(runner), CONFIG, source_commit=SOURCE_COMMIT)
 
     with pytest.raises(GateError, match="would find no request"):
-        graph.hand_off(AUTHORITATIVE)
+        graph.hand_off(AUTHORITATIVE, channel=INSTALL.channel)
 
 
 def test_clearing_a_handoff_that_was_never_written_does_nothing(tmp_path: Path) -> None:
@@ -450,7 +455,7 @@ def test_clearing_a_handoff_that_was_never_written_does_nothing(tmp_path: Path) 
 def test_a_release_lane_stages_verified_inputs_and_authors_the_exact_package_graph(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Selected profiles and the exact package become one offline install graph."""
+    """The selected runtime and the exact package become one offline install graph."""
     root = _macos_checkout(tmp_path, monkeypatch)
     runner = _recording(root)
     selected = _selected_content(root)
@@ -477,11 +482,10 @@ def test_a_release_lane_stages_verified_inputs_and_authors_the_exact_package_gra
     assert runner.ran(r"dpkg -i")
     started = runner.matching(r"docker run -d")[0]
     assert f"-v {content.assets}:/src/{CONFIG.outputs.assets}:ro" in started
-    assert f"-v {content.config}:/src/cache/target/config:ro" in started
     assert f"-v {content.root}:{content.root}:ro" in started
 
 
-def test_local_install_mounts_only_the_selected_content_pair(
+def test_local_install_mounts_only_the_selected_content(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Docker never sees the mutable checkout selector that it can replace."""
@@ -491,10 +495,6 @@ def test_local_install_mounts_only_the_selected_content_pair(
     canonical_assets = root / CONFIG.outputs.assets
     canonical_assets.parent.mkdir(parents=True, exist_ok=True)
     canonical_assets.symlink_to(selected.relative_to(canonical_assets.parent))
-    canonical = root / "cache/target/config"
-    canonical.mkdir(parents=True)
-    sentinel = canonical / "stale"
-    sentinel.write_text("untouched")
     runner = _recording(root)
 
     InstallGate(
@@ -506,21 +506,18 @@ def test_local_install_mounts_only_the_selected_content_pair(
 
     started = runner.matching(r"docker run -d")[0]
     assert f"-v {content.assets}:/src/{CONFIG.outputs.assets}:ro" in started
-    assert f"-v {content.config}:/src/cache/target/config:ro" in started
     assert f"-v {canonical_assets}:/src/{CONFIG.outputs.assets}:ro" not in started
-    assert f"-v {canonical}:/src/cache/target/config:ro" not in started
     assert canonical_assets.is_symlink()
     assert canonical_assets.readlink() == selected.relative_to(canonical_assets.parent)
-    assert sentinel.read_text() == "untouched"
 
 
-def test_local_install_without_a_selected_content_pair_fails_before_docker(
+def test_local_install_without_selected_content_fails_before_docker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = _macos_checkout(tmp_path, monkeypatch)
     runner = _recording(root)
 
-    with pytest.raises(GateError, match="selected profile content"):
+    with pytest.raises(GateError, match="selected runtime content"):
         InstallGate(
             runner,
             macos_glowup_report=str(root / "report.json"),
@@ -631,7 +628,7 @@ def test_a_local_server_that_never_reports_ready_fails(
     )
 
     with pytest.raises(GateError, match="never reported itself ready"):
-        proof.stage_content(ProfileContent.standalone(CONFIG))
+        proof.stage_content(RuntimeContent.standalone(CONFIG))
         proof.start_local_server()
 
 
@@ -681,7 +678,6 @@ def test_a_host_that_boots_a_guest_runs_the_complete_glowup(tmp_path: Path) -> N
 
     assert runner.ran(r"local-release-glowup\.py")
     assert runner.ran(rf"--source-commit {SOURCE_COMMIT}")
-    assert runner.ran(r"--profile-revision-policy selected-input")
     assert not runner.ran(r"--skip-install")
 
 

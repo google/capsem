@@ -8,13 +8,13 @@ use capsem_proto::mcp::McpAuthConfig;
 // MCP server config (stored under [mcp])
 // ---------------------------------------------------------------------------
 
-/// MCP configuration from profile or corp `[mcp]` sections.
+/// MCP configuration from the `[mcp]` section of settings.toml or corp.toml.
 ///
 /// This is server discovery/configuration only. MCP allow/ask/block decisions
 /// are security rules over canonical MCP security events.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(deny_unknown_fields)]
-pub struct McpProfileConfig {
+pub struct McpConfig {
     /// Health check interval in seconds (default: 300).
     #[serde(default)]
     pub health_check_interval_secs: Option<u64>,
@@ -43,12 +43,36 @@ pub struct McpManualServer {
     pub enabled: bool,
 }
 
-impl McpProfileConfig {
+impl McpConfig {
     pub fn validate(&self, context: &str) -> Result<(), String> {
         for server in &self.servers {
             server.validate(context)?;
         }
         Ok(())
+    }
+
+    /// The MCP configuration a session runs with: the user's `[mcp]` with the
+    /// corp `[mcp]` laid over it. A corp server replaces the user's server of
+    /// the same name, a corp `server_enabled` entry wins, and the corp health
+    /// interval wins when set. `None` when neither file has an `[mcp]`.
+    pub fn merged(user: Option<&Self>, corp: Option<&Self>) -> Option<Self> {
+        let (mut merged, corp) = match (user, corp) {
+            (None, None) => return None,
+            (Some(user), None) => return Some(user.clone()),
+            (None, Some(corp)) => return Some(corp.clone()),
+            (Some(user), Some(corp)) => (user.clone(), corp),
+        };
+        merged
+            .servers
+            .retain(|server| !corp.servers.iter().any(|locked| locked.name == server.name));
+        merged.servers.extend(corp.servers.iter().cloned());
+        for (name, enabled) in &corp.server_enabled {
+            merged.server_enabled.insert(name.clone(), *enabled);
+        }
+        if corp.health_check_interval_secs.is_some() {
+            merged.health_check_interval_secs = corp.health_check_interval_secs;
+        }
+        Some(merged)
     }
 }
 

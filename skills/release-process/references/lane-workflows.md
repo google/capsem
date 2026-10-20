@@ -1,7 +1,7 @@
 # Release Lane Workflows
 
 Read this reference before changing per-channel locking, preview deployment,
-profile or binary lane ownership, nightly sequencing, staged-profile
+runtime or binary lane ownership, nightly sequencing, staged-runtime
 activation, base-image materialization, or corporate authoring.
 
 ## Shared per-channel serialization
@@ -20,13 +20,13 @@ distribution assembly, and production deployment.
 
 Consequences:
 
-- binary and profile release work for one channel cannot overlap;
-- two profile releases for one channel cannot overlap;
+- binary and runtime release work for one channel cannot overlap;
+- two runtime releases for one channel cannot overlap;
 - queued work re-reads the manifest only after acquiring the lock;
 - stable and nightly may proceed concurrently;
 - preview deployment cannot mutate production source manifests;
 - `release-channel.yaml` may deploy production only for a serialized parent
-  binary or profile workflow.
+  binary or runtime workflow.
 
 `release-channel-staging.yaml` is the preview-only proof of the reusable
 deployer. It renders a deterministic generated distribution and deploys a
@@ -66,37 +66,37 @@ publication boundary. Linux reports absent Apple signing material and CI-owned
 secret-dependent macOS toolchain. Present tools are validated, and macOS still
 fails closed when the signing key is absent or malformed.
 
-## Profile release
+## Runtime release
 
-`just release-profile nightly code <source-commit>` invokes:
+`just release-assets nightly <source-commit>` invokes:
 
 ```bash
-capsem-admin release --channel nightly --profile code
+capsem-admin release --channel nightly --source-commit <source-commit>
 ```
 
-The locked profile workflow:
+which dispatches `release-assets.yaml`. The locked runtime workflow:
 
 1. reads the latest nightly source manifest;
 2. resolves and verifies its current package;
-3. builds only the `nightly + code` config, images, inventory, OBOM, evidence,
-   and architecture cohort;
-4. creates an immutable identity containing channel and profile identity;
+3. builds only the runtime images, inventory, OBOM, evidence, and
+   architecture cohort;
+4. creates the immutable identity `runtime-<channel>-<revision>`;
 5. validates digests, bootability, and the unchanged package pairing;
-6. mutates only the selected profile entry;
-7. deploys immediately when the public package satisfies the profile's
+6. mutates only the channel's `runtime` entry;
+7. deploys immediately when the public package satisfies the runtime's
    declared minimum Capsem version.
 
 `capsem-admin release` supplies a unique dispatch identity, finds the workflow
 run with that exact identity, and watches it with failure propagation. The
 public command does not report success merely because GitHub accepted a queued
-dispatch; this preserves serialized profile-then-binary ordering even when the
+dispatch; this preserves serialized runtime-then-binary ordering even when the
 same channel already has pending work.
 
-If the public package is too old, publish the immutable profile artifacts and
+If the public package is too old, publish the immutable runtime artifacts and
 persist the staged source-manifest state, but do not deploy that incompatible
-pairing. Other profiles, channels, packages, and binaries remain untouched.
+pairing. Other channels, packages, and binaries remain untouched.
 
-The nightly lane always rebuilds its selected profile assets. The prior-run
+The nightly lane always rebuilds the runtime assets. The prior-run
 artifact resolver is a stable retry mechanism only; using it for nightly would
 turn the daily asset build into a no-op and lose the hermetic reproducibility
 signal.
@@ -112,8 +112,8 @@ checked-in per-platform base child manifests by exact digest through Docker's
 daemon boundary. A cold runner and a warm developer host therefore select the
 same base bytes; this is not a reason to widen the release egress helper.
 
-All corporate manifest and profile authoring also goes through `capsem-admin`.
-A corporation owns its manifest and profile definitions, may use the latest
+All corporate manifest authoring also goes through `capsem-admin`.
+A corporation owns its manifest, may use the latest
 compatible Capsem package or pin a compatible version, and never builds or
 mutates Capsem-owned binaries or public channels.
 
@@ -123,21 +123,21 @@ mutates Capsem-owned binaries or public channels.
 binary release script. The locked binary workflow:
 
 1. reads the latest nightly source manifest;
-2. resolves every referenced profile by recorded digest, including compatible
-   staged profiles;
+2. resolves the referenced runtime by recorded digest, including a compatible
+   staged runtime;
 3. builds only candidate packages, per-binary inventory, host SBOM, and
    existing attestation evidence;
-4. runs the complete functional suite for every resulting channel profile;
+4. runs the complete functional suite against the resulting runtime;
 5. installs the exact native packages and runs binary-update plus
-   profile-then-binary glow-up;
+   runtime-then-binary glow-up;
 6. mutates only package, per-binary inventory, host SBOM, and existing
    attestation fields;
 7. assembles and deploys the completed channel only after every gate passes.
 
-The workflow must never invoke a profile/image builder.
+The workflow must never invoke a runtime/image builder.
 
-Daily nightly automation calls this same binary command path after the profile
-commands terminate and queues behind other nightly release work. The binary
+Daily nightly automation calls this same binary command path after the runtime
+command terminates and queues behind other nightly release work. The binary
 workflow always rebuilds and runs native install, functional, Winterfell,
 IronBank, and glow-up proof. If the version tag is already immutable, the
 correlated workflow runs with publication disabled; fresh Apple signing and
@@ -146,22 +146,22 @@ existing release. A new version identity takes the normal publish-and-activate
 path. Stable uses the same command explicitly and the same quality gates, and
 has no schedule.
 
-`release-nightly.yaml` owns only sequencing: selected profile commands run with
-`max-parallel: 1`, each waits for its exact run, and the binary command runs
-after the profile matrix terminates even if a profile failed. The scheduler's
+`release-nightly.yaml` owns only sequencing: the runtime command runs and
+waits for its exact run, and the binary command runs after it terminates even
+if the runtime release failed. The scheduler's
 `capsem-nightly-release-scheduler` lock prevents overlapping orchestrators; it
 does not replace the downstream workflows' shared
 `capsem-release-nightly` transaction lock.
 
-## Dependent profile then binary release
+## Dependent runtime then binary release
 
-When a profile requires new Capsem code:
+When the runtime requires new Capsem code:
 
-1. run `just release-profile <channel> <profile> <source-commit>`;
+1. run `just release-assets <channel> <source-commit>`;
 2. publish the immutable assets once and withhold the incompatible public
    channel;
 3. run `just release-binaries <channel> <source-commit>`;
-4. resolve the already-built staged profile by digest;
+4. resolve the already-built staged runtime by digest;
 5. run the full functional, native install, and glow-up proof over the
    completed pairing;
 6. activate the channel only after success.

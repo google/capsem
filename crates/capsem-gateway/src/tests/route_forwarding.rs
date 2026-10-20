@@ -1,5 +1,41 @@
 use super::*;
 
+#[tokio::test]
+async fn connection_routes_require_gateway_auth_before_service_forwarding() {
+    let (_, state) = health_app("/tmp/capsem-credential-route-missing-service.sock");
+    let app = service_proxy_routes()
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            auth::auth_middleware,
+        ))
+        .with_state(state);
+    for (method, path) in [
+        ("GET", "/connections"),
+        ("POST", "/connections/google/authorize"),
+        ("GET", "/connections/authorizations/transaction"),
+        ("DELETE", "/connections/authorizations/transaction"),
+        ("GET", "/connections/connection"),
+        ("DELETE", "/connections/connection"),
+        ("GET", "/vms/session/credential-grants"),
+        ("POST", "/vms/session/credential-grants"),
+        ("DELETE", "/vms/session/credential-grants/grant"),
+    ] {
+        for token in [None, Some("Bearer wrong"), Some("Bearer test")] {
+            let mut request = http::Request::builder().method(method).uri(path);
+            if let Some(token) = token {
+                request = request.header("authorization", token);
+            }
+            let response = app.clone().oneshot(request.body(Body::empty()).unwrap()).await.unwrap();
+            let expected = if token == Some("Bearer test") {
+                http::StatusCode::BAD_GATEWAY
+            } else {
+                http::StatusCode::UNAUTHORIZED
+            };
+            assert_eq!(response.status(), expected, "{method} {path}");
+        }
+    }
+}
+
 fn service_proxy_app(uds_path: &str) -> axum::Router {
     let state = Arc::new(AppState {
         token: "test".into(),
@@ -28,30 +64,13 @@ async fn gateway_unknown_paths_are_not_forwarded_to_service() {
     assert_eq!(resp.status(), http::StatusCode::NOT_FOUND);
 }
 
+/// Retired MCP server mutation routes never reach the service.
 #[tokio::test]
-async fn gateway_profile_assets_edit_is_not_forwarded() {
-    let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
-    let resp = app
-        .oneshot(
-            http::Request::builder()
-                .method("PATCH")
-                .uri("/profiles/code/assets/edit")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), http::StatusCode::NOT_FOUND);
-}
-
-#[tokio::test]
-async fn gateway_profile_lifecycle_writes_are_not_forwarded() {
+async fn gateway_retired_mcp_mutation_routes_are_not_forwarded() {
     let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
     for (method, uri) in [
-        ("POST", "/profiles/create"),
-        ("PATCH", "/profiles/code/edit"),
-        ("DELETE", "/profiles/code/delete"),
-        ("POST", "/profiles/code/clone"),
+        ("PUT", "/mcp/servers/local/edit"),
+        ("DELETE", "/mcp/servers/local/delete"),
     ] {
         let resp = app
             .clone()
@@ -64,7 +83,12 @@ async fn gateway_profile_lifecycle_writes_are_not_forwarded() {
             )
             .await
             .unwrap();
-        assert_eq!(resp.status(), http::StatusCode::NOT_FOUND, "{method} {uri}");
+        assert_ne!(
+            resp.status(),
+            http::StatusCode::BAD_GATEWAY,
+            "{method} {uri} reached the proxy"
+        );
+        assert!(resp.status().is_client_error(), "{method} {uri}: {}", resp.status());
     }
 }
 
@@ -166,15 +190,12 @@ async fn gateway_security_routes_are_explicitly_forwarded() {
         ("GET", "/enforcement/status"),
         ("GET", "/detection/latest"),
         ("GET", "/detection/status"),
-        ("GET", "/profiles/list"),
-        ("GET", "/profiles/status"),
         ("GET", "/update/status"),
         ("POST", "/update/check"),
         ("POST", "/update/apply"),
-        ("POST", "/profiles/reload"),
-        ("GET", "/profiles/code/info"),
-        ("GET", "/profiles/code/obom"),
-        ("POST", "/profiles/code/validate"),
+        ("GET", "/images"),
+        ("GET", "/images?refresh=true"),
+        ("POST", "/images/pull"),
         ("POST", "/vms/create"),
         ("GET", "/networks"),
         ("POST", "/networks"),
@@ -207,46 +228,25 @@ async fn gateway_security_routes_are_explicitly_forwarded() {
         ("GET", "/vms/test-vm/save/status"),
         ("GET", "/vms/test-vm/fork/status"),
         ("POST", "/vms/test-vm/fork"),
-        ("POST", "/profiles/code/enforcement/evaluate"),
-        ("GET", "/profiles/code/enforcement/info"),
-        ("PUT", "/profiles/code/enforcement/rules/eicar_block/edit"),
-        ("DELETE", "/profiles/code/enforcement/rules/eicar_block/delete"),
-        ("POST", "/profiles/code/enforcement/reload"),
-        ("GET", "/profiles/code/enforcement/rules/list"),
-        ("POST", "/profiles/code/detection/evaluate"),
-        ("GET", "/profiles/code/detection/info"),
-        ("PUT", "/profiles/code/detection/rules/eicar_detect/edit"),
-        ("DELETE", "/profiles/code/detection/rules/eicar_detect/delete"),
-        ("POST", "/profiles/code/detection/reload"),
-        ("GET", "/profiles/code/detection/rules/list"),
-        ("GET", "/profiles/code/assets/status"),
-        ("GET", "/profiles/code/assets/info"),
-        ("POST", "/profiles/code/assets/ensure"),
-        ("GET", "/profiles/code/skills/info"),
-        ("GET", "/profiles/code/skills/list"),
-        ("POST", "/profiles/code/skills/add"),
-        ("PATCH", "/profiles/code/skills/build/edit"),
-        ("DELETE", "/profiles/code/skills/build/delete"),
-        ("GET", "/profiles/code/plugins/list"),
-        ("GET", "/profiles/code/plugins/info"),
-        ("GET", "/profiles/code/plugins/dummy_pre_eicar/info"),
-        ("PATCH", "/profiles/code/plugins/dummy_pre_eicar/edit"),
-        ("GET", "/profiles/code/plugins/credential_broker/credentials/info"),
-        ("POST", "/profiles/code/plugins/credential_broker/credentials/reload"),
-        ("GET", "/profiles/code/mcp/info"),
-        ("GET", "/profiles/code/mcp/servers/list"),
-        ("GET", "/profiles/code/mcp/default/info"),
-        ("PATCH", "/profiles/code/mcp/default/edit"),
-        ("PUT", "/profiles/code/mcp/servers/local/edit"),
-        ("DELETE", "/profiles/code/mcp/servers/local/delete"),
-        ("GET", "/profiles/code/mcp/servers/local/tools/list"),
-        ("POST", "/profiles/code/mcp/servers/local/refresh"),
-        ("PATCH", "/profiles/code/mcp/servers/local/tools/echo/edit"),
-        ("POST", "/profiles/code/mcp/servers/local/tools/echo/call"),
+        ("GET", "/assets/status"),
+        ("POST", "/assets/ensure"),
+        ("GET", "/plugins/list"),
+        ("POST", "/credentials/inject"),
+        ("GET", "/plugins/dummy_pre_eicar/info"),
+        ("PATCH", "/plugins/dummy_pre_eicar/edit"),
+        ("GET", "/plugins/credential_broker/credentials/info"),
+        ("POST", "/plugins/credential_broker/credentials/reload"),
+        ("GET", "/mcp/info"),
+        ("GET", "/mcp/servers/list"),
+        ("GET", "/mcp/default/info"),
+        ("PATCH", "/mcp/default/edit"),
+        ("GET", "/mcp/servers/local/tools/list"),
+        ("POST", "/mcp/servers/local/refresh"),
+        ("PATCH", "/mcp/servers/local/tools/echo/edit"),
+        ("POST", "/mcp/servers/local/tools/echo/call"),
         ("PUT", "/corp/edit"),
         ("GET", "/settings/info"),
         ("PATCH", "/settings/edit"),
-        ("POST", "/profiles/code/reload"),
         ("GET", "/corp/info"),
         ("POST", "/corp/validate"),
         ("POST", "/corp/reload"),
@@ -264,6 +264,87 @@ async fn gateway_security_routes_are_explicitly_forwarded() {
             .unwrap();
         assert_eq!(resp.status(), http::StatusCode::BAD_GATEWAY, "{method} {uri}");
     }
+}
+
+#[tokio::test]
+async fn credential_injection_forwards_exact_authenticated_material_once() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let root = tempfile::tempdir().unwrap();
+    let socket = root.path().join("credential.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let received = calls.clone();
+    let body = r#"{"provider":"google","value":"fixture-secret","storage":"memory"}"#;
+    let service = axum::Router::new().route(
+        "/credentials/inject",
+        axum::routing::post(move |request: http::Request<Body>| {
+            let received = received.clone();
+            async move {
+                assert!(!request.headers().contains_key("authorization"));
+                assert_eq!(axum::body::to_bytes(request.into_body(), 1024).await.unwrap(), body);
+                received.fetch_add(1, Ordering::SeqCst);
+                (
+                    http::StatusCode::SERVICE_UNAVAILABLE,
+                    "{\"error\":\"owner unavailable\"}",
+                )
+            }
+        }),
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, service).await.unwrap() });
+    let (_, state) = health_app(socket.to_str().unwrap());
+    let app = service_proxy_routes()
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            auth::auth_middleware,
+        ))
+        .with_state(state);
+    let denied = app
+        .clone()
+        .oneshot(
+            http::Request::builder()
+                .method("POST")
+                .uri("/credentials/inject")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), http::StatusCode::UNAUTHORIZED);
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let response = app
+        .clone()
+        .oneshot(
+            http::Request::builder()
+                .method("POST")
+                .uri("/credentials/inject")
+                .header("authorization", "Bearer test")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), http::StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        axum::body::to_bytes(response.into_body(), 1024).await.unwrap(),
+        "{\"error\":\"owner unavailable\"}"
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    let wrong_method = app
+        .oneshot(
+            http::Request::builder()
+                .method("GET")
+                .uri("/credentials/inject")
+                .header("authorization", "Bearer test")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(wrong_method.status(), http::StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    server.abort();
+    let _ = server.await;
 }
 
 #[tokio::test]
@@ -316,31 +397,6 @@ async fn gateway_does_not_forward_retired_plugin_authoring_routes() {
         ("POST", "/plugins/test-vm/dummy_pre_eicar"),
         ("GET", "/plugins/global/dummy_pre_eicar"),
         ("POST", "/plugins/global/dummy_pre_eicar"),
-    ] {
-        let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
-        let resp = app
-            .oneshot(
-                http::Request::builder()
-                    .method(method)
-                    .uri(uri)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), http::StatusCode::NOT_FOUND, "{method} {uri}");
-    }
-}
-
-#[tokio::test]
-async fn gateway_does_not_forward_retired_profile_credential_routes() {
-    for (method, uri) in [
-        ("GET", "/profiles/code/credentials/info"),
-        ("GET", "/profiles/code/credentials/status"),
-        ("GET", "/profiles/code/credentials/list"),
-        ("POST", "/profiles/code/credentials/reload"),
-        ("GET", "/profiles/code/credentials/openai/info"),
-        ("DELETE", "/profiles/code/credentials/openai/delete"),
     ] {
         let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
         let resp = app
@@ -419,24 +475,6 @@ async fn gateway_does_not_forward_retired_corp_config_route() {
         .await
         .unwrap();
     assert_eq!(resp.status(), http::StatusCode::NOT_FOUND);
-}
-
-#[tokio::test]
-async fn gateway_does_not_forward_retired_global_asset_routes() {
-    for (method, uri) in [("GET", "/assets/status"), ("POST", "/assets/ensure")] {
-        let app = service_proxy_app("/tmp/capsem-gateway-must-not-connect.sock");
-        let resp = app
-            .oneshot(
-                http::Request::builder()
-                    .method(method)
-                    .uri(uri)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), http::StatusCode::NOT_FOUND, "{method} {uri}");
-    }
 }
 
 #[tokio::test]

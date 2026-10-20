@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import io
+import json
 import math
 from collections.abc import Mapping, Sequence
+from contextlib import suppress
 from enum import StrEnum
 from typing import Self
 from urllib.parse import quote, urlencode, urlsplit
@@ -13,6 +15,9 @@ import aiohttp
 from pydantic import BaseModel, TypeAdapter
 from yarl import URL
 
+from .models.credential_error_code import CredentialErrorCode
+from .models.error_code import ErrorCode
+from .models.error_response import ErrorResponse
 from .models.model_base import JsonValue
 
 QueryValue = str | int | bool | Sequence[str | int | bool] | None
@@ -31,14 +36,43 @@ class MediaType(StrEnum):
     GZIP = "application/gzip"
 
 
-class HttpError(Exception):
+class CapsemError(Exception):
+    """Base exception for Capsem SDK errors."""
+
+
+class HttpError(CapsemError):
     """The gateway returned an unsuccessful HTTP status."""
+
+    status: int
+    body: str
+    response: ErrorResponse | None
+    code: ErrorCode | None
 
     def __init__(self, status: int, body: str) -> None:
         self.status = status
         self.body = body
+        self.response = None
+        with suppress(ValueError):
+            self.response = ErrorResponse.model_validate_json(body)
+        self.code = self.response.code if self.response is not None else None
         super().__init__(f"HTTP {status}: {body}")
 
+    @property
+    def credential_code(self) -> CredentialErrorCode | None:
+        """Known credential refusal code; future/non-JSON errors remain HTTP errors."""
+        try:
+            envelope = json.loads(self.body)
+            return CredentialErrorCode(envelope.get("code")) if isinstance(envelope, dict) else None
+        except (ValueError, TypeError):
+            return None
+
+    def __reduce__(self) -> tuple[type[Self], tuple[object, ...], dict[str, object]]:
+        return (type(self), (self.status, self.body), self.__dict__.copy())
+
+    def __setstate__(self, state: dict[str, object] | None, /) -> None:
+        if state is not None:
+            self.__dict__.update(state)
+        self.args = (f"HTTP {self.status}: {self.body}",)
 
 def _query_value(value: str | int | bool) -> str:
     return str(value).lower() if isinstance(value, bool) else str(value)
@@ -65,6 +99,9 @@ class Transport:
     def timeout(self) -> float:
         """The default per-request deadline, in seconds."""
         return self._timeout
+
+    def __getstate__(self) -> dict[str, object]:
+        return {**self.__dict__, "_session": None}
 
     async def __aenter__(self) -> Self:
         return self

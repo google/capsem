@@ -13,7 +13,6 @@ from typing import Any
 
 import blake3
 
-PROFILE = "code"
 CREDENTIAL_REF_PREFIX = "credential:blake3:"
 CREDENTIAL_REF_DOMAIN = b"capsem.credential.v1"
 
@@ -63,7 +62,7 @@ def test_credential_broker_retry_loads_store_once_and_hot_reads_are_memory_only(
         raw_credential=raw_credential,
     )
 
-    before = client.get(f"/profiles/{PROFILE}/plugins/credential_broker/credentials/info")
+    before = client.get("/plugins/credential_broker/credentials/info")
     assert before["store"]["backend"] == "disk_override"
     assert before["store"]["ready"] is True
     assert before["store"]["status"] == "ready"
@@ -82,13 +81,13 @@ def test_credential_broker_retry_loads_store_once_and_hot_reads_are_memory_only(
             "status": "ready",
             "last_error": None,
         }
-        hot_detail = client.get(f"/profiles/{PROFILE}/plugins/credential_broker/credentials/info")
+        hot_detail = client.get("/plugins/credential_broker/credentials/info")
         assert hot_detail["store"]["last_hydrated_unix_ms"] == startup_hydrated_at
         assert hot_detail["store"]["cached_count"] == 0
         assert credential_ref not in json.dumps(hot_detail)
 
     reloaded = client.post(
-        f"/profiles/{PROFILE}/plugins/credential_broker/credentials/reload",
+        "/plugins/credential_broker/credentials/reload",
         {},
     )
     assert reloaded["store"]["backend"] == "disk_override"
@@ -104,7 +103,7 @@ def test_credential_broker_retry_loads_store_once_and_hot_reads_are_memory_only(
     assert credential_ref not in json.dumps(reloaded)
 
     for _ in range(3):
-        detail = client.get(f"/profiles/{PROFILE}/plugins/credential_broker/credentials/info")
+        detail = client.get("/plugins/credential_broker/credentials/info")
         assert detail["store"]["cached_count"] == 1
         assert detail["store"]["last_hydrated_count"] == 1
         assert detail["store"]["last_hydrated_unix_ms"] == hydrated_at

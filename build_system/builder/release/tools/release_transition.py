@@ -67,7 +67,9 @@ def _matches(row: Mapping[str, object], source: str, digest: str) -> bool:
 def build_transition_verdict(
     rows: Sequence[Mapping[str, object]],
     *,
-    kind: str, result: str, source: str,
+    kind: str,
+    result: str,
+    source: str,
     candidate_manifest_sha256: str,
     previous_manifest_sha256: str | None = None,
 ) -> dict[str, object]:
@@ -136,7 +138,7 @@ def build_transition_verdict(
             raise TransitionEvidenceError("candidate rejection event has no causal error")
         required = {
             "tampered_artifact": ("mismatch", "failed size or digest verification"),
-            "incompatible_profile": ("requires Capsem 9999.0.0 or newer",),
+            "incompatible_runtime": ("requires Capsem 9999.0.0 or newer",),
         }.get(kind, ())
         if required and not any(cause.lower() in error.lower() for cause in required):
             raise TransitionEvidenceError(

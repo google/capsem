@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 import hashlib
 import importlib.util
 import json
@@ -27,8 +26,7 @@ from capsem_builder.release.tools import (
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 LOCAL_GLOWUP_PATH = Path(local_release_glowup.__file__)
 INSTALLED_PROBE_PATH = (
-    PROJECT_ROOT
-    / "build_system/builder/release/tools/release_installed_probe.py"
+    PROJECT_ROOT / "build_system/builder/release/tools/release_installed_probe.py"
 )
 MARKETING_SURFACE_PATH = Path(marketing_install_surface.__file__)
 AUTOMATIC_UPDATE_POLL_CLEANUP = [
@@ -110,52 +108,43 @@ def _manifest(artifact) -> dict[str, object]:
                 "status": "current",
             }
         ],
-        "profiles": {"work": {}},
+        "runtime": {"revision": "1.5.100-0123456789ab", "architectures": []},
     }
 
 
 def test_tamper_candidate_targets_the_installed_architecture() -> None:
     module = _load_module()
     manifest = {
-        "profiles": {
-            "code": {
-                "architectures": [
-                    {
-                        "architecture": "arm64",
-                        "images": [
-                            {
-                                "status": "current",
-                                "digest": {
-                                    "sha256": "a" * 64,
-                                    "blake3": "b" * 64,
-                                },
-                            }
-                        ],
-                    },
-                    {
-                        "architecture": "x86_64",
-                        "images": [
-                            {
-                                "status": "current",
-                                "digest": {
-                                    "sha256": "c" * 64,
-                                    "blake3": "d" * 64,
-                                },
-                            }
-                        ],
-                    },
-                ]
-            }
+        "runtime": {
+            "architectures": [
+                {
+                    "architecture": "arm64",
+                    "images": [
+                        {
+                            "name": "rootfs.squashfs",
+                            "status": "current",
+                            "digest": {"sha256": "a" * 64, "blake3": "b" * 64},
+                        }
+                    ],
+                },
+                {
+                    "architecture": "x86_64",
+                    "images": [
+                        {
+                            "name": "rootfs.squashfs",
+                            "status": "current",
+                            "digest": {"sha256": "c" * 64, "blake3": "d" * 64},
+                        }
+                    ],
+                },
+            ]
         }
     }
 
-    module.tamper_profile_artifact_digest(
-        manifest,
-        profile_ids=("code",),
-        architecture="x86_64",
-    )
+    tampered = module.tamper_runtime_artifact_digest(manifest, architecture="x86_64")
 
-    architectures = cast(list[dict[str, Any]], manifest["profiles"]["code"]["architectures"])
+    assert tampered == "rootfs.squashfs"
+    architectures = cast(list[dict[str, Any]], manifest["runtime"]["architectures"])
     assert architectures[0]["images"][0]["digest"] == {
         "sha256": "a" * 64,
         "blake3": "b" * 64,
@@ -169,37 +158,28 @@ def test_tamper_candidate_targets_the_installed_architecture() -> None:
 def test_tamper_candidate_refuses_non_consumed_evidence() -> None:
     module = _load_module()
     manifest = {
-        "profiles": {
-            "code": {
-                "architectures": [
-                    {
-                        "architecture": "x86_64",
-                        "evidence": [
-                            {
-                                "status": "current",
-                                "digest": {
-                                    "sha256": "a" * 64,
-                                    "blake3": "b" * 64,
-                                },
-                            }
-                        ],
-                    }
-                ]
-            }
+        "runtime": {
+            "architectures": [
+                {
+                    "architecture": "x86_64",
+                    "evidence": [
+                        {
+                            "status": "current",
+                            "digest": {"sha256": "a" * 64, "blake3": "b" * 64},
+                        }
+                    ],
+                }
+            ]
         }
     }
 
     with pytest.raises(
         module.GlowupContractError,
-        match="no consumed current profile artifact",
+        match="no consumed current runtime image",
     ):
-        module.tamper_profile_artifact_digest(
-            manifest,
-            profile_ids=("code",),
-            architecture="x86_64",
-        )
+        module.tamper_runtime_artifact_digest(manifest, architecture="x86_64")
 
-    assert manifest["profiles"]["code"]["architectures"][0]["evidence"][0]["digest"] == {
+    assert manifest["runtime"]["architectures"][0]["evidence"][0]["digest"] == {
         "sha256": "a" * 64,
         "blake3": "b" * 64,
     }
@@ -212,14 +192,14 @@ def _pairing(
     manifest_sha256: str,
     package_version: str,
     package_sha256: str,
-    profiles_sha256: str,
+    runtime_sha256: str,
 ):
     return module.PairingIdentity(
         channel=channel,
         manifest_sha256=manifest_sha256,
         package_version=package_version,
         package_sha256=package_sha256,
-        profiles_sha256=profiles_sha256,
+        runtime_sha256=runtime_sha256,
     )
 
 
@@ -258,7 +238,7 @@ def _transition(
     before,
     after,
     result="activated",
-    staged_profiles_sha256=None,
+    staged_runtime_sha256=None,
 ):
     return module.build_transition_evidence(
         kind=kind,
@@ -267,7 +247,7 @@ def _transition(
         result=result,
         doctor_passed=True,
         winterfell_passed=True,
-        staged_profiles_sha256=staged_profiles_sha256,
+        staged_runtime_sha256=staged_runtime_sha256,
         preserved_previous=result == "rejected",
     )
 
@@ -319,7 +299,7 @@ def test_existing_x86_64_manifest_package_resolves_without_mutating_authority(
                 "status": "current",
             }
         ],
-        "profiles": {"code": {}},
+        "runtime": {"revision": "1.5.100-000000000001", "architectures": []},
     }
     contents = json.dumps(document, sort_keys=True).encode()
 
@@ -427,8 +407,6 @@ def test_normalized_installed_evidence_is_platform_independent() -> None:
         "running": True,
         "service": "ok",
         "gateway": "ok",
-        "profiles_ready": 3,
-        "profiles_total": 3,
     }
 
     assert module.validate_installed_evidence(evidence) == evidence
@@ -440,8 +418,6 @@ def test_normalized_installed_evidence_is_platform_independent() -> None:
         ("running", False),
         ("service", "failed"),
         ("gateway", "failed"),
-        ("profiles_ready", 2),
-        ("profiles_total", 0),
     ):
         invalid = dict(evidence)
         invalid[field] = bad_value
@@ -462,8 +438,6 @@ def test_shared_report_has_one_schema_for_linux_and_macos(tmp_path: Path) -> Non
         "running": True,
         "service": "ok",
         "gateway": "ok",
-        "profiles_ready": 3,
-        "profiles_total": 3,
     }
 
     reports = [
@@ -497,7 +471,7 @@ def test_pairing_identity_is_derived_from_exact_manifest_and_package(
     module = _load_module()
     artifact = _artifact(tmp_path, module)
     manifest = _manifest(artifact)
-    manifest["profiles"] = {"code": {"revision": "profiles-1", "images": [{"digest": "a" * 64}]}}
+    manifest["runtime"] = {"revision": "1.5.100-0123456789ab", "images": [{"digest": "a" * 64}]}
     contents = json.dumps(manifest, sort_keys=True).encode()
 
     pairing = module.PairingIdentity.from_manifest_bytes(
@@ -510,10 +484,10 @@ def test_pairing_identity_is_derived_from_exact_manifest_and_package(
     assert pairing.package_sha256 == artifact.sha256
     assert pairing.manifest_sha256 == hashlib.sha256(contents).hexdigest()
     assert (
-        pairing.profiles_sha256
+        pairing.runtime_sha256
         == hashlib.sha256(
             json.dumps(
-                manifest["profiles"],
+                manifest["runtime"],
                 sort_keys=True,
                 separators=(",", ":"),
             ).encode()
@@ -535,7 +509,7 @@ def test_transition_sequence_proves_each_required_installed_state() -> None:
         manifest_sha256=zero,
         package_version="1.0.0",
         package_sha256=zero,
-        profiles_sha256=zero,
+        runtime_sha256=zero,
     )
     binary = _pairing(
         module,
@@ -543,15 +517,15 @@ def test_transition_sequence_proves_each_required_installed_state() -> None:
         manifest_sha256=one,
         package_version="1.1.0",
         package_sha256=one,
-        profiles_sha256=zero,
+        runtime_sha256=zero,
     )
-    profile = _pairing(
+    runtime = _pairing(
         module,
         channel="stable",
         manifest_sha256=two,
         package_version="1.1.0",
         package_sha256=one,
-        profiles_sha256=two,
+        runtime_sha256=two,
     )
     combined = _pairing(
         module,
@@ -559,7 +533,7 @@ def test_transition_sequence_proves_each_required_installed_state() -> None:
         manifest_sha256=three,
         package_version="1.2.0",
         package_sha256=three,
-        profiles_sha256=three,
+        runtime_sha256=three,
     )
     nightly = _pairing(
         module,
@@ -567,7 +541,7 @@ def test_transition_sequence_proves_each_required_installed_state() -> None:
         manifest_sha256=four,
         package_version="1.3.0-nightly.1",
         package_sha256=four,
-        profiles_sha256=five,
+        runtime_sha256=five,
     )
     transitions = [
         _transition(
@@ -584,16 +558,16 @@ def test_transition_sequence_proves_each_required_installed_state() -> None:
         ),
         _transition(
             module,
-            module.TransitionKind.PROFILE_ONLY,
+            module.TransitionKind.RUNTIME_ONLY,
             before=binary,
-            after=profile,
+            after=runtime,
         ),
         _transition(
             module,
-            module.TransitionKind.PROFILE_THEN_BINARY,
-            before=profile,
+            module.TransitionKind.RUNTIME_THEN_BINARY,
+            before=runtime,
             after=combined,
-            staged_profiles_sha256=combined.profiles_sha256,
+            staged_runtime_sha256=combined.runtime_sha256,
         ),
         _transition(
             module,
@@ -613,7 +587,7 @@ def test_transition_sequence_proves_each_required_installed_state() -> None:
     report = module.validate_transition_sequence(transitions)
 
     assert [row["kind"] for row in report] == [kind.value for kind in module.TransitionKind]
-    assert report[3]["staged_profiles_sha256"] == combined.profiles_sha256
+    assert report[3]["staged_runtime_sha256"] == combined.runtime_sha256
     assert report[-1]["preserved_previous"] is True
     assert all(row["probes"] == {"doctor": True, "winterfell": True} for row in report)
 
@@ -629,7 +603,7 @@ def test_lane_scoped_transition_report_requires_declared_exact_order(
         manifest_sha256="0" * 64,
         package_version="1.5.99",
         package_sha256="0" * 64,
-        profiles_sha256="2" * 64,
+        runtime_sha256="2" * 64,
     )
     candidate = _pairing(
         module,
@@ -637,7 +611,7 @@ def test_lane_scoped_transition_report_requires_declared_exact_order(
         manifest_sha256="1" * 64,
         package_version=artifact.version,
         package_sha256=artifact.sha256,
-        profiles_sha256="2" * 64,
+        runtime_sha256="2" * 64,
     )
     fresh = _transition(
         module,
@@ -661,8 +635,6 @@ def test_lane_scoped_transition_report_requires_declared_exact_order(
         "running": True,
         "service": "ok",
         "gateway": "ok",
-        "profiles_ready": 1,
-        "profiles_total": 1,
     }
 
     report = module.build_report(
@@ -703,11 +675,11 @@ def test_lane_scoped_transition_report_requires_declared_exact_order(
         (
             "binary_only",
             {},
-            {"profiles_sha256": "2" * 64},
-            "profiles",
+            {"runtime_sha256": "2" * 64},
+            "runtime",
         ),
         (
-            "profile_only",
+            "runtime_only",
             {},
             {"package_sha256": "2" * 64},
             "package",
@@ -732,7 +704,7 @@ def test_transition_contract_rejects_metadata_only_or_cross_family_changes(
         "manifest_sha256": "0" * 64,
         "package_version": "1.0.0",
         "package_sha256": "0" * 64,
-        "profiles_sha256": "0" * 64,
+        "runtime_sha256": "0" * 64,
         **before_updates,
     }
     after_values = {
@@ -740,7 +712,7 @@ def test_transition_contract_rejects_metadata_only_or_cross_family_changes(
         "manifest_sha256": "1" * 64,
         "package_version": "1.1.0" if kind == "binary_only" else "1.0.0",
         "package_sha256": "1" * 64 if kind == "binary_only" else "0" * 64,
-        "profiles_sha256": "1" * 64 if kind == "profile_only" else "0" * 64,
+        "runtime_sha256": "1" * 64 if kind == "runtime_only" else "0" * 64,
         **after_updates,
     }
 
@@ -753,7 +725,7 @@ def test_transition_contract_rejects_metadata_only_or_cross_family_changes(
         )
 
 
-def test_profile_then_binary_requires_exact_staged_profile_reuse() -> None:
+def test_runtime_then_binary_requires_exact_staged_runtime_reuse() -> None:
     module = _load_module()
     before = _pairing(
         module,
@@ -761,7 +733,7 @@ def test_profile_then_binary_requires_exact_staged_profile_reuse() -> None:
         manifest_sha256="0" * 64,
         package_version="1.0.0",
         package_sha256="0" * 64,
-        profiles_sha256="0" * 64,
+        runtime_sha256="0" * 64,
     )
     after = _pairing(
         module,
@@ -769,16 +741,16 @@ def test_profile_then_binary_requires_exact_staged_profile_reuse() -> None:
         manifest_sha256="1" * 64,
         package_version="1.1.0",
         package_sha256="1" * 64,
-        profiles_sha256="1" * 64,
+        runtime_sha256="1" * 64,
     )
 
-    with pytest.raises(module.GlowupContractError, match="staged profile"):
+    with pytest.raises(module.GlowupContractError, match="staged runtime"):
         _transition(
             module,
-            module.TransitionKind.PROFILE_THEN_BINARY,
+            module.TransitionKind.RUNTIME_THEN_BINARY,
             before=before,
             after=after,
-            staged_profiles_sha256="2" * 64,
+            staged_runtime_sha256="2" * 64,
         )
 
 
@@ -790,7 +762,7 @@ def test_tamper_rejection_requires_working_state_to_remain_exact() -> None:
         manifest_sha256="0" * 64,
         package_version="1.0.0",
         package_sha256="0" * 64,
-        profiles_sha256="0" * 64,
+        runtime_sha256="0" * 64,
     )
     changed = _pairing(
         module,
@@ -798,7 +770,7 @@ def test_tamper_rejection_requires_working_state_to_remain_exact() -> None:
         manifest_sha256="1" * 64,
         package_version="1.0.0",
         package_sha256="0" * 64,
-        profiles_sha256="0" * 64,
+        runtime_sha256="0" * 64,
     )
 
     with pytest.raises(module.GlowupContractError, match="previous working"):
@@ -829,7 +801,7 @@ def test_transition_sequence_rejects_missing_duplicate_or_reordered_rows() -> No
         manifest_sha256="0" * 64,
         package_version="1.0.0",
         package_sha256="0" * 64,
-        profiles_sha256="0" * 64,
+        runtime_sha256="0" * 64,
     )
     fresh = _transition(
         module,
@@ -843,6 +815,22 @@ def test_transition_sequence_rejects_missing_duplicate_or_reordered_rows() -> No
             module.validate_transition_sequence(invalid)
 
 
+def _next_artifact(tmp_path: Path, module, payload: bytes = b"exact candidate package v2"):
+    path = tmp_path / "after" / "Capsem-1.5.101.pkg"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(payload)
+    return module.ArtifactIdentity.from_path(
+        path,
+        version="1.5.101",
+        platform="macos",
+        architecture="arm64",
+    )
+
+
+def _runtime(revision: str) -> dict[str, object]:
+    return {"revision": revision, "status": "current", "architectures": []}
+
+
 def test_exact_binary_pairing_uses_real_manifest_and_package_bytes(
     tmp_path: Path,
 ) -> None:
@@ -850,22 +838,13 @@ def test_exact_binary_pairing_uses_real_manifest_and_package_bytes(
     before_root = tmp_path / "before"
     before_root.mkdir()
     before_artifact = _artifact(before_root, module)
-    after_path = tmp_path / "after" / "Capsem-1.5.101.pkg"
-    after_path.parent.mkdir(parents=True)
-    after_path.write_bytes(b"exact candidate package v2")
-    after_artifact = module.ArtifactIdentity.from_path(
-        after_path,
-        version="1.5.101",
-        platform="macos",
-        architecture="arm64",
-    )
-    profiles = {"code": {"revision": "profiles-1"}}
+    after_artifact = _next_artifact(tmp_path, module)
     before_manifest = _manifest(before_artifact)
     before_manifest["channel"] = "stable"
-    before_manifest["profiles"] = profiles
+    before_manifest["runtime"] = _runtime("1.5.100-000000000001")
     after_manifest = _manifest(after_artifact)
     after_manifest["channel"] = "stable"
-    after_manifest["profiles"] = profiles
+    after_manifest["runtime"] = _runtime("1.5.100-000000000001")
     before_contents = json.dumps(before_manifest, sort_keys=True).encode()
     after_contents = json.dumps(after_manifest, sort_keys=True).encode()
     resolved_before = module.artifact_identity_from_manifest_package(
@@ -888,98 +867,88 @@ def test_exact_binary_pairing_uses_real_manifest_and_package_bytes(
 
     assert before.package_sha256 == before_artifact.sha256
     assert after.package_sha256 == after_artifact.sha256
-    assert before.profiles_sha256 == after.profiles_sha256
+    assert before.runtime_sha256 == after.runtime_sha256
+
+    after_manifest["runtime"] = _runtime("1.5.101-000000000002")
+    with pytest.raises(module.GlowupContractError, match="exact runtime"):
+        module.validate_pairing_inputs(
+            kind=module.TransitionKind.BINARY_ONLY,
+            channel="stable",
+            before_manifest_bytes=before_contents,
+            after_manifest_bytes=json.dumps(after_manifest, sort_keys=True).encode(),
+            before_artifact=resolved_before,
+            after_artifact=resolved_after,
+        )
 
 
-def test_exact_profile_pairing_allows_only_the_selected_profile_to_change(
+def test_exact_runtime_pairing_requires_the_runtime_to_change(
     tmp_path: Path,
 ) -> None:
     module = _load_module()
     artifact = _artifact(tmp_path, module)
     before_manifest = _manifest(artifact)
     before_manifest["channel"] = "nightly"
-    before_manifest["profiles"] = {
-        "code": {"revision": "code-1"},
-        "experimental": {"revision": "experimental-1"},
-    }
+    before_manifest["runtime"] = _runtime("1.5.100-000000000001")
     after_manifest = json.loads(json.dumps(before_manifest))
-    after_manifest["profiles"]["experimental"]["revision"] = "experimental-2"
+    after_manifest["runtime"]["revision"] = "1.5.100-000000000002"
 
-    module.validate_pairing_inputs(
-        kind=module.TransitionKind.PROFILE_ONLY,
+    before, after = module.validate_pairing_inputs(
+        kind=module.TransitionKind.RUNTIME_ONLY,
         channel="nightly",
         before_manifest_bytes=json.dumps(before_manifest, sort_keys=True).encode(),
         after_manifest_bytes=json.dumps(after_manifest, sort_keys=True).encode(),
         before_artifact=artifact,
         after_artifact=artifact,
-        changed_profiles=("experimental",),
+    )
+    assert before.runtime_sha256 != after.runtime_sha256
+
+    with pytest.raises(module.GlowupContractError, match="must change the runtime"):
+        module.validate_pairing_inputs(
+            kind=module.TransitionKind.RUNTIME_ONLY,
+            channel="nightly",
+            before_manifest_bytes=json.dumps(before_manifest, sort_keys=True).encode(),
+            after_manifest_bytes=json.dumps(before_manifest, sort_keys=True).encode(),
+            before_artifact=artifact,
+            after_artifact=artifact,
+        )
+
+
+def test_exact_runtime_pairing_allows_first_runtime_in_empty_channel(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    artifact = _artifact(tmp_path, module)
+    before_manifest = _manifest(artifact)
+    before_manifest["channel"] = "nightly"
+    before_manifest["runtime"] = None
+    after_manifest = json.loads(json.dumps(before_manifest))
+    after_manifest["runtime"] = _runtime("1.5.100-000000000001")
+
+    before, after = module.validate_pairing_inputs(
+        kind=module.TransitionKind.RUNTIME_ONLY,
+        channel="nightly",
+        before_manifest_bytes=json.dumps(before_manifest, sort_keys=True).encode(),
+        after_manifest_bytes=json.dumps(after_manifest, sort_keys=True).encode(),
+        before_artifact=artifact,
+        after_artifact=artifact,
     )
 
-    after_manifest["profiles"]["code"]["revision"] = "code-2"
-    with pytest.raises(module.GlowupContractError, match="unselected profile"):
+    assert before.package_sha256 == after.package_sha256
+    assert before.runtime_sha256 == hashlib.sha256(b"null").hexdigest()
+    assert before.runtime_sha256 != after.runtime_sha256
+
+    with pytest.raises(module.GlowupContractError, match="runtime must be an object"):
         module.validate_pairing_inputs(
-            kind=module.TransitionKind.PROFILE_ONLY,
+            kind=module.TransitionKind.BINARY_ONLY,
             channel="nightly",
             before_manifest_bytes=json.dumps(before_manifest, sort_keys=True).encode(),
             after_manifest_bytes=json.dumps(after_manifest, sort_keys=True).encode(),
             before_artifact=artifact,
             after_artifact=artifact,
-            changed_profiles=("experimental",),
         )
 
 
-def test_exact_profile_pairing_accepts_an_earlier_staged_profile_beside_the_selected_one(
-    tmp_path: Path,
-) -> None:
-    module = _load_module()
-    artifact = _artifact(tmp_path, module)
-    before_manifest = _manifest(artifact)
-    before_manifest["channel"] = "stable"
-    before_manifest["profiles"] = {
-        "code": {"revision": "0.6.5"},
-        "co-work": {"revision": "0.6.3"},
-    }
-    after_manifest = json.loads(json.dumps(before_manifest))
-    after_manifest["profiles"]["code"]["revision"] = "0.6.6"
-    after_manifest["profiles"]["co-work"]["revision"] = "0.6.4"
-
-    module.validate_pairing_inputs(
-        kind=module.TransitionKind.PROFILE_ONLY,
-        channel="stable",
-        before_manifest_bytes=json.dumps(before_manifest, sort_keys=True).encode(),
-        after_manifest_bytes=json.dumps(after_manifest, sort_keys=True).encode(),
-        before_artifact=artifact,
-        after_artifact=artifact,
-        changed_profiles=("co-work", "code"),
-    )
-
-
-def test_exact_profile_pairing_allows_first_profile_in_empty_channel(
-    tmp_path: Path,
-) -> None:
-    module = _load_module()
-    artifact = _artifact(tmp_path, module)
-    before_manifest = _manifest(artifact)
-    before_manifest["channel"] = "nightly"
-    before_manifest["profiles"] = {}
-    after_manifest = json.loads(json.dumps(before_manifest))
-    after_manifest["profiles"] = {"code": {"revision": "code-1"}}
-
-    before, after = module.validate_pairing_inputs(
-        kind=module.TransitionKind.PROFILE_ONLY,
-        channel="nightly",
-        before_manifest_bytes=json.dumps(before_manifest, sort_keys=True).encode(),
-        after_manifest_bytes=json.dumps(after_manifest, sort_keys=True).encode(),
-        before_artifact=artifact,
-        after_artifact=artifact,
-        changed_profiles=("code",),
-    )
-
-    assert before.package_sha256 == after.package_sha256
-    assert before.profiles_sha256 != after.profiles_sha256
-
-
-def test_exact_pairing_classifier_distinguishes_binary_and_staged_profile(
+def test_exact_pairing_classifier_distinguishes_binary_and_staged_runtime(
     tmp_path: Path,
 ) -> None:
     module = _load_module()
@@ -987,26 +956,15 @@ def test_exact_pairing_classifier_distinguishes_binary_and_staged_profile(
     before_root = tmp_path / "before"
     before_root.mkdir()
     before_artifact = _artifact(before_root, module)
-    after_path = tmp_path / "after" / "Capsem-1.5.101.pkg"
-    after_path.parent.mkdir(parents=True)
-    after_path.write_bytes(b"exact candidate package v2")
-    after_artifact = module.ArtifactIdentity.from_path(
-        after_path,
-        version="1.5.101",
-        platform="macos",
-        architecture="arm64",
-    )
+    after_artifact = _next_artifact(tmp_path, module)
     before_manifest = _manifest(before_artifact)
     before_manifest["channel"] = "nightly"
-    before_manifest["profiles"] = {
-        "code": {"revision": "code-1"},
-        "experimental": {"revision": "experimental-1"},
-    }
+    before_manifest["runtime"] = _runtime("1.5.100-000000000001")
     after_manifest = _manifest(after_artifact)
     after_manifest["channel"] = "nightly"
-    after_manifest["profiles"] = json.loads(json.dumps(before_manifest["profiles"]))
+    after_manifest["runtime"] = _runtime("1.5.100-000000000001")
 
-    kind, profile = classifier.classify_pairing_inputs(
+    kind = classifier.classify_pairing_inputs(
         channel="nightly",
         before_manifest_bytes=json.dumps(before_manifest).encode(),
         after_manifest_bytes=json.dumps(after_manifest).encode(),
@@ -1014,36 +972,19 @@ def test_exact_pairing_classifier_distinguishes_binary_and_staged_profile(
         after_artifact=after_artifact,
     )
     assert kind is classifier.TransitionKind.BINARY_ONLY
-    assert profile == ()
 
-    after_manifest["profiles"]["experimental"]["revision"] = "experimental-2"
-    kind, profile = classifier.classify_pairing_inputs(
+    after_manifest["runtime"]["revision"] = "1.5.101-000000000002"
+    kind = classifier.classify_pairing_inputs(
         channel="nightly",
         before_manifest_bytes=json.dumps(before_manifest).encode(),
         after_manifest_bytes=json.dumps(after_manifest).encode(),
         before_artifact=before_artifact,
         after_artifact=after_artifact,
     )
-    assert kind is classifier.TransitionKind.PROFILE_THEN_BINARY
-    assert profile == ("experimental",)
-
-    after_manifest["profiles"]["code"]["revision"] = "code-2"
-    kind, profiles = classifier.classify_pairing_inputs(
-        channel="nightly",
-        before_manifest_bytes=json.dumps(before_manifest).encode(),
-        after_manifest_bytes=json.dumps(after_manifest).encode(),
-        before_artifact=before_artifact,
-        after_artifact=after_artifact,
-    )
-    assert kind is classifier.TransitionKind.PROFILE_THEN_BINARY
-    assert profiles == ("code", "experimental")
+    assert kind is classifier.TransitionKind.RUNTIME_THEN_BINARY
 
 
-@pytest.mark.parametrize("selected_profile", ["code", "co-work"])
-def test_exact_pairing_classifier_recognizes_profile_only_update(
-    tmp_path: Path,
-    selected_profile: str,
-) -> None:
+def test_exact_pairing_classifier_recognizes_runtime_only_update(tmp_path: Path) -> None:
     module = _load_module()
     classifier = _load_first_release()
     before_artifact = _artifact(tmp_path, module)
@@ -1058,22 +999,18 @@ def test_exact_pairing_classifier_recognizes_profile_only_update(
     )
     before_manifest = _manifest(before_artifact)
     before_manifest["channel"] = "stable"
-    before_manifest["profiles"] = {
-        "code": {"revision": "0.6.1"},
-        "co-work": {"revision": "0.6.1"},
-    }
+    before_manifest["runtime"] = _runtime("1.5.100-000000000001")
     after_manifest = json.loads(json.dumps(before_manifest))
-    after_manifest["profiles"][selected_profile]["revision"] = "0.6.2"
+    after_manifest["runtime"]["revision"] = "1.5.100-000000000002"
 
-    kind, profiles = classifier.classify_pairing_inputs(
+    kind = classifier.classify_pairing_inputs(
         channel="stable",
         before_manifest_bytes=json.dumps(before_manifest).encode(),
         after_manifest_bytes=json.dumps(after_manifest).encode(),
         before_artifact=before_artifact,
         after_artifact=after_artifact,
     )
-    assert kind is classifier.TransitionKind.PROFILE_ONLY
-    assert profiles == (selected_profile,)
+    assert kind is classifier.TransitionKind.RUNTIME_ONLY
 
 
 def test_exact_pairing_classifier_anchors_nightly_on_verified_stable(
@@ -1084,26 +1021,15 @@ def test_exact_pairing_classifier_anchors_nightly_on_verified_stable(
     before_root = tmp_path / "before"
     before_root.mkdir()
     before_artifact = _artifact(before_root, module)
-    after_path = tmp_path / "after" / "Capsem-1.5.101.pkg"
-    after_path.parent.mkdir(parents=True)
-    after_path.write_bytes(b"exact nightly candidate")
-    after_artifact = module.ArtifactIdentity.from_path(
-        after_path,
-        version="1.5.101",
-        platform="macos",
-        architecture="arm64",
-    )
+    after_artifact = _next_artifact(tmp_path, module, b"exact nightly candidate")
     before_manifest = _manifest(before_artifact)
     before_manifest["channel"] = "stable"
-    before_manifest["profiles"] = {
-        "code": {"revision": "code-stable"},
-        "co-work": {"revision": "co-work-stable"},
-    }
+    before_manifest["runtime"] = _runtime("1.5.100-000000000001")
     after_manifest = _manifest(after_artifact)
     after_manifest["channel"] = "nightly"
-    after_manifest["profiles"] = json.loads(json.dumps(before_manifest["profiles"]))
+    after_manifest["runtime"] = _runtime("1.5.100-000000000001")
 
-    kind, profiles = classifier.classify_pairing_inputs(
+    kind = classifier.classify_pairing_inputs(
         channel="nightly",
         baseline_channel="stable",
         before_manifest_bytes=json.dumps(before_manifest).encode(),
@@ -1113,7 +1039,6 @@ def test_exact_pairing_classifier_anchors_nightly_on_verified_stable(
     )
 
     assert kind is classifier.TransitionKind.CHANNEL_SWITCH
-    assert profiles == ("co-work", "code")
 
     before_manifest["channel"] = "nightly"
     with pytest.raises(classifier.GlowupContractError, match="baseline channel"):
@@ -1130,54 +1055,15 @@ def test_exact_pairing_classifier_anchors_nightly_on_verified_stable(
 def test_only_cross_channel_pairing_requires_an_explicit_product_switch() -> None:
     module = _load_module()
 
-    assert module.explicit_channel_switch_args(
-        module.TransitionKind.CHANNEL_SWITCH, "nightly"
-    ) == ("update", "--yes", "--channel", "nightly")
-    assert module.explicit_channel_switch_args(
-        module.TransitionKind.BINARY_ONLY, "stable"
-    ) == ()
-
-
-def test_cross_channel_profile_release_stages_the_complete_target_but_owns_one_profile() -> None:
-    module = _load_local_glowup()
-
-    module.validate_selected_profile_scope(
-        transition=module.TransitionKind.CHANNEL_SWITCH,
-        selected_profile="code",
-        changed_profiles=("co-work", "code"),
+    assert module.explicit_channel_switch_args(module.TransitionKind.CHANNEL_SWITCH, "nightly") == (
+        "update",
+        "--yes",
+        "--channel",
+        "nightly",
     )
-    with pytest.raises(SystemExit, match="selected profile"):
-        module.validate_selected_profile_scope(
-            transition=module.TransitionKind.CHANNEL_SWITCH,
-            selected_profile="code",
-            changed_profiles=("co-work",),
-        )
-    with pytest.raises(SystemExit, match="manifest delta"):
-        module.validate_selected_profile_scope(
-            transition=module.TransitionKind.PROFILE_ONLY,
-            selected_profile="code",
-            changed_profiles=("co-work",),
-        )
+    assert module.explicit_channel_switch_args(module.TransitionKind.BINARY_ONLY, "stable") == ()
 
 
-def test_serial_profile_releases_stack_before_the_binary() -> None:
-    """RELEASE.md lets profile commands run one after another before the binary
-    release activates them. The 0.6.6 co-work release was refused because code
-    0.6.6, staged minutes earlier and still inert, made the delta two profiles.
-    The selected profile must be in the delta; an earlier staged release may be
-    beside it."""
-    module = _load_local_glowup()
-
-    module.validate_selected_profile_scope(
-        transition=module.TransitionKind.PROFILE_ONLY,
-        selected_profile="co-work",
-        changed_profiles=("co-work", "code"),
-    )
-    module.validate_selected_profile_scope(
-        transition=module.TransitionKind.PROFILE_THEN_BINARY,
-        selected_profile="co-work",
-        changed_profiles=("co-work", "code"),
-    )
 
 
 def test_exact_pairing_rejects_manifest_channel_or_package_mismatch(
@@ -1209,13 +1095,12 @@ def test_exact_pairing_rejects_manifest_channel_or_package_mismatch(
     )
     with pytest.raises(module.GlowupContractError, match="sha256"):
         module.validate_pairing_inputs(
-            kind=module.TransitionKind.PROFILE_ONLY,
+            kind=module.TransitionKind.RUNTIME_ONLY,
             channel="stable",
             before_manifest_bytes=contents,
             after_manifest_bytes=contents,
             before_artifact=mismatched,
             after_artifact=mismatched,
-            changed_profiles=("work",),
         )
 
 
@@ -1228,10 +1113,9 @@ def test_release_pairing_cli_is_all_or_nothing() -> None:
         before_manifest=None,
         after_manifest=None,
         before_package=None,
-        before_profile_inputs=None,
-        after_profile_inputs=None,
-        profile=None,
-        candidate_profile_publication=None,
+        before_release_inputs=None,
+        after_release_inputs=None,
+        candidate_runtime_publication=None,
         publication_base=None,
         input_deb=Path("candidate.deb"),
     )
@@ -1252,36 +1136,8 @@ def test_release_pairing_cli_is_all_or_nothing() -> None:
     cleared = SimpleNamespace(**vars(empty))
     cleared.release_channel = ""
     cleared.release_transition = ""
-    cleared.profile = ""
     cleared.publication_base = ""
     assert module.validate_exact_release_pairing(cleared) is None
-
-
-def test_local_channel_import_uses_the_typed_selected_revision_policy() -> None:
-    """Public legacy revisions are imported, never accepted for new authoring."""
-    tree = ast.parse(LOCAL_GLOWUP_PATH.read_text(encoding="utf-8"))
-    authoring_partials = [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and isinstance(node.func.value, ast.Name)
-        and node.func.value.id == "functools"
-        and node.func.attr == "partial"
-        and node.args
-        and isinstance(node.args[0], ast.Name)
-        and node.args[0].id == "author_native_candidate"
-    ]
-
-    assert len(authoring_partials) == 1
-    policy = next(
-        keyword.value
-        for keyword in authoring_partials[0].keywords
-        if keyword.arg == "profile_revision_policy"
-    )
-    assert isinstance(policy, ast.Attribute)
-    assert isinstance(policy.value, ast.Name)
-    assert (policy.value.id, policy.attr) == ("args", "profile_revision_policy")
 
 
 def test_local_glowup_exports_bounded_started_evidence_before_failure(
@@ -1304,14 +1160,10 @@ def test_local_glowup_exports_bounded_started_evidence_before_failure(
             str(tmp_path / "bin"),
             "--assets-dir",
             str(tmp_path / "assets"),
-            "--config-root",
-            str(tmp_path / "config"),
             "--work-dir",
             str(tmp_path / "work"),
             "--evidence-dir",
             str(evidence),
-            "--profile-revision-policy",
-            "selected-input",
         ],
     )
 
@@ -1355,78 +1207,76 @@ def test_exact_release_transport_changes_only_urls_and_reuses_exact_bytes(
         platform="macos",
         architecture="arm64",
     )
-    before_profile_url = "https://profiles.test/code-1/rootfs.erofs"
-    after_profile_url = "https://profiles.test/code-2/rootfs.erofs"
+    before_runtime_url = "https://runtime.test/1/rootfs.erofs"
+    after_runtime_url = "https://runtime.test/2/rootfs.erofs"
 
-    def authority(artifact, package_url: str, profile_url: str, revision: str):
+    def authority(artifact, package_url: str, runtime_url: str, revision: str):
         manifest = _manifest(artifact)
         manifest["channel"] = "nightly"
         manifest["packages"][0]["url"] = package_url
-        manifest["profiles"] = {
-            "code": {
-                "revision": revision,
-                "architectures": [
-                    {
-                        "architecture": "arm64",
-                        "images": [
-                            {
-                                "kind": "rootfs",
-                                "url": profile_url,
-                                "bytes": 13,
-                                "digest": {
-                                    "sha256": "a" * 64,
-                                    "blake3": "b" * 64,
-                                },
-                            }
-                        ],
-                    }
-                ],
-            }
+        manifest["runtime"] = {
+            "revision": revision,
+            "architectures": [
+                {
+                    "architecture": "arm64",
+                    "images": [
+                        {
+                            "kind": "rootfs",
+                            "url": runtime_url,
+                            "bytes": 13,
+                            "digest": {
+                                "sha256": "a" * 64,
+                                "blake3": "b" * 64,
+                            },
+                        }
+                    ],
+                }
+            ],
         }
         return manifest
 
     before_document = authority(
         before_artifact,
         "https://packages.test/Capsem-1.5.100.pkg",
-        before_profile_url,
-        "code-1",
+        before_runtime_url,
+        "1.5.100-000000000001",
     )
     after_document = authority(
         after_artifact,
         "https://packages.test/Capsem-1.5.101.pkg",
-        after_profile_url,
-        "code-2",
+        after_runtime_url,
+        "1.5.101-000000000002",
     )
     before_manifest = before_root / "manifest.json"
     after_manifest = after_root / "manifest.json"
     before_manifest.write_text(json.dumps(before_document, sort_keys=True))
     after_manifest.write_text(json.dumps(after_document, sort_keys=True))
-    before_inputs = before_root / "profile-inputs"
-    after_inputs = after_root / "profile-inputs"
-    profile_relative = Path("profiles/code/arm64/images/rootfs.erofs")
+    before_inputs = before_root / "runtime-inputs"
+    after_inputs = after_root / "runtime-inputs"
+    runtime_relative = Path("runtime/arm64/images/rootfs.erofs")
     for inputs, payload in (
         (before_inputs, b"before rootfs"),
         (after_inputs, b"after rootfs"),
     ):
-        path = inputs / profile_relative
+        path = inputs / runtime_relative
         path.parent.mkdir(parents=True)
         path.write_bytes(payload)
 
     reports = {
         before_inputs: (
             {
-                "kind": "profiles",
+                "kind": "runtime",
                 "manifest_url": "https://release.test/assets/nightly/manifest.json",
-                "artifacts": [{"url": before_profile_url, "path": profile_relative.as_posix()}],
+                "artifacts": [{"url": before_runtime_url, "path": runtime_relative.as_posix()}],
             },
             before_document,
             {},
         ),
         after_inputs: (
             {
-                "kind": "profiles",
+                "kind": "runtime",
                 "manifest_url": after_manifest.resolve().as_uri(),
-                "artifacts": [{"url": after_profile_url, "path": profile_relative.as_posix()}],
+                "artifacts": [{"url": after_runtime_url, "path": runtime_relative.as_posix()}],
             },
             after_document,
             {},
@@ -1438,27 +1288,25 @@ def test_exact_release_transport_changes_only_urls_and_reuses_exact_bytes(
         lambda input_dir: reports[input_dir],
     )
     before, after = module.validate_pairing_inputs(
-        kind=module.TransitionKind.PROFILE_THEN_BINARY,
+        kind=module.TransitionKind.RUNTIME_THEN_BINARY,
         channel="nightly",
         before_manifest_bytes=before_manifest.read_bytes(),
         after_manifest_bytes=after_manifest.read_bytes(),
         before_artifact=before_artifact,
         after_artifact=after_artifact,
-        changed_profiles=("code",),
     )
     pairing = module.ExactReleasePairing(
         channel="nightly",
         baseline_channel="nightly",
-        transition=module.TransitionKind.PROFILE_THEN_BINARY,
-        changed_profiles=("code",),
+        transition=module.TransitionKind.RUNTIME_THEN_BINARY,
         before=before,
         after=after,
         before_manifest=before_manifest,
         after_manifest=after_manifest,
         before_package=before_package,
         after_package=after_package,
-        before_profile_inputs=before_inputs,
-        after_profile_inputs=after_inputs,
+        before_release_inputs=before_inputs,
+        after_release_inputs=after_inputs,
     )
     before_authority_bytes = before_manifest.read_bytes()
     after_authority_bytes = after_manifest.read_bytes()
@@ -1489,9 +1337,9 @@ def test_exact_release_transport_changes_only_urls_and_reuses_exact_bytes(
     assert after_manifest.read_bytes() == after_authority_bytes
     projected = json.loads(transport.after_manifest.read_text())
     assert projected["packages"][0]["digest"] == after_document["packages"][0]["digest"]
-    assert projected["profiles"]["code"]["revision"] == "code-2"
+    assert projected["runtime"]["revision"] == "1.5.101-000000000002"
     assert projected["packages"][0]["url"].startswith("http://127.0.0.1:8765/transitions/after/")
-    assert projected["profiles"]["code"]["architectures"][0]["images"][0]["url"].startswith(
+    assert projected["runtime"]["architectures"][0]["images"][0]["url"].startswith(
         "http://127.0.0.1:8765/transitions/after/"
     )
 
@@ -1520,15 +1368,9 @@ def test_exact_release_transport_changes_only_urls_and_reuses_exact_bytes(
     )
     tampered = json.loads(candidates.tampered_manifest.read_text())
     incompatible = json.loads(candidates.incompatible_manifest.read_text())
-    assert (
-        tampered["profiles"]["code"]["architectures"][0]["images"][0]["digest"]["sha256"]
-        == "0" * 64
-    )
-    assert (
-        tampered["profiles"]["code"]["architectures"][0]["images"][0]["digest"]["blake3"]
-        == "0" * 64
-    )
-    assert incompatible["profiles"]["code"]["min_capsem_version"] == "9999.0.0"
+    assert tampered["runtime"]["architectures"][0]["images"][0]["digest"]["sha256"] == "0" * 64
+    assert tampered["runtime"]["architectures"][0]["images"][0]["digest"]["blake3"] == "0" * 64
+    assert incompatible["runtime"]["min_capsem_version"] == "9999.0.0"
     assert candidates.tampered_manifest.read_bytes() != transport.after_manifest.read_bytes()
     assert candidates.incompatible_manifest.read_bytes() != transport.after_manifest.read_bytes()
 
@@ -1567,27 +1409,25 @@ def test_exact_installed_glowup_uses_service_poll_and_probes_each_state(
     after_document = _manifest(after_artifact)
     after_document["channel"] = "nightly"
     for document in (before_document, after_document):
-        document["profiles"] = {
-            "work": {
-                "revision": "work-1",
-                "architectures": [
-                    {
-                        "architecture": "amd64",
-                        "images": [
-                            {
-                                "kind": "rootfs",
-                                "url": "http://127.0.0.1:8765/rootfs.erofs",
-                                "bytes": 13,
-                                "digest": {
-                                    "sha256": "a" * 64,
-                                    "blake3": "b" * 64,
-                                },
-                                "status": "current",
-                            }
-                        ],
-                    }
-                ],
-            }
+        document["runtime"] = {
+            "revision": "1.5.99-000000000001",
+            "architectures": [
+                {
+                    "architecture": "amd64",
+                    "images": [
+                        {
+                            "kind": "rootfs",
+                            "url": "http://127.0.0.1:8765/rootfs.erofs",
+                            "bytes": 13,
+                            "digest": {
+                                "sha256": "a" * 64,
+                                "blake3": "b" * 64,
+                            },
+                            "status": "current",
+                        }
+                    ],
+                }
+            ],
         }
     before_manifest = tmp_path / "before.json"
     after_manifest = tmp_path / "after.json"
@@ -1634,15 +1474,14 @@ def test_exact_installed_glowup_uses_service_poll_and_probes_each_state(
         channel="nightly",
         baseline_channel="nightly",
         transition=module.TransitionKind.BINARY_ONLY,
-        changed_profiles=(),
         before=before,
         after=after,
         before_manifest=before_manifest,
         after_manifest=after_manifest,
         before_package=before_package,
         after_package=after_package,
-        before_profile_inputs=tmp_path / "before-profiles",
-        after_profile_inputs=tmp_path / "after-profiles",
+        before_release_inputs=tmp_path / "before-runtime",
+        after_release_inputs=tmp_path / "after-runtime",
     )
     transport = module.ExactReleaseTransport(
         before_manifest=before_manifest,
@@ -1707,9 +1546,12 @@ def test_exact_installed_glowup_uses_service_poll_and_probes_each_state(
     assert "automatic release update failed" not in tamper_script
     assert "tampered-before-manifest.json" in tamper_script
     assert "tampered-rejection.json" in tamper_script
-    assert "observe_update_transition incompatible_profile rejected" in incompatible_script
+    assert "observe_update_transition incompatible_runtime rejected" in incompatible_script
     assert "incompatible-before-manifest.json" in incompatible_script
     assert "incompatible-rejection.json" in incompatible_script
+    for script in (tamper_script, incompatible_script):
+        assert 'test "$(installed_runtime_digest)" = "$runtime_digest_before"' in script
+        assert "installed_runtime_digest() {" in script
     assert "probe_installed_transition rejection-preserved" in preserved_script
     for script in (before_script, after_script, preserved_script):
         assert "build_system/scripts/release/verify-installed-release.py" in script
@@ -1731,7 +1573,7 @@ def test_exact_installed_glowup_uses_service_poll_and_probes_each_state(
     assert evidence.preserved_winterfell.name == "rejection-preserved-winterfell.json"
 
 
-def test_first_profile_glowup_never_installs_empty_authoring_state(
+def test_first_runtime_glowup_never_installs_empty_authoring_state(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1745,32 +1587,30 @@ def test_first_profile_glowup_never_installs_empty_authoring_state(
         architecture="amd64",
     )
     before_document = _manifest(artifact)
-    before_document.update({"channel": "nightly", "profiles": {}})
+    before_document.update({"channel": "nightly", "runtime": None})
     after_document = _manifest(artifact)
     after_document.update(
         {
             "channel": "nightly",
-            "profiles": {
-                "code": {
-                    "revision": "code-1",
-                    "architectures": [
-                        {
-                            "architecture": "x86_64",
-                            "images": [
-                                {
-                                    "kind": "rootfs",
-                                    "url": "https://example.test/rootfs.erofs",
-                                    "bytes": 13,
-                                    "digest": {
-                                        "sha256": "a" * 64,
-                                        "blake3": "b" * 64,
-                                    },
-                                    "status": "current",
-                                }
-                            ],
-                        }
-                    ],
-                }
+            "runtime": {
+                "revision": "1.5.100-000000000001",
+                "architectures": [
+                    {
+                        "architecture": "x86_64",
+                        "images": [
+                            {
+                                "kind": "rootfs",
+                                "url": "https://example.test/rootfs.erofs",
+                                "bytes": 13,
+                                "digest": {
+                                    "sha256": "a" * 64,
+                                    "blake3": "b" * 64,
+                                },
+                                "status": "current",
+                            }
+                        ],
+                    }
+                ],
             },
         }
     )
@@ -1809,7 +1649,7 @@ def test_first_profile_glowup_never_installs_empty_authoring_state(
         before_manifest.read_bytes(),
         artifact=artifact,
         channel="nightly",
-        allow_empty_profiles=True,
+        allow_empty_runtime=True,
     )
     after = module.PairingIdentity.from_manifest_bytes(
         after_manifest.read_bytes(),
@@ -1819,16 +1659,15 @@ def test_first_profile_glowup_never_installs_empty_authoring_state(
     pairing = module.ExactReleasePairing(
         channel="nightly",
         baseline_channel="nightly",
-        transition=module.TransitionKind.PROFILE_ONLY,
-        changed_profiles=("code",),
+        transition=module.TransitionKind.RUNTIME_ONLY,
         before=before,
         after=after,
         before_manifest=before_manifest,
         after_manifest=after_manifest,
         before_package=package,
         after_package=package,
-        before_profile_inputs=tmp_path / "before-profiles",
-        after_profile_inputs=tmp_path / "after-profiles",
+        before_release_inputs=tmp_path / "before-runtime",
+        after_release_inputs=tmp_path / "after-runtime",
     )
     transport = module.ExactReleaseTransport(
         before_manifest=before_manifest,
@@ -1876,8 +1715,6 @@ def test_first_profile_glowup_never_installs_empty_authoring_state(
         "running": True,
         "service": "ok",
         "gateway": "ok",
-        "profiles_ready": 1,
-        "profiles_total": 1,
     }
     for path in (evidence.fresh_installed, evidence.preserved_installed):
         path.write_text(json.dumps(installed))
@@ -1903,7 +1740,7 @@ def test_first_profile_glowup_never_installs_empty_authoring_state(
     for index, (path, kind) in enumerate(
         (
             (evidence.tamper_rejection, "tampered_artifact"),
-            (evidence.incompatible_rejection, "incompatible_profile"),
+            (evidence.incompatible_rejection, "incompatible_runtime"),
         ),
         start=3,
     ):
@@ -1935,7 +1772,7 @@ def test_exact_installed_transition_rows_require_real_probe_reports(tmp_path: Pa
         manifest_sha256="0" * 64,
         package_version="1.5.99",
         package_sha256="0" * 64,
-        profiles_sha256="2" * 64,
+        runtime_sha256="2" * 64,
     )
     after = _pairing(
         module,
@@ -1943,7 +1780,7 @@ def test_exact_installed_transition_rows_require_real_probe_reports(tmp_path: Pa
         manifest_sha256="1" * 64,
         package_version="1.5.100",
         package_sha256="1" * 64,
-        profiles_sha256="2" * 64,
+        runtime_sha256="2" * 64,
     )
     pairing = SimpleNamespace(
         transition=module.TransitionKind.BINARY_ONLY,
@@ -1990,8 +1827,6 @@ def test_exact_installed_transition_rows_require_real_probe_reports(tmp_path: Pa
                     "running": True,
                     "service": "ok",
                     "gateway": "ok",
-                    "profiles_ready": 1,
-                    "profiles_total": 1,
                 }
             )
         )
@@ -2046,7 +1881,7 @@ def test_exact_installed_transition_rows_require_real_probe_reports(tmp_path: Pa
     evidence.incompatible_rejection.write_text(
         json.dumps(
             _transition_verdict(
-                kind="incompatible_profile",
+                kind="incompatible_runtime",
                 result="rejected",
                 source=source,
                 candidate_sha256="4" * 64,
@@ -2112,10 +1947,10 @@ def _first_release_manifests(tmp_path: Path, module):
     )
     after_manifest = _manifest(after_artifact)
     after_manifest["channel"] = "stable"
-    after_manifest["profiles"] = {"code": {"revision": "code-1"}, "co-work": {"revision": "cw-1"}}
+    after_manifest["runtime"] = _runtime("9.9.9-000000000001")
     # What `project-first-channel-before.py` writes for a channel whose published
     # graph was retired: an authority that offers nothing at all.
-    before_manifest = {"channel": "stable", "packages": [], "profiles": {}}
+    before_manifest = {"channel": "stable", "packages": []}
     return before_manifest, after_manifest, after_artifact
 
 
@@ -2125,7 +1960,7 @@ def test_a_channel_serving_nothing_classifies_as_a_first_release(tmp_path: Path)
     classifier = _load_first_release()
     before_manifest, after_manifest, after_artifact = _first_release_manifests(tmp_path, module)
 
-    kind, profiles = classifier.classify_pairing_inputs(
+    kind = classifier.classify_pairing_inputs(
         channel="stable",
         before_manifest_bytes=json.dumps(before_manifest).encode(),
         after_manifest_bytes=json.dumps(after_manifest).encode(),
@@ -2134,8 +1969,16 @@ def test_a_channel_serving_nothing_classifies_as_a_first_release(tmp_path: Path)
     )
 
     assert kind is classifier.TransitionKind.FRESH_INSTALL
-    # Every declared profile is staged: none of them was ever served.
-    assert profiles == ("co-work", "code")
+
+    after_manifest["runtime"] = None
+    with pytest.raises(classifier.GlowupContractError, match="must publish a runtime"):
+        classifier.classify_pairing_inputs(
+            channel="stable",
+            before_manifest_bytes=json.dumps(before_manifest).encode(),
+            after_manifest_bytes=json.dumps(after_manifest).encode(),
+            before_artifact=None,
+            after_artifact=after_artifact,
+        )
 
 
 def test_a_first_release_pairing_carries_no_predecessor_identity(tmp_path: Path) -> None:
@@ -2150,7 +1993,6 @@ def test_a_first_release_pairing_carries_no_predecessor_identity(tmp_path: Path)
         after_manifest_bytes=json.dumps(after_manifest).encode(),
         before_artifact=None,
         after_artifact=after_artifact,
-        changed_profiles=("co-work", "code"),
     )
 
     assert before is None
@@ -2158,43 +2000,25 @@ def test_a_first_release_pairing_carries_no_predecessor_identity(tmp_path: Path)
 
 
 def test_the_caller_and_the_validator_agree_on_a_first_release(tmp_path: Path) -> None:
-    """The rule was written twice and the two disagreed on a first release.
+    """The classifier's answer is the validator's input, never restated.
 
-    `validate_pairing_inputs` demands a non-empty changed-profile set for every
-    kind but `BINARY_ONLY`. Its caller in `local-release-glowup.py` listed only
-    the two profile transitions and passed an empty set otherwise -- so
-    `FRESH_INSTALL` raised "fresh_install release pairing requires changed
-    profiles" whatever it was handed, and that is the pairing a first release
-    makes.
-
-    Both halves had tests of their own. What had none was their composition, so
-    this feeds the caller's decision to the validator rather than restating
-    either answer, and checks the caller asks instead of deciding.
+    A first release once died because the caller and the validator each decided
+    what a pairing stages and came to different answers. The classification is
+    now the only decision, so feeding it back must validate.
     """
     module = _load_module()
     classifier = _load_first_release()
 
-    assert "requires_changed_profiles(transition)" in LOCAL_GLOWUP_PATH.read_text(
-        encoding="utf-8"
-    ), "the glow-up decides for itself which pairings name the profiles they stage"
-    for kind in classifier.TransitionKind:
-        assert module.requires_changed_profiles(kind) is (
-            kind is not module.TransitionKind.BINARY_ONLY
-        ), kind
-
     before_manifest, after_manifest, after_artifact = _first_release_manifests(tmp_path, module)
     before_bytes = json.dumps(before_manifest).encode()
     after_bytes = json.dumps(after_manifest).encode()
-    kind, profiles = classifier.classify_pairing_inputs(
+    kind = classifier.classify_pairing_inputs(
         channel="stable",
         before_manifest_bytes=before_bytes,
         after_manifest_bytes=after_bytes,
         before_artifact=None,
         after_artifact=after_artifact,
     )
-
-    # Exactly what the glow-up now does with the answer it was given.
-    selected = profiles if module.requires_changed_profiles(kind) else ()
     before, after = classifier.validate_pairing_inputs(
         kind=kind,
         channel="stable",
@@ -2202,7 +2026,6 @@ def test_the_caller_and_the_validator_agree_on_a_first_release(tmp_path: Path) -
         after_manifest_bytes=after_bytes,
         before_artifact=None,
         after_artifact=after_artifact,
-        changed_profiles=selected,
     )
 
     assert kind is classifier.TransitionKind.FRESH_INSTALL
@@ -2215,29 +2038,28 @@ def test_a_published_channel_still_requires_its_predecessor_package(tmp_path: Pa
     classifier = _load_first_release()
     _, after_manifest, after_artifact = _first_release_manifests(tmp_path, module)
     published_before = json.loads(json.dumps(after_manifest))
-    published_before["profiles"] = {"code": {"revision": "code-0"}}
+    published_before["runtime"] = _runtime("9.9.8-000000000000")
 
     with pytest.raises(classifier.GlowupContractError, match="requires a public-before package"):
         classifier.validate_pairing_inputs(
-            kind=classifier.TransitionKind.PROFILE_THEN_BINARY,
+            kind=classifier.TransitionKind.RUNTIME_THEN_BINARY,
             channel="stable",
             before_manifest_bytes=json.dumps(published_before).encode(),
             after_manifest_bytes=json.dumps(after_manifest).encode(),
             before_artifact=None,
             after_artifact=after_artifact,
-            changed_profiles=("co-work", "code"),
         )
 
 
-def test_a_graph_with_profiles_but_no_package_is_not_a_first_release() -> None:
+def test_a_graph_with_a_runtime_but_no_package_is_not_a_first_release() -> None:
     """Half-empty is broken, not fresh -- calling it fresh would skip the upgrade proof."""
     classifier = _load_first_release()
-    half_empty = {"channel": "stable", "packages": [], "profiles": {"code": {"revision": "code-0"}}}
+    half_empty = {"channel": "stable", "packages": [], "runtime": _runtime("9.9.8-000000000000")}
 
     assert classifier.public_before_is_unpublished(json.dumps(half_empty).encode()) is False
     assert (
         classifier.public_before_is_unpublished(
-            json.dumps({"channel": "stable", "packages": [], "profiles": {}}).encode()
+            json.dumps({"channel": "stable", "packages": [], "runtime": None}).encode()
         )
         is True
     )
@@ -2262,7 +2084,7 @@ def test_a_first_release_cannot_claim_a_predecessor_it_never_served(tmp_path: Pa
     ) == (None, None)
 
 
-def _unpublished_profile_inputs(root: Path) -> Path:
+def _unpublished_runtime_inputs(root: Path) -> Path:
     """The cohort a first release actually gets: a manifest offering nothing.
 
     This is what `project-first-channel-before.py` writes and what
@@ -2270,15 +2092,15 @@ def _unpublished_profile_inputs(root: Path) -> Path:
     no artifact rows and there is nothing on disk to digest.
     """
     root.mkdir(parents=True, exist_ok=True)
-    manifest = {"channel": "stable", "packages": [], "profiles": {}}
+    manifest = {"channel": "stable", "packages": [], "runtime": None}
     (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     (root / "release-inputs.json").write_text(
         json.dumps(
             {
                 "schema": "capsem.release_inputs.v1",
-                "kind": "profiles",
+                "kind": "runtime",
                 "manifest_url": "file:///public-before/manifest.json",
-                "allow_empty_profiles": True,
+                "allow_empty_runtime": True,
                 "artifacts": [],
             }
         ),
@@ -2290,13 +2112,13 @@ def _unpublished_profile_inputs(root: Path) -> Path:
 def test_a_first_release_stages_a_transport_with_no_predecessor_package(tmp_path: Path) -> None:
     """The public-before side of a first release has a manifest and nothing else."""
     module = _load_local_glowup()
-    inputs = _unpublished_profile_inputs(tmp_path / "before-inputs")
+    inputs = _unpublished_runtime_inputs(tmp_path / "before-inputs")
 
     staged_manifest, staged_package = module._stage_exact_transport_release(
         label="before",
         manifest_path=inputs / "manifest.json",
         package_path=None,
-        profile_inputs=inputs,
+        release_inputs=inputs,
         dist=tmp_path / "dist",
         base_url="http://127.0.0.1:9/base",
     )
@@ -2307,7 +2129,7 @@ def test_a_first_release_stages_a_transport_with_no_predecessor_package(tmp_path
     assert json.loads(staged_manifest.read_text()) == {
         "channel": "stable",
         "packages": [],
-        "profiles": {},
+        "runtime": None,
     }
     assert not (tmp_path / "dist" / "transitions" / "before" / "package").exists()
 
@@ -2463,8 +2285,8 @@ def test_the_tamper_wait_accepts_the_products_integrity_error() -> None:
             "previous": {"manifest_sha256": previous},
             "current": {"manifest_sha256": previous},
             "error": (
-                "stage verified update candidate: profile config "
-                "https://release.test/profiles/code/profile.toml "
+                "stage verified update candidate: runtime image "
+                "https://release.test/runtime/releases/nightly/1/x86_64/rootfs.erofs "
                 "failed size or digest verification"
             ),
         },
@@ -2501,13 +2323,13 @@ def test_neither_rejection_wait_can_be_satisfied_by_the_other() -> None:
             "candidate_manifest_sha256": candidate,
             "previous": {"manifest_sha256": previous},
             "current": {"manifest_sha256": previous},
-            "error": "profile requires Capsem 9999.0.0 or newer",
+            "error": "runtime requires Capsem 9999.0.0 or newer",
         },
     ]
 
     verdict = module.build_transition_verdict(
         rows,
-        kind="incompatible_profile",
+        kind="incompatible_runtime",
         result="rejected",
         source=source,
         candidate_manifest_sha256=candidate,
@@ -2603,7 +2425,7 @@ def test_the_polling_url_is_shaped_like_a_channel_manifest() -> None:
     The glow-up served `/transitions/current/manifest.json`, so every
     automatic-update cycle in the proof died before fetching anything, with
     "release channel check failed". The tamper proof passed anyway -- it
-    accepted any failed cycle -- and the incompatible-profile proof, which
+    accepted any failed cycle -- and the incompatible-runtime proof, which
     names its own cause, timed out. Neither had exercised an update.
     """
     source = LOCAL_GLOWUP_PATH.read_text(encoding="utf-8")
@@ -2739,20 +2561,13 @@ def test_linux_glowup_proves_background_asset_hydration() -> None:
     assert 'grep -Fq "event=manifest_installed"' in fresh_install
     assert 'if grep -Fq "event=assets_hydrated"' in fresh_install
     assert "package installer synchronously hydrated VM assets" in fresh_install
-    assert 'assets status --profile "$profile" --json' in staging
+    assert 'assets status --json > "$output"' in staging
     assert 'status.get("ready") and not status.get("downloading")' in staging
-    assert (
-        'wait_for_profile_assets code "$EVIDENCE_DIR/code-assets-after-install.json"'
-        in fresh_install
-    )
-    assert (
-        'wait_for_profile_assets co-work "$EVIDENCE_DIR/co-work-assets-after-install.json"'
-        in fresh_install
-    )
+    assert 'wait_for_assets "$EVIDENCE_DIR/assets-after-install.json"' in fresh_install
     assert fresh_install.index("event=manifest_installed") < fresh_install.index(
-        "wait_for_profile_assets code"
+        "wait_for_assets"
     )
-    assert fresh_install.index("wait_for_profile_assets co-work") < fresh_install.index(
+    assert fresh_install.index("wait_for_assets") < fresh_install.index(
         "probe_installed_transition fresh-stable"
     )
 

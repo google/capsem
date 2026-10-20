@@ -1,4 +1,4 @@
-import {HostLogSource, TimelineLayer, type Hypervisor, type ProfileSummary, type VM} from '@capsem/sdk';
+import {HostLogSource, TimelineLayer, type Hypervisor, type VM} from '@capsem/sdk';
 import type {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js';
 import {z} from 'zod';
 import {toolCall} from './results.js';
@@ -36,26 +36,14 @@ function defined<T extends object>(input: T): {[K in keyof T]?: Exclude<T[K], un
   };
 }
 
-async function profileOption(hypervisor: Hypervisor, profileId: string | undefined, signal: AbortSignal): Promise<{
-  profile: ProfileSummary
-} | undefined> {
-  // No name means the catalog default, which the SDK resolves from the
-  // gateway; a named profile is validated against the catalog, whatever it is.
-  if (profileId === undefined) return undefined;
-  const profile = (await hypervisor.profiles.list({signal})).find(candidate => candidate.id === profileId);
-  if (profile === undefined) throw new TypeError(`Unknown profile ${JSON.stringify(profileId)}`);
-  return {profile};
-}
-
 export function registerHostTools(server: McpServer, hypervisor: Hypervisor): void {
   server.registerTool('capsem_list', {
     description: 'List VMs with identity, lifecycle, resources, and telemetry.',
   }, extra => toolCall(() => hypervisor.list({signal: extra.signal})));
 
   server.registerTool('capsem_create', {
-    description: 'Create a detached profile-owned VM and return its immutable ID.',
+    description: 'Create a detached VM and return its immutable ID.',
     inputSchema: {
-      profile: z.string().min(1).optional(),
       name: z.string().min(1).optional(),
       cpus: positiveInt.optional(),
       memory: positiveInt.optional().describe('Guest memory in GiB'),
@@ -65,11 +53,11 @@ export function registerHostTools(server: McpServer, hypervisor: Hypervisor): vo
       command: z.array(z.string()).optional(),
       registry: registry.optional(),
     },
-  }, ({profile, network_ids, registry: access, ...options}, extra) => toolCall(async () => {
+  }, ({network_ids, registry: access, ...options}, extra) => toolCall(async () => {
     const networks = await Promise.all((network_ids ?? []).map(id =>
       hypervisor.networks.inspect(id, {signal: extra.signal})));
     const created = await hypervisor.create({
-      ...defined(options), ...(await profileOption(hypervisor, profile, extra.signal) ?? {}), networks,
+      ...defined(options), networks,
       ...(access === undefined ? {} : {registry: defined(access)}), signal: extra.signal,
     });
     return {id: created.id, name: created.name};
@@ -89,13 +77,13 @@ export function registerHostTools(server: McpServer, hypervisor: Hypervisor): vo
   server.registerTool('capsem_run', {
     description: 'Run a command in a fresh service-managed VM and return stdout, stderr, and exit code.',
     inputSchema: {
-      command: z.string().min(1), profile: z.string().min(1).optional(), timeout_secs: positiveInt.optional(),
+      command: z.string().min(1), timeout_secs: positiveInt.optional(),
       cpus: positiveInt.optional(),
       memory: positiveInt.optional().describe('Guest memory in GiB'),
       env: z.record(z.string(), z.string()).optional(),
     },
-  }, ({command, profile, ...options}, extra) => toolCall(async () => hypervisor.run(command, {
-    ...defined(options), ...(await profileOption(hypervisor, profile, extra.signal) ?? {}), signal: extra.signal,
+  }, ({command, ...options}, extra) => toolCall(() => hypervisor.run(command, {
+    ...defined(options), signal: extra.signal,
   })));
 
   server.registerTool('capsem_start', {

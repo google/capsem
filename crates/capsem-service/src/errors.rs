@@ -7,11 +7,11 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
 
-pub use crate::api::ErrorResponse;
+pub use crate::api::{ErrorCode, ErrorResponse};
 
-/// Tuple of (HTTP status, error message). Implements `IntoResponse` so handlers
-/// can `?` against `Result<T, AppError>` and get a JSON `{"error": "..."}`
-/// body with the right status code.
+/// Structured `(HTTP status, ErrorResponse)` returned by service route handlers.
+/// Implements `IntoResponse` so handlers can `?` against `Result<T, AppError>`
+/// and get a JSON `{"error": "..."}` body with the right status code.
 ///
 /// Every `AppError` is automatically logged as it goes out the door (see the
 /// `IntoResponse` impl below). 5xx → `tracing::error!`, 4xx → `tracing::warn!`,
@@ -19,12 +19,73 @@ pub use crate::api::ErrorResponse;
 /// for every error response without per-site work. Pre-W3.5: the operator
 /// got a 500 in the response and nothing in the log to trace back from.
 #[derive(Debug)]
-pub struct AppError(pub StatusCode, pub String);
+pub struct AppError {
+    pub status: StatusCode,
+    pub body: ErrorResponse,
+}
+
+impl AppError {
+    /// Construct a plain `(status, error)` response without structured metadata.
+    pub fn new(status: StatusCode, error: String) -> Self {
+        Self {
+            status,
+            body: ErrorResponse {
+                error,
+                code: None,
+                vm_id: None,
+                timeout_secs: None,
+            },
+        }
+    }
+
+    pub fn into_message(self) -> String {
+        self.body.error
+    }
+
+    pub fn with_code(mut self, code: ErrorCode) -> Self {
+        self.body.code = Some(code);
+        self
+    }
+
+    pub fn with_vm_id(mut self, vm_id: impl Into<String>) -> Self {
+        self.body.vm_id = Some(vm_id.into());
+        self
+    }
+
+    pub fn with_timeout_secs(mut self, timeout_secs: u64) -> Self {
+        self.body.timeout_secs = Some(timeout_secs);
+        self
+    }
+
+    pub fn vm_not_found(id: &str) -> Self {
+        Self::new(StatusCode::NOT_FOUND, format!("sandbox not found: {id}"))
+            .with_code(ErrorCode::VmNotFound)
+            .with_vm_id(id)
+    }
+
+    pub fn exec_timeout(error: impl Into<String>, timeout_secs: u64) -> Self {
+        Self::new(StatusCode::GATEWAY_TIMEOUT, error.into())
+            .with_code(ErrorCode::ExecTimeout)
+            .with_timeout_secs(timeout_secs)
+    }
+
+    pub fn create_timeout(id: &str, attempts: u32) -> Self {
+        ::tracing::warn!(vm_id = id, attempts, "container create readiness timed out");
+        Self::new(
+            StatusCode::GATEWAY_TIMEOUT,
+            format!(
+                "container workload for VM {id} did not become ready before the HTTP deadline; setup continues under service ownership"
+            ),
+        )
+        .with_code(ErrorCode::CreateTimeout)
+        .with_vm_id(id)
+    }
+}
 
 impl IntoResponse for AppError {
     fn into_response(self) -> axum::response::Response {
-        let status = self.0;
-        let msg = self.1.as_str();
+        let status = self.status;
+        let msg = self.body.error.as_str();
         if status.is_server_error() {
             ::tracing::error!(
                 target: "service",
@@ -48,7 +109,7 @@ impl IntoResponse for AppError {
             );
         }
 
-        (self.0, Json(ErrorResponse { error: self.1 })).into_response()
+        (self.status, Json(self.body)).into_response()
     }
 }
 
@@ -71,7 +132,7 @@ macro_rules! app_error_logged {
             status = $status.as_u16(),
             "{}", __msg
         );
-        $crate::errors::AppError($status, __msg)
+        $crate::errors::AppError::new($status, __msg)
     }};
 }
 

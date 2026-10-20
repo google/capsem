@@ -10,6 +10,11 @@ const {Hypervisor, VM, HttpError} = sdk;
 const url = process.env.SDK_GATEWAY_URL, token = process.env.SDK_GATEWAY_TOKEN, id = process.env.SDK_VM_ID;
 assert(url && token && id, 'SDK acceptance fixture must provide gateway credentials and VM ID');
 
+const local = new Hypervisor();
+try {assert((await local.list()).sandboxes.some(entry => entry.id === id));}
+finally {local.close();}
+process.stdout.write('SDK_LOCAL_DISCOVERY_OK\n');
+
 const denied = new Hypervisor(url, 'incorrect-token');
 try {await assert.rejects(denied.list(), error => error instanceof HttpError && error.status === 401);}
 finally {denied.close();}
@@ -18,10 +23,10 @@ const hv = new Hypervisor(url, token);
 const vm = new VM(url, token, {name: 'route-workspace'});
 try {
   assert((await hv.info()).gateway_version.length > 0);
-  const profiles = await hv.profiles.list();
-  const [profile] = profiles;
-  assert(profile, 'SDK acceptance fixture must expose at least one profile');
-  assert.equal((await hv.profiles.mcp(profile).info()).profile_id, profile.id);
+  const mcp = await hv.mcp.info();
+  assert(mcp.manual_server_count <= mcp.server_count);
+  assert(Array.isArray(await hv.mcp.servers()));
+  assert.equal(typeof (await hv.mcp.defaultPermission()).action, 'string');
   assert(Array.isArray((await hv.debug.panics({limit: 2})).panics));
   assert.equal(typeof (await hv.debug.triage({since: '1h', limit: 2})).session, 'object');
   assert((await hv.list()).sandboxes.some(entry => entry.id === id));

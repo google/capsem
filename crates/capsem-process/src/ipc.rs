@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use capsem_foundation::ipc_channel::{channel_from_std, Receiver, Sender};
+use capsem_foundation::unix::peer::PeerIdentity;
 use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
 use capsem_proto::HostToGuest;
 use std::collections::HashMap;
@@ -12,11 +13,13 @@ use tracing::{debug, error, info, warn};
 
 use crate::job_store::{JobResult, JobStore};
 use crate::mcp_runtime::McpRuntime;
-use crate::runtime_config::RuntimeProfileSource;
+use crate::runtime_config::RuntimePolicySource;
 use crate::terminal::TerminalRelay;
 
 mod container_pull;
+mod credentials;
 mod exec;
+pub(crate) mod file_boundary;
 mod private;
 mod publication;
 
@@ -55,7 +58,15 @@ const GUEST_FILE_WRITE_MODE: u32 = 0o644;
 /// Negotiate the synchronous Hello side-channel away from Tokio's worker
 /// threads, then hand the verified socket to the typed async IPC transport.
 /// A peer mismatch is a refused connection, not a process-fatal error.
-async fn open_ipc_channel(stream: tokio::net::UnixStream) -> Result<Option<(ProcessIpcChannel, bool)>> {
+async fn open_ipc_channel(
+    stream: tokio::net::UnixStream,
+    controller: PeerIdentity,
+) -> Result<Option<(ProcessIpcChannel, bool)>> {
+    use std::os::fd::AsFd;
+    if let Err(error) = capsem_foundation::unix::peer::require(stream.as_fd(), controller) {
+        warn!(target: "ipc", %error, "unauthorized IPC peer; refusing connection before Hello");
+        return Ok(None);
+    }
     let std_stream = stream.into_std()?;
     let traceparent = capsem_foundation::telemetry::current_parent_traceparent();
     let (std_stream, handshake) = tokio::task::spawn_blocking(move || {
@@ -120,13 +131,14 @@ async fn record_guest_write(
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn handle_ipc_connection(
     stream: tokio::net::UnixStream,
+    controller: PeerIdentity,
     ctrl_tx: mpsc::Sender<ServiceToProcess>,
     ipc_tx: broadcast::Sender<ProcessToService>,
     term_relay: Arc<TerminalRelay>,
     job_store: Arc<JobStore>,
     net_state: Arc<capsem_core::SandboxNetworkState>,
     mcp_runtime: Arc<McpRuntime>,
-    runtime_source: RuntimeProfileSource,
+    runtime_source: RuntimePolicySource,
     mcp_builtin_binary: Option<PathBuf>,
     mcp_builtin_env: HashMap<String, String>,
     vm_ready: Arc<AtomicBool>,
@@ -134,7 +146,7 @@ pub(crate) async fn handle_ipc_connection(
     // First frame on every IPC connection is a Hello -- detect cross-version
     // mixes (capsem-service built before X, capsem-process built after) in
     // ~1s with a structured log line instead of a 30s silent timeout.
-    let Some(((tx, rx), stream_role)) = open_ipc_channel(stream).await? else {
+    let Some(((tx, rx), stream_role)) = open_ipc_channel(stream, controller).await? else {
         return Ok(());
     };
 
@@ -194,6 +206,13 @@ pub(crate) async fn handle_ipc_connection(
             }
         };
         match msg {
+            ServiceToProcess::InjectCredentials {
+                id,
+                credentials: material,
+            } => {
+                let reply = credentials::apply(capsem_core::credential_broker::CredentialStore::global(), id, material);
+                capsem_core::try_send!("ipc_credentials_injected", ipc_tx_out.send(reply).await);
+            }
             ServiceToProcess::StartTerminalStream => {
                 info!("Starting terminal stream for connection");
                 // Track the stream task so StopTerminalStream / connection
@@ -280,9 +299,9 @@ pub(crate) async fn handle_ipc_connection(
                 );
             }
             ServiceToProcess::Exec { .. } | ServiceToProcess::ExecStream { .. } => {
-                let (id, command, streaming) = match msg {
-                    ServiceToProcess::Exec { id, command } => (id, command, false),
-                    ServiceToProcess::ExecStream { id, command } => (id, command, true),
+                let (id, job, streaming) = match msg {
+                    ServiceToProcess::Exec { id, command, target } => (id, (command, target), false),
+                    ServiceToProcess::ExecStream { id, command, target } => (id, (command, target), true),
                     _ => unreachable!(),
                 };
                 connection_execs.insert(id);
@@ -291,7 +310,7 @@ pub(crate) async fn handle_ipc_connection(
                 let registration = exec::install(id, streaming, &job_store, &ipc_tx_out);
                 tokio::spawn(exec::run(
                     id,
-                    command,
+                    job,
                     Arc::clone(&job_store),
                     ctrl_tx.clone(),
                     ipc_tx_out.clone(),
@@ -620,109 +639,10 @@ pub(crate) async fn handle_ipc_connection(
                     }
                 });
             }
-            ServiceToProcess::LogFileBoundary {
-                id,
-                action,
-                path,
-                data,
-                size,
-                mime_type,
-            } => {
-                let job_store = job_store.clone();
-                let ctrl_tx = ctrl_tx.clone();
-                let ipc_tx_out = ipc_tx_out.clone();
-                let db = Arc::clone(&net_state.db);
-                tokio::spawn(async move {
-                    debug!(id, ?action, path, size, "Received LogFileBoundary command via IPC");
-                    let (j_tx, j_rx) = oneshot::channel();
-                    job_store.jobs.lock().unwrap().insert(id, j_tx);
-                    capsem_core::try_send!(
-                        "ctrl_log_file_boundary",
-                        ctrl_tx
-                            .send(ServiceToProcess::LogFileBoundary {
-                                id,
-                                action,
-                                path,
-                                data,
-                                size,
-                                mime_type,
-                            })
-                            .await
-                    );
-                    match tokio::time::timeout(Duration::from_secs(5), j_rx).await {
-                        Ok(Ok(JobResult::LogFileBoundary { success, data, error })) => {
-                            db.flush().await;
-                            capsem_core::try_send!(
-                                "ipc_log_file_boundary_result",
-                                ipc_tx_out
-                                    .send(ProcessToService::LogFileBoundaryResult {
-                                        id,
-                                        success,
-                                        data,
-                                        error,
-                                    })
-                                    .await
-                            );
-                        }
-                        Ok(Ok(JobResult::Error { message })) => {
-                            capsem_core::try_send!(
-                                "ipc_log_file_boundary_result_err",
-                                ipc_tx_out
-                                    .send(ProcessToService::LogFileBoundaryResult {
-                                        id,
-                                        success: false,
-                                        data: None,
-                                        error: Some(message),
-                                    })
-                                    .await
-                            );
-                        }
-                        Ok(Ok(other)) => {
-                            error!(id, result = ?other, "unexpected job result for LogFileBoundary");
-                            capsem_core::try_send!(
-                                "ipc_log_file_boundary_result_unexpected",
-                                ipc_tx_out
-                                    .send(ProcessToService::LogFileBoundaryResult {
-                                        id,
-                                        success: false,
-                                        data: None,
-                                        error: Some("unexpected log file boundary result".into()),
-                                    })
-                                    .await
-                            );
-                        }
-                        Ok(Err(_)) => {
-                            let _ = job_store.jobs.lock().unwrap().remove(&id);
-                            capsem_core::try_send!(
-                                "ipc_log_file_boundary_result_closed",
-                                ipc_tx_out
-                                    .send(ProcessToService::LogFileBoundaryResult {
-                                        id,
-                                        success: false,
-                                        data: None,
-                                        error: Some("log file boundary result channel closed".into()),
-                                    })
-                                    .await
-                            );
-                        }
-                        Err(_) => {
-                            let _ = job_store.jobs.lock().unwrap().remove(&id);
-                            capsem_core::try_send!(
-                                "ipc_log_file_boundary_result_timeout",
-                                ipc_tx_out
-                                    .send(ProcessToService::LogFileBoundaryResult {
-                                        id,
-                                        success: false,
-                                        data: None,
-                                        error: Some("log file boundary timed out".into()),
-                                    })
-                                    .await
-                            );
-                        }
-                    }
-                });
+            message @ ServiceToProcess::LogFileBoundary { .. } => {
+                file_boundary::spawn(&net_state, &mcp_runtime, &ipc_tx_out, message);
             }
-            ServiceToProcess::CloneState { id, destination } => {
+            ServiceToProcess::CloneState { id } => {
                 let job_store = job_store.clone();
                 let ctrl_tx = ctrl_tx.clone();
                 let ipc_tx_out = ipc_tx_out.clone();
@@ -731,7 +651,7 @@ pub(crate) async fn handle_ipc_connection(
                     job_store.jobs.lock().unwrap().insert(id, j_tx);
                     capsem_core::try_send!(
                         "ctrl_clone_state",
-                        ctrl_tx.send(ServiceToProcess::CloneState { id, destination }).await
+                        ctrl_tx.send(ServiceToProcess::CloneState { id }).await
                     );
                     let result = match tokio::time::timeout(CLONE_STATE_TIMEOUT, j_rx).await {
                         Ok(Ok(JobResult::CloneState { result })) => result,
@@ -754,31 +674,41 @@ pub(crate) async fn handle_ipc_connection(
                     );
                 });
             }
-            ServiceToProcess::ReloadConfig { id } => {
+            ServiceToProcess::CloneStateComplete { id, size_bytes, error } => {
+                let result = match (size_bytes, error) {
+                    (Some(size), None) => Ok(size),
+                    (None, Some(error)) => Err(error),
+                    _ => Err("coordinator returned an invalid clone completion".to_string()),
+                };
+                if let Err(error) = job_store.complete_clone(id, result) {
+                    warn!(id, %error, "clone completion refused");
+                }
+            }
+            ServiceToProcess::ReloadConfig { id, active_policy } => {
                 info!(
-                    active_profile = %runtime_source.active_profile_path().display(),
-                    "Reloading profile runtime config"
+                    active_policy = %runtime_source.active_policy_path().display(),
+                    "Reloading runtime policy"
                 );
-                // A profile that does not load leaves the previous policy in
+                // A policy that does not load leaves the previous one in
                 // force; the service is told why instead of losing the socket.
-                let reply = match runtime_source.load() {
+                let reply = match runtime_source.load_bytes(&active_policy) {
                     Ok(runtime_config) => {
-                        let digest = runtime_config.active_profile_digest.clone();
+                        let digest = runtime_config.active_policy_digest.clone();
                         runtime_config.apply(&net_state, &mcp_runtime);
                         ProcessToService::ConfigReloadResult {
                             id,
-                            active_profile_digest: Some(digest),
+                            active_policy_digest: Some(digest),
                             error: None,
                         }
                     }
                     Err(error) => {
                         warn!(
                             error = format!("{error:#}"),
-                            "Profile reload refused; previous policy kept"
+                            "Policy reload refused; previous policy kept"
                         );
                         ProcessToService::ConfigReloadResult {
                             id,
-                            active_profile_digest: None,
+                            active_policy_digest: None,
                             error: Some(format!("{error:#}")),
                         }
                     }
@@ -790,12 +720,9 @@ pub(crate) async fn handle_ipc_connection(
                 info!("Received Shutdown command, exiting IPC loop gracefully");
                 break;
             }
-            ServiceToProcess::Suspend { checkpoint_path } => {
+            ServiceToProcess::Suspend => {
                 info!("Received Suspend command, forwarding to ctrl channel");
-                capsem_core::try_send!(
-                    "ctrl_suspend",
-                    ctrl_tx.send(ServiceToProcess::Suspend { checkpoint_path }).await
-                );
+                capsem_core::try_send!("ctrl_suspend", ctrl_tx.send(ServiceToProcess::Suspend).await);
             }
             ServiceToProcess::McpListServers { id } => {
                 let mcp = Arc::clone(&mcp_runtime);
@@ -846,6 +773,7 @@ pub(crate) async fn handle_ipc_connection(
                                     namespaced_name: t.namespaced_name,
                                     original_name: t.original_name,
                                     description: t.description,
+                                    input_schema: t.input_schema,
                                     server_name: t.server_name,
                                     annotations: t.annotations,
                                 })
@@ -874,11 +802,11 @@ pub(crate) async fn handle_ipc_connection(
                 let mcp_builtin_binary = mcp_builtin_binary.clone();
                 let mcp_builtin_env = mcp_builtin_env.clone();
                 tokio::spawn(async move {
-                    let runtime_config = match runtime_source.load() {
+                    let runtime_config = match runtime_source.current() {
                         Ok(config) => config,
                         Err(e) => {
                             capsem_core::try_send!(
-                                "ipc_mcp_refresh_profile_load_err",
+                                "ipc_mcp_refresh_policy_load_err",
                                 ipc_tx_out
                                     .send(ProcessToService::McpRefreshResult {
                                         id,
@@ -938,10 +866,7 @@ pub(crate) async fn handle_ipc_connection(
                         jsonrpc: "2.0".to_string(),
                         id: Some(serde_json::json!(id)),
                         method: "tools/call".to_string(),
-                        params: Some(serde_json::json!({
-                            "name": namespaced_name,
-                            "arguments": arguments,
-                        })),
+                        params: Some(serde_json::json!({"name": namespaced_name, "arguments": arguments})),
                         meta: None,
                     };
                     let response = capsem_core::net::mitm_proxy::dispatch_logged_mcp_request(
@@ -949,6 +874,7 @@ pub(crate) async fn handle_ipc_connection(
                         Arc::clone(&mcp.db),
                         request,
                         "capsem-service".to_string(),
+                        capsem_core::net::mitm_proxy::McpTransport::Direct,
                     )
                     .await;
                     mcp.db.flush().await;

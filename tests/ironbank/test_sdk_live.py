@@ -1,14 +1,17 @@
-"""SDK acceptance owns disposable VMs and communicates through the TCP gateway."""
+"""Installed SDK consumers own disposable VMs through the real TCP gateway."""
 
 from __future__ import annotations
 
 import os
-import subprocess
 from pathlib import Path
 
 import pytest
+from helpers.constants import ASSETS_DIR
 from helpers.gateway import GatewayInstance
+from helpers.sdk_packages import inspect_ai_gateway, python_gateway, typescript_gateway
 from helpers.service import ServiceInstance
+
+from tests.fixtures.oci.registry import grant_exact, registry
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -21,17 +24,83 @@ def test_sdk_live_vm_lifecycle_and_binary_files(language: str) -> None:
     try:
         service.start()
         gateway.start()
-        result = subprocess.run(
-            ["uv", "run", "--frozen", "--no-sync", "python", "-m", "tests.live_acceptance"]
-            if language == "python" else ["node", "tools/live-acceptance.mjs"],
-            cwd=ROOT / "sdk" / language, env={
+        environment = {
+            **{key: value for key, value in os.environ.items() if key != "VIRTUAL_ENV"},
+            "SDK_GATEWAY_URL": gateway.base_url, "SDK_GATEWAY_TOKEN": gateway.token,
+        }
+        run = python_gateway if language == "python" else typescript_gateway
+        output = run(
+            ROOT, environment,
+            probe="live_acceptance.py" if language == "python" else "live-acceptance.mjs",
+            success_marker="SDK_LIVE_ACCEPTANCE_OK", timeout_seconds=240,
+        )
+        assert "SDK_IMAGE_PACKAGE_ACCEPTANCE_OK" in output
+        assert "SDK_LIVE_ACCEPTANCE_OK" in output
+        print(output.strip())
+    finally:
+        gateway.stop()
+        service.stop()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("language", ["python", "typescript"])
+def test_installed_sdk_oci_create_and_execution_targets(language: str, tmp_path: Path) -> None:
+    service = ServiceInstance()
+    gateway = GatewayInstance(service.uds_path)
+    try:
+        with registry(tmp_path) as (reference, certificate, requests):
+            grant_exact(service.home_dir, reference)
+            service.start()
+            gateway.start()
+            environment = {
                 **{key: value for key, value in os.environ.items() if key != "VIRTUAL_ENV"},
                 "SDK_GATEWAY_URL": gateway.base_url, "SDK_GATEWAY_TOKEN": gateway.token,
-            }, capture_output=True, text=True, timeout=240, check=False,
+                "SDK_IMAGE": reference, "SDK_REGISTRY_CA": str(certificate),
+            }
+            run = python_gateway if language == "python" else typescript_gateway
+            output = run(
+                ROOT, environment,
+                probe="oci_acceptance.py" if language == "python" else "oci-acceptance.mjs",
+                success_marker="SDK_OCI_ACCEPTANCE_OK", timeout_seconds=240,
+            )
+            assert "SDK_IMAGE_PACKAGE_ACCEPTANCE_OK" in output
+            assert "SDK_OCI_ACCEPTANCE_OK" in output
+            digest = reference.split("@", 1)[1]
+            assert requests.count(f"/v2/library/redis/manifests/{digest}") == 1, requests
+            assert any("/blobs/" in path for path in requests), requests
+            assert service.client().get("/vms/list")["sandboxes"] == []
+            print(output.strip())
+    finally:
+        gateway.stop()
+        service.stop()
+
+
+@pytest.mark.integration
+def test_inspect_ai_live_vm_sandbox_acceptance() -> None:
+    service = ServiceInstance()
+    gateway = GatewayInstance(service.uds_path)
+    try:
+        service.start()
+        gateway.start()
+        environment = {
+            **{key: value for key, value in os.environ.items() if key != "VIRTUAL_ENV"},
+            "CAPSEM_HOME": str(service.home_dir),
+            "CAPSEM_ASSETS_DIR": str(service.assets_dir or ASSETS_DIR),
+            "CAPSEM_GATEWAY_URL": gateway.base_url,
+            "CAPSEM_GATEWAY_TOKEN": gateway.token,
+        }
+        output = inspect_ai_gateway(
+            ROOT,
+            environment,
+            probe="live_acceptance.py",
+            success_marker="INSPECT_CAPSEM_VM_ACCEPTANCE_OK",
+            timeout_seconds=240,
         )
-        assert result.returncode == 0, result.stdout + result.stderr
-        assert "SDK_LIVE_ACCEPTANCE_OK" in result.stdout
-        print(result.stdout.strip())
+        assert "SDK_IMAGE_PACKAGE_ACCEPTANCE_OK" in output
+        assert "INSPECT_CAPSEM_CONTAINER_ACCEPTANCE_OK" in output
+        assert "INSPECT_CAPSEM_HOST_BUILD_ACCEPTANCE_OK" in output
+        assert "INSPECT_CAPSEM_VM_ACCEPTANCE_OK" in output
+        print(output.strip())
     finally:
         gateway.stop()
         service.stop()

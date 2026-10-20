@@ -2,9 +2,13 @@ export * from './models/index.js';
 export {Debug} from './debug.js';
 export {decodeExecOutput} from './execution.js';
 export {Hypervisor} from './hypervisor.js';
+export {ManagedSession} from './managed.js';
+export {Images} from './images.js';
+export {Credentials} from './credentials.js';
+export {Connections, CredentialGrants} from './connections.js';
 export {VM} from './vm.js';
 export {
-  Files, McpTools, Networks, Ports, Profiles, ProfileMcp, ProfileMcpServer, VmNetworks, type Port,
+  Files, Mcp, McpServer, McpTools, Networks, Ports, VmNetworks, type Port,
 } from './resources.js';
 export {HttpError, NetworkError, type CallOptions, type TransportOptions} from './transport.js';
 export type * from './options.js';

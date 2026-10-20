@@ -1,9 +1,12 @@
 use std::collections::BTreeMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use capsem_core::net::dns::{DnsHandler, DnsResolver};
 use capsem_core::net::policy::NetworkMechanics;
-use capsem_core::net::policy_config::{SecurityPluginConfig, SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource};
+use capsem_core::net::policy_config::{
+    ModelEndpointRegistry, SecurityRuleProfile, SecurityRuleSet, SecurityRuleSource,
+};
+use capsem_core::net::proxy_engine::{ProxyPolicyHandle, ProxyPolicySnapshot};
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use hickory_proto::op::{Message, MessageType, OpCode, Query};
 use hickory_proto::rr::{Name, RecordType};
@@ -17,14 +20,18 @@ fn build_query_bytes(name: &str, qtype: RecordType, id: u16) -> Vec<u8> {
 }
 
 fn local_nxdomain_handler() -> DnsHandler {
-    let policy = Arc::new(RwLock::new(Arc::new(NetworkMechanics::new())));
     let profile = SecurityRuleProfile::parse_toml("").expect("empty rule profile parses");
     let rules =
         SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).expect("empty rule profile compiles");
-    let security_rules = Arc::new(RwLock::new(Arc::new(rules)));
-    let plugin_policy = Arc::new(RwLock::new(Arc::new(BTreeMap::<String, SecurityPluginConfig>::new())));
+    let policy = ProxyPolicyHandle::new(ProxyPolicySnapshot::new(
+        "blake3:benchmark".into(),
+        NetworkMechanics::new(),
+        rules,
+        BTreeMap::new(),
+        ModelEndpointRegistry::default(),
+    ));
     let resolver = Arc::new(DnsResolver::with_upstreams(Vec::new()));
-    DnsHandler::new(policy, security_rules, plugin_policy, resolver)
+    DnsHandler::new(policy, resolver)
 }
 
 fn bench_local_nxdomain(c: &mut Criterion) {

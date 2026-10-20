@@ -21,12 +21,13 @@ use crate::net::policy_config::{SecurityPluginConfig, SecurityRuleSet};
 mod html_extract;
 mod upstream;
 
+pub use crate::net::upstream_address::{is_public_address, resolve_upstream};
 use crate::security_engine::{
     evaluate_security_boundary, HttpRequestSecurityEvent, HttpSecurityEvent, IpSecurityEvent, RuntimeSecurityEventType,
     SecurityEnforcementAction, SecurityEnforcementDecision, SecurityEvent, TcpSecurityEvent,
 };
 pub use html_extract::{collapse_whitespace, extract_markdown_from_html, extract_text_from_html};
-pub use upstream::{is_public_address, non_public_refusal, resolve_upstream, BuiltinHttpClient};
+pub use upstream::{non_public_refusal, BuiltinHttpClient};
 
 /// The three built-in tool names (without any namespace prefix).
 const BUILTIN_TOOL_NAMES: &[&str] = &["fetch_http", "grep_http", "http_headers"];
@@ -321,9 +322,11 @@ async fn handle_fetch_http(
         None => return tool_error(id, "missing required parameter: url"),
     };
 
-    let checked = match authorize_upstream(url, "GET", security_rules, plugin_policy).await {
+    let start = Instant::now();
+    let checked = match http.request(url, "GET", security_rules, plugin_policy).await {
         Ok(checked) => checked,
-        Err(e) => {
+        Err(upstream::RequestFailure::Failed(error)) => return tool_error(id, &error),
+        Err(upstream::RequestFailure::Denied(e)) => {
             let blocked = blocked_decision(e.clone());
             let path = reqwest::Url::parse(url)
                 .map(|u| u.path().to_string())
@@ -348,15 +351,7 @@ async fn handle_fetch_http(
     let format = args.get("format").and_then(|v| v.as_str()).unwrap_or("markdown");
     let (start_index, max_length) = pagination_params(args);
 
-    let client = match http.pinned(&checked.domain, &checked.addresses) {
-        Ok(client) => client,
-        Err(e) => return tool_error(id, &format!("HTTP client setup failed: {e}")),
-    };
-    let start = Instant::now();
-    let resp = match client.get(url).send().await {
-        Ok(r) => r,
-        Err(e) => return tool_error(id, &format!("HTTP request failed: {e}")),
-    };
+    let resp = checked.response;
 
     let status_code = resp.status().as_u16();
 
@@ -481,9 +476,11 @@ async fn handle_grep_http(
         Err(e) => return tool_error(id, &format!("invalid regex: {e}")),
     };
 
-    let checked = match authorize_upstream(url, "GET", security_rules, plugin_policy).await {
+    let start = Instant::now();
+    let checked = match http.request(url, "GET", security_rules, plugin_policy).await {
         Ok(checked) => checked,
-        Err(e) => {
+        Err(upstream::RequestFailure::Failed(error)) => return tool_error(id, &error),
+        Err(upstream::RequestFailure::Denied(e)) => {
             let blocked = blocked_decision(e.clone());
             let path = reqwest::Url::parse(url)
                 .map(|u| u.path().to_string())
@@ -509,15 +506,7 @@ async fn handle_grep_http(
     let raw = args.get("raw").and_then(|v| v.as_bool()).unwrap_or(false);
     let (start_index, max_length) = pagination_params(args);
 
-    let client = match http.pinned(&checked.domain, &checked.addresses) {
-        Ok(client) => client,
-        Err(e) => return tool_error(id, &format!("HTTP client setup failed: {e}")),
-    };
-    let start = Instant::now();
-    let resp = match client.get(url).send().await {
-        Ok(r) => r,
-        Err(e) => return tool_error(id, &format!("HTTP request failed: {e}")),
-    };
+    let resp = checked.response;
 
     let status_code = resp.status().as_u16();
 
@@ -597,11 +586,18 @@ async fn handle_http_headers(
         None => return tool_error(id, "missing required parameter: url"),
     };
 
-    let method = args.get("method").and_then(|v| v.as_str()).unwrap_or("HEAD");
+    // Policy and the ledger must see the actual outgoing method, including
+    // the existing HEAD fallback for every argument other than exact GET.
+    let method = match args.get("method").and_then(|v| v.as_str()) {
+        Some("GET") => "GET",
+        _ => "HEAD",
+    };
 
-    let checked = match authorize_upstream(url, method, security_rules, plugin_policy).await {
+    let start = Instant::now();
+    let checked = match http.request(url, method, security_rules, plugin_policy).await {
         Ok(checked) => checked,
-        Err(e) => {
+        Err(upstream::RequestFailure::Failed(error)) => return tool_error(id, &error),
+        Err(upstream::RequestFailure::Denied(e)) => {
             let blocked = blocked_decision(e.clone());
             let path = reqwest::Url::parse(url)
                 .map(|u| u.path().to_string())
@@ -609,7 +605,7 @@ async fn handle_http_headers(
             record_http(
                 ledger,
                 &extract_domain(url),
-                "HEAD",
+                method,
                 &path,
                 HttpDecision::Denied,
                 None,
@@ -623,20 +619,7 @@ async fn handle_http_headers(
     };
     let (start_index, max_length) = pagination_params(args);
 
-    let client = match http.pinned(&checked.domain, &checked.addresses) {
-        Ok(client) => client,
-        Err(e) => return tool_error(id, &format!("HTTP client setup failed: {e}")),
-    };
-    let start = Instant::now();
-    let resp = match method {
-        "GET" => client.get(url).send().await,
-        _ => client.head(url).send().await,
-    };
-
-    let resp = match resp {
-        Ok(r) => r,
-        Err(e) => return tool_error(id, &format!("HTTP request failed: {e}")),
-    };
+    let resp = checked.response;
     let duration_ms = start.elapsed().as_millis() as u64;
     let status_code = resp.status().as_u16();
 
@@ -730,11 +713,11 @@ fn url_host(parsed: &reqwest::Url) -> Option<(String, Option<IpAddr>)> {
 }
 
 #[derive(Debug, Clone)]
-struct BuiltinHttpDecision {
-    domain: String,
+pub struct BuiltinHttpDecision {
+    pub domain: String,
     /// The addresses the boundary judged; the connection is pinned to them.
-    addresses: Vec<SocketAddr>,
-    decision: SecurityEnforcementDecision,
+    pub addresses: Vec<SocketAddr>,
+    pub decision: SecurityEnforcementDecision,
 }
 
 fn blocked_decision(reason: String) -> SecurityEnforcementDecision {
@@ -778,7 +761,7 @@ fn evaluate_builtin_http_request(
 /// through an explicit allow rule: host rules are written against names, and
 /// the name is the guest's to choose. Anything the rules block by address
 /// blocks the request whatever the name said.
-async fn authorize_upstream(
+pub async fn authorize_upstream(
     url: &str,
     method: &str,
     security_rules: &SecurityRuleSet,

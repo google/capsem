@@ -11,6 +11,7 @@ authors.workspace = true
 build = "build.rs"
 
 [dependencies]
+capsem-crypto = { path = "../capsem-crypto", version = "0.7.1", default-features = false }
 serde = { workspace = true }
 serde_bytes = { workspace = true }
 serde_json = { workspace = true }
@@ -18,7 +19,6 @@ rmp-serde = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
-blake3 = "1"
 
 [lints]
 workspace = true
@@ -29,6 +29,7 @@ tempfile = "3"
 [build-dependencies]
 quote = "1"
 syn = { version = "2", features = ["full", "visit-mut"] }
+toml = { workspace = true }
 
 [[bench]]
 name = "vsock_framing_micro"

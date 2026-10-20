@@ -1,6 +1,6 @@
 use super::*;
 
-const IDENTITY: &str = "profile-stable-code-0.6.2";
+const IDENTITY: &str = "runtime-stable-0.7.0-2368c2a80280";
 const EARLIER: &str = "2368c2a80280a6ae1cff5917a8f62fbdab09c7f2";
 const MAIN: &str = "0da05c6bce4807bf7f73398d14ab7eee6b525198";
 
@@ -41,7 +41,7 @@ fn an_identity_published_from_another_commit_is_refused_before_any_build() {
         .unwrap_err()
         .to_string();
     assert!(error.contains(EARLIER), "{error}");
-    assert!(error.contains("advance the profile's `revision`"), "{error}");
+    assert!(error.contains("names exactly one source commit"), "{error}");
 }
 
 #[test]

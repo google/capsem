@@ -20,7 +20,7 @@ fn valid_config_minimal() {
     let config = VmConfig::builder().kernel_path(&kernel).build().unwrap();
     assert_eq!(config.cpu_count, 4); // default
     assert_eq!(config.ram_bytes, 4 * 1024 * 1024 * 1024); // default 4GB
-    assert_eq!(config.kernel_cmdline, default_kernel_cmdline());
+    assert_eq!(config.kernel_cmdline, KERNEL_CMDLINE);
     assert!(config.initrd_path.is_none());
     assert!(config.disk_path.is_none());
 }
@@ -303,7 +303,7 @@ fn builder_defaults_are_sane() {
     assert!(b.initrd_path.is_none());
     assert!(b.disk_path.is_none());
     assert!(b.scratch_disk_path.is_none());
-    assert_eq!(b.kernel_cmdline, default_kernel_cmdline());
+    assert_eq!(b.kernel_cmdline, KERNEL_CMDLINE);
 }
 
 #[test]
@@ -482,9 +482,9 @@ fn hash_verification_succeeds_with_correct_blake3() {
     std::fs::write(&initrd, b"test initrd data").unwrap();
     std::fs::write(&rootfs, b"test rootfs data").unwrap();
 
-    let kh = blake3::hash(b"test kernel data").to_hex().to_string();
-    let ih = blake3::hash(b"test initrd data").to_hex().to_string();
-    let rh = blake3::hash(b"test rootfs data").to_hex().to_string();
+    let kh = capsem_crypto::blake3::hash(b"test kernel data").to_hex().to_string();
+    let ih = capsem_crypto::blake3::hash(b"test initrd data").to_hex().to_string();
+    let rh = capsem_crypto::blake3::hash(b"test rootfs data").to_hex().to_string();
 
     let config = VmConfig::builder()
         .kernel_path(&kernel)
@@ -499,14 +499,14 @@ fn hash_verification_succeeds_with_correct_blake3() {
 
 #[test]
 fn algorithm_tagged_pins_verify_against_the_same_digest_as_bare_hex() {
-    // Profile pins derived from the release graph spell the digest
+    // Asset pins derived from the release graph spell the digest
     // `blake3:<hex>`; asset manifests spell the same digest as bare hex. Boot
     // receives whichever the caller holds, so both must verify the same bytes
     // rather than one of them failing as a mismatch against itself.
     let dir = tempfile::tempdir().unwrap();
     let kernel = dir.path().join("vmlinuz");
     std::fs::write(&kernel, b"test kernel data").unwrap();
-    let hex = blake3::hash(b"test kernel data").to_hex().to_string();
+    let hex = capsem_crypto::blake3::hash(b"test kernel data").to_hex().to_string();
 
     VmConfig::verify_hash(&kernel, &hex).unwrap();
     VmConfig::verify_hash(&kernel, &format!("blake3:{hex}")).unwrap();
@@ -517,7 +517,7 @@ fn a_tagged_pin_still_rejects_the_wrong_bytes() {
     let dir = tempfile::tempdir().unwrap();
     let kernel = dir.path().join("vmlinuz");
     std::fs::write(&kernel, b"test kernel data").unwrap();
-    let wrong = blake3::hash(b"other kernel data").to_hex().to_string();
+    let wrong = capsem_crypto::blake3::hash(b"other kernel data").to_hex().to_string();
 
     let result = VmConfig::verify_hash(&kernel, &format!("blake3:{wrong}"));
     assert!(
@@ -548,7 +548,7 @@ fn hash_verification_cache_is_metadata_and_hash_bound() {
     let dir = tempfile::tempdir().unwrap();
     let kernel = dir.path().join("vmlinuz");
     std::fs::write(&kernel, b"test kernel data").unwrap();
-    let hash = blake3::hash(b"test kernel data").to_hex().to_string();
+    let hash = capsem_crypto::blake3::hash(b"test kernel data").to_hex().to_string();
 
     VmConfig::verify_hash(&kernel, &hash).unwrap();
     let cache = VmConfig::hash_cache_path(&kernel);
@@ -569,7 +569,7 @@ fn hash_verification_fails_on_corrupted_kernel() {
     let dir = tempfile::tempdir().unwrap();
     let kernel = dir.path().join("vmlinuz");
     std::fs::write(&kernel, b"corrupted kernel").unwrap();
-    let wrong_hash = blake3::hash(b"correct kernel").to_hex().to_string();
+    let wrong_hash = capsem_crypto::blake3::hash(b"correct kernel").to_hex().to_string();
 
     let result = VmConfig::builder()
         .kernel_path(&kernel)
@@ -589,4 +589,45 @@ fn no_expected_hash_skips_verification() {
 
     let config = VmConfig::builder().kernel_path(&kernel).build();
     assert!(config.is_ok(), "no hash set means no verification");
+}
+
+#[test]
+fn kernel_cmdline_carries_every_hardening_flag() {
+    let flags: Vec<&str> = KERNEL_CMDLINE.split_whitespace().collect();
+    for flag in [
+        "root=/dev/vda",
+        "ro",
+        "slab_nomerge",
+        "page_alloc.shuffle=1",
+        "oops=panic",
+    ] {
+        assert!(flags.contains(&flag), "{flag} missing from {KERNEL_CMDLINE}");
+    }
+    #[cfg(target_arch = "x86_64")]
+    assert!(flags.contains(&"console=ttyS0"));
+    #[cfg(not(target_arch = "x86_64"))]
+    assert!(flags.contains(&"console=hvc0"));
+}
+
+#[test]
+fn kernel_cmdline_disables_guest_heap_wiping_even_with_kernel_defaults_on() {
+    let flags: Vec<&str> = KERNEL_CMDLINE.split_whitespace().collect();
+    for name in ["init_on_alloc", "init_on_free"] {
+        let prefix = format!("{name}=");
+        let settings: Vec<_> = flags.iter().copied().filter(|flag| flag.starts_with(&prefix)).collect();
+        let expected = format!("{name}=0");
+        assert_eq!(settings, [expected.as_str()], "{KERNEL_CMDLINE}");
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn x86_default_boot_keeps_dma_bouncing_with_a_small_initial_pool() {
+    let config = VmConfigBuilder::default();
+    let pools: Vec<_> = config
+        .kernel_cmdline
+        .split_whitespace()
+        .filter(|flag| flag.starts_with("swiotlb="))
+        .collect();
+    assert_eq!(pools, ["swiotlb=2048"], "bouncing must not be disabled or overridden");
 }

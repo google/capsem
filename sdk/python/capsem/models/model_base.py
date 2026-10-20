@@ -2,10 +2,22 @@
 
 from __future__ import annotations
 
+import json
 from math import isfinite
 from typing import Annotated, ClassVar, TypeAlias
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, model_validator
+from pydantic import (
+    AfterValidator,
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictStr,
+    TypeAdapter,
+    ValidationError,
+    ValidatorFunctionWrapHandler,
+    model_validator,
+)
 from pydantic import JsonValue as PydanticJsonValue
 
 
@@ -23,11 +35,40 @@ def _finite_json(value: PydanticJsonValue) -> PydanticJsonValue:
 
 
 JsonValue: TypeAlias = Annotated[PydanticJsonValue, AfterValidator(_finite_json)]
+UuidString: TypeAlias = Annotated[StrictStr, Field(
+    pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+)]
+
+
+def _datetime_string(value: str) -> str:
+    TypeAdapter(AwareDatetime).validate_json(json.dumps(value), strict=True)
+    return value
+
+
+DateTimeString: TypeAlias = Annotated[StrictStr, Field(
+    pattern=r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:[.][0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})$",
+), AfterValidator(_datetime_string)]
 
 
 class Model(BaseModel):
     model_config = ConfigDict(strict=True, populate_by_name=True)
     nonnullable_optional: ClassVar[frozenset[str]] = frozenset()
+    private_input: ClassVar[bool] = False
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def redact_private_validation(cls, value: object, handler: ValidatorFunctionWrapHandler) -> object:
+        try:
+            return handler(value)
+        except ValidationError:
+            if not cls.private_input:
+                raise
+            # Replace the input and field locations as well as the rendered
+            # message: callers can inspect errors(), not only str(error).
+            raise ValidationError.from_exception_data(cls.__name__, [{
+                "type": "value_error", "loc": (), "input": None,
+                "ctx": {"error": ValueError("invalid private request")},
+            }], hide_input=True) from None
 
     @model_validator(mode="before")
     @classmethod

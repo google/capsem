@@ -89,7 +89,7 @@ fn recent_processes_are_searched_before_the_full_proc_walk() {
     std::os::unix::fs::symlink("socket:[42]", proc_root.join("200/fd/3")).unwrap();
 
     let candidates = pid_candidates(&proc_root, &[200]);
-    let owner = find_process_pid(&proc_root, 443, &[200]);
+    let owner = find_process_pid(&proc_root, "127.0.0.1:443".parse().unwrap(), &[200], None);
     std::fs::remove_dir_all(proc_root).unwrap();
 
     assert_eq!(candidates, vec![200, 100]);
@@ -221,4 +221,68 @@ fn async_vsock_new_owns_the_fd_on_failure() {
         0,
         "the failed constructor must close its socket"
     );
+}
+
+fn fake_proc(name: &str) -> std::path::PathBuf {
+    let root = std::env::temp_dir().join(format!("capsem-net-proxy-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("net")).unwrap();
+    root
+}
+
+fn owns_socket(root: &std::path::Path, pid: u32, inode: u32) {
+    std::fs::create_dir_all(root.join(format!("{pid}/fd"))).unwrap();
+    std::os::unix::fs::symlink(format!("socket:[{inode}]"), root.join(format!("{pid}/fd/3"))).unwrap();
+}
+
+#[test]
+fn the_kernel_address_encoding_is_matched_exactly() {
+    assert_eq!(
+        proc_tcp_addresses("127.0.0.1:443".parse().unwrap()),
+        ["0100007F:01BB", "0000000000000000FFFF00000100007F:01BB"]
+    );
+    assert_eq!(
+        proc_tcp_addresses("[::1]:8080".parse().unwrap()),
+        ["00000000000000000000000001000000:1F90"]
+    );
+}
+
+/// The same local port on two addresses: only the client's own address and
+/// port name its socket. Matching the port alone took the first one listed.
+#[test]
+fn a_same_port_socket_on_another_address_is_not_the_client() {
+    let root = fake_proc("collision");
+    std::fs::write(
+        root.join("net/tcp"),
+        "header\n  0: 0200007F:1388 00000000:0000 01 0:0 0:0 0 1000 0 7\n  1: 0100007F:1388 00000000:0000 01 0:0 0:0 0 1000 0 8\n",
+    )
+    .unwrap();
+    owns_socket(&root, 100, 7);
+    owns_socket(&root, 200, 8);
+
+    let owner = find_process_pid(&root, "127.0.0.1:5000".parse().unwrap(), &[], None);
+    std::fs::remove_dir_all(&root).unwrap();
+    assert_eq!(owner, Some(200));
+}
+
+/// A container workload's sockets live in its own network namespace, which
+/// the VM's /proc/net does not list; the workload's /proc/<pid>/net does.
+#[test]
+fn a_workload_client_is_found_in_the_workloads_network_namespace() {
+    let root = fake_proc("workload");
+    std::fs::write(root.join("net/tcp"), "header\n").unwrap();
+    std::fs::create_dir_all(root.join("300/net")).unwrap();
+    std::fs::write(
+        root.join("300/net/tcp"),
+        "header\n  0: 0201000A:9C40 0101000A:01BB 01 0:0 0:0 0 101000 0 9\n",
+    )
+    .unwrap();
+    owns_socket(&root, 301, 9);
+
+    let client = "10.0.1.2:40000".parse().unwrap();
+    let without = find_process_pid(&root, client, &[], None);
+    let with = find_process_pid(&root, client, &[], Some(300));
+    std::fs::remove_dir_all(&root).unwrap();
+    assert_eq!(without, None);
+    assert_eq!(with, Some(301));
 }

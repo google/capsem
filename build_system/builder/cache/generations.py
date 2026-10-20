@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fnmatch
+import stat as stat_mode
 from pathlib import Path
 
 from .leases import active_path, lease_key
@@ -30,8 +31,12 @@ def _lease_files(template: str | None, children: list[Path], stage_policy) -> di
     found = {}
     for child in children:
         key = lease_key(template, child.name)
-        if key is not None and not managed(stage_policy, child.name) and not child.is_symlink() \
-                and child.is_file():
+        if (
+            key is not None
+            and not managed(stage_policy, child.name)
+            and not child.is_symlink()
+            and child.is_file()
+        ):
             found[child.name] = key
     return found
 
@@ -70,7 +75,11 @@ def directory_entries(
         if key in names:
             key = None  # the lease of an unmanaged sibling stays unmanaged
         logical, allocated = entry_size(child, allocated_seen)
-        stat = child.lstat()
+        try:
+            stat = child.lstat()
+        except FileNotFoundError:
+            # Another bounded command may retire an idle generation during the scan.
+            continue
         lease_only = key is not None
         is_managed = lease_only or child.name in managed_names
         members: tuple[Path, ...] = ()
@@ -95,7 +104,13 @@ def directory_entries(
                 lease_only=lease_only,
                 protected=is_managed
                 and (
-                    busy or generation in referenced
+                    busy
+                    or generation in referenced
+                    or (
+                        stage_policy.protect_hardlinks
+                        and stat_mode.S_ISREG(stat.st_mode)
+                        and stat.st_nlink > 1
+                    )
                     or lease_active(directory, template, generation)
                 ),
             )

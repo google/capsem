@@ -5,8 +5,6 @@ TDD: tests written first (RED), then manifest.py makes them pass (GREEN).
 
 from __future__ import annotations
 
-import json
-
 import pytest
 from capsem_builder.image.manifest import (
     ArchManifest,
@@ -17,8 +15,6 @@ from capsem_builder.image.manifest import (
     collect_bom,
     parse_b3sums,
     parse_dpkg_query,
-    parse_npm_ls,
-    parse_pip_list,
     render,
 )
 from pydantic import ValidationError
@@ -36,25 +32,6 @@ vim-tiny\t2:9.0.1378-2\tarm64
 """
 
 DPKG_SINGLE = "bash\t5.2.15\tarm64\n"
-
-PIP_JSON = json.dumps([
-    {"name": "pytest", "version": "8.3.4"},
-    {"name": "requests", "version": "2.31.0"},
-    {"name": "httpx", "version": "0.27.0"},
-])
-
-PIP_EMPTY = "[]"
-
-NPM_JSON = json.dumps({
-    "dependencies": {
-        "@anthropic-ai/claude-code": {"version": "1.0.36"},
-        "@google/gemini-cli": {"version": "0.1.20"},
-    }
-})
-
-NPM_EMPTY = json.dumps({"dependencies": {}})
-
-NPM_NO_DEPS_KEY = json.dumps({"name": "root"})
 
 B3SUMS_OUTPUT = """\
 a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2  vmlinuz
@@ -80,7 +57,7 @@ class TestPackageEntry:
         assert p.arch == "arm64"
 
     def test_defaults(self):
-        p = PackageEntry(name="pytest", version="8.0", source="pip")
+        p = PackageEntry(name="bash", version="5.2", source="dpkg")
         assert p.arch == ""
 
     def test_frozen(self):
@@ -259,64 +236,6 @@ class TestParseDpkgQuery:
 
 
 # ---------------------------------------------------------------------------
-# parse_pip_list
-# ---------------------------------------------------------------------------
-
-
-class TestParsePipList:
-
-    def test_happy_path(self):
-        pkgs = parse_pip_list(PIP_JSON)
-        assert len(pkgs) == 3
-        assert pkgs[1].name == "pytest"  # sorted
-        assert pkgs[1].source == "pip"
-
-    def test_empty_array(self):
-        assert parse_pip_list(PIP_EMPTY) == []
-
-    def test_invalid_json(self):
-        with pytest.raises(ValueError, match="Invalid"):
-            parse_pip_list("not json")
-
-    def test_sorted_by_name(self):
-        pkgs = parse_pip_list(PIP_JSON)
-        names = [p.name for p in pkgs]
-        assert names == sorted(names)
-
-
-# ---------------------------------------------------------------------------
-# parse_npm_ls
-# ---------------------------------------------------------------------------
-
-
-class TestParseNpmLs:
-
-    def test_happy_path(self):
-        pkgs = parse_npm_ls(NPM_JSON)
-        assert len(pkgs) == 2
-        assert pkgs[0].source == "npm"
-
-    def test_empty_dependencies(self):
-        assert parse_npm_ls(NPM_EMPTY) == []
-
-    def test_no_dependencies_key(self):
-        assert parse_npm_ls(NPM_NO_DEPS_KEY) == []
-
-    def test_invalid_json(self):
-        with pytest.raises(ValueError, match="Invalid"):
-            parse_npm_ls("not json")
-
-    def test_concatenated_documents_are_rejected(self):
-        with pytest.raises(ValueError, match="Extra data"):
-            parse_npm_ls(f"{NPM_JSON}\n{NPM_EMPTY}")
-
-    def test_sorted_by_name(self):
-        pkgs = parse_npm_ls(NPM_JSON)
-        names = [p.name for p in pkgs]
-        assert names == sorted(names)
-
-
-# ---------------------------------------------------------------------------
 # parse_b3sums
 # ---------------------------------------------------------------------------
 
@@ -363,8 +282,6 @@ class TestCollectBom:
         m = collect_bom(
             arch="arm64",
             dpkg_output=DPKG_SINGLE,
-            pip_output=PIP_EMPTY,
-            npm_output=NPM_EMPTY,
             b3sum_output=B3SUMS_OUTPUT,
         )
         assert m.arch == "arm64"
@@ -372,8 +289,7 @@ class TestCollectBom:
         assert len(m.assets) == 3
 
     def test_empty_outputs(self):
-        m = collect_bom(arch="x86_64", dpkg_output="", pip_output="[]",
-                        npm_output=NPM_NO_DEPS_KEY, b3sum_output="")
+        m = collect_bom(arch="x86_64", dpkg_output="", b3sum_output="")
         assert m.packages == []
         assert m.assets == []
 
@@ -388,7 +304,7 @@ class TestRender:
     def _make_manifest(self, *, vulns=None):
         pkgs = [
             PackageEntry(name="bash", version="5.2.15", source="dpkg", arch="arm64"),
-            PackageEntry(name="pytest", version="8.3.4", source="pip"),
+            PackageEntry(name="python3-pytest", version="8.3.4", source="dpkg", arch="all"),
         ]
         assets = [
             AssetEntry(filename="vmlinuz", hash="a" * 64, size=12_345_678),
@@ -414,9 +330,10 @@ class TestRender:
         assert "bash" in text
         assert "5.2.15" in text
 
-    def test_pip_packages(self):
+    def test_every_dpkg_package_is_listed(self):
         text = render(self._make_manifest())
-        assert "pytest" in text
+        assert "Packages (dpkg): 2" in text
+        assert "python3-pytest" in text
         assert "8.3.4" in text
 
     def test_assets(self):

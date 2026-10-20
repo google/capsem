@@ -2,7 +2,8 @@
 // VM list + resource summary. Also provides lifecycle methods (stop, delete, etc.).
 
 import * as api from '../api';
-import type { AssetStatusResponse } from '../types/assets';
+import { VmAction } from '@capsem/sdk';
+import { hasVmAction } from '../vm-actions';
 import type { VmSummary, VmStatsSummary, ResourceSummary, ProvisionRequest, ForkRequest, ForkResponse } from '../types/gateway';
 
 function assetStatusError(e: unknown): string {
@@ -15,11 +16,9 @@ class VmStore {
   vms = $state<VmSummary[]>([]);
   resourceSummary = $state<ResourceSummary | null>(null);
   serviceStatus = $state<string>('unknown');
-  assetHealth = $state<AssetStatusResponse | null>(null);
   acting = $state(false);
   polled = $state(false);
   showCreateModal = $state(false);
-  createProfileId = $state<string | null>(null);
   activeStatsId = $state<string | null>(null);
   activeStats = $state<VmStatsSummary | null>(null);
 
@@ -94,7 +93,17 @@ class VmStore {
 
   // -- Lifecycle actions --
 
+  private requireAction(id: string, action: VmAction): VmSummary {
+    if (this.acting) throw new Error('Another session action is already in progress');
+    const vm = this.vms.find(vm => vm.id === id);
+    if (this.serviceStatus !== 'running' || this.error || !vm || !hasVmAction(vm, action)) {
+      throw new Error(`${action} is no longer available for ${vm?.name ?? id}`);
+    }
+    return vm;
+  }
+
   async stop(id: string): Promise<void> {
+    this.requireAction(id, VmAction.STOP);
     console.log('[vmStore] stop(%s)', id);
     this.acting = true;
     try {
@@ -105,19 +114,8 @@ class VmStore {
     }
   }
 
-  async restart(id: string): Promise<void> {
-    console.log('[vmStore] restart(%s)', id);
-    this.acting = true;
-    try {
-      await api.stopVm(id);
-      await api.resumeVm(id);
-      await this.refresh();
-    } finally {
-      this.acting = false;
-    }
-  }
-
   async suspend(id: string): Promise<void> {
+    this.requireAction(id, VmAction.PAUSE);
     this.acting = true;
     try {
       await api.suspendVm(id);
@@ -128,6 +126,7 @@ class VmStore {
   }
 
   async delete(id: string): Promise<void> {
+    this.requireAction(id, VmAction.DELETE);
     console.log('[vmStore] delete(%s)', id);
     this.acting = true;
     try {
@@ -141,9 +140,13 @@ class VmStore {
   }
 
   async resume(id: string): Promise<void> {
+    const vm = this.vms.find(vm => vm.id === id);
+    const action = vm && hasVmAction(vm, VmAction.START) ? VmAction.START : VmAction.RESUME;
+    this.requireAction(id, action);
     this.acting = true;
     try {
-      await api.resumeVm(id);
+      if (action === VmAction.START) await api.startVm(id);
+      else await api.resumeVm(id);
       await this.refresh();
     } finally {
       this.acting = false;
@@ -152,16 +155,13 @@ class VmStore {
 
   async provision(opts: ProvisionRequest): Promise<{ id: string; name: string }> {
     console.log('[vmStore] provision(%o)', opts);
-    let assetHealth: AssetStatusResponse | null = null;
+    let ready: boolean;
     try {
-      assetHealth = await api.getAssetsStatus(opts.profile_id);
+      ready = (await api.getAssetsStatus()).ready;
     } catch (e) {
       throw new Error(assetStatusError(e));
     }
-    if (assetHealth.ready !== true) {
-      this.assetHealth = assetHealth;
-      throw new Error(`VM assets are not ready for profile ${opts.profile_id}`);
-    }
+    if (!ready) throw new Error('VM assets are not ready');
     this.acting = true;
     try {
       const result = await api.provisionVm(opts);
@@ -173,27 +173,16 @@ class VmStore {
     }
   }
 
-  openCreateModal(profileId?: string): void {
-    this.createProfileId = profileId ?? null;
+  openCreateModal(): void {
     this.showCreateModal = true;
   }
 
   closeCreateModal(): void {
     this.showCreateModal = false;
-    this.createProfileId = null;
-  }
-
-  async ensureAssets(profileId: string): Promise<void> {
-    this.acting = true;
-    try {
-      this.assetHealth = await api.ensureAssets(profileId);
-      await this.refresh();
-    } finally {
-      this.acting = false;
-    }
   }
 
   async fork(id: string, opts: ForkRequest): Promise<ForkResponse> {
+    this.requireAction(id, VmAction.FORK);
     this.acting = true;
     try {
       const result = await api.forkVm(id, opts);

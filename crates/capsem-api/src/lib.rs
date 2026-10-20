@@ -1,20 +1,29 @@
 //! HTTP wire contracts shared by the gateway and service.
 //! No runtime, filesystem, or service dependencies belong here.
 
+mod credentials;
 mod document;
+pub use credentials::*;
+mod connections;
+pub use connections::*;
+mod identity;
 pub use document::{openapi, CONTRACT_VERSION};
 mod hypervisor;
 pub use hypervisor::*;
 mod vm_info;
 pub use vm_info::*;
-mod profile_status;
-pub use profile_status::*;
+mod asset_status;
+pub use asset_status::*;
 
 mod containers;
 pub use containers::*;
 mod exposures;
 pub use exposures::*;
+mod images;
+pub use images::*;
 mod lifecycle;
+mod managed_sessions;
+pub use managed_sessions::*;
 pub mod stream;
 pub use lifecycle::*;
 mod execution;
@@ -37,8 +46,8 @@ mod updates;
 pub use updates::*;
 mod restart;
 pub use restart::*;
-mod profiles;
-pub use profiles::*;
+mod proxy;
+pub use proxy::*;
 mod networks;
 pub use networks::*;
 mod diagnostics;

@@ -59,8 +59,24 @@ jobs:
           test "$GITHUB_REF" = "refs/tags/capsem-source-$SOURCE_COMMIT"
           test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
 
-  runtime-preflight:
+  client-publication-prerequisites:
     needs: source-identity
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ inputs.source_commit }}
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+      - name: Require stable registry publisher configuration
+        if: ${{ inputs.channel == 'stable' && inputs.publish == true }}
+        env:
+          PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: uv run --project build_system --frozen python -m capsem_builder.release.tools.client_publishers check-credentials
+
+  runtime-preflight:
+    needs: [source-identity, client-publication-prerequisites]
     uses: ./.github/workflows/release-runtime-preflight.yaml
     with:
       channel: ${{ inputs.channel }}
@@ -68,7 +84,7 @@ jobs:
       source_commit: ${{ inputs.source_commit }}
 
   fast-gate:
-    needs: source-identity
+    needs: [source-identity, client-publication-prerequisites]
     uses: ./.github/workflows/fast-gate.yaml
     with:
       source_commit: ${{ inputs.source_commit }}
@@ -101,7 +117,7 @@ jobs:
           python3 build_system/scripts/release/fetch-channel-source-manifest.py \
             --channel "$RELEASE_CHANNEL" \
             --source-commit "$SOURCE_COMMIT" \
-            --require-profile-membership \
+            --require-runtime \
             --output cache/target/channel-source/manifest.json
 
       - name: Project inactive first-channel public-before state
@@ -139,22 +155,24 @@ jobs:
           kind: packages
           output: cache/target/binary-public-before/packages
 
-      - name: Fetch exact deployed public-before profiles
+      # Empty only when the public channel has published no runtime yet; a
+      # runtime the manifest names must still resolve every artifact.
+      - name: Fetch exact deployed public-before runtime
         uses: ./.github/actions/fetch-release-inputs
         with:
           manifest-url: ${{ steps.public-before-authority.outputs.manifest-url }}
-          allow-empty-profiles: ${{ steps.public-before.outputs.bootstrap }}
-          kind: profiles
+          allow-empty-runtime: true
+          kind: runtime
           architecture: x86_64
-          output: cache/target/binary-public-before/profiles
+          output: cache/target/binary-public-before/runtime
 
       - name: Prove public-before cohorts use one manifest
         run: |
           uv run --project build_system --frozen python build_system/scripts/release/verify-release-inputs.py \
-            --input-dir cache/target/binary-public-before/profiles
+            --input-dir cache/target/binary-public-before/runtime
           cmp \
             cache/target/binary-public-before/packages/manifest.json \
-            cache/target/binary-public-before/profiles/manifest.json
+            cache/target/binary-public-before/runtime/manifest.json
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -166,8 +184,8 @@ jobs:
           path: cache/target/binary-public-before/packages/
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: binary-public-before-profiles
-          path: cache/target/binary-public-before/profiles/
+          name: binary-public-before-runtime
+          path: cache/target/binary-public-before/runtime/
 
   preflight:
     needs: [runtime-preflight, fast-gate]
@@ -270,12 +288,6 @@ jobs:
           name: binary-channel-source
           path: cache/target/channel-source/
 
-      - name: Select serialized pre-activation manifest
-        run: |
-          test -s cache/target/channel-source/manifest.json
-          echo "PREACTIVATION_MANIFEST=file://$PWD/cache/target/channel-source/manifest.json" \
-            >> "$GITHUB_ENV"
-
       - name: Select Xcode 16.2
         run: sudo xcode-select -s /Applications/Xcode_16.2.app
 
@@ -288,29 +300,19 @@ jobs:
 
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
 
-      - name: Fetch exact selected arm64 profiles
+      - name: Fetch exact selected arm64 runtime
         uses: ./.github/actions/fetch-release-inputs
         with:
           manifest-url: file://${{ github.workspace }}/cache/target/channel-source/manifest.json
-          kind: profiles
+          kind: runtime
           architecture: arm64
-          output: cache/target/binary-selected-profiles
+          output: cache/target/binary-selected-runtime
 
-      - name: Stage exact selected profile inputs
+      - name: Stage exact selected runtime inputs
         run: |
           uv run --project build_system --frozen python build_system/scripts/release/stage-release-test-inputs.py \
-            --input-dir cache/target/binary-selected-profiles \
-            --assets-dir cache/target/release/staging/assets \
-            --config-root cache/target/release/staging/config \
-            --shared-config-root config
-
-      - name: Materialize runtime config
-        run: |
-          CAPSEM_ASSET_MANIFEST="$PREACTIVATION_MANIFEST" \
-          CAPSEM_ASSETS_PATH="$PWD/cache/target/release/staging/assets" \
-          CAPSEM_CONFIG_ROOT="$PWD/cache/target/release/staging/config" \
-          CAPSEM_ARCH=arm64 \
-            bash build_system/scripts/build/materialize-config.sh
+            --input-dir cache/target/binary-selected-runtime \
+            --assets-dir cache/target/release/staging/assets
 
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
@@ -395,6 +397,8 @@ jobs:
             -p capsem \
             -p capsem-service \
             -p capsem-process \
+            -p capsem-ledger \
+            -p capsem-proxy \
             -p capsem-tui \
             -p capsem-router \
             -p capsem-mcp-aggregator \
@@ -410,9 +414,9 @@ jobs:
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
-          for bin in capsem capsem-service capsem-process capsem-tui capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin capsem-mock-server capsem-bench-rs; do
+          for bin in capsem capsem-service capsem-process capsem-ledger capsem-proxy capsem-tui capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin capsem-mock-server capsem-bench-rs; do
             entitlement_args=()
-            if [[ "$bin" != capsem-router ]]; then
+            if [[ "$bin" != capsem-router && "$bin" != capsem-ledger && "$bin" != capsem-proxy ]]; then
               entitlement_args=(--entitlements build_system/packaging/macos/entitlements.plist)
             fi
             codesign --sign "$APPLE_SIGNING_IDENTITY" \
@@ -433,7 +437,6 @@ jobs:
             "cache/target/cargo/release/bundle/macos/Capsem.app" \
             "cache/target/cargo/release" \
             "cache/target/release/staging/assets" \
-            "cache/target/config" \
             "$VERSION" \
             "$APPLE_INSTALLER_SIGNING_IDENTITY"
 
@@ -536,35 +539,24 @@ jobs:
           toolchain: 1.97.1
       - uses: ./.github/actions/rust-cache
         with:
-          key: materialize-package-config-${{ matrix.arch }}
+          key: linux-package-${{ matrix.arch }}
 
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
       - run: uv sync --project build_system --frozen
 
-      - name: Fetch exact selected ${{ matrix.arch }} profiles
+      - name: Fetch exact selected ${{ matrix.arch }} runtime
         uses: ./.github/actions/fetch-release-inputs
         with:
           manifest-url: file://${{ github.workspace }}/cache/target/channel-source/manifest.json
-          kind: profiles
+          kind: runtime
           architecture: ${{ matrix.arch }}
-          output: cache/target/binary-selected-profiles
+          output: cache/target/binary-selected-runtime
 
-      - name: Stage exact selected profile inputs
+      - name: Stage exact selected runtime inputs
         run: |
           uv run --project build_system --frozen python build_system/scripts/release/stage-release-test-inputs.py \
-            --input-dir cache/target/binary-selected-profiles \
-            --assets-dir cache/target/package-content/assets \
-            --config-root cache/target/package-source-config \
-            --shared-config-root config
-
-      - name: Materialize runtime config
-        run: |
-          CAPSEM_ASSET_MANIFEST="$PWD/cache/target/package-content/assets/manifest.json" \
-          CAPSEM_ASSETS_PATH="$PWD/cache/target/package-content/assets" \
-          CAPSEM_CONFIG_ROOT="$PWD/cache/target/package-source-config" \
-          CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/cache/target/package-content/config" \
-          CAPSEM_ARCH="${{ matrix.arch }}" \
-            bash build_system/scripts/build/materialize-config.sh --pair-content
+            --input-dir cache/target/binary-selected-runtime \
+            --assets-dir cache/target/package-content/assets
 
       - name: Build Linux package through the shared hermetic rail
         env:
@@ -684,21 +676,14 @@ jobs:
             "${ARTIFACT_ARGS[@]}"
           test -f "cache/target/binary-channel/$RELEASE_CHANNEL/manifest.before.json"
 
-      - name: Prove binary candidate preserved every profile
+      - name: Prove binary candidate preserved the runtime
         run: |
           set -euo pipefail
-          python3 - "$RELEASE_CHANNEL" <<'PY'
-          import json
-          import sys
-          from pathlib import Path
-
-          channel = sys.argv[1]
-          root = Path("cache/target/binary-channel") / channel
-          before = json.loads((root / "manifest.before.json").read_text())
-          after = json.loads((root / "manifest.json").read_text())
-          if before.get("profiles") != after.get("profiles"):
-              raise SystemExit(f"{channel} binary candidate changed profile metadata")
-          PY
+          root="cache/target/binary-channel/$RELEASE_CHANNEL"
+          if [[ "$(jq -cS .runtime "$root/manifest.before.json")" != "$(jq -cS .runtime "$root/manifest.json")" ]]; then
+            echo "$RELEASE_CHANNEL binary candidate changed runtime metadata" >&2
+            exit 1
+          fi
 
       - name: Verify binary release lane policy
         run: |
@@ -767,7 +752,7 @@ jobs:
           pkgutil --pkg-info com.capsem.pkg | grep -F "version: $VERSION"
           test -d "/Applications/Capsem.app"
           test -x "/Applications/Capsem.app/Contents/MacOS/capsem-app"
-          for bin in capsem capsem-admin capsem-gateway capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs; do
+          for bin in capsem capsem-admin capsem-gateway capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-ledger capsem-proxy capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs; do
             test -x "$HOME/.capsem/bin/$bin"
             "$HOME/.capsem/bin/$bin" --version | grep -F "$VERSION"
           done
@@ -852,7 +837,7 @@ jobs:
           sudo dpkg -i "$package"
           test ! -e /var/run/capsem/install-manifest
           dpkg-query -W -f='${Version}' capsem | grep -Fx "$VERSION"
-          for bin in capsem capsem-admin capsem-app capsem-gateway capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs; do
+          for bin in capsem capsem-admin capsem-app capsem-gateway capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-ledger capsem-proxy capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs; do
             test -x "/usr/bin/$bin"
             if [ "$bin" != "capsem-app" ]; then
               "/usr/bin/$bin" --version | grep -F "$VERSION"
@@ -955,8 +940,8 @@ jobs:
           path: cache/target/binary-public-before/packages/
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: binary-public-before-profiles
-          path: cache/target/binary-public-before/profiles/
+          name: binary-public-before-runtime
+          path: cache/target/binary-public-before/runtime/
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: binary-channel-candidate
@@ -967,33 +952,26 @@ jobs:
           uv run --project build_system --frozen python build_system/scripts/release/verify-release-inputs.py \
             --input-dir cache/target/binary-public-before/packages
           uv run --project build_system --frozen python build_system/scripts/release/verify-release-inputs.py \
-            --input-dir cache/target/binary-public-before/profiles
+            --input-dir cache/target/binary-public-before/runtime
           cmp \
             cache/target/binary-public-before/packages/manifest.json \
-            cache/target/binary-public-before/profiles/manifest.json
+            cache/target/binary-public-before/runtime/manifest.json
 
-      - name: Resolve exact candidate-after profiles
+      - name: Resolve exact candidate-after runtime
         uses: ./.github/actions/fetch-release-inputs
         with:
           manifest-url: file://${{ github.workspace }}/cache/target/binary-channel/${{ inputs.channel }}/manifest.json
-          kind: profiles
+          kind: runtime
           architecture: x86_64
-          output: cache/target/candidate-profile-inputs
+          output: cache/target/candidate-runtime-inputs
 
-      - name: Stage exact candidate-after profiles
+      - name: Stage exact candidate-after runtime
         run: |
           uv run --project build_system --frozen python build_system/scripts/release/verify-release-inputs.py \
-            --input-dir cache/target/candidate-profile-inputs
+            --input-dir cache/target/candidate-runtime-inputs
           uv run --project build_system --frozen python build_system/scripts/release/stage-release-test-inputs.py \
-            --input-dir cache/target/candidate-profile-inputs \
-            --assets-dir cache/target/assets \
-            --config-root cache/target/release/staging/config \
-            --shared-config-root config
-          CAPSEM_ASSET_MANIFEST="$PWD/cache/target/assets/manifest.json" \
-          CAPSEM_ASSETS_PATH="$PWD/cache/target/assets" \
-          CAPSEM_CONFIG_ROOT="$PWD/cache/target/release/staging/config" \
-          CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/cache/target/config" \
-            bash build_system/scripts/build/materialize-config.sh --pair-content
+            --input-dir cache/target/candidate-runtime-inputs \
+            --assets-dir cache/target/assets
 
       - name: Activate exact candidate package binaries for functional tests
         env:
@@ -1012,17 +990,16 @@ jobs:
           {
             echo "CAPSEM_RELEASE_PACKAGE=$PWD/$package"
             echo "CAPSEM_RELEASE_BIN_DIR=$PWD/cache/target/cargo/debug"
-            echo "CAPSEM_RELEASE_INPUT_DIR=$PWD/cache/target/candidate-profile-inputs"
+            echo "CAPSEM_RELEASE_INPUT_DIR=$PWD/cache/target/candidate-runtime-inputs"
             printf 'CAPSEM_RELEASE_CHANNEL=%s\nCAPSEM_RELEASE_BASELINE_CHANNEL=%s\n' "$RELEASE_CHANNEL" "$BASELINE_CHANNEL"
             echo "CAPSEM_RELEASE_TRANSITION=auto"
-            echo "CAPSEM_RELEASE_BEFORE_MANIFEST=$PWD/cache/target/binary-public-before/profiles/manifest.json"
+            echo "CAPSEM_RELEASE_BEFORE_MANIFEST=$PWD/cache/target/binary-public-before/runtime/manifest.json"
             echo "CAPSEM_RELEASE_AFTER_MANIFEST=$PWD/cache/target/binary-channel/$RELEASE_CHANNEL/manifest.json"
             echo "CAPSEM_RELEASE_BEFORE_PACKAGE=${before_package:+$PWD/$before_package}"
-            echo "CAPSEM_RELEASE_BEFORE_PROFILE_INPUTS=$PWD/cache/target/binary-public-before/profiles"
-            echo "CAPSEM_RELEASE_AFTER_PROFILE_INPUTS=$PWD/cache/target/candidate-profile-inputs"
+            echo "CAPSEM_RELEASE_BEFORE_INPUTS=$PWD/cache/target/binary-public-before/runtime"
+            echo "CAPSEM_RELEASE_AFTER_INPUTS=$PWD/cache/target/candidate-runtime-inputs"
             echo "CAPSEM_TEST_BINARY=$PWD/cache/target/cargo/debug/capsem"
             echo "CAPSEM_TEST_ASSETS_DIR=$PWD/cache/target/assets"
-            echo "CAPSEM_TEST_CONFIG_ROOT=$PWD/cache/target/config"
           } >> "$GITHUB_ENV"
 
       - name: Qualify the candidate binaries
@@ -1312,6 +1289,23 @@ jobs:
         run: >
           build_system/scripts/build/prove-live-public-install.sh
           "$ASSET_MANIFEST_URL" "$RELEASE_CHANNEL"
+
+  publish-client-packages:
+    needs: [verify-release-downloads]
+    if: ${{ inputs.channel == 'stable' && inputs.publish == true }}
+    uses: ./.github/workflows/release-client-packages.yaml
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+      attestations: write
+    with:
+      source_commit: ${{ inputs.source_commit }}
+      release_tag: ${{ inputs.tag }}
+    secrets:
+      PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
   cleanup-unpublished-version-claim:
     needs: [verify-release-downloads]

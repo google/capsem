@@ -8,18 +8,228 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "guest" / "artifacts"))
 
 from capsem_bench import __main__ as bench_main
-from capsem_bench import load_harness, mitm_load
+from capsem_bench import dns_load, load_harness, mcp_load, mitm_load
 
 
-@pytest.mark.parametrize("status", [200, 204, 302, 403, 500])
-def test_mitm_load_counts_http_failures(status):
-    session = types.SimpleNamespace(
-        get=lambda *args, **kwargs: types.SimpleNamespace(status_code=status),
+def test_mitm_load_delegates_to_async_rust_driver(monkeypatch):
+    calls = []
+    row = {
+        "concurrency": 2,
+        "duration_s": 1.0,
+        "total_requests": 4,
+        "errors": 0,
+    }
+
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return types.SimpleNamespace(returncode=0, stdout=json.dumps(row), stderr="")
+
+    monkeypatch.setattr(mitm_load.subprocess, "run", run)
+
+    assert mitm_load._drive_at_concurrency("https://fixture.test/tiny", 2, 1) == row
+    assert calls == [
+        (
+            [
+                mitm_load.RUST_BENCH,
+                "http-load",
+                "--target",
+                "https://fixture.test/tiny",
+                "--concurrency",
+                "2",
+                "--duration-s",
+                "1",
+            ],
+            {"check": False, "capture_output": True, "text": True},
+        )
+    ]
+
+
+def test_mitm_load_rejects_starved_driver(monkeypatch):
+    row = {"concurrency": 512, "total_requests": 91, "errors": 0}
+    monkeypatch.setattr(
+        mitm_load.subprocess,
+        "run",
+        lambda *args, **kwargs: types.SimpleNamespace(
+            returncode=0, stdout=json.dumps(row), stderr=""
+        ),
     )
-    elapsed, observed_status, error = mitm_load._do_request("https://fixture.test/tiny", session)
-    assert elapsed >= 0
-    assert observed_status == status
-    assert error == (None if 200 <= status < 300 else f"HTTP {status}")
+
+    with pytest.raises(RuntimeError, match="91 of 512 client loops"):
+        mitm_load._drive_at_concurrency("https://fixture.test/tiny", 512, 10)
+
+
+def test_mitm_load_preserves_failed_level_for_collector_rejection(monkeypatch):
+    monkeypatch.setattr(
+        mitm_load,
+        "_drive_at_concurrency",
+        lambda url, concurrency, duration_s: {
+            "concurrency": 1,
+            "duration_s": 1.0,
+            "total_requests": 2,
+            "errors": 1,
+            "error_distribution": {"timed out": 1},
+            "rps": 2.0,
+            "p50_ms": 10.0,
+            "p95_ms": 20.0,
+            "p99_ms": 20.0,
+            "p999_ms": 20.0,
+        },
+    )
+
+    result = mitm_load.mitm_load_bench(
+        target="https://fixture.capsem.test/tiny",
+        concurrency_levels=[1],
+        duration_s=1,
+    )
+
+    assert result["concurrency_levels"] == [
+        {
+            "concurrency": 1,
+            "duration_s": 1.0,
+            "total_requests": 2,
+            "errors": 1,
+            "error_distribution": {"timed out": 1},
+            "rps": 2.0,
+            "p50_ms": 10.0,
+            "p95_ms": 20.0,
+            "p99_ms": 20.0,
+            "p999_ms": 20.0,
+        }
+    ]
+
+
+def test_dns_load_delegates_to_async_rust_driver(monkeypatch):
+    calls = []
+    row = {
+        "concurrency": 2,
+        "duration_s": 1.0,
+        "total_requests": 4,
+        "errors": 0,
+        "request_bytes": 160,
+        "response_bytes": 224,
+    }
+
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return types.SimpleNamespace(returncode=0, stdout=json.dumps(row), stderr="")
+
+    monkeypatch.setattr(dns_load.subprocess, "run", run)
+
+    assert dns_load._drive_at_concurrency("fixture.test", 1, 2, 1, 5) == row
+    assert calls == [
+        (
+            [
+                dns_load.RUST_BENCH,
+                "dns-load",
+                "--target",
+                "127.0.0.1:53",
+                "--qname",
+                "fixture.test",
+                "--qtype",
+                "1",
+                "--concurrency",
+                "2",
+                "--duration-s",
+                "1",
+                "--timeout-ms",
+                "5000",
+            ],
+            {"check": False, "capture_output": True, "text": True},
+        )
+    ]
+
+
+def test_load_curve_reaches_the_config_owned_client_ceiling(monkeypatch):
+    monkeypatch.setattr(
+        load_harness,
+        "runtime_limits",
+        lambda: {"network_client_capacity": 512},
+    )
+
+    expected = (1, 16, 64, 128, 256, 512)
+    assert load_harness.capacity_concurrency_levels() == expected
+    assert dns_load.capacity_concurrency_levels() == expected
+    assert mitm_load.capacity_concurrency_levels() == expected
+    assert mcp_load.capacity_concurrency_levels() == expected
+
+
+def test_load_harness_reads_runtime_limits_from_the_rust_harness(monkeypatch):
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return types.SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps({"network_client_capacity": 512}),
+            stderr="",
+        )
+
+    monkeypatch.setattr(load_harness.subprocess, "run", run)
+
+    assert load_harness.runtime_limits()["network_client_capacity"] == 512
+    assert calls == [
+        (
+            [load_harness.RUST_BENCH, "runtime-limits"],
+            {"check": False, "capture_output": True, "text": True},
+        )
+    ]
+
+
+def test_dns_load_rejects_starved_driver(monkeypatch):
+    row = {"concurrency": 512, "total_requests": 91, "errors": 0}
+    monkeypatch.setattr(
+        dns_load.subprocess,
+        "run",
+        lambda *args, **kwargs: types.SimpleNamespace(
+            returncode=0, stdout=json.dumps(row), stderr=""
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="91 of 512 client loops"):
+        dns_load._drive_at_concurrency("fixture.test", 1, 512, 10, 5)
+
+
+def test_dns_load_preserves_failed_level_for_collector_rejection(monkeypatch):
+    monkeypatch.setattr(
+        dns_load,
+        "_drive_at_concurrency",
+        lambda qname, qtype, concurrency, duration_s, timeout_s: {
+            "concurrency": 1,
+            "duration_s": 1.0,
+            "total_requests": 2,
+            "errors": 1,
+            "error_distribution": {"timed out": 1},
+            "decision_distribution": {"allow": 1},
+            "rps": 2.0,
+            "p50_ms": 10.0,
+            "p95_ms": 20.0,
+            "p99_ms": 20.0,
+            "p999_ms": 20.0,
+        },
+    )
+
+    result = dns_load.dns_load_bench(
+        qname="fixture.test",
+        qtype=1,
+        concurrency_levels=[1],
+        duration_s=1,
+    )
+
+    assert result["concurrency_levels"] == [
+        {
+            "concurrency": 1,
+            "duration_s": 1.0,
+            "total_requests": 2,
+            "errors": 1,
+            "error_distribution": {"timed out": 1},
+            "decision_distribution": {"allow": 1},
+            "rps": 2.0,
+            "p50_ms": 10.0,
+            "p95_ms": 20.0,
+            "p99_ms": 20.0,
+            "p999_ms": 20.0,
+        }
+    ]
 
 
 class _StubConsole:
@@ -57,6 +267,8 @@ def test_protocol_mode_delegates_to_rust_bench(monkeypatch, tmp_path):
     calls = []
     rust_bench = tmp_path / "capsem-bench-rs"
     rust_bench.touch()
+    for variable, _ in bench_main.PROTOCOL_ENV_FLAGS:
+        monkeypatch.delenv(variable, raising=False)
 
     class Completed:
         returncode = 7
@@ -78,12 +290,53 @@ def test_protocol_mode_delegates_to_rust_bench(monkeypatch, tmp_path):
 
     assert exc.value.code == 7
     assert calls == [
-        ([
-            bench_main.RUST_BENCH,
-            "protocol",
-            "--base-url",
-            "http://127.0.0.1:3713",
-        ], False)
+        (
+            [
+                bench_main.RUST_BENCH,
+                "protocol",
+                "--base-url",
+                "http://127.0.0.1:3713",
+            ],
+            False,
+        )
+    ]
+
+
+def test_protocol_mode_translates_documented_environment_controls(monkeypatch, tmp_path):
+    calls = []
+    rust_bench = tmp_path / "capsem-bench-rs"
+    rust_bench.touch()
+
+    class Completed:
+        returncode = 0
+
+    monkeypatch.setenv("CAPSEM_BENCH_TOTAL_REQUESTS", "1000")
+    monkeypatch.setenv("CAPSEM_BENCH_CONCURRENCY", "64")
+    monkeypatch.setenv("CAPSEM_BENCH_TIMEOUT_MS", "2500")
+    monkeypatch.setenv("CAPSEM_BENCH_SCENARIOS", "model_json_response,mcp_tool_call")
+    monkeypatch.setattr(bench_main, "RUST_BENCH", str(rust_bench))
+    monkeypatch.setattr(
+        bench_main.subprocess,
+        "run",
+        lambda argv, check=False: calls.append((argv, check)) or Completed(),
+    )
+
+    assert bench_main._run_rust_protocol(["protocol", "--requests=7"]) == 0
+    assert calls == [
+        (
+            [
+                bench_main.RUST_BENCH,
+                "protocol",
+                "--requests=7",
+                "--concurrency",
+                "64",
+                "--timeout-ms",
+                "2500",
+                "--scenarios",
+                "model_json_response,mcp_tool_call",
+            ],
+            False,
+        )
     ]
 
 
@@ -99,7 +352,9 @@ def test_all_mode_keeps_network_sections_by_merging_rust_protocol(monkeypatch):
     fake_module("capsem_bench.startup", "startup_bench")
     fake_module("capsem_bench.snapshot", "snapshot_bench")
     monkeypatch.setattr(sys, "argv", ["capsem-bench", "all"])
-    monkeypatch.setenv(bench_main.MOCK_SERVER_PROTOCOL_BASE_URL_ENV, "http://127.0.0.1:3713")
+    monkeypatch.setenv(
+        bench_main.MOCK_SERVER_PROTOCOL_BASE_URL_ENV, "http://127.0.0.1:3713"
+    )
     calls = []
 
     def fake_rust_protocol_artifact(scenarios=None, requests=None, concurrency=None):
@@ -155,7 +410,9 @@ def test_all_mode_keeps_network_sections_by_merging_rust_protocol(monkeypatch):
             }
         }
 
-    monkeypatch.setattr(bench_main, "_run_rust_protocol_artifact", fake_rust_protocol_artifact)
+    monkeypatch.setattr(
+        bench_main, "_run_rust_protocol_artifact", fake_rust_protocol_artifact
+    )
 
     bench_main.main()
 
@@ -165,7 +422,11 @@ def test_all_mode_keeps_network_sections_by_merging_rust_protocol(monkeypatch):
     assert data["throughput"]["http_code"] == 200
     assert data["throughput"]["size_bytes"] == 10 * 1024 * 1024
     assert "mock_server_protocol" in data
-    assert calls == [(None, None, None), ("tiny_http", None, None), ("http_10mb", "1", "1")]
+    assert calls == [
+        (None, None, None),
+        ("tiny_http", None, None),
+        ("http_10mb", "1", "1"),
+    ]
 
 
 def test_global_load_config_parses_count_and_duration_modes(monkeypatch):

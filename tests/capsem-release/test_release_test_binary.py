@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -26,12 +27,10 @@ class FakeRunner:
         *,
         cwd: Path,
         check: bool,
-        timeout: int,
     ) -> subprocess.CompletedProcess[str]:
         self.commands.append(command)
         assert cwd == ROOT
         assert check is True
-        assert timeout == 120
         self.binary.parent.mkdir(parents=True, exist_ok=True)
         self.binary.write_bytes(b"locally built")
         self.binary.chmod(0o755)
@@ -92,11 +91,27 @@ def test_local_mode_builds_a_missing_binary(tmp_path: Path) -> None:
         runner=runner,
     )
 
-    assert runner.commands == [("cargo", "build", "-p", "capsem-gateway")]
+    assert runner.commands == [(
+        sys.executable, str(ROOT / "build_system/scripts/ci/run-bounded-command.py"),
+        "--timeout-seconds", "120", "--", "cargo", "build", "-p", "capsem-gateway",
+    )]
     assert binary.read_bytes() == b"locally built"
 
 
-def test_local_mode_rebuilds_only_when_source_is_newer(tmp_path: Path) -> None:
+def test_local_binary_fallback_takes_the_machine_lease(tmp_path: Path) -> None:
+    runner = FakeRunner(tmp_path / "capsem-gateway")
+    HELPER.ensure_host_test_binary(
+        runner.binary, source_paths=(),
+        build_command=("cargo", "build", "-p", "capsem-gateway"),
+        project_root=ROOT, env={}, runner=runner,
+    )
+    assert runner.commands == [(
+        sys.executable, str(ROOT / "build_system/scripts/ci/run-bounded-command.py"),
+        "--timeout-seconds", "120", "--", "cargo", "build", "-p", "capsem-gateway",
+    )], "a local fixture fallback must not rebuild shared binaries outside the machine lease"
+
+
+def test_local_mode_rebuilds_when_source_has_no_receipt(tmp_path: Path) -> None:
     binary = tmp_path / "cache/target/cargo/debug/capsem-admin"
     source = tmp_path / "crates/capsem-admin/src/main.rs"
     binary.parent.mkdir(parents=True)
@@ -117,4 +132,63 @@ def test_local_mode_rebuilds_only_when_source_is_newer(tmp_path: Path) -> None:
         runner=runner,
     )
 
-    assert runner.commands == [("cargo", "build", "-p", "capsem-admin")]
+    assert runner.commands == [(
+        sys.executable, str(ROOT / "build_system/scripts/ci/run-bounded-command.py"),
+        "--timeout-seconds", "120", "--", "cargo", "build", "-p", "capsem-admin",
+    )]
+
+
+def test_local_mode_rebuilds_a_newer_binary_from_another_worktree(
+    tmp_path: Path,
+) -> None:
+    binary = tmp_path / "cache/target/cargo/debug/capsem-mock-server"
+    source = tmp_path / "crates/capsem-mock-server/src/main.rs"
+    binary.parent.mkdir(parents=True)
+    source.parent.mkdir(parents=True)
+    source.write_text("current source", encoding="utf-8")
+    binary.write_bytes(b"newer foreign binary")
+    binary.chmod(0o755)
+    os.utime(source, (1, 1))
+    os.utime(binary, (2, 2))
+    runner = FakeRunner(binary)
+
+    HELPER.ensure_host_test_binary(
+        binary,
+        source_paths=(source,),
+        build_command=("cargo", "build", "-p", "capsem-mock-server"),
+        project_root=ROOT,
+        env={},
+        runner=runner,
+    )
+
+    assert len(runner.commands) == 1
+    assert binary.read_bytes() == b"locally built"
+
+
+def test_local_mode_reuses_receipt_until_shared_binary_changes(tmp_path: Path) -> None:
+    binary = tmp_path / "cache/target/cargo/debug/capsem-mock-server"
+    source = tmp_path / "crates/capsem-mock-server/src/main.rs"
+    source.parent.mkdir(parents=True)
+    source.write_text("current source", encoding="utf-8")
+    runner = FakeRunner(binary)
+
+    def ensure() -> None:
+        HELPER.ensure_host_test_binary(
+            binary,
+            source_paths=(source,),
+            build_command=("cargo", "build", "-p", "capsem-mock-server"),
+            project_root=ROOT,
+            env={},
+            runner=runner,
+        )
+
+    ensure()
+    ensure()
+    assert len(runner.commands) == 1
+
+    binary.write_bytes(b"foreign worktree output")
+    binary.chmod(0o755)
+    ensure()
+
+    assert len(runner.commands) == 2
+    assert binary.read_bytes() == b"locally built"

@@ -12,21 +12,19 @@ use uuid::Uuid;
 /// past retention. Nothing here can fail the deletion: the VM is gone either
 /// way, and what could not be recorded is logged with the reason.
 pub(super) async fn vm_deleted(state: &Arc<ServiceState>, vm_id: &str) {
+    if let Err(error) = vm_deleted_checked(state, vm_id).await {
+        tracing::warn!(vm_id, %error, "deleted VM left a network membership behind");
+        switches::unplug_everywhere(state, vm_id).await;
+    }
+}
+
+pub(crate) async fn vm_deleted_checked(state: &Arc<ServiceState>, vm_id: &str) -> Result<()> {
     // Memberships go first, cables second: a plug finishing in between finds
     // no membership and unplugs itself.
     let now_unix_ms = vm_lifecycle::unix_time_ms();
     let mut registry = state.networks.lock().await;
-    let retired = match registry.vm_deleted(vm_id, now_unix_ms).await {
-        Ok(departures) => departures
-            .iter()
-            .filter(|departure| departure.retired)
-            .map(|departure| departure.network)
-            .collect(),
-        Err(error) => {
-            tracing::warn!(vm_id, %error, "deleted VM left a network membership behind");
-            Vec::new()
-        }
-    };
+    let departure = registry.vm_deleted(vm_id, now_unix_ms).await;
+    let retired = registry.retired_ids();
     sweep_retired(&mut registry, now_unix_ms);
     drop(registry);
     switches::unplug_everywhere(state, vm_id).await;
@@ -34,6 +32,8 @@ pub(super) async fn vm_deleted(state: &Arc<ServiceState>, vm_id: &str) {
         tracing::info!(vm_id, %network, "network retired with its last member");
         switches::retire(state, network).await;
     }
+    departure?;
+    Ok(())
 }
 
 /// The retention sweep, run wherever a network retires and at startup.
@@ -53,11 +53,11 @@ pub(super) fn network_error(error: NetworkError) -> AppError {
         NetworkError::NotFound(_) | NetworkError::NotAMember { .. } => StatusCode::NOT_FOUND,
         NetworkError::Database { .. } => StatusCode::INTERNAL_SERVER_ERROR,
     };
-    AppError(status, error.to_string())
+    AppError::new(status, error.to_string())
 }
 
 fn parse_network_id(id: &str) -> Result<Uuid, AppError> {
-    Uuid::parse_str(id).map_err(|_| AppError(StatusCode::NOT_FOUND, format!("network not found: {id}")))
+    Uuid::parse_str(id).map_err(|_| AppError::new(StatusCode::NOT_FOUND, format!("network not found: {id}")))
 }
 
 fn network_info(registry: &NetworkRegistry, id: Uuid) -> Option<NetworkInfo> {
@@ -98,7 +98,7 @@ pub(super) fn resolve_network_names(registry: &NetworkRegistry, names: &[String]
         .map(|name| {
             registry
                 .find(name)
-                .ok_or_else(|| AppError(StatusCode::BAD_REQUEST, format!("unknown network: {name}")))
+                .ok_or_else(|| AppError::new(StatusCode::BAD_REQUEST, format!("unknown network: {name}")))
         })
         .collect()
 }
@@ -189,7 +189,7 @@ pub(super) async fn handle_network_attach(
     let known = state.instances.lock().unwrap().contains_key(&vm_id)
         || vm_lifecycle::find_persistent_entry_by_route_id(&state, &vm_id).is_some();
     if !known {
-        return Err(AppError(StatusCode::NOT_FOUND, format!("sandbox not found: {vm_id}")));
+        return Err(AppError::vm_not_found(&vm_id));
     }
     state
         .networks
@@ -243,7 +243,7 @@ pub(super) async fn handle_network_logs(
         // The ledger wrote this JSON; a row that no longer parses is a broken
         // database, reported as such rather than shown as an empty event.
         let parsed = serde_json::from_str(&event.event_json).map_err(|error| {
-            AppError(
+            AppError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("network {network} event {} is not JSON: {error}", event.event_id),
             )

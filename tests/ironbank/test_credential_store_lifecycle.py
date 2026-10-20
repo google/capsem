@@ -13,7 +13,6 @@ from pathlib import Path
 
 import blake3
 import pytest
-from helpers.constants import CODE_PROFILE_ID
 from helpers.service import ServiceInstance
 
 pytestmark = pytest.mark.integration
@@ -57,8 +56,8 @@ def test_credential_store_retry_and_hot_status_reads_pay_lifecycle_debt_blackbox
         assert raw_credential not in json.dumps(service_status)
         assert credential_ref not in json.dumps(service_status)
 
-        detail_path = f"/profiles/{CODE_PROFILE_ID}/plugins/credential_broker/credentials/info"
-        reload_path = f"/profiles/{CODE_PROFILE_ID}/plugins/credential_broker/credentials/reload"
+        detail_path = "/plugins/credential_broker/credentials/info"
+        reload_path = "/plugins/credential_broker/credentials/reload"
 
         before = client.get(detail_path)
         assert before["plugin_id"] == "credential_broker"

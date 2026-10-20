@@ -24,7 +24,7 @@ from .proc import Runner
 
 
 def build_config(config: GateConfig) -> BuildConfig:
-    """Load the profile-materialization source through its product schema."""
+    """Load the guest image source through its product schema."""
     build = load_guest_config(config.path(config.imagebuild.source_config)).build
     missing = sorted(set(config.architectures) - set(build.architectures))
     if missing:

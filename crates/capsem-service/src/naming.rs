@@ -1,14 +1,14 @@
-//! VM-name helpers: profile-scoped session names and persistent-name validation.
+//! VM-name helpers: generated session names and persistent-name validation.
 
-use anyhow::{anyhow, Result};
-use rand::Rng;
+use anyhow::Result;
 
-pub fn generate_profile_session_name<I, S>(profile_id: &str, existing: I) -> String
+/// The first free `vm-N` among `existing` names.
+pub fn generate_session_name<I, S>(existing: I) -> String
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
-    let base = sanitize_profile_prefix(profile_id);
+    let base = "vm";
     let existing: std::collections::HashSet<String> = existing
         .into_iter()
         .map(|name| name.as_ref().to_ascii_lowercase())
@@ -19,32 +19,10 @@ where
             return candidate;
         }
     }
-    format!("{base}-{}", rand::thread_rng().gen_range(10_000..99_999))
+    format!("{base}-{}", capsem_crypto::random::range_u32(10_000..99_999))
 }
 
-fn sanitize_profile_prefix(profile_id: &str) -> String {
-    let mut out = String::new();
-    let mut last_dash = false;
-    for ch in profile_id.trim().to_ascii_lowercase().chars() {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch);
-            last_dash = false;
-        } else if !last_dash && !out.is_empty() {
-            out.push('-');
-            last_dash = true;
-        }
-    }
-    while out.ends_with('-') {
-        out.pop();
-    }
-    if out.is_empty() {
-        "session".to_string()
-    } else {
-        out
-    }
-}
-
-/// Validate that a persistent VM name is safe for use as a directory name.
+/// Validate that a persistent VM name (or VM label key) is safe for use as an identifier.
 ///
 /// Rules:
 /// - non-empty
@@ -52,21 +30,40 @@ fn sanitize_profile_prefix(profile_id: &str) -> String {
 /// - starts with an ASCII letter or digit (no leading hyphen/underscore)
 /// - consists only of ASCII alphanumerics, `-`, or `_`
 pub fn validate_vm_name(name: &str) -> Result<()> {
-    if name.is_empty() {
-        return Err(anyhow!("VM name cannot be empty"));
+    capsem_api::validate_name("VM name", name).map_err(anyhow::Error::msg)
+}
+
+/// Validate user-supplied advisory VM labels before persisting or registering a VM.
+///
+/// Rules:
+/// - at most 64 entries
+/// - keys: reuse the VM-name rule (`validate_vm_name`: `1..=64` ASCII chars starting with
+///   `[A-Za-z0-9]` and containing only `[A-Za-z0-9_-]`)
+/// - values: `<= 255` UTF-8 bytes with no control characters (`char::is_control`)
+pub fn validate_vm_labels(labels: Option<&std::collections::HashMap<String, String>>) -> Result<()> {
+    let Some(labels) = labels else {
+        return Ok(());
+    };
+    if labels.len() > 64 {
+        anyhow::bail!("too many VM labels (max 64)");
     }
-    if name.len() > 64 {
-        return Err(anyhow!("VM name too long (max 64 characters)"));
-    }
-    if !name.chars().next().unwrap().is_ascii_alphanumeric() {
-        return Err(anyhow!("VM name must start with a letter or digit"));
-    }
-    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
-        return Err(anyhow!(
-            "VM name must contain only letters, digits, hyphens, and underscores"
-        ));
+    for (key, value) in labels {
+        validate_vm_name(key).map_err(|reason| anyhow::anyhow!("invalid VM label key {key:?}: {reason}"))?;
+        if value.len() > 255 {
+            anyhow::bail!("VM label value for {key:?} too long (max 255 bytes)");
+        }
+        if value.chars().any(char::is_control) {
+            anyhow::bail!("VM label value for {key:?} must not contain control characters");
+        }
     }
     Ok(())
+}
+
+/// Normalize an optional label map so an empty map `{}` is treated identically to `None`.
+pub fn non_empty_labels(
+    labels: Option<std::collections::HashMap<String, String>>,
+) -> Option<std::collections::HashMap<String, String>> {
+    labels.filter(|labels| !labels.is_empty())
 }
 
 #[cfg(test)]

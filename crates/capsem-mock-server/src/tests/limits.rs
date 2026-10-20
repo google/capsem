@@ -32,7 +32,14 @@ async fn generated_bodies_above_the_cap_are_refused_with_a_client_error() {
 async fn start_http_server() -> SocketAddr {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("addr");
-    tokio::spawn(serve_http(listener, State { request_log: None }, false));
+    tokio::spawn(serve_http(
+        listener,
+        State {
+            request_log: None,
+            dns_answers: DnsAnswers::default(),
+        },
+        false,
+    ));
     addr
 }
 

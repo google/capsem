@@ -1,6 +1,59 @@
 use super::*;
 
 #[test]
+fn cold_boot_enables_fast_strings_on_bsp_and_application_processors() {
+    if std::env::var_os("CAPSEM_SKIP_KVM_TESTS").is_some() {
+        return;
+    }
+    let Ok(kvm) = sys::KvmFd::open() else { return };
+    let vm = kvm.create_vm().unwrap();
+    vm.create_irqchip().unwrap();
+    for id in 0..2 {
+        let vcpu = vm.create_vcpu(id).unwrap();
+        setup_cpuid(&kvm, &vcpu, id, 2).unwrap();
+        let before = vcpu.get_msrs(&[0x1a0]).unwrap().pop().unwrap().data;
+        if id == 0 {
+            setup_boot_regs(&vcpu, KERNEL_LOAD_ADDR, BOOT_PARAMS_ADDR).unwrap();
+        } else {
+            setup_application_processor(&vcpu).unwrap();
+        }
+        let after = vcpu.get_msrs(&[0x1a0]).unwrap().pop().unwrap().data;
+        assert_eq!(
+            after,
+            before | 1,
+            "vCPU{id}: preserve IA32_MISC_ENABLE and enable fast strings"
+        );
+    }
+}
+
+#[test]
+fn checkpoint_restore_preserves_a_guests_disabled_fast_strings() {
+    if std::env::var_os("CAPSEM_SKIP_KVM_TESTS").is_some() {
+        return;
+    }
+    let Ok(kvm) = sys::KvmFd::open() else { return };
+    let original_vm = kvm.create_vm().unwrap();
+    original_vm.create_irqchip().unwrap();
+    let original = original_vm.create_vcpu(0).unwrap();
+    setup_cpuid(&kvm, &original, 0, 1).unwrap();
+    setup_boot_regs(&original, KERNEL_LOAD_ADDR, BOOT_PARAMS_ADDR).unwrap();
+    let mut msrs = original.get_msrs(&[0x1a0]).unwrap();
+    msrs[0].data &= !1;
+    original.set_msrs(&msrs).unwrap();
+    let snapshot = super::super::checkpoint::snapshot_vcpu(&original).unwrap();
+    assert!(snapshot.msrs.contains(&msrs[0]));
+
+    let restored_vm = kvm.create_vm().unwrap();
+    restored_vm.create_irqchip().unwrap();
+    let restored = [restored_vm.create_vcpu(0).unwrap()];
+    setup_cpuid(&kvm, &restored[0], 0, 1).unwrap();
+    setup_boot_regs(&restored[0], KERNEL_LOAD_ADDR, BOOT_PARAMS_ADDR).unwrap();
+    super::super::checkpoint::restore_vcpus(&restored, &[snapshot]).unwrap();
+    // The guest's choice was restored, rather than the cold-boot default.
+    assert_eq!(restored[0].get_msrs(&[0x1a0]).unwrap(), msrs);
+}
+
+#[test]
 fn gdt_entries_correct_size() {
     // 4 entries * 8 bytes = 32 bytes
     let mem = GuestMemory::new(4096 * 16).unwrap();

@@ -10,20 +10,27 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+capsem-mcp-transport = { path = "../capsem-mcp-transport" }
+capsem-crypto = { path = "../capsem-crypto", default-features = false, features = ["random", "secrets"] }
+capsem-credentials = { path = "../capsem-credentials" }
 capsem-api = { path = "../capsem-api" }
 capsem-assets = { path = "../capsem-assets" }
+capsem-cache = { path = "../capsem-cache" }
 capsem-core = { path = "../capsem-core" }
 capsem-foundation = { path = "../capsem-foundation" }
 capsem-guard = { path = "../capsem-guard" }
 capsem-logger = { path = "../capsem-logger" }
 capsem-telemetry = { path = "../capsem-telemetry", features = ["export"] }
 capsem-proto = { path = "../capsem-proto" }
+http.workspace = true
 capsem-router = { path = "../capsem-router" }
 anyhow.workspace = true
 tokio.workspace = true
+tokio-util.workspace = true
 tracing.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+rmp-serde.workspace = true
 toml.workspace = true
 humantime.workspace = true
 clap.workspace = true
@@ -31,17 +38,22 @@ tokio-stream.workspace = true
 futures.workspace = true
 axum = { version = "0.8", features = ["macros", "ws"] }
 tower-http = { version = "0.6", features = ["trace"] }
-rand = "0.8"
 base64.workspace = true
 reqwest.workspace = true
-blake3 = "1"
+hyper = { workspace = true, features = ["http2"] }
+hyper-util = { workspace = true, features = ["http2"] }
+http-body-util.workspace = true
 uuid = { version = "1", features = ["v4"] }
 
 [lints]
 workspace = true
 
 [dev-dependencies]
+async-trait = "0.1"
+bytes.workspace = true
+metrics = "0.24"
 opentelemetry = { version = "0.33", default-features = false, features = ["metrics"] }
+opentelemetry-http = { version = "0.33", default-features = false }
 opentelemetry_sdk = { version = "0.33", default-features = false, features = ["metrics", "testing"] }
 tokio-tungstenite = "0.29.0"
 capsem-config = { path = "../capsem-config" }
@@ -49,3 +61,6 @@ tempfile = "3"
 filetime = "0.2"
 tower = { version = "0.5", features = ["util"] }
 rusqlite = { workspace = true }
+# test-util enables tokio's paused clock, so the image catalog's refresh and
+# retry intervals are tested at their real lengths. Dev-only; no prod impact.
+tokio = { workspace = true, features = ["test-util"] }

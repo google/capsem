@@ -1,7 +1,8 @@
 //! WebSocket upgrade handling for MITM-proxied connections.
 //!
 //! An upgrade is gated exactly like any other request -- port allowlist, then
-//! the security boundary -- before the upstream is dialed. Only then is the
+//! the security boundary, which judges the resolved address -- before the
+//! upstream is dialed, at exactly that address. Only then is the
 //! 101 relayed and the two upgraded streams spliced together.
 
 use super::*;
@@ -12,12 +13,13 @@ pub(super) struct UpgradeRequest<'a> {
     pub parts: &'a http::request::Parts,
     pub client_upgrade: hyper::upgrade::OnUpgrade,
     pub domain: &'a str,
+    pub target: &'a UpstreamTarget,
     pub protocol: Protocol,
     pub upstream_port: u16,
     pub upstream_tls: &'a Arc<rustls::ClientConfig>,
     pub config: &'a Arc<MitmProxyConfig>,
     pub process_name: &'a Option<String>,
-    pub policy: &'a NetworkMechanics,
+    pub policy_snapshot: &'a Arc<crate::net::proxy_engine::ProxyPolicySnapshot>,
     pub ai_provider: Option<ProviderKind>,
     pub ai_protocol: Option<ModelProtocol>,
     pub method: String,
@@ -45,12 +47,13 @@ pub(super) async fn handle_upgrade(
         parts,
         client_upgrade,
         domain,
+        target,
         protocol,
         upstream_port,
         upstream_tls,
         config,
         process_name,
-        policy,
+        policy_snapshot,
         ai_provider,
         ai_protocol,
         method,
@@ -67,6 +70,7 @@ pub(super) async fn handle_upgrade(
 
     let original_headers = parts.headers.clone();
     let original_method = parts.method.clone();
+    let responses_websocket = ai_protocol == Some(ModelProtocol::OpenAi) && path.ends_with("/responses");
 
     let ws_span = tracing::debug_span!(
         target: "capsem.mitm",
@@ -80,6 +84,7 @@ pub(super) async fn handle_upgrade(
     let make_ws_error = |error: &dyn std::fmt::Display| -> hyper::Response<ProxyBoxBody> {
         let body_text = format!("Capsem: websocket upstream error ({error})\n");
         let req_ctx = TelemetryRequestContext {
+            policy_snapshot: Arc::clone(policy_snapshot),
             domain: domain.to_string(),
             process_name: process_name.clone(),
             ai_provider,
@@ -125,6 +130,7 @@ pub(super) async fn handle_upgrade(
                   decision: &SecurityBoundaryDecisionFields|
      -> hyper::Response<ProxyBoxBody> {
         let req_ctx = TelemetryRequestContext {
+            policy_snapshot: Arc::clone(policy_snapshot),
             domain: domain.to_string(),
             process_name: process_name.clone(),
             ai_provider,
@@ -159,7 +165,7 @@ pub(super) async fn handle_upgrade(
             .body(seal_with_telemetry(body, req_ctx, ai_provider, ai_protocol))
             .unwrap()
     };
-    if !http_upstream_port_allowed(policy, protocol, upstream_port) {
+    if !http_upstream_port_allowed(policy_snapshot.network(), protocol, upstream_port) {
         let matched = "security.web.http_upstream_ports";
         tracing::Span::current().record("decision", "deny");
         return Ok(refuse(
@@ -170,6 +176,7 @@ pub(super) async fn handle_upgrade(
     }
     let mut upgrade_event = http_request_security_event(HttpRequestSecurityEventInput {
         domain,
+        upstream_ip: target.judged_ip(domain),
         upstream_port,
         method: &method,
         path: &path,
@@ -181,12 +188,7 @@ pub(super) async fn handle_upgrade(
     if let Some(trace_id) = capsem_foundation::telemetry::ambient_capsem_trace_id() {
         upgrade_event = upgrade_event.with_trace_id(trace_id);
     }
-    let rules = config.telemetry.security_rules.read().unwrap().clone();
-    let upgrade_evaluation = crate::security_engine::evaluate_security_boundary(
-        &rules,
-        config.telemetry.plugin_policy.read().unwrap().clone(),
-        upgrade_event,
-    );
+    let upgrade_evaluation = config.engine.evaluate(policy_snapshot, upgrade_event).await;
     let upgrade_decision = match upgrade_evaluation {
         Ok(evaluation) => evaluation,
         Err(error) => return Ok(make_ws_error(&error)),
@@ -207,12 +209,12 @@ pub(super) async fn handle_upgrade(
         .clone()
         .unwrap_or_else(|| matched_rule.clone());
 
-    let dial_target = format!("{domain}:{upstream_port}");
-    let upstream_tcp = match tokio::net::TcpStream::connect(&dial_target)
+    let upstream_tcp = match target
+        .connect_with_grants(config.upstream_grants.as_deref(), policy_snapshot.digest())
         .instrument(ws_span.clone())
         .await
     {
-        Ok(stream) => stream,
+        Ok((stream, _pinned)) => stream,
         Err(error) => {
             ws_span.record("decision", "error");
             ws_span.record("status", "error");
@@ -221,7 +223,7 @@ pub(super) async fn handle_upgrade(
         }
     };
 
-    let upstream_io: TokioIo<Box<dyn TokioReadWrite + Unpin + Send>> = match protocol {
+    let upstream_io: TokioIo<Box<dyn TokioReadWrite + Unpin + Send>> = match target.protocol(protocol) {
         Protocol::Tls => {
             let connector = tokio_rustls::TlsConnector::from(Arc::clone(upstream_tls));
             let server_name = match rustls::pki_types::ServerName::try_from(domain.to_string()) {
@@ -271,7 +273,9 @@ pub(super) async fn handle_upgrade(
     let mut builder = hyper::Request::builder().method(original_method).uri(&full_path);
     for (name, value) in original_headers.iter() {
         let drop_host = matches!(protocol, Protocol::Tls) && name == "host";
-        if drop_host {
+        // This message adapter has no negotiated compression extensions.
+        // Ordinary WebSocket tunnels retain their original negotiation.
+        if drop_host || (responses_websocket && name == http::header::SEC_WEBSOCKET_EXTENSIONS) {
             continue;
         }
         builder = builder.header(name.clone(), value.clone());
@@ -301,13 +305,40 @@ pub(super) async fn handle_upgrade(
         None
     };
     let (resp_parts, _resp_body) = upstream_resp.into_parts();
+    if responses_websocket && resp_parts.headers.contains_key(http::header::SEC_WEBSOCKET_EXTENSIONS) {
+        return Ok(make_ws_error(&"upstream returned an unnegotiated WebSocket extension"));
+    }
     if let Some(upstream_upgrade) = upstream_upgrade {
         let tunnel_span = ws_span.clone();
+        let model_context = responses_websocket.then(|| websocket::Context {
+            pipeline: Arc::clone(&config.pipeline),
+            engine: Arc::clone(&config.engine),
+            conn: hooks::ConnMeta {
+                domain: domain.to_string(),
+                process_name: process_name.clone(),
+                port: upstream_port,
+                protocol,
+                ai_provider,
+                ai_protocol,
+            },
+            ip: target.judged_ip(domain),
+            method: method.clone(),
+            path: path.clone(),
+            query: query.clone(),
+            request_headers: req_hdrs.clone(),
+            response_headers: format_headers(&resp_parts.headers),
+            credential_ref: credential_ref.clone(),
+            credential_observations: credential_observations.clone(),
+        });
         tokio::spawn(async move {
             let result = async move {
                 let mut client = TokioIo::new(client_upgrade.await?);
                 let mut upstream = TokioIo::new(upstream_upgrade.await?);
-                tokio::io::copy_bidirectional(&mut client, &mut upstream).await?;
+                if let Some(context) = model_context {
+                    websocket::bridge(client, upstream, context).await?;
+                } else {
+                    tokio::io::copy_bidirectional(&mut client, &mut upstream).await?;
+                }
                 Ok::<(), anyhow::Error>(())
             }
             .instrument(tunnel_span.clone())
@@ -328,6 +359,7 @@ pub(super) async fn handle_upgrade(
     }
 
     let req_ctx = TelemetryRequestContext {
+        policy_snapshot: Arc::clone(policy_snapshot),
         domain: domain.to_string(),
         process_name: process_name.clone(),
         ai_provider,

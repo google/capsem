@@ -20,6 +20,7 @@ pub(crate) struct SecuritySessionLedger {
 // The matched event's payload is archive-backed: it is read by event id with
 // `BodyDirection::Payload`, and the index metadata travels with the other
 // bodies in the stats-detail payload.
+#[cfg(test)]
 pub(crate) const SECURITY_LATEST_SQL: &str = r#"
 SELECT event.timestamp_unix_ms, event.event_id, event.event_type, event.rule_id,
        event.rule_action, event.detection_level,
@@ -54,8 +55,11 @@ async fn read_security_ledger(
         "latest",
         db_path,
         &db,
-        SECURITY_LATEST_SQL,
-        &[json!(SECURITY_LATEST_LIMIT)],
+        capsem_logger::ledger_protocol::LedgerQuery::SecurityLatest {
+            limit: SECURITY_LATEST_LIMIT as u16,
+            detection_only: false,
+        },
+        0,
     )
     .await?;
     Ok(Some(SecuritySessionLedger { latest }))
@@ -68,16 +72,21 @@ pub(crate) async fn security_latest_for_vm(
     detection_only: bool,
 ) -> Result<Vec<capsem_logger::SecurityRuleMatch>, AppError> {
     let session_dir = resolve_session_dir(state, vm_id)?;
-    let Some(session) = read_security_session_ledger(state, vm_id, &session_dir.join("session.db")).await? else {
-        return Ok(Vec::new());
-    };
-    Ok(session
-        .latest
-        .iter()
-        .filter(|event| !detection_only || is_detection_rule_event(event))
-        .take(limit)
-        .cloned()
-        .collect())
+    let db_path = session_dir.join("session.db");
+    let db = session_db(state, vm_id, "security", &db_path).await?;
+    query_route_typed_rows(
+        vm_id,
+        "security",
+        "latest",
+        &db_path,
+        &db,
+        capsem_logger::ledger_protocol::LedgerQuery::SecurityLatest {
+            limit: u16::try_from(limit).unwrap_or(2000),
+            detection_only,
+        },
+        0,
+    )
+    .await
 }
 
 /// The security ledger's aggregates alone.
@@ -110,7 +119,7 @@ pub(crate) async fn security_stats_for_session(
 async fn security_stats(
     vm_id: &str,
     db_path: &StdPath,
-    db: &capsem_logger::DbHandle,
+    db: &session_db_handles::SessionLedger,
 ) -> Result<capsem_logger::SecurityRuleStats, AppError> {
     let counters = db
         .ledger_counters()

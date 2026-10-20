@@ -64,7 +64,14 @@ def _assert_mcp_owner(fast: dict[str, Any], ci: dict[str, Any], coverage: dict[s
     sdk = next(index for index, step in enumerate(steps) if step.get("working-directory") == "sdk/typescript")
     mcp = next(index for index, step in enumerate(steps) if step.get("working-directory") == MCP)
     assert sdk < mcp, "the MCP build links the SDK package the SDK step builds; " + RATIONALE
-    assert "pnpm test " in steps[mcp]["run"], RATIONALE
+    assert steps[mcp]["run"].splitlines() == [
+        "pnpm install --frozen-lockfile",
+        "pnpm run prewarm:packed",
+        (
+            "pnpm test --reporter=default --reporter=junit "
+            "--outputFile=../../cache/target/coverage/junit/mcp-typescript.xml"
+        ),
+    ], RATIONALE
     upload = next(step for step in steps if step.get("with", {}).get("flags") == "mcp-server")
     assert upload["with"]["files"] == MCP_LCOV, RATIONALE
     vitest = (ROOT / MCP / "vitest.config.ts").read_text()
@@ -77,6 +84,19 @@ def _assert_mcp_owner(fast: dict[str, Any], ci: dict[str, Any], coverage: dict[s
 
 def test_sdk_ci_owns_cold_install_tests_and_complete_coverage() -> None:
     _assert_owners(*_documents())
+
+
+def test_inspect_extension_ci_owns_prewarm_tests_and_coverage() -> None:
+    fast, ci, coverage = _documents()
+    prewarm = PYTHON_PREWARM.replace("sdk/python ", "integrations/inspect-ai ")
+    assert any(prewarm in step.get("run", "").splitlines() for step in fast["jobs"]["static"]["steps"]), RATIONALE
+    steps = ci["jobs"]["test"]["steps"]
+    test = next(step for step in steps if step.get("working-directory") == "integrations/inspect-ai")
+    assert "--junitxml=../../cache/target/coverage/junit/inspect-ai.xml" in test["run"], RATIONALE
+    upload = next(step for step in steps if step.get("with", {}).get("flags") == "inspect-ai")
+    assert upload["with"]["files"] == "cache/target/coverage/inspect-ai/coverage.xml", RATIONALE
+    assert coverage["flags"]["inspect-ai"]["paths"] == ["integrations/inspect-ai/inspect_capsem/**"], RATIONALE
+    assert coverage["coverage"]["status"]["project"]["inspect-ai"]["target"] == "90%", RATIONALE
 
 
 @pytest.mark.parametrize("mutation", [

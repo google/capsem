@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import sys
 
 from capsem import Hypervisor, models
 
@@ -11,7 +12,8 @@ async def main() -> None:
         response = await hv.restart()
         assert response.status is models.RestartStatus.ACCEPTED
         assert response.authentication is models.RestartAuthentication.NEW_TOKEN_REQUIRED
-        assert response.manager is models.ServiceManager.LAUNCHD
+        expected_manager = models.ServiceManager.SYSTEMD if sys.platform == "linux" else models.ServiceManager.LAUNCHD
+        assert response.manager is expected_manager
     print("SDK_RESTART_ACCEPTED")
 
 

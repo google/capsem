@@ -12,10 +12,13 @@ Capsem sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtua
 **Host-side:**
 - **capsem-service** (daemon): always-running background service. Axum HTTP server over Unix Domain Socket (`~/.capsem/run/service.sock`). Manages VM lifecycle, routes API calls to per-VM processes. It is the only client of a VM owner: container setup (service-owned OCI pull and staging), exposures (`/vms/{id}/exposures`, admitted by the owner as `network.lifecycle` events), and the `capsem.stream.v1` WebSocket at `/vms/{id}/stream` (terminal, streaming exec, container attach) all translate to typed owner IPC here; CLI, TUI, web and SDKs never dial a per-VM socket.
 - **capsem-process** (per-VM): one process per sandbox. Boots the VM, bridges vsock connections (terminal + control), manages structured jobs (exec, file I/O) via a job store.
-- **capsem** (CLI): user-facing CLI. Sessions are created from profiles and
-  named by the service (`<profile-id>-N` unless the user supplies a name).
+- **capsem** (CLI): user-facing CLI. Sessions are named by the service
+  (`vm-N` unless the user supplies a name) and sized by create flags with
+  fixed defaults.
   `capsem shell` opens the TUI/session picker, creates or attaches through the
-  service, and talks to capsem-service over UDS HTTP. User-facing copy says
+  authenticated gateway, using the Rust SDK and shared API types. Direct UDS
+  HTTP is restricted to local status/asset administration and service startup.
+  Failed gateway authentication never falls back to UDS. User-facing copy says
   sessions; implementation/debug output may say VM when describing the
   virtualization layer.
 - **@capsem/mcp** (npm MCP server): separately installed stdio server for AI agents. Uses the TypeScript SDK and an explicit gateway URL/token; it has no UDS, VM-runtime, or virtualization access.
@@ -66,19 +69,24 @@ Capsem sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtua
   Plugged VMs talk over any protocol. The switch forwards on MAC only and is a
   network, not a security boundary: never add per-flow relays, admission,
   or IP/TCP parsing to it. See `references/storage-network-and-lifecycle.md`.
-- Corp config owns enterprise constraints; profiles own VM assets and runtime
-  policy; settings own UI preferences. All enforcement and detection compiles
+- Corp config owns enterprise constraints and wins; the user's
+  `settings.toml` and built-in defaults supply the rest of the policy; the
+  one VM runtime and OCI images own what a guest runs; settings own UI
+  preferences. All enforcement and detection compiles
   into one `SecurityRuleSet` over `SecurityEvent`.
 - Credential capture/injection belongs to the credential broker. Durable
   ledger storage belongs to `capsem-logger`; routes, MCP helpers, UI handlers,
   benchmarks, and network formatters must not open SQLite or own projection
   caches. Missing tables or columns are schema failures, never empty data.
-- Sessions run profiles. Workspace and overlay bytes are session state, never
-  a hidden image-authoring rail; package changes go through profile-owned
-  inputs and the profile-derived asset build.
-- `capsem-process` stays low privilege: a cleared allowlisted environment,
-  0600 sockets, a 0700 session directory, read-only assets and guest binaries,
-  and only `session_dir/guest/` shared with the VM.
+- Workspace and overlay bytes are session state, never
+  a hidden image-authoring rail; package changes go through the runtime
+  package set (`/build-images`) or an OCI image under `images/`.
+- `capsem-process` clears its inherited environment, uses 0600 sockets and a
+  0700 session directory, attaches read-only assets and guest binaries, and
+  shares only `session_dir/guest/` with the VM. These controls do not confine
+  a compromised same-UID host worker by themselves. The VM owner, proxy, ledger
+  and native MCP workers enforce OS confinement before readiness. The service
+  retains native MCP child handles and generation-bound cleanup authority.
 - capsem-app contains no VM logic or `capsem-core` dependency. Gateway and tray
   are service-owned companions and must self-exit with their parent.
 

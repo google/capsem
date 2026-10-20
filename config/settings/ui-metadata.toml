@@ -392,7 +392,7 @@ env_vars = ["HOME"]
 name = "PATH"
 description = "Executable search path for the guest shell."
 type = "text"
-default = "/opt/ai-clis/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+default = "/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 [settings.vm.environment.shell.path.meta]
 env_vars = ["PATH"]
@@ -418,11 +418,6 @@ content = '''
 PS1='\[\033[1;32m\]\h\[\033[0m\]:\[\033[1;34m\]\w\[\033[0m\]\$ '
 
 # Aliases
-alias pip='uv pip'
-alias pip3='uv pip'
-alias python='uv run python'
-alias python3='uv run python3'
-alias gemini='gemini --yolo'
 alias ls='ls --color=auto'
 alias ll='ls -la --color=auto'
 alias grep='grep --color=auto'

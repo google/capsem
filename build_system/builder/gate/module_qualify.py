@@ -4,13 +4,13 @@ One verb per artifact family, and the only `just` recipes any workflow needs.
 
 Before these existed, `release-assets.yaml` and `release.yaml` each assembled
 their lane out of private `_test-*` recipes: three or four steps, in an order
-restated in YAML, with the deferred-profile branch expressed as a step-level
-`if:`. The bodies were shared but the sequence was not, which is how the asset
-lane grew a `_test-profile-artifacts` branch that the binary lane never got.
-Private primitives had become the integration surface, so the integration had
-nowhere to live except the workflow files, twice.
+restated in YAML, with a deferred branch expressed as a step-level `if:`. The
+bodies were shared but the sequence was not, which is how the asset lane grew
+a branch that the binary lane never got. Private primitives had become the
+integration surface, so the integration had nowhere to live except the
+workflow files, twice.
 
-`release-binaries` and `release-profile` cannot be reused here, and that is not
+`release-binaries` and `release-assets` cannot be reused here, and that is not
 an oversight. Those are the operator's dispatchers: they accept a qualified
 commit, publish the immutable source ref, and dispatch these very workflows. A
 workflow calling one would dispatch itself.
@@ -23,7 +23,7 @@ from pathlib import Path
 
 from .command import GateCommand
 from .config import GateConfig
-from .content import ProfileContent
+from .content import RuntimeContent
 from .module_artifacts import artifacts, pulled_artifacts
 from .module_functional import functional
 from .module_glowup import glowup
@@ -38,7 +38,7 @@ def _pairing(
     config: GateConfig,
     qualification: Qualification,
     *,
-    staged: ProfileContent | None = None,
+    staged: RuntimeContent | None = None,
 ) -> Plan:
     """Artifacts, then every VM suite, then the installed-package proof.
 
@@ -69,7 +69,7 @@ class QualifyBinariesModule(
     InWorkspace,
     GateCommand,
     name="qualify-binaries",
-    help="qualify the candidate packages against the manifest-selected profiles",
+    help="qualify the candidate packages against the manifest-selected runtime",
 ):
     """The binary lane's whole proof, as one step a workflow can call.
 
@@ -101,7 +101,7 @@ class QualifyBinariesModule(
             Plan(self.name),
             self._config,
             self.qualification,
-            staged=ProfileContent.staged(self._config, self._args.workspace_root),
+            staged=RuntimeContent.staged(self._config, self._args.workspace_root),
         )
 
 
@@ -109,11 +109,11 @@ class QualifyAssetsModule(
     InWorkspace,
     GateCommand,
     name="qualify-assets",
-    help="qualify one profile's built assets against the selected binary",
+    help="qualify the built runtime assets against the selected binary",
 ):
     """The asset lane's whole proof, including the branch the YAML used to own.
 
-    A channel with no package cohort yet can publish a profile immutably but
+    A channel with no package cohort yet can publish the runtime immutably but
     inactive. That is not a lesser pairing, it is a different one: there is no
     binary to pair against, so the functional and glow-up modules have nothing
     to run and the artifact proof stands alone. The lane decides that here,
@@ -130,7 +130,6 @@ class QualifyAssetsModule(
     @classmethod
     def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("input_dir", type=Path)
-        parser.add_argument("profile")
         parser.add_argument("workspace_root", type=Path)
         parser.add_argument(
             "--activation-ready",
@@ -147,7 +146,7 @@ class QualifyAssetsModule(
                 plan,
                 self._config,
                 input_dir=self._args.input_dir,
-                profile=self._args.profile,
+                boot=True,
                 after=(recorded,),
             )
             plan.add(verify_step(), after=(proved,))
@@ -161,5 +160,5 @@ class QualifyAssetsModule(
             plan,
             self._config,
             self.qualification,
-            staged=ProfileContent.staged(self._config, self._args.workspace_root),
+            staged=RuntimeContent.staged(self._config, self._args.workspace_root),
         )

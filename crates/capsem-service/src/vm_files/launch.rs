@@ -28,7 +28,7 @@ use capsem_foundation::poll::{poll_until, PollOpts};
 pub(super) const LAUNCH_CEILING: Duration = Duration::from_millis(500);
 
 #[derive(Debug, PartialEq, Eq)]
-pub(super) enum LaunchWait {
+pub(crate) enum LaunchWait {
     /// The guest handshake already completed.
     Ready,
     /// The VM is running and the process answers IPC.
@@ -39,11 +39,15 @@ pub(super) enum LaunchWait {
     TimedOut,
 }
 
+pub(super) fn stamped(path: &Path, expected: &str) -> bool {
+    std::fs::read_to_string(path).is_ok_and(|stamp| stamp.trim() == expected)
+}
+
 /// Wait for the launch signal, readiness, or a crash, at most `ceiling`.
 /// `still_alive` reports whether the instance is still registered; it is
 /// consulted only when neither sentinel exists so a crash after launch
 /// (which exec surfaces) does not turn a successful create into an error.
-pub(super) async fn wait_for_launch(
+pub(crate) async fn wait_for_launch(
     ready_path: &Path,
     launched_path: &Path,
     still_alive: impl Fn() -> bool,
@@ -56,10 +60,10 @@ pub(super) async fn wait_for_launch(
         max_delay: Duration::from_millis(50),
     };
     let outcome = poll_until(opts, || async {
-        if ready_path.exists() {
+        if stamped(ready_path, "ready") {
             return Some(LaunchWait::Ready);
         }
-        if launched_path.exists() {
+        if stamped(launched_path, "launched") {
             return Some(LaunchWait::Launched);
         }
         (!still_alive()).then_some(LaunchWait::Crashed)

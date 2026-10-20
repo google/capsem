@@ -268,17 +268,14 @@ pub(crate) fn history_processes(counters: &LedgerCounters, limit: usize) -> Vec<
     processes
 }
 
-/// The counter snapshot of every session of a profile, as of now.
+/// The counter snapshot of every session the service knows, as of now.
 ///
 /// The plugin and credential runtime views are opened, and reloaded, on
 /// demand rather than polled, so each session's handle is readied first: its
 /// `ready()` is the barrier that brings the snapshot up to the last commit.
-pub(crate) async fn profile_counters(
-    state: &ServiceState,
-    profile_id: &str,
-) -> Result<Vec<Arc<LedgerCounters>>, AppError> {
+pub(crate) async fn session_counters(state: &ServiceState) -> Result<Vec<Arc<LedgerCounters>>, AppError> {
     let mut snapshots = Vec::new();
-    for (vm_id, session_dir) in profile_session_dirs(state, profile_id) {
+    for (vm_id, session_dir) in service_session_dirs(state) {
         let db_path = session_db_path_for_session_dir(&session_dir);
         let db = open_ready_session_db(state, &vm_id, "plugins", &db_path).await?;
         snapshots.push(

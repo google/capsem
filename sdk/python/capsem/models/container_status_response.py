@@ -5,6 +5,7 @@ from __future__ import annotations
 from pydantic import StrictInt, StrictStr
 
 from .container_state import ContainerState
+from .container_surface import ContainerSurface
 from .model_base import Model
 
 
@@ -13,4 +14,6 @@ class ContainerStatusResponse(Model):
     error: StrictStr | None = None
     exit_code: StrictInt | None = None
     image: StrictStr
+    resolved: StrictStr | None = None
     state: ContainerState
+    surface: ContainerSurface | None = None

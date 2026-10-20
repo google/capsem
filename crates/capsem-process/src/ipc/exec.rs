@@ -38,7 +38,7 @@ pub(super) fn install(
 
 pub(super) async fn run(
     id: u64,
-    command: String,
+    (command, target): (String, capsem_proto::ipc::ExecTarget),
     jobs: Arc<JobStore>,
     control: mpsc::Sender<ServiceToProcess>,
     output: mpsc::Sender<ProcessToService>,
@@ -47,7 +47,11 @@ pub(super) async fn run(
 ) {
     let installed = registration.is_some();
     let result = if let Some(rx) = registration {
-        if control.send(ServiceToProcess::Exec { id, command }).await.is_err() {
+        if control
+            .send(ServiceToProcess::Exec { id, command, target })
+            .await
+            .is_err()
+        {
             Err("guest control channel closed".to_string())
         } else {
             // User work has no implicit duration limit. The owning IPC

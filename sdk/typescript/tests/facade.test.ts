@@ -1,33 +1,29 @@
 import {expect, it} from 'vitest';
-import {HistoryLayerFilter, HostLogSource, HttpError, Hypervisor, RestartAuthentication, RestartStatus, TimelineLayer, VM, type NetworkInfo, type ProfileSummary, type Registry} from '../src/index.js';
+import {HistoryLayerFilter, HostLogSource, HttpError, Hypervisor, RestartAuthentication, RestartStatus, TimelineLayer, VM, type NetworkInfo, type Registry} from '../src/index.js';
 import {gateway} from './gateway.js';
 import {sample, schemas} from './contract.js';
 import {FacadeGateway} from './facade-gateway.js';
 
-it('creates bound VM handles with profile defaults and shared lifetime', async () => {
-  await gateway((request, response) => response.end(JSON.stringify(request.url === '/status'
-    ? {
-      ...sample(schemas.HypervisorInfo ?? {}) as object,
-      profiles: {...sample(schemas.ProfileCatalogStatus ?? {}) as object, defaults: {vm: 'code', container: 'code'}},
-    }
-    : {...sample(schemas.ProvisionResponse ?? {}) as object, id: 'vm-0', name: 'chosen'})),
+it('creates bound VM handles with service defaults and shared lifetime', async () => {
+  await gateway((_request, response) => response.end(JSON.stringify(
+    {...sample(schemas.ProvisionResponse ?? {}) as object, id: 'vm-0', name: 'chosen'})),
   async (url, received) => {
     const hv = new Hypervisor(url, 'secret');
     const network = {...sample(schemas.NetworkInfo ?? {}) as object, name: 'team'} as NetworkInfo;
-    const profile = {...sample(schemas.ProfileSummary ?? {}) as object, id: 'custom'} as ProfileSummary;
-    const vm = await hv.create({profile, name: 'chosen', memory: 8, cpus: 4, networks: [network]});
+    const vm = await hv.create({name: 'chosen', memory: 8, cpus: 4, labels: {suite: 'eval'}, networks: [network]});
     expect(vm).toBeInstanceOf(VM);
     expect(vm.id).toBe('vm-0');
     expect(vm.name).toBe('chosen');
-    expect(JSON.parse(received[0]?.body.toString() ?? '')).toMatchObject({
-      profile_id: 'custom', persistent: true, ram_mb: 8192, cpus: 4, networks: ['team'],
+    expect(JSON.parse(received[0]?.body.toString() ?? '')).toEqual({
+      name: 'chosen', persistent: true, cpus: 4, ram_mb: 8192, env: null, labels: {suite: 'eval'}, networks: ['team'],
     });
-    expect(JSON.parse(received[0]?.body.toString() ?? '')).not.toHaveProperty('container');
     vm.close();
     await expect(vm.info()).rejects.toThrow('closed');
     const sibling = await hv.create();
-    const creates = received.filter(entry => entry.url === '/vms/create');
-    expect(JSON.parse(creates[1]?.body.toString() ?? '')).toMatchObject({persistent: false, cpus: null, ram_mb: null});
+    expect(received.map(entry => entry.url)).toEqual(['/vms/create', '/vms/create']);
+    expect(JSON.parse(received[1]?.body.toString() ?? '')).toEqual({
+      name: null, persistent: false, cpus: null, ram_mb: null, env: null, networks: [],
+    });
     hv.close();
     await expect(sibling.info()).rejects.toThrow('closed');
     await expect(hv.list()).rejects.toThrow('closed');
@@ -60,7 +56,7 @@ it('maps every facade method through HTTP and resolves a name once', async () =>
       await vm.log();
       await vm.files.list(); await vm.files.list('/nested', {depth: 2});
       await vm.files.list('/root', {exact: true});
-      const fork = await vm.fork('copy', {description: 'checkpoint'});
+      const fork = await vm.fork('copy', {description: 'checkpoint', labels: {suite: 'fork'}});
       expect(fork.id).toBe('fork-0'); expect(fork.name).toBe('copy');
       fork.close();
       const another = await vm.fork('another'); another.close();
@@ -80,19 +76,35 @@ it('maps every facade method through HTTP and resolves a name once', async () =>
       expect(received.some(request => request.url === '/vms/vm-0/files/list')).toBe(true);
       expect(received.some(request => request.url === '/vms/vm-0/files/list?path=%2Froot&exact=true')).toBe(true);
       expect(received.some(request => request.url.includes('layers=fs%2Cexec'))).toBe(true);
+      const forks = received.filter(request => request.url === '/vms/vm-0/fork');
+      expect(JSON.parse(forks[0]?.body.toString() ?? '')).toEqual({
+        name: 'copy', description: 'checkpoint', labels: {suite: 'fork'},
+      });
+      expect(JSON.parse(forks[1]?.body.toString() ?? '')).toEqual({
+        name: 'another', description: null,
+      });
       await hv.info(); await hv.list(); await hv.log();
       await hv.log({source: HostLogSource.GATEWAY, tail: 2});
-      const [profile] = await hv.profiles.list();
-      if (profile === undefined) throw new Error('fixture profile missing');
-      await hv.run('printf ok', {profile, timeout_secs: 4});
+      await hv.run('printf ok', {timeout_secs: 4});
+      expect(received.at(-1)?.url).toBe('/run');
+      expect(JSON.parse(received.at(-1)?.body.toString() ?? '')).toEqual({
+        command: 'printf ok', timeout_secs: 4, cpus: null, ram_mb: null, env: null,
+      });
       await hv.debug.panics({since: '5m', limit: 3});
       await hv.debug.triage({vm_id: 'vm-0', since: '1h', limit: 2});
       await hv.purge({all: true});
-      const mcp = hv.profiles.mcp(profile);
-      await mcp.info(); await mcp.servers(); await mcp.defaultPermission();
-      const server = await mcp.get('local');
+      const firstMcp = received.length;
+      await hv.mcp.info(); await hv.mcp.servers(); await hv.mcp.defaultPermission();
+      const server = await hv.mcp.get('local');
       await server.tools.list(); await server.refresh();
       await server.tools.call('read_file', {path: '/tmp/x'});
+      expect(received.slice(firstMcp).map(request => [request.method, request.url])).toEqual([
+        ['GET', '/mcp/info'], ['GET', '/mcp/servers/list'], ['GET', '/mcp/default/info'],
+        ['GET', '/mcp/servers/list'], ['GET', '/mcp/servers/local/tools/list'],
+        ['POST', '/mcp/servers/local/refresh'], ['POST', '/mcp/servers/local/tools/read_file/call'],
+      ]);
+      expect(JSON.parse(received.at(-1)?.body.toString() ?? '')).toEqual({path: '/tmp/x'});
+      await expect(hv.mcp.get('missing')).rejects.toThrow('Expected one MCP server named "missing", found 0');
       await hv.update();
       expect(received.at(-1)?.url).toBe('/update/apply');
       expect(JSON.parse(received.at(-1)?.body.toString() ?? '')).toEqual({confirmed: true});
@@ -140,9 +152,9 @@ it.each([1, 8])('accepts positive memory in GiB: %s', async memory => {
   await gateway((request, response) => state.handle(request, response), async (url, received) => {
     const hv = new Hypervisor(url, 'secret');
     try {
-      const vm = await hv.create({memory, env: {LANG: 'C'}});
+      const vm = await hv.create({memory, env: {LANG: 'C'}, labels: {}});
       const created = received.find(entry => entry.url === '/vms/create');
-      expect(JSON.parse(created?.body.toString() ?? '')).toMatchObject({ram_mb: memory * 1024, env: {LANG: 'C'}});
+      expect(JSON.parse(created?.body.toString() ?? '')).toMatchObject({ram_mb: memory * 1024, env: {LANG: 'C'}, labels: {}});
       vm.close();
     } finally {hv.close();}
   });
@@ -209,7 +221,6 @@ it('opens typed ports and hides exposure targets and preview sessions', async ()
       expect(received).toHaveLength(requestCount);
       await vm.ports.close(plain);
       expect(received.map(request => [request.method, request.url])).toEqual([
-        ['GET', '/status'],
         ['POST', '/vms/create'],
         ['POST', '/vms/vm-0/exposures'],
         ['POST', '/vms/vm-0/exposures'],

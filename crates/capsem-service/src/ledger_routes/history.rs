@@ -18,6 +18,7 @@
 
 use super::*;
 
+#[cfg(test)]
 const EXEC_ROWS: &str = r#"
 SELECT timestamp, 'exec' AS layer, command, exit_code, duration_ms,
        stdout_preview, stderr_preview,
@@ -30,6 +31,7 @@ SELECT timestamp, 'exec' AS layer, command, exit_code, duration_ms,
 FROM exec_events
 "#;
 
+#[cfg(test)]
 const AUDIT_ROWS: &str = r#"
 SELECT timestamp, 'audit' AS layer, argv AS command, exit_code, NULL AS duration_ms,
        NULL AS stdout_preview, NULL AS stderr_preview,
@@ -49,15 +51,18 @@ FROM audit_events
 "#;
 
 /// `?1` is the search text in both statements.
+#[cfg(test)]
 const SEARCH: &str = " WHERE instr(command, ?1) > 0 OR instr(stdout_preview, ?1) > 0 \
                       OR instr(stderr_preview, ?1) > 0 OR instr(details, ?1) > 0";
 
 /// The one aggregate here: how many rows a search matches.
+#[cfg(test)]
 const SEARCH_TOTAL: &str = "SELECT COUNT(*) AS total FROM ({arms})";
 
 /// The maximum rows the reader returns for one page, as the API caps it.
 pub(crate) const PAGE_CAP: usize = 2000;
 
+#[cfg(test)]
 fn arms(layer: api::HistoryLayerFilter) -> Vec<&'static str> {
     [
         (api::HistoryLayer::Exec, EXEC_ROWS),
@@ -69,6 +74,7 @@ fn arms(layer: api::HistoryLayerFilter) -> Vec<&'static str> {
     .collect()
 }
 
+#[cfg(test)]
 fn filtered(rows: &str, search: bool) -> String {
     let search = if search { SEARCH } else { "" };
     format!("SELECT * FROM ({rows}){search}")
@@ -76,6 +82,7 @@ fn filtered(rows: &str, search: bool) -> String {
 
 /// One page: `?1` search (NULL and unused without one), `?2` rows per arm
 /// (`offset + limit`), `?3` limit, `?4` offset.
+#[cfg(test)]
 pub(crate) fn page_sql(layer: api::HistoryLayerFilter, search: bool) -> String {
     let arms = arms(layer)
         .into_iter()
@@ -92,16 +99,13 @@ pub(crate) fn page_sql(layer: api::HistoryLayerFilter, search: bool) -> String {
     )
 }
 
+#[cfg(test)]
 pub(crate) fn search_total_sql(layer: api::HistoryLayerFilter) -> String {
     let arms = arms(layer)
         .into_iter()
         .map(|rows| filtered(rows, true))
         .collect::<Vec<_>>();
     SEARCH_TOTAL.replace("{arms}", &arms.join(" UNION ALL "))
-}
-
-fn sql_integer(value: usize) -> serde_json::Value {
-    json!(i64::try_from(value).unwrap_or(i64::MAX))
 }
 
 pub(crate) async fn history_page(
@@ -114,6 +118,39 @@ pub(crate) async fn history_page(
     let db = open_ready_session_db(state, vm_id, "history", &db_path).await?;
     let limit = params.limit.min(PAGE_CAP);
     let search = params.search.as_deref();
+    let query = capsem_logger::ledger_protocol::LedgerQuery::History {
+        layers: [
+            (
+                api::HistoryLayer::Exec,
+                capsem_logger::ledger_protocol::LedgerHistoryLayer::Exec,
+            ),
+            (
+                api::HistoryLayer::Audit,
+                capsem_logger::ledger_protocol::LedgerHistoryLayer::Audit,
+            ),
+        ]
+        .into_iter()
+        .filter(|(layer, _)| params.layer.includes(*layer))
+        .map(|(_, layer)| layer)
+        .collect(),
+        search: params.search.clone(),
+        limit: u16::try_from(limit.max(1)).unwrap_or(2000),
+        offset: u64::try_from(params.offset).unwrap_or(u64::MAX),
+    };
+    let mut sets = db
+        .query(query)
+        .await
+        .map_err(|error| ledger_route_error(vm_id, "history", "query", &db_path, error))?;
+    if sets.is_empty() {
+        return Err(ledger_route_error(
+            vm_id,
+            "history",
+            "query",
+            &db_path,
+            "history query returned no page",
+        ));
+    }
+    let page = ledger_rows_to_objects(sets.remove(0));
     let total = match search {
         None => {
             let counters = db
@@ -129,17 +166,8 @@ pub(crate) async fn history_page(
             .map(|(_, count)| count)
             .sum()
         }
-        Some(search) => {
-            let rows = query_route_objects(
-                vm_id,
-                "history",
-                "search total",
-                &db_path,
-                &db,
-                &search_total_sql(params.layer),
-                &[json!(search)],
-            )
-            .await?;
+        Some(_) => {
+            let rows = sets.into_iter().next().map(ledger_rows_to_objects).unwrap_or_default();
             rows.first()
                 .and_then(|row| row.get("total"))
                 .and_then(serde_json::Value::as_u64)
@@ -149,22 +177,7 @@ pub(crate) async fn history_page(
     let commands = if limit == 0 || u64::try_from(params.offset).map_or(true, |offset| offset >= total) {
         Vec::new()
     } else {
-        let rows = query_route_objects(
-            vm_id,
-            "history",
-            "entries",
-            &db_path,
-            &db,
-            &page_sql(params.layer, search.is_some()),
-            &[
-                search.map_or(serde_json::Value::Null, |search| json!(search)),
-                sql_integer(params.offset.saturating_add(limit)),
-                sql_integer(limit),
-                sql_integer(params.offset),
-            ],
-        )
-        .await?;
-        rows.into_iter()
+        page.into_iter()
             .map(|row| decode_entry(vm_id, &db_path, row))
             .collect::<Result<Vec<_>, AppError>>()?
     };

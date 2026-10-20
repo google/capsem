@@ -29,13 +29,13 @@ class SandboxInfo(Model):
     files: VmFilesInfo | None = None
     forked_from: StrictStr | None = None
     id: StrictStr
+    labels: dict[str, StrictStr] | None = None
     last_error: StrictStr | None = None
     model_call_count: Annotated[StrictInt, Field(ge=0)] | None = None
     name: StrictStr | None = None
     network: VmNetworkInfo | None = None
     persistent: StrictBool | None = None
     pid: Annotated[StrictInt, Field(ge=0)]
-    profile_id: StrictStr
     ram_mb: Annotated[StrictInt, Field(ge=0)] | None = None
     resume_blocked_reason: StrictStr | None = None
     session_db: SessionDbStatus | None = None

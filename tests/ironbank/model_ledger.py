@@ -39,6 +39,7 @@ class ModelLedgerRun:
     log_paths: tuple[Path, ...]
     raw_secrets: tuple[str, ...] = ()
     expected_credential_ref: str | None = None
+    dns_answer_ip: str = "127.0.0.1"
 
 
 @dataclass(frozen=True)
@@ -364,7 +365,9 @@ def assert_two_turn_model_ledger_exchange(
         assert dns["qclass"] == 1, dict(dns)
         assert dns["rcode"] == 0, dict(dns)
         assert dns["decision"] == "allowed", dict(dns)
-        assert dns["answer_ip"] == spec.dns_ip == "127.0.0.1", dict(dns)
+        # What the mock DNS was asked to answer: loopback for a VM client,
+        # routable for a workload client (helpers.mock_server).
+        assert dns["answer_ip"] == spec.dns_ip == run.dns_answer_ip, dict(dns)
         assert dns["source_proto"] in {"udp", "tcp"}, dict(dns)
 
         file_event_ids: list[str] = []
@@ -400,7 +403,7 @@ def assert_two_turn_model_ledger_exchange(
             }
             assert turn.call_response in (trace_tool_responses[0]["content_preview"] or "")
 
-            file_row = _assert_created_file_row(
+            file_row = _assert_written_file_row(
                 conn,
                 trace_id=trace_id,
                 file_path=turn.file_path,
@@ -866,7 +869,7 @@ def _assert_tool_output_file(
     )
     if not isinstance(command, str):
         return
-    match = re.search(r">\s*(/root/[^ ]+)", command)
+    match = re.search(r">\s*(/(?:root|workspace)/[^ ]+)", command)
     if not match:
         return
     path = Path(match.group(1)).name
@@ -893,7 +896,7 @@ def _assert_tool_output_file(
     ]
 
 
-def _assert_created_file_row(
+def _assert_written_file_row(
     conn: sqlite3.Connection,
     *,
     trace_id: str,
@@ -909,20 +912,30 @@ def _assert_created_file_row(
             """
             SELECT *
             FROM fs_events
-            WHERE action = 'created'
+            WHERE action IN ('created', 'modified')
             ORDER BY id
             """
         ).fetchall()
-        if any(row["trace_id"] == trace_id and row["name"] == path for row in rows):
+        if any(
+            row["trace_id"] == trace_id
+            and row["name"] == path
+            and row["size"] == len(file_content.encode())
+            for row in rows
+        ):
             break
         time.sleep(0.25)
-    matches = [row for row in rows if row["trace_id"] == trace_id and row["name"] == path]
+    matches = [
+        row
+        for row in rows
+        if row["trace_id"] == trace_id
+        and row["name"] == path
+        and row["size"] == len(file_content.encode())
+    ]
     assert len(matches) == 1, [dict(row) for row in rows]
     row = matches[0]
     _assert_event_id(row["event_id"])
     assert row["path"] == path, dict(row)
     assert row["directory"] == ".", dict(row)
-    assert row["size"] == len(file_content.encode()), dict(row)
     assert row["credential_ref"] is None, dict(row)
     return row
 

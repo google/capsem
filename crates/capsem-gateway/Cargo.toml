@@ -14,6 +14,7 @@ name = "capsem-gateway"
 path = "src/main.rs"
 
 [dependencies]
+capsem-crypto = { path = "../capsem-crypto", default-features = false, features = ["random", "secrets"] }
 capsem-api = { path = "../capsem-api" }
 capsem-foundation = { path = "../capsem-foundation" }
 capsem-proto = { path = "../capsem-proto" }
@@ -32,8 +33,10 @@ tower-service.workspace = true
 bytes.workspace = true
 axum = { version = "0.8", features = ["ws"] }
 tower-http = { version = "0.6", features = ["trace", "cors"] }
-rand = "0.9"
 url = "2"
+
+[build-dependencies]
+capsem-crypto = { path = "../capsem-crypto" }
 
 [lints]
 workspace = true

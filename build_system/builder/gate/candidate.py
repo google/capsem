@@ -105,8 +105,10 @@ class CompleteGate:
     the price of a qualification whose subject cannot move while it runs, and
     only a command that already costs an hour should pay it.
 
-    Publication has its own short detached prefix and does not consume this
-    machine-local qualification journal.
+    Publication has its own short detached prefix. The public release commands
+    require this local journal for the selected commit or an identical Git tree,
+    except for the configured unattended channels. The hosted lane then
+    independently qualifies the artifact pairing it publishes.
     """
 
     def resources(self, runner: Runner) -> tuple[Resource, ...]:

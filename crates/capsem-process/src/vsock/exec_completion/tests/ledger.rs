@@ -41,6 +41,7 @@ impl Ledger {
                 exec_id: id,
                 command: "produce output".into(),
                 source: "api".into(),
+                target: capsem_proto::ipc::ExecTarget::Vm,
                 trace_id: None,
                 process_name: None,
                 credential_ref: None,

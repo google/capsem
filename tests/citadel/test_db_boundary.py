@@ -40,6 +40,8 @@ FORBIDDEN_PATTERNS: tuple[tuple[str, str], ...] = (
     ("route_projection", "route/service projection cache must be burned"),
     ("_route_projection", "route/service projection cache must be burned"),
     ("live_session_counter_projection", "route/service projection cache must be burned"),
+    ("stats_detail_response_cache", "route/service projection cache must be burned"),
+    ("session_response_cache", "route/service projection cache must be burned"),
     ("missing_optional_ledger_shape", "missing schema must fail loudly"),
     ("no such table", "missing schema fallback must not be special-cased"),
     ("no such column", "missing schema fallback must not be special-cased"),
@@ -93,10 +95,12 @@ LOGGER_DB_INTERNALS = {
     Path("crates/capsem-logger/src/reader.rs"),
     Path("crates/capsem-logger/src/reader/open.rs"),
     Path("crates/capsem-logger/src/schema.rs"),
+    # The DB object's schema validator receives its owned connection to check
+    # canonical integrity declarations; it never opens a second ledger.
+    Path("crates/capsem-logger/src/schema/integrity.rs"),
     Path("crates/capsem-logger/src/schema/pragmas.rs"),
     Path("crates/capsem-logger/src/schema/security_event_types.rs"),
     Path("crates/capsem-logger/src/schema/transport.rs"),
-    Path("crates/capsem-logger/src/session_index.rs"),
     Path("crates/capsem-logger/src/writer.rs"),
     # The writer thread's own modules. They run on the thread that owns the
     # connection and are handed it as an argument; they do not open one.
@@ -105,6 +109,9 @@ LOGGER_DB_INTERNALS = {
     Path("crates/capsem-logger/src/writer/model_rows.rs"),
     Path("crates/capsem-logger/src/writer/retention.rs"),
     Path("crates/capsem-logger/src/writer/tests.rs"),
+    # The host ledger's chain test edits a copy of a closed ledger on disk to
+    # prove tampering breaks the chain, the same pattern as handle_tests above.
+    Path("crates/capsem-logger/src/writer/tests/host.rs"),
     # The writer's open path, under the writer lock it already holds: it reads
     # whether a ledger predates format v4 and moves such a file aside before
     # the writer opens a fresh one. It never reads or writes ledger rows.

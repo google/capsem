@@ -5,19 +5,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from . import assetrecovery, hostbuild, hostpackage, initrd
-from .actions import Run
 from .config import GateConfig
-from .execution import Kind, Needs, Speed, Step, step
+from .execution import Step
 from .plan import Plan
 from .rebuildpermission import DEFAULT_PERMISSION, RebuildPermission
 
 
 @dataclass(frozen=True)
 class Preparation:
-    """Canonical runtime and the profile content it materialized."""
+    """The canonical runtime, signed and ready."""
 
     ready: Step
-    profile_content: Step
 
 
 def prepare(
@@ -44,19 +42,7 @@ def prepare(
         packed = initrd.pack(plan, config, after=assets)
         previous = (packed,)
 
-    materialized = phase.add(materialize_config_step(config), after=previous)
-    built = hostbuild.add(phase, config, after=(materialized,), label=build_label)
+    built = hostbuild.add(phase, config, after=previous, label=build_label)
     ready = phase.add(hostpackage.sign_step(config, label=sign_label), after=(built,))
-    return Preparation(ready=ready, profile_content=materialized)
+    return Preparation(ready=ready)
 
-
-def materialize_config_step(config: GateConfig) -> Step:
-    """Produce the canonical config half of locally built profile content."""
-    return step(
-        "materialize-config",
-        Run(["bash", config.candidate.materialize_script]),
-        contends=(config.exclusive("workspace_binaries"),),
-        kind=Kind.COMPILE,
-        needs=frozenset({Needs.DISK}),
-        speed=Speed.FAST,
-    )

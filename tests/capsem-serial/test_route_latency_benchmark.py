@@ -52,7 +52,7 @@ def _assert_route_contention_benchmark_budget(summary: dict, gates: dict) -> Non
 
 
 def test_route_read_write_contention_benchmark() -> None:
-    """Archive `/stats` route latency while profile mutation writes are active."""
+    """Archive `/stats` route latency while policy mutation writes are active."""
 
     result = run_concurrent_route_read_write_benchmark(samples=160, mutation_repeats=8)
     summary = route_timing_summary(result.timing)
@@ -61,14 +61,14 @@ def test_route_read_write_contention_benchmark() -> None:
     data = {
         "version": "0.1.0",
         "timestamp": time.time(),
-        "scenario": "service_stats_reads_during_profile_mutation_writes",
+        "scenario": "service_stats_reads_during_policy_mutation_writes",
         "reader": {
             "route": "/stats",
             "transport": "service_uds",
             "summary": summary,
         },
         "writer": {
-            "route": "/profiles/code/mcp/default/edit",
+            "route": "/mcp/default/edit",
             "transport": "service_uds",
             "writes": len(actions),
             "actions": actions,

@@ -3,6 +3,39 @@
 use super::*;
 
 #[test]
+fn openai_outputs_preserve_arrays_and_custom_call_metadata() {
+    for item_type in ["function_call_output", "custom_tool_call_output"] {
+        let body = serde_json::json!({"model": "gpt-fixture", "stream": true, "instructions": "keep metadata",
+            "tools": [{"type": "custom", "name": "exec"}], "input": [
+            {"type": item_type, "call_id": "call_code", "output": [
+                {"type": "input_text", "text": "Script completed\nOutput:\n"},
+                {"type": "input_image", "image_url": "data:image/png;base64,ignored"},
+                {"type": "input_text", "text": "actual echo"}]},
+            {"role": "user", "content": "continue"}]})
+        .to_string();
+        let meta = parse_request(ModelProtocol::OpenAi, body.as_bytes());
+        assert_eq!(meta.model.as_deref(), Some("gpt-fixture"));
+        assert!(meta.stream);
+        assert_eq!(meta.system_prompt_preview.as_deref(), Some("keep metadata"));
+        assert_eq!(meta.messages_count, 2);
+        assert_eq!(meta.tools_count, 1);
+        assert_eq!(meta.tool_results.len(), 1, "{item_type}");
+        assert_eq!(meta.tool_results[0].call_id, "call_code");
+        assert_eq!(
+            meta.tool_results[0].content_preview,
+            "Script completed\nOutput:\n\nactual echo"
+        );
+        assert!(!meta.tool_results[0].is_error);
+    }
+    let meta = parse_request(
+        ModelProtocol::OpenAi,
+        br#"{"input":[{"type":"custom_tool_call_output","call_id":"call_string","output":"exact text"}]}"#,
+    );
+    assert_eq!(meta.tool_results.len(), 1);
+    assert_eq!(meta.tool_results[0].content_preview, "exact text");
+}
+
+#[test]
 fn test_extract_model_field() {
     let body = br#"{"model":"claude-3-opus-20240229","messages":[]}"#;
     assert_eq!(extract_model_field(body), Some("claude-3-opus-20240229".to_string()));

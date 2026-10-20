@@ -20,9 +20,6 @@ async fn hypervisor_defaults_overrides_update_and_vm_handle_lifetime() {
     request(&mut server, "/status").await;
     assert_eq!(hv.list().await.unwrap().sandboxes[0].id, "vm-1");
     request(&mut server, "/vms/list").await;
-    let mut first_create = true;
-    let mut profile = hv.profiles().list().await.unwrap().remove(0);
-    request(&mut server, "/profiles/list").await;
     for name in [None, Some(String::new())] {
         let vm = hv
             .create(CreateOptions {
@@ -33,42 +30,38 @@ async fn hypervisor_defaults_overrides_update_and_vm_handle_lifetime() {
             .unwrap();
         assert_eq!(vm.id(), Some("vm-1"));
         assert_eq!(vm.name(), Some("work"));
-        if first_create {
-            // A profile-less create asks the catalog which profile is the
-            // default; the handle caches the answer.
-            request(&mut server, "/status").await;
-            first_create = false;
-        }
+        // A create is one request: CPU, memory and what the VM runs are the
+        // service's to decide, so nothing asks `/status` first.
         let body = request(&mut server, "/vms/create").await;
-        assert_eq!(body["name"], json!(null));
-        assert_eq!(body["profile_id"], "code");
-        assert_eq!(body["persistent"], false);
-        for omitted in ["ram_mb", "cpus", "env"] {
-            assert!(body.get(omitted).is_none());
-        }
+        assert_eq!(body, json!({"name": null, "persistent": false}));
     }
     let network = hv.networks().create("team").await.unwrap();
     request(&mut server, "/networks").await;
-    profile.id = "co-work".into();
     let vm = hv
         .create(CreateOptions {
-            profile: Some(profile),
             name: Some("work".into()),
             cpus: Some(4),
             memory: Some(8),
             env: Some([("EDITOR".into(), "vim".into())].into()),
+            labels: Some([("suite".into(), "eval".into())].into()),
             networks: vec![network.clone()],
             ..Default::default()
         })
         .await
         .unwrap();
     let body = request(&mut server, "/vms/create").await;
-    assert_eq!(body["ram_mb"], 8192);
-    assert_eq!(body["cpus"], 4);
-    assert_eq!(body["name"], "work");
-    assert_eq!(body["persistent"], true);
-    assert_eq!(body["env"]["EDITOR"], "vim");
-    assert_eq!(body["networks"], json!([network.name]));
+    assert_eq!(
+        body,
+        json!({
+            "name": "work",
+            "ram_mb": 8192,
+            "cpus": 4,
+            "persistent": true,
+            "env": {"EDITOR": "vim"},
+            "labels": {"suite": "eval"},
+            "networks": [network.name],
+        })
+    );
     hv.update().await.unwrap();
     assert_eq!(
         request(&mut server, "/update/apply").await,
@@ -143,13 +136,7 @@ async fn container_and_port_resources_hide_wire_exposure_details() {
         })
         .await
         .unwrap();
-    // The profile-less create resolves the catalog default first.
-    request(&mut server, "/status").await;
     let create = request(&mut server, "/vms/create").await;
-    assert_eq!(
-        create["profile_id"], "co-work",
-        "a container takes the catalog's container default"
-    );
     assert_eq!(create["env"], serde_json::Value::Null);
     assert_eq!(create["container"]["image"], "docker://busybox:latest");
     assert_eq!(create["container"]["env"]["MODE"], "preview");
@@ -216,10 +203,17 @@ async fn controls_and_resources_use_the_canonical_vm_routes() {
     request(&mut server, "/vms/vm-1/stop").await;
     vm.delete().await.unwrap();
     request(&mut server, "/vms/vm-1/delete").await;
-    let fork = vm.fork("branch", Some("notes".into())).await.unwrap();
+    let fork = vm
+        .fork(
+            "branch",
+            Some("notes".into()),
+            Some([("suite".into(), "eval".into())].into()),
+        )
+        .await
+        .unwrap();
     assert_eq!(
         request(&mut server, "/vms/vm-1/fork").await,
-        json!({"name":"branch","description":"notes"})
+        json!({"name":"branch","description":"notes","labels":{"suite":"eval"}})
     );
     drop(vm);
     fork.info().await.unwrap();
@@ -346,16 +340,12 @@ async fn network_resource_uses_typed_routes_put_and_cursor_logs() {
 }
 
 #[tokio::test]
-async fn diagnostics_persistence_and_profile_mcp_use_typed_routes() {
+async fn diagnostics_persistence_and_mcp_use_typed_routes() {
     let mut server = gateway().await;
     let hv = Hypervisor::new(&server.url, "private-token").unwrap();
-    let mut profile = hv.profiles().list().await.unwrap().remove(0);
-    request(&mut server, "/profiles/list").await;
-    profile.id = "co-work".into();
     hv.run(
         "printf hello",
         RunOptions {
-            profile: Some(profile),
             timeout_secs: Some(4),
             cpus: Some(2),
             memory: Some(1),
@@ -366,7 +356,7 @@ async fn diagnostics_persistence_and_profile_mcp_use_typed_routes() {
     .unwrap();
     assert_eq!(
         request(&mut server, "/run").await,
-        json!({"command":"printf hello","profile_id":"co-work","timeout_secs":4,"ram_mb":1024,"cpus":2,"env":{"EDITOR":"vim"}})
+        json!({"command":"printf hello","timeout_secs":4,"ram_mb":1024,"cpus":2,"env":{"EDITOR":"vim"}})
     );
     hv.debug()
         .panics(DiagnosticOptions {
@@ -394,26 +384,39 @@ async fn diagnostics_persistence_and_profile_mcp_use_typed_routes() {
     vm.persist("saved").await.unwrap();
     assert_eq!(request(&mut server, "/vms/vm-1/save").await, json!({"name":"saved"}));
 
-    let profile = hv.profiles().list().await.unwrap().remove(0);
-    request(&mut server, "/profiles/list").await;
-    let mcp = hv.profiles().mcp(&profile);
+    let mcp = hv.mcp();
     mcp.info().await.unwrap();
-    request(&mut server, "/profiles/code/mcp/info").await;
     mcp.servers().await.unwrap();
-    request(&mut server, "/profiles/code/mcp/servers/list").await;
     mcp.default_permission().await.unwrap();
-    request(&mut server, "/profiles/code/mcp/default/info").await;
     let mcp_server = mcp.get("filesystem").await.unwrap();
-    request(&mut server, "/profiles/code/mcp/servers/list").await;
+    assert_eq!(mcp_server.info.name, "filesystem");
     mcp_server.tools().list().await.unwrap();
-    request(&mut server, "/profiles/code/mcp/servers/filesystem/tools/list").await;
     mcp_server.refresh().await.unwrap();
-    request(&mut server, "/profiles/code/mcp/servers/filesystem/refresh").await;
     mcp_server.tools().call("read", json!({"path":"/tmp/a"})).await.unwrap();
-    assert_eq!(
-        request(&mut server, "/profiles/code/mcp/servers/filesystem/tools/read/call").await,
-        json!({"path":"/tmp/a"})
-    );
+    // The facade is exactly this sequence of hypervisor-wide routes, in order,
+    // and only the tool call carries a body: its arguments, verbatim.
+    for (method, path, body) in [
+        ("GET", "/mcp/info", None),
+        ("GET", "/mcp/servers/list", None),
+        ("GET", "/mcp/default/info", None),
+        ("GET", "/mcp/servers/list", None),
+        ("GET", "/mcp/servers/filesystem/tools/list", None),
+        ("POST", "/mcp/servers/filesystem/refresh", None),
+        (
+            "POST",
+            "/mcp/servers/filesystem/tools/read/call",
+            Some(json!({"path":"/tmp/a"})),
+        ),
+    ] {
+        let (parts, received) = server.received.recv().await.unwrap();
+        assert_eq!((parts.method.as_str(), parts.uri.path()), (method, path));
+        assert_eq!(parts.headers["authorization"], "Bearer private-token");
+        match body {
+            Some(body) => assert_eq!(serde_json::from_slice::<serde_json::Value>(&received).unwrap(), body),
+            None => assert!(received.is_empty(), "{path} sent a body"),
+        }
+    }
+    assert!(server.received.try_recv().is_err());
 }
 
 #[tokio::test]

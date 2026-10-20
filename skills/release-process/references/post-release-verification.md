@@ -16,9 +16,7 @@ uv run --project build_system --frozen python3 build_system/scripts/release/chec
   --channel stable \
   --manifest-url https://release.capsem.org/assets/stable/manifest.json \
   --install-script-url https://capsem.org/install.sh \
-  --docker-linux-install \
-  --docker-channel-switch \
-  --docker-upgrade
+  --docker-linux-install
 ```
 
 Use `build_system/scripts/release/check-public-binary-release.py` for post-deploy glow-up instead of
@@ -28,6 +26,19 @@ package SHA-256, package-owned binary hashes, absence of a packaged
 install, stable/nightly asset switching, and the binary updater path. Package
 scripts must not normalize or convert manifest JSON; the selected channel
 manifest is the only runtime manifest format.
+
+The public Docker check boots the shared real systemd harness before the
+installer runs as its ordinary test user. It uses the qualified, input-keyed
+install dependency image by default; `--docker-image` may select another clean
+prepared systemd image with that user and the masked binfmt unit. It owns a
+unique container and removes it on failure or interruption. Public downloads
+use an explicit bridge network; the ordinary installed-package proof remains
+sealed with `runtime_network = "none"`.
+
+Use `--docker-channel-switch` only when both deployed channels are compatible
+with the installed binary, and `--docker-upgrade` only for a supported genuine
+second compiled cohort. Stable 0.7 publication does not imply that the
+independently owned nightly channel has migrated from 0.6.
 
 Binary transition proof must use two genuinely compiled package cohorts with
 different versions. Rewriting only Debian control metadata, package provenance,
@@ -52,7 +63,7 @@ Binary GitHub releases publish host packages and the canonical host SBOM
 artifact, `capsem-sbom.spdx.json`; the SBOM attestation subject list must cover
 both `.pkg` and `.deb` package artifacts, and the release summary must say
 `SBOM attested (SPDX 2.3, pkg + deb)`. VM asset manifests, blobs, OBOM evidence,
-profile-owned records, channel manifests, and the root channel list live on
+runtime records, channel manifests, and the root channel list live on
 `release.capsem.org`; do not verify or publish VM `manifest.json` through the
 tag release. Before recording binary metadata in the release channel, the tag
 workflow preflights that the downloaded release artifacts contain
@@ -82,3 +93,32 @@ running service to ensure the tray via `/companions/tray/ensure`; spawning
 `capsem-tray` directly bypasses the service parent guard and is not the product
 path.
 ## Documentation site
+
+## Stable SDK and adapter registries
+
+The binary workflow calls `release-client-packages.yaml` only after the native
+public download/install proof. It consumes the source gate's `client-packages`
+artifact rather than repacking Python or npm sources. The Rust publisher uses
+Cargo's official packager and refuses any byte difference from the tested
+crate before upload. Its verification build runs without publishing tokens.
+
+Before a stable attempt, configure Actions secrets `PYPI_TOKEN`, `NPM_TOKEN`,
+and `CARGO_REGISTRY_TOKEN` with authority for the existing Capsem projects and
+their dependency crates. PyPI authority must cover both `capsem` and
+`inspect-capsem-sandbox`; npm authority must cover `@capsem/sdk` and `@capsem/mcp`.
+Never put a token in source, command arguments, logs, or a conversation.
+
+`client_registry` anonymously checks exact public versions and downloads their
+bytes. `tests/client_registry_acceptance.py` then starts the exact native
+package's service and runs clean consumers outside the checkout. Python checks
+SDK discovery and the Inspect plugin; Node checks SDK discovery and packed MCP
+handshake/status; Rust compiles only registry dependencies and calls the service.
+The SDK defaults discover the isolated service's actual local metadata.
+
+If publication stops partway through, repair the registry authority or transport
+and retry the same qualified source through the owning binary release command.
+The publisher accepts only byte-identical already-uploaded files and publishes
+missing files in dependency order. It never uses a skip-existing flag. Native
+publication can already be live while this continuation is incomplete; do not
+report the coordinated release complete until the public consumer proof passes.
+

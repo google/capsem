@@ -15,9 +15,7 @@ SCRIPT = PROJECT_ROOT / "build_system" / "scripts" / "release" / "verify-install
 
 def _write_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
     manifest = tmp_path / "served-manifest.json"
-    manifest.write_bytes(
-        b'{"schema":"capsem.release_graph.v1","profiles":{"code":{},"co-work":{}}}\n'
-    )
+    manifest.write_bytes(b'{"schema":"capsem.release_graph.v1","runtime":{}}\n')
     home = tmp_path / "home"
     assets = home / "assets"
     assets.mkdir(parents=True)
@@ -45,8 +43,8 @@ def _write_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
     capsem = tmp_path / "capsem"
     capsem.write_text(
         "#!/bin/sh\n"
-        "if [ \"${1:-}\" = logs ]; then\n"
-        "  cat \"$CAPSEM_RUN_DIR/sessions/$2\"-failed-*/process.log\n"
+        'if [ "${1:-}" = logs ]; then\n'
+        '  cat "$CAPSEM_RUN_DIR/sessions/$2"-failed-*/process.log\n'
         "  exit\n"
         "fi\n"
         "cat <<'EOF'\n"
@@ -55,9 +53,9 @@ def _write_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
         "Running:   true\n"
         "Service:   ok (v1.5.9)\n"
         "Gateway:   ok (port 19222, v1.5.9)\n"
-        "Profiles:  2/2 ready (profile)\n"
-        f"  source:  {manifest.resolve().as_uri()}\n"
-        "  status:  valid\n"
+        "Assets: ready\n"
+        f"Manifest source: {manifest.resolve().as_uri()}\n"
+        "Manifest status: Valid\n"
         "EOF\n",
         encoding="utf-8",
     )
@@ -164,26 +162,27 @@ def _write_polling_metadata(
     return polling
 
 
-def test_installed_release_gate_accepts_exact_manifest_metadata_and_ready_profiles(
-    tmp_path: Path,
-) -> None:
+def test_installed_release_gate_accepts_exact_manifest_metadata(tmp_path: Path) -> None:
     home, manifest, capsem = _write_fixture(tmp_path)
 
     result = _run(home, manifest, capsem)
 
     assert result.returncode == 0, result.stderr
-    assert "verified installed stable release 1.5.9: 2/2 profiles ready" in result.stdout
+    assert "verified installed stable release 1.5.9: exact manifest" in result.stdout
 
 
 @pytest.mark.parametrize("version", ["0.6.2", workspace_version(PROJECT_ROOT), "9.9.9", "1.5.9"])
 def test_failed_session_log_proof_requires_the_released_capability(
-    tmp_path: Path, version: str,
+    tmp_path: Path,
+    version: str,
 ) -> None:
     home, manifest, capsem = _write_fixture(tmp_path)
     metadata = home / "assets" / "manifest-metadata.json"
     metadata.write_text(metadata.read_text().replace("1.5.9", version))
     capsem.write_text(
-        capsem.read_text().replace("1.5.9", version).replace(
+        capsem.read_text()
+        .replace("1.5.9", version)
+        .replace(
             '  cat "$CAPSEM_RUN_DIR/sessions/$2"-failed-*/process.log',
             '  echo "unknown session name or id" >&2; exit 1',
         )
@@ -191,12 +190,8 @@ def test_failed_session_log_proof_requires_the_released_capability(
 
     result = _run(home, manifest, capsem, package_version=version)
 
-    if version == "0.6.2":
-        assert result.returncode == 0, result.stderr
-        assert "not applicable to released 0.6.2" in result.stdout
-    else:
-        assert result.returncode != 0
-        assert "capsem logs exited 1" in result.stderr
+    assert result.returncode != 0
+    assert "capsem logs exited 1" in result.stderr
 
 
 def test_legacy_log_capability_does_not_bypass_installed_version_identity(
@@ -399,11 +394,13 @@ def test_installed_release_gate_rejects_legacy_sidecars(tmp_path: Path) -> None:
     assert "legacy state path still exists" in result.stderr
 
 
-def test_installed_release_gate_rejects_partial_profile_readiness(tmp_path: Path) -> None:
-    home, manifest, capsem = _write_fixture(tmp_path)
-    capsem.write_text(capsem.read_text().replace("Profiles:  2/2", "Profiles:  1/2"))
-
-    result = _run(home, manifest, capsem)
-
-    assert result.returncode != 0
-    assert "profiles are not all ready" in result.stderr
+def test_the_verifier_asks_only_for_lines_capsem_status_prints() -> None:
+    """The fake above is only honest while the real `capsem status` prints the
+    lines the verifier requires: the profile section it used to check for
+    went away with profiles, and every installed proof then failed."""
+    main = (PROJECT_ROOT / "crates/capsem/src/main.rs").read_text()
+    assert 'println!("Manifest status: {:?}", manifest.validation_status);' in main
+    assert 'println!("Manifest source: {source}");' in main
+    verifier = (PROJECT_ROOT / "build_system/builder/release/tools/verify_installed_release.py").read_text()
+    assert '"Manifest status: Valid"' in verifier
+    assert 'f"Manifest source: {metadata_manifest_url}"' in verifier

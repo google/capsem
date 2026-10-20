@@ -21,7 +21,9 @@ use super::sys::{
 use super::virtio_mmio::{QueueSnapshot, VirtioMmioSnapshot};
 
 const MAGIC: &[u8; 16] = b"CAPSEM-KVM-CKPT\0";
-const VERSION: u32 = 9;
+const VERSION: u32 = 10;
+#[cfg(target_arch = "x86_64")]
+const PREVIOUS_VERSION: u32 = 9;
 const HEADER_LEN: u64 = 16 + 4 + 4 + 8 + 4 + 4 + 4;
 const COPY_CHUNK_SIZE: usize = 1024 * 1024;
 const CHECKPOINT_PROGRESS_INTERVAL: u64 = 1024 * 1024 * 1024;
@@ -37,6 +39,7 @@ const SELECTED_MSR_INDEXES: &[u32] = &[
     0x0000_0174, // IA32_SYSENTER_CS
     0x0000_0175, // IA32_SYSENTER_ESP
     0x0000_0176, // IA32_SYSENTER_EIP
+    super::boot_x86_64::IA32_MISC_ENABLE,
     0x0000_0277, // IA32_PAT
     0x0000_06e0, // IA32_TSC_DEADLINE
     0xc000_0081, // IA32_STAR
@@ -66,6 +69,8 @@ const X86_VCPU_STATE_LEN: u32 = (std::mem::size_of::<KvmRegs>()
     + std::mem::size_of::<KvmFpu>()
     + std::mem::size_of::<KvmXcrs>()
     + std::mem::size_of::<KvmXsave>()) as u32;
+#[cfg(target_arch = "x86_64")]
+const PREVIOUS_X86_VCPU_STATE_LEN: u32 = X86_VCPU_STATE_LEN - std::mem::size_of::<KvmMsrEntry>() as u32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct CheckpointHeader {
@@ -296,7 +301,8 @@ pub(super) fn read_checkpoint(
     expected_vcpu_count: u32,
     expected_mmio_device_count: u32,
 ) -> Result<RestoredCheckpoint> {
-    let file = std::fs::File::open(path).with_context(|| format!("open KVM checkpoint: {}", path.display()))?;
+    let file = capsem_foundation::unix::fs::open_regular_file_no_follow(path)
+        .with_context(|| format!("open KVM checkpoint: {}", path.display()))?;
     let mut reader = BufReader::new(file);
     let mut header_bytes = [0u8; HEADER_LEN as usize];
     reader.read_exact(&mut header_bytes).context("read checkpoint header")?;
@@ -304,8 +310,13 @@ pub(super) fn read_checkpoint(
     validate_header(&header, memory.size(), expected_vcpu_count, expected_mmio_device_count)?;
 
     let mut vcpus = Vec::with_capacity(header.vcpu_count as usize);
+    let msr_slots = if header.version == PREVIOUS_VERSION {
+        SELECTED_MSR_INDEXES.len() - 1
+    } else {
+        SELECTED_MSR_INDEXES.len()
+    };
     for id in 0..header.vcpu_count {
-        vcpus.push(read_vcpu_snapshot(&mut reader, id)?);
+        vcpus.push(read_vcpu_snapshot(&mut reader, id, msr_slots)?);
     }
 
     let vm = read_vm_snapshot(&mut reader)?;
@@ -318,21 +329,54 @@ pub(super) fn read_checkpoint(
         mmio_devices.push(snapshot);
     }
 
-    let mut offset = 0u64;
-    let mut buf = vec![0u8; COPY_CHUNK_SIZE.min(memory.size() as usize)];
-    while offset < memory.size() {
-        let len = (memory.size() - offset).min(buf.len() as u64) as usize;
-        reader.read_exact(&mut buf[..len]).context("read checkpoint memory")?;
-        memory
-            .write_at(offset, &buf[..len])
-            .context("restore checkpoint memory")?;
-        offset += len as u64;
+    // Keep the file format and exact length checks; restore only allocated
+    // extents into zeroed lazy RAM instead of populating multi-GiB holes.
+    let memory_start = reader.stream_position().context("checkpoint memory start position")?;
+    let memory_end = memory_start
+        .checked_add(memory.size())
+        .context("checkpoint memory end overflow")?;
+    let file = reader.into_inner();
+    use std::os::fd::AsFd;
+    let actual_len =
+        capsem_foundation::unix::fd::regular_file_size(file.as_fd()).context("checkpoint file metadata")?;
+    if actual_len < memory_end {
+        bail!("read checkpoint memory: file is truncated");
     }
-
-    let mut trailing = [0u8; 1];
-    if reader.read(&mut trailing).context("check checkpoint length")? != 0 {
+    if actual_len != memory_end {
         bail!("checkpoint has trailing bytes");
     }
+    memory.discard_contents().context("clear inactive checkpoint memory")?;
+    let mut offset = memory_start;
+    let mut restored_bytes = 0u64;
+    let mut buf = vec![0u8; COPY_CHUNK_SIZE.min(memory.size() as usize)];
+    while let Some(range) = capsem_foundation::unix::fs::next_data_range(&file, offset, memory_end)
+        .context("locate checkpoint memory extent")?
+    {
+        offset = range.start;
+        while offset < range.end {
+            let len = (range.end - offset).min(buf.len() as u64) as usize;
+            let mut read = 0usize;
+            while read < len {
+                let count =
+                    capsem_foundation::unix::fd::read_at(file.as_fd(), &mut buf[read..len], offset + read as u64)
+                        .context("read checkpoint memory")?;
+                if count == 0 {
+                    bail!("read checkpoint memory: file is truncated");
+                }
+                read += count;
+            }
+            memory
+                .write_at(offset - memory_start, &buf[..len])
+                .context("restore checkpoint memory")?;
+            offset += len as u64;
+            restored_bytes += len as u64;
+        }
+    }
+    tracing::debug!(
+        logical_bytes = memory.size(),
+        restored_bytes,
+        "checkpoint sparse memory restored"
+    );
 
     Ok(RestoredCheckpoint {
         vcpus,
@@ -390,14 +434,31 @@ fn write_checkpoint_inner(
         memory
             .read_at(offset, &mut buf[..len])
             .context("read guest memory for checkpoint")?;
-        if buf[..len] == zero_buf[..len] {
-            writer
-                .seek(SeekFrom::Current(len as i64))
-                .context("seek sparse guest memory checkpoint hole")?;
-            sparse_bytes += len as u64;
-        } else {
-            writer.write_all(&buf[..len]).context("write guest memory checkpoint")?;
-            data_bytes += len as u64;
+        // Coalesce runs of equal page occupancy, preserving 4-KiB holes even
+        // when shuffled guest allocation scatters used pages across a chunk.
+        let mut start = 0usize;
+        while start < len {
+            let mut end = (start + 4096).min(len);
+            let zero = buf[start..end] == zero_buf[..end - start];
+            while end < len {
+                let next = (end + 4096).min(len);
+                if (buf[end..next] == zero_buf[..next - end]) != zero {
+                    break;
+                }
+                end = next;
+            }
+            if zero {
+                writer
+                    .seek(SeekFrom::Current((end - start) as i64))
+                    .context("seek sparse guest memory checkpoint hole")?;
+                sparse_bytes += (end - start) as u64;
+            } else {
+                writer
+                    .write_all(&buf[start..end])
+                    .context("write guest memory checkpoint")?;
+                data_bytes += (end - start) as u64;
+            }
+            start = end;
         }
         offset += len as u64;
         if offset >= next_progress || offset == memory.size() {
@@ -427,7 +488,7 @@ fn write_checkpoint_inner(
 
 #[cfg(target_arch = "x86_64")]
 fn validate_header(header: &CheckpointHeader, ram_bytes: u64, vcpu_count: u32, mmio_device_count: u32) -> Result<()> {
-    if header.version != VERSION {
+    if header.version != VERSION && header.version != PREVIOUS_VERSION {
         bail!(
             "unsupported KVM checkpoint version: got {}, expected {}",
             header.version,
@@ -458,11 +519,16 @@ fn validate_header(header: &CheckpointHeader, ram_bytes: u64, vcpu_count: u32, m
             mmio_device_count
         );
     }
-    if header.vcpu_state_len != X86_VCPU_STATE_LEN {
+    let expected_state_len = if header.version == PREVIOUS_VERSION {
+        PREVIOUS_X86_VCPU_STATE_LEN
+    } else {
+        X86_VCPU_STATE_LEN
+    };
+    if header.vcpu_state_len != expected_state_len {
         bail!(
             "checkpoint vCPU state size mismatch: checkpoint={}, expected={}",
             header.vcpu_state_len,
-            X86_VCPU_STATE_LEN
+            expected_state_len
         );
     }
     Ok(())
@@ -502,7 +568,7 @@ fn write_vcpu_snapshot(writer: &mut impl Write, snapshot: &VcpuSnapshot) -> Resu
 }
 
 #[cfg(target_arch = "x86_64")]
-fn read_vcpu_snapshot(reader: &mut impl Read, expected_id: u32) -> Result<VcpuSnapshot> {
+fn read_vcpu_snapshot(reader: &mut impl Read, expected_id: u32, msr_slots: usize) -> Result<VcpuSnapshot> {
     let mut id_bytes = [0u8; 4];
     reader.read_exact(&mut id_bytes).context("read checkpoint vCPU id")?;
     let id = u32::from_le_bytes(id_bytes);
@@ -520,15 +586,15 @@ fn read_vcpu_snapshot(reader: &mut impl Read, expected_id: u32) -> Result<VcpuSn
                 .read_exact(&mut count_bytes)
                 .context("read checkpoint vCPU MSR count")?;
             let count = u32::from_le_bytes(count_bytes) as usize;
-            if count > SELECTED_MSR_INDEXES.len() {
+            if count > msr_slots {
                 bail!(
                     "checkpoint vCPU MSR count exceeds selected set: {} > {}",
                     count,
-                    SELECTED_MSR_INDEXES.len()
+                    msr_slots
                 );
             }
             let mut entries = Vec::with_capacity(count);
-            for i in 0..SELECTED_MSR_INDEXES.len() {
+            for i in 0..msr_slots {
                 let entry: KvmMsrEntry = read_pod(reader).context("read checkpoint vCPU MSR entry")?;
                 if i < count {
                     entries.push(entry);

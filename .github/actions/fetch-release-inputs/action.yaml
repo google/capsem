@@ -9,7 +9,7 @@ inputs:
     description: Manifest artifact family.
     required: true
   architecture:
-    description: Optional profile architecture selection.
+    description: Optional runtime architecture selection.
     required: false
     default: ""
   output:
@@ -19,8 +19,8 @@ inputs:
     description: Optional manifest used only for an absent first-party channel.
     required: false
     default: ""
-  allow-empty-profiles:
-    description: Permit an explicitly empty bootstrap profile set.
+  allow-empty-runtime:
+    description: Permit a bootstrap manifest that has published no runtime yet.
     required: false
     default: "false"
   allow-empty-packages:
@@ -64,8 +64,8 @@ runs:
         if [[ -n "${{ inputs.bootstrap-manifest-url }}" ]]; then
           args+=(--bootstrap-manifest-url "${{ inputs.bootstrap-manifest-url }}")
         fi
-        if [[ "${{ inputs.allow-empty-profiles }}" == "true" ]]; then
-          args+=(--allow-empty-profiles)
+        if [[ "${{ inputs.allow-empty-runtime }}" == "true" ]]; then
+          args+=(--allow-empty-runtime)
         fi
         if [[ "${{ inputs.allow-empty-packages }}" == "true" ]]; then
           args+=(--allow-empty-packages)

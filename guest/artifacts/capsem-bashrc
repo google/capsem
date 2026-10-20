@@ -10,6 +10,19 @@ export HISTFILE=/root/.bash_history
 export HOME=/root
 cd /root
 
+# An image session's terminal is its workload's (capsem-core ATTACH_COMMAND):
+# wait for the image it was created with, then hand this PTY to the launcher,
+# which enters the workload as the image's user and never comes back here.
+if [ -n "$CAPSEM_WORKLOAD" ] || [ -f /root/.capsem-image/ready ]; then
+    trap '' INT QUIT TSTP
+    until [ -f /root/.capsem-image/ready ]; do
+        [ -n "$_capsem_waiting" ] || echo "capsem: waiting for the image"
+        _capsem_waiting=1
+        sleep 1
+    done
+    exec chroot /proc/1/root /bin/busybox unshare -m /bin/sh -ec 'mount --make-rprivate /; cd /newroot; mount --move . /; exec chroot . /usr/bin/python3 /root/.capsem-image/launch.py --attach'
+fi
+
 # Python venv is activated by capsem-pty-agent at boot (VIRTUAL_ENV + PATH).
 # Both the PTY shell and exec commands see the venv without sourcing here.
 
@@ -34,7 +47,7 @@ if [ -f /etc/capsem-banner.txt ]; then
         while IFS= read -r line; do echo -e "$line"; done
 fi
 
-# Show AI tool status based on policy (CAPSEM_*_ALLOWED) and API key env vars.
+# Show AI provider status based on policy (CAPSEM_*_ALLOWED) and API key env vars.
 # Host injects CAPSEM_ANTHROPIC_ALLOWED, CAPSEM_OPENAI_ALLOWED, CAPSEM_GOOGLE_ALLOWED
 # as "1" or "0" at boot based on the provider allow toggles in settings.
 _ai_status() {
@@ -50,10 +63,10 @@ _ai_status() {
     fi
 }
 echo ""
-echo -e "  ${_DIM}AI:${_RST}"
-_ai_status "claude" "CAPSEM_ANTHROPIC_ALLOWED" "ANTHROPIC_API_KEY"
-_ai_status "gemini" "CAPSEM_GOOGLE_ALLOWED"    "GEMINI_API_KEY"
-_ai_status "codex"  "CAPSEM_OPENAI_ALLOWED"    "OPENAI_API_KEY"
+echo -e "  ${_DIM}AI providers:${_RST}"
+_ai_status "anthropic" "CAPSEM_ANTHROPIC_ALLOWED" "ANTHROPIC_API_KEY"
+_ai_status "google"    "CAPSEM_GOOGLE_ALLOWED"    "GEMINI_API_KEY"
+_ai_status "openai"    "CAPSEM_OPENAI_ALLOWED"    "OPENAI_API_KEY"
 unset -f _ai_status
 
 # Random tip from /etc/capsem-tips.txt

@@ -13,7 +13,7 @@ import sqlite3
 import textwrap
 import time
 import uuid
-from contextlib import closing, suppress
+from contextlib import ExitStack, closing
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,12 +22,9 @@ import pytest
 from helpers.body_archive import session_archive
 from helpers.constants import (
     ASSETS_DIR,
-    CODE_PROFILE_ID,
-    DEFAULT_CPUS,
-    DEFAULT_RAM_MB,
-    EXEC_READY_TIMEOUT,
-    PROFILES_DIR,
 )
+from helpers.debug_session import WORKSPACE, debug_session
+from helpers.hermetic_models import model_corp_config
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
 from helpers.service import (
     ServiceInstance,
@@ -35,11 +32,14 @@ from helpers.service import (
     vm_name,
     vm_session_db_path,
     vm_session_dir,
-    wait_exec_ready,
 )
-from helpers.session_ledger import open_session_ledger
+from helpers.session_ledger import open_session_ledger, stop_session_for_ledger_read
+from helpers.uds_client import UdsHttpClient
 from ironbank.model_client_assertions import assert_one_model_client
-from ironbank.model_client_config import HERMETIC_OPENAI_PRICED_MODEL
+from ironbank.model_client_config import (
+    HERMETIC_OPENAI_PRICED_MODEL,
+    WORKLOAD_OLLAMA_URL,
+)
 from ironbank.model_client_scripts import (
     agy_cli_script,
     claude_api_script,
@@ -134,10 +134,11 @@ def _credential_ref_for_secret(secret: str, *, provider: str = "openai") -> str:
 @dataclass
 class ModelClientEnv:
     service: ServiceInstance
-    client: object
+    client: UdsHttpClient
     session_id: str
     mock_base_url: str
     upstream_transcript_path: Path
+    dns_answer_ip: str
 
     @property
     def db_path(self) -> Path:
@@ -166,7 +167,7 @@ class ModelClientEnv:
         assert upload["size"] == len(payload)
         exec_resp = self.client.post(
             f"/vms/{self.session_id}/exec",
-            {"command": f"python3 /root/{script_name}", "timeout_secs": timeout_secs},
+            {"command": f"python3 {WORKSPACE}/{script_name}", "timeout_secs": timeout_secs},
             timeout=timeout_secs + 30,
         )
         assert exec_resp is not None
@@ -180,168 +181,71 @@ class ModelClientEnv:
         assert line is not None, stdout + stderr
         return json.loads(line.split("=", 1)[1])
 
+    def settle_ledger(self) -> Path:
+        """Drain every producer before an exact direct-ledger assertion."""
+        return stop_session_for_ledger_read(
+            self.client,
+            self.session_id,
+            self.db_path,
+        )
+
 
 @pytest.fixture
 def model_client_env():
     assert MOCK_SERVER_BINARY.exists(), f"{MOCK_SERVER_BINARY} missing"
     assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
-    assert PROFILES_DIR.exists(), f"{PROFILES_DIR} missing; materialize profile config"
 
     service = ServiceInstance()
     client = None
     mock_proc = None
     old_corp_config = os.environ.get("CAPSEM_CORP_CONFIG")
     session_name = vm_name("ironbank-model")
-    session_id: str | None = None
+    sessions = ExitStack()
     try:
+        # The clients run in a capsem-debug workload, whose loopback is its
+        # own: every fixture name must answer an address it can route.
         mock_proc, ready = start_mock_server(
-            request_log=service.tmp_dir / "upstream-transcript.jsonl"
+            addr="127.0.0.1:0",
+            request_log=service.tmp_dir / "upstream-transcript.jsonl",
+            dns_answers="routable",
         )
         corp_path = service.tmp_dir / "corp.toml"
-        corp_path.write_text(
-            textwrap.dedent(
-                f"""
-                refresh_policy = "24h"
-
-                [network.dns]
-                upstreams = [{json.dumps(ready["dns_udp_addr"])}]
-
-                [network.upstream_overrides."daily-cloudcode-pa.googleapis.com:443"]
-                dial = {json.dumps(ready["http_addr"])}
-                protocol = "http"
-
-                [network.upstream_overrides."generativelanguage.googleapis.com:443"]
-                dial = {json.dumps(ready["http_addr"])}
-                protocol = "http"
-
-                [network.upstream_overrides."www.googleapis.com:443"]
-                dial = {json.dumps(ready["http_addr"])}
-                protocol = "http"
-
-                [network.upstream_overrides."play.googleapis.com:443"]
-                dial = {json.dumps(ready["http_addr"])}
-                protocol = "http"
-
-                [network.upstream_overrides."antigravity-unleash.goog:443"]
-                dial = {json.dumps(ready["http_addr"])}
-                protocol = "http"
-
-                [network.upstream_overrides."api.openai.com:443"]
-                dial = {json.dumps(ready["http_addr"])}
-                protocol = "http"
-
-                [network.upstream_overrides."api.anthropic.com:443"]
-                dial = {json.dumps(ready["http_addr"])}
-                protocol = "http"
-
-                [settings."security.web.http_upstream_ports"]
-                value = [80, 3713, 8080, 11434]
-                modified = "2026-06-14T00:00:00Z"
-
-                [ai.ollama]
-                name = "Ollama"
-                protocol = "ollama"
-                url = "http://127.0.0.1:3713"
-                listen_ports = [3713]
-                allowed_remote_targets = ["127.0.0.1:3713"]
-
-                [ai.ollama.rules.local_fixture_endpoint]
-                name = "ollama_local_fixture_endpoint"
-                action = "allow"
-                priority = -100
-                detection_level = "informational"
-                reason = "Declare the hermetic Ollama-compatible endpoint for Ironbank launcher tests."
-                match = 'http.host == "127.0.0.1" && tcp.port == "3713" && (http.path == "/" || http.path == "/api/show" || http.path == "/api/tags" || http.path == "/api/chat" || http.path == "/v1/responses" || http.path == "/v1/messages")'
-
-                [corp.rules.allow_ironbank_mock_model_server]
-                name = "allow_ironbank_mock_model_server"
-                action = "allow"
-                priority = -100
-                detection_level = "informational"
-                reason = "Allow the hermetic Ironbank model fixture while preserving local-network ask defaults."
-                match = 'http.host == "127.0.0.1" && tcp.port == "3713" && (http.path == "/" || http.path == "/api/show" || http.path == "/api/tags" || http.path == "/api/chat" || http.path == "/v1/responses" || http.path == "/v1/messages")'
-
-                [corp.rules.allow_ironbank_google_code_assist]
-                name = "allow_ironbank_google_code_assist"
-                action = "allow"
-                priority = -100
-                detection_level = "informational"
-                reason = "Allow hermetic AGY Google Code Assist replay through the declared upstream override."
-                match = 'tcp.port == "443" && ((http.host == "daily-cloudcode-pa.googleapis.com" && http.path.matches("^/v1internal:")) || (http.host == "www.googleapis.com" && http.path == "/oauth2/v2/userinfo") || (http.host == "play.googleapis.com" && http.path == "/log") || (http.host == "antigravity-unleash.goog" && http.path.matches("^/api/client/")))'
-
-                [corp.rules.allow_ironbank_gemini_api]
-                name = "allow_ironbank_gemini_api"
-                action = "allow"
-                priority = -100
-                detection_level = "informational"
-                reason = "Allow hermetic Gemini API replay through the declared upstream override."
-                match = 'tcp.port == "443" && http.host == "generativelanguage.googleapis.com" && http.path.matches("^/v1beta/models/")'
-
-                [corp.rules.allow_ironbank_openai_api]
-                name = "allow_ironbank_openai_api"
-                action = "allow"
-                priority = -100
-                detection_level = "informational"
-                reason = "Allow hermetic OpenAI API replay through the declared upstream override."
-                match = 'tcp.port == "443" && http.host == "api.openai.com" && http.path.matches("^/v1/")'
-
-                [corp.rules.allow_ironbank_anthropic_api]
-                name = "allow_ironbank_anthropic_api"
-                action = "allow"
-                priority = -100
-                detection_level = "informational"
-                reason = "Allow hermetic Anthropic API replay through the declared upstream override."
-                match = 'tcp.port == "443" && http.host == "api.anthropic.com" && http.path.matches("^/v1/")'
-                """
-            ).strip()
-            + "\n",
-            encoding="utf-8",
-        )
+        corp_path.write_text(model_corp_config(ready), encoding="utf-8")
         os.environ["CAPSEM_CORP_CONFIG"] = str(corp_path)
         service.start()
         client = service.client()
-        create = client.post(
-            "/vms/create",
-            {
-                "name": session_name,
-                "profile_id": CODE_PROFILE_ID,
-                "ram_mb": DEFAULT_RAM_MB,
-                "cpus": DEFAULT_CPUS,
-                "env": {"CAPSEM_MOCK_SERVER_BASE_URL": ready["base_url"]},
-            },
-            timeout=90,
+        # The clients and SDKs are capsem-debug's: they run in its workload.
+        session_id = sessions.enter_context(
+            debug_session(
+                service,
+                service.tmp_dir / "registry",
+                session_name,
+                env={"CAPSEM_MOCK_SERVER_BASE_URL": WORKLOAD_OLLAMA_URL},
+            )
         )
-        assert create is not None
-        assert create.get("name") == session_name
-        session_id = create["id"]
         assert session_id != session_name
-        active_profile = vm_session_dir(service.tmp_dir, client, session_id) / "vm" / "active_profile.toml"
-        assert active_profile.exists(), f"active profile missing at {active_profile}"
-        active_profile_text = active_profile.read_text(encoding="utf-8")
-        assert ready["dns_udp_addr"] in active_profile_text
-        assert ready["http_addr"] in active_profile_text
-        assert "api.openai.com:443" in active_profile_text
-        assert "api.anthropic.com:443" in active_profile_text
-        assert "generativelanguage.googleapis.com:443" in active_profile_text
-        assert "daily-cloudcode-pa.googleapis.com:443" in active_profile_text
-        assert "antigravity-unleash.goog:443" in active_profile_text
-        assert "runtime-overlay.toml" not in active_profile_text
-        assert wait_exec_ready(client, session_id, timeout=EXEC_READY_TIMEOUT)
+        active_policy = vm_session_dir(service.tmp_dir, client, session_id) / "vm" / "active_policy.toml"
+        assert active_policy.exists(), f"active policy missing at {active_policy}"
+        active_policy_text = active_policy.read_text(encoding="utf-8")
+        assert ready["dns_udp_addr"] in active_policy_text
+        assert ready["http_addr"] in active_policy_text
+        assert "api.openai.com:443" in active_policy_text
+        assert "api.anthropic.com:443" in active_policy_text
+        assert "generativelanguage.googleapis.com:443" in active_policy_text
+        assert "daily-cloudcode-pa.googleapis.com:443" in active_policy_text
+        assert "antigravity-unleash.goog:443" in active_policy_text
+        assert "runtime-overlay.toml" not in active_policy_text
         yield ModelClientEnv(
             service=service,
             client=client,
             session_id=session_id,
-            mock_base_url=ready["base_url"],
+            mock_base_url=WORKLOAD_OLLAMA_URL,
             upstream_transcript_path=Path(ready["request_log"]),
+            dns_answer_ip=ready["dns_answer_ip"],
         )
     finally:
         stop_process(mock_proc)
-        if client is not None:
-            try:
-                if session_id is not None:
-                    client.delete(f"/vms/{session_id}/delete", timeout=60)
-            except Exception:
-                pass
+        sessions.close()
         service.stop()
         if old_corp_config is None:
             os.environ.pop("CAPSEM_CORP_CONFIG", None)
@@ -352,12 +256,12 @@ def model_client_env():
 @pytest.fixture
 def live_model_client_env():
     assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before live canary"
-    assert PROFILES_DIR.exists(), f"{PROFILES_DIR} missing; materialize profile config"
 
     service = ServiceInstance()
     client = None
     old_corp_config = os.environ.get("CAPSEM_CORP_CONFIG")
-    session_id = vm_name("ironbank-live-model")
+    session_name = vm_name("ironbank-live-model")
+    sessions = ExitStack()
     vm_env = {
         key: value
         for key in (
@@ -390,20 +294,9 @@ def live_model_client_env():
         os.environ["CAPSEM_CORP_CONFIG"] = str(corp_path)
         service.start()
         client = service.client()
-        create = client.post(
-            "/vms/create",
-            {
-                "name": session_id,
-                "profile_id": CODE_PROFILE_ID,
-                "ram_mb": DEFAULT_RAM_MB,
-                "cpus": DEFAULT_CPUS,
-                "env": vm_env,
-            },
-            timeout=90,
+        session_id = sessions.enter_context(
+            debug_session(service, service.tmp_dir / "registry", session_name, env=vm_env)
         )
-        assert create is not None
-        assert create.get("id") == session_id or create.get("name") == session_id
-        assert wait_exec_ready(client, session_id, timeout=EXEC_READY_TIMEOUT)
         transcript_path = service.tmp_dir / "live-provider-transcript-unused.jsonl"
         transcript_path.write_text("", encoding="utf-8")
         yield ModelClientEnv(
@@ -412,11 +305,11 @@ def live_model_client_env():
             session_id=session_id,
             mock_base_url="https://live-provider.invalid",
             upstream_transcript_path=transcript_path,
+            # Real DNS: the live assertions never compare an answer.
+            dns_answer_ip="",
         )
     finally:
-        if client is not None:
-            with suppress(Exception):
-                client.delete(f"/vms/{session_id}/delete", timeout=60)
+        sessions.close()
         service.stop()
         if old_corp_config is None:
             os.environ.pop("CAPSEM_CORP_CONFIG", None)
@@ -608,14 +501,7 @@ def test_openai_two_tool_calls_have_exact_item_cardinality(
     # a separate monitor. Stop the persistent VM first so the process drains
     # FsMonitor -> DbWriter and checkpoints the database before we reopen it.
     # A timing poll here would only hide a missing visibility barrier.
-    db_path = model_client_env.db_path
-    stopped = model_client_env.client.post(
-        f"/vms/{model_client_env.session_id}/stop",
-        {},
-        timeout=60,
-    )
-    assert stopped == {"success": True, "persistent": True}, stopped
-    assert db_path.exists(), db_path
+    db_path = model_client_env.settle_ledger()
 
     import sqlite3
 
@@ -681,21 +567,14 @@ def test_openai_two_tool_calls_have_exact_item_cardinality(
             "SELECT * FROM tool_calls WHERE tool_name = 'exec_command' ORDER BY id"
         ).fetchall()
         tool_responses = conn.execute("SELECT * FROM tool_responses ORDER BY id").fetchall()
-        expected_filenames = {item["filename"] for item in result["results"]}
-        file_rows = _eventually(
-            lambda: conn.execute(
-                """
-                SELECT *
-                FROM fs_events
-                WHERE action = 'created'
-                ORDER BY id
-                """
-            ).fetchall(),
-            lambda rows: (
-                expected_filenames <= {row["name"] for row in rows if row["name"] is not None}
-            ),
-            timeout_s=15,
-        )
+        file_rows = conn.execute(
+            """
+            SELECT *
+            FROM fs_events
+            WHERE action IN ('created', 'modified')
+            ORDER BY id
+            """
+        ).fetchall()
         net_rows = conn.execute(
             """
             SELECT *
@@ -759,7 +638,7 @@ def test_openai_two_tool_calls_have_exact_item_cardinality(
         assert dns["qclass"] == 1, dict(dns)
         assert dns["rcode"] == 0, dict(dns)
         assert dns["decision"] == "allowed", dict(dns)
-        assert dns["answer_ip"] == result["dns_ip"] == "127.0.0.1", dict(dns)
+        assert dns["answer_ip"] == result["dns_ip"] == model_client_env.dns_answer_ip, dict(dns)
         assert dns["source_proto"] in {"udp", "tcp"}, dict(dns)
 
         file_event_ids = []
@@ -814,16 +693,17 @@ def test_openai_two_tool_calls_have_exact_item_cardinality(
             assert len(trace_tool_responses) == 1, [dict(row) for row in tool_responses]
             assert trace_tool_responses[0]["call_id"] == expected["call_id"]
             assert expected["call_response"] in (trace_tool_responses[0]["content_preview"] or "")
-            created = [
+            written = [
                 row
                 for row in file_rows
-                if row["trace_id"] == trace_id and row["name"] == expected["filename"]
+                if row["trace_id"] == trace_id
+                and row["name"] == expected["filename"]
+                and row["size"] == len((expected["nonce"] + "\n").encode())
             ]
-            assert len(created) == 1, [dict(row) for row in file_rows]
-            assert created[0]["size"] == len((expected["nonce"] + "\n").encode())
-            assert created[0]["directory"] == ".", dict(created[0])
-            assert created[0]["credential_ref"] is None, dict(created[0])
-            file_event_ids.append(created[0]["event_id"])
+            assert len(written) == 1, [dict(row) for row in file_rows]
+            assert written[0]["directory"] == ".", dict(written[0])
+            assert written[0]["credential_ref"] is None, dict(written[0])
+            file_event_ids.append(written[0]["event_id"])
 
         event_ids = [row["event_id"] for row in [*model_calls, *net_rows, dns]]
         event_ids.extend(file_event_ids)
@@ -941,7 +821,7 @@ def test_openai_two_tool_calls_have_exact_item_cardinality(
             assert route_row["source"] == db_row["origin"]
             assert route_row["credential_ref"] == db_row["credential_ref"]
 
-        created_by_event = {row["event_id"]: row for row in file_rows if row["event_id"]}
+        written_by_event = {row["event_id"]: row for row in file_rows if row["event_id"]}
         for event_id in file_event_ids:
             assert event_id in route_file_by_event, {
                 "missing_file_event_id": event_id,
@@ -953,7 +833,7 @@ def test_openai_two_tool_calls_have_exact_item_cardinality(
                 ),
             }
             route_row = route_file_by_event[event_id]
-            db_row = created_by_event[event_id]
+            db_row = written_by_event[event_id]
             assert route_row["action"] == db_row["action"]
             assert route_row["path"] == db_row["path"]
             assert route_row["size"] == db_row["size"]
@@ -989,7 +869,7 @@ def test_openai_two_tool_calls_have_exact_item_cardinality(
             """
             SELECT *
             FROM exec_events
-            WHERE command LIKE 'python3 /root/ironbank-client-%'
+            WHERE command LIKE 'python3 /workspace/ironbank-client-%'
             ORDER BY id DESC
             LIMIT 1
             """
@@ -1024,7 +904,7 @@ def test_openai_two_tool_calls_have_exact_item_cardinality(
                 "db_boundary_contract": (
                     "security/latest must preserve every rule match row; "
                     "event_id alone is not unique because one event can match "
-                    "corp, profile, and default rules"
+                    "corp, settings, and default rules"
                 ),
             }
             route_row = route_security_by_event_rule[route_key]

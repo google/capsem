@@ -145,7 +145,7 @@ fn audit_records_are_evaluated_against_the_rules_current_at_arrival() {
     let handle = RwLock::new(Arc::new(audit_rules("boot_rules", "/bin/first")));
 
     handle_audit_frame(&audit_payload("/bin/first"), &db, &handle);
-    // A profile edit reloads the rules while the audit connection stays up.
+    // A policy edit reloads the rules while the audit connection stays up.
     *handle.write().unwrap() = Arc::new(audit_rules("reloaded_rules", "/bin/second"));
     handle_audit_frame(&audit_payload("/bin/second"), &db, &handle);
     db.shutdown_blocking();

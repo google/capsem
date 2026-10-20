@@ -3,18 +3,13 @@ use super::*;
 
 /// The list/info row of a running VM, from its in-memory record alone.
 pub(super) fn running_sandbox_info(i: &InstanceInfo) -> SandboxInfo {
-    let mut info = SandboxInfo::new(
-        i.id.clone(),
-        i.profile_id.clone(),
-        i.pid,
-        VmLifecycleState::Running,
-        i.persistent,
-    );
+    let mut info = SandboxInfo::new(i.id.clone(), i.pid, VmLifecycleState::Running, i.persistent);
     info.name = Some(i.name.clone());
     info.ram_mb = Some(i.ram_mb);
     info.cpus = Some(i.cpus);
     info.version = Some(i.base_version.clone());
     info.forked_from = i.forked_from.clone();
+    info.labels = non_empty_labels(i.labels.clone());
     info.uptime_secs = Some(i.start_time.elapsed().as_secs());
     info.can_resume = false;
     info.refresh_available_actions();
@@ -31,13 +26,14 @@ pub(super) fn inactive_sandbox_info(
     can_resume: bool,
     blocked_reason: Option<String>,
 ) -> SandboxInfo {
-    let mut info = SandboxInfo::new(vm_id, entry.profile_id.clone(), 0, status, true);
+    let mut info = SandboxInfo::new(vm_id, 0, status, true);
     info.name = Some(entry.name.clone());
     info.ram_mb = Some(entry.ram_mb);
     info.cpus = Some(entry.cpus);
     info.version = Some(entry.base_version.clone());
     info.forked_from = entry.forked_from.clone();
     info.description = entry.description.clone();
+    info.labels = non_empty_labels(entry.labels.clone());
     info.can_resume = can_resume;
     if can_resume {
         info.resume_blocked_reason = None;
@@ -88,13 +84,10 @@ pub(super) fn build_list_response(state: &ServiceState) -> (ListResponse, Vec<Pa
     (ListResponse { sandboxes }, session_dirs)
 }
 
-pub(super) async fn handle_list(State(state): State<Arc<ServiceState>>) -> axum::response::Response {
+pub(super) async fn list_response(state: &Arc<ServiceState>) -> Result<ListResponse, AppError> {
     // The fingerprint stats and hashes files for every inactive entry; the
     // UI polls this route, so it runs off the worker as one unit.
-    let (mut response, session_dirs) = match state.off_worker(|state| list_lifecycle(&state)).await {
-        Ok(listed) => listed,
-        Err(error) => return error.into_response(),
-    };
+    let (mut response, session_dirs) = state.off_worker(|state| list_lifecycle(&state)).await?;
     // Every VM's totals, from each ledger handle's memory: no reader round
     // trip and no SQLite read per poll.
     let counters = futures::future::join_all(
@@ -102,7 +95,7 @@ pub(super) async fn handle_list(State(state): State<Arc<ServiceState>>) -> axum:
             .sandboxes
             .iter()
             .zip(&session_dirs)
-            .map(|(info, session_dir)| ledger_routes::activity::counters_if_ready(&state, &info.id, session_dir)),
+            .map(|(info, session_dir)| ledger_routes::activity::counters_if_ready(state, &info.id, session_dir)),
     )
     .await;
     for (info, counters) in response.sandboxes.iter_mut().zip(counters) {
@@ -110,22 +103,28 @@ pub(super) async fn handle_list(State(state): State<Arc<ServiceState>>) -> axum:
             ledger_routes::activity::apply_totals(info, &counters);
         }
     }
+    Ok(response)
+}
+
+pub(super) async fn handle_list(State(state): State<Arc<ServiceState>>) -> axum::response::Response {
+    let response = match list_response(&state).await {
+        Ok(response) => response,
+        Err(error) => return error.into_response(),
+    };
     json_bytes_response(Bytes::from(serde_json::to_vec(&response).unwrap_or_default()))
 }
 
 fn list_lifecycle(state: &ServiceState) -> (ListResponse, Vec<PathBuf>) {
     state.reconcile_persistent_defunct_from_logs();
     let fingerprint = list_response_fingerprint(state);
-    if let Some(cached) = state.list_response_cache.lock().unwrap().clone() {
-        if cached.fingerprint == fingerprint {
-            return cached.listed;
-        }
+    if let Some(cached) = state.list_response_cache.get(&fingerprint) {
+        return (*cached).clone();
     }
 
+    let started = std::time::Instant::now();
     let listed = build_list_response(state);
-    *state.list_response_cache.lock().unwrap() = Some(CachedListResponse {
-        fingerprint,
-        listed: listed.clone(),
-    });
-    listed
+    state
+        .list_response_cache
+        .record_load(started.elapsed(), capsem_cache::LoadStatus::Success);
+    (*state.list_response_cache.publish(fingerprint, listed)).clone()
 }

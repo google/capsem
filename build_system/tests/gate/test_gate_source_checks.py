@@ -35,6 +35,7 @@ def _policy(**overrides: object) -> LintConfig:
     base = {
         "python_roots": ("src", "scripts"),
         "strict_roots": ("src",),
+        "strict_ty_search_paths": (),
         "ty_search_paths": ("src", "tests"),
         "python_platform": "all",
         "error_on_warning": True,
@@ -83,9 +84,12 @@ def test_a_strict_root_outside_the_checked_roots_is_refused() -> None:
 
 
 @pytest.mark.parametrize("search_paths", (("tests", "tests"), ("../tests",), ("",)))
-def test_a_ty_search_path_must_be_one_relative_tree(search_paths: tuple[str, ...]) -> None:
+@pytest.mark.parametrize("field", ("ty_search_paths", "strict_ty_search_paths"))
+def test_a_ty_search_path_must_be_one_relative_tree(
+    search_paths: tuple[str, ...], field: str
+) -> None:
     with pytest.raises(pydantic.ValidationError):
-        _policy(ty_search_paths=search_paths)
+        _policy(**{field: search_paths})
 
 
 @pytest.mark.parametrize("rule", ("Invalid-Assignment", "invalid assignment", "", "x"))
@@ -180,7 +184,12 @@ def test_ty_uses_the_installed_package_and_scoped_relaxed_search_paths() -> None
         )
 
     strict = " ".join(plan.step_named("python.ty.strict").render())
-    assert "--extra-search-path" not in strict
+    strict_arguments = tuple(shlex.split(strict))
+    strict_pairs = list(pairwise(strict_arguments))
+    for path in CONFIG.lint.strict_ty_search_paths:
+        assert strict_pairs.count(("--extra-search-path", path)) == 1
+    for path in set(CONFIG.lint.ty_search_paths) - set(CONFIG.lint.strict_ty_search_paths):
+        assert ("--extra-search-path", path) not in strict_pairs
     assert "build_system/sdist_command.py" in strict
 
     relaxed_arguments = tuple(shlex.split(" ".join(plan.step_named("python.ty.relaxed").render())))

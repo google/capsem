@@ -12,10 +12,12 @@
 //! per session and never carried across builds, so a file an older build wrote
 //! fails here, naming what it lacks.
 
+// Digest checks use exact byte lengths and 64 individual hex characters.
+// GLOB '[0-9a-f]*' checks only the first character; text length ignores a NUL suffix.
 pub const CREATE_SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS net_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(CAST(event_id AS BLOB)) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         timestamp TEXT NOT NULL,
         domain TEXT NOT NULL,
         port INTEGER DEFAULT 443,
@@ -44,12 +46,12 @@ pub const CREATE_SCHEMA: &str = "
         policy_reason TEXT,
         trace_id TEXT,
         turn_id TEXT,
-        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(CAST(credential_ref AS BLOB)) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'))
     );
 
     CREATE TABLE IF NOT EXISTS model_calls (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(CAST(event_id AS BLOB)) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         timestamp TEXT NOT NULL,
         provider TEXT NOT NULL,
         protocol TEXT CHECK (protocol IS NULL OR protocol IN ('anthropic', 'openai', 'google', 'ollama')),
@@ -77,7 +79,7 @@ pub const CREATE_SCHEMA: &str = "
         trace_id TEXT,
         turn_id TEXT,
         usage_details TEXT,
-        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(CAST(credential_ref AS BLOB)) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'))
     );
 
     -- The one generation selected by this SQLite snapshot. Its UUID fields
@@ -101,6 +103,23 @@ pub const CREATE_SCHEMA: &str = "
         counters BLOB NOT NULL CHECK (typeof(counters) = 'blob')
     );
 
+    -- Producer-authored identity/content chains. The trusted coordinator
+    -- checkpoints these rows outside the ledger directory only after the
+    -- corresponding event flush is durable.
+    CREATE TABLE IF NOT EXISTS ledger_commitments (
+        global_sequence INTEGER PRIMARY KEY CHECK (global_sequence > 0),
+        generation BLOB NOT NULL CHECK (typeof(generation) = 'blob' AND length(generation) = 16),
+        client_id INTEGER NOT NULL CHECK (client_id > 0),
+        producer_role TEXT NOT NULL CHECK (producer_role IN ('vm_owner', 'proxy', 'coordinator')),
+        producer_sequence INTEGER NOT NULL CHECK (producer_sequence > 0),
+        event_kind TEXT NOT NULL CHECK (length(event_kind) BETWEEN 1 AND 64),
+        event_hash BLOB NOT NULL CHECK (typeof(event_hash) = 'blob' AND length(event_hash) = 32),
+        previous_hash BLOB NOT NULL CHECK (typeof(previous_hash) = 'blob' AND length(previous_hash) = 32),
+        commitment_hash BLOB NOT NULL CHECK (typeof(commitment_hash) = 'blob' AND length(commitment_hash) = 32),
+        UNIQUE(generation, client_id, producer_sequence),
+        UNIQUE(commitment_hash)
+    );
+
     -- One block of an archive generation. The bytes live in the archive file;
     -- SQLite records where each block landed so a reader never scans. A block
     -- stays open across disk flushes and grows by one segment per flush, so
@@ -119,7 +138,7 @@ pub const CREATE_SCHEMA: &str = "
     -- block it sits in and its span inside that block's inflated bytes.
     CREATE TABLE IF NOT EXISTS event_body_blobs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id TEXT NOT NULL CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        event_id TEXT NOT NULL CHECK (length(CAST(event_id AS BLOB)) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.decision', 'security.ask')),
         source_table TEXT NOT NULL CHECK (source_table IN ('net_events', 'model_calls', 'tool_calls', 'tool_responses', 'exec_events', 'security_rule_events', 'security_decision_events', 'security_ask_events')),
         direction TEXT NOT NULL CHECK (direction IN ('request', 'response', 'payload', 'stdout', 'stderr')),
@@ -130,7 +149,7 @@ pub const CREATE_SCHEMA: &str = "
         -- blake3 of the ARCHIVED bytes, not of whatever they were cut from:
         -- a read verifies what it got against this, so a corrupted or
         -- edited index row is caught instead of served as a body.
-        body_hash TEXT NOT NULL CHECK (length(body_hash) = 71 AND body_hash GLOB 'blake3:[0-9a-f]*'),
+        body_hash TEXT NOT NULL CHECK (length(CAST(body_hash AS BLOB)) = 71 AND body_hash GLOB 'blake3:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         block_offset INTEGER NOT NULL REFERENCES body_blocks(block_offset),
         body_offset INTEGER NOT NULL CHECK (body_offset >= 0),
         body_len INTEGER NOT NULL CHECK (body_len = stored_bytes),
@@ -146,7 +165,7 @@ pub const CREATE_SCHEMA: &str = "
 
     CREATE TABLE IF NOT EXISTS tool_calls (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(CAST(event_id AS BLOB)) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         timestamp TEXT NOT NULL DEFAULT '',
         model_call_id INTEGER,
         provider TEXT NOT NULL DEFAULT '',
@@ -174,19 +193,19 @@ pub const CREATE_SCHEMA: &str = "
         policy_reason TEXT,
         trace_id TEXT,
         turn_id TEXT,
-        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(CAST(credential_ref AS BLOB)) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'))
     );
 
     CREATE TABLE IF NOT EXISTS tool_responses (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(CAST(event_id AS BLOB)) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         model_call_id INTEGER NOT NULL,
         call_id TEXT NOT NULL,
         content_preview TEXT,
         is_error INTEGER DEFAULT 0,
         trace_id TEXT,
         turn_id TEXT,
-        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(CAST(credential_ref AS BLOB)) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'))
     );
 
     CREATE INDEX IF NOT EXISTS idx_net_events_domain
@@ -217,7 +236,7 @@ pub const CREATE_SCHEMA: &str = "
 
     CREATE TABLE IF NOT EXISTS model_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(CAST(event_id AS BLOB)) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         model_call_id INTEGER NOT NULL,
         timestamp TEXT NOT NULL,
         provider TEXT NOT NULL,
@@ -231,8 +250,8 @@ pub const CREATE_SCHEMA: &str = "
         tool_name TEXT,
         arguments TEXT,
         content TEXT,
-        content_hash TEXT NOT NULL CHECK (length(content_hash) = 71 AND content_hash GLOB 'blake3:[0-9a-f]*'),
-        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*')),
+        content_hash TEXT NOT NULL CHECK (length(CAST(content_hash AS BLOB)) = 71 AND content_hash GLOB 'blake3:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(CAST(credential_ref AS BLOB)) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]')),
         UNIQUE(trace_id, kind, content_hash, call_id)
     );
     CREATE INDEX IF NOT EXISTS idx_model_items_trace_id
@@ -249,7 +268,7 @@ pub const CREATE_SCHEMA: &str = "
 
     CREATE TABLE IF NOT EXISTS fs_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(CAST(event_id AS BLOB)) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         timestamp TEXT NOT NULL,
         action TEXT NOT NULL,
         path TEXT NOT NULL,
@@ -259,7 +278,7 @@ pub const CREATE_SCHEMA: &str = "
         kind TEXT NOT NULL DEFAULT 'file' CHECK (kind IN ('file','dir','symlink','other')),
         trace_id TEXT,
         turn_id TEXT,
-        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(CAST(credential_ref AS BLOB)) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'))
     );
 
     CREATE INDEX IF NOT EXISTS idx_fs_events_timestamp
@@ -269,7 +288,7 @@ pub const CREATE_SCHEMA: &str = "
 
     CREATE TABLE IF NOT EXISTS exec_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(CAST(event_id AS BLOB)) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         timestamp TEXT NOT NULL,
         exec_id INTEGER NOT NULL,
         command TEXT NOT NULL,
@@ -280,11 +299,13 @@ pub const CREATE_SCHEMA: &str = "
         stdout_bytes INTEGER DEFAULT 0,
         stderr_bytes INTEGER DEFAULT 0,
         source TEXT NOT NULL DEFAULT 'api',
+        -- Where it ran. No default: a row that does not say is a writer bug.
+        target TEXT NOT NULL CHECK (target IN ('vm', 'workload')),
         trace_id TEXT,
         turn_id TEXT,
         process_name TEXT,
         pid INTEGER,
-        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(CAST(credential_ref AS BLOB)) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'))
     );
     CREATE INDEX IF NOT EXISTS idx_exec_events_timestamp
         ON exec_events(timestamp);
@@ -297,7 +318,7 @@ pub const CREATE_SCHEMA: &str = "
 
     CREATE TABLE IF NOT EXISTS dns_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(CAST(event_id AS BLOB)) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         timestamp TEXT NOT NULL,
         qname TEXT NOT NULL,
         qtype INTEGER NOT NULL,
@@ -315,7 +336,7 @@ pub const CREATE_SCHEMA: &str = "
         policy_action TEXT,
         policy_rule TEXT,
         policy_reason TEXT,
-        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(CAST(credential_ref AS BLOB)) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'))
     );
     CREATE INDEX IF NOT EXISTS idx_dns_events_timestamp
         ON dns_events(timestamp);
@@ -330,7 +351,7 @@ pub const CREATE_SCHEMA: &str = "
 
     CREATE TABLE IF NOT EXISTS audit_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(CAST(event_id AS BLOB)) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         timestamp TEXT NOT NULL,
         pid INTEGER NOT NULL,
         ppid INTEGER NOT NULL,
@@ -347,7 +368,7 @@ pub const CREATE_SCHEMA: &str = "
         parent_exe TEXT,
         trace_id TEXT,
         turn_id TEXT,
-        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*'))
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(CAST(credential_ref AS BLOB)) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'))
     );
     CREATE INDEX IF NOT EXISTS idx_audit_events_timestamp
         ON audit_events(timestamp);
@@ -360,13 +381,13 @@ pub const CREATE_SCHEMA: &str = "
 
     CREATE TABLE IF NOT EXISTS substitution_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(CAST(event_id AS BLOB)) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         timestamp TEXT NOT NULL,
         material_class TEXT NOT NULL,
         source TEXT NOT NULL,
         event_type TEXT,
         algorithm TEXT NOT NULL,
-        substitution_ref TEXT NOT NULL CHECK (length(substitution_ref) = 82 AND substitution_ref GLOB 'credential:blake3:[0-9a-f]*'),
+        substitution_ref TEXT NOT NULL CHECK (length(CAST(substitution_ref AS BLOB)) = 82 AND substitution_ref GLOB 'credential:blake3:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         outcome TEXT NOT NULL CHECK (outcome IN ('captured', 'brokered', 'injected', 'error')),
         provider TEXT,
         confidence REAL,
@@ -401,7 +422,7 @@ pub const CREATE_SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS security_rule_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp_unix_ms INTEGER NOT NULL,
-        event_id TEXT NOT NULL CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        event_id TEXT NOT NULL CHECK (length(CAST(event_id AS BLOB)) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask', 'network.connect', 'network.connect_result', 'network.close', 'network.lifecycle', 'network.probe', 'network.probe_result')),
         rule_id TEXT NOT NULL,
         rule_action TEXT NOT NULL CHECK (rule_action IN ('allow', 'ask', 'block', 'preprocess', 'rewrite', 'postprocess')),
@@ -415,7 +436,7 @@ pub const CREATE_SCHEMA: &str = "
         -- in RAM.
         trace_id TEXT,
         turn_id TEXT,
-        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*')),
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(CAST(credential_ref AS BLOB)) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]')),
         CHECK ((rule_json IS NOT NULL AND json_valid(rule_json) AND run_id IS NULL)
             OR (rule_json IS NULL AND run_id IS NOT NULL))
     );
@@ -459,7 +480,7 @@ pub const CREATE_SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS security_decision_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp_unix_ms INTEGER NOT NULL,
-        event_id TEXT NOT NULL CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        event_id TEXT NOT NULL CHECK (length(CAST(event_id AS BLOB)) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask', 'network.connect', 'network.connect_result', 'network.close', 'network.lifecycle', 'network.probe', 'network.probe_result')),
         stage TEXT CHECK (stage IN ('preprocess', 'rule', 'rewrite', 'postprocess', 'ask_resolution')),
         actor TEXT,
@@ -476,7 +497,7 @@ pub const CREATE_SCHEMA: &str = "
         -- mirrored in RAM.
         trace_id TEXT,
         turn_id TEXT,
-        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(credential_ref) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f]*')),
+        credential_ref TEXT CHECK (credential_ref IS NULL OR (length(CAST(credential_ref AS BLOB)) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]')),
         run_id INTEGER REFERENCES security_decision_runs(id),
         CHECK ((run_id IS NULL AND stage IS NOT NULL AND actor IS NOT NULL
                 AND previous_decision IS NOT NULL AND requested_decision IS NOT NULL AND effective_decision IS NOT NULL)
@@ -491,8 +512,8 @@ pub const CREATE_SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS security_ask_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp_unix_ms INTEGER NOT NULL,
-        ask_id TEXT NOT NULL CHECK (length(ask_id) = 12 AND ask_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
-        event_id TEXT NOT NULL CHECK (length(event_id) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        ask_id TEXT NOT NULL CHECK (length(CAST(ask_id AS BLOB)) = 12 AND ask_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        event_id TEXT NOT NULL CHECK (length(CAST(event_id AS BLOB)) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask', 'network.connect', 'network.connect_result', 'network.close', 'network.lifecycle', 'network.probe', 'network.probe_result')),
         rule_id TEXT NOT NULL,
         rule_name TEXT NOT NULL,
@@ -514,11 +535,10 @@ pub const CREATE_SCHEMA: &str = "
     CREATE INDEX IF NOT EXISTS idx_security_ask_events_rule_id
         ON security_ask_events(rule_id);
 
-    CREATE TABLE IF NOT EXISTS profile_mutation_events (
+    CREATE TABLE IF NOT EXISTS policy_mutation_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp_unix_ms INTEGER NOT NULL,
-        mutation_id TEXT NOT NULL CHECK (length(mutation_id) = 12 AND mutation_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
-        profile_id TEXT NOT NULL,
+        mutation_id TEXT NOT NULL CHECK (length(CAST(mutation_id AS BLOB)) = 12 AND mutation_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         actor TEXT NOT NULL,
         category TEXT NOT NULL,
         filename TEXT NOT NULL,
@@ -527,20 +547,38 @@ pub const CREATE_SCHEMA: &str = "
         target_key TEXT NOT NULL,
         operation TEXT NOT NULL,
         rule_id TEXT,
-        old_hash TEXT NOT NULL CHECK (length(old_hash) = 71 AND old_hash GLOB 'blake3:[0-9a-f]*'),
+        old_hash TEXT NOT NULL CHECK (length(CAST(old_hash AS BLOB)) = 71 AND old_hash GLOB 'blake3:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         old_size INTEGER NOT NULL,
-        new_hash TEXT NOT NULL CHECK (length(new_hash) = 71 AND new_hash GLOB 'blake3:[0-9a-f]*'),
+        new_hash TEXT NOT NULL CHECK (length(CAST(new_hash AS BLOB)) = 71 AND new_hash GLOB 'blake3:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         new_size INTEGER NOT NULL,
         status TEXT NOT NULL CHECK (status IN ('applied', 'failed')),
         error TEXT,
         trace_id TEXT
     );
-    CREATE INDEX IF NOT EXISTS idx_profile_mutation_events_timestamp
-        ON profile_mutation_events(timestamp_unix_ms);
-    CREATE INDEX IF NOT EXISTS idx_profile_mutation_events_profile
-        ON profile_mutation_events(profile_id);
-    CREATE INDEX IF NOT EXISTS idx_profile_mutation_events_target
-        ON profile_mutation_events(category, target_kind, target_key);
+    CREATE INDEX IF NOT EXISTS idx_policy_mutation_events_timestamp
+        ON policy_mutation_events(timestamp_unix_ms);
+    CREATE INDEX IF NOT EXISTS idx_policy_mutation_events_target
+        ON policy_mutation_events(category, target_kind, target_key);
+
+    -- What the host did to sessions and itself. Each row chains to the one
+    -- before it: hash = chain_hash(prev_hash, event), genesis all zeros.
+    CREATE TABLE IF NOT EXISTS host_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp_unix_ms INTEGER NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN (
+            'session_created', 'session_started', 'session_stopped', 'session_restarted',
+            'session_forked', 'session_destroyed', 'session_suspended', 'session_resumed',
+            'image_admitted', 'image_denied', 'grant_minted', 'grant_revoked',
+            'settings_changed', 'service_started', 'service_stopped'
+        )),
+        session_id TEXT,
+        actor TEXT NOT NULL,
+        detail BLOB NOT NULL,
+        trace_id TEXT,
+        prev_hash BLOB NOT NULL CHECK (typeof(prev_hash) = 'blob' AND length(prev_hash) = 32),
+        hash BLOB NOT NULL CHECK (typeof(hash) = 'blob' AND length(hash) = 32)
+    );
+    CREATE INDEX IF NOT EXISTS idx_host_events_session ON host_events(session_id, id);
 
 
     -- Correlation indexes: one per table that carries the column.
@@ -593,7 +631,7 @@ pub const CREATE_SCHEMA: &str = "
 pub(super) const CREATE_TRANSPORT: &str = "
     CREATE TABLE IF NOT EXISTS transport_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id TEXT NOT NULL UNIQUE CHECK(length(event_id)=12 AND event_id NOT GLOB '*[^0-9a-f]*'),
+        event_id TEXT NOT NULL UNIQUE CHECK(length(CAST(event_id AS BLOB))=12 AND event_id NOT GLOB '*[^0-9a-f]*'),
         timestamp_unix_ms INTEGER NOT NULL CHECK(timestamp_unix_ms >= 0),
         event_type TEXT NOT NULL CHECK(event_type IN ('network.connect','network.connect_result','network.close','network.lifecycle','network.probe','network.probe_result')),
         network_id TEXT,
@@ -603,9 +641,8 @@ pub(super) const CREATE_TRANSPORT: &str = "
     CREATE INDEX IF NOT EXISTS idx_transport_events_network ON transport_events(network_id,id);
     CREATE INDEX IF NOT EXISTS idx_transport_events_connection ON transport_events(connection_id,id);
     CREATE INDEX IF NOT EXISTS idx_transport_events_timestamp ON transport_events(timestamp_unix_ms,id);
-    -- The transport ledger's own version marker. `user_version` belongs to
-    -- SessionIndex in the shared main.db, so this one is logger-owned and
-    -- disk-only; `transport::assert_current` refuses a version it does not
+    -- The transport ledger's own version marker, logger-owned and disk-only,
+    -- independent of SQLite's `user_version`; `transport::assert_current` refuses a version it does not
     -- know rather than upgrading the file. The gate that keeps a deleted
     -- marker from coming back is the TABLE's absence, checked in
     -- `create_tables`, not the row's: `OR IGNORE` here is for two writers

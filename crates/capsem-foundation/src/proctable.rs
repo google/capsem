@@ -7,24 +7,41 @@
 //! gate's Seatbelt profile a restarting service reaped nothing and its per-VM
 //! children outlived the whole run.
 //!
-//! The output is deliberately `ps -ax -o pid=,command=` shaped -- `"<pid>
-//! <argv joined by spaces>"` -- because the matching that consumes it is
-//! tested against that shape and is the part that was never wrong.
-//!
-//! Matching argv rather than remembering pids is also what makes the reaper
-//! safe against pid reuse: a recorded pid can name an unrelated process by
-//! the time a crashed service restarts, whereas a command line naming this
-//! run directory cannot.
+//! Preserve the native argument vector for ownership matching. A flattened
+//! command line loses empty arguments and spaces and can select unrelated
+//! workloads. The legacy text table is for diagnostics. A table observation
+//! alone is never stable signal authority or proof that a process has exited.
 
+use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::io;
+use std::os::unix::ffi::OsStringExt;
 
 /// One process observed in a single host process-table sweep.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Process {
     pub pid: u32,
     pub parent_pid: u32,
+    /// Lossy display text, never an argument parser or ownership boundary.
     pub arguments: String,
+    /// Observed native argv values; a snapshot is not stable signal authority.
+    pub argv: Vec<OsString>,
+}
+
+impl Process {
+    pub fn from_argv(pid: u32, parent_pid: u32, argv: Vec<OsString>) -> Self {
+        let arguments = argv
+            .iter()
+            .map(|arg| arg.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(" ");
+        Self {
+            pid,
+            parent_pid,
+            arguments,
+            argv,
+        }
+    }
 }
 
 /// Every readable running process as typed identity and ancestry.
@@ -53,7 +70,7 @@ pub fn running_processes() -> io::Result<String> {
 
 #[cfg(target_os = "macos")]
 mod imp {
-    use super::Process;
+    use super::{OsString, OsStringExt, Process};
     use libc;
     use std::io;
 
@@ -123,13 +140,12 @@ mod imp {
         Ok(buffer.into_iter().filter(|pid| *pid > 0).collect())
     }
 
-    /// The full argument vector of one process, joined by spaces.
+    /// The full native argument vector, retaining empty values and byte boundaries.
     ///
     /// `KERN_PROCARGS2` returns `argc`, then the executable path, then NUL
     /// padding, then `argc` NUL-terminated arguments, then the environment.
-    /// Only the arguments are wanted: the environment carries secrets, and
-    /// this string is matched against and logged.
-    fn argv(pid: libc::pid_t) -> Option<String> {
+    /// Only the arguments are wanted; the environment carries secrets.
+    fn argv(pid: libc::pid_t) -> Option<Vec<OsString>> {
         let name = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid];
         let buffer = sysctl_bytes(&name).ok()?;
         let count = u32::from_ne_bytes(buffer.get(..4)?.try_into().ok()?) as usize;
@@ -143,9 +159,9 @@ mod imp {
 
         let mut arguments = Vec::with_capacity(count);
         for field in rest.split(|byte| *byte == 0).take(count) {
-            arguments.push(String::from_utf8_lossy(field).into_owned());
+            arguments.push(OsString::from_vec(field.to_vec()));
         }
-        Some(arguments.join(" "))
+        Some(arguments)
     }
 
     fn parent_pid(pid: libc::pid_t) -> Option<u32> {
@@ -178,11 +194,7 @@ mod imp {
             // Unreadable is ordinary: `KERN_PROCARGS2` is denied for other
             // users' processes, and ours are not among those.
             if let (Some(parent_pid), Some(arguments)) = (parent_pid(pid), argv(pid)) {
-                processes.push(Process {
-                    pid: pid as u32,
-                    parent_pid,
-                    arguments,
-                });
+                processes.push(Process::from_argv(pid as u32, parent_pid, arguments));
             }
         }
         Ok(processes)
@@ -191,7 +203,7 @@ mod imp {
 
 #[cfg(not(target_os = "macos"))]
 mod imp {
-    use super::Process;
+    use super::{OsString, OsStringExt, Process};
     use std::io;
 
     pub(super) fn resident_bytes(pid: u32) -> io::Result<u64> {
@@ -225,19 +237,20 @@ mod imp {
             let Ok(raw) = std::fs::read(entry.path().join("cmdline")) else {
                 continue;
             };
-            let arguments: Vec<String> = raw
+            if raw.is_empty() {
+                continue;
+            }
+            // Remove the final terminator only; an empty argument is a field.
+            let arguments: Vec<OsString> = raw
+                .strip_suffix(&[0])
+                .unwrap_or(&raw)
                 .split(|byte| *byte == 0)
-                .filter(|field| !field.is_empty())
-                .map(|field| String::from_utf8_lossy(field).into_owned())
+                .map(|field| OsString::from_vec(field.to_vec()))
                 .collect();
             if arguments.is_empty() {
                 continue;
             }
-            processes.push(Process {
-                pid,
-                parent_pid,
-                arguments: arguments.join(" "),
-            });
+            processes.push(Process::from_argv(pid, parent_pid, arguments));
         }
         Ok(processes)
     }

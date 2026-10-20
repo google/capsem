@@ -6,8 +6,10 @@ JSON. Keep that machinery here so DNS, MCP, MITM, and local mock-server
 benchmarks cannot drift into incompatible result shapes.
 """
 
+import json
 import os
 import resource
+import subprocess
 from dataclasses import dataclass
 
 GLOBAL_CONCURRENCY_ENV = "CAPSEM_BENCH_CONCURRENCY"
@@ -15,6 +17,37 @@ GLOBAL_DURATION_ENV = "CAPSEM_BENCH_DURATION_S"
 GLOBAL_TOTAL_REQUESTS_ENV = "CAPSEM_BENCH_TOTAL_REQUESTS"
 GLOBAL_TIMEOUT_ENV = "CAPSEM_BENCH_TIMEOUT_S"
 GLOBAL_SCENARIOS_ENV = "CAPSEM_BENCH_SCENARIOS"
+RUST_BENCH = "/usr/local/bin/capsem-bench-rs"
+
+
+def runtime_limits():
+    """Read the generated product capacity authority from the Rust harness."""
+    completed = subprocess.run(
+        [RUST_BENCH, "runtime-limits"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode:
+        raise RuntimeError(
+            "read runtime limits failed with "
+            f"{completed.returncode}: {completed.stderr[-2000:].strip()}"
+        )
+    try:
+        limits = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("runtime limits returned invalid JSON") from exc
+    capacity = limits.get("network_client_capacity")
+    if type(capacity) is not int or capacity < 1:
+        raise RuntimeError("runtime limits omitted network client capacity")
+    return limits
+
+
+def capacity_concurrency_levels():
+    """Exercise one client through the complete supported network capacity."""
+    capacity = runtime_limits()["network_client_capacity"]
+    levels = (1, capacity // 32, capacity // 8, capacity // 4, capacity // 2, capacity)
+    return tuple(dict.fromkeys(max(1, level) for level in levels))
 
 
 def _env_prefix(mode):
@@ -102,7 +135,8 @@ class DurationLoadConfig:
             raw = _env_value(mode, "DURATION_S", GLOBAL_DURATION_ENV)
             duration_s = (
                 parse_positive_float(raw, "duration_s")
-                if raw else float(default_duration_s)
+                if raw
+                else float(default_duration_s)
             )
         else:
             duration_s = parse_positive_float(duration_s, "duration_s")
@@ -139,7 +173,8 @@ class CountLoadConfig:
             raw = _env_value(mode, "TOTAL_REQUESTS", GLOBAL_TOTAL_REQUESTS_ENV)
             total_requests = (
                 parse_positive_int(raw, "total_requests")
-                if raw else int(default_total_requests)
+                if raw
+                else int(default_total_requests)
             )
         else:
             total_requests = parse_positive_int(total_requests, "total_requests")
@@ -148,7 +183,8 @@ class CountLoadConfig:
             raw = _env_value(mode, "CONCURRENCY", GLOBAL_CONCURRENCY_ENV)
             concurrency = (
                 parse_positive_int(raw, "concurrency")
-                if raw else int(default_concurrency)
+                if raw
+                else int(default_concurrency)
             )
         else:
             concurrency = parse_positive_int(concurrency, "concurrency")
@@ -157,7 +193,8 @@ class CountLoadConfig:
             raw = _env_value(mode, "TIMEOUT_S", GLOBAL_TIMEOUT_ENV)
             timeout_s = (
                 parse_positive_float(raw, "timeout_s")
-                if raw else float(default_timeout_s)
+                if raw
+                else float(default_timeout_s)
             )
         else:
             timeout_s = parse_positive_float(timeout_s, "timeout_s")
@@ -189,12 +226,14 @@ def peak_rss_mb():
 def summarize_load_level(latencies_ms, errors, concurrency, duration_s, *, extra=None):
     from .helpers import percentile
 
+    total_requests = len(latencies_ms) + errors
     if not latencies_ms:
         row = {
             "concurrency": concurrency,
             "duration_s": duration_s,
-            "total_requests": 0,
+            "total_requests": total_requests,
             "errors": errors,
+            "error_ratio": errors / total_requests if total_requests else 0.0,
             "rps": 0.0,
             "p50_ms": 0.0,
             "p95_ms": 0.0,
@@ -206,8 +245,9 @@ def summarize_load_level(latencies_ms, errors, concurrency, duration_s, *, extra
         row = {
             "concurrency": concurrency,
             "duration_s": duration_s,
-            "total_requests": len(latencies_ms),
+            "total_requests": total_requests,
             "errors": errors,
+            "error_ratio": errors / total_requests,
             "rps": len(latencies_ms) / duration_s,
             "p50_ms": percentile(sorted_latencies, 50),
             "p95_ms": percentile(sorted_latencies, 95),

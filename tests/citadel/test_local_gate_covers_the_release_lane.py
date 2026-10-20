@@ -28,6 +28,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from capsem_builder.gate import config as gate_config
+from capsem_builder.gate.execution import step as plan_step
+from capsem_builder.gate.plan import Plan
 from capsem_builder.gate.qualification import from_environment
 from helpers.gate import built_command
 
@@ -39,48 +41,62 @@ STAGED = Path("/staged-release-workspace")
 REHEARSAL = "rehearsal"
 
 
-def _labels(name: str, arguments: tuple, qualification) -> tuple[str, ...]:
-    return tuple(built_command(ROOT, name, arguments, qualification)._describe().labels)
+def _plan(name: str, arguments: tuple, qualification) -> Plan:
+    return built_command(ROOT, name, arguments, qualification)._describe()
 
 
-def _plans() -> tuple[tuple[str, ...], tuple[str, ...]]:
+def _plans() -> tuple[Plan, Plan]:
     """The local gate's steps, and the binary release lane's."""
     config = gate_config.load(ROOT)
     settings = config.modules
     release = from_environment(
         config,
         {
-            settings.release_input_dir: str(STAGED / "cache/target/candidate-profile-inputs"),
+            settings.release_input_dir: str(STAGED / "cache/target/candidate-runtime-inputs"),
             settings.release_package: str(STAGED / "release-test-package/capsem.deb"),
             settings.release_bin_dir: str(STAGED / "cache/target/cargo/debug"),
         },
     )
-    local = _labels("candidate", (), from_environment(config, {}))
-    pulled = _labels("qualify-binaries", (("workspace_root", STAGED),), release)
+    local = _plan("candidate", (), from_environment(config, {}))
+    pulled = _plan("qualify-binaries", (("workspace_root", STAGED),), release)
     return local, pulled
+
+
+def _owner(plan: Plan, label: str) -> str:
+    stage = plan.stage_of(label)
+    return label.removeprefix(f"{stage}.") if stage else label
+
+
+def _uncovered(local: Plan, pulled: Plan) -> list[str]:
+    covered = set(local.labels) | {_owner(local, label) for label in local.labels}
+    return [label for label in pulled.labels if _owner(pulled, label) not in covered]
 
 
 def test_every_release_step_has_a_local_counterpart() -> None:
     """The whole point: a green `just test` has to mean something about CI."""
     local, pulled = _plans()
-    covered = set(local)
-
     # Matched by what the step does rather than by which phase does it. A
     # release lane makes the generated settings in its functional phase because
     # that is the only phase it has; the local gate makes them once in the fast
     # phase and hands the step on. Same work, same command, different label --
     # and a guard that insisted on the phase would report that as a blind spot.
-    suffixes = {label.split(".", 1)[-1] for label in covered}
-    uncovered = [
-        label
-        for label in pulled
-        if label not in covered and label.split(".", 1)[-1] not in suffixes
-    ]
+    uncovered = _uncovered(local, pulled)
 
     assert not uncovered, (
         "these steps run only in a binary release, so the only way to find a "
         "defect in one is to dispatch a release and wait: " + ", ".join(sorted(uncovered))
     )
+
+
+def test_shared_owner_matches_its_phase_without_erasing_the_domain() -> None:
+    local, pulled = Plan("local"), Plan("pulled")
+    local.phase("fast").add(plan_step("toolchain.node"))
+    local.phase("fast").add(plan_step("sdk.typescript.build"))
+    pulled.shared(plan_step("toolchain.node"))
+    pulled.shared(plan_step("fast.sdk.typescript.build"))
+    assert _uncovered(local, pulled) == []
+    pulled.shared(plan_step("network.node"))
+    assert _uncovered(local, pulled) == ["network.node"]
 
 
 def test_the_rehearsal_covers_exactly_the_steps_that_differ() -> None:
@@ -149,7 +165,7 @@ def test_only_the_rehearsal_skips_the_installed_transition() -> None:
         from_environment(
             config,
             {
-                settings.release_input_dir: str(STAGED / "cache/target/candidate-profile-inputs"),
+                settings.release_input_dir: str(STAGED / "cache/target/candidate-runtime-inputs"),
                 settings.release_package: str(STAGED / "release-test-package/capsem.deb"),
                 settings.release_bin_dir: str(STAGED / "cache/target/cargo/debug"),
             },
@@ -184,7 +200,7 @@ def test_a_release_lane_does_not_rehearse_itself() -> None:
     fabricated beside it.
     """
     _, pulled = _plans()
-    doubled = [label for label in pulled if label.startswith(f"{REHEARSAL}.")]
+    doubled = [label for label in pulled.labels if label.startswith(f"{REHEARSAL}.")]
     assert not doubled, f"the release lane rehearses itself at {doubled}"
 
 

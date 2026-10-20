@@ -1,5 +1,14 @@
 use super::*;
 
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn checkpoint_preserves_fast_string_msr() {
+    assert!(
+        SELECTED_MSR_INDEXES.contains(&0x1a0),
+        "IA32_MISC_ENABLE must survive checkpoint restore"
+    );
+}
+
 fn test_header() -> CheckpointHeader {
     #[cfg(target_arch = "x86_64")]
     let vcpu_state_len = X86_VCPU_STATE_LEN;
@@ -30,7 +39,7 @@ fn header_roundtrips() {
     let decoded = CheckpointHeader::decode(&header.encode()).unwrap();
     assert_eq!(decoded, header);
     assert_eq!(decoded.version, VERSION);
-    assert_eq!(decoded.version, 9, "complete virtio device graph identity requires v9");
+    assert_eq!(decoded.version, 10, "v10 preserves the guest's fast-string MSR");
     assert_eq!(decoded.ram_bytes, 4096);
     assert_eq!(decoded.vcpu_count, 2);
     #[cfg(target_arch = "x86_64")]
@@ -58,7 +67,7 @@ fn restore_rejects_version_8_checkpoint() {
 
     assert!(
         err.to_string()
-            .contains("unsupported KVM checkpoint version: got 8, expected 9"),
+            .contains("unsupported KVM checkpoint version: got 8, expected 10"),
         "{err:#}"
     );
 }
@@ -122,6 +131,85 @@ fn vm_snapshot() -> VmSnapshot {
         pit2,
         clock,
     }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn restores_previous_v9_checkpoint_without_changing_its_memory_or_registers() {
+    let dir = temp_dir("restore-v9");
+    let path = dir.join("state.kvm");
+    let original = snapshot(0);
+    // Encode the previous writer's exact 23-slot MSR layout independently of
+    // the current writer, including its padding before the LAPIC state.
+    let mut bytes = vec![0; HEADER_LEN as usize];
+    bytes.extend_from_slice(&original.id.to_le_bytes());
+    write_pod(&mut bytes, &original.regs).unwrap();
+    write_pod(&mut bytes, &original.sregs).unwrap();
+    write_pod(&mut bytes, &original.mp_state).unwrap();
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    write_pod(&mut bytes, &original.msrs[0]).unwrap();
+    for _ in 1..23 {
+        write_pod(&mut bytes, &KvmMsrEntry::default()).unwrap();
+    }
+    write_pod(&mut bytes, &original.lapic).unwrap();
+    write_pod(&mut bytes, &original.events).unwrap();
+    write_pod(&mut bytes, &original.debugregs).unwrap();
+    write_pod(&mut bytes, &original.fpu).unwrap();
+    write_pod(&mut bytes, &original.xcrs).unwrap();
+    write_pod(&mut bytes, &original.xsave).unwrap();
+    let header = CheckpointHeader {
+        version: 9,
+        vcpu_count: 1,
+        mmio_device_count: 0,
+        vcpu_state_len: (bytes.len() - HEADER_LEN as usize - 4) as u32,
+        ..test_header()
+    };
+    bytes[..HEADER_LEN as usize].copy_from_slice(&header.encode());
+    write_vm_snapshot(&mut bytes, &vm_snapshot()).unwrap();
+    let memory = vec![0xa5; header.ram_bytes as usize];
+    bytes.extend_from_slice(&memory);
+    std::fs::write(&path, &bytes).unwrap();
+    let restored_mem = GuestMemory::new(header.ram_bytes).unwrap();
+    let restored = read_checkpoint(&path, &restored_mem, 1, 0).unwrap();
+    let mut original_regs = Vec::new();
+    let mut restored_regs = Vec::new();
+    write_pod(&mut original_regs, &original.regs).unwrap();
+    write_pod(&mut restored_regs, &restored.vcpus[0].regs).unwrap();
+    assert_eq!(restored_regs, original_regs);
+    assert_eq!(restored.vcpus[0].msrs, original.msrs);
+    assert_eq!(restored.vm, vm_snapshot());
+    let mut actual = vec![0; memory.len()];
+    restored_mem.read_at(0, &mut actual).unwrap();
+    assert_eq!(actual, memory);
+
+    let mut invalid = header;
+    invalid.vcpu_state_len += std::mem::size_of::<KvmMsrEntry>() as u32;
+    bytes[..HEADER_LEN as usize].copy_from_slice(&invalid.encode());
+    std::fs::write(&path, &bytes).unwrap();
+    assert!(read_checkpoint(&path, &restored_mem, 1, 0)
+        .unwrap_err()
+        .to_string()
+        .contains("vCPU state size mismatch"));
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn current_checkpoint_roundtrips_every_msr_including_disabled_fast_strings() {
+    let dir = temp_dir("restore-all-msrs");
+    let path = dir.join("state.kvm");
+    let mem = GuestMemory::new(4096).unwrap();
+    let mut original = snapshot(0);
+    original.msrs = SELECTED_MSR_INDEXES
+        .iter()
+        .map(|index| KvmMsrEntry {
+            index: *index,
+            reserved: 0,
+            data: if *index == 0x1a0 { 0x1800 } else { u64::from(*index) },
+        })
+        .collect();
+    write_checkpoint(&path, &mem, &[original.clone()], &vm_snapshot(), &[]).unwrap();
+    let restored = read_checkpoint(&path, &mem, 1, 0).unwrap();
+    assert_eq!(restored.vcpus[0].msrs, original.msrs);
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -298,6 +386,9 @@ fn zero_memory_is_written_as_sparse_holes() {
     );
 
     let restored_mem = GuestMemory::new(mem_size).unwrap();
+    restored_mem
+        .write_at(mem_size / 2, b"old data must not survive a hole")
+        .unwrap();
     read_checkpoint(&path, &restored_mem, 1, 0).unwrap();
     let mut front = [0u8; 5];
     let mut middle = [1u8; 16];
@@ -308,6 +399,51 @@ fn zero_memory_is_written_as_sparse_holes() {
     assert_eq!(&front, b"front");
     assert_eq!(middle, [0u8; 16]);
     assert_eq!(&tail, b"tail");
+    let address = restored_mem.as_ptr().addr();
+    let mut selected = false;
+    let mut resident_kb = None;
+    for line in std::fs::read_to_string("/proc/self/smaps").unwrap().lines() {
+        if let Some((start, end)) = line.split_whitespace().next().and_then(|word| word.split_once('-')) {
+            selected = usize::from_str_radix(start, 16).unwrap() <= address
+                && address < usize::from_str_radix(end, 16).unwrap();
+        } else if selected && line.starts_with("Rss:") {
+            resident_kb = Some(line.split_whitespace().nth(1).unwrap().parse::<u64>().unwrap());
+            break;
+        }
+    }
+    assert!(
+        resident_kb.unwrap() * 1024 < mem_size / 2,
+        "restore must not allocate sparse checkpoint holes; a 12-GiB VM once took 21.5s to resume"
+    );
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn scattered_guest_pages_do_not_allocate_whole_mebibyte_checkpoint_chunks() {
+    use std::os::fd::AsFd;
+    let dir = temp_dir("sparse-scattered-pages");
+    let path = dir.join("state.kvm");
+    let size = 64 * 1024 * 1024;
+    let memory = GuestMemory::new(size).unwrap();
+    for offset in (0..size).step_by(1024 * 1024) {
+        memory.write_at(offset + 7 * 4096 + 3, b"used page").unwrap();
+    }
+    write_checkpoint(&path, &memory, &[snapshot(0)], &vm_snapshot(), &[]).unwrap();
+    let file = capsem_foundation::unix::fs::open_regular_file_no_follow(&path).unwrap();
+    let metadata = capsem_foundation::unix::fd::regular_file_metadata(file.as_fd()).unwrap();
+    assert!(
+        metadata.allocated_bytes < size / 8,
+        "a single used 4-KiB page must not turn a one-MiB chunk into dense checkpoint data"
+    );
+    let restored = GuestMemory::new(size).unwrap();
+    read_checkpoint(&path, &restored, 1, 0).unwrap();
+    for offset in (0..size).step_by(1024 * 1024) {
+        let mut bytes = [0u8; 9];
+        restored.read_at(offset + 7 * 4096 + 3, &mut bytes).unwrap();
+        assert_eq!(&bytes, b"used page");
+        restored.read_at(offset + 30 * 4096, &mut bytes).unwrap();
+        assert_eq!(bytes, [0; 9]);
+    }
 }
 
 #[cfg(target_arch = "x86_64")]

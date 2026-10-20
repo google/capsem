@@ -23,13 +23,21 @@ just exec "capsem-doctor -x"           # Stop on first failure
 | File | What it verifies |
 |------|------------------|
 | `test_sandbox.py` | Read-only rootfs, binary permissions, setuid/setgid, kernel hardening (no modules, no debugfs, no IPv6, no swap), process integrity, network isolation (dummy0, fake DNS, iptables) |
-| `test_network.py` | MITM CA in system store + certifi, curl without -k, Python urllib HTTPS, CA env vars, HTTP/80 blocked, non-443 blocked, direct IP blocked, multi-domain DNS, AI provider domains |
+| `test_network.py` | MITM CA in system store, curl without -k, Python urllib HTTPS, CA env vars, HTTP/80 blocked, non-443 blocked, direct IP blocked, multi-domain DNS, AI provider domains |
 | `test_environment.py` | TERM/HOME/PATH env vars, bash shell, kernel version, aarch64 arch, mount points, tmpfs |
-| `test_runtimes.py` | Python3, Node.js, npm, pip3, git version checks, Python/Node file I/O, git workflow |
-| `test_utilities.py` | ~36 unix utilities (coreutils, text processing, network, system tools) |
+| `test_runtimes.py` | python3/pip3 versions, hermetic pip install into the venv, hermetic apt install of a local .deb, apt sandbox TLS trust, Python file I/O |
 | `test_workflows.py` | Text write/read, JSON roundtrip, shell pipes, large file (10MB) |
-| `test_ai_cli.py` | claude/gemini/codex installed and executable |
 | `test_virtiofs.py` | VirtioFS mount, ext4 loopback, workspace I/O, pip install, file delete+recreate |
+
+The runtime rootfs is minimal: no node, uv, git or AI CLIs. Those live in the OCI
+images under `images/`, and `tests/images/` proves each one boots and runs its agent.
+
+A host-side test that needs a tool the runtime lacks -- a test runner, network
+tool, package manager, model SDK, agent CLI or benchmark peer -- opens a
+`capsem-debug` session (`tests/helpers/debug_session.py`) and execs into its
+workload; `"target": "vm"` still reaches the VM. Never add test tooling to
+`runtime_apt_packages`. The image, its digest pin and how to rebuild it are in
+`tests/fixtures/oci/README.md`.
 
 ### Adding new in-VM tests
 
@@ -42,13 +50,15 @@ just exec "capsem-doctor -x"           # Stop on first failure
 
 ## Session inspection
 
-After running a VM session, inspect the telemetry database:
+For a live or retained product session, inspect telemetry through the typed
+service routes (`capsem_timeline`, history, statistics, and security tools in
+`@capsem/mcp`). Direct database inspection is an offline diagnostic for a
+coherent, quiesced evidence copy after its ledger worker has stopped:
 
 ```bash
-python3 build_system/scripts/doctor/check_session.py              # Latest session
-python3 build_system/scripts/doctor/check_session.py <session-id> # Specific session
-python3 build_system/scripts/doctor/check_session.py --list       # List recent sessions
-python3 build_system/scripts/doctor/check_session.py -n 10        # Show 10 preview rows per table
+uv run --project build_system --frozen python build_system/scripts/doctor/check_session.py --list
+uv run --project build_system --frozen python build_system/scripts/doctor/check_session.py --db /path/to/evidence/session.db
+uv run --project build_system --frozen python build_system/scripts/doctor/check_session.py --db /path/to/evidence/session.db -n 10
 ```
 
 Checks: session ledgers exist (net_events, model_calls, tool_calls, tool_responses, fs_events, dns_events, security_rule_events), row counts, orphaned tool_calls, AI-provider consistency.
@@ -57,10 +67,13 @@ Checks: session ledgers exist (net_events, model_calls, tool_calls, tool_respons
 
 Each pipeline can be tested with a targeted VM command:
 
-- **fs_events**: `just exec 'touch /root/test.txt && sleep 1'` then `python3 build_system/scripts/doctor/check_session.py`
+- **fs_events**: `just exec 'touch /root/test.txt && sleep 1'` then inspect the
+  typed timeline route
 - **net_events**: `just exec 'curl -s https://api.anthropic.com/ && sleep 1'`
 - **model_calls/tool_calls**: boot interactively, run `claude -p "what is 2+2"`
-- **MCP-origin tool_calls**: boot interactively, run `claude -p "use fetch to get https://example.com"` and query `tool_calls WHERE origin = 'mcp'`
+- **MCP-origin tool_calls**: boot interactively, run
+  `claude -p "use fetch to get https://example.com"`, then inspect the typed
+  timeline route for MCP-origin evidence
 
 If events are missing: check boot logs for daemon startup, vsock connection acceptance, and whether the VM lived long enough for the debouncer to flush (add `sleep 1`).
 
@@ -74,8 +87,9 @@ The fixture (`tests/fixtures/session/test.db`) is a real session DB shared by fr
 # 1. Run integration test to generate a rich session
 python3 build_system/scripts/test/integration_test.py --binary cache/target/cargo/debug/capsem --assets assets
 
-# 2. Inspect completeness
-python3 build_system/scripts/doctor/check_session.py <session-id>
+# 2. Stop the fixture owner, preserve a coherent ledger/archive copy, and
+# inspect completeness
+uv run --project build_system --frozen python build_system/scripts/doctor/check_session.py --db /path/to/evidence/session.db
 
 # 3. Fixture refresh has no Just convenience command. Copy, checkpoint, and
 # scrub the selected DB using the procedure in /dev-session-debug.

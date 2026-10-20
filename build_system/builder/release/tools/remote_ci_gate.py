@@ -77,9 +77,7 @@ def pr_gate_contract_failures(job_block: str, gate_script: str) -> list[str]:
         failures.append("does not aggregate required jobs: " + ", ".join(missing))
     if not re.search(r"(?m)^\s+if:\s*\$\{\{\s*always\(\)\s*\}}\s*$", job_block):
         failures.append("pr-gate does not run with if: ${{ always() }}")
-    if not re.search(
-        rf"(?m)^\s+run:\s+bash\s+{re.escape(GATE_SCRIPT_PATH)}\s*$", job_block
-    ):
+    if not re.search(rf"(?m)^\s+run:\s+bash\s+{re.escape(GATE_SCRIPT_PATH)}\s*$", job_block):
         failures.append(f"pr-gate does not dispatch bare {GATE_SCRIPT_PATH}")
     if re.search(
         r"(?m)^\s+(?:-\s+)?continue-on-error:\s*(?:true|\$\{\{\s*true\s*\}\})\s*$",

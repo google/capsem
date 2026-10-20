@@ -63,7 +63,7 @@ function fmt(v: unknown): string {
 // `window.__capsemDebug.lastWsEvents` is a small ring of the last 5
 // websocket events captured by the api.ts onmessage handler.
 // `window.__capsemDebug.snapshot()` returns the same diagnostic truth
-// the UI reads from gateway routes: status, profile catalog readiness,
+// the UI reads from gateway routes: status, VM asset readiness,
 // corp config summary, websocket tail, and frontend log path.
 //
 // This is intentionally a console-only handle, not a UI panel. The

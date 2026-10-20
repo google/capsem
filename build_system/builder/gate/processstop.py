@@ -91,7 +91,7 @@ def _surviving(descendants: tuple[SystemProcess, ...]) -> list[str]:
     alive: list[str] = []
     for process in descendants:
         try:
-            if not process.is_running() or process.status() == STATUS_ZOMBIE:
+            if not is_live(process):
                 continue
             command = " ".join(process.cmdline()[:6]) or process.name()
         except ProcessError:
@@ -151,11 +151,13 @@ def _signal_descendants(descendants: tuple[SystemProcess, ...], sent: signal.Sig
             process.send_signal(sent)
 
 
+def is_live(process: SystemProcess) -> bool:
+    """An unreaped foreign child has a PID but can no longer execute."""
+    try:
+        return process.is_running() and process.status() != STATUS_ZOMBIE
+    except NoSuchProcess:
+        return False
+
+
 def _descendants_alive(descendants: tuple[SystemProcess, ...]) -> bool:
-    for process in descendants:
-        try:
-            if process.is_running() and process.status() != STATUS_ZOMBIE:
-                return True
-        except NoSuchProcess:
-            continue
-    return False
+    return any(is_live(process) for process in descendants)

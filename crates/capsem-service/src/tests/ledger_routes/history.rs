@@ -34,6 +34,7 @@ async fn history_app() -> (axum::Router, tempfile::TempDir, Vec<(String, String)
                 exec_id: exec_id as u64,
                 command,
                 source: "api".to_string(),
+                target: capsem_proto::ipc::ExecTarget::Vm,
                 trace_id: None,
                 process_name: Some("bash".to_string()),
                 credential_ref: None,

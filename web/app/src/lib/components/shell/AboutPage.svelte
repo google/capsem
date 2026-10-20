@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { AssetFileState } from '@capsem/sdk';
   import * as api from '../../api';
   import type { CapsemStatus } from '../../api';
 
@@ -25,31 +26,6 @@
     return typeof value === 'string' && value.length > 0 ? value : fallback;
   }
 
-  function manifestProfiles(): Array<{ id: string; profile: JsonObject }> {
-    return Object.entries(object(system?.manifest.profiles)).map(([id, profile]) => ({
-      id,
-      profile: object(profile),
-    }));
-  }
-
-  function liveProfile(id: string): JsonObject {
-    return object(array(system?.profiles.profiles).find((entry) => object(entry).id === id));
-  }
-
-  function profileArchitectures(profile: JsonObject): JsonObject[] {
-    return array(profile.architectures).map(object);
-  }
-
-  function selectedArchitecture(id: string, profile: JsonObject): JsonObject {
-    const architectures = profileArchitectures(profile);
-    const current = liveProfile(id).current_arch;
-    return architectures.find((arch) => arch.architecture === current) ?? architectures[0] ?? {};
-  }
-
-  function profileEvidence(id: string, profile: JsonObject): JsonObject[] {
-    return array(selectedArchitecture(id, profile).evidence).map(object);
-  }
-
   function packageRecords(): JsonObject[] {
     const packages = array(system?.manifest.packages).map(object);
     const platform = typeof navigator !== 'undefined' && /Mac/i.test(navigator.userAgent)
@@ -59,10 +35,7 @@
     const exact = platformPackages.filter((pkg) => pkg.version === system?.version);
     if (exact.length > 0) return exact;
 
-    const currentArchitecture = manifestProfiles()
-      .map(({ id }) => liveProfile(id).current_arch)
-      .find((value) => typeof value === 'string');
-    const channelArchitecture = platformPackages.filter((pkg) => pkg.architecture === currentArchitecture);
+    const channelArchitecture = platformPackages.filter((pkg) => pkg.architecture === system?.assets.current_arch);
     return channelArchitecture.length > 0 ? channelArchitecture : platformPackages;
   }
 
@@ -133,7 +106,7 @@
     <div class="flex items-start justify-between gap-x-6 mb-8">
       <div>
         <h1 class="text-2xl font-bold text-foreground">About Capsem</h1>
-        <p class="text-sm text-muted-foreground-1 mt-1">Installed manifest, profiles, binaries, and update state.</p>
+        <p class="text-sm text-muted-foreground-1 mt-1">Installed manifest, VM assets, binaries, and update state.</p>
       </div>
       <div class="flex gap-x-2">
         <button type="button" class="py-2 px-4 text-sm font-medium rounded-lg border border-line-2 bg-layer text-foreground hover:bg-layer-hover disabled:opacity-60" disabled={!system} onclick={copyStatus}>
@@ -166,34 +139,23 @@
         </div>
       </div>
 
-      <h2 class="text-xs font-semibold text-foreground uppercase tracking-wider mb-2">VM profiles</h2>
-      <div class="grid gap-4 mb-6 sm:grid-cols-2">
-        {#each manifestProfiles() as { id, profile } (id)}
-          {@const live = liveProfile(id)}
-          {@const architecture = selectedArchitecture(id, profile)}
-          <section class="bg-card border border-card-line rounded-xl p-4">
-            <div class="flex items-start justify-between gap-4">
-              <div>
-                <h3 class="text-base font-semibold text-foreground">{text(profile.name, id)}</h3>
-                <p class="text-sm text-muted-foreground-1 mt-1">{text(profile.description, '')}</p>
-              </div>
-              <span class="text-xs {live.ready === true ? 'text-primary' : 'text-destructive'}">{live.ready === true ? 'Ready' : 'Not ready'}</span>
-            </div>
-            <dl class="grid grid-cols-[7rem_1fr] gap-x-3 gap-y-1 mt-4 text-xs">
-              <dt class="text-muted-foreground-1">Revision</dt><dd class="text-foreground break-all">{text(profile.revision)}</dd>
-              <dt class="text-muted-foreground-1">Architecture</dt><dd class="text-foreground">{text(architecture.architecture)}</dd>
-              <dt class="text-muted-foreground-1">Profile hash</dt><dd class="text-foreground break-all">{text(live.profile_payload_hash)}</dd>
-            </dl>
-            {#if profileEvidence(id, profile).length > 0}
-              <div class="flex flex-wrap gap-3 mt-4">
-                {#each profileEvidence(id, profile) as evidence}
-                  {#if resolveManifestUrl(evidence.url)}
-                    <a class="text-xs font-medium text-primary hover:underline" href={resolveManifestUrl(evidence.url)} target="_blank" rel="noreferrer">{text(evidence.kind).toUpperCase()}</a>
-                  {/if}
-                {/each}
-              </div>
-            {/if}
-          </section>
+      <h2 class="text-xs font-semibold text-foreground uppercase tracking-wider mb-2">VM assets</h2>
+      <div class="bg-card border border-card-line rounded-xl divide-y divide-card-divider mb-6">
+        <div class="flex items-center justify-between p-4">
+          <span class="text-sm text-foreground">Status</span>
+          <span class="text-sm {system.assets.ready ? 'text-primary' : 'text-destructive'}">{system.assets.ready ? 'Ready' : system.assets.downloading ? 'Downloading' : 'Not ready'}</span>
+        </div>
+        <div class="flex items-center justify-between p-4"><span class="text-sm text-foreground">Architecture</span><span class="text-sm text-muted-foreground-1">{system.assets.current_arch}</span></div>
+        <div class="flex items-center justify-between p-4"><span class="text-sm text-foreground">Asset version</span><span class="text-sm text-muted-foreground-1">{text(system.assets.asset_version)}</span></div>
+        {#each system.assets.assets as asset (asset.kind)}
+          <div class="p-4">
+            <div class="flex items-center justify-between gap-4"><span class="text-sm text-foreground">{asset.name}</span><span class="text-xs {asset.status === AssetFileState.PRESENT ? 'text-muted-foreground-1' : 'text-destructive'}">{asset.status}</span></div>
+            <p class="text-xs text-muted-foreground-1 mt-1 break-all">{asset.path}</p>
+            <p class="text-xs text-muted-foreground-1 mt-1 break-all">Expected hash {asset.expected_hash}</p>
+          </div>
+        {/each}
+        {#each system.assets.errors as assetError (assetError)}
+          <div class="p-4 text-xs text-destructive">{assetError}</div>
         {/each}
       </div>
 

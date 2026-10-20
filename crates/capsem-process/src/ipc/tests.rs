@@ -3,6 +3,8 @@ use std::time::Duration;
 
 use super::*;
 
+mod authorization;
+use authorization::controller_identity;
 mod classification;
 mod publications;
 mod reload;
@@ -62,7 +64,10 @@ async fn negotiated_channel_carries_typed_messages_in_both_directions() {
         channel
     });
 
-    let ((process_tx, process_rx), stream_role) = open_ipc_channel(process_stream).await.unwrap().unwrap();
+    let ((process_tx, process_rx), stream_role) = open_ipc_channel(process_stream, controller_identity())
+        .await
+        .unwrap()
+        .unwrap();
     assert!(!stream_role, "a service connection is a command connection");
     let (service_tx, service_rx) = service.await.unwrap();
 
@@ -78,36 +83,38 @@ async fn malformed_handshake_is_refused_before_typed_ipc_starts() {
     let (process_stream, mut peer) = tokio::net::UnixStream::pair().unwrap();
     peer.write_all(&0_u32.to_be_bytes()).await.unwrap();
 
-    assert!(open_ipc_channel(process_stream).await.unwrap().is_none());
+    assert!(open_ipc_channel(process_stream, controller_identity())
+        .await
+        .unwrap()
+        .is_none());
 }
 
-/// The owner's IPC dispatcher as `main.rs` wires it, on a fixture profile
+/// The owner's IPC dispatcher as `main.rs` wires it, on a fixture policy
 /// with an in-memory ledger and a canned MCP aggregator.
-struct Dispatcher {
+pub(in crate::ipc) struct Dispatcher {
     job_store: Arc<JobStore>,
     term_relay: Arc<TerminalRelay>,
     ctrl_tx: mpsc::Sender<ServiceToProcess>,
     events_tx: broadcast::Sender<ProcessToService>,
-    net_state: Arc<capsem_core::SandboxNetworkState>,
-    mcp_runtime: Arc<McpRuntime>,
-    runtime_source: RuntimeProfileSource,
-    ready: Arc<AtomicBool>,
+    pub(in crate::ipc) net_state: Arc<capsem_core::SandboxNetworkState>,
+    pub(in crate::ipc) mcp_runtime: Arc<McpRuntime>,
+    runtime_source: RuntimePolicySource,
+    pub(in crate::ipc) ready: Arc<AtomicBool>,
 }
 
 impl Dispatcher {
-    fn new(temp: &std::path::Path) -> (Self, mpsc::Receiver<ServiceToProcess>) {
-        let active_profile = temp.join("active_profile.toml");
-        std::fs::write(
-            &active_profile,
-            r#"
-id = "code"
-name = "Code"
-description = "IPC dispatcher fixture."
-revision = "test.1"
-"#,
-        )
-        .unwrap();
-        let db = Arc::new(capsem_logger::DbWriter::open_in_memory(64).unwrap());
+    pub(in crate::ipc) fn new(temp: &std::path::Path) -> (Self, mpsc::Receiver<ServiceToProcess>) {
+        Self::with_db(temp, Arc::new(capsem_logger::DbWriter::open_in_memory(64).unwrap()))
+    }
+
+    pub(in crate::ipc) fn with_db(
+        temp: &std::path::Path,
+        db: Arc<capsem_logger::DbWriter>,
+    ) -> (Self, mpsc::Receiver<ServiceToProcess>) {
+        let active_policy = temp.join("active_policy.toml");
+        std::fs::write(&active_policy, "[user_rules]\n[corp_rules]\n[network]\n").unwrap();
+        let initial_digest =
+            capsem_core::net::policy_config::active_policy_digest(&std::fs::read(&active_policy).unwrap());
         let net_state = Arc::new(
             capsem_core::create_net_state_with_policy(
                 "ipc-dispatch-test",
@@ -116,13 +123,20 @@ revision = "test.1"
             )
             .unwrap(),
         );
-        let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(
-            capsem_core::net::policy_config::SecurityRuleSet::new(Vec::new()),
-        )));
-        let plugin_policy = Arc::new(std::sync::RwLock::new(Arc::new(BTreeMap::new())));
-        let model_endpoints = Arc::new(std::sync::RwLock::new(Arc::new(
-            capsem_core::net::policy_config::ModelEndpointRegistry::default(),
-        )));
+        let rule_set = capsem_core::net::policy_config::SecurityRuleSet::new(Vec::new());
+        let plugins = BTreeMap::new();
+        let model_endpoints = capsem_core::net::policy_config::ModelEndpointRegistry::default();
+        let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(rule_set.clone())));
+        let plugin_policy = Arc::new(std::sync::RwLock::new(Arc::new(plugins.clone())));
+        let proxy_policy = capsem_core::net::proxy_engine::ProxyPolicyHandle::new(
+            capsem_core::net::proxy_engine::ProxyPolicySnapshot::new(
+                initial_digest,
+                capsem_core::net::policy::NetworkMechanics::default(),
+                rule_set,
+                plugins,
+                model_endpoints,
+            ),
+        );
         let (aggregator, mut aggregator_rx) = AggregatorClient::channel(8);
         tokio::spawn(async move {
             while let Some((request, response_tx)) = aggregator_rx.recv().await {
@@ -132,7 +146,7 @@ revision = "test.1"
                             name: "fixture".to_string(),
                             url: "stdio://fixture".to_string(),
                             enabled: true,
-                            source: "profile".to_string(),
+                            source: "config".to_string(),
                             is_stdio: true,
                             connected: true,
                             tool_count: 1,
@@ -180,7 +194,7 @@ revision = "test.1"
             db: Arc::clone(&db),
             security_rules,
             plugin_policy,
-            model_endpoints,
+            proxy_policy,
         });
         let term_relay = TerminalRelay::new(8);
         let job_store = Arc::new(JobStore::new());
@@ -194,7 +208,7 @@ revision = "test.1"
                 events_tx,
                 net_state,
                 mcp_runtime,
-                runtime_source: RuntimeProfileSource::new(active_profile),
+                runtime_source: RuntimePolicySource::new(active_policy),
                 ready: Arc::new(AtomicBool::new(true)),
             },
             ctrl_rx,
@@ -202,9 +216,10 @@ revision = "test.1"
     }
 
     /// Serve one service connection the way the owner's accept loop does.
-    fn connection(&self, stream: tokio::net::UnixStream) -> tokio::task::JoinHandle<Result<()>> {
+    pub(in crate::ipc) fn connection(&self, stream: tokio::net::UnixStream) -> tokio::task::JoinHandle<Result<()>> {
         tokio::spawn(handle_ipc_connection(
             stream,
+            controller_identity(),
             self.ctrl_tx.clone(),
             self.events_tx.clone(),
             Arc::clone(&self.term_relay),
@@ -269,6 +284,7 @@ async fn negotiated_dispatcher_covers_stream_jobs_queries_and_lifecycle() {
         .send(ServiceToProcess::Exec {
             id: 10,
             command: "printf ok".to_string(),
+            target: capsem_proto::ipc::ExecTarget::Vm,
         })
         .await
         .unwrap();
@@ -298,12 +314,17 @@ async fn negotiated_dispatcher_covers_stream_jobs_queries_and_lifecycle() {
         .send(ServiceToProcess::ExecStream {
             id: 19,
             command: "printf live".into(),
+            target: capsem_proto::ipc::ExecTarget::Workload,
         })
         .await
         .unwrap();
     assert!(matches!(
         ctrl_rx.recv().await.unwrap(),
-        ServiceToProcess::Exec { id: 19, .. }
+        ServiceToProcess::Exec {
+            id: 19,
+            target: capsem_proto::ipc::ExecTarget::Workload,
+            ..
+        }
     ));
     let sender = job_store
         .active_execs
@@ -346,6 +367,7 @@ async fn negotiated_dispatcher_covers_stream_jobs_queries_and_lifecycle() {
         .send(ServiceToProcess::Exec {
             id: 17,
             command: "false".to_string(),
+            target: capsem_proto::ipc::ExecTarget::Vm,
         })
         .await
         .unwrap();
@@ -377,6 +399,7 @@ async fn negotiated_dispatcher_covers_stream_jobs_queries_and_lifecycle() {
         .send(ServiceToProcess::Exec {
             id: 18,
             command: "closed".to_string(),
+            target: capsem_proto::ipc::ExecTarget::Vm,
         })
         .await
         .unwrap();
@@ -545,131 +568,23 @@ async fn negotiated_dispatcher_covers_stream_jobs_queries_and_lifecycle() {
         } if error == "read fixture failed"
     ));
 
+    let active_policy =
+        b"[user_rules]\n[corp_rules]\n[network]\n[network.dns]\nupstreams = [\"127.0.0.1:5353\"]\n".to_vec();
     service_tx
-        .send(ServiceToProcess::LogFileBoundary {
-            id: 13,
-            action: capsem_proto::ipc::FileBoundaryAction::Export,
-            path: "/root/out.txt".to_string(),
-            data: Vec::new(),
-            size: 4,
-            mime_type: Some("text/plain".to_string()),
+        .send(ServiceToProcess::ReloadConfig {
+            id: 30,
+            active_policy: active_policy.clone(),
         })
         .await
         .unwrap();
-    assert!(matches!(
-        ctrl_rx.recv().await.unwrap(),
-        ServiceToProcess::LogFileBoundary { id: 13, .. }
-    ));
-    job_store
-        .jobs
-        .lock()
-        .unwrap()
-        .remove(&13)
-        .unwrap()
-        .send(JobResult::LogFileBoundary {
-            success: true,
-            data: None,
-            error: None,
-        })
-        .unwrap();
+    let applied = capsem_core::net::policy_config::active_policy_digest(&active_policy);
     assert!(matches!(
         service_rx.recv().await.unwrap(),
-        ProcessToService::LogFileBoundaryResult {
-            id: 13,
-            success: true,
-            ..
-        }
-    ));
-
-    for (id, result, expected_error) in [
-        (
-            21,
-            JobResult::Error {
-                message: "boundary fixture failed".to_string(),
-            },
-            "boundary fixture failed",
-        ),
-        (
-            22,
-            JobResult::ReadFile {
-                data: None,
-                error: None,
-            },
-            "unexpected log file boundary result",
-        ),
-    ] {
-        service_tx
-            .send(ServiceToProcess::LogFileBoundary {
-                id,
-                action: capsem_proto::ipc::FileBoundaryAction::Import,
-                path: "/root/in.txt".to_string(),
-                data: Vec::new(),
-                size: 0,
-                mime_type: None,
-            })
-            .await
-            .unwrap();
-        assert!(matches!(
-            ctrl_rx.recv().await.unwrap(),
-            ServiceToProcess::LogFileBoundary { id: actual, .. } if actual == id
-        ));
-        job_store
-            .jobs
-            .lock()
-            .unwrap()
-            .remove(&id)
-            .unwrap()
-            .send(result)
-            .unwrap();
-        assert!(matches!(
-            service_rx.recv().await.unwrap(),
-            ProcessToService::LogFileBoundaryResult {
-                id: actual,
-                success: false,
-                error: Some(error),
-                ..
-            } if actual == id && error == expected_error
-        ));
-    }
-
-    service_tx
-        .send(ServiceToProcess::LogFileBoundary {
-            id: 23,
-            action: capsem_proto::ipc::FileBoundaryAction::Export,
-            path: "/root/closed.txt".to_string(),
-            data: Vec::new(),
-            size: 0,
-            mime_type: None,
-        })
-        .await
-        .unwrap();
-    assert!(matches!(
-        ctrl_rx.recv().await.unwrap(),
-        ServiceToProcess::LogFileBoundary { id: 23, .. }
-    ));
-    drop(job_store.jobs.lock().unwrap().remove(&23).unwrap());
-    assert!(matches!(
-        service_rx.recv().await.unwrap(),
-        ProcessToService::LogFileBoundaryResult {
-            id: 23,
-            success: false,
-            error: Some(error),
-            ..
-        } if error == "log file boundary result channel closed"
-    ));
-
-    service_tx
-        .send(ServiceToProcess::ReloadConfig { id: 30 })
-        .await
-        .unwrap();
-    let applied = capsem_core::net::policy_config::active_profile_digest(
-        &std::fs::read(temp.path().join("active_profile.toml")).unwrap(),
-    );
-    assert!(matches!(
-        service_rx.recv().await.unwrap(),
-        ProcessToService::ConfigReloadResult { id: 30, active_profile_digest: Some(digest), error: None }
+        ProcessToService::ConfigReloadResult { id: 30, active_policy_digest: Some(digest), error: None }
             if digest == applied
     ));
+    assert_eq!(dispatcher.mcp_runtime.proxy_policy.snapshot().digest(), applied);
+    std::fs::remove_file(dispatcher.runtime_source.active_policy_path()).unwrap();
 
     service_tx
         .send(ServiceToProcess::McpListServers { id: 15 })
@@ -723,16 +638,8 @@ async fn negotiated_dispatcher_covers_stream_jobs_queries_and_lifecycle() {
         other => panic!("unexpected MCP call result: {other:?}"),
     }
 
-    service_tx
-        .send(ServiceToProcess::Suspend {
-            checkpoint_path: "checkpoint.vzsave".to_string(),
-        })
-        .await
-        .unwrap();
-    assert!(matches!(
-        ctrl_rx.recv().await.unwrap(),
-        ServiceToProcess::Suspend { .. }
-    ));
+    service_tx.send(ServiceToProcess::Suspend).await.unwrap();
+    assert!(matches!(ctrl_rx.recv().await.unwrap(), ServiceToProcess::Suspend));
     service_tx.send(ServiceToProcess::Shutdown).await.unwrap();
     assert!(matches!(ctrl_rx.recv().await.unwrap(), ServiceToProcess::Shutdown));
     handler.await.unwrap().unwrap();
@@ -822,7 +729,8 @@ fn classify_exec() {
     assert_eq!(
         classify_ipc_message(&ServiceToProcess::Exec {
             id: 1,
-            command: "ls".into()
+            command: "ls".into(),
+            target: capsem_proto::ipc::ExecTarget::Vm,
         }),
         IpcAction::Job
     );
@@ -910,7 +818,10 @@ fn classify_container_pull_admission() {
 #[test]
 fn classify_reload_config() {
     assert_eq!(
-        classify_ipc_message(&ServiceToProcess::ReloadConfig { id: 1 }),
+        classify_ipc_message(&ServiceToProcess::ReloadConfig {
+            id: 1,
+            active_policy: Vec::new(),
+        }),
         IpcAction::Reload
     );
 }
@@ -922,12 +833,7 @@ fn classify_shutdown() {
 
 #[test]
 fn classify_suspend() {
-    assert_eq!(
-        classify_ipc_message(&ServiceToProcess::Suspend {
-            checkpoint_path: "cp.vzsave".into()
-        }),
-        IpcAction::Lifecycle
-    );
+    assert_eq!(classify_ipc_message(&ServiceToProcess::Suspend), IpcAction::Lifecycle);
 }
 
 #[test]
@@ -954,10 +860,7 @@ fn classify_stop_terminal_stream() {
 #[test]
 fn classify_clone_state_is_a_job() {
     assert_eq!(
-        classify_ipc_message(&ServiceToProcess::CloneState {
-            id: 1,
-            destination: "/tmp/fork".into(),
-        }),
+        classify_ipc_message(&ServiceToProcess::CloneState { id: 1 }),
         IpcAction::Job
     );
 }

@@ -86,7 +86,6 @@ pub(crate) fn run_dimensions(
     quick: bool,
     channel: &str,
     commit: &str,
-    profile: &str,
     strays: Vec<String>,
 ) -> Result<()> {
     let fitness = machine::examine(
@@ -150,7 +149,6 @@ pub(crate) fn run_dimensions(
                 commit: commit.to_string(),
             },
             host: fitness.host.clone(),
-            profile: profile.to_string(),
             quick,
             metrics,
             sidecar: collected.sidecar,
@@ -246,32 +244,31 @@ pub(crate) fn select_dimensions(names: &[String]) -> Result<Vec<schema::Dimensio
 ///
 /// The question the old layout could not answer without globbing filenames
 /// and parsing ten shapes: is this slower than it was?
-pub(crate) fn report(store_db: &Path, arch: &str, profile: &str) -> Result<()> {
+pub(crate) fn report(store_db: &Path, arch: &str) -> Result<()> {
     let connection = store::open(store_db)?;
     let subjects = store::subjects(&connection)?;
     if subjects.is_empty() {
         bail!("no runs recorded in {}", store_db.display());
     }
 
-    for (dimension, subject_arch, subject_profile) in subjects {
-        if subject_arch != arch || subject_profile != profile {
+    for (dimension, subject_arch) in subjects {
+        if subject_arch != arch {
             continue;
         }
-        let Some(record) = store::latest(&connection, dimension, arch, profile)? else {
+        let Some(record) = store::latest(&connection, dimension, arch)? else {
             continue;
         };
         println!(
-            "\n## {} -- {} {} {}, recorded {}",
+            "\n## {} -- {} {}, recorded {}",
             dimension.as_str(),
             record.release.version,
             arch,
-            profile,
             record.recorded_at
         );
         println!("| metric | median | p99 | cv | n | trend |");
         println!("|---|---:|---:|---:|---:|---|");
         for metric in &record.metrics {
-            let points = store::history(&connection, &metric.key, arch, profile)?;
+            let points = store::history(&connection, &metric.key, arch)?;
             // Oldest to newest, so the direction is visible without a chart.
             let trend = points
                 .iter()

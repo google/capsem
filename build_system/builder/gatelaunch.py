@@ -24,7 +24,7 @@ that never changes.
 from __future__ import annotations
 
 import atexit
-import hashlib
+import hashlib  # Source-key bootstrap must remain stdlib-only until re-exec.
 import importlib
 import os
 import shlex

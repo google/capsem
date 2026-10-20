@@ -17,10 +17,10 @@ def test_shared_diagrams_require_both_web_builds() -> None:
         assert CLASSIFIER.web_only((path,))
 
 
-def test_docs_dependency_patches_have_build_and_docs_owners() -> None:
+def test_dependency_patches_reach_every_consumer() -> None:
     path = "build_system/patches/http-cache-semantics@4.3.0.patch"
-    assert CLASSIFIER.ci_scopes((path,)) == {"build_system", "docs"}
-    assert "docs-build" in CLASSIFIER.ci_owners((path,))
+    assert CLASSIFIER.ci_scopes((path,)) == {"shared"}
+    assert CLASSIFIER.ci_owners((path,)) == CLASSIFIER.ALL_JOBS
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,6 +29,14 @@ SCRIPT = ROOT / "build_system" / "scripts" / "ci" / "classify-ci-scope.py"
 
 def _classifier():
     return CLASSIFIER
+
+
+def test_carried_inspect_sources_have_python_ci_ownership() -> None:
+    for path in ("integrations/inspect-ai/inspect_capsem/containers/compose.py", "integrations/inspect-ai/tests/containers/test_compose_fields.py"):
+        assert _classifier().ci_scopes((path,)) == {"build_system"}
+        assert _classifier().ci_owners((path,)) == _classifier().PRODUCT_JOBS | {"fast-gate", "pr-gate"}
+    with pytest.raises(ValueError, match="unowned integrations subtree"):
+        _classifier().ci_scopes(("integrations/unknown/code.py",))
 
 
 @pytest.mark.parametrize(
@@ -187,7 +195,8 @@ def test_rename_classifies_both_old_and_new_owners() -> None:
         ("build_system/release_site/src/index.astro", "release_site"),
         ("crates/capsem-core/src/lib.rs", "rust_guest_config"),
         ("guest/artifacts/capsem-init", "rust_guest_config"),
-        ("config/profiles/code/profile.toml", "rust_guest_config"),
+        ("images/base/Dockerfile", "rust_guest_config"),
+        ("config/docker/image/build.toml", "rust_guest_config"),
         ("rustfmt.toml", "rust_guest_config"),
         ("benchmarks/collectors/routes", "benchmarks"),
         ("benchmarks/baselines/routes/data.json", "benchmarks"),
@@ -214,6 +223,7 @@ def test_shared_hidden_and_root_inputs_fan_out() -> None:
         "build_system/scripts/ci/classify-ci-scope.py",
         "build_system/scripts/ci/require-ci-jobs.sh",
         "build_system/builder/gate/tools/ci/classify_ci_scope.py",
+        "build_system/patches/http-cache-semantics@4.3.0.patch",
     ):
         assert module.ci_scopes((path,)) == {"shared"}
         assert module.ci_owners((path,)) == module.ALL_JOBS

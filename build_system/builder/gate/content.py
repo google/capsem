@@ -1,9 +1,8 @@
-"""One verified profile-content bundle consumed by later gate rails.
+"""One verified runtime-content bundle consumed by later gate rails.
 
-Assets and materialized configuration are a pair.  Keeping both paths relative
-to one root makes it impossible for a caller to combine an IronBank-proved
-asset tree with stale configuration from the checkout.  Construction is pure;
-the filesystem proof is an explicit run action.
+The asset tree is named relative to one root, so a lane that staged a cohort
+elsewhere hands over that root rather than a path a caller could recombine.
+Construction is pure; the filesystem proof is an explicit run action.
 """
 
 from __future__ import annotations
@@ -25,48 +24,40 @@ def _require_real_subdirectory(root: Path, relative: Path, label: str) -> Path:
     for component in relative.parts:
         current /= component
         if current.is_symlink():
-            raise GateError(f"profile content {label} path contains a symlink: {current}")
+            raise GateError(f"runtime content {label} path contains a symlink: {current}")
     if not current.is_dir():
-        raise GateError(f"profile content {label} are missing: {current}")
+        raise GateError(f"runtime content {label} are missing: {current}")
     return current
 
 
 @dataclass(frozen=True)
-class ProfileContent:
+class RuntimeContent:
     root: Path
     assets_path: Path
-    config_path: Path
 
     def __post_init__(self) -> None:
-        for path in (self.assets_path, self.config_path):
-            if not _relative(path):
-                raise ValueError(f"ProfileContent requires a relative path under its root: {path}")
+        if not _relative(self.assets_path):
+            raise ValueError(
+                f"RuntimeContent requires a relative path under its root: {self.assets_path}"
+            )
 
     @classmethod
-    def isolated(cls, config, root: Path) -> ProfileContent:
-        """The private per-profile layout produced and proved by AssetGate."""
-        return cls(
-            Path(root),
-            Path(config.assets.merged_assets_dir),
-            Path(config.assets.merged_config_dir),
-        )
+    def isolated(cls, config, root: Path) -> RuntimeContent:
+        """The private layout produced and proved by AssetGate."""
+        return cls(Path(root), Path(config.assets.merged_assets_dir))
 
     @classmethod
-    def built_profile(cls, config, profile: str) -> ProfileContent:
-        """One real per-profile bundle built below the gate's test root."""
-        return cls.isolated(config, config.path(config.assets.test_root) / profile)
+    def built(cls, config) -> RuntimeContent:
+        """The real runtime bundle built below the gate's test root."""
+        return cls.isolated(config, config.path(config.assets.test_root))
 
     @classmethod
-    def standalone(cls, config) -> ProfileContent:
+    def standalone(cls, config) -> RuntimeContent:
         """The checkout layout accepted only by the public standalone rail."""
-        return cls(
-            config.root,
-            Path(config.functional.assets_dir),
-            Path(config.functional.config_root),
-        )
+        return cls(config.root, Path(config.functional.assets_dir))
 
     @classmethod
-    def staged(cls, config, root: Path) -> ProfileContent:
+    def staged(cls, config, root: Path) -> RuntimeContent:
         """The standalone layout, anchored at a lane's workspace.
 
         Same relative shape, different root. A release lane stages its cohort
@@ -76,94 +67,63 @@ class ProfileContent:
         """
         if not root.is_absolute():
             raise ValueError("a staged content root must be absolute")
-        return cls(
-            root,
-            Path(config.functional.assets_dir),
-            Path(config.functional.config_root),
-        )
+        return cls(root, Path(config.functional.assets_dir))
 
     @property
     def assets(self) -> Path:
         return self.root / self.assets_path
 
-    @property
-    def config(self) -> Path:
-        return self.root / self.config_path
-
-    def profiles(self, config) -> Path:
-        return self.config / config.functional.profiles_subdir
-
-    def config_manifest(self, config) -> Path:
-        """The runtime manifest copied into this content bundle's config tree."""
-        return self.config / config.assets.merged_assets_dir / config.install.manifest_name
-
     def require_complete(self, config, arches: tuple | None = None) -> None:
-        """Fail unless this exact pair is complete for the requested targets."""
+        """Fail unless this content is complete for the requested targets."""
         requested = tuple(config.architectures.values()) if arches is None else arches
         for arch in requested:
             if config.architectures.get(arch.name) != arch:
                 raise GateError(f"content target {arch.name!r} is not a configured architecture")
 
         if self.root.is_symlink():
-            raise GateError(f"profile content root is a symlink: {self.root}")
+            raise GateError(f"runtime content root is a symlink: {self.root}")
         if not self.root.is_dir():
-            raise GateError(f"profile content root is missing: {self.root}")
+            raise GateError(f"runtime content root is missing: {self.root}")
         assets = _require_real_subdirectory(self.root, self.assets_path, "assets")
-        _require_real_subdirectory(self.root, self.config_path, "config")
 
         manifest = assets / config.install.manifest_name
-        config_manifest = self.config_manifest(config)
         if not manifest.is_file():
-            raise GateError(f"profile content asset manifest is missing: {manifest}")
-        if not config_manifest.is_file():
-            raise GateError(f"profile content config manifest is missing: {config_manifest}")
-        manifest_bytes = manifest.read_bytes()
-        if config_manifest.read_bytes() != manifest_bytes:
-            raise GateError(
-                f"profile content config manifest {config_manifest} does not match {manifest}"
-            )
-
-        declared = _declared_arches(manifest, manifest_bytes)
+            raise GateError(f"runtime content asset manifest is missing: {manifest}")
+        declared = _declared_arches(manifest, manifest.read_bytes())
         for arch in requested:
             if arch.name not in declared:
                 raise GateError(
-                    f"profile content manifest does not declare {arch.name}: {manifest}"
+                    f"runtime content manifest does not declare {arch.name}: {manifest}"
                 )
             directory = assets / arch.name
             if not directory.is_dir():
-                raise GateError(f"profile content assets are missing {arch.name}: {directory}")
+                raise GateError(f"runtime content assets are missing {arch.name}: {directory}")
             for name in (*config.artifacts.bootable, *config.assets.evidence_artifacts):
                 artifact = directory / name
                 if not artifact.is_file():
                     raise GateError(
-                        f"profile content artifact is missing {arch.name}/{name}: {artifact}"
+                        f"runtime content artifact is missing {arch.name}/{name}: {artifact}"
                     )
-
-        profiles = self.profiles(config)
-        if not profiles.is_dir():
-            raise GateError(f"profile content catalog is missing: {profiles}")
-        if not any(path.is_file() for path in profiles.glob("*/profile.toml")):
-            raise GateError(f"profile content catalog has no materialized profiles: {profiles}")
 
 
 @dataclass(frozen=True)
 class LocalInstallContent:
     """Fresh local content whose checked graph is authored during install."""
 
-    content: ProfileContent
+    content: RuntimeContent
 
 
 @dataclass(frozen=True)
 class SelectedInstallContent:
     """Manifest-selected content whose packaged channel remains authoritative."""
 
-    content: ProfileContent
+    content: RuntimeContent
 
     def inputs(self, config) -> Path:
         return self.content.root / config.install.selected_inputs_dir
 
     def require_complete(self, config, *, arches: tuple) -> None:
-        """Prove the paired projection and require its verified source graph."""
+        """Prove the content and require its verified source graph."""
         self.content.require_complete(config, arches=arches)
         relative = Path(config.install.selected_inputs_dir)
         if not _relative(relative):
@@ -176,7 +136,7 @@ class SelectedInstallContent:
         # Keep the fetched graph byte-for-byte. `release-inputs.json` binds its
         # public URLs to safe local paths and immutable digests; the shared
         # verifier checks that report on the host and again inside the sealed
-        # container before any byte is consumed. Profile staging rewrites a
+        # container before any byte is consumed. Runtime staging rewrites a
         # separate runtime projection, so requiring generated file:// URLs in
         # this source graph rejects the real hosted channel.
         manifest = inputs / config.install.manifest_name
@@ -206,13 +166,8 @@ def _declared_arches(path: Path, payload: bytes) -> frozenset[str]:
                 raise TypeError("arches has a non-string name")
             return names
 
-        profiles = manifest["profiles"]
-        return frozenset(
-            entry["architecture"]
-            for profile in profiles.values()
-            for entry in profile["architectures"]
-        )
+        return frozenset(entry["architecture"] for entry in manifest["runtime"]["architectures"])
     except (json.JSONDecodeError, KeyError, TypeError, AttributeError) as error:
         raise GateError(
-            f"profile content manifest has no valid architecture graph: {path}: {error}"
+            f"runtime content manifest has no valid architecture graph: {path}: {error}"
         ) from None

@@ -13,7 +13,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 DEBT = Path(__file__).with_name("release_authority_debt.toml")
-CANONICAL_TITLE = "# Capsem Binary, Profile, Manifest, and Channel Release Specification"
+CANONICAL_TITLE = "# Capsem Binary, Runtime, Manifest, and Channel Release Specification"
 OLD_AUTHORITY = "tmp/release-spec.md"
 ROUTING_SURFACES = ("AGENTS.md", "skills/release-process/")
 EXCLUDED_POLICY_FILES = frozenset(
@@ -150,7 +150,7 @@ def test_old_normative_source_and_reference_are_rejected() -> None:
         "The normative contract is elsewhere.",
         "This is the governing contract.",
         "Capsem has exactly two release-facing Just commands.",
-        "A profile release MUST NOT build binaries.",
+        "An asset release MUST NOT build binaries.",
     ],
 )
 def test_agent_and_skill_normative_duplicates_are_rejected(claim: str) -> None:

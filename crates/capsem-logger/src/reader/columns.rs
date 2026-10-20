@@ -72,7 +72,7 @@ pub(super) const TOOL_RESPONSE_COLUMNS: &str = "call_id, content_preview, is_err
 
 /// The exec_events list `recent_exec_events` reads, in its order.
 pub(super) const EXEC_EVENT_COLUMNS: &str = "timestamp, exec_id, command, source, trace_id, process_name,
-     credential_ref, event_id";
+     credential_ref, event_id, target";
 
 /// The exec_events list `read_exec_history_row` reads, in its order.
 pub(super) const EXEC_HISTORY_COLUMNS: &str = "timestamp, exec_id, command, exit_code, duration_ms,

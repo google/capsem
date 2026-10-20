@@ -10,7 +10,7 @@ pub(crate) async fn handle_resume(
     let _launch = state
         .lifecycle
         .admit()
-        .map_err(|e| AppError(StatusCode::CONFLICT, e.to_string()))?;
+        .map_err(|e| AppError::new(StatusCode::CONFLICT, e.to_string()))?;
     // See handle_suspend: same lock, same reason. Restore happens in the
     // freshly spawned capsem-process's boot, so the lock must bridge the
     // spawn and the readiness sentinel for a sibling save_state not to
@@ -20,7 +20,7 @@ pub(crate) async fn handle_resume(
 
     let attempted_checkpoint = state.has_existing_resume_checkpoint(&id);
 
-    // resume_sandbox reads the registry and profile files and spawns the
+    // resume_sandbox reads the registry and policy files and spawns the
     // child: all blocking, all off the worker.
     let resume_id = id.clone();
     match state
@@ -30,7 +30,7 @@ pub(crate) async fn handle_resume(
         Ok(resumed_id) => {
             let uds_path = state
                 .instance_socket_path(&resumed_id)
-                .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+                .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
             if let Err(e) = wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&resumed_id)).await {
                 error!(id, error = %e, "resume ready-wait failed");
                 if attempted_checkpoint {
@@ -38,7 +38,7 @@ pub(crate) async fn handle_resume(
                         id,
                         "warm restore failed; archiving checkpoint and retrying as a cold persistent boot"
                     );
-                    stop_failed_restore_process_under_lock(&state, &resumed_id).await;
+                    stop_failed_restore_process_under_lock(&state, &resumed_id).await?;
                     let cold_id = resumed_id.clone();
                     match state
                         .off_worker(move |state| {
@@ -50,12 +50,12 @@ pub(crate) async fn handle_resume(
                         Ok(cold_id) => {
                             let cold_uds_path = state
                                 .instance_socket_path(&cold_id)
-                                .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+                                .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
                             if let Err(cold_e) =
                                 wait_for_vm_ready(&cold_uds_path, 30, Some(&state), Some(&cold_id)).await
                             {
                                 error!(id, "cold resume fallback failed after warm restore failure: {cold_e}");
-                                return Err(AppError(
+                                return Err(AppError::new(
                                     StatusCode::INTERNAL_SERVER_ERROR,
                                     format!(
                                         "resume failed: warm restore failed ({e}); cold fallback failed ({cold_e})"
@@ -66,6 +66,8 @@ pub(crate) async fn handle_resume(
                             state
                                 .off_worker(move |state| state.clear_resume_checkpoint(&cleared_id))
                                 .await?;
+                            connection_routes::lifecycle::rebind(&state, &cold_id).await?;
+                            crate::container_setup::restore_ready(&state, &cold_id).await?;
                             return provision_response_for_running(&state, cold_id).map(Json);
                         }
                         Err(cold_e) => {
@@ -73,14 +75,14 @@ pub(crate) async fn handle_resume(
                                 id,
                                 "cold resume fallback spawn failed after warm restore failure: {cold_e}"
                             );
-                            return Err(AppError(
+                            return Err(AppError::new(
                                 StatusCode::INTERNAL_SERVER_ERROR,
                                 format!("resume failed: warm restore failed ({e}); cold fallback failed ({cold_e})"),
                             ));
                         }
                     }
                 }
-                return Err(AppError(
+                return Err(AppError::new(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("resume failed: {e}"),
                 ));
@@ -89,33 +91,42 @@ pub(crate) async fn handle_resume(
             state
                 .off_worker(move |state| state.clear_resume_checkpoint(&cleared_id))
                 .await?;
+            connection_routes::lifecycle::rebind(&state, &resumed_id).await?;
+            crate::container_setup::restore_ready(&state, &resumed_id).await?;
             provision_response_for_running(&state, resumed_id).map(Json)
         }
         Err(e) => {
             error!(id, error = %e, "resume failed");
-            Err(AppError(StatusCode::NOT_FOUND, format!("resume failed: {e}")))
+            let mut err = AppError::new(StatusCode::NOT_FOUND, format!("resume failed: {e}"));
+            if find_persistent_entry_by_route_id(&state, &id).is_none() {
+                err = err.with_code(ErrorCode::VmNotFound).with_vm_id(&id);
+            }
+            Err(err)
         }
     }
 }
 
 /// Tear down a warm-restore process that failed to reach ready while the
 /// caller already holds the save/restore locks.
-pub(crate) async fn stop_failed_restore_process_under_lock(state: &ServiceState, id: &str) {
-    let Some((uds_path, pid)) = ({
+pub(crate) async fn stop_failed_restore_process_under_lock(state: &ServiceState, id: &str) -> Result<(), AppError> {
+    let Some((uds_path, generation)) = ({
         let instances = state.instances.lock().unwrap();
-        instances.get(id).map(|i| (i.uds_path.clone(), i.pid))
+        instances.get(id).map(|i| (i.uds_path.clone(), i.generation))
     }) else {
-        return;
+        return Ok(());
     };
 
-    if pid > 0 {
-        process_control::send_or_log(pid, process_control::Signal::Terminate, "failed-restore-cleanup");
-    }
+    signal_vm_process(state, id, generation, process_control::Signal::Terminate).await?;
 
-    tracing::warn!(id, pid, "removing failed warm restore before cold fallback");
-    state.instances.lock().unwrap().remove(id);
+    tracing::warn!(id, "removing failed warm restore before cold fallback");
+    claim_shutdown_instance(state, id, generation);
     state.unregister_session_db_handle(id);
-    wait_for_process_exit(pid, std::time::Duration::from_secs(1)).await;
+    wait_for_process_exit(state, id, generation, std::time::Duration::from_secs(1)).await?;
+    state
+        .connections
+        .stop_runtime(id, generation, capsem_credentials::GrantStopPolicy::Preserve)
+        .await?;
     let _ = std::fs::remove_file(&uds_path);
     let _ = std::fs::remove_file(uds_path.with_extension("ready"));
+    Ok(())
 }

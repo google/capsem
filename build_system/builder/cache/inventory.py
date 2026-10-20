@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from .cargounits import unaccounted_size, unit_entries
+from .cargounits import cargo_inventory, unaccounted_size
 from .contract import PruneStrategy
 from .generations import directory_entries, entry_size
 from .inventorymodels import RetentionInventory
@@ -21,18 +21,23 @@ def _stage_inventory(
     paths: CachePaths,
     policy: CachePolicy,
     allocated_seen: set[tuple[int, int]],
-    *, retention: bool = False, checkout: Path | None = None,
+    *,
+    retention: bool = False,
+    checkout: Path | None = None,
 ) -> StageInventory:
     stage_policy = policy.stages[stage_id]
     stage_root = paths.stage(stage_id)
     if retention and stage_policy.cargo_target_roots:
         # The working set: the calling checkout and the cache authority.
         working_set = frozenset(root for root in (paths.repository_root, checkout) if root)
-        return _cargo_inventory(stage_id, stage_root, stage_policy, allocated_seen, working_set)
+        return cargo_inventory(stage_id, stage_root, stage_policy, allocated_seen, working_set)
     if stage_policy.object_store:
         return _object_inventory(stage_id, stage_root, stage_policy, allocated_seen)
-    entry_root = (stage_policy.retention_root if retention and stage_policy.retention_root
-                  else stage_policy.entry_root)
+    entry_root = (
+        stage_policy.retention_root
+        if retention and stage_policy.retention_root
+        else stage_policy.entry_root
+    )
     stage_path = stage_root / entry_root
     if stage_path.is_symlink() or not stage_path.resolve().is_relative_to(stage_root.resolve()):
         raise ValueError(f"cache entry root escapes its stage: {stage_path}")
@@ -45,7 +50,11 @@ def _stage_inventory(
     sweep = sweeps(stage_policy)
     if stage_path.is_dir():
         entries = directory_entries(
-            stage_path, stage_policy, allocated_seen, busy=busy, referenced=referenced,
+            stage_path,
+            stage_policy,
+            allocated_seen,
+            busy=busy,
+            referenced=referenced,
             relative=Path(stage_path.name) if sweep else Path("."),
         )
     if sweep:
@@ -75,38 +84,14 @@ def _stage_inventory(
     )
 
 
-def _cargo_inventory(
-    stage_id, stage_root: Path, stage_policy, allocated_seen, working_set: frozenset[Path]
-) -> StageInventory:
-    """A Cargo stage as its compilation units, everything else accounted beside them."""
-    for target_root in stage_policy.cargo_target_roots:
-        resolved = (stage_root / target_root).resolve()
-        if stage_root.is_dir() and not resolved.is_relative_to(stage_root.resolve()):
-            raise ValueError(f"cache entry root escapes its stage: {stage_root / target_root}")
-    held = held_locks(stage_root, stage_policy.mutation_locks)
-    busy = bool(held)
-    entries, accounted = unit_entries(
-        stage_root, stage_policy.cargo_target_roots, allocated_seen, protected=busy,
-        working_set=working_set,
-    )
-    other_logical, other_allocated = unaccounted_size(stage_root, accounted, allocated_seen)
-    return StageInventory(
-        stage_id=stage_id,
-        path=stage_root,
-        logical_bytes=sum(entry.logical_bytes for entry in entries) + other_logical,
-        allocated_bytes=sum(entry.allocated_bytes for entry in entries) + other_allocated,
-        protected_bytes=sum(entry.budget_bytes for entry in entries if entry.protected),
-        entries=entries,
-        held_locks=held,
-    )
-
-
 def _object_inventory(stage_id, stage_root: Path, stage_policy, allocated_seen) -> StageInventory:
     """An object store as its receipt generations, shared objects accounted beside them."""
     held = held_locks(stage_root, stage_policy.mutation_locks)
     busy = bool(held)
     entries, accounted = object_entries(stage_root, allocated_seen, protected=busy)
-    other_logical, other_allocated = unaccounted_size(stage_root, accounted, allocated_seen)
+    # Shared objects are collected once no receipt names them: deferred, not
+    # unselectable, so the store reports totals only.
+    other_logical, other_allocated, _ = unaccounted_size(stage_root, accounted, allocated_seen)
     return StageInventory(
         stage_id=stage_id,
         path=stage_root,
@@ -154,7 +139,10 @@ def _unclassified_inventory(
                 visit(child, relative / child.name)
             return
         logical, allocated = entry_size(path, allocated_seen)
-        stat = path.lstat()
+        try:
+            stat = path.lstat()
+        except FileNotFoundError:
+            return  # Live producers may remove unclassified siblings too.
         entries.append(
             CacheEntry(
                 key=relative.as_posix(),
@@ -173,7 +161,10 @@ def _unclassified_inventory(
 
 
 def scan_inventory(
-    paths: CachePaths, policy: CachePolicy, *, now_ns: int | None = None,
+    paths: CachePaths,
+    policy: CachePolicy,
+    *,
+    now_ns: int | None = None,
     retention: bool = False,
     stage_ids: frozenset[str] | None = None,
     checkout: Path | None = None,
@@ -194,7 +185,9 @@ def scan_inventory(
         )
         for stage_id in scan_order
     }
-    unclassified = _unclassified_inventory(paths, policy, allocated_seen) if stage_ids is None else ()
+    unclassified = (
+        _unclassified_inventory(paths, policy, allocated_seen) if stage_ids is None else ()
+    )
     stages = tuple(by_id[stage_id] for stage_id in sorted(by_id))
     return CacheInventory(
         root=paths.root,

@@ -17,7 +17,7 @@ from . import repository_root
 MANUAL_GATES_PENDING = [
     "macOS package install via `just install` with user-present sudo/package context",
     "Installed `capsem status` and `capsem debug` output captured after the macOS install",
-    "Installed UI/TUI smoke: profile cards, session actions, stats/detail panes, and no API 404s",
+    "Installed UI/TUI smoke: session actions, stats/detail panes, and no API 404s",
     "AGY OAuth/manual poem smoke through installed Capsem with stats and credential broker evidence",
     "Installed `capsem stop` and TUI service stop do not trigger credential prompts",
 ]
@@ -280,7 +280,9 @@ def _ironbank_guard(project_root: Path) -> dict[str, Any]:
 def _installed_credential_store_guard(home: Path) -> dict[str, Any]:
     bin_dir = home / ".capsem" / "bin"
     capsem_dir = home / ".capsem"
-    scan_dirs = [path for path in [bin_dir, *sorted(capsem_dir.glob("bin.backup*"))] if path.exists()]
+    scan_dirs = [
+        path for path in [bin_dir, *sorted(capsem_dir.glob("bin.backup*"))] if path.exists()
+    ]
     if not scan_dirs:
         return {
             "installed_bin_dir": str(bin_dir),

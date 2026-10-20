@@ -129,21 +129,16 @@ def check_assets(
     ready = phase.add(
         _when_stale(
             recovery,
-            assetdependencies.dependency_step(
-                config, imagebuild.profiles(config), names, label="recovery-dependencies"
-            ),
+            assetdependencies.dependency_step(config, names, label="recovery-dependencies"),
         ),
         after=(ready,),
     )
-    images: list[Step] = []
     manifest = config.path(config.imagebuild.output) / config.install.manifest_name
-    for profile in imagebuild.profiles(config):
-        subject = imagebuild.build(config, profile=profile, arch=arch.name, template="all")
-        subject = replace(subject, actions=(Remove(manifest), *subject.actions))
-        ready = phase.add(_when_stale(recovery, subject), after=(ready,))
-        images.append(ready)
-    phase.add(recovery.record_step(), after=(ready,))
-    return tuple(images)
+    subject = imagebuild.build(config, arch=arch.name, template="all")
+    subject = replace(subject, actions=(Remove(manifest), *subject.actions))
+    image = phase.add(_when_stale(recovery, subject), after=(ready,))
+    phase.add(recovery.record_step(), after=(image,))
+    return (image,)
 
 
 def _when_stale(recovery: AssetRecovery, subject: Step) -> Step:

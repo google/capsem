@@ -4,7 +4,7 @@ use super::*;
 // Q: MergedPolicies basic construction (6)
 // -----------------------------------------------------------------------
 
-fn file_with_mcp(entries: Vec<(&str, SettingValue)>, mcp: crate::mcp::policy::McpProfileConfig) -> SettingsFile {
+fn file_with_mcp(entries: Vec<(&str, SettingValue)>, mcp: crate::mcp::policy::McpConfig) -> SettingsFile {
     let mut f = file_with(entries);
     f.mcp = Some(mcp);
     f
@@ -219,8 +219,8 @@ fn merged_retired_custom_allow_setting_is_ignored() {
 
 #[test]
 fn merged_empty_mcp_section() {
-    use crate::mcp::policy::McpProfileConfig;
-    let user = file_with_mcp(vec![], McpProfileConfig::default());
+    use crate::mcp::policy::McpConfig;
+    let user = file_with_mcp(vec![], McpConfig::default());
     let m = MergedPolicies::from_files(&user, &empty_file()).expect("policies merge");
     assert!(has_security_rule(&m, "profiles.rules.default_http"));
 }
@@ -228,10 +228,10 @@ fn merged_empty_mcp_section() {
 #[test]
 fn merged_partial_settings_file() {
     // TOML with only [mcp] section, no [settings]
-    use crate::mcp::policy::McpProfileConfig;
+    use crate::mcp::policy::McpConfig;
     let user = SettingsFile {
         settings: HashMap::new(),
-        mcp: Some(McpProfileConfig {
+        mcp: Some(McpConfig {
             health_check_interval_secs: Some(30),
             ..Default::default()
         }),
@@ -291,7 +291,7 @@ mode = "disable"
 // The engine allows any event no rule matches, so an empty rule set is
 // allow-everything. from_files used to substitute exactly that for a rule set
 // that failed to compile, behind a warning, and compile_security_rule_set
-// returned it as Ok: one broken rule in a profile disabled every other one.
+// returned it as Ok: one broken rule disabled every other one.
 
 #[test]
 fn a_rule_set_that_does_not_compile_is_an_error_not_an_empty_allow_all() {
@@ -311,15 +311,13 @@ match = 'http.host.matches("(unclosed")'
 }
 
 #[test]
-fn an_active_profile_with_a_broken_rule_refuses_to_compile_its_rule_set() {
+fn an_active_policy_with_a_broken_rule_refuses_to_compile_its_rule_set() {
     // Deserialization does not validate, so a broken rule can reach the
-    // runtime from active_profile.toml on disk.
-    let active: ActiveProfileFile = toml::from_str(
+    // runtime from active_policy.toml on disk.
+    let active: ActivePolicyFile = toml::from_str(
         r#"
-id = "code"
-name = "Code"
-description = "test"
-revision = "r1"
+[user_rules]
+[network]
 
 [corp_rules.corp.rules.broken]
 name = "broken"
@@ -330,6 +328,6 @@ match = 'http.host.matches("(unclosed")'
     .unwrap();
     let error = active
         .compile_security_rule_set()
-        .expect_err("the runtime must not receive an empty rule set for a broken profile");
+        .expect_err("the runtime must not receive an empty rule set for a broken policy");
     assert!(error.contains("regex"), "{error}");
 }

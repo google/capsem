@@ -11,10 +11,8 @@ class ServiceConfig(Strict):
     binary: str
     process_binary: str
     sync_assets_script: str
-    generated_profiles: str
     assets_dir: str
     home_assets: str
-    home_profiles: str
     socket: str
     pidfile: str
     retired_config: tuple[str, ...]

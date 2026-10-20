@@ -2,7 +2,6 @@
 
 import argparse
 import os
-import sqlite3
 import sys
 from pathlib import Path
 
@@ -13,31 +12,21 @@ from capsem_builder.gate.tools.doctor.check_session_report import (
     check_session,
     table,
 )
+from capsem_builder.gate.tools.doctor.host_ledger import host_ledger_path, recent_sessions
 
 CAPSEM_HOME = Path(os.environ.get("CAPSEM_HOME", Path.home() / ".capsem"))
 RUN_DIR = Path(os.environ.get("CAPSEM_RUN_DIR", CAPSEM_HOME / "run"))
 SESSIONS_DIR = RUN_DIR / "sessions"
 PERSISTENT_DIR = RUN_DIR / "persistent"
-MAIN_DB = CAPSEM_HOME / "sessions" / "main.db"
+HOST_LEDGER = host_ledger_path(CAPSEM_HOME)
 
 
 def list_recent_sessions(n: int = 5) -> list[dict]:
-    """Return the N most recent sessions from main.db."""
-    if not MAIN_DB.exists():
-        print(f"{RED}main.db not found at {MAIN_DB}{RESET}", file=sys.stderr)
+    """Return the N most recent sessions from the host ledger."""
+    if not HOST_LEDGER.exists():
+        print(f"{RED}host ledger not found at {HOST_LEDGER}{RESET}", file=sys.stderr)
         sys.exit(1)
-    conn = sqlite3.connect(f"file:{MAIN_DB}?mode=ro", uri=True)
-    conn.row_factory = sqlite3.Row
-    rows = conn.execute(
-        "SELECT id, mode, status, created_at, stopped_at,"
-        " total_requests, allowed_requests, denied_requests,"
-        " total_input_tokens, total_output_tokens,"
-        " total_estimated_cost, total_tool_calls, total_file_events"
-        " FROM sessions ORDER BY created_at DESC LIMIT ?",
-        (n,),
-    ).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    return recent_sessions(HOST_LEDGER, n)
 
 
 def resolve_session(session_id: str | None) -> Path:
@@ -49,7 +38,7 @@ def resolve_session(session_id: str | None) -> Path:
     if not session_id:
         sessions = list_recent_sessions(1)
         if not sessions:
-            print(f"{RED}No sessions found in main.db{RESET}", file=sys.stderr)
+            print(f"{RED}No sessions found in the host ledger{RESET}", file=sys.stderr)
             sys.exit(1)
         session_id = sessions[0]["id"]
 
@@ -81,12 +70,12 @@ def main():
     parser.add_argument(
         "--list",
         action="store_true",
-        help="List recent sessions from main.db and exit",
+        help="List recent sessions from the host ledger and exit",
     )
     parser.add_argument(
         "--db",
         type=Path,
-        help="Check this session.db directly instead of resolving one from main.db",
+        help="Check this session.db directly instead of resolving one from the host ledger",
     )
     parser.add_argument(
         "--verify-bodies",
@@ -101,34 +90,11 @@ def main():
             print(f"{RED}No sessions found{RESET}", file=sys.stderr)
             sys.exit(1)
         print(f"\n{BOLD}Recent sessions:{RESET}")
-        headers = [
-            "id",
-            "mode",
-            "status",
-            "created_at",
-            "requests",
-            "in_tokens",
-            "out_tokens",
-            "cost",
-            "tools",
-            "files",
+        headers = ["id", "status", "created_at_ms", "stopped_at_ms"]
+        rows = [
+            [s["id"], s["status"], str(s["created_at_ms"]), str(s["stopped_at_ms"] or "-")]
+            for s in sessions
         ]
-        rows = []
-        for s in sessions:
-            rows.append(
-                [
-                    s["id"],
-                    s["mode"],
-                    s["status"],
-                    s["created_at"],
-                    f"{s['allowed_requests']}/{s['total_requests']}",
-                    str(s["total_input_tokens"]),
-                    str(s["total_output_tokens"]),
-                    f"${s['total_estimated_cost']:.4f}",
-                    str(s["total_tool_calls"]),
-                    str(s["total_file_events"]),
-                ]
-            )
         print(table(headers, rows))
         return 0
 

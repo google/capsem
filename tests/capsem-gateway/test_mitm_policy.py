@@ -8,7 +8,7 @@ import uuid
 from pathlib import Path
 
 import pytest
-from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.mock_server import (
     MOCK_SERVER_ADDR,
     MOCK_SERVER_BINARY,
@@ -67,7 +67,6 @@ def test_mitm_policy_telemetry(service_env, client):
         "/vms/create",
         {
             "name": vm_name,
-            "profile_id": CODE_PROFILE_ID,
             "ram_mb": DEFAULT_RAM_MB,
             "cpus": DEFAULT_CPUS,
         },

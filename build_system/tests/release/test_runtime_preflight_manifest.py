@@ -30,7 +30,6 @@ def _manifest(channel: str, *, status: str = "current") -> bytes:
         {
             "channel": channel,
             "packages": [],
-            "profiles": {},
             "status": status,
         },
         sort_keys=True,
@@ -84,7 +83,7 @@ def test_existing_channel_always_selects_its_public_manifest() -> None:
     }
 
 
-def test_absent_first_party_profile_channel_uses_existing_donor_graph() -> None:
+def test_absent_first_party_channel_uses_existing_donor_graph() -> None:
     selection = SELECTOR.select_runtime_preflight_manifest(
         _catalog("stable"),
         release_site="https://release.capsem.org",

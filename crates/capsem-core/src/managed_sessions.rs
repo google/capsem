@@ -1,0 +1,342 @@
+//! Capability ownership and durable admission precede service VM effects.
+
+use std::{
+    fmt,
+    io::{Read, Write},
+    path::Path,
+};
+
+use anyhow::{ensure, Context, Result};
+use capsem_foundation::unix::{
+    contained::{ContainedDir, ContainedOpenOptions},
+    fs::ensure_private_dir,
+    lock::{try_acquire, FileLock, LockAttempt, LockMode},
+};
+pub use leases::{LeaseClock, LeasePolicy};
+use leases::{LeaseDeadline, LeaseFacts, LeaseLimitState, RuntimeLease};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+/// An opaque 256-bit ownership secret. It is never serialized or logged.
+#[derive(Clone)]
+pub struct Capability(capsem_crypto::secrets::Zeroizing<[u8; 32]>);
+
+impl Capability {
+    pub fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(capsem_crypto::secrets::Zeroizing::new(bytes))
+    }
+
+    fn hash(&self, request: Uuid) -> capsem_crypto::blake3::Hash {
+        let mut hash = capsem_crypto::blake3::Hasher::new_derive_key("capsem managed session capability v1");
+        hash.update(request.as_bytes());
+        hash.update(self.0.as_ref());
+        hash.finalize()
+    }
+}
+
+impl fmt::Debug for Capability {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("Capability([REDACTED])")
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+enum Rejection {
+    #[error("managed ownership capability denied")]
+    Forbidden,
+    #[error("managed request already registered; recover ownership instead")]
+    DuplicateRequest,
+}
+
+impl Record {
+    fn authenticate(&self, capability: &Capability) -> Result<()> {
+        // BLAKE3 Hash equality compares the fixed-size hashes in constant time.
+        if capsem_crypto::blake3::Hash::from(self.capability_hash) != capability.hash(self.request) {
+            return Err(Rejection::Forbidden.into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum State {
+    Reserved,
+    Creating,
+    Active,
+    Closing,
+    Closed,
+    Unknown,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Record {
+    schema_version: u32,
+    request: Uuid,
+    generation: Uuid,
+    capability_hash: [u8; 32],
+    state: State,
+    #[serde(default)]
+    vm: Option<VmBinding>,
+    #[serde(default)]
+    lease: Option<LeaseFacts>,
+    #[serde(default)]
+    spawn_intent: Option<VmBinding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    closed_wall_ms: Option<u64>,
+}
+
+/// A service-proven VM identity. Generation must identify the actual spawn,
+/// rather than a recyclable PID or a user-visible VM name.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VmBinding {
+    id: String,
+    generation: Uuid,
+}
+
+impl VmBinding {
+    pub fn new(id: String, generation: Uuid) -> Result<Self> {
+        ensure!(
+            !id.is_empty() && id.len() <= 256 && !id.chars().any(char::is_control),
+            "invalid managed VM identity"
+        );
+        ensure!(!generation.is_nil(), "managed VM generation is nil");
+        Ok(Self { id, generation })
+    }
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+    pub fn generation(&self) -> Uuid {
+        self.generation
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Snapshot {
+    request: Uuid,
+    generation: Uuid,
+    state: State,
+    vm: Option<VmBinding>,
+    expires_wall_ms: Option<u64>,
+    lease_duration_ms: Option<u64>,
+    spawn_intent: Option<VmBinding>,
+}
+
+impl Snapshot {
+    pub fn request(&self) -> Uuid {
+        self.request
+    }
+    pub fn generation(&self) -> Uuid {
+        self.generation
+    }
+    pub fn state(&self) -> State {
+        self.state
+    }
+    pub fn vm(&self) -> Option<&VmBinding> {
+        self.vm.as_ref()
+    }
+    pub fn expires_wall_ms(&self) -> Option<u64> {
+        self.expires_wall_ms
+    }
+    pub fn lease_duration(&self) -> Option<std::time::Duration> {
+        self.lease_duration_ms.map(std::time::Duration::from_millis)
+    }
+    pub fn spawn_intent(&self) -> Option<&VmBinding> {
+        self.spawn_intent.as_ref()
+    }
+}
+
+impl From<&Record> for Snapshot {
+    fn from(record: &Record) -> Self {
+        Self {
+            request: record.request,
+            generation: record.generation,
+            state: record.state,
+            vm: record.vm.clone(),
+            expires_wall_ms: record.lease.as_ref().map(|lease| lease.expires_wall_ms),
+            lease_duration_ms: record.lease.as_ref().map(|lease| lease.duration_ms),
+            spawn_intent: record.spawn_intent.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Ticket {
+    request: Uuid,
+    generation: Uuid,
+}
+
+impl Ticket {
+    pub fn request(&self) -> Uuid {
+        self.request
+    }
+    pub fn generation(&self) -> Uuid {
+        self.generation
+    }
+}
+
+#[derive(Debug)]
+pub enum Reservation {
+    New(Ticket),
+    Existing(Snapshot),
+}
+
+/// Synchronous private-store primitives: service callers use their blocking
+/// execution boundary. Contention is immediate refusal, never a machine lock.
+pub struct Registry {
+    root: ContainedDir,
+    deadlines: std::sync::Mutex<std::collections::HashMap<Uuid, RuntimeLease>>,
+    lease_limit: std::sync::Mutex<LeaseLimitState>,
+}
+
+impl Registry {
+    pub fn open(root: &Path) -> Result<Self> {
+        ensure_private_dir(root)?;
+        let root = ContainedDir::open_root(root)?;
+        root.validate_private()?;
+        Ok(Self {
+            root,
+            deadlines: std::sync::Mutex::new(std::collections::HashMap::new()),
+            lease_limit: std::sync::Mutex::new(LeaseLimitState::default()),
+        })
+    }
+
+    pub fn reserve(&self, request: Uuid, capability: &Capability) -> Result<Reservation> {
+        ensure!(!request.is_nil(), "managed request identity is nil");
+        let _lease = self.lease()?;
+        if let Some(record) = self.read(request)? {
+            record.authenticate(capability)?;
+            return Ok(Reservation::Existing(Snapshot::from(&record)));
+        }
+        let record = Record {
+            schema_version: 1,
+            request,
+            generation: capsem_crypto::uuid_v4(),
+            capability_hash: *capability.hash(request).as_bytes(),
+            state: State::Reserved,
+            vm: None,
+            lease: None,
+            spawn_intent: None,
+            closed_wall_ms: None,
+        };
+        self.write(&record)?;
+        Ok(Reservation::New(Ticket {
+            request,
+            generation: record.generation,
+        }))
+    }
+
+    fn lease(&self) -> Result<FileLock> {
+        match try_acquire(&self.root.path().join("registry.lock"), LockMode::Exclusive)? {
+            LockAttempt::Acquired(lease) => Ok(lease),
+            LockAttempt::Contended => anyhow::bail!("managed ownership store is busy"),
+        }
+    }
+
+    fn runtime_deadlines(&self) -> Result<std::sync::MutexGuard<'_, std::collections::HashMap<Uuid, RuntimeLease>>> {
+        self.deadlines
+            .lock()
+            .map_err(|_| anyhow::anyhow!("managed runtime lease state poisoned"))
+    }
+
+    fn ticket_record(&self, ticket: &Ticket) -> Result<Record> {
+        let record = self.read(ticket.request)?.context("managed reservation is missing")?;
+        ensure!(
+            record.generation == ticket.generation,
+            "managed reservation generation mismatch"
+        );
+        Ok(record)
+    }
+
+    fn read(&self, request: Uuid) -> Result<Option<Record>> {
+        let name = format!("{request}.json");
+        let file = match self.root.open_file(name.as_ref(), ContainedOpenOptions::read_only()) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        // Fixed-shape ownership metadata contains no user payload.
+        const RECORD_LIMIT: u64 = 4096;
+        ensure!(
+            file.metadata()?.len() <= RECORD_LIMIT,
+            "managed ownership record exceeds fixed-shape limit"
+        );
+        let mut bytes = Vec::new();
+        file.take(RECORD_LIMIT + 1).read_to_end(&mut bytes)?;
+        ensure!(
+            bytes.len() as u64 <= RECORD_LIMIT,
+            "managed ownership record grew during read"
+        );
+        let record: Record = serde_json::from_slice(&bytes).context("invalid managed ownership record")?;
+        ensure!(
+            record.schema_version == 1 && record.request == request && !record.generation.is_nil(),
+            "managed ownership identity mismatch"
+        );
+        if let Some(vm) = &record.vm {
+            VmBinding::new(vm.id.clone(), vm.generation)?;
+        }
+        if let Some(intent) = &record.spawn_intent {
+            VmBinding::new(intent.id.clone(), intent.generation)?;
+            ensure!(
+                record.vm.as_ref().is_none_or(|vm| vm == intent),
+                "managed spawn intent and VM binding disagree"
+            );
+        }
+        if let Some(lease) = &record.lease {
+            lease.validate()?;
+        }
+        ensure!(
+            record.closed_wall_ms.is_none() || record.state == State::Closed,
+            "managed completion timestamp requires confirmed cleanup"
+        );
+        ensure!(
+            match record.state {
+                State::Reserved | State::Closed => record.vm.is_none(),
+                State::Active => record.vm.is_some(),
+                State::Creating | State::Closing | State::Unknown => true,
+            },
+            "managed ownership state and VM binding disagree"
+        );
+        Ok(Some(record))
+    }
+
+    fn write(&self, record: &Record) -> Result<()> {
+        let mut record = record.clone();
+        if record.state == State::Closed && record.closed_wall_ms.is_none() {
+            record.closed_wall_ms = Some(LeaseClock::now()?.wall_ms);
+        }
+        let bytes = serde_json::to_vec(&record)?;
+        let temporary_name = format!(".pending-managed-{}", capsem_crypto::uuid_v4());
+        let mut temporary = self.root.create_new_private_file(temporary_name.as_ref())?;
+        let result = (|| -> Result<()> {
+            temporary.write_all(&bytes)?;
+            temporary.sync_all()?;
+            self.root.rename_to(
+                temporary_name.as_ref(),
+                &self.root,
+                format!("{}.json", record.request).as_ref(),
+            )?;
+            self.root.sync()?;
+            Ok(())
+        })();
+        if result.is_err() {
+            match self.root.remove_non_directory(temporary_name.as_ref()) {
+                Ok(()) => self.root.sync()?,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        result
+    }
+}
+
+pub mod controller;
+mod leases;
+mod recovery;
+mod retention;
+mod transitions;
+
+#[cfg(test)]
+mod tests;

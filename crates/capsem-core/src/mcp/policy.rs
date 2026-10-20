@@ -1,3 +1,3 @@
-//! Compatibility exports for configuration-owned MCP profile contracts.
+//! Exports of the configuration-owned MCP server contracts.
 
 pub use capsem_config::mcp::*;

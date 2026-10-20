@@ -1,23 +1,7 @@
-//! Guest byte streams handed whole to an async handler: the MITM rail and
-//! each network cable's stream. Both duplicate the accepted descriptor and
-//! keep the connection alive for as long as the handler runs.
+//! Guest network cable streams handed whole to their owning switch.
 use capsem_core::VsockConnection;
 use std::sync::Arc;
-use tracing::{error, info, warn};
-
-pub(super) fn serve_mitm(conn: VsockConnection, config: Arc<capsem_core::net::mitm_proxy::MitmProxyConfig>) {
-    tokio::spawn(async move {
-        match conn.try_clone_fd() {
-            Ok(fd) => capsem_core::net::mitm_proxy::handle_connection(fd, config).await,
-            Err(error) => error!(
-                operation = "duplicate-mitm-vsock",
-                errno = error.raw_os_error(),
-                error = %error,
-                "MITM connection descriptor unavailable"
-            ),
-        }
-    });
-}
+use tracing::{info, warn};
 
 /// A guest pump's stream for one cable, held for that network's switch once
 /// the pump has named the cable. The four header bytes are read exactly and

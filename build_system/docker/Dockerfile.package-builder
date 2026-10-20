@@ -17,6 +17,7 @@ COPY sdk/rust/Cargo.toml /prefetch/sdk/rust/Cargo.toml
 RUN mkdir -p /prefetch/sdk/rust/src && : > /prefetch/sdk/rust/src/lib.rs
 COPY sdk/typescript/package.json sdk/typescript/pnpm-lock.yaml /prefetch/sdk/typescript/
 COPY web/app/package.json web/app/pnpm-lock.yaml web/app/pnpm-workspace.yaml /prefetch/web/app/
+COPY build_system/patches /prefetch/build_system/patches
 
 WORKDIR /prefetch
 
@@ -70,6 +71,7 @@ RUN test -n "${APT_SNAPSHOT_BASE}" \
 RUN --mount=type=cache,id=${APT_LISTS_CACHE_ID},target=/var/lib/apt/lists,sharing=locked \
     --mount=type=cache,id=${APT_ARCHIVES_CACHE_ID},target=/var/cache/apt,sharing=locked \
     rm -f /etc/apt/apt.conf.d/docker-clean \
+    && rm -f /var/lib/apt/lists/lock /var/cache/apt/archives/lock \
     && swap-dev-libs "${DPKG_ARCH}" "${APT_SNAPSHOT_BASE}" \
         "${APT_SNAPSHOT_ID}" "${CROSS_DEV_PACKAGES}" "${HOST_PACKAGES}"
 

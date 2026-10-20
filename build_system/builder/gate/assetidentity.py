@@ -1,7 +1,7 @@
 """What a built VM asset is a function of.
 
-`AssetLanes._build` shelled into `capsem-admin image build` for every profile
-and every stage, every run, with no check of any kind. Four consecutive
+`AssetLanes._build` shelled into `capsem-admin image build` for every
+architecture and every stage, every run, with no check of any kind. Four consecutive
 qualifications of one release spent about twenty-five minutes each rebuilding
 both architectures from sources none of them had touched -- the last three
 changed only test files and a shell function.
@@ -26,8 +26,7 @@ import stat
 from collections.abc import Iterator
 from pathlib import Path
 
-import blake3
-
+from .. import crypto as blake3
 from .config import GateConfig
 from .errors import GateError
 
@@ -81,7 +80,7 @@ def _inputs(root: Path, relatives: tuple[str, ...]) -> Iterator[tuple[str, Path]
             yield path.relative_to(root).as_posix(), path
 
 
-def _feed(digest: blake3.blake3, path: Path) -> None:
+def _feed(digest: blake3.Hasher, path: Path) -> None:
     mode = path.lstat().st_mode
     digest.update(f"{stat.S_IMODE(mode):04o}".encode("ascii"))
     digest.update(b"\0")

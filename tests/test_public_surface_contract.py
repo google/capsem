@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 import variables
+from capsem_builder.gate.tools.audit import cli_surface
 from capsem_builder.gate.tools.audit import public_surface as checker
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -47,7 +48,7 @@ def test_fast_feedback_is_explicitly_incomplete_and_release_owns_qualification()
 
     for name, extra in (
         ("release-binaries", {"channel": "stable"}),
-        ("release-profile", {"channel": "stable", "profile": "code"}),
+        ("release-assets", {"channel": "stable"}),
     ):
         plan = GateCommand.registry[name](
             RecordingRunner(ROOT),
@@ -111,7 +112,82 @@ enum NetworkCommands {
     List,
 }
 """
-    assert checker._cli_paths(source, "Commands") == ["create", "network list"]
+    assert cli_surface.cli_paths(source, "Commands") == ["create", "network list"]
+
+
+@pytest.mark.parametrize("annotation", [
+    "",
+    "// Keep the nested, command visible.\n        ",
+    "/* Keep the nested, command visible. */\n        ",
+    '#[doc = "Nested [commands], remain visible"]\n        ',
+    "#[allow(dead_code)]\n        // Preserve policy.\n        ",
+])
+def test_subcommands_declared_in_a_field_are_commands(annotation: str) -> None:
+    """A command's subcommands can live in a `#[command(subcommand)]` field of
+    its Args struct or struct variant. They used to be invisible: the command
+    was one leaf, so `images pull` would have shipped unapproved. An optional
+    subcommand leaves the bare command a command; a required one does not."""
+    source = """
+enum Commands {
+    /// List or pull images
+    Images(image_commands::ImagesArgs),
+    Create(create_command::CreateArgs),
+    Volume {
+        #[command(subcommand)]
+        command: VolumeCommands,
+    },
+    #[command(subcommand)]
+    Network(NetworkCommands),
+}
+
+pub(crate) struct ImagesArgs {
+    #[command(subcommand)]
+    pub command: Option<ImageCommands>,
+    #[arg(long)]
+    pub json: bool,
+}
+
+pub(super) struct CreateArgs {
+    #[arg(long)]
+    pub name: Option<String>,
+}
+
+enum ImageCommands {
+    Pull {
+        image: String,
+    },
+}
+
+enum VolumeCommands {
+    Prune,
+}
+
+enum NetworkCommands {
+    List,
+}
+"""
+    source = source.replace("command: VolumeCommands,", annotation + "command: VolumeCommands,")
+    source = source.replace("pub command: Option<ImageCommands>,", annotation + "pub command: Option<ImageCommands>,")
+    assert cli_surface.cli_paths(source, "Commands") == [
+        "images",
+        "images pull",
+        "create",
+        "volume prune",
+        "network list",
+    ]
+    # A tuple variant naming an enum still needs an explicit policy.
+    with pytest.raises(checker.SurfaceError, match="lacks flatten/subcommand policy"):
+        cli_surface.cli_paths(source.replace("Create(create_command::CreateArgs)", "Create(VolumeCommands)"), "Commands")
+
+
+@pytest.mark.parametrize("field", [
+    "command: (ImageCommands,),",
+    "command: [ImageCommands; 1],",
+    "invalid, other: ImageCommands,",
+])
+def test_unparsed_marked_subcommand_fields_fail_closed(field: str) -> None:
+    with pytest.raises(checker.SurfaceError, match="subcommand field"):
+        cli_surface._nested_subcommand("#[command(subcommand)] " + field)
 
 
 def test_declared_count_drift_fails_closed(tmp_path: Path) -> None:

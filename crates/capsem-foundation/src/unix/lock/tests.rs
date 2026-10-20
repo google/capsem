@@ -11,6 +11,20 @@ use super::{
     acquire, acquire_existing_until, try_acquire, try_acquire_after_open, try_acquire_existing, LockAttempt, LockMode,
 };
 
+#[test]
+fn creating_lock_deadline_returns_timeout_without_stealing_and_reacquires_after_release() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("credential.lock");
+    let held = acquire(&path, LockMode::Exclusive).unwrap();
+    let started = Instant::now();
+    let error = super::acquire_until(&path, LockMode::Shared, started + Duration::from_millis(25)).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+    assert!(started.elapsed() < Duration::from_secs(1));
+    drop(held);
+    let acquired = super::acquire_until(&path, LockMode::Exclusive, Instant::now() + Duration::from_secs(1)).unwrap();
+    drop(acquired);
+}
+
 fn acquired(attempt: LockAttempt) -> super::FileLock {
     match attempt {
         LockAttempt::Acquired(lock) => lock,

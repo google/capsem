@@ -22,7 +22,6 @@ class VmSummary(Model):
     model_call_count: Annotated[StrictInt, Field(ge=0)] | None = None
     name: StrictStr | None = None
     persistent: StrictBool
-    profile_id: StrictStr
     resume_blocked_reason: StrictStr | None = None
     status: VmLifecycleState
     total_estimated_cost: StrictFloat | None = None

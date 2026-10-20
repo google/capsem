@@ -42,10 +42,6 @@ impl ProcessProbe {
     pub(crate) fn is_gone(&mut self, pid: u32) -> bool {
         self.state(pid) == ProcessState::Gone
     }
-
-    pub(crate) fn is_alive(&mut self, pid: u32) -> bool {
-        self.state(pid) == ProcessState::Alive
-    }
 }
 
 pub(crate) fn probe(pid: u32) -> io::Result<ProcessState> {

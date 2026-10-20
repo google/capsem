@@ -1,12 +1,19 @@
 //! Child-process reapers that own instance and persistent-registry cleanup.
 
 use super::*;
+mod retirement;
+pub(crate) use retirement::{Registration, Retirements};
 
-pub(super) fn kill_and_reap(mut child: tokio::process::Child) {
+pub(super) fn kill_and_reap(
+    mut child: tokio::process::Child,
+    mut retirement: Registration,
+) -> tokio::task::JoinHandle<()> {
     let _ = child.start_kill();
     tokio::spawn(async move {
-        let _ = child.wait().await;
-    });
+        if retirement.wait_child(&mut child).await.is_ok() {
+            retirement.complete();
+        }
+    })
 }
 
 /// The one child reaper: every `capsem-process` exit, from a fresh provision
@@ -21,11 +28,64 @@ pub(super) fn spawn_exit_reaper(
     state: Arc<ServiceState>,
     uds_path: PathBuf,
     session_dir: PathBuf,
+    mut retirement: Registration,
 ) -> tokio::task::JoinHandle<()> {
     let pid = child.id();
+    // Registration precedes this call. Retain the spawn identity before the
+    // task can be delayed across an exit/replacement or PID reuse.
+    let generation = retirement.generation();
     tokio::spawn(async move {
-        let exit_status = child.wait().await.ok();
+        let Ok((exit_status, current)) = retirement
+            .wait_child_before_reap(&mut child, || {
+                state
+                    .connections
+                    .fence_runtime(&id, generation, capsem_credentials::GrantStopPolicy::Preserve);
+                let instances = state.instances.lock().unwrap();
+                let current = instances
+                    .get(&id)
+                    .is_none_or(|instance| instance.generation == generation);
+                if let Some(instance) = instances.get(&id).filter(|instance| instance.generation == generation) {
+                    instance.authority.revoke();
+                }
+                drop(instances);
+                if current {
+                    state.remove_proxy_worker(&id, generation);
+                }
+                current
+            })
+            .await
+        else {
+            return;
+        };
+        if !current {
+            retirement.complete();
+            return;
+        }
         info!(id, ?exit_status, "capsem-process exited, cleaning up");
+        // Even a delayed reaper must fence its exact old runtime. A resumed
+        // replacement may already own the map, but never owns these handles.
+        state
+            .connections
+            .fence_runtime(&id, generation, capsem_credentials::GrantStopPolicy::Preserve);
+
+        // Native wait is positive exit authority. Persist the fenced receipt
+        // before moving a named session, so a later host boot can reprepare
+        // a new generation without interpreting an old numeric PID.
+        let receipt_id = id.clone();
+        let receipt_dir = session_dir.clone();
+        let receipt = state
+            .off_worker(move |state| {
+                let binding = capsem_core::managed_sessions::VmBinding::new(receipt_id, generation)?;
+                state.persist_native_exit(&receipt_dir, &binding, false)
+            })
+            .await;
+        match receipt {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => warn!(id, %error, "durable native exit receipt remains unconfirmed"),
+            Err(error) => {
+                warn!(id, error = %error.body.error, "native exit receipt worker interrupted")
+            }
+        }
 
         // An ephemeral VM's removal from the instances map below is the
         // trigger for preserve_failed_session_dir; if `removed` is Some, the
@@ -34,7 +94,10 @@ pub(super) fn spawn_exit_reaper(
         // the guest or service initiated it; anything else is a crash.
         let removed = {
             let mut instances = state.instances.lock().unwrap();
-            if instances.get(&id).is_some_and(|instance| Some(instance.pid) != pid) {
+            if instances
+                .get(&id)
+                .is_some_and(|instance| Some(instance.pid) != pid || instance.generation != generation)
+            {
                 // A cold fallback can replace a failed restore while holding
                 // the exclusive guard. Its registry, DB and sockets are not
                 // owned by this delayed reaper.
@@ -43,13 +106,20 @@ pub(super) fn spawn_exit_reaper(
                     ?pid,
                     "replacement process owns session; skipping stale exit cleanup"
                 );
+                retirement.complete();
                 return;
             }
             instances.remove(&id)
         };
-        if removed.is_some() {
+        if let Some(info) = &removed {
+            info.authority.revoke();
+            state.remove_proxy_worker(&id, generation);
             // The VM is gone: a container setup for it has nothing left to do.
-            state.containers.cancel(&id);
+            let policy = connection_routes::lifecycle::stop_policy(info.persistent, true);
+            if let Err(error) = state.connections.stop_runtime(&id, generation, policy).await {
+                warn!(id, error = %error.body.error, "exited session credential metadata remains pending");
+            }
+            state.containers.cancel_and_wait(&id).await;
         }
         // Publish the exit before waiting: restore holds the write guard
         // while readiness polls this registry to detect a crashed child.
@@ -60,6 +130,7 @@ pub(super) fn spawn_exit_reaper(
                 id,
                 "session replaced while exit cleanup waited; leaving replacement intact"
             );
+            retirement.complete();
             return;
         }
         state.unregister_session_db_handle(&id);
@@ -76,16 +147,16 @@ pub(super) fn spawn_exit_reaper(
             .await
             .unwrap_or(session_dir)
         };
-        let clean_exit = exit_status.as_ref().is_some_and(|status| status.success());
+        let clean_exit = exit_status.success();
         let unexpected_exit = removed.is_some() && !clean_exit;
         if removed.is_some() {
             let status = if clean_exit { "stopped" } else { "crashed" };
-            if let Err(error) = state.record_session_index_stop(&id, status, Some(&session_dir)) {
+            if let Err(error) = state.record_host_session_stopped(&id, status, true).await {
                 error!(
                     id,
                     status,
                     error = %error,
-                    "failed to record main.db session stop after child exit"
+                    "failed to record the session stop in the host ledger after child exit"
                 );
             }
         }
@@ -142,5 +213,6 @@ pub(super) fn spawn_exit_reaper(
         }
         let _ = std::fs::remove_file(&uds_path);
         let _ = std::fs::remove_file(uds_path.with_extension("ready"));
+        retirement.complete();
     })
 }

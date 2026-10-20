@@ -13,6 +13,17 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from typing import Protocol
+
+
+class SessionLifecycleClient(Protocol):
+    def post(
+        self,
+        path: str,
+        body: dict,
+        *,
+        timeout: float,
+    ) -> dict | None: ...
 
 #: The occurrence columns a test reads; `run_id` is resolved, not shown.
 _EVENT_COLUMNS = (
@@ -64,6 +75,23 @@ def open_session_ledger(db_path: Path | str) -> sqlite3.Connection:
     except BaseException:
         conn.close()
         raise
+
+
+def stop_session_for_ledger_read(
+    client: SessionLifecycleClient,
+    session_id: str,
+    db_path: Path,
+) -> Path:
+    """Stop a named VM and return its quiesced ledger path.
+
+    A completed write accepts an event into the DB-owned producer buffer. The
+    stop barrier drains every producer and finalizes body archive indexes before
+    a black-box test opens the SQLite file directly.
+    """
+    stopped = client.post(f"/vms/{session_id}/stop", {}, timeout=60)
+    assert stopped == {"success": True, "persistent": True}, stopped
+    assert db_path.exists(), db_path
+    return db_path
 
 
 #: `capsem_logger::counters::COUNTED_TOOL_ORIGINS`: the origins every surface

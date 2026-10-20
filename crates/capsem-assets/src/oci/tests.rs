@@ -1,10 +1,14 @@
 use super::*;
 
 pub(super) fn private_dir() -> tempfile::TempDir {
+    private_dir_in(&std::env::temp_dir())
+}
+
+pub(super) fn private_dir_in(parent: &std::path::Path) -> tempfile::TempDir {
     use std::os::unix::fs::PermissionsExt;
     tempfile::Builder::new()
         .permissions(std::fs::Permissions::from_mode(0o700))
-        .tempdir()
+        .tempdir_in(parent)
         .unwrap()
 }
 

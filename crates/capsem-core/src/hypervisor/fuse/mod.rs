@@ -15,6 +15,9 @@ pub use protocol::*;
 
 use std::os::unix::fs::MetadataExt;
 
+/// Host-side edits must remain visible without a separate invalidation channel.
+pub const ATTR_CACHE_SECONDS: u64 = 0;
+
 // ---------------------------------------------------------------------------
 // Struct serialization helpers
 // ---------------------------------------------------------------------------
@@ -63,7 +66,8 @@ pub fn success_response(unique: u64, body: &[u8]) -> Vec<u8> {
 // Utility functions
 // ---------------------------------------------------------------------------
 
-pub fn metadata_to_fuse_attr(ino: u64, meta: &std::fs::Metadata) -> FuseAttr {
+/// Stable VM-root ownership; the workload mount maps it to the image user.
+pub fn metadata_to_fuse_attr(ino: u64, meta: &std::fs::Metadata, _caller: &FuseInHeader) -> FuseAttr {
     FuseAttr {
         ino,
         size: meta.size(),
@@ -76,10 +80,9 @@ pub fn metadata_to_fuse_attr(ino: u64, meta: &std::fs::Metadata) -> FuseAttr {
         ctimensec: meta.ctime_nsec() as u32,
         mode: meta.mode(),
         nlink: meta.nlink() as u32,
-        // The backing workspace is owned by the host user, but the guest runs
-        // the exported tree as root. Reporting host ids into the guest makes
-        // standard tools reject their own files, e.g. git's safe.directory
-        // ownership check.
+        // One inode cannot have a different owner for each caller: even a
+        // zero attribute TTL leaves inode ownership shared by permission
+        // checks. Namespace-specific ownership belongs in the mount's idmap.
         uid: 0,
         gid: 0,
         rdev: meta.rdev() as u32,

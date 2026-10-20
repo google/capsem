@@ -14,7 +14,6 @@ export const UpdateStatusResponseSchema: z.ZodType<UpdateStatusResponse> = z.obj
   "checked_at": z.int().min(0).nullable().exactOptional(),
   "images": z.lazy(() => UpdateTrackStatusSchema),
   "last_error": z.string().nullable().exactOptional(),
-  "profiles": z.lazy(() => UpdateTrackStatusSchema),
   "stale": z.boolean(),
   "supply_chain": z.lazy(() => SupplyChainEvidenceSchema),
   "validation_error": z.string().nullable().exactOptional(),

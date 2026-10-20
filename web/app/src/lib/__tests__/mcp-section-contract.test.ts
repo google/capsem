@@ -5,8 +5,18 @@ const source = readFileSync(
   new URL('../components/settings/McpSection.svelte', import.meta.url),
   'utf8',
 );
+const settingsPage = readFileSync(
+  new URL('../components/shell/SettingsPage.svelte', import.meta.url),
+  'utf8',
+);
 
 describe('McpSection route contract', () => {
+  it('lives in Settings and loads service-wide MCP state without a scope argument', () => {
+    expect(settingsPage).toContain('<McpSection />');
+    expect(source).toContain('void mcpStore.load()');
+    expect(source).not.toContain('$props');
+  });
+
   it('renders tool permissions with enum metadata and keeps the route-backed selector', () => {
     expect(source).toContain('const PERMISSIONS: { value: ToolPermission');
     expect(source).toContain('{#each PERMISSIONS as permission');

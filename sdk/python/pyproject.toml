@@ -1,9 +1,15 @@
 [project]
 name = "capsem"
-version = "0.6.3"
+version = "0.7.1"
 description = "Typed async client for the Capsem HTTP gateway"
+readme = "README.md"
+license = "Apache-2.0"
 requires-python = ">=3.11"
 dependencies = ["aiohttp>=3.12,<4", "pydantic>=2.10,<3", "yarl>=1.20,<2"]
+
+[project.urls]
+Homepage = "https://capsem.org"
+Repository = "https://github.com/google/capsem"
 
 [build-system]
 requires = ["hatchling==1.29.0"]
@@ -13,7 +19,17 @@ build-backend = "hatchling.build"
 packages = ["capsem"]
 
 [dependency-groups]
-dev = ["pytest>=9", "pytest-cov>=6", "ruff>=0.15.16", "ty>=0.0.46", "build>=1.2", "hatchling==1.29.0", "editables==0.5"]
+package-build = ["hatchling==1.29.0"]
+dev = [
+    { include-group = "package-build" },
+    "pytest>=9",
+    "pytest-cov>=6",
+    "ruff>=0.15.16",
+    "ty>=0.0.46",
+    "build>=1.2",
+    "editables==0.5",
+    "openai==2.54.0",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

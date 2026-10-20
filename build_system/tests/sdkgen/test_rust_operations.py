@@ -15,15 +15,59 @@ from capsem_builder.sdkgen.schema import Schema
 SPEC = Path(__file__).resolve().parents[3] / "sdk/specification/openapi.json"
 
 
+@pytest.mark.parametrize("minimum", [0, 1, 32])
+def test_nonnegative_integer_query_minimum_keeps_unsigned_type(minimum: int) -> None:
+    assert type_name(Schema(type="integer", format="int32", minimum=minimum)) == "u32"
+
+
 def test_all_routes_are_generated_in_small_modules() -> None:
     routes = read_operations(SPEC)
     sources = render_operations(routes)
     assert len(sources) == len(routes) + 1
     assert max(len(source.splitlines()) for source in sources.values()) < 150
     assert sources == render_operations(list(reversed(routes)))
-    call = sources["call_profile_mcp_tool.rs"]
-    assert "parameters: &[\n            (\"profile_id\"" in call
-    assert ".request(\n            reqwest::Method::POST," in call
+
+
+def test_a_call_is_split_where_rustfmt_splits_it() -> None:
+    """`cargo fmt` and the drift check both run over the generated SDK, so a
+    call rustfmt would split must be generated split. POST /images/pull is
+    the first call exactly at rustfmt's 72-column chain width; the generator
+    kept it on one line, and each check then failed on what the other wrote."""
+    sources = render_operations(read_operations(SPEC))
+    assert (
+        "    let bytes = transport\n"
+        '        .request(reqwest::Method::POST, "/images/pull", request)\n'
+        "        .await?;" in sources["pull_image.rs"]
+    )
+    # One column shorter stays on one line, as rustfmt leaves it.
+    assert (
+        '    let bytes = transport.request(reqwest::Method::POST, "/vms/create", request).await?;'
+        in sources["create_vm.rs"]
+    )
+
+
+def test_a_list_wider_than_rustfmt_allows_is_one_item_per_line() -> None:
+    """rustfmt lays an array or a call's arguments out one per line once its
+    contents pass 72 columns (60% of max_width 120). call_mcp_tool is the first
+    route past it on both counts, with two path parameters (73 columns) and a
+    long path (79); generated on one line, `cargo fmt` rewrote it and the
+    drift check refused what it wrote."""
+    call = render_operations(read_operations(SPEC))["call_mcp_tool.rs"]
+    assert (
+        "        parameters: &[\n"
+        '            ("server_id", path_server_id.as_str()),\n'
+        '            ("tool_id", path_tool_id.as_str()),\n'
+        "        ],\n" in call
+    )
+    assert (
+        "    let bytes = transport\n"
+        "        .request(\n"
+        "            reqwest::Method::POST,\n"
+        '            "/mcp/servers/{server_id}/tools/{tool_id}/call",\n'
+        "            request,\n"
+        "        )\n"
+        "        .await?;" in call
+    )
 
 
 @pytest.mark.parametrize(("schema", "expected"), [
@@ -36,7 +80,7 @@ def test_primitive_types(schema: dict, expected: str) -> None:
     assert type_name(Schema.model_validate(schema)) == expected
 
 
-@pytest.mark.parametrize("schema", [{"type": "number"}, {"type": "integer", "minimum": 2},
+@pytest.mark.parametrize("schema", [{"type": "number"},
                                     {"type": "string", "enum": ["A"]}])
 def test_unhandled_types_fail_closed(schema: dict) -> None:
     with pytest.raises(ValueError, match="unsupported Rust operation schema"):
@@ -49,7 +93,7 @@ def test_unhandled_query_encoding_fails_closed() -> None:
 
 
 def test_collisions_and_reserved_identifiers_fail_closed() -> None:
-    route = read_operations(SPEC)[0]
+    route = next(route for route in read_operations(SPEC) if route.operation.parameters)
     with pytest.raises(ValueError, match="colliding"):
         render_operations([route, route])
     invalid = route.operation.model_copy(update={"operation_id": "type"})

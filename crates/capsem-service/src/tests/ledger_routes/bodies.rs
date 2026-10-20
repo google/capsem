@@ -27,7 +27,7 @@ fn stored(bytes: Vec<u8>, truncated: bool) -> StoredBody {
         content_type: Some("application/json".to_string()),
         original_bytes,
         truncated,
-        body_hash: format!("blake3:{}", blake3::hash(&bytes).to_hex()),
+        body_hash: format!("blake3:{}", capsem_crypto::blake3::hash(&bytes).to_hex()),
         bytes,
     }
 }
@@ -46,11 +46,12 @@ fn an_event_id_is_twelve_lowercase_hex_characters_or_a_bad_request() {
         "0123456789ag", // 'g' is not hex
         "0123456789 b",
     ] {
-        let AppError(status, message) = validate_event_id(rejected).expect_err(rejected);
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{rejected}");
+        let err = validate_event_id(rejected).expect_err(rejected);
+        assert_eq!(err.status, StatusCode::BAD_REQUEST, "{rejected}");
         assert!(
-            message.contains("12 lowercase hex characters"),
-            "the refusal must name the constraint, got {message:?}"
+            err.body.error.contains("12 lowercase hex characters"),
+            "the refusal must name the constraint, got {:?}",
+            err.body.error
         );
     }
 }
@@ -220,7 +221,7 @@ async fn the_route_returns_one_entry_per_stored_direction() {
         assert!(!body.truncated && !body.truncated_for_transport);
         assert_eq!(
             body.body_hash,
-            format!("blake3:{}", blake3::hash(expected.as_bytes()).to_hex()),
+            format!("blake3:{}", capsem_crypto::blake3::hash(expected.as_bytes()).to_hex()),
             "{direction}"
         );
     }
@@ -314,6 +315,7 @@ async fn the_stats_list_names_exec_output_bodies() {
             exec_id: 7,
             command: "echo hi".to_string(),
             source: "api".to_string(),
+            target: capsem_proto::ipc::ExecTarget::Vm,
             trace_id: None,
             process_name: Some("bash".to_string()),
             credential_ref: None,

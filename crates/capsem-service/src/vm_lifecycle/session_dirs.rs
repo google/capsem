@@ -14,14 +14,14 @@ use super::*;
 pub(super) fn claim_persistent_name(state: &ServiceState, entry: PersistentVmEntry) -> Result<(), AppError> {
     let registry = state.persistent_registry.lock().unwrap();
     if registry.contains(&entry.name) {
-        return Err(AppError(
+        return Err(AppError::new(
             StatusCode::CONFLICT,
             format!("persistent VM \"{}\" already exists", entry.name),
         ));
     }
     registry
         .register(entry)
-        .map_err(|error| AppError(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))
+        .map_err(|error| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))
 }
 
 /// Move a persisted session that still lives where it ran to
@@ -79,11 +79,26 @@ pub(crate) fn settle_persistent_session_dir(state: &ServiceState, name: &str, ex
 /// reports is data, not authority, and used to go straight to
 /// `remove_dir_all`.
 pub(super) async fn remove_purged_session_dir(state: &Arc<ServiceState>, vm_id: &str, session_dir: PathBuf) -> bool {
+    let _deletion_guard = match connection_routes::lifecycle::deletion(state, vm_id).await {
+        Ok(guard) => guard,
+        Err(error) => {
+            warn!(vm_id, error = %error.body.error, "purge credential retirement remains pending");
+            return false;
+        }
+    };
+    state.unregister_session_db_handle(vm_id);
+    if let Err(error) = state.ledger_workers.shutdown(vm_id).await {
+        warn!(vm_id, error = %error, "purge could not stop the session ledger worker");
+        return false;
+    }
     let delete_state = Arc::clone(state);
     let dir = session_dir.clone();
     let outcome = tokio::task::spawn_blocking(move || delete_state.delete_session_dir(&dir)).await;
     let error = match outcome {
-        Ok(Ok(())) => return true,
+        Ok(Ok(())) => match state.ledger_workers.retire(vm_id).await {
+            Ok(()) => return true,
+            Err(error) => format!("purge checkpoint cleanup failed: {error:#}"),
+        },
         Ok(Err(error)) => error.to_string(),
         Err(join_error) => format!("purge delete task failed: {join_error}"),
     };

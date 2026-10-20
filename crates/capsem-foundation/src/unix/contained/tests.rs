@@ -8,6 +8,24 @@ use nix::sys::stat::Mode;
 use super::*;
 
 #[test]
+fn inventory_metadata_stays_bound_to_opened_inodes() {
+    let tree = tree();
+    std::fs::write(tree.root_path.join("blob"), b"cached bytes").unwrap();
+    let file = std::fs::metadata(tree.root_path.join("blob")).unwrap();
+    let entry = tree.root.entries().unwrap().remove(0);
+    assert_eq!(entry.identity.dev, file.dev());
+    assert_eq!(entry.identity.ino, file.ino());
+    assert_eq!(entry.allocated, file.blocks() * 512);
+
+    let original = std::fs::metadata(&tree.root_path).unwrap();
+    std::fs::rename(&tree.root_path, tree.outside.join("saved")).unwrap();
+    symlink(&tree.outside, &tree.root_path).unwrap();
+    let opened = tree.root.metadata().unwrap();
+    assert_eq!((opened.dev(), opened.ino()), (original.dev(), original.ino()));
+    assert_eq!(opened.blocks(), original.blocks());
+}
+
+#[test]
 fn link_reads_are_relative_to_the_open_directory_after_an_ancestor_is_replaced() {
     let tree = tree();
     let original = tree.root_path.join("child");
@@ -379,6 +397,59 @@ fn mode_reads_permission_bits_from_the_descriptor() {
 }
 
 #[test]
+fn timestamp_updates_are_exact_descriptor_relative_and_never_follow_links() {
+    let tree = tree();
+    let file_path = tree.root_path.join("file");
+    std::fs::write(&file_path, b"data").unwrap();
+    tree.root
+        .set_relative_times(
+            Path::new("file"),
+            FileTimeSpec::Exact {
+                seconds: 1_234_567,
+                nanoseconds: 123_456_789,
+            },
+            FileTimeSpec::Exact {
+                seconds: 2_345_678,
+                nanoseconds: 987_654_321,
+            },
+        )
+        .unwrap();
+    let metadata = std::fs::metadata(&file_path).unwrap();
+    assert_eq!((metadata.atime(), metadata.atime_nsec()), (1_234_567, 123_456_789));
+    assert_eq!((metadata.mtime(), metadata.mtime_nsec()), (2_345_678, 987_654_321));
+
+    let target = tree.outside.join("target");
+    std::fs::write(&target, b"outside").unwrap();
+    let before = std::fs::metadata(&target).unwrap().modified().unwrap();
+    symlink(&target, tree.root_path.join("link")).unwrap();
+    tree.root
+        .set_relative_times(Path::new("link"), FileTimeSpec::Now, FileTimeSpec::Now)
+        .unwrap();
+    assert_eq!(std::fs::metadata(&target).unwrap().modified().unwrap(), before);
+}
+
+#[test]
+fn timestamp_updates_reject_invalid_paths_and_nanoseconds() {
+    let tree = tree();
+    std::fs::write(tree.root_path.join("file"), b"data").unwrap();
+    assert!(tree
+        .root
+        .set_relative_times(Path::new("../file"), FileTimeSpec::Omit, FileTimeSpec::Now)
+        .is_err());
+    assert!(tree
+        .root
+        .set_relative_times(
+            Path::new("file"),
+            FileTimeSpec::Omit,
+            FileTimeSpec::Exact {
+                seconds: 1,
+                nanoseconds: 1_000_000_000,
+            },
+        )
+        .is_err());
+}
+
+#[test]
 fn rename_moves_a_link_as_a_link_and_never_its_target() {
     let tree = tree();
     std::fs::write(tree.outside.join("secret"), b"host").unwrap();
@@ -397,6 +468,28 @@ fn rename_moves_a_link_as_a_link_and_never_its_target() {
     assert!(host
         .rename_to(OsStr::new("image"), &tree.root, OsStr::new("a/b"))
         .is_err());
+}
+
+#[test]
+fn remove_non_directory_unlinks_files_and_links_but_never_follows() {
+    let tree = tree();
+    std::fs::write(tree.root_path.join("file"), b"guest").unwrap();
+    std::fs::create_dir(tree.root_path.join("dir")).unwrap();
+    std::fs::write(tree.outside.join("target"), b"keep").unwrap();
+    symlink(tree.outside.join("target"), tree.root_path.join("link")).unwrap();
+
+    tree.root.remove_non_directory(OsStr::new("file")).unwrap();
+    // A link a writer put in place of a file goes; what it points at stays.
+    tree.root.remove_non_directory(OsStr::new("link")).unwrap();
+    assert!(tree.root.entry_kind(OsStr::new("file")).unwrap().is_none());
+    assert!(tree.root.entry_kind(OsStr::new("link")).unwrap().is_none());
+    assert_eq!(std::fs::read(tree.outside.join("target")).unwrap(), b"keep");
+
+    assert!(tree.root.remove_non_directory(OsStr::new("dir")).is_err());
+    assert!(tree.root_path.join("dir").is_dir());
+    assert!(tree.root.remove_non_directory(OsStr::new("../target")).is_err());
+    let missing = tree.root.remove_non_directory(OsStr::new("absent")).unwrap_err();
+    assert_eq!(missing.kind(), io::ErrorKind::NotFound);
 }
 
 #[test]
@@ -431,4 +524,152 @@ fn listings_tell_a_symlink_from_other_special_entries() {
     assert!(find("link").is_symlink && find("link").kind == EntryKind::Other);
     assert!(!find("fifo").is_symlink && find("fifo").kind == EntryKind::Other);
     assert!(!find("file").is_symlink);
+}
+
+#[test]
+fn tree_removal_deletes_links_as_links_and_never_their_targets() {
+    let tree = tree();
+    let doomed = tree.root_path.join("doomed");
+    std::fs::create_dir_all(doomed.join("nested/deeper")).unwrap();
+    std::fs::write(doomed.join("nested/deeper/file"), b"bytes").unwrap();
+    symlink(&tree.outside, doomed.join("dir-link")).unwrap();
+    symlink(tree.outside.join("secret"), doomed.join("nested/file-link")).unwrap();
+    symlink("missing", doomed.join("dangling")).unwrap();
+
+    tree.root.remove_tree(OsStr::new("doomed")).unwrap();
+
+    assert!(std::fs::symlink_metadata(&doomed).is_err());
+    assert_eq!(std::fs::read(tree.outside.join("secret")).unwrap(), b"secret");
+}
+
+#[test]
+fn tree_removal_of_a_top_level_link_removes_only_the_link() {
+    let tree = tree();
+    symlink(&tree.outside, tree.root_path.join("link")).unwrap();
+
+    tree.root.remove_tree(OsStr::new("link")).unwrap();
+
+    assert!(std::fs::symlink_metadata(tree.root_path.join("link")).is_err());
+    assert_eq!(std::fs::read(tree.outside.join("secret")).unwrap(), b"secret");
+}
+
+#[test]
+fn tree_removal_reports_a_missing_entry_and_refuses_traversal_names() {
+    let tree = tree();
+    let error = tree.root.remove_tree(OsStr::new("absent")).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+    for name in ["..", ".", "a/b", ""] {
+        assert!(tree.root.remove_tree(OsStr::new(name)).is_err(), "{name:?}");
+    }
+    assert!(tree.outside.join("secret").exists());
+}
+
+#[test]
+fn hard_link_names_the_same_inode_below_another_directory() {
+    let tree = tree();
+    std::fs::write(tree.root_path.join("blob"), b"verified").unwrap();
+    let to = ContainedDir::open_root(&tree.outside).unwrap();
+    tree.root
+        .hard_link(OsStr::new("blob"), &to, OsStr::new("copy"))
+        .unwrap();
+    let source = std::fs::metadata(tree.root_path.join("blob")).unwrap();
+    let linked = std::fs::metadata(tree.outside.join("copy")).unwrap();
+    assert_eq!((source.ino(), source.nlink()), (linked.ino(), 2));
+    assert_eq!(std::fs::read(tree.outside.join("copy")).unwrap(), b"verified");
+}
+
+#[test]
+fn hard_link_refuses_a_link_a_directory_and_an_existing_destination() {
+    let tree = tree();
+    std::fs::write(tree.outside.join("secret"), b"host secret").unwrap();
+    symlink(tree.outside.join("secret"), tree.root_path.join("link")).unwrap();
+    std::fs::create_dir(tree.root_path.join("directory")).unwrap();
+    std::fs::write(tree.root_path.join("blob"), b"verified").unwrap();
+    let to = ContainedDir::open_root(&tree.outside).unwrap();
+    for name in ["link", "directory", "missing"] {
+        assert!(
+            tree.root.hard_link(OsStr::new(name), &to, OsStr::new(name)).is_err(),
+            "{name}"
+        );
+        assert!(to.entry_kind(OsStr::new(name)).unwrap().is_none(), "{name} was linked");
+    }
+    // An existing destination, even a dangling link, is never replaced.
+    symlink("/nowhere", tree.outside.join("planted")).unwrap();
+    let error = tree
+        .root
+        .hard_link(OsStr::new("blob"), &to, OsStr::new("planted"))
+        .unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+    assert_eq!(
+        std::fs::read_link(tree.outside.join("planted")).unwrap(),
+        Path::new("/nowhere")
+    );
+    assert!(tree
+        .root
+        .hard_link(OsStr::new("../blob"), &to, OsStr::new("x"))
+        .is_err());
+    assert!(tree
+        .root
+        .hard_link(OsStr::new("blob"), &to, OsStr::new("../x"))
+        .is_err());
+}
+
+#[test]
+fn only_filesystem_limits_count_as_a_link_that_cannot_be_made() {
+    for errno in [
+        Errno::EXDEV,
+        Errno::EPERM,
+        Errno::ENOTSUP,
+        Errno::EOPNOTSUPP,
+        Errno::EMLINK,
+    ] {
+        assert!(is_link_unsupported(&io::Error::from(errno)), "{errno}");
+    }
+    for errno in [Errno::EEXIST, Errno::ENOENT, Errno::EACCES, Errno::ELOOP] {
+        assert!(!is_link_unsupported(&io::Error::from(errno)), "{errno}");
+    }
+}
+
+#[test]
+fn relative_mode_changes_stay_beneath_the_open_root() {
+    let tree = tree();
+    std::fs::create_dir_all(tree.root_path.join("nested/dir")).unwrap();
+    std::fs::write(tree.root_path.join("nested/file"), b"data").unwrap();
+
+    tree.root.set_relative_mode(Path::new("nested/file"), 0o751).unwrap();
+    tree.root.set_relative_mode(Path::new("nested/dir"), 0o710).unwrap();
+
+    assert_eq!(
+        std::fs::metadata(tree.root_path.join("nested/file")).unwrap().mode() & 0o7777,
+        0o751
+    );
+    assert_eq!(
+        std::fs::metadata(tree.root_path.join("nested/dir")).unwrap().mode() & 0o7777,
+        0o710
+    );
+}
+
+#[test]
+fn relative_mode_changes_refuse_links_and_traversal() {
+    let tree = tree();
+    let secret = tree.outside.join("secret");
+    std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o600)).unwrap();
+    symlink(&secret, tree.root_path.join("link")).unwrap();
+    symlink(&tree.outside, tree.root_path.join("dir-link")).unwrap();
+    let _socket = std::os::unix::net::UnixListener::bind(tree.root_path.join("socket")).unwrap();
+
+    for path in [
+        "link",
+        "dir-link/secret",
+        "socket",
+        "../outside/secret",
+        "/tmp/file",
+        "a/../b",
+    ] {
+        assert!(
+            tree.root.set_relative_mode(Path::new(path), 0o777).is_err(),
+            "accepted {path}"
+        );
+    }
+    assert_eq!(std::fs::metadata(secret).unwrap().mode() & 0o7777, 0o600);
 }

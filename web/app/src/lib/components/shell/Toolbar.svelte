@@ -12,15 +12,18 @@
   import DotsThreeVertical from 'phosphor-svelte/lib/DotsThreeVertical';
   import Info from 'phosphor-svelte/lib/Info';
   import GearSix from 'phosphor-svelte/lib/GearSix';
-  import IdentificationCard from 'phosphor-svelte/lib/IdentificationCard';
   import Pause from 'phosphor-svelte/lib/Pause';
   import Terminal from 'phosphor-svelte/lib/Terminal';
   import ChartBar from 'phosphor-svelte/lib/ChartBar';
   import FolderSimple from 'phosphor-svelte/lib/FolderSimple';
   import Scroll from 'phosphor-svelte/lib/Scroll';
   import HardDrives from 'phosphor-svelte/lib/HardDrives';
+  import AppWindow from 'phosphor-svelte/lib/AppWindow';
   import { formatTokens, formatCost } from '../../format';
   import { hasVmAction, startAction, startLabel } from '../../vm-actions';
+  import { sessionActionError } from '../../models/session-action-error';
+  import { getContainerStatus, openSurface } from '../../api';
+  import { hasOpenableSurface, surfaceMayAppear } from '../../models/surface';
 
   let active = $derived(tabStore.active);
   let isVM = $derived(active?.vmId != null);
@@ -47,6 +50,36 @@
     };
   });
 
+  // The active session's app surface, once its workload runs and the service
+  // has exposed it. Asked again only while one may still appear, and again
+  // whenever the session's lifecycle changes.
+  const SURFACE_RECHECK_MS = 3000;
+  let surfaceVmId = $state<string | null>(null);
+  // A primitive, so the 2 s session poll re-runs the check only on a change.
+  let activeVmStatus = $derived(activeVm?.status);
+  $effect(() => {
+    const id = active?.vmId;
+    void activeVmStatus;
+    surfaceVmId = null;
+    if (!id) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const check = async () => {
+      const status = await getContainerStatus(id).catch(() => null);
+      if (stopped) return;
+      if (hasOpenableSurface(status)) {
+        surfaceVmId = id;
+      } else if (surfaceMayAppear(status)) {
+        timer = setTimeout(check, SURFACE_RECHECK_MS);
+      }
+    };
+    void check();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  });
+
   const vmViewButtons: { view: TabView; label: string; icon: typeof Terminal }[] = [
     { view: 'terminal', label: 'Terminal', icon: Terminal },
     { view: 'stats', label: 'Stats', icon: ChartBar },
@@ -63,6 +96,9 @@
   type ModalKind = 'stop' | 'delete' | 'fork' | null;
   let modalKind = $state<ModalKind>(null);
   let modalInput = $state('');
+  let actionError = $state<string | null>(null);
+  let modalVmId = $state<string | null>(null);
+  let modalVmTitle = $state('');
 
   function openModal(kind: ModalKind) {
     menuOpen = false;
@@ -70,6 +106,8 @@
       modalInput = `${active?.title ?? 'vm'}-fork`;
     }
     modalKind = kind;
+    modalVmId = active?.vmId ?? null;
+    modalVmTitle = active?.title ?? activeVm?.name ?? modalVmId ?? '';
   }
 
   // Deep-link actions from the tray dispatch a
@@ -91,27 +129,47 @@
   function closeModal() {
     modalKind = null;
     modalInput = '';
+    modalVmId = null;
+    modalVmTitle = '';
   }
 
   async function handleModalConfirm() {
-    if (!active?.vmId) return;
-    const id = active.vmId;
+    if (!modalVmId) return;
+    const id = modalVmId;
     const kind = modalKind;
     const name = modalInput.trim();
     closeModal();
-    switch (kind) {
-      case 'stop':
-        await vmStore.stop(id);
-        break;
-      case 'delete':
-        await vmStore.delete(id);
-        break;
-      case 'fork': {
-        if (!name) break;
-        const result = await vmStore.fork(id, { name });
-        tabStore.openVM(result.id, result.name);
-        break;
+    try {
+      switch (kind) {
+        case 'stop':
+          await vmStore.stop(id);
+          break;
+        case 'delete': {
+          const tab = tabStore.tabs.find(tab => tab.vmId === id);
+          await vmStore.delete(id);
+          if (tab) tabStore.close(tab.id);
+          break;
+        }
+        case 'fork': {
+          if (!name) break;
+          const result = await vmStore.fork(id, { name });
+          tabStore.openVM(result.id, result.name);
+          break;
+        }
       }
+      actionError = null;
+    } catch (error) {
+      actionError = sessionActionError(error);
+    }
+  }
+
+  async function runAction(action: () => Promise<void>) {
+    menuOpen = false;
+    try {
+      await action();
+      actionError = null;
+    } catch (error) {
+      actionError = sessionActionError(error);
     }
   }
 </script>
@@ -148,7 +206,7 @@
                 type="button"
                 class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
                 disabled={busy}
-                onclick={async () => { if (active?.vmId) { await vmStore.suspend(active.vmId); } menuOpen = false; }}
+                onclick={() => { const id = active?.vmId; if (id) void runAction(() => vmStore.suspend(id)); }}
               >
                 <Pause size={16} />
                 <span>Pause</span>
@@ -171,7 +229,7 @@
                 class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover disabled:opacity-40 disabled:pointer-events-none"
                 disabled={busy}
                 title={startLabel(activeVm)}
-                onclick={async () => { if (activeVm) { await vmStore.resume(activeVm.id); } menuOpen = false; }}
+                onclick={() => { const id = activeVm?.id; if (id) void runAction(() => vmStore.resume(id)); }}
               >
                 <Play size={16} />
                 <span>{startLabel(activeVm)}</span>
@@ -210,14 +268,6 @@
           >
             <HardDrives size={16} />
             <span>Service Logs</span>
-          </button>
-          <button
-            type="button"
-            class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover"
-            onclick={() => { tabStore.openSingleton('profile', 'Profile'); menuOpen = false; }}
-          >
-            <IdentificationCard size={16} />
-            <span>Profile</span>
           </button>
           <button
             type="button"
@@ -273,6 +323,17 @@
         </button>
       {/each}
     </div>
+    {#if surfaceVmId && surfaceVmId === active?.vmId}
+      <button
+        type="button"
+        class="inline-flex items-center gap-x-1 px-2 py-1 text-xs rounded-md bg-primary text-primary-foreground hover:bg-primary-hover"
+        onclick={() => { if (surfaceVmId) openSurface(surfaceVmId).catch(err => console.error('[toolbar] open app failed:', err)); }}
+        title="Open this session's app in your browser"
+      >
+        <AppWindow size={14} />
+        <span class="hidden sm:inline">Open app</span>
+      </button>
+    {/if}
   {/if}
 
   <!-- Center: window name / shell title -->
@@ -293,6 +354,12 @@
 </div>
 
 <!-- Modals -->
+{#if actionError}
+  <div role="alert" class="flex items-center gap-3 border-b border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+    <p class="flex-1 break-words">{actionError}</p>
+    <button type="button" aria-label="Dismiss session action error" onclick={() => actionError = null} class="rounded px-2 py-1 hover:bg-destructive/10">Dismiss</button>
+  </div>
+{/if}
 <Modal
   open={modalKind === 'stop'}
   title="Stop session"
@@ -301,7 +368,7 @@
   onconfirm={handleModalConfirm}
   oncancel={closeModal}
 >
-  <p class="text-sm text-foreground">Stop session <strong>{active?.title}</strong>?</p>
+  <p class="text-sm text-foreground">Stop session <strong>{modalVmTitle}</strong>?</p>
 </Modal>
 
 <Modal
@@ -312,7 +379,7 @@
   onconfirm={handleModalConfirm}
   oncancel={closeModal}
 >
-  <p class="text-sm text-foreground">Delete session <strong>{active?.title}</strong>? This cannot be undone.</p>
+  <p class="text-sm text-foreground">Delete session <strong>{modalVmTitle}</strong>? This cannot be undone.</p>
 </Modal>
 
 <Modal

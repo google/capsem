@@ -12,9 +12,9 @@
 //! on the workspace reqwest (rustls with ring): no gRPC stack and no second
 //! TLS provider come with it.
 //!
-//! Every process that records metrics installs this itself -- the service
-//! and each `capsem-process` -- tagged with its own resource attributes, so
-//! nothing has to relay one process's measurements through another.
+//! Each process installs its own recorder, tagged with its resource
+//! attributes. The service uses the bounded reqwest transport below; a
+//! confined worker can supply a local broker transport instead.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -33,6 +33,11 @@ use opentelemetry_sdk::Resource;
 
 /// How long one export request may take before it is abandoned.
 const EXPORT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// A syntactically valid endpoint used only to let the OTLP encoder construct
+/// requests for a caller-supplied transport. The transport owns delivery and
+/// must not resolve or dial this reserved name.
+const BROKER_REQUEST_ENDPOINT: &str = "http://capsem-metric-broker.invalid/v1/metrics";
 
 /// The environment variables that turn export on without a corp config.
 const OTEL_ENDPOINT_ENV: [&str; 2] = ["OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"];
@@ -140,6 +145,25 @@ pub fn install(
     attributes: Vec<KeyValue>,
 ) -> Result<Exporter, InstallError> {
     let provider = provider(destination, service_name, attributes)?;
+    install_provider(provider)
+}
+
+/// Install OTLP export with a caller-owned HTTP transport.
+///
+/// The exporter still owns protobuf encoding, resource attributes, periodic
+/// collection, and its request deadline. The supplied client owns delivery;
+/// this crate gives it a request addressed to a reserved, non-routable name so
+/// no collector destination crosses into the caller.
+pub fn install_with_http_client(
+    client: impl opentelemetry_http::HttpClient + 'static,
+    service_name: &'static str,
+    attributes: Vec<KeyValue>,
+) -> Result<Exporter, InstallError> {
+    let provider = provider_with_http_client(client, service_name, attributes)?;
+    install_provider(provider)
+}
+
+fn install_provider(provider: SdkMeterProvider) -> Result<Exporter, InstallError> {
     let recorder = OtelRecorder::new(provider.meter("capsem"));
     metrics::set_global_recorder(recorder).map_err(|_| InstallError::RecorderAlreadySet)?;
     crate::describe_all();
@@ -159,6 +183,27 @@ fn provider(
     if let Destination::Corp(base) = destination {
         builder = builder.with_endpoint(format!("{base}/v1/metrics"));
     }
+    build_provider(builder, service_name, attributes)
+}
+
+fn provider_with_http_client(
+    client: impl opentelemetry_http::HttpClient + 'static,
+    service_name: &'static str,
+    attributes: Vec<KeyValue>,
+) -> Result<SdkMeterProvider, InstallError> {
+    let builder = opentelemetry_otlp::MetricExporter::builder()
+        .with_http()
+        .with_http_client(client)
+        .with_timeout(EXPORT_TIMEOUT)
+        .with_endpoint(BROKER_REQUEST_ENDPOINT);
+    build_provider(builder, service_name, attributes)
+}
+
+fn build_provider(
+    builder: opentelemetry_otlp::MetricExporterBuilder<opentelemetry_otlp::HttpExporterBuilderSet>,
+    service_name: &'static str,
+    attributes: Vec<KeyValue>,
+) -> Result<SdkMeterProvider, InstallError> {
     let exporter = builder
         .build()
         .map_err(|error| InstallError::Build(error.to_string()))?;

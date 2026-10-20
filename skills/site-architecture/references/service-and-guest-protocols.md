@@ -10,7 +10,7 @@ or any guest agent binary.
 
 ```
 AI Agent  -> @capsem/mcp (stdio) -> authenticated gateway HTTP -> capsem-service
-User      -> capsem CLI          -> HTTP/UDS -> capsem-service
+User      -> capsem CLI (SDK)    -> authenticated gateway HTTP -> capsem-service
 Frontend  -> capsem-gateway (TCP)-> HTTP/UDS -> capsem-service
 Tray app  -> capsem-gateway (TCP)-> HTTP/UDS -> capsem-service
                                                      |
@@ -25,12 +25,14 @@ Tray app  -> capsem-gateway (TCP)-> HTTP/UDS -> capsem-service
 ```
 
 **Entry points for exec:**
-- `capsem exec <id> "cmd"` -> service HTTP `/exec/{id}` -> process IPC -> vsock
-- `capsem run "cmd"` -> service HTTP `/run` -> provision + exec + destroy
+- `capsem exec <id> "cmd"` -> authenticated gateway `/vms/{id}/exec` -> service -> process IPC -> vsock
+- `capsem run "cmd"` -> authenticated gateway `/run` -> service -> provision + exec + destroy
 - MCP `capsem_exec` / `capsem_run` -> authenticated gateway HTTP -> same service path
 
 **Entry point for interactive shell:**
-- `capsem shell [id]` -> UDS IPC directly to capsem-process -> `StartTerminalStream` -> vsock:5001
+- `capsem shell [id]` -> capsem-tui -> authenticated gateway HTTP -> service
+  `/vms/{id}/stream` -> owner IPC `StartTerminalStream` -> vsock:5001.
+  The CLI and TUI attach through the service stream; they do not dial a VM owner socket.
 
 ### IPC protocols
 
@@ -38,10 +40,18 @@ Tray app  -> capsem-gateway (TCP)-> HTTP/UDS -> capsem-service
 |-------|----------|--------|
 | Frontend/Tray -> gateway | HTTP/1.1 over TCP | `127.0.0.1:19222` (Bearer token auth) |
 | Gateway -> service | HTTP/1.1 over UDS | `~/.capsem/run/service.sock` |
-| CLI -> service | HTTP/1.1 over UDS | `~/.capsem/run/service.sock` |
+| CLI -> gateway | Rust SDK HTTP/WebSocket over TCP | runtime gateway URL and Bearer token |
+| CLI local administration -> service | HTTP/1.1 over UDS | status/asset reads and startup only |
 | SDK/npm MCP -> gateway | HTTP/1.1 over TCP | explicit gateway URL (Bearer token auth) |
 | Service -> process | bincode over UDS (after a MessagePack Hello) | `~/.capsem/run/instances/{id}.sock` |
 | Process -> guest agent | Binary frames over vsock | ports 5000 (control), 5001 (terminal), 5004 (lifecycle), 5005 (exec) |
+
+The CLI discovers the local gateway from `gateway.port` and `gateway.token`
+beside its administration socket. `CAPSEM_GATEWAY_URL` and
+`CAPSEM_GATEWAY_TOKEN` explicitly select a gateway; remote endpoints require
+an explicit token. Missing or invalid credentials fail closed. SDK transport
+owns URL encoding, finite request deadlines, HTTP errors and streaming; it
+never replays a failed mutation through the service socket.
 
 ### Service HTTP API
 
@@ -58,9 +68,9 @@ surface requires explicit product/API approval.
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| POST | `/vms/create` | Create a session from a profile |
-| GET | `/vms/list` | List sessions and profile/status metadata |
-| GET | `/vms/{id}/info` | Session identity, profile, config, and diagnostics |
+| POST | `/vms/create` | Create a session from the one runtime, sized by request flags |
+| GET | `/vms/list` | List sessions and status metadata |
+| GET | `/vms/{id}/info` | Session identity, config, and diagnostics |
 | GET | `/vms/{id}/status` | Hot in-memory runtime state and counters |
 | POST | `/vms/{id}/exec` | Execute command, return stdout/stderr/exit_code |
 | POST | `/run` | One-shot create + exec + destroy through the same service path |
@@ -80,7 +90,7 @@ surface requires explicit product/API approval.
 
 MCP tools include `capsem_create`, `capsem_list`, `capsem_info`, `capsem_exec`,
 `capsem_run`, lifecycle tools, file read/write, logs, timeline, triage,
-status, fork, private networks, and profile MCP tools. Raw SQL inspection tools are not part of
+status, fork, private networks, and MCP server tools (`capsem_mcp_*`). Raw SQL inspection tools are not part of
 the product surface; telemetry access must use typed routes.
 
 ## Host-guest communication

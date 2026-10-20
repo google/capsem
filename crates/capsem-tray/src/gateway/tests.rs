@@ -70,8 +70,8 @@ fn deserialize_status_response() {
             "service": "running",
             "vm_count": 2,
             "vms": [
-                {"id": "abc123", "name": "dev", "status": "running", "persistent": true},
-                {"id": "def456", "name": null, "status": "stopped", "persistent": false}
+                {"id": "abc123", "name": "dev", "status": "running", "persistent": true, "available_actions": ["pause", "stop", "fork", "delete"]},
+                {"id": "def456", "name": null, "status": "stopped", "persistent": false, "available_actions": ["delete"]}
             ]
         }"#;
     let resp: StatusResponse = serde_json::from_str(json).unwrap();
@@ -111,6 +111,7 @@ fn deserialize_vm_extra_fields_ignored() {
             "name": "test",
             "status": "running",
             "persistent": true,
+            "available_actions": ["delete"],
             "ram_mb": 512,
             "cpus": 4
         }"#;
@@ -192,12 +193,13 @@ async fn spawn_http_probe(
     match_method: &'static str,
     match_path: &'static str,
     status: u16,
-    body: &'static str,
+    body: &str,
 ) -> (String, Arc<Mutex<Vec<String>>>, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let captures: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let captures_clone = Arc::clone(&captures);
+    let body = body.to_owned();
 
     let handle = tokio::spawn(async move {
         // Serve a single connection.
@@ -212,7 +214,7 @@ async fn spawn_http_probe(
             let first_line = req.lines().next().unwrap_or("");
             let matches = first_line.starts_with(&format!("{match_method} {match_path} "));
             let (code, reason, resp_body) = if matches {
-                (status, if status == 200 { "OK" } else { "NO" }, body)
+                (status, if status == 200 { "OK" } else { "NO" }, body.as_str())
             } else {
                 (500, "ERR", "mismatch")
             };
@@ -296,8 +298,7 @@ fn captured_auth(captures: &Arc<Mutex<Vec<String>>>) -> Option<String> {
 
 #[tokio::test]
 async fn status_parses_and_measures_latency() {
-    let body =
-        r#"{"service":"running","vm_count":1,"vms":[{"id":"abc","name":"dev","status":"running","persistent":true}]}"#;
+    let body = r#"{"service":"running","vm_count":1,"vms":[{"id":"abc","name":"dev","status":"running","persistent":true,"available_actions":["delete"]}]}"#;
     let (base, captures, handle) = spawn_http_probe("GET", "/status", 200, body).await;
     let client = GatewayClient::new_with_base_url(base, "tok".into());
     let status = client.status().await.unwrap();
@@ -330,14 +331,7 @@ async fn status_attaches_update_status_when_available() {
             },
             "assets": {
                 "current": "assets-1",
-                "latest": "assets-1",
-                "update_available": false,
-                "state": "current",
-                "compatibility": "compatible"
-            },
-            "profiles": {
-                "current": "profiles-2030.0101.0",
-                "latest": "profiles-2030.0101.1",
+                "latest": "assets-2",
                 "update_available": false,
                 "state": "current",
                 "blocked_reason": "requires binary 1.4.1 or newer",
@@ -363,7 +357,7 @@ async fn status_attaches_update_status_when_available() {
     assert!(updates.binary.update_available);
     assert_eq!(updates.binary.latest.as_deref(), Some("1.4.1"));
     assert_eq!(
-        updates.profiles.blocked_reason.as_deref(),
+        updates.assets.blocked_reason.as_deref(),
         Some("requires binary 1.4.1 or newer")
     );
     assert_eq!(status.update_error, None);
@@ -419,6 +413,44 @@ async fn resume_vm_sends_post() {
     client.resume_vm("vm-42").await.unwrap();
     handle.await.unwrap();
     assert!(captures.lock().unwrap()[0].starts_with("POST /vms/vm-42/resume "));
+}
+
+#[tokio::test]
+async fn start_vm_uses_advertised_start_endpoint_and_gateway_auth() {
+    let (base, captures, handle) = spawn_http_probe("POST", "/vms/opaque-id/start", 200, "{}").await;
+    let client = GatewayClient::new_with_base_url(base, "fixture-token".into());
+    client.start_vm("opaque-id").await.unwrap();
+    handle.await.unwrap();
+    assert!(captures.lock().unwrap()[0].starts_with("POST /vms/opaque-id/start "));
+    assert_eq!(captured_auth(&captures).as_deref(), Some("Bearer fixture-token"));
+}
+
+#[tokio::test]
+async fn refused_action_keeps_readable_error_but_redacts_gateway_credentials() {
+    let body = r#"{"error":"Checkpoint incompatible; token fixture-secret must not appear"}"#;
+    let (base, _, handle) = spawn_http_probe("POST", "/vms/box/resume", 409, body).await;
+    let client = GatewayClient::new_with_base_url(base, "fixture-secret".into());
+    let error = client.resume_vm("box").await.unwrap_err().to_string();
+    handle.await.unwrap();
+    assert!(error.contains("409") && error.contains("Checkpoint incompatible"));
+    assert!(!error.contains("fixture-secret"));
+}
+
+#[tokio::test]
+async fn oversized_error_body_is_not_rendered_as_action_feedback() {
+    let body = serde_json::json!({"error": "x".repeat(8192)}).to_string();
+    let (base, _, handle) = spawn_http_probe("POST", "/vms/box/stop", 500, &body).await;
+    let client = GatewayClient::new_with_base_url(base, "fixture-secret".into());
+    let error = client.stop_vm("box").await.unwrap_err().to_string();
+    handle.await.unwrap();
+    assert!(error.contains("500"));
+    assert!(error.len() < 100);
+}
+
+#[test]
+fn missing_lifecycle_authority_is_refused_instead_of_guessed() {
+    let vm = r#"{"id":"opaque-id","name":null,"status":"Running","persistent":false}"#;
+    assert!(serde_json::from_str::<VmSummary>(vm).is_err());
 }
 
 #[tokio::test]

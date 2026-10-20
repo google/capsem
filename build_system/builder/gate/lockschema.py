@@ -32,9 +32,17 @@ class BoundedLeaseConfig(Strict):
     """Which direct commands are machine work, and so take the gate's lock."""
 
     programs: tuple[str, ...]
+    command_prefixes: tuple[tuple[str, ...], ...]
     wrappers: tuple[str, ...]
     exempt_subcommands: tuple[str, ...]
     wait_exit_code: int
+
+    @field_validator("command_prefixes")
+    @classmethod
+    def _nonempty_prefixes(cls, value: tuple[tuple[str, ...], ...]) -> tuple[tuple[str, ...], ...]:
+        if any(not prefix or any(not token for token in prefix) for prefix in value):
+            raise ValueError("machine-work command prefixes must contain nonempty tokens")
+        return value
 
 
 class LocksConfig(Strict):

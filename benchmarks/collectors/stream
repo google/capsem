@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests"))
 sys.path.insert(0, str(ROOT))
 
-from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.gateway import GatewayInstance
 from helpers.service import ServiceInstance, wait_exec_ready
 from websockets.sync.client import ClientConnection, connect
@@ -171,7 +171,7 @@ def main() -> int:
         client = service.client()
         name = f"bench-stream-{uuid.uuid4().hex[:8]}"
         created = client.post(
-            "/vms/create", {"name": name, "profile_id": CODE_PROFILE_ID, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS}
+            "/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS}
         )
         # The stream route addresses a VM by the id create returns, not its name.
         vm = str((created or {}).get("id") or "")

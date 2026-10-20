@@ -23,6 +23,8 @@ from contextlib import contextmanager, suppress
 from pathlib import Path
 
 import pytest
+from capsem_builder.cache.config import load_paths
+from helpers.bounded import bounded
 
 
 def pytest_configure(config):
@@ -137,14 +139,16 @@ def fresh_capsem_binary() -> Path:
         binary.stat().st_mtime >= path.stat().st_mtime for path in source_paths
     ):
         return binary
+    # A selected prebuilt directory can be consumed above, but source builds
+    # belong to the same shared Cargo cache the bounded launcher selects.
+    binary = load_paths(repo_root).stage("cargo") / "debug" / "capsem"
     result = subprocess.run(
-        ["cargo", "build", "--locked", "-p", "capsem", "--bin", "capsem"],
+        bounded(["cargo", "build", "--locked", "-p", "capsem", "--bin", "capsem"], 120),
         cwd=repo_root,
         check=False,
         capture_output=True,
         text=True,
-        timeout=120,
-        env={**os.environ, "CARGO_TARGET_DIR": str(bin_src.parent)},
+        env=dict(os.environ),
     )
     assert result.returncode == 0, (
         f"cargo build of current-source capsem failed\n"
@@ -311,7 +315,6 @@ def _ensure_installed() -> None:
 
     bin_src = os.environ.get("CAPSEM_BIN_SRC", "cache/target/cargo/debug")
     assets_src = os.environ.get("CAPSEM_ASSETS_SRC", "assets")
-    config_src = os.environ.get("CAPSEM_CONFIG_SRC", "cache/target/config")
     script = (
         Path(__file__).parent.parent.parent
         / "build_system"
@@ -321,7 +324,7 @@ def _ensure_installed() -> None:
     )
     assert script.exists(), f"simulate-install.sh not found at {script}"
     result = subprocess.run(
-        ["bash", str(script), bin_src, assets_src, config_src],
+        ["bash", str(script), bin_src, assets_src],
         capture_output=True,
         text=True,
         timeout=60,

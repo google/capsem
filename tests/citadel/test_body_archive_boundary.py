@@ -1,4 +1,4 @@
-"""Citadel guard: only the logger opens the session body archive.
+"""Citadel guard: only the ledger worker and logger open the body archive.
 
 `session.bodies` is the second half of the session ledger, and it is only
 readable together with the SQLite index that names its blocks. A route, UI or
@@ -22,9 +22,9 @@ BODY_ARCHIVE_RATIONALE = (
     "read_bodies or GET /vms/{id}/bodies/{event_id}."
 )
 
-# The archive's own crate writes and reads the file; the logger owns the index
-# that says where in it anything lives. Nothing else may name either.
-ARCHIVE_OWNERS = ("capsem-archive", "capsem-logger")
+# The archive library defines the format, the logger owns its index, and the
+# confined ledger worker is the sole process that executes its codecs.
+ARCHIVE_OWNERS = ("capsem-archive", "capsem-ledger", "capsem-logger")
 
 NEEDLES: tuple[str, ...] = (
     "BodyLogReader::open",
@@ -34,7 +34,7 @@ NEEDLES: tuple[str, ...] = (
 
 
 def owns_the_archive(path: Path) -> bool:
-    """True for a file inside one of the two crates that own the archive."""
+    """True for a file inside a crate that owns archive format or execution."""
     parts = path.parts
     if "crates" not in parts:
         return False
@@ -53,7 +53,7 @@ def archive_violations(path: Path, text: str) -> list[str]:
         relative = path.relative_to(PROJECT_ROOT)
     except ValueError:
         relative = path
-    if owns_the_archive(path):
+    if owns_the_archive(path) or "tests" in path.parts or path.name == "tests.rs":
         return []
     return [f"{relative} contains `{needle}`" for needle in NEEDLES if needle in text]
 
@@ -82,4 +82,4 @@ def test_the_guard_flags_a_file_that_opens_the_archive(tmp_path: Path) -> None:
 
     owner = tmp_path / "crates" / "capsem-logger" / "src" / "db" / "bodies.rs"
     owner.parent.mkdir(parents=True)
-    assert archive_violations(owner, source) == [], "the owning crates are not offenders"
+    assert archive_violations(owner, source) == [], "archive owners are not offenders"

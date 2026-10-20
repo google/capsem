@@ -1,4 +1,5 @@
 use super::*;
+use capsem_proto::ipc::ExecTarget;
 use std::time::Duration;
 
 #[tokio::test]
@@ -10,16 +11,18 @@ async fn owner_cancellation_releases_stream_registration_and_pending_ack() {
     let registration = install(11, true, &jobs, &output);
     let task = tokio::spawn(run(
         11,
-        "sleep 100".into(),
+        ("sleep 100".into(), ExecTarget::Workload),
         jobs.clone(),
         control.clone(),
         output,
         db,
         registration,
     ));
+    // Forwarded as the caller wrote it: the control bridge records it in the
+    // ledger before it wraps it for the workload.
     assert!(matches!(
         commands.recv().await,
-        Some(ServiceToProcess::Exec { id: 11, .. })
+        Some(ServiceToProcess::Exec { id: 11, command, target: ExecTarget::Workload }) if command == "sleep 100"
     ));
     jobs.pending_acks.lock().unwrap().insert(
         11,
@@ -63,7 +66,16 @@ async fn failed_dispatch_returns_error_and_removes_registration() {
     let (output, mut consumer) = mpsc::channel(1);
     drop(commands);
     let registration = install(12, true, &jobs, &output);
-    run(12, "true".into(), jobs.clone(), control, output, db, registration).await;
+    run(
+        12,
+        ("true".into(), ExecTarget::Vm),
+        jobs.clone(),
+        control,
+        output,
+        db,
+        registration,
+    )
+    .await;
     assert!(matches!(consumer.recv().await, Some(ProcessToService::ExecResult {
         id: 12, exit_code: -1, stderr, ..
     }) if stderr == b"guest control channel closed"));
@@ -82,7 +94,16 @@ async fn duplicate_id_does_not_replace_original_job_or_dispatch_again() {
     let (output, mut consumer) = mpsc::channel(1);
     let registration = install(13, true, &jobs, &output);
     assert!(registration.is_none(), "a duplicate id must not be registered again");
-    run(13, "true".into(), jobs.clone(), control, output, db, registration).await;
+    run(
+        13,
+        ("true".into(), ExecTarget::Vm),
+        jobs.clone(),
+        control,
+        output,
+        db,
+        registration,
+    )
+    .await;
     assert!(matches!(consumer.recv().await, Some(ProcessToService::ExecResult {
         id: 13, exit_code: -1, stderr, ..
     }) if stderr == b"exec id is already in use"));

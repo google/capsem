@@ -1,6 +1,197 @@
 use super::*;
 
 mod limits;
+mod responses;
+mod websocket;
+
+#[test]
+fn claude_startup_host_resolves_in_both_fixture_modes() {
+    for (mode, address) in [
+        (DnsAnswers::Loopback, [127, 0, 0, 1]),
+        (DnsAnswers::Routable, [198, 51, 100, 10]),
+    ] {
+        let answer = dns_response_for(&test_dns_query("platform.claude.com", 123), mode).unwrap();
+        assert_eq!(answer[3] & 0x0F, 0);
+        assert_eq!(&answer[answer.len() - 4..], &address);
+        let unknown = dns_response_for(&test_dns_query("unknown.claude.com", 123), mode).unwrap();
+        assert_eq!(unknown[3] & 0x0F, 3);
+    }
+}
+
+#[tokio::test]
+async fn anthropic_cli_connectivity_probe_succeeds_without_broad_get_fallback() {
+    for method in [Method::HEAD, Method::GET] {
+        let (status, _, body) = routed(method.clone(), "/api/hello", None, HeaderMap::new(), json!({})).await;
+        assert_eq!(status, StatusCode::OK);
+        if method == Method::HEAD {
+            assert!(body.is_empty());
+        } else {
+            assert_eq!(body, "capsem-mock-server:anthropic-ready\n");
+        }
+    }
+    let (status, _, body) = routed(Method::GET, "/v1/oauth/hello", None, HeaderMap::new(), json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, "capsem-mock-server:anthropic-ready\n");
+    let (status, _, _) = routed(Method::GET, "/api/unknown", None, HeaderMap::new(), json!({})).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+fn mcp_proof_payload(stream: bool) -> Value {
+    json!({
+        "model": "claude-fixture", "stream": stream,
+        "messages": [{"role": "user", "content": "CAPSEM_MCP_PROOF=0123456789abcdef0123456789abcdef. Call the Capsem echo tool."}],
+        "tools": [{"name": "mcp__capsem__local__echo", "input_schema": {
+            "type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]
+        }}]
+    })
+}
+
+#[tokio::test]
+async fn anthropic_mcp_proof_asks_for_the_declared_tool_in_both_protocol_forms() {
+    for stream in [false, true] {
+        let (status, _, body) = routed(
+            Method::POST,
+            "/v1/messages",
+            None,
+            HeaderMap::new(),
+            mcp_proof_payload(stream),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let text = String::from_utf8(body.to_vec()).unwrap();
+        assert!(text.contains("mcp__capsem__local__echo"), "{text}");
+        assert!(text.contains("0123456789abcdef0123456789abcdef"), "{text}");
+        assert!(!text.contains("Bash") && !text.contains("exec_command"), "{text}");
+    }
+}
+
+#[tokio::test]
+async fn anthropic_mcp_proof_refuses_an_undeclared_tool_instead_of_faking_echo() {
+    let mut payload = mcp_proof_payload(false);
+    payload["tools"] = json!([]);
+    let (status, _, body) = routed(Method::POST, "/v1/messages", None, HeaderMap::new(), payload).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{}", String::from_utf8_lossy(&body));
+}
+
+#[tokio::test]
+async fn anthropic_mcp_proof_requires_the_matching_successful_echo_result() {
+    for (id, text, is_error) in [
+        ("toolu_capsem_mcp_echo", "wrong echo", false),
+        ("other_call", "0123456789abcdef0123456789abcdef", false),
+        ("toolu_capsem_mcp_echo", "0123456789abcdef0123456789abcdef", true),
+    ] {
+        let mut payload = mcp_proof_payload(false);
+        payload["messages"].as_array_mut().unwrap().push(json!({
+            "role": "user", "content": [{"type": "tool_result", "tool_use_id": id,
+            "content": [{"type": "text", "text": text}], "is_error": is_error}]
+        }));
+        let (status, _, body) = routed(Method::POST, "/v1/messages", None, HeaderMap::new(), payload).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{}", String::from_utf8_lossy(&body));
+    }
+}
+
+#[tokio::test]
+async fn anthropic_mcp_proof_finishes_only_after_the_exact_echo_result() {
+    for stream in [false, true] {
+        let mut payload = mcp_proof_payload(stream);
+        payload["messages"].as_array_mut().unwrap().push(json!({
+            "role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_capsem_mcp_echo",
+            "content": [{"type": "text", "text": "0123456789abcdef0123456789abcdef"}]}]
+        }));
+        let (status, _, body) = routed(Method::POST, "/v1/messages", None, HeaderMap::new(), payload).await;
+        assert_eq!(status, StatusCode::OK);
+        let body = String::from_utf8(body.to_vec()).unwrap();
+        assert!(
+            body.contains("end_turn") && body.contains("0123456789abcdef0123456789abcdef"),
+            "{body}"
+        );
+        assert!(!body.contains("tool_use\""), "{body}");
+    }
+}
+
+#[tokio::test]
+async fn anthropic_mcp_proof_accepts_user_text_blocks_without_reading_tool_metadata() {
+    let mut payload = mcp_proof_payload(false);
+    let prompt = payload["messages"][0]["content"].take();
+    payload["messages"][0]["content"] = json!([{"type": "text", "text": prompt}]);
+    let body = routed_json(Method::POST, "/v1/messages", payload).await;
+    assert_eq!(body["content"][0]["name"], "mcp__capsem__local__echo");
+    assert_eq!(
+        body["content"][0]["input"],
+        json!({"text": "0123456789abcdef0123456789abcdef"})
+    );
+}
+
+#[tokio::test]
+async fn anthropic_mcp_proof_loads_a_declared_deferred_echo_before_calling_it() {
+    let mut payload = mcp_proof_payload(false);
+    payload["tools"] = json!([{"name": "ToolSearch"}]);
+    payload["messages"].as_array_mut().unwrap().push(json!({
+        "role": "system", "content": "Deferred tools available via ToolSearch: mcp__capsem__local__echo"
+    }));
+    let body = routed_json(Method::POST, "/v1/messages", payload.clone()).await;
+    assert_eq!(body["content"][0]["name"], "ToolSearch");
+    assert_eq!(
+        body["content"][0]["input"],
+        json!({"query": "select:mcp__capsem__local__echo", "max_results": 1})
+    );
+    let schema = json!({"name": "mcp__capsem__local__echo", "parameters": {
+        "type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]
+    }});
+    payload["messages"].as_array_mut().unwrap().push(json!({
+        "role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_capsem_mcp_discover",
+            "content": [{"type": "text", "text": format!("<functions><function>{schema}</function></functions>")}]}]
+    }));
+    let body = routed_json(Method::POST, "/v1/messages", payload).await;
+    assert_eq!(body["content"][0]["name"], "mcp__capsem__local__echo");
+}
+
+#[tokio::test]
+async fn anthropic_mcp_proof_does_not_confuse_a_background_title_with_a_tool_turn() {
+    let mut payload = mcp_proof_payload(false);
+    payload.as_object_mut().unwrap().remove("tools");
+    let body = routed_json(Method::POST, "/v1/messages", payload).await;
+    assert_ne!(body["content"][0]["name"], "mcp__capsem__local__echo");
+    let mut payload = mcp_proof_payload(false);
+    payload["tools"] = json!([]);
+    payload["messages"][0]["content"] = json!(format!(
+        "<session>\n{}\n</session>\nWrite a title.",
+        payload["messages"][0]["content"].as_str().unwrap()
+    ));
+    let body = routed_json(Method::POST, "/v1/messages", payload).await;
+    assert_ne!(body["content"][0]["name"], "mcp__capsem__local__echo");
+}
+
+#[tokio::test]
+async fn anthropic_mcp_proof_refuses_missing_and_failed_deferred_discovery() {
+    let mut payload = mcp_proof_payload(false);
+    payload["tools"] = json!([{"name": "ToolSearch"}]);
+    let (status, _, _) = routed(Method::POST, "/v1/messages", None, HeaderMap::new(), payload.clone()).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    payload["messages"].as_array_mut().unwrap().push(json!({
+        "role": "system", "content": "Deferred tools: mcp__capsem__local__echo"
+    }));
+    payload["messages"].as_array_mut().unwrap().push(json!({
+        "role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_capsem_mcp_discover",
+            "is_error": true, "content": [{"type": "text", "text": "Tool not found"}]}]
+    }));
+    let (status, _, _) = routed(Method::POST, "/v1/messages", None, HeaderMap::new(), payload).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn anthropic_mcp_proof_accepts_a_tool_reference_only_with_its_loaded_schema() {
+    let mut payload = mcp_proof_payload(false);
+    payload["messages"].as_array_mut().unwrap().push(json!({
+        "role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_capsem_mcp_discover",
+        "content": [{"type": "tool_reference", "tool_name": "mcp__capsem__local__echo"}]}]
+    }));
+    let body = routed_json(Method::POST, "/v1/messages", payload.clone()).await;
+    assert_eq!(body["content"][0]["name"], "mcp__capsem__local__echo");
+    payload["tools"] = json!([{"name": "ToolSearch"}]);
+    let (status, _, _) = routed(Method::POST, "/v1/messages", None, HeaderMap::new(), payload).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
 
 async fn routed(
     method: Method,
@@ -75,14 +266,50 @@ fn dns_fixture_answers_known_names_and_rejects_unknown() {
 }
 
 #[test]
+fn routable_dns_answers_every_fixture_with_an_address_a_container_can_route() {
+    for name in DNS_FIXTURES {
+        let query = test_dns_query(name, 0xABCD);
+        let response = dns_response_for(&query, DnsAnswers::Routable).expect("dns response");
+        assert_eq!(response[3] & 0x0F, 0, "{name}");
+        assert_eq!(&response[response.len() - 4..], &[198, 51, 100, 10], "{name}");
+    }
+    let query = test_dns_query("unknown.capsem.invalid", 0xBEEF);
+    let response = dns_response_for(&query, DnsAnswers::Routable).expect("dns response");
+    assert_eq!(response[3] & 0x0F, 3, "routable mode still refuses unknown names");
+
+    let query = test_dns_query("ollama.capsem.test", 0x0111);
+    let response = dns_response(&query).expect("dns response");
+    assert_eq!(
+        &response[response.len() - 4..],
+        &[127, 0, 0, 1],
+        "the default stays loopback"
+    );
+}
+
+#[test]
+fn dns_answers_are_loopback_unless_routable_is_asked_for() {
+    let default = Args::try_parse_from(["capsem-mock-server"]).expect("default arguments");
+    assert_eq!(default.dns_answers, DnsAnswers::Loopback);
+    let routable =
+        Args::try_parse_from(["capsem-mock-server", "--dns-answers", "routable"]).expect("routable arguments");
+    assert_eq!(routable.dns_answers, DnsAnswers::Routable);
+    assert_eq!(DnsAnswers::Loopback.provider_answer(), "127.0.0.1");
+    assert_eq!(DnsAnswers::Routable.provider_answer(), "198.51.100.10");
+}
+
+#[test]
 fn websocket_accept_matches_rfc_fixture() {
     assert_eq!(
-        websocket_accept("dGhlIHNhbXBsZSBub25jZQ=="),
+        crate::websocket::accept("dGhlIHNhbXBsZSBub25jZQ=="),
         "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
     );
 }
 
 fn test_dns_query(name: &str, id: u16) -> Vec<u8> {
+    test_dns_query_of_type(name, id, 1)
+}
+
+fn test_dns_query_of_type(name: &str, id: u16, qtype: u16) -> Vec<u8> {
     let mut query = Vec::new();
     query.extend_from_slice(&id.to_be_bytes());
     query.extend_from_slice(&[0x01, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0]);
@@ -90,8 +317,35 @@ fn test_dns_query(name: &str, id: u16) -> Vec<u8> {
         query.push(u8::try_from(part.len()).expect("label fits"));
         query.extend_from_slice(part.as_bytes());
     }
-    query.extend_from_slice(&[0, 0, 1, 0, 1]);
+    query.push(0);
+    query.extend_from_slice(&qtype.to_be_bytes());
+    query.extend_from_slice(&[0, 1]);
     query
+}
+
+#[test]
+fn a_fixture_name_has_no_record_of_any_type_but_a() {
+    // The fixtures are IPv4 addresses. Answering AAAA (or HTTPS, TXT, ...)
+    // with an A record is a malformed answer a resolver may take as the
+    // address; the honest answer is NOERROR with no records.
+    for answers in [DnsAnswers::Loopback, DnsAnswers::Routable] {
+        for qtype in [28_u16, 65, 16, 33] {
+            let query = test_dns_query_of_type("api.openai.com", 0x2828, qtype);
+            let response = dns_response_for(&query, answers).expect("dns response");
+            assert_eq!(&response[..2], b"\x28\x28");
+            assert_eq!(response[3] & 0x0F, 0, "qtype {qtype}: a known name is not NXDOMAIN");
+            assert_eq!(&response[4..6], &[0, 1], "qtype {qtype}: the question is echoed");
+            assert_eq!(&response[6..8], &[0, 0], "qtype {qtype}: no answer records");
+            assert_eq!(response.len(), query.len(), "qtype {qtype}: nothing after the question");
+        }
+        let query = test_dns_query_of_type("unknown.capsem.invalid", 0x2829, 28);
+        let response = dns_response_for(&query, answers).expect("dns response");
+        assert_eq!(response[3] & 0x0F, 3, "an unknown name stays NXDOMAIN for AAAA too");
+    }
+    let query = test_dns_query_of_type("api.openai.com", 0x0001, 1);
+    let response = dns_response(&query).expect("dns response");
+    assert_eq!(&response[6..8], &[0, 1], "A still answers");
+    assert_eq!(&response[response.len() - 4..], &[127, 0, 0, 1]);
 }
 
 // ── Request-parsing helpers ────────────────────────────────────────
@@ -192,32 +446,58 @@ fn hex32_scan_handles_non_ascii_without_panicking() {
 }
 
 #[test]
-fn root_txt_path_is_extracted_and_stops_at_the_first_disallowed_character() {
+fn target_txt_path_is_extracted_and_stops_at_the_first_disallowed_character() {
     assert_eq!(
-        find_root_txt_path(r#"{"cmd":"cat /root/out.txt"}"#).as_deref(),
+        find_target_txt_path(r#"{"cmd":"cat /root/out.txt"}"#).as_deref(),
         Some("/root/out.txt")
     );
     assert_eq!(
-        find_root_txt_path("/root/nested/dir/file.txt and more").as_deref(),
+        find_target_txt_path("/root/nested/dir/file.txt and more").as_deref(),
         Some("/root/nested/dir/file.txt")
     );
 }
 
 #[test]
-fn root_txt_path_ignores_candidates_without_a_txt_suffix() {
-    assert_eq!(find_root_txt_path("/root/binary.bin"), None);
-    assert_eq!(find_root_txt_path("no path here"), None);
-    assert_eq!(find_root_txt_path(""), None);
+fn target_txt_path_ignores_candidates_without_a_txt_suffix() {
+    assert_eq!(find_target_txt_path("/root/binary.bin"), None);
+    assert_eq!(find_target_txt_path("no path here"), None);
+    assert_eq!(find_target_txt_path(""), None);
 }
 
 #[test]
-fn root_txt_path_takes_the_last_candidate_when_several_appear() {
+fn target_txt_path_takes_the_last_candidate_when_several_appear() {
     // `.last()` is load-bearing: a payload that mentions an earlier path in
     // prose must not beat the one the command actually writes.
     assert_eq!(
-        find_root_txt_path("first /root/a.txt then /root/b.txt").as_deref(),
+        find_target_txt_path("first /root/a.txt then /root/b.txt").as_deref(),
         Some("/root/b.txt")
     );
+}
+
+#[test]
+fn target_txt_path_is_found_under_a_workload_workspace_too() {
+    // A container workload writes under its workspace; its root is read-only.
+    assert_eq!(
+        find_target_txt_path(r#"{"cmd":"printf x > /workspace/out.txt"}"#).as_deref(),
+        Some("/workspace/out.txt")
+    );
+    assert_eq!(
+        find_target_txt_path("first /workspace/a.txt then /root/b.txt").as_deref(),
+        Some("/root/b.txt"),
+        "the last path written wins, whichever root it is under"
+    );
+    assert_eq!(
+        find_target_txt_path("first /root/a.txt then /workspace/b.txt").as_deref(),
+        Some("/workspace/b.txt")
+    );
+    assert_eq!(find_target_txt_path("/home/capsem/out.txt"), None);
+}
+
+#[test]
+fn a_tool_runs_in_the_directory_of_the_file_it_writes() {
+    assert_eq!(target_dir("/workspace/agy-1.txt"), "/workspace");
+    assert_eq!(target_dir("/root/agy-1.txt"), "/root");
+    assert_eq!(target_dir("/workspace/nested/x.txt"), "/workspace/nested");
 }
 
 #[test]
@@ -340,6 +620,68 @@ async fn provider_stream_routes_emit_protocol_terminators() {
         assert!(String::from_utf8_lossy(&bytes).contains(marker), "{path}: {bytes:?}");
         assert!(headers[CONTENT_TYPE].to_str().unwrap().contains("event-stream"));
     }
+}
+
+#[tokio::test]
+async fn responses_stream_json_escapes_multiline_output() {
+    let (_, _, bytes) = routed(
+        Method::POST,
+        "/v1/responses",
+        None,
+        HeaderMap::new(),
+        json!({
+            "model": "gpt-fixture",
+            "stream": true,
+            "input": [{
+                "type": "function_call_output",
+                "call_id": "call_fixture",
+                "output": "line one\nline two"
+            }]
+        }),
+    )
+    .await;
+    let stream = String::from_utf8(bytes.to_vec()).unwrap();
+    let payloads = stream
+        .lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+        .map(|data| serde_json::from_str::<Value>(data).expect("every SSE data field is JSON"))
+        .collect::<Vec<_>>();
+
+    assert!(payloads.iter().any(|payload| {
+        payload["type"] == "response.output_text.delta"
+            && payload["delta"] == "Capsem ironbank poem\nledgers count the sparks\nno secret crosses raw"
+    }));
+}
+
+#[tokio::test]
+async fn openai_sdk_controls_expose_cancel_and_upstream_error_fixtures() {
+    let delayed = tokio::time::timeout(
+        std::time::Duration::from_millis(50),
+        routed(
+            Method::POST,
+            "/v1/responses",
+            None,
+            HeaderMap::new(),
+            json!({"model": "capsem-sdk-cancel"}),
+        ),
+    )
+    .await;
+    assert!(
+        delayed.is_err(),
+        "cancel fixture answered before the client could abort"
+    );
+
+    let (status, _, body) = routed(
+        Method::POST,
+        "/v1/chat/completions",
+        None,
+        HeaderMap::new(),
+        json!({"model": "capsem-sdk-upstream-error"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["error"]["code"], "fixture_unavailable");
 }
 
 #[tokio::test]

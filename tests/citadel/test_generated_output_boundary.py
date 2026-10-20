@@ -24,9 +24,11 @@ FINAL_OUTPUT_ROOTS = {
     "coverage": "cache/target/coverage",
     "distribution": "cache/target/release/distribution",
     "gate_runs": "cache/target/gate-runs",
-    "materialized_config": "cache/target/config",
     "packages": "cache/target/packages",
     "test_artifacts": "cache/target/tests/evidence",
+    "sdk_packages": "cache/target/sdk",
+    "inspect_packages": "cache/target/integrations/inspect-ai",
+    "mcp_packages": "cache/target/mcp/typescript",
 }
 
 RATIONALE = """\
@@ -347,7 +349,7 @@ def _synthetic_policy() -> dict[str, Any]:
             "tracked generated root byte",
         ),
         (
-            _synthetic(tracked=("config/profiles/code/catalog.generated.json",)),
+            _synthetic(tracked=("config/corp/catalog.generated.json",)),
             "generated file in source/config root",
         ),
         (
@@ -447,7 +449,6 @@ def test_non_rust_repository_asset_owners_use_the_canonical_target_root() -> Non
     )
     assert config["imagebuild"]["output"] == target
     assert config["service"]["assets_dir"] == target
-    assert config["suites"]["pytest"]["test_manifest"] == f"{target}/manifest.json"
     assert config["functional"]["assets_dir"] == target
     assert config["package"]["generated_inputs"][0] == target
     assert target in config["prefix"]["lent"]

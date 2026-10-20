@@ -157,7 +157,7 @@ def test_ensure_service_owns_the_bounded_host_build_and_signing(
         argparse.Namespace(dry_run=False, graph=False, timing=False),
     )._describe()
 
-    assert plan.after_of("prepare.build-binaries") == {"prepare.materialize-config"}
+    assert plan.after_of("prepare.build-binaries") == {"initrd.hash-aliases"}
     assert plan.after_of("prepare.sign") == {"prepare.build-binaries"}
     assert plan.after_of("prepare") == {"prepare.sign"}
     assert plan.after_of("materialize") == {"prepare"}
@@ -175,8 +175,7 @@ def test_runtime_commands_own_preparation_service_and_guest_edges() -> None:
         )
         plan = GateCommand.registry[command](RecordingRunner(PROJECT_ROOT), args)._describe()
 
-        assert plan.after_of("prepare.materialize-config")
-        assert plan.after_of("prepare.build-binaries") == {"prepare.materialize-config"}
+        assert plan.after_of("prepare.build-binaries") == {"initrd.hash-aliases"}
         assert plan.after_of("prepare.sign") == {"prepare.build-binaries"}
         assert plan.after_of("prepare") == {"prepare.sign"}
         assert plan.after_of("materialize") == {"prepare"}
@@ -209,47 +208,45 @@ def test_the_phases_run_in_the_order_the_gate_depends_on() -> None:
     the line order of a shell body, and the sequence of `plan.add` calls in
     four separate commands.
     """
-    labels = list(_plan().labels)
+    from helpers.gate import plan_ancestors
+
+    plan = _plan()
+    labels = list(plan.labels)
 
     assert _at(labels, "fast.") < _at(labels, "static.")
     assert _at(labels, "static.") < _at(labels, "artifacts.")
-    assert _at(labels, "artifacts.") < _at(labels, "functional.")
-    assert _at(labels, "functional.") < _at(labels, "glowup.")
+    assert _at(labels, "artifacts.") < labels.index("functional.content")
+    assert labels.index("functional.content") < _at(labels, "glowup.")
+    # The shared Rust SDK example is compilation, so it may run early. Every
+    # remaining functional step consumes the qualified artifact frontier.
+    for label in labels:
+        if label.startswith("functional.") and label != "functional.sdk.rust.example":
+            assert "artifacts.build-chain" in plan_ancestors(plan, label), label
 
 
-def test_every_local_functional_vm_step_selects_its_exact_ironbank_profile() -> None:
+def test_every_local_functional_vm_step_selects_the_exact_ironbank_runtime() -> None:
     """Diagnostic continuation may start at any VM step, so selection travels
     with every step rather than relying on one earlier mutable selector."""
-    from capsem_builder.gate import profiles as gate_profiles
-
     plan = _plan()
     names = CONFIG.environment
+    root = CONFIG.path(CONFIG.assets.test_root)
+    assets = root / CONFIG.assets.merged_assets_dir
 
-    for profile in gate_profiles.selected(CONFIG):
-        assets = CONFIG.path(CONFIG.assets.test_root) / profile / CONFIG.assets.merged_assets_dir
-        profiles = (
-            CONFIG.path(CONFIG.assets.test_root)
-            / profile
-            / CONFIG.assets.merged_config_dir
-            / CONFIG.assets.materialized_profiles_dir
-        )
-        labels = [
-            label
-            for label in plan.labels
-            if label.startswith("functional.") and label.endswith(f".{profile}")
-        ]
-        assert labels
-        for label in labels:
-            rendered = "\n".join(plan.step_named(label).render())
-            if ".pytest." in label:
-                assert f"{names.assets_dir}={assets}" in rendered, label
-                assert f"{names.profiles_dir}={profiles}" in rendered, label
-            else:
-                assert f"--assets {assets}" in rendered, label
-                if ".injection." in label:
-                    assert f"--profiles-dir {profiles}" in rendered, label
-                else:
-                    assert f"{names.profiles_dir}={profiles}" in rendered, label
+    labels = [
+        label
+        for label in plan.labels
+        if label.startswith("functional.pytest.")
+        or label in {"functional.injection", "functional.integration"}
+    ]
+    assert {"functional.pytest.broad", "functional.injection", "functional.integration"} <= set(
+        labels
+    )
+    for label in labels:
+        rendered = "\n".join(plan.step_named(label).render())
+        if ".pytest." in label:
+            assert f"{names.assets_dir}={assets}" in rendered, label
+        else:
+            assert f"--assets {assets}" in rendered, label
 
 
 def test_the_source_state_is_recorded_first_and_re_asserted_last() -> None:
@@ -276,7 +273,7 @@ def test_benchmark_fitness_precedes_expensive_assets_and_timing() -> None:
 
     assert harness < fitness
     assert fitness < labels.index("assets.build.arm64")
-    assert fitness < labels.index("functional.pytest.timing.code")
+    assert fitness < labels.index("functional.pytest.timing")
 
 
 def test_package_network_is_qualified_before_expensive_candidate_work() -> None:
@@ -288,24 +285,8 @@ def test_package_network_is_qualified_before_expensive_candidate_work() -> None:
     assert all(label in labels for label in dependencies)
     assert labels.index("prepare.benchmark-fitness") < labels.index(dependencies[0])
     assert labels.index(dependencies[-1]) < labels.index("assets.build.arm64")
-    assert labels.index(dependencies[-1]) < labels.index("functional.pytest.broad.code")
+    assert labels.index(dependencies[-1]) < labels.index("functional.pytest.broad")
     assert all(("host-image", label) in plan.edges for label in dependencies)
-
-
-def test_glowup_reuses_the_profile_content_materialized_by_preparation() -> None:
-    """Standalone ownership must not become duplicate work in composition."""
-    plan = _plan()
-    materializers = [
-        step.label
-        for step in plan.steps
-        if any(
-            action.render() == "bash build_system/scripts/build/materialize-config.sh"
-            for action in step.actions
-        )
-    ]
-
-    assert materializers == ["prepare.materialize-config"]
-    assert "prepare.materialize-config" in ancestors(plan, "package.arm64.content")
 
 
 def test_preparation_waits_for_every_fast_leaf_and_not_one_incidental_step() -> None:

@@ -6,15 +6,15 @@ import contextlib
 import json
 import os
 import re
-import secrets
 import stat
 from collections.abc import Iterator
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Any, Literal
 
-import blake3
 from pydantic import BaseModel, ConfigDict, StringConstraints, field_validator
 
+from .. import crypto as blake3
+from .. import crypto as secrets
 from ..cache.config import load_paths
 from ..cache.leases import shared_use
 from ..cache.objects import ObjectRef, digest_file, import_file, materialize

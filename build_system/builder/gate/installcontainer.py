@@ -22,6 +22,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..policy.dockerpolicy import ContainerNetwork
 from . import config as gate_config
 from . import host, installimage
 from .content import InstallContent, SelectedInstallContent
@@ -71,6 +72,18 @@ def verify_vm_device_access(docker: Docker, container: str, settings: InstallCon
     user = settings.guest_user.name
     for device in settings.vm_devices:
         docker.exec(container, ["test", "-r", device, "-a", "-w", device], user=user)
+
+
+def claim_owned_paths(docker: Docker, container: str, settings: InstallConfig) -> None:
+    """Grant the proof user its scratch trees and replaceable parent entries."""
+    guest = settings.guest_user.name
+    owned = settings.layout.owned_paths(settings.mount)
+    docker.exec(container, ["mkdir", "-p", *owned])
+    docker.exec(container, ["chown", "-R", f"{guest}:{guest}", *owned])
+    # Replacing a scratch directory needs its parent's entry permission;
+    # recursively changing the parent would also claim unrelated output.
+    parents = settings.layout.owned_parent_paths(settings.mount)
+    docker.exec(container, ["chown", f"{guest}:{guest}", *parents])
 
 
 class InstallContainer:
@@ -143,20 +156,19 @@ class InstallContainer:
 
     def start(self, *, options: list[str]) -> None:
         self._runner.note("Starting systemd container...")
-        cgroup = self._settings.cgroup_path
         image = installimage.require_local_image(self._runner, self._config)
         # A stable name plus a preemptive removal is what recovers from a
         # predecessor that died before its own cleanup -- a cargo SIGTERM under
         # a Colima OOM, for instance.
         self._docker.remove(self.name)
-        self._docker.run_detached(
+        start_systemd_container(
+            self._docker, self._settings,
             network=self._settings.runtime_network,
             name=self.name,
             image=image,
             command=systemd_command(self._settings, self._runtime_user_devices),
-            options=["--privileged", "--cgroupns=host", *options, *self._tmpfs()],
+            options=options,
             mounts=[
-                Mount(cgroup, cgroup, "rw"),
                 Mount.generated(
                     str(self._config.path(self._settings.layout.glowup_evidence)),
                     f"{self._settings.mount}/{self._settings.layout.glowup_evidence}",
@@ -174,9 +186,9 @@ class InstallContainer:
                 *self._content_mounts(),
                 *(Mount.generated(str(path), str(path)) for path in self._inputs),
             ],
+            sleep=self._sleep,
         )
-        self._await_systemd()
-        self._claim_paths()
+        claim_owned_paths(self._docker, self.name, self._settings)
 
     def verify_vm_device_access(self) -> None:
         if self.boots_a_guest:
@@ -185,47 +197,19 @@ class InstallContainer:
     def _content_mounts(self) -> tuple[Mount, ...]:
         if self._content is None:
             return ()
-        mount = self._settings.mount
-        profile = self._content.content
         mounts = [
             Mount.generated(
-                str(profile.assets),
-                f"{mount}/{self._config.functional.assets_dir}",
-            ),
-            Mount.generated(
-                str(profile.config),
-                f"{mount}/{self._config.functional.config_root}",
+                str(self._content.content.assets),
+                f"{self._settings.mount}/{self._config.functional.assets_dir}",
             ),
         ]
         if isinstance(self._content, SelectedInstallContent):
             # stage-release-test-inputs writes absolute file:// URLs. Mounting
-            # the one paired root at the same address keeps those immutable
+            # the one content root at the same address keeps those immutable
             # bytes resolvable without exposing the checkout or public egress.
             root = self._content.content.root.resolve()
             mounts.append(Mount.generated(str(root), str(root)))
         return tuple(mounts)
-
-    def _await_systemd(self) -> None:
-        await_systemd(
-            self._docker,
-            self.name,
-            attempts=self._settings.systemd_ready_attempts,
-            interval=self._settings.systemd_ready_interval_seconds,
-            sleep=self._sleep,
-        )
-
-    def _claim_paths(self) -> None:
-        guest = self._settings.guest_user.name
-        self._docker.exec(self.name, ["mkdir", "-p", *self._owned])
-        self._docker.exec(self.name, ["chown", "-R", f"{guest}:{guest}", *self._owned])
-        # Removing an owned path needs write permission on its parent, not on
-        # the path itself. Claim each config-derived parent entry without
-        # recursively walking unrelated build output beneath it.
-        parents = self._settings.layout.owned_parent_paths(self._settings.mount)
-        self._docker.exec(
-            self.name,
-            ["chown", f"{guest}:{guest}", *parents],
-        )
 
     def return_paths(self) -> None:
         """Hand the container's writes back to the host user that owns them."""
@@ -237,9 +221,6 @@ class InstallContainer:
         uid, gid = host.user()
         self._docker.shell(self.name, f"mkdir -p {path} && chown -R {uid}:{gid} {path}")
 
-    def _tmpfs(self) -> list[str]:
-        return [flag for path in self._settings.tmpfs_paths for flag in ("--tmpfs", path)]
-
     def stop(self) -> None:
         self._docker.remove(self.name)
 
@@ -250,6 +231,26 @@ class InstallContainer:
                 self._docker.exec(self.name, list(command), check=False)
             except (GateError, OSError) as error:
                 self._runner.note(f"Install storage diagnostics unavailable: {error}")
+
+
+def start_systemd_container(
+    docker: Docker, settings: InstallConfig, *, name: str, image: str,
+    command: list[str], network: ContainerNetwork,
+    options: list[str] | None = None, mounts: list[Mount] | None = None,
+    attempts: int | None = None,
+    sleep=time.sleep,
+) -> None:
+    """One native-supervisor boot primitive for sealed and public install proofs."""
+    tmpfs = [flag for path in settings.tmpfs_paths for flag in ("--tmpfs", path)]
+    docker.run_detached(
+        name=name, image=image, command=command, network=network,
+        options=["--privileged", "--cgroupns=host", *(options or []), *tmpfs],
+        mounts=[Mount(settings.cgroup_path, settings.cgroup_path, "rw"), *(mounts or [])],
+    )
+    await_systemd(
+        docker, name, attempts=settings.systemd_ready_attempts if attempts is None else attempts,
+        interval=settings.systemd_ready_interval_seconds, sleep=sleep,
+    )
 
 
 def await_systemd(

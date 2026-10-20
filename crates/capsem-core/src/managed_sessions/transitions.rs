@@ -1,0 +1,143 @@
+use super::*;
+
+impl Registry {
+    /// The existing owner can revoke its exact ticket without a client token.
+    /// This records Closing before original effects retire on policy denial.
+    pub(super) fn begin_owned_cleanup(&self, ticket: &Ticket) -> Result<Snapshot> {
+        let _lease = self.lease()?;
+        let mut record = self.ticket_record(ticket)?;
+        record.state = closing_state(record.state);
+        self.write(&record)?;
+        self.runtime_deadlines()?.remove(&record.request);
+        Ok(Snapshot::from(&record))
+    }
+
+    /// The only permission to perform a create side effect. Persist before
+    /// spawning; a repeat or a close racing this operation never admits again.
+    pub fn begin_create(&self, ticket: &Ticket, clock: LeaseClock) -> Result<bool> {
+        let _lease = self.lease()?;
+        let mut record = self.ticket_record(ticket)?;
+        if record.state != State::Reserved {
+            return Ok(false);
+        }
+        ensure!(record.lease.is_some(), "managed lease was not initialized");
+        let mut deadlines = self.runtime_deadlines()?;
+        if self.expire_if_due(&mut record, clock, &mut deadlines)? {
+            return Ok(false);
+        }
+        record.state = State::Creating;
+        self.write(&record)?;
+        Ok(true)
+    }
+
+    /// Persist the close intent, including when it arrives before reservation.
+    /// A Creating record stays Closing until its outcome has been reconciled.
+    pub fn close(&self, request: Uuid, capability: &Capability) -> Result<Snapshot> {
+        ensure!(!request.is_nil(), "managed request identity is nil");
+        let _lease = self.lease()?;
+        let mut record = match self.read(request)? {
+            Some(record) => {
+                record.authenticate(capability)?;
+                record
+            }
+            None => Record {
+                schema_version: 1,
+                request,
+                generation: capsem_crypto::uuid_v4(),
+                capability_hash: *capability.hash(request).as_bytes(),
+                state: State::Closed,
+                vm: None,
+                lease: None,
+                spawn_intent: None,
+                closed_wall_ms: None,
+            },
+        };
+        record.state = closing_state(record.state);
+        self.write(&record)?;
+        self.runtime_deadlines()?.remove(&request);
+        Ok(Snapshot::from(&record))
+    }
+
+    /// A late create result after close is bound for cleanup, never activated.
+    pub fn bind_created(&self, ticket: &Ticket, binding: VmBinding, clock: LeaseClock) -> Result<Snapshot> {
+        self.bind_vm(ticket, binding, clock, true)
+    }
+
+    /// Registered VM ownership can become discoverable before its workload
+    /// is ready. Pending reports preserve Creating or an existing close intent.
+    pub(super) fn bind_pending(&self, ticket: &Ticket, binding: VmBinding, clock: LeaseClock) -> Result<Snapshot> {
+        self.bind_vm(ticket, binding, clock, false)
+    }
+
+    fn bind_vm(&self, ticket: &Ticket, binding: VmBinding, clock: LeaseClock, ready: bool) -> Result<Snapshot> {
+        let _lease = self.lease()?;
+        let mut record = self.ticket_record(ticket)?;
+        ensure!(
+            matches!(record.state, State::Creating | State::Active | State::Closing),
+            "managed creation is no longer admissible"
+        );
+        ensure!(
+            record.spawn_intent.as_ref() == Some(&binding),
+            "managed VM does not match durable spawn intent"
+        );
+        if let Some(existing) = &record.vm {
+            ensure!(existing == &binding, "managed VM generation cannot be rebound");
+        }
+        if matches!(record.state, State::Creating | State::Active) {
+            let mut deadlines = self.runtime_deadlines()?;
+            self.expire_if_due(&mut record, clock, &mut deadlines)?;
+        }
+        record.vm = Some(binding);
+        if ready && record.state == State::Creating {
+            record.state = State::Active;
+        }
+        self.write(&record)?;
+        Ok(Snapshot::from(&record))
+    }
+
+    /// The producer must persist its exact target before spawning any VM.
+    /// This is an intent, not evidence that a VM exists or is ready.
+    pub fn prepare_spawn(&self, ticket: &Ticket, binding: VmBinding, clock: LeaseClock) -> Result<Snapshot> {
+        let _lease = self.lease()?;
+        let mut record = self.ticket_record(ticket)?;
+        ensure!(
+            record.state == State::Creating,
+            "managed spawn admission is no longer live"
+        );
+        if let Some(original) = &record.spawn_intent {
+            ensure!(original == &binding, "managed spawn generation cannot be replaced");
+        }
+        let mut deadlines = self.runtime_deadlines()?;
+        let expired = self.expire_if_due(&mut record, clock, &mut deadlines)?;
+        drop(deadlines);
+        ensure!(!expired, "managed spawn lease expired");
+        record.spawn_intent = Some(binding);
+        self.write(&record)?;
+        Ok(Snapshot::from(&record))
+    }
+
+    /// The service calls this only after VM teardown, session cleanup and grant
+    /// revocation have all completed for this exact binding. Failures leave the
+    /// durable Closing intent available for reconciliation.
+    pub fn complete_cleanup(&self, ticket: &Ticket, binding: &VmBinding) -> Result<Snapshot> {
+        let _lease = self.lease()?;
+        let mut record = self.ticket_record(ticket)?;
+        ensure!(record.state == State::Closing, "managed close is not pending");
+        ensure!(
+            record.vm.as_ref() == Some(binding),
+            "managed cleanup VM generation mismatch"
+        );
+        record.state = State::Closed;
+        record.vm = None;
+        self.write(&record)?;
+        self.runtime_deadlines()?.remove(&record.request);
+        Ok(Snapshot::from(&record))
+    }
+}
+
+fn closing_state(state: State) -> State {
+    match state {
+        State::Reserved | State::Closed => State::Closed,
+        State::Creating | State::Active | State::Closing | State::Unknown => State::Closing,
+    }
+}

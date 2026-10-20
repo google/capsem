@@ -9,7 +9,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import vm_name, vm_session_db_path, wait_exec_ready
 from helpers.session_ledger import open_session_ledger
 
@@ -41,7 +41,6 @@ def test_real_redis_persistence_limits_and_fresh_vm(oci_vm, tmp_path):
         "/vms/create",
         {
             "name": second,
-            "profile_id": CODE_PROFILE_ID,
             "ram_mb": DEFAULT_RAM_MB,
             "cpus": DEFAULT_CPUS,
         },

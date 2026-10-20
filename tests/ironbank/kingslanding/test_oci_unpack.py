@@ -41,7 +41,7 @@ def test_packaged_umoci_unpacks_layer_semantics(oci_vm, tmp_path):
     (tmp_path / "identity.txt").write_text(f"{architecture}\n{digest}\n{stdout}")
 
 
-def test_unpack_profile_preserves_guest_hardening(oci_vm, tmp_path):
+def test_unpack_preserves_guest_hardening(oci_vm, tmp_path):
     _, client, name = oci_vm
     result = client.post(
         f"/vms/{name}/exec",

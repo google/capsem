@@ -10,14 +10,29 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+capsem-api = { path = "../capsem-api" }
+capsem-crypto = { path = "../capsem-crypto", default-features = false, features = ["jwt"] }
 capsem-foundation = { path = "../capsem-foundation" }
 capsem-proto = { path = "../capsem-proto" }
+base64 = { workspace = true }
+url = "2"
+tokio = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+http-body-util = { workspace = true }
+bytes = { workspace = true }
+futures = { workspace = true }
+reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+humantime = { workspace = true }
+time = { workspace = true, features = ["parsing"] }
+uuid = "1"
 tracing = { workspace = true }
 
 [lints]
 workspace = true
 
 [dev-dependencies]
+capsem-crypto = { path = "../capsem-crypto", features = ["test-fixtures"] }
 tempfile = "3"

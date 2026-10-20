@@ -126,6 +126,12 @@ jobs:
         timeout-minutes: 45
         run: just test-linux-rust
 
+      # These integration targets execute the real self-confined worker
+      # binaries. The unit coverage command uses --lib/--bins and therefore
+      # cannot prove Landlock/seccomp took effect before readiness.
+      - name: Confined worker subprocess tests
+        run: cargo test --locked -p capsem-ledger -p capsem-proxy --test subprocess
+
       # cargo check still runs BLAKE3's native SIMD build. Both guest targets
       # belong on their native Linux C toolchain, already provisioned above.
       # Build and link the production feature set, not a pure-Rust substitute.
@@ -240,7 +246,6 @@ jobs:
           -q
       - run: bash build_system/scripts/build/generate-settings.sh
       - run: bash build_system/scripts/test/prepare-install-test-assets.sh
-      - run: bash build_system/scripts/build/materialize-config.sh
       - run: cd web/app && pnpm install --frozen-lockfile
       - name: Build TypeScript SDK for frontend consumers
         working-directory: sdk/typescript
@@ -277,13 +282,24 @@ jobs:
           fi
 
       # Unit tests: all crates with coverage + JUnit XML for test analytics.
-      # capsem-app (Tauri bin) is macOS-only; capsem-mcp-aggregator and
-      # capsem-mcp-builtin are thin binaries that pull capsem-core logic.
+      # capsem-app (Tauri bin) is macOS-only. Native MCP workers share
+      # connected capabilities through capsem-mcp-transport.
+      - name: Build native MCP workers for service tests
+        run: |
+          cargo llvm-cov clean --workspace
+          cargo llvm-cov run --locked --no-cfg-coverage --no-report -p capsem-mcp-aggregator -- --version
+          cargo llvm-cov run --locked --no-cfg-coverage --no-report -p capsem-mcp-builtin -- --version
+
       - name: Unit tests with coverage
         run: |
           set -o pipefail
-          cargo llvm-cov nextest --no-cfg-coverage --lib --bins --profile ci-unit --codecov --output-path cache/target/coverage/rust/unit.json -p capsem-api -p capsem-sdk -p capsem-archive -p capsem-telemetry -p capsem-assets -p capsem-config -p capsem-credentials -p capsem-foundation -p capsem-core -p capsem-admin -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-router -p capsem-network -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-tray -p capsem-app -p capsem-process -p capsem-bench -p capsem-mock-server
-          cargo llvm-cov report --summary-only -p capsem-api -p capsem-sdk -p capsem-archive -p capsem-telemetry -p capsem-assets -p capsem-config -p capsem-credentials -p capsem-foundation -p capsem-core -p capsem-admin -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-router -p capsem-network -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-tray -p capsem-app -p capsem-process -p capsem-bench -p capsem-mock-server 2>&1 | tee cache/target/coverage/rust/summary.txt
+          cargo llvm-cov nextest --no-cfg-coverage --no-clean --lib --bins --profile ci-unit --codecov --output-path cache/target/coverage/rust/unit.json -p capsem-api -p capsem-sdk -p capsem-archive -p capsem-telemetry -p capsem-cache -p capsem-crypto -p capsem-assets -p capsem-config -p capsem-credentials -p capsem-foundation -p capsem-core -p capsem-admin -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-router -p capsem-ledger -p capsem-proxy -p capsem-network -p capsem-mcp-transport -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-tray -p capsem-app -p capsem-process -p capsem-bench -p capsem-mock-server
+          cargo llvm-cov report --summary-only -p capsem-api -p capsem-sdk -p capsem-archive -p capsem-telemetry -p capsem-cache -p capsem-crypto -p capsem-assets -p capsem-config -p capsem-credentials -p capsem-foundation -p capsem-core -p capsem-admin -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-router -p capsem-ledger -p capsem-proxy -p capsem-network -p capsem-mcp-transport -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-tray -p capsem-app -p capsem-process -p capsem-bench -p capsem-mock-server 2>&1 | tee cache/target/coverage/rust/summary.txt
+
+      # Run the production executables under the host's real Seatbelt policy.
+      # --lib/--bins above compiles but does not execute integration targets.
+      - name: Confined worker subprocess tests
+        run: cargo test --locked -p capsem-ledger -p capsem-proxy --test subprocess
 
       # Integration tests (tests/ directory, cross-crate)
       - name: Integration tests with coverage
@@ -298,12 +314,26 @@ jobs:
           CAPSEM_FRONTEND_JUNIT: ${{ github.workspace }}/cache/target/coverage/junit/frontend.xml
         run: bash build_system/scripts/web/check-web-surface.sh frontend-verify
 
+      - name: Build Python SDK distributions
+        run: |
+          uv sync --project sdk/python --frozen --no-install-project
+          uv run --project sdk/python --frozen --no-sync python -m build --no-isolation --outdir cache/target/sdk/python sdk/python
+
       # Python schema tests with coverage
       - name: Python SDK tests with coverage
         working-directory: sdk/python
         env:
           COVERAGE_FILE: ${{ github.workspace }}/cache/target/coverage/python-sdk/.coverage
         run: uv run --frozen pytest --junitxml=../../cache/target/coverage/junit/python-sdk.xml
+
+      - name: Install Linux guest tools for host-backed Inspect fixtures
+        run: brew install coreutils
+
+      - name: Inspect AI extension tests with coverage
+        working-directory: integrations/inspect-ai
+        env:
+          COVERAGE_FILE: ${{ github.workspace }}/cache/target/coverage/inspect-ai/.coverage
+        run: uv run --frozen pytest --junitxml=../../cache/target/coverage/junit/inspect-ai.xml
 
       - name: Python lint and type check
         run: |
@@ -314,6 +344,7 @@ jobs:
         working-directory: sdk/typescript
         run: |
           pnpm install --frozen-lockfile
+          pnpm run prewarm:package
           pnpm test --reporter=default --reporter=junit --outputFile=../../cache/target/coverage/junit/typescript-sdk.xml
 
       # Builds against the SDK package the step above just built.
@@ -321,6 +352,7 @@ jobs:
         working-directory: mcp/typescript
         run: |
           pnpm install --frozen-lockfile
+          pnpm run prewarm:packed
           pnpm test --reporter=default --reporter=junit --outputFile=../../cache/target/coverage/junit/mcp-typescript.xml
 
       - name: Cross-system Python schema tests with coverage
@@ -359,10 +391,12 @@ jobs:
       - name: Python integration tests (non-VM suites)
         run: |
           bash build_system/scripts/test/prepare-install-test-assets.sh
-          cargo build -p capsem-process -p capsem-service -p capsem -p capsem-mock-server -p capsem-bench
+          cargo build -p capsem-process -p capsem-ledger -p capsem-proxy -p capsem-service -p capsem -p capsem-mock-server -p capsem-bench
           for bin in cache/target/cargo/debug/capsem-process cache/target/cargo/debug/capsem-service cache/target/cargo/debug/capsem cache/target/cargo/debug/capsem-mock-server cache/target/cargo/debug/capsem-bench-rs; do
             codesign --sign - --entitlements build_system/packaging/macos/entitlements.plist --force "$bin"
           done
+          codesign --sign - --force cache/target/cargo/debug/capsem-ledger
+          codesign --sign - --force cache/target/cargo/debug/capsem-proxy
           uv run --project build_system --frozen python -m pytest -c build_system/pyproject.toml --rootdir . tests/capsem-bootstrap/ \
             tests/capsem-codesign/ \
             tests/capsem-rootfs-artifacts/ \
@@ -414,6 +448,15 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
+      - name: Upload Inspect AI extension coverage
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac
+        with:
+          files: cache/target/coverage/inspect-ai/coverage.xml
+          flags: inspect-ai
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
       - name: Upload Rust unit test coverage
         if: ${{ !cancelled() }}
         uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac
@@ -455,7 +498,7 @@ jobs:
         if: ${{ !cancelled() }}
         uses: codecov/test-results-action@0fa95f0e1eeaafde2c782583b36b28ad0d8c77d3
         with:
-          files: cache/target/coverage/nextest/ci-unit/junit.xml,cache/target/coverage/nextest/ci-integration/junit.xml,cache/target/coverage/junit/frontend.xml,cache/target/coverage/junit/python-cross-system.xml,cache/target/coverage/junit/python-build-system.xml,cache/target/coverage/junit/python-sdk.xml,cache/target/coverage/junit/typescript-sdk.xml,cache/target/coverage/junit/mcp-typescript.xml
+          files: cache/target/coverage/nextest/ci-unit/junit.xml,cache/target/coverage/nextest/ci-integration/junit.xml,cache/target/coverage/junit/frontend.xml,cache/target/coverage/junit/python-cross-system.xml,cache/target/coverage/junit/python-build-system.xml,cache/target/coverage/junit/python-sdk.xml,cache/target/coverage/junit/inspect-ai.xml,cache/target/coverage/junit/typescript-sdk.xml,cache/target/coverage/junit/mcp-typescript.xml
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
@@ -496,20 +539,45 @@ jobs:
   # Install e2e: Docker-based install layout + systemd tests (Linux)
   # ---------------------------------------------------------------------------
   test-install:
-    needs: scope
+    needs: [scope, fast-gate]
     if: ${{ contains(fromJSON(needs.scope.outputs.owners), 'test-install') }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
 
+      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.97.1
+          targets: aarch64-unknown-linux-gnu,x86_64-unknown-linux-gnu,aarch64-unknown-linux-musl,x86_64-unknown-linux-musl
+      - uses: ./.github/actions/rust-cache
 
-      # The package source build compiles the musl guest cohort and therefore
-      # needs the same C toolchain as the release asset builder.
-      - name: Install musl C toolchain
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
+        with:
+          version: 10.34.5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 24
+
+      - name: Select the declared tool set
+        id: gate_tools
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends musl-tools acl
+          list=$(python3 build_system/scripts/ci/gate-tool-list.py --sets complete)
+          echo "list=$list" >> "$GITHUB_OUTPUT"
+      - name: Install prebuilt Rust gate tools
+        uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b
+        with:
+          tool: ${{ steps.gate_tools.outputs.list }}
+
+      - name: Bootstrap complete install qualification host
+        env:
+          CAPSEM_SKIP_ASSET_CHECK: "1"
+        run: sh bootstrap.sh --yes
+
+      - name: Prove Linux sandbox boundary
+        run: python3 build_system/scripts/bootstrap/prepare-linux-sandbox.py --repair-hosted-runner
 
       - name: Enable required KVM and vsock devices
         run: |
@@ -517,80 +585,25 @@ jobs:
           test -c /dev/kvm
           test -c /dev/vhost-vsock
 
-      - name: Classify the stable install graph
-        id: install-channel
+      - name: Materialize locked qualification dependencies
         run: |
-          python3 build_system/scripts/bootstrap/select-runtime-preflight-manifest.py \
-            --channel stable \
-            --classify-only \
-            --github-output "$GITHUB_OUTPUT"
+          uv sync --project build_system --frozen
+          python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 300 -- uv sync --project sdk/python --frozen --no-install-project
+          cargo fetch --locked
+          for workspace in web/app sdk/typescript mcp/typescript build_system/release_site; do
+            pnpm --dir "$workspace" install --frozen-lockfile
+          done
 
-      - name: Select exact stable install inputs
-        id: install-manifest
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          PUBLIC_MANIFEST_URL: ${{ steps.install-channel.outputs.manifest-url }}
-          PUBLIC_STATE: ${{ steps.install-channel.outputs.state }}
-        run: |
-          set -euo pipefail
-          case "$PUBLIC_STATE" in
-            published)
-              echo "manifest-url=$PUBLIC_MANIFEST_URL" >> "$GITHUB_OUTPUT"
-              ;;
-            retired)
-              # The package derives public/corporate lock policy from this
-              # canonical URL shape. Keep a retired first-party fixture public
-              # so the install gate may hand it its generated local manifest.
-              output="$PWD/cache/target/ci-install-selection/assets/stable/manifest.json"
-              python3 build_system/scripts/release/fetch-channel-source-manifest.py \
-                --channel stable \
-                --repository "$GITHUB_REPOSITORY" \
-                --require-profile-membership \
-                --output "$output"
-              echo "manifest-url=file://$output" >> "$GITHUB_OUTPUT"
-              ;;
-            *)
-              echo "stable install graph is $PUBLIC_STATE; no exact install input exists" >&2
-              exit 1
-              ;;
-          esac
-
-      - name: Pull exact stable profile assets
-        uses: ./.github/actions/fetch-release-inputs
-        with:
-          manifest-url: ${{ steps.install-manifest.outputs.manifest-url }}
-          kind: profiles
-          architecture: x86_64
-          output: cache/target/ci-install-content/inputs
-
-      - name: Stage one exact install content pair
-        run: |
-          uv run --project build_system --frozen python build_system/scripts/release/stage-release-test-inputs.py \
-            --input-dir cache/target/ci-install-content/inputs \
-            --assets-dir cache/target/ci-install-content/assets \
-            --config-root cache/target/ci-install-source-config \
-            --shared-config-root config
-          CAPSEM_ASSET_MANIFEST="$PWD/cache/target/ci-install-content/assets/manifest.json" \
-          CAPSEM_ASSETS_PATH="$PWD/cache/target/ci-install-content/assets" \
-          CAPSEM_CONFIG_ROOT="$PWD/cache/target/ci-install-source-config" \
-          CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/cache/target/ci-install-content/config" \
-          CAPSEM_ARCH=x86_64 \
-            bash build_system/scripts/build/materialize-config.sh --pair-content
-
-      - name: Build exact native release package
-        env:
-          CAPSEM_INSTALL_MANIFEST_URL: ${{ steps.install-manifest.outputs.manifest-url }}
-          CAPSEM_INSTALL_CHANNEL: stable
-        run: |
-          uv run --project build_system --frozen capsem-gate cross-compile x86_64 \
-            --content-root cache/target/ci-install-content \
-            --defer-proof
-
+      # A source candidate must be installable before its first runtime is
+      # published. The canonical local owner constructs and proves that cohort;
+      # publication lanes still consume manifest-selected immutable inputs.
       - name: Run install e2e tests
         id: install_e2e
-        run: |
-          uv run --project build_system --frozen capsem-gate install \
-            --selected-content-root cache/target/ci-install-content
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+        run: uv run --project build_system --frozen capsem-gate test-glowup --slow
 
       - name: Upload install and glow-up evidence on failure
         if: failure()
@@ -599,11 +612,8 @@ jobs:
           name: install-glowup-evidence-${{ github.run_attempt }}
           path: |
             cache/target/gate-runs/
-            cache/target/release/staging/local-glowup-evidence/
+            cache/target/tests/evidence/
           retention-days: 7
-          # Input resolution can fail before a gate exists. Preserve that
-          # primary failure without adding a misleading upload failure, while
-          # keeping missing evidence fatal when the install gate itself ran.
           if-no-files-found: ${{ steps.install_e2e.outcome == 'failure' && 'error' || 'warn' }}
 
   # ---------------------------------------------------------------------------

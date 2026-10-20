@@ -13,7 +13,9 @@ from types import ModuleType
 
 import pytest
 import yaml
+from capsem_builder.gate.config import load as load_gate_config
 from capsem_builder.release.tools import check_public_binary_release as RELEASE_GATE
+from capsem_builder.release.tools import public_install_smoke
 from helpers.workflow_contract import workflow_job_source
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -264,7 +266,9 @@ def test_public_binary_release_gate_does_not_execute_gui_payload_without_deps(
     assert "validated 1 package and 3 packaged binaries" in result.stdout
 
 
-def test_public_binary_release_gate_rejects_frozen_manifest_payload(tmp_path: Path) -> None:
+def test_public_binary_release_gate_rejects_frozen_manifest_payload(
+    tmp_path: Path,
+) -> None:
     package_dir = tmp_path / "packages"
     package_dir.mkdir()
     package = package_dir / "Capsem_9.9.9_amd64.deb"
@@ -375,7 +379,9 @@ def test_public_binary_release_gate_rejects_manifest_metadata_package_version_dr
 def test_release_workflow_runs_public_package_gate_and_native_install() -> None:
     workflow = (PROJECT_ROOT / ".github/workflows/release.yaml").read_text(encoding="utf-8")
     verify_downloads = workflow.split("  verify-release-downloads:", maxsplit=1)[1]
-    live_proof = (PROJECT_ROOT / "build_system/scripts/build/prove-live-public-install.sh").read_text(encoding="utf-8")
+    live_proof = (
+        PROJECT_ROOT / "build_system/scripts/build/prove-live-public-install.sh"
+    ).read_text(encoding="utf-8")
 
     assert "build_system/scripts/release/check-public-binary-release.py" in verify_downloads
     assert '--channel "$RELEASE_CHANNEL"' in verify_downloads
@@ -437,23 +443,12 @@ def test_public_binary_release_gate_keeps_public_installer_default_on_stable() -
     assert failures == []
 
 
-def test_public_binary_release_gate_switches_stable_to_nightly_and_back(
-    monkeypatch,
-) -> None:
-    gate = _load_release_gate()
-    calls: list[list[str]] = []
-
-    monkeypatch.setattr(gate.shutil, "which", lambda _name: "/usr/bin/docker")
-
-    def capture_run(args, **_kwargs):
-        calls.append(args)
-        return subprocess.CompletedProcess(args, 0)
-
-    monkeypatch.setattr(gate.subprocess, "run", capture_run)
+def test_public_binary_release_gate_switches_stable_to_nightly_and_back() -> None:
     stable = "https://release.capsem.org/assets/stable/manifest.json"
     nightly = "https://release.capsem.org/assets/nightly/manifest.json"
 
-    gate.run_docker_install_smoke(
+    script = public_install_smoke.install_script(
+        load_gate_config(PROJECT_ROOT),
         release_base_url="https://release.capsem.org",
         install_script_url="https://capsem.org/install.sh",
         stable_manifest_url=stable,
@@ -461,10 +456,7 @@ def test_public_binary_release_gate_switches_stable_to_nightly_and_back(
         expected_version="1.5.0",
         channel_switch=True,
         upgrade=True,
-        docker_image="ubuntu:24.04",
     )
-
-    script = calls[0][7]
     assert "CAPSEM_CHANNEL=stable" in script
     assert "update --assets --channel stable" in script
     initial_stable = script.index(f"grep -F {stable}")
@@ -476,14 +468,13 @@ def test_public_binary_release_gate_switches_stable_to_nightly_and_back(
     assert initial_stable < switch_nightly < verify_nightly < switch_stable
     assert switch_stable < verify_stable < upgrade_nightly
     assert "dpkg-query -W -f='${Version}' capsem | grep -Fx 1.5.0" in script
-    assert 'grep -F "Installed: true" /home/capsemtest/.capsem/service-status.txt' in script
-    assert 'grep -F "Running:   true" /home/capsemtest/.capsem/service-status.txt' in script
-    assert 'grep -F "Service:   ok" /home/capsemtest/.capsem/service-status.txt' in script
-    assert 'grep -F "Gateway:   ok" /home/capsemtest/.capsem/service-status.txt' in script
+    for expected in ("Installed: true", "Running:   true", "Service:   ok", "Gateway:   ok"):
+        assert expected in script
 
 
 def test_public_binary_release_gate_runs_install_switch_and_upgrade_paths() -> None:
     source = Path(RELEASE_GATE.__file__).read_text(encoding="utf-8")
+    source += Path(public_install_smoke.__file__).read_text(encoding="utf-8")
 
     assert "--docker-channel-switch" in source
     assert "--docker-upgrade" in source
@@ -491,7 +482,7 @@ def test_public_binary_release_gate_runs_install_switch_and_upgrade_paths() -> N
     assert "update --assets --channel stable" in source
     assert "CAPSEM_RELEASE_CHANNELS_URL=" in source
     assert "update --yes --channel nightly" in source
-    assert '.capsem/bin/$bin\\\\" --version' in source
+    assert '"$CAPSEM_HOME/bin/$bin" --version' in source
     assert "manifest-metadata.json" in source
     assert "snapshot_sha256" in source
     assert "freezes {frozen_manifest_path}" in source
@@ -511,9 +502,9 @@ def test_public_binary_release_gate_runs_install_switch_and_upgrade_paths() -> N
 
 def test_public_binary_release_gate_requires_fail_closed_installer_integrity() -> None:
     gate = _load_release_gate()
-    script = (
-        PROJECT_ROOT / "web" / "marketing" / "public" / "install.sh"
-    ).read_text(encoding="utf-8")
+    script = (PROJECT_ROOT / "web" / "marketing" / "public" / "install.sh").read_text(
+        encoding="utf-8"
+    )
 
     failures = gate.check_install_script_defaults(
         script,

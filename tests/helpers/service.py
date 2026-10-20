@@ -11,6 +11,7 @@ import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
 
 from log_streams import read_log_stream
 
@@ -19,9 +20,7 @@ from .constants import (
     ASSETS_DIR,
     BIN_DIR,
     EXEC_READY_TIMEOUT,
-    PROFILES_DIR,
     content_assets_root,
-    content_profiles_root,
     host_bin_root,
 )
 from .http_transport import Transport
@@ -37,7 +36,6 @@ LINUX_TEST_TMP_PARENT = Path("/var/tmp/capsem-tests")
 WINTERFELL_ROOT_ENV = {
     "binary_dir": "CAPSEM_WINTERFELL_BIN_DIR",
     "assets_dir": "CAPSEM_WINTERFELL_ASSETS_DIR",
-    "profiles_dir": "CAPSEM_WINTERFELL_PROFILES_DIR",
 }
 WINTERFELL_REQUIRED_BINARIES = (
     "capsem-service",
@@ -86,11 +84,10 @@ def test_rust_log_filter(environ: Mapping[str, str] = os.environ) -> str:
 
 @dataclass(frozen=True)
 class WinterfellArtifactRoots:
-    """One coherent binary/profile/asset cohort for Winterfell."""
+    """One coherent binary/asset cohort for Winterfell."""
 
     binary_dir: Path
     assets_dir: Path
-    profiles_dir: Path
     installed: bool
 
     def binary(self, name: str) -> Path:
@@ -127,16 +124,14 @@ def resolve_winterfell_artifact_roots(
         return WinterfellArtifactRoots(
             binary_dir=host_bin_root(environment),
             assets_dir=content_assets_root(environment) / architecture,
-            profiles_dir=content_profiles_root(environment),
             installed=False,
         )
     if len(present) != len(WINTERFELL_ROOT_ENV) or any(
         not configured[field] for field in WINTERFELL_ROOT_ENV
     ):
         raise RuntimeError(
-            "Winterfell requires all three installed artifact roots: "
-            "CAPSEM_WINTERFELL_BIN_DIR, CAPSEM_WINTERFELL_ASSETS_DIR, and "
-            "CAPSEM_WINTERFELL_PROFILES_DIR"
+            "Winterfell requires both installed artifact roots: "
+            "CAPSEM_WINTERFELL_BIN_DIR and CAPSEM_WINTERFELL_ASSETS_DIR"
         )
 
     def configured_path(field: str) -> Path:
@@ -147,15 +142,9 @@ def resolve_winterfell_artifact_roots(
 
     binary_dir = configured_path("binary_dir")
     assets_dir = configured_path("assets_dir")
-    profiles_dir = configured_path("profiles_dir")
     source_roots = (
         (binary_dir, host_bin_root(environment).resolve(), "binary"),
         (assets_dir, (PROJECT_ROOT / "cache" / "target" / "assets").resolve(), "asset"),
-        (
-            profiles_dir,
-            (PROJECT_ROOT / "cache" / "target" / "config" / "profiles").resolve(),
-            "profile",
-        ),
     )
     for selected, source, family in source_roots:
         if _path_is_within(selected, source):
@@ -166,7 +155,6 @@ def resolve_winterfell_artifact_roots(
     for directory, family in (
         (binary_dir, "binary"),
         (assets_dir, "asset"),
-        (profiles_dir, "profile"),
     ):
         if not directory.is_dir():
             raise RuntimeError(
@@ -175,10 +163,6 @@ def resolve_winterfell_artifact_roots(
     if not (assets_dir / "manifest.json").is_file():
         raise RuntimeError(
             f"installed Winterfell asset root has no manifest.json: {assets_dir}"
-        )
-    if not _contains_profile_toml(profiles_dir):
-        raise RuntimeError(
-            f"installed Winterfell profile root has no profile.toml: {profiles_dir}"
         )
     for name in WINTERFELL_REQUIRED_BINARIES:
         binary = binary_dir / name
@@ -197,7 +181,6 @@ def resolve_winterfell_artifact_roots(
     return WinterfellArtifactRoots(
         binary_dir=binary_dir,
         assets_dir=assets_dir,
-        profiles_dir=profiles_dir,
         installed=True,
     )
 
@@ -235,56 +218,22 @@ def make_service_home_run_dirs() -> tuple[Path, Path]:
     return home_dir, run_dir
 
 
-def wait_profile_assets_settled(
-    client: UdsHttpClient,
-    profile_id: str,
-    *,
-    timeout: float = 5,
-) -> dict:
-    """Wait for a previously-started asynchronous profile hydration."""
+class StatusReader(Protocol):
+    """What waiting on asset status needs from a service client."""
+
+    def get(self, path: str) -> dict: ...
+
+
+def wait_assets_settled(client: StatusReader, *, timeout: float = 5) -> dict:
+    """Wait for a previously-started asynchronous asset reconciliation."""
     deadline = time.monotonic() + timeout
     last = None
     while time.monotonic() < deadline:
-        last = client.get(f"/profiles/{profile_id}/assets/status")
+        last = client.get("/assets/status")
         if not last.get("downloading", False):
             return last
         time.sleep(0.01)
-    raise AssertionError(f"profile {profile_id} assets did not settle: {last}")
-
-
-def _contains_profile_toml(profiles_dir: Path) -> bool:
-    return any(
-        path.name == "profile.toml" for path in profiles_dir.glob("*/profile.toml")
-    )
-
-
-def materialize_test_profiles(tmp_dir: Path) -> Path:
-    """Copy generated runtime profiles into a test run directory.
-
-    Checked-in profiles are source contracts and intentionally do not contain
-    asset hashes. VM-booting tests must use the materialized profiles generated
-    under cache/target/config/profiles, matching the service/runtime rail.
-    """
-    profiles_dir = tmp_dir / "config" / "profiles"
-    if profiles_dir.exists():
-        if not _contains_profile_toml(profiles_dir):
-            raise RuntimeError(
-                f"generated profile directory contains no profile.toml: {profiles_dir}. "
-                "Run `just _materialize-config` or a just recipe that depends on it."
-            )
-        return profiles_dir
-    if not PROFILES_DIR.exists():
-        raise RuntimeError(
-            f"generated profile directory missing: {PROFILES_DIR}. "
-            "Run `just _materialize-config` or a just recipe that depends on it."
-        )
-    if not _contains_profile_toml(PROFILES_DIR):
-        raise RuntimeError(
-            f"generated profile directory contains no profile.toml: {PROFILES_DIR}. "
-            "Run `just _materialize-config` or a just recipe that depends on it."
-        )
-    shutil.copytree(PROFILES_DIR, profiles_dir)
-    return profiles_dir
+    raise AssertionError(f"VM assets did not settle: {last}")
 
 
 def record_failure(nodeid: str) -> None:
@@ -363,7 +312,10 @@ def preserve_tmp_dir_on_failure(
     errors = []
 
     try:
-        dest.mkdir(parents=True, exist_ok=True)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        # Each preserve is a new snapshot, including two in the same second.
+        # Never overwrite read-only blobs or links retained by an earlier one.
+        dest = Path(tempfile.mkdtemp(prefix=f"{dest.name}-", dir=dest.parent))
 
         # topdown=True so we can prune by emptying dirnames in-place if
         # needed; onerror catches listdir failures so a single unreadable
@@ -490,15 +442,14 @@ class ServiceInstance:
 
     def __init__(self, *, assets_dir: Path | None = None, sign_binaries: bool = True):
         # Match the installed layout exactly: CAPSEM_HOME owns a run/
-        # directory and sessions/main.db is its sibling.  Using the temporary
+        # directory and sessions/host.db is its sibling.  Using the temporary
         # home itself as CAPSEM_RUN_DIR makes main_db_path_for_run_dir() resolve
         # to the shared system temporary directory, so parallel workers all
-        # write the same /tmp/sessions/main.db.
+        # write the same /tmp/sessions/host.db.
         self.home_dir, self.tmp_dir = make_service_home_run_dirs()
         self.uds_path = self.tmp_dir / f"service-{uuid.uuid4().hex[:8]}.sock"
         self.assets_dir = assets_dir
         self.sign_binaries = sign_binaries
-        self.profiles_dir = None
         self.gateway_port = 0
         self.proc = None
         self._log_file = None
@@ -514,19 +465,11 @@ class ServiceInstance:
             sign_binary(TRAY_BINARY)
 
         assets_dir = self.assets_dir or ASSETS_DIR
-        if self.profiles_dir is None:
-            self.profiles_dir = materialize_test_profiles(self.tmp_dir)
-        if not self.profiles_dir.exists():
-            raise RuntimeError(
-                f"generated profile directory missing: {self.profiles_dir}. "
-                "Run `just _materialize-config` or a just recipe that depends on it."
-            )
 
         env = os.environ.copy()
         env["RUST_LOG"] = test_rust_log_filter()
         env["CAPSEM_RUN_DIR"] = str(self.tmp_dir)
         env["CAPSEM_HOME"] = str(self.home_dir)
-        env["CAPSEM_PROFILES_DIR"] = str(self.profiles_dir)
         env["CAPSEM_CREDENTIAL_STORE_PATH"] = str(
             self.home_dir / "credential-store.json"
         )
@@ -567,6 +510,8 @@ class ServiceInstance:
 
         start = time.time()
         while time.time() - start < 15:
+            if self.proc.poll() is not None:
+                break
             if self.uds_path.exists():
                 # Socket file exists -- verify server is actually accepting connections
                 probe = Transport(socket_path=str(self.uds_path))
@@ -579,11 +524,15 @@ class ServiceInstance:
                     probe.close()
             time.sleep(0.5)
 
+        returncode = self.proc.poll()
+        service_log = self.stop_and_read_log()
+        preserve_tmp_dir_on_failure(self.home_dir, force=True)
+        self._failure_evidence_preserved = True
         self.stop()
-        service_log = read_log_stream(log_path)
         if service_log:
             print(f"\n--- SERVICE LOG ---\n{service_log}\n---", file=sys.stderr)
-        raise RuntimeError("capsem-service failed to accept connections within 15s")
+        state = f" (process exited with code {returncode})" if returncode is not None else ""
+        raise RuntimeError(f"capsem-service failed to accept connections within 15s{state}")
 
     def client(self):
         return UdsHttpClient(
@@ -680,7 +629,7 @@ def wait_exec_ready(client, vm_name, timeout=EXEC_READY_TIMEOUT, read=exec_outpu
     try:
         resp = client.post(
             f"/vms/{vm_name}/exec",
-            {"command": "echo ready", "timeout_secs": timeout},
+            {"target": "vm", "command": "echo ready", "timeout_secs": timeout},
             timeout=timeout + 5,
         )
     except Exception:

@@ -1,4 +1,5 @@
 use super::*;
+mod credential_grants;
 use crate::credential_broker::{broker_observed_credential, CredentialObservation, CredentialProvider};
 use crate::net::ai_traffic::provider::ProviderKind;
 use crate::net::policy_config::{
@@ -271,6 +272,7 @@ fn exec_write(credential_ref: Option<&str>) -> WriteOp {
         exec_id: 1,
         command: "true".to_string(),
         source: "api".to_string(),
+        target: capsem_proto::ipc::ExecTarget::Vm,
         trace_id: Some("trace".to_string()),
         process_name: None,
         credential_ref: credential_ref.map(str::to_string),

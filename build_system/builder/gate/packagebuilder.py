@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
+from .. import crypto as hashlib
 from .cachecontrol import CacheControl
 from .config import Arch, GateConfig
 from .docker import Docker

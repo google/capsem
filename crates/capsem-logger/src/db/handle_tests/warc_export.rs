@@ -782,6 +782,7 @@ async fn exec_output_is_exported_under_a_capsem_uri_per_stream() {
         exec_id: 4242,
         command: "print a lot".into(),
         source: "api".into(),
+        target: capsem_proto::ipc::ExecTarget::Vm,
         trace_id: None,
         process_name: Some("bash".into()),
         credential_ref: None,

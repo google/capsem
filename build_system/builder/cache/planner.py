@@ -36,9 +36,18 @@ def _actions(stage, entry: CacheEntry, reason: str) -> tuple[PruneAction, ...]:
 
 
 def _pinned(stage: StageInventory) -> str:
-    """Why retention stopped short: protected bytes, and the locks that pin them."""
+    """Why retention stopped short: protected bytes and the locks that pin
+    them, and bytes outside every generation and where they are."""
     held = "; ".join(stage.held_locks) or "no lock is held"
-    return f"{stage.protected_bytes} bytes are protected ({held})"
+    pinned = f"{stage.protected_bytes} bytes are protected ({held})"
+    if stage.unselectable_bytes:
+        pinned += f"; {_unselectable(stage)}"
+    return pinned
+
+
+def _unselectable(stage: StageInventory) -> str:
+    largest = ", ".join(stage.largest_unselectable)
+    return f"{stage.unselectable_bytes} bytes are outside every generation (largest: {largest})"
 
 
 def plan_prune(inventory: CacheInventory | RetentionInventory, policy: CachePolicy) -> PrunePlan:
@@ -121,6 +130,14 @@ def plan_prune(inventory: CacheInventory | RetentionInventory, policy: CachePoli
             choose(stage, entry, reason)
             remaining -= entry.budget_bytes
             remaining_count -= 1
+        if stage.unselectable_bytes > stage_policy.warm_size_bytes:
+            # Retention can never bring this stage back to its warm size: a
+            # producer writes paths no generation names. Fail on the cause,
+            # long before the bytes reach the maximum.
+            violations.append(
+                f"{stage.stage_id} can never recover to warm size "
+                f"{stage_policy.warm_size_bytes}: {_unselectable(stage)}"
+            )
         if remaining > stage_policy.max_size_bytes:
             violations.append(
                 f"{stage.stage_id} remains {remaining} bytes above max size "

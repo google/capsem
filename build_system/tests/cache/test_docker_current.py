@@ -2,7 +2,7 @@
 
 On 2026-09-29 routine enforcement removed the running release proof's current
 `capsem-kernel-dependencies-x86_64` generation (newest-by-creation is not
-current: a cache-hit rebuild keeps its old timestamp, and each profile has its
+current: a cache-hit rebuild keeps its old timestamp, and each slot has its
 own tag), and an early enforce evicted the current host builder. Each rebuild
 cost the proof its slowest network phase again.
 """
@@ -95,13 +95,13 @@ def test_an_older_current_generation_survives_a_newer_superseded_one(paths, chec
     assert "capsem-deps:proof" not in removed(plan_runtime_prune(state, controlled_policy()))
 
 
-def test_every_profile_slot_keeps_its_own_current_tag(paths, checkout) -> None:
-    for profile in ("code", "co-work"):
+def test_every_slot_keeps_its_own_current_tag(paths, checkout) -> None:
+    for slot in ("arm64", "x86_64"):
         dockercurrent.record(
-            paths, tag=f"capsem-deps:{profile}", checkout=checkout, slot=profile, now_ns=NOW
+            paths, tag=f"capsem-deps:{slot}", checkout=checkout, slot=slot, now_ns=NOW
         )
     state = dockercurrent.mark(
-        snapshot(image("capsem-deps:code", 1), image("capsem-deps:co-work", 2)), paths
+        snapshot(image("capsem-deps:arm64", 1), image("capsem-deps:x86_64", 2)), paths
     )
 
     assert removed(plan_runtime_prune(state, controlled_policy())) == set()

@@ -29,7 +29,7 @@ def _legacy() -> dict[str, object]:
 
 
 def _graph(channel: str) -> dict[str, object]:
-    return {"version": "1.0.1", "channel": channel, "profiles": {}, "packages": []}
+    return {"version": "1.0.1", "channel": channel, "packages": []}
 
 
 def test_missing_public_channel_bootstraps_from_primary_asset_manifest(monkeypatch) -> None:
@@ -130,13 +130,11 @@ def test_asset_workflow_and_local_gate_share_complete_dist_builder() -> None:
     assert "build_system/scripts/release/build-complete-release-channel.py" in workflow
     assert "build_system/scripts/release/build-complete-release-channel.py" in release
     assert "build_system/scripts/release/build-complete-release-channel.py" in local_web_gate
-    assert local_web_gate.count("build_system/scripts/release/build-complete-release-channel.py") == 2
+    assert (
+        local_web_gate.count("build_system/scripts/release/build-complete-release-channel.py") == 2
+    )
     assert '--channel-source "stable=file://$graph_sources/stable.json"' in local_web_gate
     assert '--channel-source "nightly=file://$graph_sources/nightly.json"' in local_web_gate
-    assert '--profile-source-root "$ROOT"' in local_web_gate
-    assert "--profile-source-ref HEAD" not in local_web_gate
-    assert 'command.extend(["--source-root", str(args.profile_source_root)])' in builder
-    assert "profile_source = parser.add_mutually_exclusive_group()" in builder
     assert (
         "--channel stable"
         not in workflow.split("- name: Build complete asset channel preview", maxsplit=1)[1].split(
@@ -147,11 +145,22 @@ def test_asset_workflow_and_local_gate_share_complete_dist_builder() -> None:
     assert '"assets",\n                "channel",\n                "check"' in builder
 
 
-def test_complete_builder_preserves_public_mirror_from_public_bytes() -> None:
-    builder = Path(build_complete_release_channel.__file__).read_text()
-
-    assert "is_public_mirror" in builder
-    assert 'command.extend(["--public-base", args.release_site])' in builder
+@pytest.mark.parametrize(
+    ("document", "graph"),
+    [
+        ({"version": "1.0.1", "channel": "stable", "packages": []}, True),
+        ({"version": "1.0.1", "channel": "stable", "packages": [], "runtime": None}, True),
+        ({"version": "1.0.1", "channel": "stable", "packages": [], "runtime": {}}, True),
+        ({"version": "1.0.1", "channel": "stable", "packages": [], "runtime": []}, False),
+        ({"version": "1.0.1", "channel": "stable"}, False),
+        (_legacy(), False),
+    ],
+)
+def test_a_release_graph_is_packages_and_an_optional_runtime(
+    document: dict[str, object], graph: bool
+) -> None:
+    """A channel that has published no runtime yet is still a graph."""
+    assert _module().is_release_graph(document) is graph
 
 
 def test_stable_assembly_does_not_depend_on_a_404_nightly(monkeypatch) -> None:

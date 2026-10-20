@@ -12,7 +12,7 @@ same text out, zero I/O) at multiple concurrency levels. End-to-end
 path:
 
 ```
-Python fastmcp.Client (in guest)
+the stdlib JSON-RPC client in capsem_bench/mcp_transport.py (in guest)
   -> stdio -> /run/capsem-mcp-server (guest agent's MCP server)
   -> framed MCP over vsock:5002 -> MITM MCP endpoint (host)
   -> capsem-mcp-aggregator (host)

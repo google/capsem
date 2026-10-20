@@ -52,6 +52,28 @@ fn clones_system_workspace_and_compat_links() {
     assert_eq!(std::fs::read(s.dst.join("workspace/hello.txt")).unwrap(), b"world");
 }
 
+/// The fork's image comes from the source's host-only share, linked; the
+/// guest-writable workspace plays no part in it.
+#[test]
+fn the_image_share_is_carried_by_link_outside_the_guest_share() {
+    use std::os::unix::fs::MetadataExt;
+
+    let s = sessions();
+    let blob = "a".repeat(64);
+    std::fs::create_dir(s.src.join("image")).unwrap();
+    std::fs::write(s.src.join("image").join(&blob), b"layer").unwrap();
+
+    clone_sandbox_state(&s.src, &s.dst).unwrap();
+
+    let carried = s.dst.join("image").join(&blob);
+    assert_eq!(std::fs::read(&carried).unwrap(), b"layer");
+    assert_eq!(
+        std::fs::metadata(&carried).unwrap().ino(),
+        std::fs::metadata(s.src.join("image").join(&blob)).unwrap().ino()
+    );
+    assert!(!s.dst.join("guest/image").exists());
+}
+
 #[test]
 fn a_session_from_before_the_single_share_layout_still_clones() {
     let tmp = tempfile::tempdir().unwrap();
@@ -189,4 +211,19 @@ fn session_db_is_copied_coherently_outside_the_share() {
         .unwrap();
     assert_eq!(payload, "committed-in-wal");
     drop(conn);
+}
+
+#[test]
+fn sandbox_file_clone_never_copies_ledger_files() {
+    let s = sessions();
+    std::fs::write(s.src.join("session.db"), b"database").unwrap();
+    std::fs::write(s.src.join("session.db-wal"), b"wal").unwrap();
+    std::fs::create_dir(s.src.join("session.bodies")).unwrap();
+    std::fs::write(s.src.join("session.bodies/generation"), b"bodies").unwrap();
+
+    clone_sandbox_files(&s.src, &s.dst).unwrap();
+
+    assert!(!s.dst.join("session.db").exists());
+    assert!(!s.dst.join("session.db-wal").exists());
+    assert!(!s.dst.join("session.bodies").exists());
 }

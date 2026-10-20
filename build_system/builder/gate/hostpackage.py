@@ -205,7 +205,7 @@ class BuildUiCommand(
             )
 
         installed = plan.add(toolchain.node(config, (settings.workspace,)))
-        sdk = plan.add(sdkchecks.typescript_bundle(config), after=(installed,))
+        sdk = sdkchecks.typescript_compiled(plan, config, after=(installed,))
         bundle = plan.add(
             step(
                 "frontend",

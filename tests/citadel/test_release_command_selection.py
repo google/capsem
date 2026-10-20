@@ -16,7 +16,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 INSTALL_WARNING = (
     "Agent: optional hands-on local testing only; 'just install' does not "
     "qualify or unblock a release. Releases need 'just test <commit>' to pass "
-    "first, then 'just release-binaries ...' or 'just release-profile ...'."
+    "first, then 'just release-binaries ...' or 'just release-assets ...'."
 )
 
 RATIONALE = """\
@@ -60,4 +60,4 @@ def test_agent_contracts_forbid_install_as_release_prerequisite() -> None:
         assert "just install" in contract, RATIONALE
         assert "hands-on" in contract, RATIONALE
         assert "just release-binaries" in contract, RATIONALE
-        assert "just release-profile" in contract, RATIONALE
+        assert "just release-assets" in contract, RATIONALE

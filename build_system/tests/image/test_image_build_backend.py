@@ -198,11 +198,11 @@ def test_private_backend_requires_dependencies_through_detected_runtime(
     assert declared == [(loaded_config, "capsem-rootfs-dependencies-x86_64:fixture", tmp_path)]
 
 
-def test_each_profiles_dependency_image_is_declared_current(monkeypatch, tmp_path: Path) -> None:
-    """A dependency repository holds one current tag per profile.
+def test_each_manifests_dependency_image_is_declared_current(monkeypatch, tmp_path: Path) -> None:
+    """A dependency repository holds one current tag per image manifest.
 
-    Retention guessed "newest by creation" per repository, so the `code` and
-    `co-work` tags evicted each other and a release proof rebuilt its current
+    Retention guessed "newest by creation" per repository, so two images'
+    tags evicted each other and a release proof rebuilt its current
     `capsem-kernel-dependencies-x86_64` minutes after enforcement removed it.
     """
     authority = tmp_path / "authority"
@@ -216,18 +216,18 @@ def test_each_profiles_dependency_image_is_declared_current(monkeypatch, tmp_pat
         def __init__(self, name: str) -> None:
             self.manifest = Manifest(name)
 
-    for profile in ("code", "co-work"):
+    for manifest in ("guest", "fixture"):
         image_build_backend.declare_current(
-            Config(profile),
+            Config(manifest),
             AssetDependencyImage(
-                reference=f"capsem-rootfs-dependencies-x86_64:{profile}", image_id="sha256:x"
+                reference=f"capsem-rootfs-dependencies-x86_64:{manifest}", image_id="sha256:x"
             ),
             PROJECT_ROOT,
         )
 
     assert dockercurrent.live_tags(load_paths(PROJECT_ROOT), now_ns=time.time_ns()) == {
-        "capsem-rootfs-dependencies-x86_64:code",
-        "capsem-rootfs-dependencies-x86_64:co-work",
+        "capsem-rootfs-dependencies-x86_64:guest",
+        "capsem-rootfs-dependencies-x86_64:fixture",
     }
 
 

@@ -19,7 +19,7 @@ async fn fixture() -> Fixture {
     let state = make_test_state();
     let session_dir = dir.path().join("session");
     std::fs::create_dir_all(session_dir.join("guest/workspace")).unwrap();
-    insert_fake_instance_with_session_dir(&state, "box", 1, session_dir);
+    insert_fake_instance_with_session_dir(&state, "box", std::process::id(), session_dir);
     let uds_path = state.instances.lock().unwrap()["box"].uds_path.clone();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -107,10 +107,11 @@ fn status(frame: &[u8]) -> StreamStatus {
 async fn exec_stream_relays_output_and_ends_with_the_exit_status() {
     let fx = fixture().await;
     let owner = owner(&fx.uds_path, |tx, rx| async move {
-        let ServiceToProcess::ExecStream { id, command } = rx.recv().await.unwrap() else {
+        let ServiceToProcess::ExecStream { id, command, target } = rx.recv().await.unwrap() else {
             panic!("expected ExecStream")
         };
         assert_eq!(command, "echo hi");
+        assert_eq!(target, capsem_proto::ipc::ExecTarget::Vm);
         tx.send(ProcessToService::StateChanged {
             id: "noise".into(),
             state: "x".into(),
@@ -243,10 +244,11 @@ async fn terminal_stream_relays_output_input_and_resize() {
 async fn exec_stream_relays_stdin_eof_separate_stderr_and_disconnect_cancellation() {
     let fx = fixture().await;
     let owner = owner(&fx.uds_path, |tx, rx| async move {
-        let ServiceToProcess::ExecStream { id, command } = rx.recv().await.unwrap() else {
+        let ServiceToProcess::ExecStream { id, command, target } = rx.recv().await.unwrap() else {
             panic!("expected ExecStream")
         };
         assert_eq!(command, "cat; echo problem >&2");
+        assert_eq!(target, capsem_proto::ipc::ExecTarget::Vm);
         assert!(matches!(
             rx.recv().await.unwrap(),
             ServiceToProcess::ExecStreamInput { id: input_id, data }
@@ -338,10 +340,11 @@ async fn container_stream_starts_a_staged_workload_once_and_records_its_exit() {
     let fx = fixture().await;
     let generation = fx.state.containers.stage_for_tests("box", "registry.example/app:1");
     let owner = owner(&fx.uds_path, |tx, rx| async move {
-        let ServiceToProcess::ExecStream { id, command } = rx.recv().await.unwrap() else {
+        let ServiceToProcess::ExecStream { id, command, target } = rx.recv().await.unwrap() else {
             panic!("expected ExecStream")
         };
         assert_eq!(command, capsem_core::container::LAUNCH_COMMAND);
+        assert_eq!(target, capsem_proto::ipc::ExecTarget::Vm);
         tx.send(ProcessToService::ExecResult {
             id,
             stdout: vec![],

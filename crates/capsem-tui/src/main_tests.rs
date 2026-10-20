@@ -12,6 +12,27 @@ use capsem_tui::terminal::TerminalEvent;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
 #[test]
+fn fixture_creation_does_not_leave_an_outstanding_create() {
+    let mut app = App::new(capsem_tui::fixture::fixture_state());
+    super::handle_terminal_event(
+        Event::Key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::ALT)),
+        &mut app,
+        None,
+        None,
+    )
+    .unwrap();
+    super::handle_terminal_event(
+        Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        &mut app,
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(app.overlay(), capsem_tui::app::AppOverlay::Create);
+    assert!(app.create_draft().is_some());
+}
+
+#[test]
 fn terminal_failure_status_clears_connected_session() {
     let connected = ConnectedTerminal {
         session_id: "vm-1".to_string(),

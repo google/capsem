@@ -8,6 +8,40 @@ pub enum FileBoundaryAction {
     Export,
 }
 
+/// Where a guest exec runs. Chosen by the service and never defaulted on the
+/// wire: an image session's API exec enters its workload, Capsem's own
+/// launcher and diagnostics name the VM, and the session ledger records which
+/// one ran.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecTarget {
+    /// The VM itself, as VM root in the agent's environment.
+    Vm,
+    /// The session's running OCI workload, through `runc exec` as the image's
+    /// own process user.
+    Workload,
+}
+
+impl ExecTarget {
+    /// The ledger's spelling, identical to the wire's.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Vm => "vm",
+            Self::Workload => "workload",
+        }
+    }
+}
+
+impl std::str::FromStr for ExecTarget {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        [Self::Vm, Self::Workload]
+            .into_iter()
+            .find(|target| target.as_str() == value)
+            .ok_or_else(|| format!("unknown exec target {value:?}"))
+    }
+}
+
 /// Messages sent from capsem-service to capsem-process over the per-VM Unix Domain Socket.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ServiceToProcess {
@@ -25,10 +59,13 @@ pub enum ServiceToProcess {
     },
     /// Request the process to gracefully shut down the VM.
     Shutdown,
-    /// Execute a command and wait for completion (structured).
+    /// Execute a command and wait for completion (structured). `command` is
+    /// the caller's own: the VM owner records it and applies policy to it,
+    /// then wraps it for `target`.
     Exec {
         id: u64,
         command: String,
+        target: ExecTarget,
     },
     /// Write a file to the guest.
     WriteFile {
@@ -54,10 +91,17 @@ pub enum ServiceToProcess {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         mime_type: Option<String>,
     },
-    /// Request the process to reload its active profile from disk. Answered by
-    /// `ConfigReloadResult` naming the digest of the bytes it applied.
+    /// Deliver the exact active-policy bytes the service published. Answered
+    /// by `ConfigReloadResult` naming the digest of the bytes it applied.
     ReloadConfig {
         id: u64,
+        #[serde(with = "serde_bytes")]
+        active_policy: Vec<u8>,
+    },
+    /// Seed host broker memory. This material must never cross the guest bridge.
+    InjectCredentials {
+        id: u64,
+        credentials: Vec<crate::credential_injection::CredentialMaterial>,
     },
     /// Start streaming terminal output to this IPC connection.
     StartTerminalStream,
@@ -66,18 +110,22 @@ pub enum ServiceToProcess {
     /// longer reading -- prevents late writes from leaking into the
     /// user's parent shell after raw mode is restored.
     StopTerminalStream,
-    /// Suspend VM and save checkpoint to disk.
-    Suspend {
-        checkpoint_path: String,
-    },
-    /// Clone this sandbox's state into `destination`, an empty session
-    /// directory the service created. The owner freezes the guest's system
-    /// filesystem for the copy and always thaws it, so the fork's overlay
-    /// image is consistent and a service that disappears mid-fork cannot
-    /// leave the guest frozen.
+    /// Suspend the VM into its fixed, confined checkpoint location.
+    Suspend,
+    /// Freeze the guest for a coordinator-owned state clone. The owner emits
+    /// `CloneStateReady` after the freeze and always thaws before its final
+    /// result. No source or destination path enters the VM owner.
     CloneState {
         id: u64,
-        destination: String,
+    },
+    /// Complete the coordinator-owned copy while the owner holds the guest
+    /// frozen. The size or error becomes the owner's final result after thaw.
+    CloneStateComplete {
+        id: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        size_bytes: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
     },
     /// Query MCP aggregator for server list with connection status.
     McpListServers {
@@ -105,6 +153,7 @@ pub enum ServiceToProcess {
     ExecStream {
         id: u64,
         command: String,
+        target: ExecTarget,
     },
     /// Send bytes to one running exec's stdin.
     ExecStreamInput {
@@ -177,7 +226,7 @@ pub enum ServiceToProcess {
     },
     /// The service is plugging this VM into a network's switch and wants the
     /// guest's stream for that network's cable. The owner evaluates its
-    /// profile once, has the guest bring the cable up with `address`/`prefix`,
+    /// policy once, has the guest bring the cable up with `address`/`prefix`,
     /// then answers with the handoff socket the service should ask on, keyed
     /// by `token`; the stream comes back on that connection. `generation` is
     /// the attachment's, which only grows: the cable remembers the newest.
@@ -277,7 +326,9 @@ pub enum ProcessToService {
     ShutdownRequested { id: String },
     /// Guest requested suspend (forwarded from capsem-sysutil via vsock:5004).
     SuspendRequested { id: String },
-    /// Result of CloneState: the clone's disk usage, or why it failed.
+    /// The owner froze the guest and is waiting for the coordinator copy.
+    CloneStateReady { id: u64 },
+    /// Result of CloneState after the guest has been thawed.
     CloneStateResult {
         id: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -391,13 +442,18 @@ pub enum ProcessToService {
     /// The terminal stream on this connection stopped; no more TerminalOutput
     /// follows. Sent instead of going silent when the client fell behind.
     TerminalStreamEnded { reason: String },
-    /// Result of `ReloadConfig`. On success `active_profile_digest` is the
-    /// digest of the exact active-profile bytes now enforced; on failure the
+    /// Result of `ReloadConfig`. On success `active_policy_digest` is the
+    /// digest of the exact active-policy bytes now enforced; on failure the
     /// previous policy stays in force and `error` says why.
     ConfigReloadResult {
         id: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        active_profile_digest: Option<String>,
+        active_policy_digest: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+    CredentialsInjected {
+        id: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
@@ -422,7 +478,7 @@ impl ServiceToProcess {
             | Self::WriteFile { id, .. }
             | Self::ReadFile { id, .. }
             | Self::LogFileBoundary { id, .. }
-            | Self::CloneState { id, .. }
+            | Self::CloneState { id }
             | Self::McpListServers { id }
             | Self::McpListTools { id }
             | Self::McpRefreshTools { id }
@@ -438,7 +494,8 @@ impl ServiceToProcess {
             | Self::LinkAttach { id, .. }
             | Self::LinkDetach { id, .. }
             | Self::AdmitContainerPull { id, .. }
-            | Self::ReloadConfig { id } => Some(*id),
+            | Self::ReloadConfig { id, .. }
+            | Self::InjectCredentials { id, .. } => Some(*id),
             _ => None,
         }
     }
@@ -471,7 +528,8 @@ impl ProcessToService {
             | Self::LinkAttachResult { id, .. }
             | Self::LinkDetachResult { id, .. }
             | Self::ContainerPullAdmission { id, .. }
-            | Self::ConfigReloadResult { id, .. } => Some(*id),
+            | Self::ConfigReloadResult { id, .. }
+            | Self::CredentialsInjected { id, .. } => Some(*id),
             _ => None,
         }
     }
@@ -508,6 +566,9 @@ pub struct McpToolStatus {
     pub original_name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Complete input schema used by the coordinator-owned pin cache.
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+    pub input_schema: serde_json::Value,
     pub server_name: String,
     /// Typed so SDK and UI consumers get one stable annotation contract.
     #[serde(default, skip_serializing_if = "Option::is_none")]

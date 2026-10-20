@@ -1,11 +1,9 @@
 # Tips shown randomly at login. One tip per line. Lines starting with # are ignored.
-pip install and uv pip install work out of the box.
-npm install -g works -- packages go to your scratch disk.
+Applications come from OCI images -- on the host, capsem images lists them and capsem create --image <name> starts one.
+Credentials are brokered by Capsem; do not bake secrets into the image.
+pip install works out of the box -- packages go to the session venv at /root/.venv.
 apt install works -- changes persist for the session and reset on reboot.
-Your /root directory is on a scratch disk -- files persist for the session.
-Run capsem-doctor to verify sandbox integrity.
-Use uv for faster Python package installs.
-AI CLI tools auto-update -- they live on the writable scratch disk.
+Your /root directory is the session workspace -- files persist for the session.
 The filesystem is fully writable -- changes persist for the session and reset on reboot.
-Python packages like numpy, pandas, and requests are pre-installed.
+Run capsem-doctor to verify sandbox integrity.
 Use capsem-doctor -k sandbox to run only sandbox security tests.

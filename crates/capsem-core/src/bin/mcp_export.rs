@@ -1,9 +1,0 @@
-//! Dumps builtin MCP tool definitions to JSON on stdout.
-//!
-//! Used by `_generate-settings` to produce `cache/target/config/profiles/catalog.generated.json`,
-//! which the frontend mock-data generator reads to create sample payloads.
-
-fn main() {
-    let tools = capsem_core::mcp::builtin_tools::builtin_tool_defs();
-    println!("{}", serde_json::to_string_pretty(&tools).unwrap());
-}

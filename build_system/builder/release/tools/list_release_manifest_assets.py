@@ -1,4 +1,4 @@
-"""List every profile-owned artifact in a legacy or public release manifest."""
+"""List every runtime artifact in a legacy or public release manifest."""
 
 from __future__ import annotations
 
@@ -26,55 +26,44 @@ def _absolute_url(manifest_url: str, value: object, label: str) -> str:
     return urljoin(manifest_url, value)
 
 
-def _release_graph_rows(
+def _runtime_rows(
     manifest: dict[str, Any], manifest_url: str
 ) -> list[tuple[str, str, str, str, int, str]]:
-    profiles = manifest.get("profiles")
-    if not isinstance(profiles, dict) or not profiles:
-        raise ValueError("release graph profiles must be a non-empty object")
+    runtime = manifest.get("runtime")
+    if not isinstance(runtime, dict):
+        raise ValueError("release graph runtime must be an object")
+    architectures = runtime.get("architectures")
+    if not isinstance(architectures, list) or not architectures:
+        raise ValueError("runtime has no architectures")
     rows: dict[str, tuple[str, str, str, str, int, str]] = {}
-    for profile_id, profile in sorted(profiles.items()):
-        if not isinstance(profile, dict):
-            raise ValueError(f"profile {profile_id!r} must be an object")
-        architectures = profile.get("architectures")
-        if not isinstance(architectures, list) or not architectures:
-            raise ValueError(f"profile {profile_id!r} has no architectures")
-        for architecture in architectures:
-            if not isinstance(architecture, dict):
-                raise ValueError(f"profile {profile_id!r} architecture must be an object")
-            arch = architecture.get("architecture")
-            revision = architecture.get("image_revision")
-            if not isinstance(arch, str) or not arch:
-                raise ValueError(f"profile {profile_id!r} architecture has no name")
-            if not isinstance(revision, str) or not revision:
-                raise ValueError(f"profile {profile_id!r}/{arch} has no image_revision")
-            for section in ("images", "evidence", "config"):
-                records = architecture.get(section, [])
-                if not isinstance(records, list):
-                    raise ValueError(f"profile {profile_id!r}/{arch} {section} is not a list")
-                for index, record in enumerate(records):
-                    if not isinstance(record, dict):
-                        raise ValueError(
-                            f"profile {profile_id!r}/{arch} {section}[{index}] is not an object"
-                        )
-                    label = str(
-                        record.get("name")
-                        or record.get("path")
-                        or record.get("kind")
-                        or f"{section}-{index}"
+    for architecture in architectures:
+        if not isinstance(architecture, dict):
+            raise ValueError("runtime architecture must be an object")
+        arch = architecture.get("architecture")
+        revision = architecture.get("image_revision")
+        if not isinstance(arch, str) or not arch:
+            raise ValueError("runtime architecture has no name")
+        if not isinstance(revision, str) or not revision:
+            raise ValueError(f"runtime/{arch} has no image_revision")
+        for section in ("images", "evidence"):
+            records = architecture.get(section, [])
+            if not isinstance(records, list):
+                raise ValueError(f"runtime/{arch} {section} is not a list")
+            for index, record in enumerate(records):
+                if not isinstance(record, dict):
+                    raise ValueError(f"runtime/{arch} {section}[{index}] is not an object")
+                label = str(record.get("name") or record.get("kind") or f"{section}-{index}")
+                context = f"runtime/{arch}/{label}"
+                blake3, size = _digest(record, context)
+                url = _absolute_url(manifest_url, record.get("url"), context)
+                row = (revision, arch, label, blake3, size, url)
+                previous = rows.setdefault(url, row)
+                if previous[3:5] != row[3:5]:
+                    raise ValueError(
+                        f"release graph records disagree on {url}: {previous[3:5]} != {row[3:5]}"
                     )
-                    context = f"profile {profile_id!r}/{arch}/{label}"
-                    blake3, size = _digest(record, context)
-                    url = _absolute_url(manifest_url, record.get("url"), context)
-                    row = (revision, arch, label, blake3, size, url)
-                    previous = rows.setdefault(url, row)
-                    if previous[3:5] != row[3:5]:
-                        raise ValueError(
-                            f"release graph records disagree on {url}: "
-                            f"{previous[3:5]} != {row[3:5]}"
-                        )
     if not rows:
-        raise ValueError("release graph contains no profile-owned artifacts")
+        raise ValueError("release graph contains no runtime artifacts")
     return sorted(rows.values(), key=lambda row: (row[1], row[2], row[5]))
 
 
@@ -122,8 +111,12 @@ def _legacy_rows(
 def manifest_asset_rows(
     manifest: dict[str, Any], manifest_url: str
 ) -> list[tuple[str, str, str, str, int, str]]:
-    if "profiles" in manifest:
-        return _release_graph_rows(manifest, manifest_url)
+    # A channel graph that has published no runtime yet (a binary-only first
+    # release) is valid and selects no runtime artifact.
+    if isinstance(manifest.get("packages"), list) and manifest.get("runtime") is None:
+        return []
+    if "runtime" in manifest:
+        return _runtime_rows(manifest, manifest_url)
     return _legacy_rows(manifest, manifest_url)
 
 

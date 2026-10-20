@@ -27,7 +27,7 @@ from .config import GateConfig
 from .context import Context
 from .errors import GateError
 from .execution import Kind, Needs, Speed, Step, step
-from .fileactions import Copy, MakeDir, Remove
+from .fileactions import MakeDir, Remove
 from .lifecycle import Resource
 from .plan import Plan
 
@@ -88,14 +88,10 @@ class Service(Resource, name="service"):
         self.started = True
 
     def _stage(self, context) -> None:
-        """Clear a predecessor and put this workspace's config where it looks."""
-        settings = self._config.service
-        generated = self._config.path(settings.generated_profiles)
+        """Clear a predecessor so this workspace's daemon binds a fresh socket."""
         MakeDir(self.run_dir).perform(context)
         pidfiles.stop_gate_service(self.run_dir, self._config.pidfiles)
-        Remove(self.run_dir / settings.socket).perform(context)
-        Remove(self.home / settings.home_profiles).perform(context)
-        Copy(generated, self.home / settings.home_profiles).perform(context)
+        Remove(self.run_dir / self._config.service.socket).perform(context)
 
     def release(self) -> None:
         pidfiles.stop_gate_service(self.run_dir, self._config.pidfiles)
@@ -107,7 +103,6 @@ def launch(
     home: Path,
     run_dir: Path,
     assets: Path | None = None,
-    profiles: Path | None = None,
 ) -> Launch:
     """Start the daemon, detached, with its pid where `pidfiles` will find it.
 
@@ -118,7 +113,6 @@ def launch(
     settings = config.service
     names = config.environment
     selected_assets = assets or home / settings.home_assets
-    selected_profiles = profiles or config.path(settings.generated_profiles)
     return Launch(
         [
             str(config.path(settings.binary)),
@@ -131,7 +125,7 @@ def launch(
         pidfile=run_dir / settings.pidfile,
         env={
             names.home: str(home),
-            **names.content(assets=selected_assets, profiles=selected_profiles),
+            **names.content(assets=selected_assets),
             "RUST_LOG": settings.log_level,
         },
     )
@@ -194,25 +188,6 @@ class _StopExisting(Action, name="stop-existing-service"):
         Remove(directory / context.config.service.socket).perform(context)
 
 
-class _RequireGeneratedProfiles(Action, name="require-generated-profiles"):
-    """Fail before service state changes when its generated catalog is absent."""
-
-    def __init__(self, path: Path) -> None:
-        self._path = path
-
-    def render(self) -> str:
-        return f"require generated profiles at {self._path}"
-
-    def perform(self, context: Context) -> None:
-        if context.observing:
-            return
-        if not self._path.is_dir():
-            raise GateError(
-                f"generated profiles are missing at {self._path}; run "
-                "`just _materialize-config` or a recipe that depends on it"
-            )
-
-
 class EnsureServiceCommand(
     GateCommand, name="ensure-service", help="start the development daemon idempotently"
 ):
@@ -234,12 +209,10 @@ def fragment(
     """Start the development service after its complete runtime exists."""
     settings = config.service
     target = home(config)
-    generated = config.path(settings.generated_profiles)
 
     service_prepared = plan.add(
         step(
             "prepare",
-            _RequireGeneratedProfiles(generated),
             MakeDir(run_dir(config)),
             _StopExisting(),
             # An older layout wrote these into the home. Removed on every
@@ -264,8 +237,6 @@ def fragment(
                     str(target / settings.home_assets),
                 ]
             ),
-            Remove(target / settings.home_profiles),
-            Copy(generated, target / settings.home_profiles),
             kind=Kind.CAPSEM,
             needs=frozenset({Needs.DISK}),
             speed=Speed.FAST,

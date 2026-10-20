@@ -14,11 +14,9 @@ from pathlib import Path
 import pytest
 from helpers.body_archive import session_archive
 from helpers.constants import (
-    CODE_PROFILE_ID,
     DEFAULT_CPUS,
     DEFAULT_RAM_MB,
     EXEC_READY_TIMEOUT,
-    PROFILES_DIR,
 )
 from helpers.service import (
     ServiceInstance,
@@ -28,7 +26,7 @@ from helpers.service import (
     vm_session_dir,
     wait_exec_ready,
 )
-from helpers.session_ledger import open_session_ledger
+from helpers.session_ledger import open_session_ledger, stop_session_for_ledger_read
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -62,6 +60,7 @@ EXPECTED_EXEC_COLUMNS = {
     "stdout_bytes",
     "stderr_bytes",
     "source",
+    "target",
     "trace_id",
     "process_name",
     "pid",
@@ -103,13 +102,6 @@ SECURITY_ROUTE_FIELDS = {
     "turn_id",
     "credential_ref",
 }
-
-
-def _connect_session_db(service: ServiceInstance, session_id: str) -> sqlite3.Connection:
-    db_path = vm_session_db_path(service.tmp_dir, service.client(), session_id)
-    conn = open_session_ledger(db_path)
-    conn.row_factory = sqlite3.Row
-    return conn
 
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
@@ -192,7 +184,6 @@ def _extract_json_line(output: str, prefix: str) -> dict:
 
 
 def test_file_process_routes_pay_full_ledger_debt_blackbox():
-    assert PROFILES_DIR.exists(), f"{PROFILES_DIR} missing; materialize profile config"
 
     service = ServiceInstance()
     session_id = vm_name("ironbank-fps")
@@ -220,7 +211,6 @@ def test_file_process_routes_pay_full_ledger_debt_blackbox():
             "/vms/create",
             {
                 "name": session_id,
-                "profile_id": CODE_PROFILE_ID,
                 "ram_mb": DEFAULT_RAM_MB,
                 "cpus": DEFAULT_CPUS,
             },
@@ -289,7 +279,10 @@ def test_file_process_routes_pay_full_ledger_debt_blackbox():
             assert retired_status == 404, retired
         assert not (vm_session_dir(service.tmp_dir, client, session_id) / "auto_snapshots").exists()
 
-        conn = _connect_session_db(service, session_id)
+        db_path = vm_session_db_path(service.tmp_dir, client, session_id)
+        stop_session_for_ledger_read(client, session_id, db_path)
+        conn = open_session_ledger(db_path)
+        conn.row_factory = sqlite3.Row
         try:
             assert _table_columns(conn, "fs_events") == EXPECTED_FS_COLUMNS
             assert _table_columns(conn, "exec_events") == EXPECTED_EXEC_COLUMNS
@@ -331,6 +324,7 @@ def test_file_process_routes_pay_full_ledger_debt_blackbox():
             )
             _assert_ledger_id(exec_row["event_id"])
             assert exec_row["source"] == "api"
+            assert exec_row["target"] == "vm"
             assert exec_row["stdout_bytes"] >= len("IRONBANK_FILE_PROCESS=")
             assert "IRONBANK_FILE_PROCESS=" in exec_row["stdout_preview"]
             assert exec_row["stderr_preview"] in {None, ""}

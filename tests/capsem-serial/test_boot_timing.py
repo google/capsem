@@ -11,10 +11,8 @@ from helpers.service import ServiceInstance, wait_exec_ready
 
 pytestmark = pytest.mark.serial
 
-# One budget for every platform and every profile. macOS used to get 1.5s
-# while Linux got 2.0s, but the gate is asserted across the whole functional
-# profile matrix and the profiles are deliberately different sizes: the
-# heavier co-work image lands near 1.8s where code comes in well under.
+# One budget for every platform. macOS used to get 1.5s while Linux got 2.0s;
+# one number keeps the gate comparable across hosts.
 EXEC_LATENCY_GATE = 2.0
 CONCURRENT_EXEC_LATENCY_GATE = 2.0
 

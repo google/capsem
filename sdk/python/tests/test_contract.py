@@ -12,6 +12,12 @@ from typing import Any
 import pytest
 from capsem import _operations, models
 from capsem._transport import Transport
+from capsem.execution import (
+    CREATE_READY_SECS,
+    EXEC_TIMEOUT_CEILING_SECS,
+    GATEWAY_REQUEST_BUDGET_SECS,
+    MAX_REQUEST_BODY_BYTES,
+)
 from pydantic import TypeAdapter, ValidationError
 
 from .test_transport import gateway
@@ -19,6 +25,13 @@ from .test_transport import gateway
 SPEC = json.loads((Path(__file__).resolve().parents[2] / "specification/openapi.json").read_text())
 SCHEMAS = SPEC["components"]["schemas"]
 OPERATIONS = [operation for methods in SPEC["paths"].values() for operation in methods.values()]
+
+
+def test_execution_mirrors_gateway_and_service_limits() -> None:
+    assert EXEC_TIMEOUT_CEILING_SECS == 60 * 60
+    assert GATEWAY_REQUEST_BUDGET_SECS == 120
+    assert CREATE_READY_SECS == 110
+    assert MAX_REQUEST_BODY_BYTES == 10 * 1024 * 1024
 
 
 def sample(schema: dict[str, Any]) -> object:
@@ -41,6 +54,12 @@ def sample(schema: dict[str, Any]) -> object:
         return []
     if schema.get("format") == "ipv4":
         return "10.128.0.2"
+    if schema.get("format") == "uuid":
+        return "fc120782-2272-4b3d-a2e6-a26ee2f8ab61"
+    if schema.get("format") == "date-time":
+        return "2026-10-14T12:34:56.123456789+01:30"
+    if schema.get("pattern") == "^[0-9a-f]{64}$":
+        return "af" * 32
     return {"string": "value", "integer": 0, "number": 0.5, "boolean": True}[kind]
 
 
@@ -75,7 +94,7 @@ def test_optional_nonnullable_fields_cannot_be_explicitly_null() -> None:
 
 @pytest.mark.parametrize("operation", OPERATIONS, ids=lambda operation: operation["operationId"])
 def test_each_packaged_operation_uses_http_and_returns_typed_data(operation: dict[str, Any]) -> None:
-    status = "200" if "200" in operation["responses"] else "202"
+    status = next(status for status in operation["responses"] if status.startswith("2"))
     content = operation["responses"][status]["content"]
     response_media_type = next(iter(content))
     binary = response_media_type in {"application/octet-stream", "application/gzip"}

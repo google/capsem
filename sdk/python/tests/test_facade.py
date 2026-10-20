@@ -8,11 +8,6 @@ from typing import Any
 
 import pytest
 from capsem import VM, ExecResult, HttpError, Hypervisor, Registry, models
-from capsem.execution import (
-    CREATE_READY_SECS,
-    GATEWAY_REQUEST_BUDGET_SECS,
-    command_deadline,
-)
 
 from .facade_gateway import gateway
 
@@ -33,15 +28,15 @@ def test_hypervisor_creation_defaults_and_connection_ownership() -> None:
         async with gateway() as (url, state), Hypervisor(url, "token") as hv:
             assert isinstance(await hv.info(), models.HypervisorInfo)
             assert isinstance(await hv.list(), models.ListResponse)
-            profiles = await hv.profiles.list()
-            assert profiles and isinstance(profiles[0], models.ProfileSummary)
             network = await hv.networks.create("team")
-            vm = await hv.create(profile=profiles[0], name="new", cpus=4, memory=8,
-                                 env={"LANG": "C"}, networks=[network])
+            vm = await hv.create(
+                name="new", cpus=4, memory=8,
+                env={"LANG": "C"}, networks=[network],
+            )
             assert vm.id == "created-id" and vm.name == "new"
             body = json.loads(state.requests[-1][2])
-            assert body == {"profile_id": "code", "name": "new", "persistent": True,
-                            "cpus": 4, "ram_mb": 8192, "env": {"LANG": "C"}, "networks": ["team"]}
+            assert body == {"name": "new", "persistent": True,
+                            "cpus": 4, "ram_mb": 8192, "env": {"LANG": "C"}, "labels": None, "networks": ["team"]}
             async with vm:
                 assert isinstance(await vm.info(), models.SandboxInfo)
             with pytest.raises(RuntimeError, match="closed"):
@@ -57,7 +52,9 @@ def test_hypervisor_creation_defaults_and_connection_ownership() -> None:
             for bad in ({}, {"id": "abc", "name": "x"}):
                 with pytest.raises(ValueError, match="exactly one"):
                     hv.vm(**bad)
+            request_count = len(state.requests)
             temporary = await hv.create()
+            assert [path for _, path, _ in state.requests[request_count:]] == ["/vms/create"]
             body = json.loads(state.requests[-1][2])
             assert (body["persistent"], body["name"], body["cpus"], body["ram_mb"]) == (False, None, None, None)
             assert isinstance(await hv.log(models.HostLogSource.SERVICE, grep="boot", tail=3, max_bytes=1024), models.HostLogsResponse)
@@ -65,17 +62,26 @@ def test_hypervisor_creation_defaults_and_connection_ownership() -> None:
             assert isinstance(await hv.debug.panics(since="5m", limit=3), models.PanicsResponse)
             assert isinstance(await hv.debug.triage(vm_id="vm-0", since="1h", limit=2), models.TriageResponse)
             assert isinstance(await hv.purge(all=True), models.PurgeResponse)
-            raw_profile: Any = "code"
-            with pytest.raises(TypeError, match="profile must be an object"):
-                hv.profiles.mcp(raw_profile)
-            mcp = hv.profiles.mcp(profiles[0])
-            assert isinstance(await mcp.info(), models.ProfileMcpInfoResponse)
-            assert isinstance(await mcp.servers(), list)
-            assert isinstance(await mcp.default_permission(), models.McpDefaultPermissionResponse)
-            server = await mcp.get("filesystem")
+            first_mcp_request = len(state.requests)
+            assert isinstance(await hv.mcp.info(), models.McpInfoResponse)
+            assert isinstance(await hv.mcp.servers(), list)
+            assert isinstance(await hv.mcp.default_permission(), models.McpDefaultPermissionResponse)
+            server = await hv.mcp.get("filesystem")
             assert isinstance(await server.tools.list(), list)
             assert isinstance(await server.refresh(), models.McpRefreshResponse)
             assert await server.tools.call("read_file", {"path": "/tmp/x"}) is not None
+            assert [(method, path) for method, path, _ in state.requests[first_mcp_request:]] == [
+                ("GET", "/mcp/info"),
+                ("GET", "/mcp/servers/list"),
+                ("GET", "/mcp/default/info"),
+                ("GET", "/mcp/servers/list"),
+                ("GET", "/mcp/servers/filesystem/tools/list"),
+                ("POST", "/mcp/servers/filesystem/refresh"),
+                ("POST", "/mcp/servers/filesystem/tools/read_file/call"),
+            ]
+            assert json.loads(state.requests[-1][2]) == {"path": "/tmp/x"}
+            with pytest.raises(LookupError, match="expected one MCP server named 'missing'"):
+                await hv.mcp.get("missing")
             assert isinstance(await hv.update(), models.UpdateActionResponse)
             assert json.loads(state.requests[-1][2]) == {"confirmed": True}
             restarted = await hv.restart()
@@ -190,56 +196,6 @@ def test_container_options_without_an_image_are_rejected_before_http() -> None:
             with pytest.raises(TypeError, match="Registry"):
                 await hv.create(image="busybox", registry=invalid_registry)
     asyncio.run(run())
-
-
-def test_exec_outlives_the_default_deadline_without_replaying_it() -> None:
-    async def run() -> None:
-        async with gateway() as (url, state), VM(url, "token", id="vm-0", timeout=0.05) as vm:
-            state.delays["/vms/vm-0/exec"] = 0.3
-            await vm.exec("slow build", timeout_secs=600)
-            state.delays["/run"] = 0.3
-            async with Hypervisor(url, "token", timeout=0.05) as hv:
-                await hv.run("slow build")
-            # `run` without a profile resolves the catalog default first.
-            assert [path for _, path, _ in state.requests] == ["/vms/vm-0/exec", "/status", "/run"]
-    asyncio.run(run())
-
-
-def test_create_outlives_the_default_deadline_like_exec(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def run() -> None:
-        async with gateway() as (url, state), Hypervisor(url, "token", timeout=0.05) as hv:
-            state.delays["/vms/create"] = 0.3
-            seen: list[float | None] = []
-            request = hv._transport.request
-
-            async def spy(*args: Any, **kwargs: Any) -> bytes:
-                seen.append(kwargs.get("timeout"))
-                return await request(*args, **kwargs)
-
-            monkeypatch.setattr(hv._transport, "request", spy)
-            assert (await hv.create(image="docker://busybox:latest")).id == "created-id"
-            assert seen == [None, CREATE_READY_SECS + GATEWAY_REQUEST_BUDGET_SECS]
-    asyncio.run(run())
-
-
-def test_ordinary_calls_keep_the_default_deadline() -> None:
-    async def run() -> None:
-        async with gateway() as (url, state), VM(url, "token", id="vm-0", timeout=0.05) as vm:
-            state.delays["/vms/vm-0/info"] = 0.3
-            with pytest.raises(TimeoutError):
-                await vm.info()
-            assert len(state.requests) == 1
-    asyncio.run(run())
-
-
-@pytest.mark.parametrize(
-    ("default", "timeout_secs", "expected"),
-    [(30, None, 3600 + 120), (30, 600, 600 + 120), (5000, 10, 5000)],
-)
-def test_command_deadline_covers_the_service_timeout_and_gateway_budget(
-    default: float, timeout_secs: int | None, expected: float,
-) -> None:
-    assert command_deadline(default, timeout_secs) == expected
 
 
 @pytest.mark.parametrize("memory", [0, -1, True, 1.5, "8G"])

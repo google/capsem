@@ -6,7 +6,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol, TypeVar
 
-from .productschema import ProfileRevisionPolicy
 from .sourcecommit import SourceCommit
 
 Manifest = TypeVar("Manifest")
@@ -24,8 +23,8 @@ def author_binary_graph(
 ) -> Manifest:
     """Convert to a graph, stamp package provenance, then rebuild catalogs.
 
-    ``source`` may be the legacy runtime projection used by local profile
-    assets. Package provenance belongs only on release-graph package rows, so
+    ``source`` may be the legacy runtime projection of local assets. Package
+    provenance belongs only on release-graph package rows, so
     recording before the first build is invalid. The second build validates
     the mutated graph and regenerates every derived channel document.
     """
@@ -40,7 +39,6 @@ def author_native_candidate(
     runner: Runner,
     admin: Path,
     assets_dir: Path,
-    profiles_dir: Path,
     channel: str,
     version: str,
     source_commit: SourceCommit,
@@ -50,7 +48,6 @@ def author_native_candidate(
     dist: Path,
     graph_manifest: Path,
     manifest_version: str,
-    profile_revision_policy: ProfileRevisionPolicy | None = None,
 ) -> Path:
     """Author one native package graph through the shared graph-first order."""
 
@@ -64,8 +61,6 @@ def author_native_candidate(
             manifest.resolve().as_uri(),
             "--assets-dir",
             str(assets_dir),
-            "--profiles-dir",
-            str(profiles_dir),
             "--channel",
             channel,
             "--manifest-version",
@@ -75,8 +70,6 @@ def author_native_candidate(
             "--out-dir",
             str(dist),
         ]
-        if profile_revision_policy is not None:
-            command.extend(("--profile-revision-policy", profile_revision_policy.value))
         runner(command, env=release_environment)
         return graph_manifest
 

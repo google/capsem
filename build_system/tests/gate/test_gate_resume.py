@@ -156,7 +156,7 @@ def test_a_source_fix_before_functional_rebuilds_the_exact_install_image() -> No
     A retained prefix refreshes its source before the resumed gate starts.  The
     install image key therefore changes when the fix touches any byte included
     in that image.  Chaining its smoke step ahead of the asset graph made all
-    three lifecycle steps ancestors of ``functional.pytest.timing.code``; the
+    three lifecycle steps ancestors of ``functional.pytest.timing``; the
     continuation carried the old image, built both packages, then failed at
     glow-up because the new exact tag had never been materialized.
 
@@ -167,7 +167,7 @@ def test_a_source_fix_before_functional_rebuilds_the_exact_install_image() -> No
     from capsem_builder.gate.installimage import InstallImageStep
 
     plan = _candidate_plan()
-    carried = resume.ancestors(plan, "functional.pytest.timing.code")
+    carried = resume.ancestors(plan, "functional.pytest.timing")
     install_steps = {step.value for step in InstallImageStep}
 
     assert install_steps.isdisjoint(carried)

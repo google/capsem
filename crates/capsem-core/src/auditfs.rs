@@ -2,7 +2,7 @@
 //!
 //! `fs::hard_link` is the only operation that makes two paths *the same file*.
 //! Everything else -- a write, a rename, a chmod -- affects one name. That
-//! distinction stopped being academic when `capsem-admin` staged profile
+//! distinction stopped being academic when `capsem-admin` staged checked-in
 //! payloads with it: 48 checked-in `config/` files ended up inside the
 //! published release channel sharing an inode, so a `chmod` on an artifact
 //! rewrote tracked source, and no content digest could notice because the

@@ -80,7 +80,7 @@ fn print_help(cmd: &str) {
             println!("Reboot is not supported in capsem sandbox.");
         }
         _ => {
-            println!("Commands: shutdown, halt, poweroff, reboot, suspend");
+            println!("Commands: shutdown, halt, poweroff, reboot, suspend, verify-blob <blake3:digest> <size>");
         }
     }
 }
@@ -122,6 +122,25 @@ fn main() {
             // Direct invocation as capsem-sysutil
             if args.len() > 1 {
                 match args[1].as_str() {
+                    "verify-blob" => {
+                        let result = (|| -> io::Result<()> {
+                            if args.len() != 4 {
+                                return Err(io::Error::new(
+                                    io::ErrorKind::InvalidInput,
+                                    "verify-blob requires BLAKE3 digest and byte count",
+                                ));
+                            }
+                            let size = args[3]
+                                .parse::<u64>()
+                                .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid blob size"))?;
+                            capsem_crypto::verify::blake3(io::stdin().lock(), &args[2], size)?;
+                            Ok(())
+                        })();
+                        if let Err(error) = result {
+                            eprintln!("[capsem] blob verification failed: {error}");
+                            process::exit(1);
+                        }
+                    }
                     "shutdown" | "halt" | "poweroff" => {
                         countdown("Shutting down");
                         if let Err(e) = send_lifecycle_msg(&GuestToHost::ShutdownRequest) {
@@ -146,7 +165,7 @@ fn main() {
                     }
                     other => {
                         eprintln!("[capsem] unknown command: {other}");
-                        eprintln!("Available: shutdown, halt, poweroff, reboot, suspend");
+                        eprintln!("Available: shutdown, halt, poweroff, reboot, suspend, verify-blob");
                         process::exit(1);
                     }
                 }

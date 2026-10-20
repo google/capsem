@@ -20,7 +20,7 @@ from capsem_builder.cache.runtimemodels import DockerRuntimePolicy
 from capsem_builder.cache.views import ViewReceipt
 from capsem_builder.gate import cachelayout, crosscompile
 from capsem_builder.gate import config as gate_config
-from capsem_builder.gate.content import ProfileContent
+from capsem_builder.gate.content import RuntimeContent
 from capsem_builder.gate.errors import GateError
 from capsem_builder.gate.packageinputs import pinned_toolchain, resolve_channel
 from capsem_builder.gate.packagerail import PackageRail
@@ -80,14 +80,6 @@ def _checkout(tmp_path: Path, *, toolchain: str = "9.99.9") -> Path:
         (assets / TARGET.name / name).write_text(name)
     manifest = _asset_manifest(TARGET.name)
     (assets / CONFIG.install.manifest_name).write_text(manifest)
-    config_root = tmp_path / CONFIG.functional.config_root
-    (config_root / CONFIG.functional.profiles_subdir / "code").mkdir(parents=True)
-    (config_root / CONFIG.functional.profiles_subdir / "code" / "profile.toml").write_text(
-        'id = "code"\n'
-    )
-    config_manifest = config_root / CONFIG.assets.merged_assets_dir / CONFIG.install.manifest_name
-    config_manifest.parent.mkdir(parents=True, exist_ok=True)
-    config_manifest.write_text(manifest)
     return tmp_path
 
 
@@ -132,7 +124,7 @@ def _rail(runner: RecordingRunner, **kwargs) -> PackageRail:
     return PackageRail(
         runner,
         TARGET,
-        content=ProfileContent.standalone(gate_config.load(runner.root)),
+        content=RuntimeContent.standalone(gate_config.load(runner.root)),
         **kwargs,
     )
 
@@ -142,31 +134,26 @@ def _rail(runner: RecordingRunner, **kwargs) -> PackageRail:
 # ---------------------------------------------------------------------------
 
 
-def test_profile_content_derives_both_trees_from_one_root_without_reading_it(
+def test_runtime_content_derives_its_assets_from_one_root_without_reading_it(
     tmp_path: Path,
 ) -> None:
-    missing = tmp_path / "not-materialized-yet"
+    missing = tmp_path / "not-built-yet"
 
-    content = ProfileContent.isolated(CONFIG, missing)
+    content = RuntimeContent.isolated(CONFIG, missing)
 
     assert content.root == missing
     assert content.assets == missing / CONFIG.assets.merged_assets_dir
-    assert content.config == missing / CONFIG.assets.merged_config_dir
-    assert content.config_manifest(CONFIG) == (
-        content.config / CONFIG.assets.merged_assets_dir / CONFIG.install.manifest_name
-    )
-    assert content.profiles(CONFIG) == content.config / CONFIG.functional.profiles_subdir
 
 
 @pytest.mark.parametrize("relative", [Path("/absolute"), Path("../sibling")])
-def test_profile_content_refuses_a_path_outside_its_root(tmp_path: Path, relative: Path) -> None:
+def test_runtime_content_refuses_a_path_outside_its_root(tmp_path: Path, relative: Path) -> None:
     with pytest.raises(ValueError, match="relative path under"):
-        ProfileContent(tmp_path, relative, Path("config"))
+        RuntimeContent(tmp_path, relative)
 
 
-def test_profile_content_completeness_is_explicitly_target_scoped(tmp_path: Path) -> None:
+def test_runtime_content_completeness_is_explicitly_target_scoped(tmp_path: Path) -> None:
     root = _checkout(tmp_path)
-    content = ProfileContent.standalone(gate_config.load(root))
+    content = RuntimeContent.standalone(gate_config.load(root))
 
     content.require_complete(gate_config.load(root), arches=(TARGET,))
 
@@ -174,7 +161,7 @@ def test_profile_content_completeness_is_explicitly_target_scoped(tmp_path: Path
         content.require_complete(gate_config.load(root))
 
 
-def test_profile_content_refuses_an_architecture_not_declared_by_the_manifest(
+def test_runtime_content_refuses_an_architecture_not_declared_by_the_manifest(
     tmp_path: Path,
 ) -> None:
     root = _checkout(tmp_path)
@@ -183,10 +170,10 @@ def test_profile_content_refuses_an_architecture_not_declared_by_the_manifest(
     (root / CONFIG.outputs.assets / undeclared.name).mkdir()
 
     with pytest.raises(GateError, match=r"manifest.*x86_64"):
-        ProfileContent.standalone(config).require_complete(config, arches=(undeclared,))
+        RuntimeContent.standalone(config).require_complete(config, arches=(undeclared,))
 
 
-def test_profile_content_refuses_missing_required_evidence_before_docker(
+def test_runtime_content_refuses_missing_required_evidence_before_docker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Linux")
@@ -240,7 +227,7 @@ def test_explicit_package_content_refuses_a_symlink_root_before_docker(
     selected = tmp_path / "selected-content"
     selected.symlink_to(real.name, target_is_directory=True)
     runner = Building(checkout, replies={"select-linux": "skip"})
-    rail = PackageRail(runner, TARGET, content=ProfileContent.isolated(config, selected))
+    rail = PackageRail(runner, TARGET, content=RuntimeContent.isolated(config, selected))
 
     with pytest.raises(GateError, match=r"root.*symlink"):
         _run_lane(rail)
@@ -248,60 +235,31 @@ def test_explicit_package_content_refuses_a_symlink_root_before_docker(
     _assert_no_package_docker_started(runner)
 
 
-def test_package_content_refuses_a_symlink_config_directory_before_docker(
+def test_package_mounts_only_the_concrete_content_assets(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Linux")
     monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: TARGET.name)
     root = _checkout(tmp_path)
     config = gate_config.load(root)
-    selected = root / "selected-config"
-    (root / config.functional.config_root).rename(selected)
-    (root / config.functional.config_root).symlink_to(
-        Path("..") / selected.name, target_is_directory=True
-    )
-    runner = Building(root, replies={"select-linux": "skip"})
-
-    with pytest.raises(GateError, match=r"config.*symlink"):
-        _run_lane(_rail(runner))
-
-    _assert_no_package_docker_started(runner)
-
-
-def test_package_mounts_only_the_concrete_paired_content_dirs(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Linux")
-    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: TARGET.name)
-    root = _checkout(tmp_path)
-    config = gate_config.load(root)
-    isolated = root / "cache" / "target" / "ironbank-assets" / "code"
-    content = ProfileContent.isolated(config, isolated)
+    isolated = root / "cache" / "target" / "ironbank"
+    content = RuntimeContent.isolated(config, isolated)
     content.assets.mkdir(parents=True)
-    content.config.mkdir(parents=True)
     manifest = _asset_manifest(TARGET.name)
     (content.assets / TARGET.name).mkdir()
     for name in (*config.artifacts.bootable, *config.assets.evidence_artifacts):
         (content.assets / TARGET.name / name).write_text(name)
     (content.assets / config.install.manifest_name).write_text(manifest)
-    profile = content.profiles(config) / "code" / "profile.toml"
-    profile.parent.mkdir(parents=True)
-    profile.write_text('id = "code"\n')
-    config_manifest = content.config_manifest(config)
-    config_manifest.parent.mkdir(parents=True)
-    config_manifest.write_text(manifest)
 
     # This is the exact retained-prefix shape that Docker's `-v <prefix>/assets`
-    # destroyed: a relative selector plus an older canonical config tree.  The
-    # package must not even inspect or normalize either one.
+    # destroyed: a relative selector. The package must not even inspect or
+    # normalize it.
     stale_assets = root / "stale-canonical-assets"
     canonical_assets = root / CONFIG.outputs.assets
     canonical_assets.rename(stale_assets)
     canonical_assets.symlink_to(Path("..") / stale_assets.name)
     selector_inode = canonical_assets.lstat().st_ino
     selector_target = canonical_assets.readlink()
-    sentinel = root / config.functional.config_root / "stale-sentinel"
-    sentinel.write_bytes(b"canonical config must survive")
     runner = Building(root, replies={"select-linux": "skip"})
 
     rail = PackageRail(runner, TARGET, content=content)
@@ -310,12 +268,9 @@ def test_package_mounts_only_the_concrete_paired_content_dirs(
 
     create = runner.matching(r"docker create")[0]
     assert f"{content.assets}:/src/{CONFIG.outputs.assets}:ro" in create
-    assert f"{content.config}:/src/cache/target/config:ro" in create
     assert f"{canonical_assets}:/src/{CONFIG.outputs.assets}" not in create
-    assert f"{root / 'target' / 'config'}:/src/cache/target/config" not in create
     assert canonical_assets.lstat().st_ino == selector_inode
     assert canonical_assets.readlink() == selector_target
-    assert sentinel.read_bytes() == b"canonical config must survive"
 
 
 # ---------------------------------------------------------------------------
@@ -936,7 +891,7 @@ def test_package_helper_exact_identity_is_written_to_the_run_journal(
     runner = RecordingRunner(root)
     journal = RecordingJournal()
 
-    crosscompile._phase(config.arch("arm64"), "materialize", ProfileContent.standalone(config))(
+    crosscompile._phase(config.arch("arm64"), "materialize", RuntimeContent.standalone(config))(
         Context(runner, config, journal=journal)
     )
 
@@ -1318,7 +1273,7 @@ def test_a_provable_target_runs_the_systemd_kvm_proof(
 def test_the_standalone_plan_keeps_the_exact_package_proof() -> None:
     plan = Plan("standalone-package")
     crosscompile.fragment(
-        plan, CONFIG, CONFIG.host_arch(), content=ProfileContent.standalone(CONFIG)
+        plan, CONFIG, CONFIG.host_arch(), content=RuntimeContent.standalone(CONFIG)
     )
 
     rendered = "\n".join(plan.step_named(f"package.{CONFIG.host_arch().name}.prove").render())

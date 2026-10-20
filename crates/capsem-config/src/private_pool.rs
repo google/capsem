@@ -1,8 +1,7 @@
 //! The private IPv4 pool every network's subnet is carved from.
 //!
 //! One pool for the host: a network's subnet is a host-wide fact, not a
-//! profile setting, so the pool is not something two profiles could disagree
-//! on. Each network gets its own `/NETWORK_PREFIX_LEN` subnet and each VM
+//! per-VM setting, so the pool is not something two VMs could disagree on. Each network gets its own `/NETWORK_PREFIX_LEN` subnet and each VM
 //! plugged into it an address inside that subnet, so a guest on several
 //! networks routes each one out of its own cable. The pool must stay clear of
 //! the two links a guest already has -- its own dummy interface on

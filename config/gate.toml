@@ -36,9 +36,11 @@ benchmarks = "cache/target/tests/benchmarks"
 coverage = "cache/target/coverage"
 distribution = "cache/target/release/distribution"
 gate_runs = "cache/target/gate-runs"
-materialized_config = "cache/target/config"
 packages = "cache/target/packages"
 test_artifacts = "cache/target/tests/evidence"
+sdk_packages = "cache/target/sdk"
+inspect_packages = "cache/target/integrations/inspect-ai"
+mcp_packages = "cache/target/mcp/typescript"
 
 [architectures.arm64]
 rust_target = "aarch64-unknown-linux-gnu"
@@ -69,7 +71,7 @@ common_script = "build_system/scripts/doctor/doctor-common.sh"
 
 [pidfiles]
 # Ordered. The gateway owns the fixed localhost port, so it must stop before
-# the service -- otherwise the next profile attaches to an orphan gateway whose
+# the service -- otherwise the next run attaches to an orphan gateway whose
 # UDS points at a deleted run directory.
 names = ["gateway.pid", "service.pid"]
 term_wait_seconds = 2.0
@@ -206,10 +208,6 @@ venv = "/home/capsem/.venv-install-test"
 source_cli = "/opt/capsem/install-test/bin/capsem-current"
 mount = "/src"
 channel = "local"
-# The install proof re-publishes immutable, already-selected public inputs into
-# a loopback-only graph. Current public profiles predate the strict SemVer
-# authoring rule; release authoring never selects this policy and remains strict.
-profile_revision_policy = "selected-input"
 manifest_version = "1.0.0"
 # The hands-on developer-machine path. It builds the same complete unsigned
 # candidate package the macOS qualification adapter consumes, then installs it
@@ -219,8 +217,8 @@ local_macos_installer = ["/usr/bin/osascript", "build_system/packaging/macos/ins
 local_macos_target = "/"
 
 # Build output the install proof reads, which the image cannot carry because
-# it is produced *after* the image is built. ProfileContent supplies its exact
-# assets/config pair separately. Mounted read-only -- an install proof that
+# it is produced *after* the image is built. RuntimeContent supplies its exact
+# assets separately. Mounted read-only -- an install proof that
 # could rewrite the package it is proving would be proving nothing.
 generated_inputs = ["cache/target/packages"]
 systemd_ready_attempts = 30
@@ -280,18 +278,17 @@ request_script = "build_system/packaging/shared/install-manifest-request.sh"
 # The authoritative release graph, and the legacy runtime projection an
 # operator can mistake for it. Handing the installer the second produces an
 # install that looks fine and carries the wrong manifest.
-graph_manifest = "assets/local/manifest.json"
+graph_manifest = "assets/{channel}/manifest.json"
 legacy_projection = "manifest.json"
-# Manifest-selected release inputs are retained beneath the paired content
-# root so every rewritten file:// URL remains available inside the sealed
-# install container.  The whole root is mounted read-only at the same absolute
-# address; assets and config are still mounted at their product-facing paths.
+# Manifest-selected release inputs are retained beneath the content root so
+# every rewritten file:// URL remains available inside the sealed install
+# container.  The whole root is mounted read-only at the same absolute
+# address; the assets are still mounted at their product-facing path.
 selected_inputs_dir = "inputs"
 # The narrow exact-package proof mounts its immutable content here, then copies
 # it into writable staging before capsem-admin records the candidate binary.
 proof_content_mount = "/mnt/capsem-proof-content"
 proof_assets_name = "assets"
-proof_config_name = "config"
 # The package's complete runtime dependency names.  Release hosts verify the
 # actual Depends field against this tuple before installing from apt_snapshot.
 package_runtime_packages = [
@@ -324,6 +321,7 @@ identity_inputs = [
     "build_system/release_site/package.json",
     "build_system/release_site/pnpm-lock.yaml",
     "build_system/release_site/pnpm-workspace.yaml",
+    "build_system/patches/http-cache-semantics@4.3.0.patch",
     "build_system/docker/Dockerfile.install-builder",
     "build_system/scripts/build/rustc-workspace-wrapper.sh",
     "build_system/docker/materialize-install-os.sh",
@@ -383,13 +381,12 @@ package_name = "capsem"
 # the checkout.
 [install.layout]
 assets = "cache/target/tests/install/assets"
-config = "cache/target/tests/install/config"
 # The authored release tree is distribution output even though this instance
 # exists only long enough to prove the installer.
 channel = "cache/target/release/distribution/install-proof"
 packages = "cache/target/tests/install/packages"
 glowup = "cache/target/release/staging/local-glowup"
-glowup_evidence = "cache/target/release/staging/local-glowup-evidence"
+glowup_evidence = "cache/target/tests/evidence/installed"
 
 # Written by the container as its own user, and handed back on the way out.
 extra_owned_paths = ["build_system/release_site/node_modules", "build_system/release_site/dist"]
@@ -417,8 +414,8 @@ extra_owned_paths = ["build_system/release_site/node_modules", "build_system/rel
 home = "CAPSEM_HOME"
 run_dir = "CAPSEM_RUN_DIR"
 assets_dir = "CAPSEM_ASSETS_DIR"
-profiles_dir = "CAPSEM_PROFILES_DIR"
 benchmark_root = "CAPSEM_BENCHMARK_OUTPUT_ROOT"
+mcp_package_archives = "CAPSEM_MCP_PACKAGE_ARCHIVES"
 coverage_file = "COVERAGE_FILE"
 # Set by the parent that built a private checkout, and read by the child that
 # runs inside it. This is what stops the re-exec recursing: a process that
@@ -565,10 +562,9 @@ lane_container = "capsem-package-{arch}"
 # One tag for every architecture -- the source is the same, and `COPY`
 # invalidates the layer on any source change, which is the correct cache key.
 # Build output the lane consumes and the image deliberately does not carry.
-# `cache/target/assets/` is 3.0 GB and changes every run; `cache/target/config` is the
-# materialized profile catalog `repack-deb.sh` reads. Both are produced by
-# earlier steps, so they are mounted read-only rather than copied.
-generated_inputs = ["cache/target/assets", "cache/target/config"]
+# `cache/target/assets/` is 3.0 GB and changes every run. It is produced by an
+# earlier step, so it is mounted read-only rather than copied.
+generated_inputs = ["cache/target/assets"]
 lane_dockerfile = "build_system/docker/Dockerfile.package"
 lane_image = "capsem-package-lane:latest"
 # The checkout is copied into the source image; these three paths get
@@ -606,6 +602,7 @@ identity_inputs = [
     "web/app/package.json",
     "web/app/pnpm-lock.yaml",
     "web/app/pnpm-workspace.yaml",
+    "build_system/patches/http-cache-semantics@4.3.0.patch",
     "build_system/docker/Dockerfile.package-builder",
     "build_system/scripts/build/rustc-workspace-wrapper.sh",
     "build_system/docker/swap-dev-libs.sh",
@@ -624,7 +621,7 @@ apt_archives_cache_id = "capsem-package-apt-archives"
 
 # Installing the exact package into a clean systemd container and proving it
 # works: every binary present and reporting the package's own version, the
-# service and gateway up, every profile ready, and a real guest shell.
+# service and gateway up, the runtime assets ready, and a real guest shell.
 
 # Local signing material. Absent on a developer machine, which is why the rail
 # treats it as optional -- the release lanes sign in CI from secrets. Declared
@@ -656,6 +653,8 @@ binaries = [
     "capsem-mcp-aggregator",
     "capsem-mcp-builtin",
     "capsem-process",
+    "capsem-ledger",
+    "capsem-proxy",
     "capsem-service",
     "capsem-tray",
     "capsem-tui",
@@ -686,7 +685,6 @@ status_requires = [
 
 [assets]
 test_root = "cache/target/tests/ironbank"
-profiles_glob = "config/profiles/*/profile.toml"
 
 # Everything a built VM asset is a function of. A lane whose identity matches
 # the one recorded beside its output is reused; anything else rebuilds.
@@ -705,6 +703,8 @@ identity_roots = [
     "crates/capsem-agent",
     "crates/capsem-proto",
     "crates/capsem-bench",
+    "crates/capsem-crypto",
+    "crates/capsem-foundation",
     "Cargo.toml",
     "Cargo.lock",
     "build_system/pyproject.toml",
@@ -771,11 +771,8 @@ cross_platform_probe_command = "/bin/true"
 # say what it needs rather than omitting the decision.
 cross_platform_probe_network = "none"
 merged_assets_dir = "assets"
-merged_config_dir = "config"
-profile_home_dir = "home"
+proof_home_dir = "home"
 failure_evidence_dir = "run-failure"
-# The subdirectory `capsem-admin profile materialize` writes into.
-materialized_profiles_dir = "profiles"
 # The alias the image builders repoint at whichever architecture they built last.
 current_link = "current"
 
@@ -818,7 +815,6 @@ bootstrap_script = "bootstrap.sh"
 tart_readiness_script = "build_system/scripts/build/tart_readiness.py"
 clean_stale_script = "build_system/scripts/build/clean_stale.py"
 generated_settings_script = "build_system/scripts/build/check-generated-settings.sh"
-materialize_script = "build_system/scripts/build/materialize-config.sh"
 recipe_suite = ["uv", "run", "--project", "build_system", "--frozen", "python", "-m", "pytest", "-c", "build_system/pyproject.toml", "--rootdir", ".", "tests/capsem-recipes/", "-v", "--tb=short", "-m", "recipe"]
 # Cache owner enforced before the complete gate starts expensive work.
 candidate_cache = "all"
@@ -853,9 +849,10 @@ key = "version"
 # ---------------------------------------------------------------------------
 
 [lint]
-python_roots = ["build_system/builder", "build_system/sdist_command.py", "build_system/packaging", "build_system/scripts", "build_system/tests", "tests", "guest"]
+python_roots = ["build_system/builder", "build_system/sdist_command.py", "build_system/packaging", "build_system/scripts", "build_system/tests", "tests", "guest", "images"]
 # Already passes every rule, and must keep doing so.
 strict_roots = ["build_system/builder", "build_system/sdist_command.py"]
+strict_ty_search_paths = []
 # Match the import roots exercised by the sole pytest project plus the guest
 # trees and script bootstrap paths that are materialized at runtime. Keeping
 # these explicit lets Ty inspect a conventional capsem-builder install without
@@ -890,13 +887,13 @@ error_on_warning = true
 # Reductions must lower the count immediately, so stale exemptions fail too.
 [lint.ty_ratchet]
 call-top-callable = 1
-invalid-argument-type = 64
-invalid-assignment = 6
-invalid-return-type = 4
-no-matching-overload = 6
-not-subscriptable = 122
-unresolved-attribute = 71
-unresolved-import = 3
+invalid-argument-type = 33
+invalid-assignment = 5
+invalid-return-type = 2
+no-matching-overload = 5
+not-subscriptable = 10
+unresolved-attribute = 60
+unresolved-import = 1
 unsupported-operator = 2
 unused-ignore-comment = 3
 unused-type-ignore-comment = 3
@@ -905,8 +902,8 @@ unused-type-ignore-comment = 3
 # policy change. This is historical debt, not capacity: every value may shrink
 # and no value may grow.
 [lint.suppression_budget]
-noqa = 225
-type_ignore = 22
+noqa = 214
+type_ignore = 21
 ty_ignore = 5
 ruff_global_ignore = 1
 ruff_per_file_ignore = 0
@@ -1070,7 +1067,7 @@ direct_concurrency = ["planrunner.py", "metadatasurvey.py"]
 # shrink must update or remove its entry immediately. This is debt inventory,
 # not an exemption list.
 [boundary.scripts]
-roots = ["build_system/scripts", "build_system/packaging", "sdk/python", "sdk/typescript", "mcp/typescript"]
+roots = ["build_system/scripts", "build_system/packaging", "sdk/python", "sdk/typescript", "mcp/typescript", "integrations"]
 suffixes = [".py", ".sh", ".ts", ".mjs"]
 max_lines = 300
 
@@ -1099,44 +1096,31 @@ max_lines = 1000
 must_stay_below_lines = 3000
 
 [boundary.rust.oversized_line_counts]
-"crates/capsem-admin/src/assets_channel_render.rs" = 1719
-"crates/capsem-admin/src/assets_channel_validation.rs" = 1412
-"crates/capsem-admin/src/main.rs" = 2144
-"crates/capsem-admin/src/profile_images.rs" = 2188
-"crates/capsem-admin/src/release_graph.rs" = 1089
-"crates/capsem-admin/src/release_graph/tests.rs" = 1323
+"crates/capsem-admin/src/assets_channel_render.rs" = 1308
+"crates/capsem-admin/src/main.rs" = 1727
+"crates/capsem-admin/src/release_graph/tests.rs" = 1046
 "crates/capsem-agent/src/tests.rs" = 1115
-"crates/capsem-assets/src/asset_manager.rs" = 1355
-"crates/capsem-core/src/hypervisor/kvm/mod.rs" = 1029
+"crates/capsem-assets/src/asset_manager.rs" = 1210
+"crates/capsem-core/src/hypervisor/kvm/mod.rs" = 1039
 "crates/capsem-core/src/hypervisor/kvm/sys.rs" = 1895
 "crates/capsem-core/src/hypervisor/kvm/virtio_blk.rs" = 1768
 "crates/capsem-core/src/hypervisor/kvm/virtio_blk/tests.rs" = 1059
-"crates/capsem-core/src/hypervisor/kvm/virtio_fs/tests.rs" = 1997
-"crates/capsem-core/src/net/mitm_proxy/mod.rs" = 2433
-"crates/capsem-core/src/net/policy_config/profile_contract.rs" = 1897
-"crates/capsem-core/src/net/policy_config/profile_contract/tests.rs" = 1125
-"crates/capsem-core/src/net/policy_config/security_rule_profile/tests.rs" = 1553
-"crates/capsem-core/src/security_engine/mod.rs" = 2073
-"crates/capsem-core/tests/mitm_integration.rs" = 2023
-"crates/capsem-logger/src/writer/tests.rs" = 1413
-"crates/capsem-mock-server/src/main.rs" = 1416
-"crates/capsem-process/src/vsock.rs" = 1390
+"crates/capsem-core/src/hypervisor/kvm/virtio_fs/tests.rs" = 2041
+"crates/capsem-core/src/net/mitm_proxy/mod.rs" = 2507
+"crates/capsem-core/src/net/policy_config/security_rule_profile/tests.rs" = 1549
+"crates/capsem-core/src/security_engine/mod.rs" = 2046
+"crates/capsem-core/tests/mitm_integration.rs" = 2087
+"crates/capsem-logger/src/writer/tests.rs" = 1237
+"crates/capsem-mock-server/src/main.rs" = 1167
+"crates/capsem-process/src/vsock.rs" = 1239
 "crates/capsem-proto/src/tests.rs" = 1446
-"crates/capsem-service/src/ledger_routes.rs" = 1504
-"crates/capsem-service/src/main.rs" = 1420
-"crates/capsem-service/src/profile_routes.rs" = 2068
-"crates/capsem-service/src/tests/assets_registry.rs" = 1352
-"crates/capsem-service/src/tests/lifecycle.rs" = 1784
-"crates/capsem-service/src/tests/profile_routes.rs" = 2194
-"crates/capsem-service/src/vm_files.rs" = 1334
-"crates/capsem-tui/src/tests.rs" = 1563
-"crates/capsem-tui/src/ui.rs" = 1081
-"crates/capsem/src/main.rs" = 2129
-"crates/capsem/src/support_bundle.rs" = 1034
-"crates/capsem/src/tests.rs" = 1056
-"crates/capsem/src/update.rs" = 2471
-"crates/capsem/src/update/asset_install.rs" = 1400
-"crates/capsem/src/update/tests.rs" = 2776
+"crates/capsem-service/src/tests/assets_registry.rs" = 1070
+"crates/capsem-service/src/tests/lifecycle.rs" = 1315
+"crates/capsem/src/main.rs" = 1972
+"crates/capsem/src/tests.rs" = 1241
+"crates/capsem/src/update.rs" = 2142
+"crates/capsem/src/update/asset_install.rs" = 1125
+"crates/capsem/src/update/tests.rs" = 2301
 
 # The benchmark collectors. Their whole contract is that they print raw
 # samples and compute nothing, so one growing past this ceiling means
@@ -1145,6 +1129,7 @@ must_stay_below_lines = 3000
 #
 # They carry no suffix (`benchmarks/collectors/routes` is run by name), so they are
 # found by shebang, the same way suffix-less packaging helpers are.
+
 [boundary.bench]
 roots = ["benchmarks/collectors"]
 suffixes = [".py"]
@@ -1153,10 +1138,10 @@ max_lines = 300
 [boundary.bench.oversized_line_counts]
 
 [boundary.scripts.oversized_line_counts]
-"build_system/packaging/macos/build-pkg.sh" = 349
-"build_system/packaging/macos/macos_release_glowup.py" = 367
-"build_system/packaging/macos/macos_tart_glowup.py" = 526
-"build_system/packaging/macos/macos_tart_guest.sh" = 316
+"build_system/packaging/macos/build-pkg.sh" = 317
+"build_system/packaging/macos/macos_release_glowup.py" = 360
+"build_system/packaging/macos/macos_tart_glowup.py" = 519
+"build_system/packaging/macos/macos_tart_guest.sh" = 312
 
 # ---------------------------------------------------------------------------
 # What may not run beside what
@@ -1238,8 +1223,8 @@ poll_interval_seconds = 0.25
 run_marker = "CAPSEM_GATE_RUN"
 
 [locks.bounded]
-# Direct commands that are machine work take the lock above, through the
-# bounded-command wrapper every direct command already has to use.
+# Explicit --machine-lease diagnostics use this selection. Routine bounded
+# compilation and local TDD do not acquire the global machine lock.
 #
 # The lock used to coordinate `capsem-gate` processes and nothing else, while
 # that wrapper routed every worktree's cargo into the one shared target
@@ -1250,6 +1235,12 @@ run_marker = "CAPSEM_GATE_RUN"
 # for ninety minutes of a day. A queue the kernel owns replaces all three:
 # it names its holder, and it is released when the holder dies.
 programs = ["cargo"]
+# These fixture scripts compile after preparing inputs. Their outer timeout
+# starts after the lease wait; leasing only nested Cargo is too late.
+command_prefixes = [
+    ["bash", "build_system/scripts/test/prepare-install-test-assets.sh"],
+    ["bash", "build_system/scripts/release/rehearse-asset-channel-staging.sh"],
+]
 # Stepped over when finding the program, with any `NAME=value` that follows.
 wrappers = ["env", "caffeinate", "nice", "time"]
 # Neither compile nor write the target directory, so queueing them behind a
@@ -1438,7 +1429,7 @@ install = ["cargo", "install", "sccache", "--version", "0.17.0", "--locked"]
 [release]
 # The selected commit is prepared and committed before release. Qualification
 # may create immutable Git refs afterward; it may never edit tracked source.
-line = "0.6"
+line = "0.7"
 # A release dispatches only a commit whose exact `just test <commit>` journal
 # passed on this machine: four stable attempts once each burned a 2.5 h hosted
 # lane on a defect the local glow-up catches in minutes (RELEASE.md 8.1).
@@ -1456,10 +1447,9 @@ tagger_email = "release@capsem.org"
 notes = ["build_system/scripts/release/release-binaries.py", "--precheck"]
 fetch_manifest = "build_system/scripts/release/fetch-channel-source-manifest.py"
 binaries = "build_system/scripts/release/release-binaries.py"
-profile = ["cargo", "run", "-p", "capsem-admin", "--", "release"]
-# `release-profile <channel> all` dispatches every profile behind one shared
-# source proof instead of repeating it once per profile. No profile may use it.
-all_profiles = "all"
+# `release-assets` dispatches the runtime asset lane through capsem-admin, which
+# owns the publication identity and the workflow correlation.
+assets = ["cargo", "run", "-p", "capsem-admin", "--", "release"]
 preflight_dir = "cache/target/release/staging/preflight"
 channel_source = "cache/target/release/staging/preflight/channel-source.json"
 default_repository = "google/capsem"
@@ -1468,7 +1458,7 @@ token_variable = "GITHUB_TOKEN"
 
 # The pre-0.6 stable graph points at a deleted GitHub release. This exact
 # catalog-authorized payload alone may be projected as empty during the 0.6
-# profile-first replacement; a changed graph remains ordinary public state.
+# replacement; a changed graph remains ordinary public state.
 [[release.retired_public_graphs]]
 channel = "stable"
 sha256 = "e8ddf88034a3e73beb605811d5efe5e03c04e79d1ba4b656ff6ca837ef54640e"
@@ -1491,7 +1481,6 @@ generate_settings = "build_system/scripts/build/generate-settings.sh"
 # generation, so drift is caught -- by the step whose job that is.
 generated_settings_scratch = "cache/target/generated/settings"
 check_settings = "build_system/scripts/build/check-generated-settings.sh"
-materialize_config = "build_system/scripts/build/materialize-config.sh"
 
 [initrd]
 # The guest binaries the initrd carries, all cross-compiled to musl.
@@ -1539,7 +1528,7 @@ log = "cache/target/smoke.log"
 # parallel phase, for the same reason the full gate serializes them.
 [[smoke.groups]]
 name = "mcp"
-paths = ["tests/ironbank/test_mcp_profile_ledger.py"]
+paths = ["tests/ironbank/test_mcp_settings_ledger.py"]
 markers = "integration"
 parallel = 0
 
@@ -1568,16 +1557,12 @@ paths = [
 markers = "integration"
 
 [service]
-# The development daemon: the same profile/assets rail an installed package
-# uses, so the dev service cannot mix stale profile pins with fresh assets and
-# make profiles look broken in the UI.
+# The development daemon, on the same assets rail an installed package uses.
 binary = "cache/target/cargo/debug/capsem-service"
 process_binary = "cache/target/cargo/debug/capsem-process"
 sync_assets_script = "build_system/scripts/build/sync-dev-assets.sh"
-generated_profiles = "cache/target/config/profiles"
 assets_dir = "cache/target/assets"
 home_assets = "assets"
-home_profiles = "profiles"
 socket = "service.sock"
 pidfile = "service.pid"
 # Config files an older layout wrote into the home. Removed on every start so a
@@ -1604,7 +1589,7 @@ lane_tag = "capsem-linux-rust:latest"
 # Not the workspace manifests: `cargo fetch --locked` fetches everything the
 # lock resolves regardless of features, so a manifest edit that leaves
 # `Cargo.lock` alone leaves the sealed lane with every source it needs.
-identity_inputs = ["Cargo.lock", "rust-toolchain.toml", "sdk/typescript/pnpm-lock.yaml", "web/app/pnpm-lock.yaml", "build_system/pyproject.toml", "build_system/uv.lock"]
+identity_inputs = ["Cargo.lock", "rust-toolchain.toml", "sdk/typescript/pnpm-lock.yaml", "web/app/pnpm-lock.yaml", "build_system/pyproject.toml", "build_system/uv.lock", "build_system/patches/http-cache-semantics@4.3.0.patch"]
 # Named here so the lane's refusal and the recipe that answers it cannot drift
 # apart. `test_every_recipe_the_gate_tells_an_operator_to_run_exists` checks
 # this resolves to a real recipe -- the last time a message named one that did
@@ -1698,8 +1683,8 @@ binaries = [
 # `initrd.guest-agents` cross-compiles.
 built = [
     "capsem", "capsem-admin", "capsem-bench-rs", "capsem-gateway",
-    "capsem-mcp-aggregator", "capsem-mcp-builtin", "capsem-mock-server", "capsem-process", "capsem-router",
-    "capsem-service", "capsem-tray", "capsem-tui", "mcp_export",
+    "capsem-ledger", "capsem-mcp-aggregator", "capsem-mcp-builtin", "capsem-mock-server", "capsem-process", "capsem-proxy", "capsem-router",
+    "capsem-service", "capsem-tray", "capsem-tui",
 ]
 # Host binaries this list deliberately omits, each built by a step that owns
 # its prerequisites. Named so the guard can tell an exclusion from an omission.
@@ -1734,19 +1719,19 @@ cli = "cache/target/cargo/debug/capsem"
 admin = ["cargo", "run", "-p", "capsem-admin", "--", "image", "build"]
 workspace_admin = ["cargo", "run", "-p", "capsem-admin", "--", "image", "workspace"]
 dependency_backend = ["uv", "run", "--project", "build_system", "--frozen", "python", "-m", "capsem_builder.image.image_build_backend"]
-# The profile materializer copies this directory byte-for-byte. It is also the
+# The image workspace copies this directory byte-for-byte. It is also the
 # one authority the gate uses to prefetch exact per-platform base manifests.
 source_config = "config/docker/image"
 guest_dir = "guest"
-workspace_root = "cache/target/build/image-workspace/{profile}/{arch}"
+# Must agree with `image_build_workspace_path` in capsem-admin, which the
+# single-shot build writes: the dependency step prepares that same tree.
+workspace_root = "cache/target/build/image-workspace/{arch}"
 workspace_guest_dir = "guest"
 # The stages a concurrent asset lane builds, in order. Named here because the
 # lanes build kernel and rootfs separately while a single-shot build uses
 # "all", and a second copy of that list in code is a second opinion.
 lane_templates = ["kernel", "rootfs"]
 templates = ["kernel", "rootfs", "all"]
-profiles_glob = "config/profiles/*/profile.toml"
-profile_manifest = "config/profiles/{profile}/profile.toml"
 config_root = "config"
 output = "cache/target/assets"
 # Doctor is run first, with the checks that would fail on the very thing this
@@ -1819,6 +1804,7 @@ cache_stage = "audit-results"
 lockfiles = [
     "Cargo.lock",
     "build_system/uv.lock",
+    "integrations/inspect-ai/uv.lock",
     "mcp/typescript/pnpm-lock.yaml",
     "sdk/python/uv.lock",
     "sdk/typescript/pnpm-lock.yaml",
@@ -1826,6 +1812,10 @@ lockfiles = [
     "web/docs/pnpm-lock.yaml",
     "web/marketing/pnpm-lock.yaml",
     "build_system/release_site/pnpm-lock.yaml",
+    # capsem-debug, the test-tooling image: what its sessions run is shipped
+    # into every VM the functional suites boot.
+    "images/capsem-debug/package-lock.json",
+    "images/capsem-debug/requirements.txt",
 ]
 # Reviewed exceptions; the Rust ones mirror .cargo/audit.toml exactly.
 config = ".config/osv-scanner.toml"
@@ -1878,11 +1868,10 @@ max_lines = 20
 # Exact ratchets, as everywhere else: an entry may not grow, and a body that
 # shrinks updates or removes its entry in the same change.
 [boundary.shell_bodies.oversized_line_counts]
-"release-assets.yaml:author-profile-release:17:Author selected channel profile in the source manifest" = 32
-"release-assets.yaml:publish-profile-release:16:Publish immutable GitHub profile release" = 33
-"release.yaml:build-app-macos:23:Verify macOS package installation path policy" = 31
+"release-assets.yaml:publish-runtime-release:14:Publish immutable GitHub runtime release" = 27
+"release.yaml:build-app-macos:21:Verify macOS package installation path policy" = 31
 "release.yaml:preflight:3:Import Apple certificate (preflight)" = 23
-"release.yaml:test-binary-pairing:21:Activate exact candidate package binaries for functional tests" = 25
+"release.yaml:test-binary-pairing:21:Activate exact candidate package binaries for functional tests" = 24
 "release.yaml:test-native-linux-package:4:Install and verify exact release deb" = 27
 "release.yaml:test-native-macos-package:5:Install and verify exact notarized package" = 31
 
@@ -1909,6 +1898,12 @@ name = "python-sdk"
 pattern = "sdk/python/*.py"
 enforced_by = ["fast.sdk.python.lint", "fast.sdk.python.types"]
 checked_by = ["fast.sdk.python.tests", "fast.sdk.python.build", "fast.sdk.python.generate"]
+
+[[lint_surfaces]]
+name = "inspect-ai"
+pattern = "integrations/inspect-ai/*.py"
+enforced_by = ["fast.integrations.inspect-ai.lint", "fast.integrations.inspect-ai.types"]
+checked_by = ["fast.integrations.inspect-ai.tests", "fast.integrations.inspect-ai.build"]
 
 [[lint_surfaces]]
 name = "typescript-sdk"
@@ -1961,6 +1956,11 @@ enforced_by = ["fast.audit.shell"]
 name = "dockerfile"
 pattern = "build_system/docker/Dockerfile*"
 enforced_by = ["fast.audit.docker"]
+
+[[lint_surfaces]]
+name = "image-dockerfile"
+pattern = "images/*/Dockerfile"
+enforced_by = ["fast.audit.docker", "fast.audit.shell"]
 
 [[lint_surfaces]]
 name = "markdown"
@@ -2033,6 +2033,8 @@ building = ["frontend-build", "docs", "site"]
 # `tests/test_gate_*.py` to appear here, since by construction those need
 # neither.
 source_contract = [
+    "tests/test_benchmark_routes.py",
+    "tests/qualification/test_candidate.py",
     "build_system/tests/gate/test_gate_observation.py",
     "build_system/tests/gate/test_gate_observation_startup.py",
     "build_system/tests/gate/test_gate_observation_propagation.py",
@@ -2044,7 +2046,6 @@ source_contract = [
     "build_system/tests/gate/test_gate_prefix.py",
     "build_system/tests/gate/test_gate_resume.py",
     "build_system/tests/gate/test_gate_release_isolation.py",
-    "build_system/tests/gate/test_gate_release_profile_all.py",
     "build_system/tests/gate/test_gate_release_source_commit.py",
     "build_system/tests/gate/test_gate_release_requires_local_proof.py",
     "build_system/tests/gate/test_gate_run_transfer.py",
@@ -2060,7 +2061,7 @@ source_contract = [
     "tests/test_surface_names_are_not_hardcoded.py",
     "build_system/tests/gate/test_python_filesystem_chokepoint.py",
     "tests/test_authoritative_values_are_not_restated.py",
-    "build_system/tests/gate/test_build_assets_profile.py",
+    "build_system/tests/gate/test_build_assets.py",
     "build_system/tests/image/test_asset_network_guardrail.py",
     "tests/test_build_provenance.py",
     "build_system/tests/image/test_builder_probe_timeouts.py",
@@ -2096,6 +2097,7 @@ source_contract = [
     "build_system/tests/gate/test_gate_doctor.py",
     "build_system/tests/gate/test_gate_exec_boundary.py",
     "build_system/tests/gate/test_gate_execute_funnel.py",
+    "build_system/tests/gate/test_gate_incomplete_reports.py",
     "build_system/tests/gate/test_gate_fileactions.py",
     "build_system/tests/gate/test_gate_hardening.py",
     "build_system/tests/gate/test_gate_has_no_literal_data.py",
@@ -2150,14 +2152,13 @@ source_contract = [
     "build_system/tests/gate/test_gate_versions.py",
     "build_system/tests/gate/test_gate_vm_cache.py",
     "build_system/tests/gate/test_gate_workspace.py",
-    "build_system/tests/scripts/test_integration_script_profiles.py",
+    "build_system/tests/scripts/test_integration_script.py",
     "build_system/tests/release/test_live_channel_watch.py",
     "build_system/tests/packaging/test_macos_tart_glowup.py",
     "build_system/tests/gate/test_orphan_process_gate.py",
     "build_system/tests/gate/test_path_and_log_wrappers_are_mandatory.py",
     "build_system/tests/scripts/test_pidfile_cleanup_is_wired.py",
     "build_system/tests/scripts/test_dependency_audit.py",
-    "build_system/tests/release/test_profile_revision_semver.py",
     "build_system/tests/packaging/test_prove_installed_shell.py",
     "build_system/tests/release/test_release_gate_integrity.py",
     "build_system/tests/release/test_release_graph_variable_split.py",
@@ -2265,12 +2266,12 @@ serial_paths = [
     "tests/ironbank/test_route_health.py",
 ]
 benchmark_baseline = "tests/capsem-serial/test_capsem_bench_baseline.py"
-# The SDKs surviving a launchd KeepAlive restart. launchd refuses `bootstrap`
-# from any Seatbelt-sandboxed caller (exit 5, Input/output error, even under
-# `(allow default)`), so this cannot run in the sandboxed suites above; the
-# macOS glow-up lane, which installs and drives launchd for real, runs it
-# outside the sandbox instead.
+# Native supervisor setup cannot run after inherited privilege confinement.
+# The existing glow-up owner drives launchd on macOS; on Linux its driver
+# prepares an isolated manager, then runs the ordinary UID with no_new_privs
+# inside that manager's loopback-only namespace. Ordinary suites exclude it.
 managed_restart = "tests/ironbank/test_sdk_restart.py"
+managed_restart_driver = "tests.helpers.run_native_restart"
 benchmark_deselect = "not test_capsem_bench_baseline"
 # Namespaces tests/conftest.py's leak ledger per step, so suites running at the
 # same time neither erase nor inherit each other's attribution.
@@ -2279,12 +2280,6 @@ run_id_variable = "CAPSEM_TEST_RUN_ID"
 # Fails closed before collection rather than passing vacuously against a tree
 # whose assets were never built.
 require_artifacts = "CAPSEM_REQUIRE_ARTIFACTS"
-profile_variable = "CAPSEM_TEST_PROFILE"
-# The profile every broad proof runs against first. The rest are the
-# compatibility axis, and run the VM-owned suites again behind it.
-base_profile = "code"
-materialized_profiles = "cache/target/config/profiles"
-test_manifest = "cache/target/assets/manifest.json"
 
 [functional]
 # The two legacy VM drivers. Neither is pytest, both need a real VM, and both
@@ -2294,7 +2289,6 @@ injection_script = "build_system/scripts/test/injection_test.py"
 integration_script = "build_system/scripts/test/integration_test.py"
 binary = "cache/target/cargo/debug/capsem"
 assets_dir = "cache/target/assets"
-config_root = "cache/target/config"
 # The Node workspaces these suites render, and only those. `toolchain.node`
 # installs every workspace the local gate exercises, which is more than this
 # module needs and more than a release lane has warmed: the docs and site
@@ -2307,13 +2301,20 @@ config_root = "cache/target/config"
 # out, and only ever passed on a checkout an earlier phase had warmed.
 node_workspaces = ["build_system/release_site", "sdk/typescript", "mcp/typescript"]
 sdk_rust_example = ["cargo", "build", "--frozen", "-p", "capsem-sdk", "--example", "gateway_acceptance"]
-profiles_subdir = "profiles"
 # Overridable so a release lane can point the same proof at pulled artifacts
 # instead of source-built ones.
 binary_variable = "CAPSEM_TEST_BINARY"
 assets_variable = "CAPSEM_TEST_ASSETS_DIR"
-config_root_variable = "CAPSEM_TEST_CONFIG_ROOT"
 assets_dir_variable = "CAPSEM_ASSETS_DIR"
+
+# Image qualification (tests/qualification): mandatory groups every image
+# passes, and the groups its images/<name>/qualify.toml capabilities add. The
+# main gate runs it on the reference image; `capsem-gate image-qualify --image
+# NAME --layout PATH` runs it on a candidate, consumed as built.
+[functional.qualification]
+suite_path = "tests/qualification"
+image_variable = "CAPSEM_QUALIFY_IMAGE"
+layout_variable = "CAPSEM_QUALIFY_LAYOUT"
 
 # The chaos suite shares kingslanding's fixture and runs after it.
 [functional.greyjoy]
@@ -2330,6 +2331,49 @@ benchmark_paths = [
     "tests/ironbank/kingslanding/test_publish_benchmark.py",
 ]
 
+# capsem-debug: the test-tooling image (images/capsem-debug). Sessions that
+# need test runners, network tools, package managers, agent CLIs or benchmark
+# peers run them inside a session of this image, so the VM runtime rootfs
+# carries none of it. It is a fixture, not an official image: the catalog
+# does not list it and no default admission policy admits it.
+#
+# `digests` pins each platform's OCI image manifest. The kingslanding prefetch
+# verifies the pinned layout in the shared `cache_stage`, pulling it from
+# `repository` by digest only when absent; `capsem-gate debug-image` builds it
+# locally into the same place and prints the digest to qualify and pin here.
+# Qualify each candidate before moving its native platform pin. x86_64 images
+# are built on a Linux x86_64 host (Colima here emulates no amd64).
+# tests/fixtures/oci/README.md has the qualification and publish steps.
+[functional.debug_image]
+name = "capsem-debug"
+context = "images/capsem-debug"
+script = "tests/fixtures/oci/pinned_image.py"
+repository = "ghcr.io/google/capsem/capsem-debug"
+cache_stage = "test-images"
+digests = { "linux/arm64" = "sha256:15395ce8120d3b2a0962eaed621b071bb06cf51ad1d26375d027f266289333b2", "linux/amd64" = "sha256:0af41def16f371368e03b668169c841c5a15ae28091a9d2ec6bf5ef479ae34a7" }
+
+# The reference image: a pinned digest of the official `dev` image. Every
+# runtime test that boots a workload boots this one, so main development
+# qualifies the runtime against the product's own shape (a non-root image
+# user, /workspace, git, a toolchain) rather than a fixture -- without
+# depending on every application image. `dev` carries no agent; agent images
+# qualify on their own (`capsem-gate image-qualify`). Updating images/dev never
+# moves this pin: it changes only by a deliberate commit, after the new digest
+# qualified. `base_context` is built first and passed as BASE, as the image
+# workflow does.
+[functional.reference_image]
+name = "dev"
+context = "images/dev"
+base_context = "images/base"
+script = "tests/fixtures/oci/pinned_image.py"
+repository = "ghcr.io/google/capsem/dev"
+cache_stage = "test-images"
+# The installed proofs (winterfell, through the glow-up and the transition
+# replay) boot this image from the layout this variable names, mounted into
+# their container at its own path.
+layout_variable = "CAPSEM_REFERENCE_IMAGE_LAYOUT"
+digests = { "linux/arm64" = "sha256:206fb5037e1e3e25b798c00ad66867aaea67a667c169059f25b2cddcfd612719", "linux/amd64" = "sha256:9717813e692e28fc7edc8c61ea883f00334d8ae3730e1e7df1dd8dcefb9b501f" }
+
 [modules]
 # The build-chain suites that need built artifacts. The release-contracts
 # module excludes them because it is the cheap composition proof; the artifacts
@@ -2339,7 +2383,6 @@ build_chain_artifact_tests = [
     "tests/capsem-build-chain/test_codesign.py",
     "tests/capsem-build-chain/test_full_chain.py",
     "tests/capsem-build-chain/test_manifest_regen.py",
-    "tests/capsem-build-chain/test_materialized_profile_payload.py",
     "tests/capsem-build-chain/test_pack_initrd.py",
 ]
 release_suites = ["tests/capsem-release/", "tests/capsem-build-chain/"]
@@ -2383,11 +2426,11 @@ rust_coverage_crate_minimum = 40.0
 # Raise to about measured minus 2.5, not minus 3: a floor on the band's edge
 # is refused by the next run's +0.04 jitter.
 rust_coverage_ratchet_headroom = 3.0
-rust_coverage_crate_floors = { capsem = 50.0, capsem-admin = 71.0, capsem-agent = 45.39, capsem-app = 41.0, capsem-api = 40.0, capsem-archive = 97.0, capsem-assets = 89.42, capsem-bench = 40.0, capsem-config = 89.0, capsem-core = 78.0, capsem-credentials = 89.83, capsem-foundation = 79.88, capsem-gateway = 80.0, capsem-guard = 93.0, capsem-logger = 87.0, capsem-mcp-aggregator = 63.06, capsem-mcp-builtin = 52.71, capsem-mock-server = 58.03, capsem-network = 85.0, capsem-process = 40.0, capsem-proto = 90.82, capsem-router = 65.4, capsem-sdk = 97.0, capsem-service = 67.73, capsem-telemetry = 97.0, capsem-tray = 54.0, capsem-tui = 70.0 }
+rust_coverage_crate_floors = { capsem = 50.0, capsem-admin = 71.0, capsem-agent = 45.39, capsem-app = 41.0, capsem-api = 40.0, capsem-archive = 97.0, capsem-assets = 89.42, capsem-bench = 40.0, capsem-cache = 90.57, capsem-config = 89.0, capsem-core = 78.0, capsem-crypto = 94.06, capsem-credentials = 90.03, capsem-foundation = 79.88, capsem-gateway = 80.0, capsem-guard = 93.0, capsem-ledger = 74.0, capsem-logger = 87.0, capsem-mcp-aggregator = 63.06, capsem-mcp-builtin = 52.71, capsem-mcp-transport = 74.94, capsem-mock-server = 58.03, capsem-network = 85.0, capsem-process = 40.0, capsem-proto = 90.82, capsem-proxy = 43.98, capsem-router = 65.4, capsem-sdk = 97.0, capsem-service = 67.73, capsem-telemetry = 97.0, capsem-tray = 54.0, capsem-tui = 70.0 }
 # macOS compiles a different cfg-selected line inventory. Its stronger floors
 # must not raise Linux thresholds using code that Linux cannot compile or test.
 # Overrides may only increase the shared floors; no platform gets an exemption.
-rust_coverage_platform_crate_floors = { Linux = { capsem = 60.51, capsem-agent = 53.91, capsem-api = 95.84, capsem-assets = 91.05, capsem-bench = 49.89, capsem-config = 90.19, capsem-core = 79.67, capsem-foundation = 80.63, capsem-gateway = 80.24, capsem-logger = 92.39, capsem-mcp-aggregator = 64.06, capsem-mcp-builtin = 57.06, capsem-mock-server = 59.1, capsem-network = 98.0, capsem-process = 48.78, capsem-proto = 90.98, capsem-router = 80.52, capsem-sdk = 97.39, capsem-service = 75.33, capsem-tray = 55.01 }, Darwin = { capsem = 51.27, capsem-agent = 53.13, capsem-api = 95.34, capsem-assets = 90.3, capsem-bench = 50.56, capsem-config = 89.69, capsem-core = 81.0, capsem-foundation = 83.8, capsem-logger = 91.88, capsem-mcp-builtin = 56.56, capsem-mock-server = 58.6, capsem-network = 97.5, capsem-process = 48.12, capsem-proto = 91.54, capsem-router = 79.8, capsem-service = 74.73 } }
+rust_coverage_platform_crate_floors = { Linux = { capsem = 62.75, capsem-agent = 53.91, capsem-api = 95.84, capsem-assets = 93.38, capsem-bench = 56.43, capsem-config = 91.06, capsem-core = 82.12, capsem-foundation = 81.75, capsem-gateway = 82.24, capsem-logger = 92.39, capsem-mcp-aggregator = 66.32, capsem-mcp-transport = 75.96, capsem-mcp-builtin = 57.06, capsem-mock-server = 71.1, capsem-network = 98.0, capsem-process = 49.39, capsem-proto = 90.98, capsem-router = 80.52, capsem-sdk = 97.39, capsem-service = 79.16, capsem-tray = 57.4, capsem-admin = 75.66 }, Darwin = { capsem = 51.27, capsem-agent = 53.13, capsem-api = 95.34, capsem-assets = 90.3, capsem-bench = 50.56, capsem-config = 89.69, capsem-core = 81.0, capsem-foundation = 83.8, capsem-logger = 91.88, capsem-mcp-builtin = 56.56, capsem-mock-server = 58.6, capsem-network = 97.5, capsem-process = 48.12, capsem-proto = 91.54, capsem-router = 79.8, capsem-service = 74.73 } }
 # Nextest reads its profile from the environment; `--profile` on the command
 # line belongs to cargo-llvm-cov and would select a build profile instead.
 rust_test_profile_variable = "NEXTEST_PROFILE"
@@ -2406,10 +2449,10 @@ guest_binary_tests = [
 # Release-lane inputs. When these are set the module verifies pulled immutable
 # artifacts instead of building source ones.
 release_input_dir = "CAPSEM_RELEASE_INPUT_DIR"
-release_profile = "CAPSEM_RELEASE_PROFILE"
+release_runtime = "CAPSEM_RELEASE_RUNTIME"
 release_package = "CAPSEM_RELEASE_PACKAGE"
 verify_inputs_script = "build_system/scripts/release/verify-release-inputs.py"
-prove_profile_assets_script = "build_system/scripts/release/prove-release-profile-assets.py"
+prove_runtime_assets_script = "build_system/scripts/release/prove-release-runtime-assets.py"
 glowup_script = "build_system/scripts/release/local-release-glowup.py"
 macos_glowup_script = "build_system/packaging/macos/macos_release_glowup.py"
 # Proves the published package runs on every release [platforms.linux]
@@ -2458,7 +2501,7 @@ rehearsal_glowup_work_dir = "cache/target/release/staging/rehearsal-glowup"
 # for live stable, `select-runtime-preflight-manifest.py` reports
 # `bootstrap=true`, so the lane projects its before-state with
 # `project-first-channel-before.py`, and that projection returns exactly
-# `packages: []` and `profiles: {}`. That is what makes the pairing
+# `packages: []`. That is what makes the pairing
 # FRESH_INSTALL -- the pairing a first release makes, and the one that had never
 # run anywhere before this rehearsal existed.
 rehearsal_before_inputs = "cache/target/release/staging/rehearsal-before"
@@ -2480,8 +2523,8 @@ baseline_channel = "CAPSEM_RELEASE_BASELINE_CHANNEL"
 transition = "CAPSEM_RELEASE_TRANSITION"
 before_manifest = "CAPSEM_RELEASE_BEFORE_MANIFEST"
 after_manifest = "CAPSEM_RELEASE_AFTER_MANIFEST"
-before_profile_inputs = "CAPSEM_RELEASE_BEFORE_PROFILE_INPUTS"
-after_profile_inputs = "CAPSEM_RELEASE_AFTER_PROFILE_INPUTS"
+before_release_inputs = "CAPSEM_RELEASE_BEFORE_INPUTS"
+after_release_inputs = "CAPSEM_RELEASE_AFTER_INPUTS"
 
 # ---------------------------------------------------------------------------
 # The isolated home a gate run works in
@@ -2619,7 +2662,7 @@ resumable = ["cache/target/build/install-image"]
 # Run directories cross the prefix through `runtransfer`; its ledger, digest,
 # latest link and active marker are collection state and must never be merged
 # as ordinary build output.
-exports = ["cache/target/assets", "cache/target/config", "cache/target/coverage", "cache/target/release/distribution", "cache/target/gate-runs", "cache/target/packages", "cache/target/tests/evidence", "cache/target/tests/benchmarks"]
+exports = ["cache/target/assets", "cache/target/coverage", "cache/target/release/distribution", "cache/target/gate-runs", "cache/target/packages", "cache/target/tests/evidence", "cache/target/tests/benchmarks", "cache/target/sdk", "cache/target/integrations/inspect-ai", "cache/target/mcp/typescript"]
 
 # Trees a run writes but nothing publishes. `exports` establishes provenance
 # for everything a release takes out of a prefix; this establishes it for
@@ -2692,8 +2735,8 @@ network_reason = "No mid-run fetch. This is the rule the whole profile exists fo
 # sandboxed cargo. `just doctor` runs the same probe and owns the fetch.
 cargo_offline_probe = ["cargo", "fetch", "--locked", "--offline"]
 socket_reason = "`(deny network*)` covers AF_UNIX too, so these come back explicitly."
-self_confinement_reason = "Seatbelt cannot be nested. These trusted children replace the inherited gate profile with their stricter router profile before handling data; ordinary test children retain the gate network denial."
-self_confined_executables = ["capsem-router", "capsem-router-confinement-test"]
+self_confinement_reason = "Seatbelt cannot be nested. These trusted children replace the inherited gate profile with their stricter worker profile before handling data; ordinary test children retain the gate network denial."
+self_confined_executables = ["capsem-ledger", "capsem-proxy", "capsem-router", "capsem-router-confinement-test"]
 
 # Absolute or `~`-relative. Denying the Docker socket makes a running daemon
 # look absent -- `permission denied ... docker.sock` -- which is how the first
@@ -2825,7 +2868,7 @@ subject = "codesign --sign - --entitlements"
 platforms = ["Darwin"]
 reason = """
 macOS host binaries are signed before the prepared runtime, again after Rust
-coverage rebuilds them, and again after artifact materialization may run
+coverage rebuilds them, and again after asset manifest generation may run
 capsem-admin through Cargo. Each signature follows a producer that can replace
 the Mach-O bytes; Linux renders these signing steps as actionless ordering
 edges, which is why the duplication is visible only on macOS.
@@ -2835,26 +2878,9 @@ edges, which is why the duplication is visible only on macOS.
 subject = "cargo build --bin capsem --bin capsem-admin"
 reason = """
 The prepared runtime builds the host binaries before its first signature. The
-asset phase deliberately rebuilds them after profile materialization may run
+asset phase deliberately rebuilds them after manifest generation may run
 capsem-admin through Cargo and replace workspace outputs, then signs the exact
-post-materialization bytes used by the VM and package lanes.
-"""
-
-[[boundary.repeated_actions]]
-subject = "(in typescript) CI=true pnpm"
-reason = """
-The SDK and npm MCP are distinct package roots that share the basename
-`typescript`; the plan renderer shortens both working directories to that
-basename, so their separate dependency fetch and install actions render alike.
-"""
-
-[[boundary.repeated_actions]]
-subject = "(in typescript) pnpm run build"
-reason = """
-Two different builds that render alike: the npm MCP builds `mcp/typescript` in
-the fast lane, and the functional module bundles the SDK in `sdk/typescript`
-for the SDK suites, whose acceptance tools import its `dist`. The renderer
-shortens both working directories to the shared basename.
+post-generation bytes used by the VM and package lanes.
 """
 
 # ---------------------------------------------------------------------------
@@ -2870,6 +2896,8 @@ events = "run.jsonl"
 # field named `schema` shadows a BaseModel attribute.
 event_schema = "capsem.gate.runlog.v1"
 step_log_dir = "steps"
+# Sequential resource acquire/release commands run outside the step graph.
+resource_log = "resources.log"
 summary = "summary.txt"
 # What each run watches for filesystem faults, and where it writes them the
 # moment they happen -- not at the end, and not only into `run.jsonl`, because
@@ -2892,6 +2920,16 @@ observer_survey_seconds = 1.0
 # reported one filesystem fault, and a fault count that is never zero is a
 # fault count nobody reads.
 duplicate_content_exempt = ["crates/capsem-app/gen"]
+# The dual-architecture asset proof builds one initrd product per architecture.
+# Files at the same relative path may be architecture-independent inputs; a
+# second copy anywhere else remains a fault. These exact product roots keep the
+# observer useful without reporting every shared diagnostic and benchmark file.
+duplicate_content_mirrors = [
+    [
+        "cache/target/tests/ironbank/build-arm64/arm64",
+        "cache/target/tests/ironbank/build-x86_64/x86_64",
+    ],
+]
 # `source.record` intentionally copies every Git-visible byte into this exact
 # tree. Duplicate and empty bytes there are properties of checked-in input,
 # while hardlinks, mode churn, and concurrent writers remain faults.
@@ -2981,8 +3019,12 @@ slowest_steps = 10
 # `internal` is a reasoned, ratcheted inventory for service-UDS control routes
 # that are deliberately neither public gateway routes nor benchmark subjects.
 [benchmark.routes]
-internal = { "/vms/{id}/preserve-failure" = "CLI-only doctor failure preservation mutates and stops a one-shot VM over the local service UDS", "/networks/private/resolve" = "VM owners ask the service what a private name or pool address is, for their VM's networks only, over the local service UDS; never a gateway route", "/internal/vms/{id}/exposures/{exposure_id}/preview-session" = "The authenticated gateway asks the service for owner-scoped bootstrap material over the local service UDS", "/internal/vms/{id}/exposures/{exposure_id}/preview-bootstrap" = "The authenticated gateway exchanges a single-use browser bootstrap token over the local service UDS", "/internal/vms/{id}/exposures/{exposure_id}/preview-admission" = "The authenticated gateway asks the service and VM owner to admit one browser descriptor over the local service UDS" }
+internal = { "/vms/{id}/preserve-failure" = "CLI-only doctor failure preservation mutates and stops a one-shot VM over the local service UDS", "/networks/private/resolve" = "VM owners ask the service what a private name or pool address is, for their VM's networks only, over the local service UDS; never a gateway route", "/internal/gateway/status" = "The gateway reads one combined VM, asset, and update snapshot over its brokered service channel; this route is never exposed on TCP", "/internal/vms/{id}/metrics" = "An authenticated VM owner submits its OTLP metrics to the service over the local UDS for host export; the gateway must never expose this ingestion route", "/internal/vms/{id}/exposures/{exposure_id}/preview-session" = "The authenticated gateway asks the service for owner-scoped bootstrap material over the local service UDS", "/internal/vms/{id}/exposures/{exposure_id}/preview-bootstrap" = "The authenticated gateway exchanges a single-use browser bootstrap token over the local service UDS", "/internal/vms/{id}/exposures/{exposure_id}/preview-admission" = "The authenticated gateway asks the service and VM owner to admit one browser descriptor over the local service UDS" }
 measured = [
+    "/vms/managed/{request_id}/close",
+    "/vms/managed/{request_id}/claim",
+    "/connections",
+    "/vms/{id}/credential-grants",
     "/vms/{id}/bodies/{event_id}",
     "/vms/{id}/status",
     "/vms/{id}/exposures",
@@ -2992,69 +3034,62 @@ measured = [
     "/vms/list",
     "/networks",
     "/detection/latest",
+    "/enforcement/latest",
     "/detection/status",
     "/enforcement/status",
-    "/profiles/list",
-    "/profiles/status",
+    "/assets/status",
     "/stats",
     "/system/status",
     "/update/status",
 ]
 unmeasured = [
+    # Standalone proxy lifecycle mutations require a supervised worker fixture;
+    # their functional acceptance owns successful create, lease, and teardown.
+    "/proxies",
+    "/proxies/{id}/heartbeat",
+    "/proxies/{id}/stop",
+    # Provider authorization/poll/disconnect and concrete connection records
+    # need genuine provider lifecycle fixtures, not timed error responses.
+    "/connections/google/authorize",
+    "/connections/authorizations/{transaction_id}",
+    "/connections/{connection_id}",
+    # Claim/close mutate owned session lifetimes; grant revocation mutates
+    # credential authority. Their native acceptance owns the effects.
+    "/vms/{id}/credential-grants/{grant_id}",
     # Restart needs a disposable supervisor; the read-only route collector
     # cannot time accepted restarts. Its functional proof owns that lifecycle.
     "/restart",
+    # Secret-bearing mutation includes durable storage or VM-owner acknowledgement;
+    # the native injection acceptance owns it, not a read-only route benchmark.
+    "/credentials/inject",
     "/corp/edit",
+    "/assets/ensure",
+    "/plugins/list",
+    "/plugins/{plugin_id}/info",
+    "/plugins/{plugin_id}/edit",
+    "/plugins/credential_broker/credentials/info",
+    "/plugins/credential_broker/credentials/reload",
+    "/mcp/info",
+    "/mcp/servers/list",
+    "/mcp/default/info",
+    "/mcp/default/edit",
+    "/mcp/servers/{server_id}/tools/list",
+    "/mcp/servers/{server_id}/refresh",
+    "/mcp/servers/{server_id}/tools/{tool_id}/edit",
+    "/mcp/servers/{server_id}/tools/{tool_id}/call",
     "/corp/info",
     "/corp/reload",
     "/corp/validate",
     "/networks/{id}",
     "/networks/{id}/logs",
     "/networks/{id}/members/{vm_id}",
-    "/enforcement/latest",
+    # The image catalog is read from a registry, at most every 30 minutes;
+    # timing it would time the network. Pulls are network-bound mutations.
+    # /enforcement/latest moved to measured so the debt does not grow.
+    "/images",
+    "/images/pull",
     "/host-logs/{name}",
     "/panics",
-    "/profiles/reload",
-    "/profiles/{profile_id}/assets/ensure",
-    "/profiles/{profile_id}/assets/info",
-    "/profiles/{profile_id}/assets/status",
-    "/profiles/{profile_id}/detection/evaluate",
-    "/profiles/{profile_id}/detection/info",
-    "/profiles/{profile_id}/detection/reload",
-    "/profiles/{profile_id}/detection/rules/list",
-    "/profiles/{profile_id}/detection/rules/{rule_id}/delete",
-    "/profiles/{profile_id}/detection/rules/{rule_id}/edit",
-    "/profiles/{profile_id}/enforcement/evaluate",
-    "/profiles/{profile_id}/enforcement/info",
-    "/profiles/{profile_id}/enforcement/reload",
-    "/profiles/{profile_id}/enforcement/rules/list",
-    "/profiles/{profile_id}/enforcement/rules/{rule_id}/delete",
-    "/profiles/{profile_id}/enforcement/rules/{rule_id}/edit",
-    "/profiles/{profile_id}/info",
-    "/profiles/{profile_id}/mcp/default/edit",
-    "/profiles/{profile_id}/mcp/default/info",
-    "/profiles/{profile_id}/mcp/info",
-    "/profiles/{profile_id}/mcp/servers/list",
-    "/profiles/{profile_id}/mcp/servers/{server_id}/delete",
-    "/profiles/{profile_id}/mcp/servers/{server_id}/edit",
-    "/profiles/{profile_id}/mcp/servers/{server_id}/refresh",
-    "/profiles/{profile_id}/mcp/servers/{server_id}/tools/list",
-    "/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/call",
-    "/profiles/{profile_id}/mcp/servers/{server_id}/tools/{tool_id}/edit",
-    "/profiles/{profile_id}/obom",
-    "/profiles/{profile_id}/plugins/credential_broker/credentials/info",
-    "/profiles/{profile_id}/plugins/credential_broker/credentials/reload",
-    "/profiles/{profile_id}/plugins/info",
-    "/profiles/{profile_id}/plugins/list",
-    "/profiles/{profile_id}/plugins/{plugin_id}/edit",
-    "/profiles/{profile_id}/plugins/{plugin_id}/info",
-    "/profiles/{profile_id}/reload",
-    "/profiles/{profile_id}/skills/add",
-    "/profiles/{profile_id}/skills/info",
-    "/profiles/{profile_id}/skills/list",
-    "/profiles/{profile_id}/skills/{skill_id}/delete",
-    "/profiles/{profile_id}/skills/{skill_id}/edit",
-    "/profiles/{profile_id}/validate",
     "/purge",
     "/run",
     "/security/latest",
@@ -3099,6 +3134,14 @@ unmeasured = [
     "/vms/{id}/timeline",
 ]
 
+# Concurrent kept-alive clients exercise the same measured read-only routes as
+# the latency lane. This catches cache lock and single-flight contention while
+# keeping mutations and network-bound catalog reads out of an RPS claim.
+[benchmark.route_load]
+concurrency = 16
+requests = 512
+quick_requests = 64
+
 # Release-blocking route ceilings and the margin they must retain. The budget
 # library classifies a route once and resolves both transports from this
 # inventory; test code owns no timing literals. CPU is authored for
@@ -3114,9 +3157,9 @@ reference_samples = 64
 window_samples = 128
 # The least contended window is kept. With three, one host-busy stretch
 # covering all of them failed whichever of ~80 routes it landed on: the
-# co-work evaluate route measured 0.182 s in a proof and 0.123-0.136 s in
-# every rerun, and a 1.5x-headroom sweep of both profiles found no budget
-# short of margin. Five windows add ~40 s a profile.
+# evaluate route measured 0.182 s in a proof and 0.123-0.136 s in every
+# rerun, and a 1.5x-headroom sweep found no budget short of margin. Five
+# windows add ~40 s a sweep.
 windows = 5
 
 [benchmark.route_health.concurrent_stats]
@@ -3150,15 +3193,6 @@ cpu_s = 0.15
 p95_ms = 5.0
 p99_ms = 10.0
 cpu_s = 0.23
-
-[benchmark.route_health.budgets.profiles.service]
-p95_ms = 3.0
-p99_ms = 8.0
-cpu_s = 0.08
-[benchmark.route_health.budgets.profiles.gateway]
-p95_ms = 6.0
-p99_ms = 10.0
-cpu_s = 0.18
 
 [benchmark.route_health.budgets.stats_detail.service]
 p95_ms = 15.0
@@ -3219,15 +3253,6 @@ p95_ms = 5.0
 p99_ms = 9.0
 cpu_s = 0.16
 
-[benchmark.route_health.budgets.rules.service]
-p95_ms = 2.0
-p99_ms = 5.0
-cpu_s = 0.08
-[benchmark.route_health.budgets.rules.gateway]
-p95_ms = 5.0
-p99_ms = 8.0
-cpu_s = 0.15
-
 [benchmark.route_health.budgets.latest.service]
 p95_ms = 3.0
 p99_ms = 8.0
@@ -3236,17 +3261,6 @@ cpu_s = 0.10
 p95_ms = 5.0
 p99_ms = 10.0
 cpu_s = 0.15
-
-[benchmark.route_health.budgets.evaluate.service]
-# Same-handler Linux p95 samples reached 1.767/1.905ms; 20% margin needs
-# 2.286ms, rounded to the next whole millisecond for this health ceiling.
-p95_ms = 3.0
-p99_ms = 5.0
-cpu_s = 0.10
-[benchmark.route_health.budgets.evaluate.gateway]
-p95_ms = 5.0
-p99_ms = 8.0
-cpu_s = 0.20
 
 [benchmark.route_health.budgets.plugin_info.service]
 p95_ms = 3.0
@@ -3302,14 +3316,10 @@ storage_min_iops = 1
 default = 1000
 linux = 400
 
-# Per runtime, because "slow to start" means something different for `python3`
-# and for an agent that loads a model client.
+# Per runtime the VM ships. The minimal runtime carries only `python3`; agent
+# CLIs and Node live in OCI images and are not part of the VM's startup gate.
 [benchmark.gates.startup_mean_ms]
 python3 = 100
-node = 750
-claude = 2500
-gemini = 5000
-codex = 2500
 
 [benchmark.run]
 # What `just bench` invokes. The binary computes every derived number; a
@@ -3327,12 +3337,36 @@ store = "cache/target/tests/benchmarks/benchmarks.db"
 # under the project's interpreter rather than whatever the shebang resolves to.
 interpreter = "uv run --project build_system --frozen --active python"
 # A collector that never exits would hold the machine lock the whole gate runs
-# under, so one is always bounded.
-timeout_secs = 900
+# under, so one is always bounded. Criterion discovers every workspace target;
+# a cold build plus the statistical runs exceeded the old 15-minute ceiling
+# while still making progress, so the full lane gets a 30-minute bound.
+timeout_secs = 1800
 # The dev loop is only useful while it stays a dev loop. `quick` takes the two
 # dimensions that need no guest and finish in seconds; the ceiling is the
 # promise, not an estimate.
 quick_timeout_secs = 60
+
+[benchmark.protocol]
+# Raw samples need enough p99 tail observations to expose drift while keeping
+# this four-scenario VM lane routine. The 50,000-request release stress cohort
+# remains a separate qualification fixture.
+requests = 5000
+concurrency = 64
+timeout_ms = 30000
+scenarios = [
+    "model_json_response",
+    "credential_response",
+    "mcp_tools_list",
+    "mcp_tool_call",
+]
+
+[benchmark.mitm_scale]
+# One low-contention HTTPS cohort per independent VM. Each level keeps the
+# per-VM work fixed, so aggregate RPS and resident pressure reveal whether
+# session isolation scales across host cores and memory.
+vm_counts = [1, 2, 4, 8]
+per_vm_concurrency = 16
+duration_seconds = 10
 
 [benchmark_regression]
 # Product benchmarks use the latest checked-in result as evidence. A release
@@ -3543,12 +3577,6 @@ subject = "docker inspect --format {{range .Mounts}}{{println .Source}}{{end}} $
 reason = "the container can exit between being listed and being inspected"
 
 [[boundary.discarded_verdicts]]
-digest = "218517a41536"
-where = "build_system/packaging/linux/deb-postinst.sh"
-subject = "cp -R /usr/share/capsem/profiles/. $CAPSEM_DIR/profiles/"
-reason = "the packaged profile tree is optional; its absence must not fail the install"
-
-[[boundary.discarded_verdicts]]
 digest = "b61604839e7c"
 where = "build_system/packaging/linux/deb-postinst.sh"
 subject = "su $TARGET_USER -c XDG_RUNTIME_DIR=$XDG_DIR systemctl --user status capsem.service --no-pager -l"
@@ -3699,6 +3727,17 @@ specification = "sdk/specification/openapi.json"
 source = "sdk/python/capsem"
 tests = "sdk/python/tests"
 build_output = "cache/target/sdk/python"
+environment_python = "sdk/python/.venv/bin/python"
+package_build_requirements = "cache/target/sdk/python/package-build-requirements.txt"
+pytest_scratch = "cache/target/tests/client-packages/python"
+
+[integrations_inspect_ai]
+project = "integrations/inspect-ai"
+manifest = "integrations/inspect-ai/pyproject.toml"
+source = "integrations/inspect-ai/inspect_capsem"
+tests = "integrations/inspect-ai/tests"
+build_output = "cache/target/integrations/inspect-ai"
+pytest_scratch = "cache/target/tests/client-packages/inspect-ai"
 
 [sdk_rust]
 project = "sdk/rust"
@@ -3715,6 +3754,10 @@ specification = "sdk/specification/openapi.json"
 source = "sdk/typescript/src"
 tests = "sdk/typescript/tests"
 build_output = "cache/target/sdk/typescript"
+# Hosted concurrent type checks took 123s; the runner owns this finite build
+# budget and tears down the entire compiler process group on expiry.
+build_timeout_seconds = 300
 
 [mcp_typescript]
 project = "mcp/typescript"
+build_output = "cache/target/mcp/typescript"

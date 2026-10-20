@@ -54,7 +54,7 @@ pub fn capsem_assets_dir() -> PathBuf {
     capsem_home().join("assets")
 }
 
-/// Return `<capsem_home>/sessions` (main.db + historical session rollups).
+/// Return `<capsem_home>/sessions`, where the host ledger (`host.db`) lives.
 pub fn capsem_sessions_dir() -> PathBuf {
     capsem_home().join("sessions")
 }

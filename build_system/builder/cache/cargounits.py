@@ -20,6 +20,12 @@ compiling checkout into each unit's fingerprint directory, a unit whose
 checkout is gone is reclaimed outright, and under pressure other checkouts'
 units go first, then shared or unrecorded ones, and the working set -- the
 calling checkout and the cache authority -- last.
+
+An uplifted binary such as `debug/capsem-admin` has no unit hash, but each
+signed copy `run_signed.sh` publishes beside it is keyed by the source's
+inode and ctime, so every rebuild adds one. Each copy and its receipt are a
+generation of their own, receipt first so an interrupted removal can only
+force a re-sign; unrecognised, they once held 71 GB outside every unit.
 """
 
 from __future__ import annotations
@@ -28,12 +34,17 @@ import os
 import re
 from pathlib import Path
 
+from .leases import held_locks
 from .measure import measure
-from .models import CacheEntry
+from .models import CacheEntry, StageInventory
 
 #: Scanned in this order; the first member of a unit is its fingerprint.
 UNIT_DIRECTORIES = (".fingerprint", "build", "deps", "examples", "incremental")
 _UNIT_HASH = re.compile(r"-([0-9a-f]{16})(?=[.-]|$)")
+#: A signed copy of an uplifted binary, or its abandoned staging file.
+_SIGNED_COPY = re.compile(r"\.run-signed-.+-([0-9a-f]{64})(?:\.tmp\.\d+)?")
+#: `run_signed.sh` keeps one receipt per copy here, named by the copy's key.
+SIGNED_RECEIPTS = ".run-signed"
 #: A symlink to the compiling checkout, written by `rustc-workspace-wrapper.sh`
 #: beside Cargo's fingerprint. A link, not a file: reading it moves no atime,
 #: so it never disturbs the LRU clock, and a measure never counts it.
@@ -79,6 +90,17 @@ def unit_entries(
                 # Unhashed pieces, such as incremental sessions, stand alone.
                 unit = found.group(1) if found else f"{directory}/{child.name}"
                 groups.setdefault(f"{target_root.as_posix()}/{unit}", []).append(child)
+        top = stage_root / target_root
+        if not top.is_symlink() and top.is_dir():
+            for child in sorted(top.iterdir(), key=lambda item: item.name):
+                found = _SIGNED_COPY.fullmatch(child.name)
+                if not found:
+                    continue
+                members = groups.setdefault(f"{target_root.as_posix()}/signed/{found.group(1)}", [])
+                receipt = top / SIGNED_RECEIPTS / found.group(1)
+                if not members and receipt.is_file():
+                    members.append(receipt)
+                members.append(child)
         for key, members in groups.items():
             measured = [measure(member, allocated_seen) for member in members]
             relative = [member.relative_to(stage_root) for member in members]
@@ -101,18 +123,29 @@ def unit_entries(
     return tuple(entries), frozenset(accounted)
 
 
+#: How many of the largest unselectable paths an inventory names.
+LARGEST_UNSELECTABLE = 5
+
+
 def unaccounted_size(
-    root: Path, accounted: frozenset[Path], allocated_seen: set[tuple[int, int]]
-) -> tuple[int, int]:
-    """Bytes under `root` outside every unit, each counted once."""
-    ancestors: set[Path] = set()
+    root: Path,
+    accounted: frozenset[Path],
+    allocated_seen: set[tuple[int, int]],
+    walk: tuple[Path, ...] = (),
+) -> tuple[int, int, tuple[str, ...]]:
+    """Bytes under `root` outside every unit, each counted once, and the
+    largest such paths: no retention can select them, so they must be named
+    when they pin a stage above its maximum."""
+    # The root and every `walk` directory (a Cargo target root, where uplifted
+    # binaries sit) are always walked, so the largest paths name files rather
+    # than the directory that holds them.
+    ancestors: set[Path] = {root, *(root / directory for directory in walk)}
     for member in accounted:
         parent = member.parent
         while parent != root and parent != parent.parent:
             ancestors.add(parent)
             parent = parent.parent
-        if parent == root:
-            ancestors.add(root)
+    leaves: list[tuple[int, Path]] = []
 
     def visit(path: Path) -> tuple[int, int]:
         if path in accounted or path.is_symlink() or not path.exists():
@@ -125,6 +158,47 @@ def unaccounted_size(
                 allocated += child_allocated
             return logical, allocated
         measured = measure(path, allocated_seen)
+        leaves.append((min(measured.logical_bytes, measured.allocated_bytes), path))
         return measured.logical_bytes, measured.allocated_bytes
 
-    return visit(root)
+    logical, allocated = visit(root)
+    leaves.sort(key=lambda leaf: (-leaf[0], leaf[1]))
+    largest = tuple(
+        f"{path.relative_to(root).as_posix()} ({size} bytes)"
+        for size, path in leaves[:LARGEST_UNSELECTABLE]
+        if size
+    )
+    return logical, allocated, largest
+
+
+def cargo_inventory(
+    stage_id, stage_root: Path, stage_policy, allocated_seen, working_set: frozenset[Path]
+) -> StageInventory:
+    """A Cargo stage as its compilation units, everything else accounted beside them."""
+    for target_root in stage_policy.cargo_target_roots:
+        resolved = (stage_root / target_root).resolve()
+        if stage_root.is_dir() and not resolved.is_relative_to(stage_root.resolve()):
+            raise ValueError(f"cache entry root escapes its stage: {stage_root / target_root}")
+    held = held_locks(stage_root, stage_policy.mutation_locks)
+    busy = bool(held)
+    entries, accounted = unit_entries(
+        stage_root,
+        stage_policy.cargo_target_roots,
+        allocated_seen,
+        protected=busy,
+        working_set=working_set,
+    )
+    other_logical, other_allocated, largest = unaccounted_size(
+        stage_root, accounted, allocated_seen, stage_policy.cargo_target_roots
+    )
+    return StageInventory(
+        stage_id=stage_id,
+        path=stage_root,
+        logical_bytes=sum(entry.logical_bytes for entry in entries) + other_logical,
+        allocated_bytes=sum(entry.allocated_bytes for entry in entries) + other_allocated,
+        protected_bytes=sum(entry.budget_bytes for entry in entries if entry.protected),
+        entries=entries,
+        held_locks=held,
+        unselectable_bytes=min(other_logical, other_allocated),
+        largest_unselectable=largest,
+    )

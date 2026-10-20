@@ -17,6 +17,7 @@ fn running_fork_source(state: &Arc<ServiceState>, dir: &tempfile::TempDir, refus
             name: "fork-src".into(),
             uds_path: uds_path.clone(),
             session_dir: session_dir.clone(),
+            labels: Some(HashMap::from([("suite".into(), "eval".into())])),
             ..test_instance()
         },
     );
@@ -26,7 +27,7 @@ fn running_fork_source(state: &Arc<ServiceState>, dir: &tempfile::TempDir, refus
 #[tokio::test]
 async fn handle_fork_creates_persistent_sandbox() {
     let (state, dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
+    install_test_runtime_assets(&state);
     running_fork_source(&state, &dir, None);
     let result = handle_fork(
         State(state.clone()),
@@ -34,6 +35,7 @@ async fn handle_fork_creates_persistent_sandbox() {
         Json(ForkRequest {
             name: "my-fork".into(),
             description: Some("test".into()),
+            labels: None,
         }),
     )
     .await
@@ -45,12 +47,16 @@ async fn handle_fork_creates_persistent_sandbox() {
     // Verify fork created a persistent sandbox entry in the registry
     let registry = state.persistent_registry.lock().unwrap();
     let entry = registry.get("my-fork").unwrap();
-    assert_eq!(entry.profile_id, "code");
-    assert_eq!(entry.profile_revision, test_profile_revision());
-    assert_eq!(entry.profile_payload_hash, test_profile_payload_hash());
+    assert_eq!(entry.asset_pins, test_asset_pins());
+    assert!(entry.legacy_profile_id.is_none());
     assert_eq!(entry.asset_pins, test_asset_pins());
     assert_eq!(entry.forked_from, Some("fork-src".into()));
     assert_eq!(entry.description, Some("test".into()));
+    assert_eq!(
+        entry.labels,
+        Some(HashMap::from([("suite".into(), "eval".into())])),
+        "forked VM must inherit source labels by default"
+    );
     assert_eq!(entry.base_version, "0.0.0");
     // The owner cloned into the directory the service registered.
     assert_eq!(
@@ -65,7 +71,7 @@ async fn a_fork_whose_guest_will_not_freeze_fails_and_leaves_nothing() {
     // Copying a live ext4 overlay without the freeze can yield an image the
     // fork cannot boot, so a refused freeze is a refused fork.
     let (state, dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
+    install_test_runtime_assets(&state);
     running_fork_source(&state, &dir, Some("timed out waiting for SnapshotReady"));
     let error = handle_fork(
         State(state.clone()),
@@ -73,11 +79,12 @@ async fn a_fork_whose_guest_will_not_freeze_fails_and_leaves_nothing() {
         Json(ForkRequest {
             name: "my-fork".into(),
             description: None,
+            labels: None,
         }),
     )
     .await
     .unwrap_err();
-    assert!(error.1.contains("SnapshotReady"), "{}", error.1);
+    assert!(error.body.error.contains("SnapshotReady"), "{}", error.body.error);
     assert!(state.persistent_registry.lock().unwrap().get("my-fork").is_none());
     let persistent = state.run_dir.join("persistent");
     let leftovers = std::fs::read_dir(&persistent).map(|dir| dir.count()).unwrap_or(0);
@@ -99,17 +106,18 @@ async fn handle_fork_not_found() {
         Json(ForkRequest {
             name: "img".into(),
             description: None,
+            labels: None,
         }),
     )
     .await
     .unwrap_err();
-    assert_eq!(err.0, StatusCode::NOT_FOUND);
+    assert_eq!(err.status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
 async fn handle_fork_duplicate_returns_conflict() {
     let (state, dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
+    install_test_runtime_assets(&state);
     let session_dir = state.run_dir.join("sessions/dup-src");
     std::fs::create_dir_all(session_dir.join("system")).unwrap();
     std::fs::create_dir_all(session_dir.join("workspace")).unwrap();
@@ -133,6 +141,7 @@ async fn handle_fork_duplicate_returns_conflict() {
         Json(ForkRequest {
             name: "same-name".into(),
             description: None,
+            labels: None,
         }),
     )
     .await
@@ -144,17 +153,18 @@ async fn handle_fork_duplicate_returns_conflict() {
         Json(ForkRequest {
             name: "same-name".into(),
             description: None,
+            labels: None,
         }),
     )
     .await
     .unwrap_err();
-    assert_eq!(err.0, StatusCode::CONFLICT);
+    assert_eq!(err.status, StatusCode::CONFLICT);
 }
 
 #[tokio::test]
 async fn handle_fork_from_persistent_registry() {
     let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
+    install_test_runtime_assets(&state);
     let session_dir = state.run_dir.join("persistent/pers-vm");
     std::fs::create_dir_all(session_dir.join("system")).unwrap();
     std::fs::create_dir_all(session_dir.join("workspace")).unwrap();
@@ -167,6 +177,7 @@ async fn handle_fork_from_persistent_registry() {
             PersistentVmEntry {
                 id: vm_id.clone(),
                 created_at: "2026-01-01T00:00:00Z".into(),
+                labels: Some(HashMap::from([("suite".into(), "eval".into())])),
                 ..test_persistent_entry("pers-vm", session_dir.clone())
             },
         );
@@ -174,10 +185,11 @@ async fn handle_fork_from_persistent_registry() {
     // state is already Arc<ServiceState> from make_test_state*
     let result = handle_fork(
         State(state.clone()),
-        Path(vm_id),
+        Path(vm_id.clone()),
         Json(ForkRequest {
             name: "from-pers".into(),
             description: None,
+            labels: None,
         }),
     )
     .await
@@ -187,65 +199,114 @@ async fn handle_fork_from_persistent_registry() {
     assert_eq!(result.0.name, "from-pers");
     let registry = state.persistent_registry.lock().unwrap();
     let entry = registry.get("from-pers").unwrap();
-    assert_eq!(entry.profile_id, "code");
-    assert_eq!(entry.profile_revision, test_profile_revision());
-    assert_eq!(entry.profile_payload_hash, test_profile_payload_hash());
     assert_eq!(entry.asset_pins, test_asset_pins());
+    assert!(entry.legacy_profile_id.is_none());
+    assert_eq!(entry.asset_pins, test_asset_pins());
+    assert_eq!(
+        entry.labels,
+        Some(HashMap::from([("suite".into(), "eval".into())])),
+        "forked persistent VM must inherit source labels by default"
+    );
     drop(registry);
-}
 
-#[tokio::test]
-async fn handle_fork_rejects_asset_pin_drift() {
-    let (state, _dir) = make_test_state_with_tempdir();
-    install_test_profile_assets(&state);
-    let session_dir = state.run_dir.join("persistent/pin-drift");
-    std::fs::create_dir_all(session_dir.join("system")).unwrap();
-    std::fs::create_dir_all(session_dir.join("workspace")).unwrap();
-    std::fs::write(session_dir.join("system/rootfs.img"), b"data").unwrap();
-    let mut pins = test_asset_pins();
-    pins.rootfs.hash = "blake3:0000000000000000000000000000000000000000000000000000000000000000".into();
-    let vm_id = new_persistent_vm_id();
-    {
-        let mut reg = state.persistent_registry.lock().unwrap();
-        reg.data.vms.insert(
-            "pin-drift".into(),
-            PersistentVmEntry {
-                id: vm_id.clone(),
-                name: "pin-drift".into(),
-                profile_id: "code".into(),
-                profile_revision: test_profile_revision(),
-                profile_payload_hash: test_profile_payload_hash(),
-                asset_pins: pins,
-                ram_mb: 2048,
-                cpus: 2,
-                base_version: "0.0.0".into(),
-                created_at: "0".into(),
-                session_dir,
-                forked_from: None,
-                description: None,
-                suspended: false,
-                defunct: false,
-                last_error: None,
-                checkpoint_path: None,
-                env: None,
-            },
-        );
-    }
+    // Overriding labels on fork replaces source labels; empty map `{}` clears them to `None`.
+    let overridden = HashMap::from([("suite".into(), "override".into())]);
+    let _ = handle_fork(
+        State(state.clone()),
+        Path(vm_id.clone()),
+        Json(ForkRequest {
+            name: "from-pers-override".into(),
+            description: None,
+            labels: Some(overridden.clone()),
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        state
+            .persistent_registry
+            .lock()
+            .unwrap()
+            .get("from-pers-override")
+            .unwrap()
+            .labels,
+        Some(overridden)
+    );
 
-    let err = handle_fork(
-        State(state),
+    let _ = handle_fork(
+        State(state.clone()),
+        Path(vm_id.clone()),
+        Json(ForkRequest {
+            name: "from-pers-cleared".into(),
+            description: None,
+            labels: Some(HashMap::new()),
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        state
+            .persistent_registry
+            .lock()
+            .unwrap()
+            .get("from-pers-cleared")
+            .unwrap()
+            .labels,
+        None,
+        "empty labels map on fork must clear inherited labels to None"
+    );
+
+    let bad = handle_fork(
+        State(state.clone()),
         Path(vm_id),
         Json(ForkRequest {
-            name: "blocked-fork".into(),
+            name: "from-pers-bad".into(),
             description: None,
+            labels: Some(HashMap::from([("dot.key".into(), "v".into())])),
         }),
     )
     .await
     .unwrap_err();
-    assert_eq!(err.0, StatusCode::PRECONDITION_FAILED);
+    assert_eq!(bad.status, StatusCode::BAD_REQUEST, "{}", bad.body.error);
+}
+
+/// A VM from before profiles were removed is refused, not laundered into a
+/// fork in the current shape.
+#[tokio::test]
+async fn handle_fork_refuses_a_profile_era_vm() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    install_test_runtime_assets(&state);
+    let session_dir = state.run_dir.join("persistent/profile-era");
+    std::fs::create_dir_all(session_dir.join("workspace")).unwrap();
+    let entry = PersistentVmEntry {
+        legacy_profile_id: Some("code".into()),
+        ..test_persistent_entry("profile-era", session_dir)
+    };
+    let vm_id = entry.id.clone();
+    state
+        .persistent_registry
+        .lock()
+        .unwrap()
+        .data
+        .vms
+        .insert("profile-era".into(), entry);
+
+    let err = handle_fork(
+        State(Arc::clone(&state)),
+        Path(vm_id),
+        Json(ForkRequest {
+            name: "blocked-fork".into(),
+            description: None,
+            labels: None,
+        }),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.status, StatusCode::PRECONDITION_FAILED);
     assert!(
-        err.1.contains("asset pins changed"),
-        "fork must fail closed on asset pin drift, got: {}",
-        err.1
+        err.body.error.contains("profiles no longer exist"),
+        "{}",
+        err.body.error
     );
+    assert!(!state.persistent_registry.lock().unwrap().contains("blocked-fork"));
 }

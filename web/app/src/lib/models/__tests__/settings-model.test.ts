@@ -173,7 +173,7 @@ describe('SettingsModel', () => {
   });
 
   describe('MCP servers', () => {
-    it('does not expose profile MCP through settings model', () => {
+    it('does not expose MCP servers through the settings model', () => {
       const model = loadModel();
       expect('mcpServers' in model).toBe(false);
       expect('getMcpServer' in model).toBe(false);

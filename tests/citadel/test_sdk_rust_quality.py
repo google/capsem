@@ -8,11 +8,17 @@ from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
-from capsem_builder.gate import sdkchecks
+from capsem_builder.gate import sdkregistrychecks
 from capsem_builder.gate.plan import Plan
 from citadel.test_sdk_ci import _documents
 from citadel.test_sdk_quality import CONFIG, ROOT, SDK_RATIONALE
 from helpers.gate import gate_plan
+
+SDK_CRYPTO_RATIONALE = (
+    "The SDK uses capsem-crypto for managed ownership entropy and secret custody, "
+    "with default features disabled and only random/secrets enabled. It must not "
+    "gain service/core access. Local metadata discovery uses the foundation Unix boundary."
+)
 
 
 def _assert_owners(manifest: dict, floors: dict, ci: dict, coverage: dict) -> None:
@@ -21,7 +27,13 @@ def _assert_owners(manifest: dict, floors: dict, ci: dict, coverage: dict) -> No
     assert all(manifest.get("lib", {}).get(key, True) for key in ("test", "doctest")), SDK_RATIONALE
     assert floors.get("capsem-sdk", 0) >= 90, SDK_RATIONALE
     local = {name for name in manifest["dependencies"] if name.startswith("capsem")}
-    assert local == {"capsem-api"}, "SDK dependencies must not grant service/core or local discovery access"
+    assert local == {"capsem-api", "capsem-crypto", "capsem-foundation"}, SDK_CRYPTO_RATIONALE
+    foundation = manifest["dependencies"]["capsem-foundation"]
+    assert foundation.get("path") == "../../crates/capsem-foundation", SDK_CRYPTO_RATIONALE
+    crypto = manifest["dependencies"]["capsem-crypto"]
+    assert crypto.get("path") == "../../crates/capsem-crypto", SDK_CRYPTO_RATIONALE
+    assert crypto.get("default-features") is False, SDK_CRYPTO_RATIONALE
+    assert set(crypto.get("features", [])) == {"random", "secrets"}, SDK_CRYPTO_RATIONALE
     steps = ci["jobs"]["test"]["steps"]
     commands = next(step["run"] for step in steps if step.get("name") == "Unit tests with coverage")
     for command in commands.splitlines():
@@ -51,7 +63,8 @@ def test_rust_sdk_has_native_coverage_and_ci_owners() -> None:
 
 
 def test_rust_generation_is_enforced_in_the_fast_plan() -> None:
-    (expected,) = sdkchecks.rust_fragment(Plan("Rust SDK"), CONFIG, after=())
+    expected, packaged = sdkregistrychecks.rust_fragment(Plan("Rust SDK"), CONFIG, after=())
+    assert packaged.label == "fast.sdk.rust.package", SDK_RATIONALE
     actual = gate_plan("test-fast")
     assert expected.label in actual.labels, SDK_RATIONALE
     assert expected.render() == actual.step_named(expected.label).render(), SDK_RATIONALE
@@ -67,7 +80,11 @@ def test_removing_rust_generation_from_plan_is_rejected(monkeypatch: pytest.Monk
         test_rust_generation_is_enforced_in_the_fast_plan()
 
 
-@pytest.mark.parametrize("mutation", ["floor", "lints", "tests", "doctests", "runtime", "ci", "report", "paths", "generated"])
+@pytest.mark.parametrize("mutation", [
+    "floor", "lints", "tests", "doctests", "runtime", "ci", "report", "paths", "generated",
+    "crypto-defaults", "crypto-missing-defaults", "crypto-features", "crypto-path", "crypto-missing-secrets",
+    "foundation-path",
+])
 def test_rust_sdk_oversight_weakening_is_rejected(mutation: str) -> None:
     manifest, floors, ci, coverage = deepcopy(_settings())
     match mutation:
@@ -79,6 +96,18 @@ def test_rust_sdk_oversight_weakening_is_rejected(mutation: str) -> None:
             manifest["lib"] = {"test" if mutation == "tests" else "doctest": False}
         case "runtime":
             manifest["dependencies"]["capsem-core"] = {}
+        case "crypto-defaults":
+            manifest["dependencies"]["capsem-crypto"]["default-features"] = True
+        case "crypto-missing-defaults":
+            manifest["dependencies"]["capsem-crypto"].pop("default-features")
+        case "crypto-features":
+            manifest["dependencies"]["capsem-crypto"]["features"].append("sha256")
+        case "crypto-path":
+            manifest["dependencies"]["capsem-crypto"]["path"] = "../../crates/capsem-core"
+        case "crypto-missing-secrets":
+            manifest["dependencies"]["capsem-crypto"]["features"].remove("secrets")
+        case "foundation-path":
+            manifest["dependencies"]["capsem-foundation"]["path"] = "../../crates/capsem-core"
         case "ci" | "report":
             for step in ci["jobs"]["test"]["steps"]:
                 if step.get("name") == "Unit tests with coverage":

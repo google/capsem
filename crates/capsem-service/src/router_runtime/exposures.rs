@@ -46,13 +46,13 @@ fn api_publication(publication: capsem_proto::ipc::PublicationInfo) -> ExposureI
 
 async fn ask_owner(state: &ServiceState, id: &str, request: ServiceToProcess) -> Result<ProcessToService, AppError> {
     let uds_path = running_uds_path(state, id)?;
-    send_ipc_command(&uds_path, request, Some(OWNER_TIMEOUT_SECS))
+    send_ipc_command(state, &uds_path, request, Some(OWNER_TIMEOUT_SECS))
         .await
-        .map_err(|e| AppError(StatusCode::BAD_GATEWAY, format!("VM owner unavailable: {e}")))
+        .map_err(|e| AppError::new(StatusCode::BAD_GATEWAY, format!("VM owner unavailable: {e}")))
 }
 
 fn unexpected(reply: &ProcessToService) -> AppError {
-    AppError(
+    AppError::new(
         StatusCode::INTERNAL_SERVER_ERROR,
         format!("unexpected VM owner reply: {:?}", std::mem::discriminant(reply)),
     )
@@ -64,9 +64,21 @@ pub(crate) async fn handle_create_exposure(
     Path(id): Path<String>,
     Json(request): Json<ExposureRequest>,
 ) -> Result<Json<ExposureInfo>, AppError> {
+    create_exposure(&state, &id, request).await.map(Json)
+}
+
+/// Ask VM `id`'s owner for an exposure. The owner admits it through the VM's
+/// security engine (`network.lifecycle`) before binding anything; this is the
+/// one way an exposure is made, whether a client or an image's declared
+/// surface asks.
+pub(crate) async fn create_exposure(
+    state: &Arc<ServiceState>,
+    id: &str,
+    request: ExposureRequest,
+) -> Result<ExposureInfo, AppError> {
     let target = proto_target(request.target);
     if !target.admits(request.guest_port) {
-        return Err(AppError(
+        return Err(AppError::new(
             StatusCode::BAD_REQUEST,
             format!(
                 "guest port {} cannot be exposed from the {:?} namespace",
@@ -83,7 +95,7 @@ pub(crate) async fn handle_create_exposure(
         },
         ExposureAccess::HttpPreview => {
             if request.host_port != 0 {
-                return Err(AppError(
+                return Err(AppError::new(
                     StatusCode::BAD_REQUEST,
                     "http_preview does not accept host_port".into(),
                 ));
@@ -96,7 +108,7 @@ pub(crate) async fn handle_create_exposure(
                         .filter(|port| *port != 0)
                 })
                 .await?
-                .ok_or_else(|| AppError(StatusCode::SERVICE_UNAVAILABLE, "preview listener unavailable".into()))?;
+                .ok_or_else(|| AppError::new(StatusCode::SERVICE_UNAVAILABLE, "preview listener unavailable".into()))?;
             ServiceToProcess::DeclarePreview {
                 id: state.next_job_id(),
                 listener_port,
@@ -105,19 +117,19 @@ pub(crate) async fn handle_create_exposure(
             }
         }
     };
-    let reply = ask_owner(&state, &id, owner_request).await?;
+    let reply = ask_owner(state, id, owner_request).await?;
     match reply {
         ProcessToService::PortPublished {
             publication: Some(publication),
             error: None,
             ..
-        } => Ok(Json(api_publication(publication))),
+        } => Ok(api_publication(publication)),
         ProcessToService::PortPublished {
             error: Some(error),
             policy_refused: true,
             ..
-        } => Err(AppError(StatusCode::FORBIDDEN, error)),
-        ProcessToService::PortPublished { error: Some(error), .. } => Err(AppError(StatusCode::CONFLICT, error)),
+        } => Err(AppError::new(StatusCode::FORBIDDEN, error)),
+        ProcessToService::PortPublished { error: Some(error), .. } => Err(AppError::new(StatusCode::CONFLICT, error)),
         other => Err(unexpected(&other)),
     }
 }
@@ -153,7 +165,7 @@ pub(crate) async fn handle_delete_exposure(
     State(state): State<Arc<ServiceState>>,
     Path((id, exposure_id)): Path<(String, String)>,
 ) -> Result<Json<api::VmActionResponse>, AppError> {
-    let not_found = || AppError(StatusCode::NOT_FOUND, format!("exposure not found: {exposure_id}"));
+    let not_found = || AppError::new(StatusCode::NOT_FOUND, format!("exposure not found: {exposure_id}"));
     if exposure_id.is_empty() || exposure_id.len() > 64 {
         return Err(not_found());
     }
@@ -164,7 +176,7 @@ pub(crate) async fn handle_delete_exposure(
     match ask_owner(&state, &id, request).await? {
         ProcessToService::ExposureRevoked { revoked: true, .. } => Ok(Json(api::VmActionResponse { success: true })),
         ProcessToService::ExposureRevoked { error: Some(error), .. } => {
-            Err(AppError(StatusCode::INTERNAL_SERVER_ERROR, error))
+            Err(AppError::new(StatusCode::INTERNAL_SERVER_ERROR, error))
         }
         ProcessToService::ExposureRevoked { .. } => Err(not_found()),
         other => Err(unexpected(&other)),
@@ -195,7 +207,7 @@ async fn preview_publication(
             .map(api_publication)
             .map(|exposure| (generation, exposure))
             .ok_or_else(|| {
-                AppError(
+                AppError::new(
                     StatusCode::NOT_FOUND,
                     format!("preview exposure not found: {exposure_id}"),
                 )
@@ -231,7 +243,7 @@ pub(crate) async fn handle_create_preview_session(
             expires_in_seconds,
         })),
         ProcessToService::PreviewSessionCreated { error: Some(error), .. } => {
-            Err(AppError(StatusCode::UNAUTHORIZED, error))
+            Err(AppError::new(StatusCode::UNAUTHORIZED, error))
         }
         other => Err(unexpected(&other)),
     }
@@ -257,7 +269,7 @@ pub(crate) async fn handle_revoke_preview_sessions(
             revoked, error: None, ..
         } => Ok(Json(PreviewSessionsRevokedResponse { revoked })),
         ProcessToService::PreviewSessionsRevoked { error: Some(error), .. } => {
-            Err(AppError(StatusCode::NOT_FOUND, error))
+            Err(AppError::new(StatusCode::NOT_FOUND, error))
         }
         other => Err(unexpected(&other)),
     }
@@ -289,7 +301,7 @@ pub(crate) async fn handle_exchange_preview_bootstrap(
             expires_in_seconds,
         })),
         ProcessToService::PreviewBootstrapExchanged { error: Some(error), .. } => {
-            Err(AppError(StatusCode::UNAUTHORIZED, error))
+            Err(AppError::new(StatusCode::UNAUTHORIZED, error))
         }
         other => Err(unexpected(&other)),
     }
@@ -300,21 +312,24 @@ pub(crate) async fn handle_admit_preview_connection(
     Path((vm_id, exposure_id)): Path<(String, String)>,
     Json(request): Json<PreviewConnectionAdmissionRequest>,
 ) -> Result<Json<PreviewConnectionAdmissionResponse>, AppError> {
+    let handoff = crate::owner_handoff::OwnerHandoff::acquire(&state, &vm_id).await?;
     let kind = match request.kind {
         capsem_api::PreviewAdmissionKind::Request => capsem_proto::PreviewAdmissionKind::Request,
         capsem_api::PreviewAdmissionKind::WebsocketUpgrade => capsem_proto::PreviewAdmissionKind::WebsocketUpgrade,
     };
-    match ask_owner(
+    match send_owner_command(
         &state,
-        &vm_id,
+        &handoff.owner,
         ServiceToProcess::AdmitPreviewConnection {
             id: state.next_job_id(),
             exposure_id,
             session_token: request.session_token,
             kind,
         },
+        Some(OWNER_TIMEOUT_SECS),
     )
-    .await?
+    .await
+    .map_err(|error| AppError::new(StatusCode::BAD_GATEWAY, format!("VM owner unavailable: {error}")))?
     {
         ProcessToService::PreviewConnectionAdmitted {
             handoff_socket,
@@ -323,12 +338,17 @@ pub(crate) async fn handle_admit_preview_connection(
             error: None,
             ..
         } => Ok(Json(PreviewConnectionAdmissionResponse {
-            handoff_socket,
+            handoff_socket: handoff
+                .validate(&state, &handoff_socket)?
+                .to_string_lossy()
+                .into_owned(),
             handoff_token,
             owner_generation: owner_generation.to_string(),
+            owner_pid: handoff.owner.pid(),
+            owner_uid: handoff.owner.uid(),
         })),
         ProcessToService::PreviewConnectionAdmitted { error: Some(error), .. } => {
-            Err(AppError(StatusCode::UNAUTHORIZED, error))
+            Err(AppError::new(StatusCode::UNAUTHORIZED, error))
         }
         other => Err(unexpected(&other)),
     }

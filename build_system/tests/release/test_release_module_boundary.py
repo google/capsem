@@ -54,9 +54,7 @@ def test_first_party_channel_dependencies_remain_closed_and_ordered() -> None:
         (
             {
                 "channels": {
-                    "stable": {
-                        "manifests": [{"status": "current", "url": "manifest.json"}]
-                    }
+                    "stable": {"manifests": [{"status": "current", "url": "manifest.json"}]}
                 }
             },
             "digest must be an object",
@@ -132,9 +130,7 @@ def test_runtime_preflight_main_emits_classification_and_github_output(
 def test_github_output_serializes_boolean_selection(tmp_path: Path) -> None:
     output = tmp_path / "github-output"
 
-    runtime_preflight_manifest._write_github_output(
-        output, {"bootstrap": True, "retired": False}
-    )
+    runtime_preflight_manifest._write_github_output(output, {"bootstrap": True, "retired": False})
 
     assert output.read_text(encoding="utf-8").splitlines() == [
         "bootstrap=true",
@@ -142,40 +138,37 @@ def test_github_output_serializes_boolean_selection(tmp_path: Path) -> None:
     ]
 
 
-def test_source_manifest_validation_preserves_channel_and_membership() -> None:
-    payload = json.dumps(
-        {"channel": "nightly", "packages": [], "profiles": {"code": {}}}
-    ).encode()
+def test_source_manifest_validation_preserves_channel_and_runtime() -> None:
+    document = {"channel": "nightly", "packages": [], "runtime": {"revision": "0.7.0-0123456789ab"}}
+    payload = json.dumps(document).encode()
 
-    assert release_source_bootstrap.validate_source_manifest(payload, "nightly") == {
-        "channel": "nightly",
-        "packages": [],
-        "profiles": {"code": {}},
-    }
+    assert release_source_bootstrap.validate_source_manifest(payload, "nightly") == document
+    assert release_source_bootstrap.validate_binary_source_manifest(payload, "nightly") == document
+
+
+def test_a_channel_without_a_runtime_is_a_source_but_not_a_binary_source() -> None:
+    """A first channel may have no runtime yet; a binary release needs one staged."""
+    empty = json.dumps({"channel": "nightly", "packages": []}).encode()
+
+    assert release_source_bootstrap.validate_source_manifest(empty, "nightly")["packages"] == []
+    with pytest.raises(ValueError, match="no staged runtime"):
+        release_source_bootstrap.validate_binary_source_manifest(empty, "nightly")
 
 
 @pytest.mark.parametrize(
     ("document", "message"),
     [
         ([], "JSON object"),
-        ({"channel": "stable", "packages": [], "profiles": {}}, "expected 'nightly'"),
-        ({"channel": "nightly", "packages": [], "profiles": []}, "profiles"),
-        ({"channel": "nightly", "packages": {}, "profiles": {}}, "packages"),
+        ({"channel": "stable", "packages": []}, "expected 'nightly'"),
+        ({"channel": "nightly", "packages": [], "runtime": []}, "runtime"),
+        ({"channel": "nightly", "packages": {}}, "packages"),
     ],
 )
 def test_source_manifest_validation_rejects_incomplete_authority(
     document: object, message: str
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        release_source_bootstrap.validate_source_manifest(
-            json.dumps(document).encode(), "nightly"
-        )
-
-    empty = json.dumps(
-        {"channel": "nightly", "packages": [], "profiles": {}}
-    ).encode()
-    with pytest.raises(ValueError, match="no staged profiles"):
-        release_source_bootstrap.validate_binary_source_manifest(empty, "nightly")
+        release_source_bootstrap.validate_source_manifest(json.dumps(document).encode(), "nightly")
 
 
 def _valid_obom() -> dict[str, object]:
@@ -245,13 +238,31 @@ def test_obom_validator_rejects_unpublishable_evidence(
     elif field == "purl":
         components[0][field] = value
     else:
-        components[0]["properties"] = [
-            {"name": "cdx:osquery:category", "value": "process"}
-        ]
+        components[0]["properties"] = [{"name": "cdx:osquery:category", "value": "process"}]
     path = tmp_path / f"{field}.json"
     _write_obom(path, document)
 
     with pytest.raises(RuntimeError, match=message):
+        obom.validate_exported_rootfs_obom(path, architecture="arm64")
+
+
+def test_obom_validator_accepts_an_image_subject(tmp_path: Path) -> None:
+    subject = obom.ObomSubject(name="ghcr.io/google/capsem/dev", version="sha256:" + "a" * 64)
+    document = deepcopy(_valid_obom())
+    metadata = document["metadata"]
+    assert isinstance(metadata, dict)
+    metadata["component"] |= {"name": subject.name, "version": subject.version}
+    path = tmp_path / "obom.json"
+    _write_obom(path, document)
+
+    obom.validate_exported_rootfs_obom(path, architecture="arm64", subject=subject)
+    with pytest.raises(RuntimeError, match=r"ghcr\.io/google/capsem/dev"):
+        obom.validate_exported_rootfs_obom(
+            path,
+            architecture="arm64",
+            subject=obom.ObomSubject(name=subject.name, version="sha256:" + "b" * 64),
+        )
+    with pytest.raises(RuntimeError, match="capsem-rootfs-arm64"):
         obom.validate_exported_rootfs_obom(path, architecture="arm64")
 
 

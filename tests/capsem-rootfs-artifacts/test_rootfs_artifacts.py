@@ -1,6 +1,6 @@
 """Verify rootfs artifacts are consistent across build context, Dockerfile, and doctor checks."""
 
-import tempfile
+import shutil
 from pathlib import Path
 
 import pytest
@@ -49,35 +49,30 @@ class TestArtifactsExist:
 
 class TestBuildContext:
 
-    def test_prepare_build_context_copies_all(self):
+    def test_prepare_build_context_copies_all(self, tmp_path):
         """prepare_build_context copies all required artifacts to context dir."""
-        try:
-            from capsem_builder.image.config import load_guest_config
-            from capsem_builder.image.docker import prepare_build_context
-        except ImportError:
-            pytest.skip("capsem-builder not installed")
+        from capsem_builder.image.config import load_guest_config
+        from capsem_builder.image.docker import prepare_build_context
 
-        guest_dir = PROJECT_ROOT / "guest"
-        if not (guest_dir / "config").exists():
-            pytest.skip("No guest config directory found")
-
+        # The admin materializes runtime config and guest artifacts together.
+        guest_dir = tmp_path / "guest"
+        shutil.copytree(PROJECT_ROOT / "config" / "docker" / "image", guest_dir / "config")
+        shutil.copytree(ARTIFACTS_DIR, guest_dir / "artifacts")
         config = load_guest_config(guest_dir)
         arch_name = next(iter(config.build.architectures.keys()))
-
-        with tempfile.TemporaryDirectory() as tmp:
-            context_dir = Path(tmp)
-            prepare_build_context(
-                config, arch_name, "Dockerfile.rootfs.j2",
-                context_dir, PROJECT_ROOT,
-            )
-            # Verify all required files were copied
-            assert (context_dir / "capsem-ca.crt").exists(), "CA cert not in context"
-            for name in REQUIRED_FILES:
-                if name == "capsem-init":
-                    continue  # capsem-init goes into kernel context, not rootfs
-                assert (context_dir / name).exists(), f"{name} not in context"
-            for name in REQUIRED_DIRS:
-                assert (context_dir / name).exists(), f"{name}/ not in context"
+        context_dir = tmp_path / "context"
+        context_dir.mkdir()
+        prepare_build_context(
+            config, arch_name, "Dockerfile.rootfs.j2", context_dir, PROJECT_ROOT,
+        )
+        assert (context_dir / "capsem-ca.crt").read_bytes() == (CA_RESOURCES_DIR / "capsem-ca.crt").read_bytes()
+        for name in REQUIRED_FILES:
+            if name != "capsem-init":  # Init belongs to the kernel context.
+                assert (context_dir / name).read_bytes() == (ARTIFACTS_DIR / name).read_bytes()
+        for name in REQUIRED_DIRS:
+            for source in (ARTIFACTS_DIR / name).rglob("*"):
+                if source.is_file():
+                    assert (context_dir / source.relative_to(ARTIFACTS_DIR)).read_bytes() == source.read_bytes()
 
 
 class TestDoctorConsistency:
@@ -106,3 +101,23 @@ class TestDoctorConsistency:
         for name in ["capsem-bashrc", "banner.txt", "capsem-init"]:
             assert name in docker_src, f"docker.py missing reference to {name}"
             assert name in doctor_src, f"doctor.py missing reference to {name}"
+
+
+class TestRuntimeHosts:
+    """The exported rootfs has an empty /etc/hosts: Docker writes that file
+    only into a running container and discards writes made during a build, so
+    no Dockerfile step can fill it. capsem-init owns it, like resolv.conf."""
+
+    def test_capsem_init_binds_ipv4_localhost_over_etc_hosts(self):
+        init = (ARTIFACTS_DIR / "capsem-init").read_text()
+        assert "printf '127.0.0.1 localhost\\n' > /newroot/run/hosts" in init
+        assert "mount --bind /newroot/run/hosts /newroot/etc/hosts" in init
+
+    def test_hosts_names_no_ipv6_address_the_kernel_cannot_reach(self):
+        """The guest kernel is built without IPv6, so ::1 does not exist."""
+        for arch in ("arm64", "x86_64"):
+            defconfig = PROJECT_ROOT / f"config/docker/image/kernel/defconfig.{arch}"
+            assert "CONFIG_IPV6=n" in defconfig.read_text().splitlines()
+        init = (ARTIFACTS_DIR / "capsem-init").read_text()
+        hosts_lines = [line for line in init.splitlines() if "/newroot/run/hosts" in line]
+        assert hosts_lines and not any("::1" in line for line in hosts_lines)

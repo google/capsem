@@ -12,35 +12,6 @@ fn file_url(path: &Path) -> String {
     format!("file://{}", path.display())
 }
 
-fn repo_config_profiles_dir() -> PathBuf {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    manifest_dir
-        .parent()
-        .and_then(Path::parent)
-        .expect("repo root")
-        .join("config/profiles")
-}
-
-fn serve_manifest_once(body: String) -> String {
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
-
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind test manifest server");
-    let addr = listener.local_addr().expect("manifest server addr");
-    std::thread::spawn(move || {
-        let (mut stream, _) = listener.accept().expect("accept manifest request");
-        let mut buffer = [0_u8; 4096];
-        let _ = stream.read(&mut buffer);
-        let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            body.len(),
-            body
-        );
-        stream.write_all(response.as_bytes()).expect("write manifest response");
-    });
-    format!("http://{addr}/assets/stable/manifest.json")
-}
-
 fn minimal_manifest_json(hash: Option<&str>, include_refresh_policy: bool) -> String {
     let hash = hash.unwrap_or("1111111111111111111111111111111111111111111111111111111111111111");
     format!(
@@ -152,15 +123,15 @@ fn write_test_assets_manifest(root: &Path, arch: &str) -> PathBuf {
   }}
 }}"#,
             arch = arch,
-            kernel_hash = blake3::hash(kernel.as_bytes()).to_hex(),
+            kernel_hash = capsem_crypto::blake3::hash(kernel.as_bytes()).to_hex(),
             kernel_size = kernel.len(),
-            initrd_hash = blake3::hash(initrd.as_bytes()).to_hex(),
+            initrd_hash = capsem_crypto::blake3::hash(initrd.as_bytes()).to_hex(),
             initrd_size = initrd.len(),
-            rootfs_hash = blake3::hash(rootfs.as_bytes()).to_hex(),
+            rootfs_hash = capsem_crypto::blake3::hash(rootfs.as_bytes()).to_hex(),
             rootfs_size = rootfs.len(),
-            obom_hash = blake3::hash(obom.as_bytes()).to_hex(),
+            obom_hash = capsem_crypto::blake3::hash(obom.as_bytes()).to_hex(),
             obom_size = obom.len(),
-            software_inventory_hash = blake3::hash(software_inventory.as_bytes()).to_hex(),
+            software_inventory_hash = capsem_crypto::blake3::hash(software_inventory.as_bytes()).to_hex(),
             software_inventory_size = software_inventory.len(),
             pkg_sha256 = pkg_sha256,
             sbom_sha256 = sbom_sha256,
@@ -174,96 +145,109 @@ fn write_test_assets_manifest(root: &Path, arch: &str) -> PathBuf {
     manifest_path
 }
 
+/// A complete runtime graph for `channel`: one package cohort at 1.0.0 and a
+/// runtime at `revision` whose arm64 image set validates.
+fn test_runtime_graph(channel: &str, revision: &str) -> serde_json::Value {
+    let digest = |sha256: char, blake3: char| {
+        serde_json::json!({
+            "sha256": sha256.to_string().repeat(64),
+            "blake3": blake3.to_string().repeat(64),
+        })
+    };
+    let url = |file: &str| format!("/runtime/releases/{channel}/{revision}/arm64/{file}");
+    let image = |kind: &str, name: &str, bytes: u64| {
+        serde_json::json!({
+            "kind": kind,
+            "name": name,
+            "url": url(name),
+            "bytes": bytes,
+            "digest": digest('6', '7'),
+            "status": "current",
+        })
+    };
+    let evidence = |kind: &str, file: &str, sha256: char| {
+        serde_json::json!({
+            "kind": kind,
+            "url": url(file),
+            "bytes": 64,
+            "digest": digest(sha256, '9'),
+            "status": "current",
+        })
+    };
+    serde_json::json!({
+        "version": "1.0.2",
+        "channel": channel,
+        "status": "current",
+        "packages": [
+            {
+                "id": "old-capsem-pkg",
+                "kind": "macos_pkg",
+                "name": "Capsem-1.0.0.pkg",
+                "version": "1.0.0",
+                "platform": "macos",
+                "architecture": "arm64",
+                "url": "https://github.com/google/capsem/releases/download/v1.0.0/Capsem-1.0.0.pkg",
+                "bytes": 123,
+                "digest": digest('0', '1'),
+                "binaries": [
+                    {
+                        "name": "capsem-app",
+                        "description": "",
+                        "version": "1.0.0",
+                        "installed_path": "/Applications/Capsem.app/Contents/MacOS/capsem-app",
+                        "platform": "macos",
+                        "architecture": "arm64",
+                        "bytes": 17,
+                        "digest": digest('2', '3'),
+                        "status": "current",
+                        "sbom_component_ref": "SPDXRef-File-capsem-app",
+                    }
+                ],
+                "evidence": [],
+                "status": "current",
+            }
+        ],
+        "runtime": {
+            "revision": revision,
+            "status": "current",
+            "min_capsem_version": "1.0.0",
+            "architectures": [
+                {
+                    "architecture": "arm64",
+                    "package_inventory_revision": revision,
+                    "image_revision": revision,
+                    "software": [
+                        {
+                            "name": "python3",
+                            "version": "3.12.1-1",
+                            "source": "apt",
+                            "architecture": "arm64",
+                            "evidence": url("software-inventory.json"),
+                            "digest": digest('4', '5'),
+                        }
+                    ],
+                    "images": [
+                        image("kernel", "vmlinuz", 777),
+                        image("initrd", "initrd.img", 778),
+                        image("rootfs", "rootfs.erofs", 779),
+                    ],
+                    "evidence": [
+                        evidence("obom", "obom.cdx.json", '8'),
+                        evidence("software_inventory", "software-inventory.json", 'a'),
+                    ],
+                }
+            ],
+        },
+    })
+}
+
 fn write_test_release_graph_manifest(root: &Path) -> PathBuf {
     let manifest_path = root.join("graph-manifest.json");
     fs::write(
         &manifest_path,
         format!(
             "{}\n",
-            serde_json::to_string_pretty(&serde_json::json!({
-                "version": "1.0.2",
-                "channel": "stable",
-                "status": "current",
-                "packages": [
-                    {
-                        "id": "old-capsem-pkg",
-                        "kind": "macos_pkg",
-                        "name": "Capsem-1.0.0.pkg",
-                        "version": "1.0.0",
-                        "platform": "macos",
-                        "architecture": "arm64",
-                        "url": "https://github.com/google/capsem/releases/download/v1.0.0/Capsem-1.0.0.pkg",
-                        "bytes": 123,
-                        "digest": {
-                            "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-                            "blake3": "1111111111111111111111111111111111111111111111111111111111111111",
-                        },
-                        "binaries": [
-                            {
-                                "name": "capsem-app",
-                                "description": "",
-                                "version": "1.0.0",
-                                "installed_path": "/Applications/Capsem.app/Contents/MacOS/capsem-app",
-                                "platform": "macos",
-                                "architecture": "arm64",
-                                "bytes": 17,
-                                "digest": {
-                                    "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
-                                    "blake3": "3333333333333333333333333333333333333333333333333333333333333333",
-                                },
-                                "status": "current",
-                                "sbom_component_ref": "SPDXRef-File-capsem-app",
-                            }
-                        ],
-                        "evidence": [],
-                        "status": "current",
-                    }
-                ],
-                "profiles": {
-                    "co-work": {
-                        "version": "1.0.0",
-                        "id": "co-work",
-                        "name": "Co-work",
-                        "revision": "2030.0101.1",
-                        "status": "current",
-                        "min_capsem_version": "1.0.0",
-                        "architectures": [
-                            {
-                                "architecture": "arm64",
-                                "software": [],
-                                "config": [
-                                    {
-                                        "kind": "profile",
-                                        "path": "profiles/co-work/profile.toml",
-                                        "url": "/profiles/releases/2030.0101.1/co-work/arm64/profile.toml",
-                                        "bytes": 42,
-                                        "digest": {
-                                            "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
-                                            "blake3": "5555555555555555555555555555555555555555555555555555555555555555",
-                                        },
-                                        "status": "current",
-                                    }
-                                ],
-                                "images": [
-                                    {
-                                        "kind": "rootfs",
-                                        "name": "rootfs.erofs",
-                                        "url": "https://github.com/google/capsem/releases/download/assets-v2030.0101.1/arm64-rootfs.erofs",
-                                        "bytes": 777,
-                                        "digest": {
-                                            "sha256": "6666666666666666666666666666666666666666666666666666666666666666",
-                                            "blake3": "7777777777777777777777777777777777777777777777777777777777777777",
-                                        },
-                                        "status": "current",
-                                    }
-                                ],
-                                "evidence": [],
-                            }
-                        ],
-                    }
-                },
-            }))
-            .expect("graph manifest")
+            serde_json::to_string_pretty(&test_runtime_graph("stable", "2030.0101.1")).expect("graph manifest")
         ),
     )
     .expect("manifest");
@@ -274,7 +258,7 @@ fn test_software_inventory_json(arch: &str) -> String {
     format!(
         "{}\n",
         serde_json::json!({
-            "schema": "capsem.profile_software_inventory.v1",
+            "schema": "capsem.runtime_software_inventory.v1",
             "architecture": arch,
             "packages": [
                 {
@@ -316,20 +300,16 @@ fn test_obom_json() -> String {
     .to_string()
 }
 
-// -- Revision validation is where corp-authored profiles meet the rule -------
-
 #[path = "tests/channel_build.rs"]
 mod channel_build;
 #[path = "tests/channel_build_bounds.rs"]
 mod channel_build_bounds;
 #[path = "tests/channel_validation.rs"]
 mod channel_validation;
+#[path = "tests/config_validation.rs"]
+mod config_validation;
 #[path = "tests/image_build.rs"]
 mod image_build;
-#[path = "tests/profile_revisions.rs"]
-mod profile_revisions;
-#[path = "tests/profile_validation.rs"]
-mod profile_validation;
 #[path = "tests/release_commands.rs"]
 mod release_commands;
 

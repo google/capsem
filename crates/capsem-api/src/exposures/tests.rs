@@ -58,3 +58,29 @@ fn browser_previews_have_no_unauthenticated_loopback_listener() {
     assert!(!session.url.contains(&session.bootstrap_token));
     assert!(!session.url.contains('?'));
 }
+
+#[test]
+fn preview_handoff_grants_require_explicit_owner_process_identity() {
+    let wire = json!({
+        "handoff_socket": "/private/owner.sock", "handoff_token": 123,
+        "owner_generation": "42", "owner_pid": 2000, "owner_uid": 1000,
+    });
+    let admitted: PreviewConnectionAdmissionResponse = serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(serde_json::to_value(admitted).unwrap(), wire);
+    for missing in ["owner_pid", "owner_uid"] {
+        let mut incomplete = wire.clone();
+        incomplete.as_object_mut().unwrap().remove(missing);
+        assert!(
+            serde_json::from_value::<PreviewConnectionAdmissionResponse>(incomplete).is_err(),
+            "{missing} is required"
+        );
+    }
+    for (field, value) in [("owner_pid", json!("2000")), ("owner_uid", json!(-1))] {
+        let mut malformed = wire.clone();
+        malformed[field] = value;
+        assert!(
+            serde_json::from_value::<PreviewConnectionAdmissionResponse>(malformed).is_err(),
+            "{field} must be a kernel identity value"
+        );
+    }
+}

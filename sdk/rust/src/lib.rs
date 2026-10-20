@@ -2,21 +2,30 @@
 
 pub use capsem_api as models;
 mod client;
+mod connections;
+mod credentials;
 mod error;
 mod hypervisor;
+mod images;
 mod local;
+mod managed;
+pub use connections::{Connections, CredentialGrants};
+pub use credentials::Credentials;
+pub use managed::ManagedSession;
+pub use tokio_util::sync::CancellationToken;
 pub mod operations;
 mod options;
 pub mod resources;
 pub mod transport;
 mod vm;
 pub use error::{Error, Result};
-pub use hypervisor::{Hypervisor, Runtime};
+pub use hypervisor::Hypervisor;
+pub use images::Images;
 pub use options::{
     CreateOptions, DiagnosticOptions, HistoryOptions, LogOptions, NetworkLogOptions, Registry, RunOptions,
     TimelineOptions, TriageOptions, VmSelector,
 };
-pub use resources::{Debug, Files, McpTools, Port, PortOptions, ProfileMcpServer, VmNetworks};
+pub use resources::{Debug, Files, Mcp, McpServer, McpTools, Port, PortOptions, VmNetworks};
 pub use vm::VM;
 
 #[cfg(test)]

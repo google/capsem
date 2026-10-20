@@ -1,5 +1,5 @@
-use super::dns::emit_dns_security_write_and_rules;
 use super::*;
+use capsem_core::net::dns::session::emit_dns_security_write_and_rules;
 
 mod ports;
 
@@ -686,7 +686,15 @@ match = 'dns.qname == "api.openai.com" && dns.qtype == "1"'
         capsem_core::net::policy_config::SecurityRuleSource::User,
     )
     .expect("rules compile");
-    let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(rules)));
+    let policy = capsem_core::net::proxy_engine::ProxyPolicyHandle::new(
+        capsem_core::net::proxy_engine::ProxyPolicySnapshot::new(
+            "blake3:dns-test".into(),
+            capsem_core::net::policy::NetworkMechanics::default(),
+            rules,
+            std::collections::BTreeMap::new(),
+            capsem_core::net::policy_config::ModelEndpointRegistry::default(),
+        ),
+    );
     let event = capsem_logger::DnsEvent {
         event_id: None,
         timestamp: std::time::SystemTime::now(),
@@ -708,7 +716,7 @@ match = 'dns.qname == "api.openai.com" && dns.qtype == "1"'
         credential_ref: None,
     };
 
-    let event_id = emit_dns_security_write_and_rules(&db, &security_rules, event)
+    let event_id = emit_dns_security_write_and_rules(&db, &policy, event)
         .await
         .expect("event id allocated");
     // The caller has completed its write and can shut down immediately.

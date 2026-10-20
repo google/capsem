@@ -14,12 +14,35 @@ use std::pin::Pin;
 pub const PRIVATE_ZONE: &str = "capsem.internal";
 const REVERSE_ZONE: &str = "in-addr.arpa";
 
-/// What a query under the zone asks: a name (the labels before the zone,
-/// empty for the zone apex) or the owner of a pool address.
+/// Capsem's MCP gateway as a workload reaches it: streamable HTTP to this
+/// name, carried by the VM's interception proxy to this VM's host-side MCP
+/// endpoint. It is the zone's one name that is Capsem's own rather than a
+/// member's, and it is answered before any member is asked, so a peer VM
+/// named `mcp` can never draw the MCP traffic of another.
+pub const MCP_HOST: &str = "mcp.capsem.internal";
+
+/// What [`MCP_HOST`] resolves to. Nothing ever dials it: the VM's
+/// interception rules hand every port-80 and port-443 connection to the
+/// proxy, which routes on the name. TEST-NET-1 (RFC 5737) is routed nowhere,
+/// so the answer cannot point a client at a real host, and it lies outside
+/// the private pool, whose traffic leaves through a cable and skips the proxy.
+pub const MCP_ADDRESS: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 1);
+
+/// What a query under the zone asks: Capsem's MCP gateway, a member's name
+/// (the labels before the zone, empty for the zone apex) or the owner of a
+/// pool address.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PrivateQuestion {
+    McpGateway,
     Name(String),
     Reverse(Ipv4Addr),
+}
+
+/// Whether `host` (any case, with or without the DNS root dot) is in the
+/// zone. Nothing in it exists upstream, so nothing in it is ever dialed.
+pub fn in_private_zone(host: &str) -> bool {
+    let name = host.trim_end_matches('.').to_ascii_lowercase();
+    name == PRIVATE_ZONE || name.ends_with(&format!(".{PRIVATE_ZONE}"))
 }
 
 /// The private question a query is, if it is one. Reverse questions count
@@ -27,6 +50,9 @@ pub enum PrivateQuestion {
 /// upstream's to answer.
 pub fn private_question(qname: &str, _qtype: u16) -> Option<PrivateQuestion> {
     let name = qname.trim_end_matches('.').to_ascii_lowercase();
+    if name == MCP_HOST {
+        return Some(PrivateQuestion::McpGateway);
+    }
     if name == PRIVATE_ZONE {
         return Some(PrivateQuestion::Name(String::new()));
     }

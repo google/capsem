@@ -300,6 +300,7 @@ pub(super) const fn page_align_down(val: u64) -> u64 {
 
 /// Owned guest memory region backed by anonymous mmap.
 pub(super) struct GuestMemory {
+    _mapping: capsem_foundation::unix::guest_memory::GuestRam,
     ptr: *mut u8,
     size: u64,
 }
@@ -316,22 +317,14 @@ impl GuestMemory {
             bail!("guest memory size must be non-zero and page-aligned, got {size}");
         }
 
-        let ptr = unsafe {
-            libc::mmap(
-                std::ptr::null_mut(),
-                size as usize,
-                libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
-                -1,
-                0,
-            )
-        };
-        if ptr == libc::MAP_FAILED {
-            bail!("mmap guest memory ({size} bytes): {}", std::io::Error::last_os_error());
+        let mapping = capsem_foundation::unix::guest_memory::GuestRam::new(usize::try_from(size)?)?;
+        if let Err(error) = mapping.prefer_huge_pages() {
+            tracing::debug!(%error, "guest RAM uses ordinary pages; huge-page advice unavailable");
         }
 
         Ok(Self {
-            ptr: ptr as *mut u8,
+            ptr: mapping.as_ptr(),
+            _mapping: mapping,
             size,
         })
     }
@@ -351,6 +344,12 @@ impl GuestMemory {
     /// Size of the guest memory region.
     pub fn size(&self) -> u64 {
         self.size
+    }
+
+    /// Clear inactive guest RAM before restoring a sparse checkpoint. Holes
+    /// must stay zero even if this allocation previously held another state.
+    pub fn discard_contents(&self) -> Result<()> {
+        self._mapping.discard_contents().map_err(Into::into)
     }
 
     /// Write bytes into guest memory at a given offset from RAM_BASE.
@@ -418,16 +417,6 @@ impl GuestMemory {
             ptr: self.ptr,
             size: self.size,
             ram_base,
-        }
-    }
-}
-
-impl Drop for GuestMemory {
-    fn drop(&mut self) {
-        if !self.ptr.is_null() {
-            unsafe {
-                libc::munmap(self.ptr as *mut libc::c_void, self.size as usize);
-            }
         }
     }
 }

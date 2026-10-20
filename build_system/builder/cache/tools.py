@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
 import platform
-import secrets
 import shutil
 import urllib.request
 from collections.abc import Callable
@@ -23,6 +21,8 @@ from pydantic import (
     model_validator,
 )
 
+from .. import crypto as hashlib
+from .. import crypto as secrets
 from .paths import CachePaths
 
 SafeToken = Annotated[StrictStr, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")]

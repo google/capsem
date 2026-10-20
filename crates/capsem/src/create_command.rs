@@ -1,9 +1,9 @@
-//! `capsem create`: a VM from a profile, kept when named, and with `--image`
-//! an OCI image's workload started detached in it.
+//! `capsem create`: a VM, kept when named, and with `--image` an OCI image's
+//! workload started detached in it.
 
 use anyhow::Result;
 
-use crate::client::{self, ProvisionRequest, ProvisionResponse, UdsClient};
+use crate::client::{self, ApiResponse, ForkRequest, ForkResponse, GatewayClient, ProvisionRequest, ProvisionResponse};
 use crate::container_image::{self, ImageArgs, Workload};
 use crate::container_run::ram_mb;
 use capsem_api::ContainerState;
@@ -13,20 +13,21 @@ pub(super) struct CreateArgs {
     /// Name for the session (makes it persistent -- "if you name it, you keep it")
     #[arg(short = 'n', long)]
     pub name: Option<String>,
-    /// Profile to use for this session
-    #[arg(long, default_value = crate::DEFAULT_PROFILE_ID)]
-    pub profile: String,
-    /// RAM in GB (default: the profile's)
+    /// RAM in GB (default: 12)
     #[arg(long)]
     pub ram: Option<u64>,
-    /// CPU cores (default: the profile's)
+    /// CPU cores (default: 4)
     #[arg(long)]
     pub cpu: Option<u32>,
     /// Set environment variables (repeatable: -e KEY=VALUE; the container's, with --image)
     #[arg(short = 'e', long = "env")]
     pub env: Vec<String>,
-    /// Clone state from an existing persistent session
-    #[arg(long, conflicts_with = "image")]
+    /// Attach advisory metadata labels at creation (repeatable: -l KEY=VALUE)
+    #[arg(short = 'l', long = "label")]
+    pub label: Vec<String>,
+    /// Clone state from an existing persistent session: its workspace and,
+    /// with --image, its image volumes under the new image; without, its image
+    #[arg(long)]
     pub from: Option<String>,
     /// Named networks to join (repeatable: --network NAME)
     #[arg(long = "network")]
@@ -35,28 +36,30 @@ pub(super) struct CreateArgs {
     pub image: ImageArgs,
 }
 
-pub(super) async fn create(client: &UdsClient, args: &CreateArgs) -> Result<()> {
-    client::validate_id(&args.profile)?;
+pub(super) async fn create(client: &GatewayClient, args: &CreateArgs) -> Result<()> {
     let persistent = args.name.is_some() || args.from.is_some();
     let workload = Workload::of(&args.image, &args.env)?;
-    let request = ProvisionRequest {
+    // Resolve the environment before reading the image's registry inputs.
+    let env = match workload {
+        None => client::parse_env_vars(&args.env)?,
+        Some(_) => None,
+    };
+    let labels = client::parse_env_vars(&args.label)?;
+    let mut request = ProvisionRequest {
         name: args.name.clone(),
-        profile_id: args.profile.clone(),
         ram_mb: ram_mb(args.ram),
         cpus: args.cpu,
         persistent,
-        // With an image, the environment is the container's.
-        env: match workload {
-            None => client::parse_env_vars(&args.env)?,
-            Some(_) => None,
-        },
+        labels,
         from: args.from.clone(),
         networks: args.network.clone(),
         container: match &workload {
             Some(workload) => Some(workload.spec(false).await?),
             None => None,
         },
+        ..Default::default()
     };
+    request.env = env;
     let vm = container_image::provision(client, &request).await?;
     if let Some(workload) = &workload {
         start_image(client, &vm, workload).await?;
@@ -69,9 +72,30 @@ pub(super) async fn create(client: &UdsClient, args: &CreateArgs) -> Result<()> 
     Ok(())
 }
 
+pub(super) async fn fork(
+    client: &GatewayClient,
+    session: &str,
+    name: &str,
+    description: Option<&str>,
+    label: &[String],
+) -> Result<()> {
+    client::validate_id(session)?;
+    let session_id = crate::route_ids::resolve_session_route_id(client, session).await?;
+    let req = ForkRequest {
+        name: name.to_owned(),
+        description: description.map(ToOwned::to_owned),
+        labels: client::parse_env_vars(label)?,
+    };
+    let resp: ApiResponse<ForkResponse> = client.post(&format!("/vms/{session_id}/fork"), &req).await?;
+    let info = resp.into_result()?;
+    let size_mb = info.size_bytes as f64 / 1024.0 / 1024.0;
+    println!("Forked session '{}' from '{session}' ({size_mb:.1} MB)", info.name);
+    Ok(())
+}
+
 /// Follow the service until the workload is launched, then publish its
 /// ports. A VM this command could not start is not left behind.
-async fn start_image(client: &UdsClient, vm: &ProvisionResponse, workload: &Workload<'_>) -> Result<()> {
+async fn start_image(client: &GatewayClient, vm: &ProvisionResponse, workload: &Workload<'_>) -> Result<()> {
     let started = async {
         container_image::follow(client, &vm.id, |state| {
             matches!(state, ContainerState::Starting | ContainerState::Running)

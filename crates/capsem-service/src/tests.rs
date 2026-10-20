@@ -1,137 +1,170 @@
 use super::*;
+
+pub(crate) fn isolated_std_test_command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
+    let coverage_profile = std::env::var_os("LLVM_PROFILE_FILE");
+    let mut command = std::process::Command::new(program);
+    command.env_clear();
+    if let Some(profile) = coverage_profile {
+        command.env("LLVM_PROFILE_FILE", profile);
+    }
+    command
+}
+
+pub(crate) fn isolated_test_command(program: impl AsRef<std::ffi::OsStr>) -> tokio::process::Command {
+    tokio::process::Command::from(isolated_std_test_command(program))
+}
+
+pub(crate) fn retain_coverage_profile(command: &mut tokio::process::Command) {
+    if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+        command.env("LLVM_PROFILE_FILE", profile);
+    }
+}
+
+#[test]
+fn isolated_test_children_keep_only_the_coverage_output_path() {
+    let mut command = isolated_test_command("true");
+    command.env_clear();
+    retain_coverage_profile(&mut command);
+    let environment: Vec<_> = command.as_std().get_envs().collect();
+    match std::env::var_os("LLVM_PROFILE_FILE") {
+        Some(profile) => assert_eq!(
+            environment,
+            [(std::ffi::OsStr::new("LLVM_PROFILE_FILE"), Some(profile.as_os_str()))]
+        ),
+        None => assert!(environment.is_empty()),
+    }
+}
 use axum::body::{to_bytes, Body};
-use capsem_core::net::policy_config::{ProfileObomConfig, ProfileObomDescriptor};
+use capsem_assets::asset_manager::{
+    hash_filename, host_manifest_arch, AssetEntry, AssetRelease, AssetsSection, BinariesSection, ManifestV2,
+};
 use std::sync::atomic::AtomicU64;
 use tower::ServiceExt;
 
+mod asset_status;
 mod asset_wait;
 mod instance_reaper;
-mod profile_asset_status;
-mod profile_rule_push;
+mod policy_push;
+#[path = "tests/session_housekeeping.rs"]
+mod session_housekeeping_tests;
 
-static SETTINGS_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
-fn test_profile_summary_cache() -> Vec<api::ProfileSummary> {
-    build_profile_summary_cache().expect("test profile summary cache should build")
-}
-
-fn test_profile_cache() -> BTreeMap<String, Profile> {
-    build_profile_cache().expect("test profile cache should build")
-}
+pub(crate) static SETTINGS_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[cfg(target_os = "linux")]
 #[test]
-fn overlay_prewarm_with_no_profiles_creates_no_templates() {
+fn overlay_prewarm_creates_the_default_size_and_reuses_it() {
     let dir = tempfile::tempdir().unwrap();
-    prewarm_system_overlay_templates(dir.path(), &BTreeMap::new());
-    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
-}
-
-#[cfg(target_os = "linux")]
-#[test]
-fn overlay_prewarm_creates_only_configured_sizes_and_reuses_them() {
-    let dir = tempfile::tempdir().unwrap();
-    let profiles = test_profile_cache();
-    assert!(!profiles.is_empty());
-    let expected: HashSet<PathBuf> = profiles
-        .values()
-        .map(|profile| capsem_core::system_overlay_template_path(dir.path(), profile.config().vm.scratch_disk_size_gb))
-        .collect();
-    prewarm_system_overlay_templates(dir.path(), &profiles);
-    let template_dir = expected.iter().next().unwrap().parent().unwrap();
-    let found: HashSet<PathBuf> = std::fs::read_dir(template_dir)
+    let expected = capsem_core::system_overlay_template_path(dir.path(), DEFAULT_SCRATCH_DISK_GB);
+    prewarm_system_overlay_template(dir.path());
+    let found: HashSet<PathBuf> = std::fs::read_dir(expected.parent().unwrap())
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .collect();
     assert_eq!(
-        found, expected,
-        "prewarm must not allocate unrequested legacy disk sizes"
+        found,
+        HashSet::from([expected.clone()]),
+        "prewarm must not allocate unrequested disk sizes"
     );
-    let before: HashMap<PathBuf, std::time::SystemTime> = expected
-        .iter()
-        .map(|path| (path.clone(), std::fs::metadata(path).unwrap().modified().unwrap()))
-        .collect();
-    prewarm_system_overlay_templates(dir.path(), &profiles);
-    for (path, modified) in before {
-        assert_eq!(std::fs::metadata(path).unwrap().modified().unwrap(), modified);
-    }
+    let modified = std::fs::metadata(&expected).unwrap().modified().unwrap();
+    prewarm_system_overlay_template(dir.path());
+    assert_eq!(std::fs::metadata(&expected).unwrap().modified().unwrap(), modified);
 }
 
-fn test_profile_rule_cache() -> Mutex<BTreeMap<String, Vec<api::EnforcementRuleInfo>>> {
-    Mutex::new(build_profile_rule_cache(None).expect("test profile rule cache should build"))
-}
-
-fn test_profile_mcp_default_cache() -> Mutex<BTreeMap<String, Result<api::McpDefaultPermissionResponse, String>>> {
-    Mutex::new(build_profile_mcp_default_cache(None).expect("test profile MCP default cache should build"))
-}
-
-fn test_profile_plugin_policy_cache() -> Mutex<BTreeMap<String, BTreeMap<String, SecurityPluginConfig>>> {
-    Mutex::new(build_profile_plugin_policy_cache(None).expect("test profile plugin policy cache should build"))
-}
-
-/// A test state's home is its run directory's parent, so its main.db stays in
+/// A test state's home is its run directory's parent, so its host ledger stays in
 /// the test's own temporary directory.
-fn test_profile_mutation_db(run_dir: &StdPath) -> Arc<capsem_logger::DbHandle> {
-    ServiceState::open_profile_mutation_db_handle(&run_dir.parent().unwrap().join("sessions")).unwrap()
+fn test_host_ledger(run_dir: &StdPath) -> Arc<capsem_logger::DbHandle> {
+    host_ledger::open_host_ledger(&run_dir.parent().unwrap().join("sessions")).unwrap()
+}
+
+pub(crate) fn test_session_ledger(db_path: PathBuf) -> Result<session_db_handles::SessionLedger, String> {
+    capsem_logger::DbHandle::open_external_reader(&db_path)
+        .map(|db| session_db_handles::SessionLedger::embedded(db_path, db))
+        .map_err(|error| error.to_string())
+}
+
+/// The one test `ServiceState` constructor. The manifest is whatever
+/// `assets_dir` holds, as at service startup.
+pub(crate) fn test_state(
+    run_dir: PathBuf,
+    assets_dir: PathBuf,
+    test_tempdir: Option<tempfile::TempDir>,
+) -> ServiceState {
+    std::fs::create_dir_all(&run_dir).unwrap();
+    let manifest = capsem_assets::asset_manager::load_manifest_for_assets(&assets_dir).map(Arc::new);
+    let managed = managed_routes::Runtime::open(&run_dir, Default::default()).unwrap();
+    let connections =
+        connection_routes::Runtime::new(run_dir.join("credentials/broker.json"), managed.grant_authority());
+    ServiceState {
+        managed,
+        connections,
+        instances: Mutex::new(HashMap::new()),
+        proxy_workers: Mutex::new(HashMap::new()),
+        standalone_proxies: tokio::sync::Mutex::new(HashMap::new()),
+        ledger_workers: Arc::new(ledger_worker::LedgerWorkers::new(
+            PathBuf::from("/nonexistent/capsem-ledger"),
+            run_dir.join("ledger-commitments"),
+        )),
+        retirements: Default::default(),
+        session_db_handles: Mutex::new(HashMap::new()),
+        persistent_registry: SharedRegistry::new(
+            PersistentRegistry::load(run_dir.join("persistent_registry.json")).expect("registry loads"),
+        ),
+        networks: tokio::sync::Mutex::new(capsem_core::net::network_registry::NetworkRegistry::new(
+            run_dir.join("networks"),
+        )),
+        process_binary: PathBuf::from("/nonexistent/capsem-process"),
+        proxy_binary: PathBuf::from("/nonexistent/capsem-proxy"),
+        assets_dir,
+        service_socket: run_dir.join("service.sock"),
+        switches: switches::Switches::in_process(),
+        job_counter: AtomicU64::new(1),
+        manifest: RwLock::new(manifest),
+        current_version: "0.0.0".into(),
+        asset_reconcile: Mutex::new(AssetReconcileState::default()),
+        asset_reconcile_inflight: AtomicBool::new(false),
+        asset_status_path: asset_status_path_for_run_dir(&run_dir),
+        mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
+        plugin_policy_cache: GenerationCache::new("service.plugin_policy"),
+        host_ledger: test_host_ledger(&run_dir),
+        host_stats: Mutex::new(Default::default()),
+        last_defunct_reconcile_ms: AtomicU64::new(0),
+        containers: Default::default(),
+        storage_diagnostics_cache: BoundedCache::new(
+            "service.storage_diagnostics",
+            capsem_proto::CACHE_SERVICE_STORAGE_DIAGNOSTICS_ENTRIES,
+        ),
+        persistent_resume_state_cache: KeyedIdentityCache::new(
+            "service.persistent_resume",
+            capsem_proto::CACHE_SERVICE_PERSISTENT_RESUME_ENTRIES,
+        ),
+        asset_manifest_cache: IdentityCache::new("service.asset_manifest"),
+        list_response_cache: IdentityCache::new("service.vm_list"),
+        lifecycle: capsem_service::lifecycle::VmLifecycle::default(),
+        shutdown_lock: tokio::sync::Mutex::new(()),
+        update_lock: tokio::sync::Mutex::new(()),
+        policy_mutation: policy_mutation::PolicyMutationLock::default(),
+        update_restart: tokio::sync::Notify::new(),
+        run_dir,
+        _test_tempdir: test_tempdir,
+    }
 }
 
 pub(crate) fn make_test_state() -> Arc<ServiceState> {
     Arc::new(make_test_state_owned())
 }
 
+pub(crate) fn install_test_ledger_worker(state: &mut ServiceState, directory: &StdPath) {
+    state.ledger_workers = Arc::new(crate::ledger_worker::LedgerWorkers::new(
+        crate::ledger_worker::tests::fake_binary(directory, "normal"),
+        state.run_dir.join("ledger-commitments"),
+    ));
+}
+
 /// The test state before it is shared, for tests that replace an owner.
 pub(crate) fn make_test_state_owned() -> ServiceState {
     let test_tempdir = tempfile::tempdir().unwrap();
-    let run_dir = test_tempdir.path().join("run");
-    std::fs::create_dir_all(&run_dir).unwrap();
-    let registry_path = run_dir.join("persistent_registry.json");
-    let asset_status_path = asset_status_path_for_run_dir(&run_dir);
-    ServiceState {
-        instances: Mutex::new(HashMap::new()),
-        session_db_handles: Mutex::new(HashMap::new()),
-        persistent_registry: SharedRegistry::new(PersistentRegistry::load(registry_path).expect("registry loads")),
-        networks: tokio::sync::Mutex::new(capsem_core::net::network_registry::NetworkRegistry::new(
-            run_dir.join("networks"),
-        )),
-        process_binary: PathBuf::from("/nonexistent/capsem-process"),
-        assets_dir: PathBuf::from("/nonexistent/assets"),
-        run_dir: run_dir.clone(),
-        service_socket: run_dir.join("service.sock"),
-        switches: switches::Switches::in_process(),
-        job_counter: AtomicU64::new(1),
-        manifest: RwLock::new(None),
-        current_version: "0.0.0".into(),
-        asset_reconcile: Mutex::new(AssetReconcileState::default()),
-        asset_reconcile_inflight: AtomicBool::new(false),
-        asset_status_path,
-        plugin_policy_by_profile: Mutex::new(HashMap::new()),
-        profile_summary_cache: Mutex::new(test_profile_summary_cache()),
-        profile_cache: Mutex::new(test_profile_cache()),
-        profile_status_cache: Mutex::new(None),
-        profile_rule_cache: test_profile_rule_cache(),
-        profile_mcp_default_cache: test_profile_mcp_default_cache(),
-        profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
-        mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
-        profile_mutation_db: test_profile_mutation_db(&run_dir),
-        last_defunct_reconcile_ms: AtomicU64::new(0),
-        stats_response_cache: Mutex::new(None),
-        stats_detail_response_cache: Mutex::new(HashMap::new()),
-        containers: Default::default(),
-        storage_diagnostics_cache: Mutex::new(HashMap::new()),
-        persistent_resume_state_cache: Mutex::new(HashMap::new()),
-        evaluate_rule_cache: Mutex::new(HashMap::new()),
-        profile_rule_response_cache: Mutex::new(HashMap::new()),
-        profile_plugin_response_cache: Mutex::new(HashMap::new()),
-        evaluate_response_cache: Mutex::new(HashMap::new()),
-        list_response_cache: Mutex::new(None),
-        evaluate_last_response_cache: Mutex::new(None),
-        lifecycle: capsem_service::lifecycle::VmLifecycle::default(),
-        shutdown_lock: tokio::sync::Mutex::new(()),
-        update_lock: tokio::sync::Mutex::new(()),
-        policy_mutation: policy_mutation::PolicyMutationLock::default(),
-        update_restart: tokio::sync::Notify::new(),
-        _test_tempdir: Some(test_tempdir),
-    }
+    let root = test_tempdir.path().to_path_buf();
+    test_state(root.join("run"), root.join("assets"), Some(test_tempdir))
 }
 
 pub(crate) async fn route_request(
@@ -161,72 +194,18 @@ pub(crate) async fn route_request(
     (status, json)
 }
 
-fn enforcement_evaluate_body(request: &EnforcementEvaluateRequest) -> Bytes {
-    Bytes::from(serde_json::to_vec(request).unwrap())
-}
-
 pub(super) fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
-    let run_dir = assets_dir.join("run");
-    let asset_status_path = asset_status_path_for_run_dir(&run_dir);
-    let manifest = capsem_assets::asset_manager::load_manifest_for_assets(&assets_dir).map(Arc::new);
-    Arc::new(ServiceState {
-        instances: Mutex::new(HashMap::new()),
-        session_db_handles: Mutex::new(HashMap::new()),
-        persistent_registry: SharedRegistry::new(
-            PersistentRegistry::load(assets_dir.join("persistent_registry.json")).expect("registry loads"),
-        ),
-        networks: tokio::sync::Mutex::new(capsem_core::net::network_registry::NetworkRegistry::new(
-            run_dir.join("networks"),
-        )),
-        process_binary: PathBuf::from("/nonexistent/capsem-process"),
-        assets_dir,
-        run_dir: run_dir.clone(),
-        service_socket: run_dir.join("service.sock"),
-        switches: switches::Switches::in_process(),
-        job_counter: AtomicU64::new(1),
-        manifest: RwLock::new(manifest),
-        current_version: "0.0.0".into(),
-        asset_reconcile: Mutex::new(AssetReconcileState::default()),
-        asset_reconcile_inflight: AtomicBool::new(false),
-        asset_status_path,
-        plugin_policy_by_profile: Mutex::new(HashMap::new()),
-        profile_summary_cache: Mutex::new(test_profile_summary_cache()),
-        profile_cache: Mutex::new(test_profile_cache()),
-        profile_status_cache: Mutex::new(None),
-        profile_rule_cache: test_profile_rule_cache(),
-        profile_mcp_default_cache: test_profile_mcp_default_cache(),
-        profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
-        mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
-        profile_mutation_db: test_profile_mutation_db(&run_dir),
-        last_defunct_reconcile_ms: AtomicU64::new(0),
-        stats_response_cache: Mutex::new(None),
-        stats_detail_response_cache: Mutex::new(HashMap::new()),
-        containers: Default::default(),
-        storage_diagnostics_cache: Mutex::new(HashMap::new()),
-        persistent_resume_state_cache: Mutex::new(HashMap::new()),
-        evaluate_rule_cache: Mutex::new(HashMap::new()),
-        profile_rule_response_cache: Mutex::new(HashMap::new()),
-        profile_plugin_response_cache: Mutex::new(HashMap::new()),
-        evaluate_response_cache: Mutex::new(HashMap::new()),
-        list_response_cache: Mutex::new(None),
-        evaluate_last_response_cache: Mutex::new(None),
-        lifecycle: capsem_service::lifecycle::VmLifecycle::default(),
-        shutdown_lock: tokio::sync::Mutex::new(()),
-        update_lock: tokio::sync::Mutex::new(()),
-        policy_mutation: policy_mutation::PolicyMutationLock::default(),
-        update_restart: tokio::sync::Notify::new(),
-        _test_tempdir: None,
-    })
+    Arc::new(test_state(assets_dir.join("run"), assets_dir, None))
 }
 
 /// The fields every fake instance shares; a test names only what it varies.
 pub(crate) fn test_instance() -> InstanceInfo {
     InstanceInfo {
+        generation: capsem_crypto::uuid_v4(),
+        authority: Default::default(),
+        upstream_policy: upstream_broker::test_policy_publisher(),
         id: String::new(),
         name: String::new(),
-        profile_id: "code".into(),
-        profile_revision: test_profile_revision(),
-        profile_payload_hash: test_profile_payload_hash(),
         asset_pins: test_asset_pins(),
         pid: std::process::id(),
         uds_path: PathBuf::new(),
@@ -237,8 +216,8 @@ pub(crate) fn test_instance() -> InstanceInfo {
         base_version: "0.0.0".into(),
         persistent: false,
         env: None,
+        labels: None,
         forked_from: None,
-        owner_secret: String::new(),
     }
 }
 
@@ -267,7 +246,8 @@ pub(crate) fn spawn_fake_process(
     std::fs::write(uds_path.with_extension("ready"), b"ready").unwrap();
     tokio::spawn(async move {
         let mut messages = Vec::new();
-        for received in 0..expected {
+        while messages.len() < expected {
+            let received = messages.len();
             // A route that stops talking to its VM used to hang the whole
             // binary here: tests serialized on SETTINGS_ENV_LOCK stalled
             // behind the one waiting forever. Fail with what was missing.
@@ -289,6 +269,12 @@ pub(crate) fn spawn_fake_process(
                 capsem_foundation::ipc_channel::Receiver<ServiceToProcess>,
             ) = capsem_foundation::ipc_channel::channel_from_std(std_stream).unwrap();
             let message = rx.recv().await.unwrap();
+            if let ServiceToProcess::InjectCredentials { id, .. } = &message {
+                tx.send(ProcessToService::CredentialsInjected { id: *id, error: None })
+                    .await
+                    .unwrap();
+                continue;
+            }
             if let Some(reply) = handler(&message).await {
                 tx.send(reply).await.unwrap();
             }
@@ -306,54 +292,80 @@ pub(crate) fn only_reloads(received: &[ServiceToProcess], count: usize) -> bool 
             .all(|message| matches!(message, ServiceToProcess::ReloadConfig { .. }))
 }
 
-/// A VM owner that answers `CloneState` the way the real one does once the
-/// guest is frozen -- by cloning `source` -- or refuses with `refusal`.
+/// A VM owner that freezes, lets the service clone, and then reports thaw.
 pub(crate) fn spawn_fake_fork_owner(
     uds_path: &StdPath,
-    source: PathBuf,
+    _source: PathBuf,
     refusal: Option<&'static str>,
 ) -> tokio::task::JoinHandle<Vec<ServiceToProcess>> {
-    spawn_fake_process(uds_path, 1, move |message| {
-        let reply = match message {
-            ServiceToProcess::CloneState { id, destination } => {
-                let (size_bytes, error) = match refusal {
-                    None => (
-                        Some(capsem_core::session::clone_sandbox_state(&source, StdPath::new(destination)).unwrap()),
-                        None,
-                    ),
-                    Some(reason) => (None, Some(reason.to_string())),
-                };
-                Some(ProcessToService::CloneStateResult {
-                    id: *id,
-                    size_bytes,
-                    error,
-                })
-            }
-            other => panic!("fork sent an unexpected owner message: {other:?}"),
+    let _ = std::fs::remove_file(uds_path);
+    let listener = tokio::net::UnixListener::bind(uds_path).unwrap();
+    std::fs::write(uds_path.with_extension("ready"), b"ready").unwrap();
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let std_stream = stream.into_std().unwrap();
+        let std_stream = tokio::task::spawn_blocking(move || {
+            let mut std_stream = std_stream;
+            capsem_foundation::ipc_handshake::negotiate_responder(&mut std_stream, "capsem-process-test", "")?;
+            Ok::<_, capsem_proto::handshake::HandshakeError>(std_stream)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        let (tx, rx): (
+            capsem_foundation::ipc_channel::Sender<ProcessToService>,
+            capsem_foundation::ipc_channel::Receiver<ServiceToProcess>,
+        ) = capsem_foundation::ipc_channel::channel_from_std(std_stream).unwrap();
+        let request = rx.recv().await.unwrap();
+        let ServiceToProcess::CloneState { id } = request else {
+            panic!("fork sent an unexpected owner message: {request:?}")
         };
-        Box::pin(async move { reply })
+        let mut messages = vec![request];
+        if let Some(reason) = refusal {
+            tx.send(ProcessToService::CloneStateResult {
+                id,
+                size_bytes: None,
+                error: Some(reason.to_string()),
+            })
+            .await
+            .unwrap();
+            return messages;
+        }
+        tx.send(ProcessToService::CloneStateReady { id }).await.unwrap();
+        let completion = rx.recv().await.unwrap();
+        let ServiceToProcess::CloneStateComplete {
+            id: completed_id,
+            size_bytes,
+            error,
+        } = &completion
+        else {
+            panic!("fork sent an unexpected completion: {completion:?}")
+        };
+        assert_eq!(*completed_id, id);
+        tx.send(ProcessToService::CloneStateResult {
+            id,
+            size_bytes: *size_bytes,
+            error: error.clone(),
+        })
+        .await
+        .unwrap();
+        messages.push(completion);
+        messages
     })
 }
 
 /// A fake process that answers ping, and reloads by reporting the digest of
-/// the active profile it finds in its session, as capsem-process does.
+/// the exact active policy the service delivered, as capsem-process does.
 pub(crate) fn spawn_fake_process_reload_ack(
     uds_path: &StdPath,
     expected: usize,
 ) -> tokio::task::JoinHandle<Vec<ServiceToProcess>> {
-    let active_profile = uds_path
-        .parent()
-        .unwrap()
-        .join(ACTIVE_PROFILE_DIR)
-        .join(ACTIVE_PROFILE_FILE);
-    spawn_fake_process(uds_path, expected, move |message| {
+    spawn_fake_process(uds_path, expected, |message| {
         let reply = match message {
             ServiceToProcess::Ping => Some(ProcessToService::Pong),
-            ServiceToProcess::ReloadConfig { id } => Some(ProcessToService::ConfigReloadResult {
+            ServiceToProcess::ReloadConfig { id, active_policy } => Some(ProcessToService::ConfigReloadResult {
                 id: *id,
-                active_profile_digest: Some(capsem_core::net::policy_config::active_profile_digest(
-                    &std::fs::read(&active_profile).unwrap(),
-                )),
+                active_policy_digest: Some(capsem_core::net::policy_config::active_policy_digest(active_policy)),
                 error: None,
             }),
             _ => None,
@@ -363,124 +375,114 @@ pub(crate) fn spawn_fake_process_reload_ack(
 }
 
 pub(crate) fn insert_fake_instance_with_session_dir(state: &ServiceState, id: &str, pid: u32, session_dir: PathBuf) {
-    insert_fake_instance_with_session_dir_and_pins(
-        state,
-        id,
-        pid,
-        session_dir,
-        test_profile_revision(),
-        test_profile_payload_hash(),
-        test_asset_pins(),
-    );
-}
-
-fn insert_fake_instance_with_session_dir_and_pins(
-    state: &ServiceState,
-    id: &str,
-    pid: u32,
-    session_dir: PathBuf,
-    profile_revision: String,
-    profile_payload_hash: String,
-    asset_pins: BootAssetPins,
-) {
     state.instances.lock().unwrap().insert(
         id.to_string(),
         InstanceInfo {
             id: id.to_string(),
             name: id.to_string(),
-            profile_id: "code".into(),
-            profile_revision,
-            profile_payload_hash,
-            asset_pins,
             pid,
             // Inside the session, never a global path: a test that binds a
             // fake process here cannot collide with another run's leftovers.
             uds_path: session_dir.join("process.sock"),
             session_dir,
-            ram_mb: 2048,
-            cpus: 2,
-            start_time: std::time::Instant::now(),
-            base_version: "0.0.0".into(),
-            persistent: false,
-            env: None,
-            forked_from: None,
-            owner_secret: String::new(),
+            ..test_instance()
         },
     );
 }
 
-fn test_profile_revision() -> String {
-    ProfileConfigFile::builtin_primary().revision
+/// The test runtime asset set: each boot image's logical name and bytes.
+const TEST_RUNTIME_ASSETS: [(&str, &[u8]); 3] = [
+    ("vmlinuz", b"test-kernel"),
+    ("initrd.img", b"test-initrd"),
+    ("rootfs.erofs", b"test-rootfs"),
+];
+const TEST_ASSET_VERSION: &str = "2030.0101.1";
+
+fn test_asset_hex(body: &[u8]) -> String {
+    capsem_crypto::blake3::hash(body).to_hex().to_string()
 }
 
-fn materialized_test_profile() -> ProfileConfigFile {
-    materialized_test_profile_for("code")
-}
-
-fn materialized_test_profile_for(profile_id: &str) -> ProfileConfigFile {
-    let profile_path = checked_in_profile_dir(profile_id).join("profile.toml");
-    let mut profile: ProfileConfigFile = toml::from_str(&std::fs::read_to_string(profile_path).unwrap()).unwrap();
-    let hash = format!("blake3:{}", blake3::hash(b"test-asset").to_hex());
-    let size = b"test-asset".len() as u64;
-    for arch_assets in profile.assets.arch.values_mut() {
-        for asset in [
-            &mut arch_assets.kernel,
-            &mut arch_assets.initrd,
-            &mut arch_assets.rootfs,
-        ] {
-            asset.hash = Some(hash.clone());
-            asset.size = Some(size);
-        }
+/// A format-2 manifest whose one release, for this host's architecture, is
+/// the test runtime asset set.
+fn test_runtime_manifest() -> ManifestV2 {
+    let entries = TEST_RUNTIME_ASSETS
+        .iter()
+        .map(|(name, body)| {
+            (
+                name.to_string(),
+                AssetEntry {
+                    hash: test_asset_hex(body),
+                    sha256: String::new(),
+                    size: body.len() as u64,
+                },
+            )
+        })
+        .collect();
+    ManifestV2 {
+        format: 2,
+        refresh_policy: "24h".into(),
+        asset_base: None,
+        assets: AssetsSection {
+            current: TEST_ASSET_VERSION.into(),
+            releases: HashMap::from([(
+                TEST_ASSET_VERSION.into(),
+                AssetRelease {
+                    date: "2030-01-01".into(),
+                    deprecated: false,
+                    deprecated_date: None,
+                    min_binary: String::new(),
+                    arches: HashMap::from([(host_manifest_arch().to_string(), entries)]),
+                },
+            )]),
+        },
+        binaries: BinariesSection {
+            current: "0.0.0".into(),
+            releases: HashMap::new(),
+        },
     }
-    pin_checked_in_profile_files(&mut profile);
-    profile
 }
 
-fn test_profile_payload_hash() -> String {
-    profile_payload_hash(&materialized_test_profile()).unwrap()
-}
-
-fn test_asset_pins() -> BootAssetPins {
-    profile_asset_pins(&materialized_test_profile()).unwrap()
-}
-
-fn install_test_profile_assets(state: &ServiceState) {
-    let profile = materialized_test_profile();
-    install_test_profile_catalog(state, &profile);
-
-    let arch = capsem_core::net::policy_config::current_profile_arch();
-    let arch_dir = state.assets_dir.join(arch);
-    std::fs::create_dir_all(&arch_dir).unwrap();
-    let assets = profile.assets.current_arch_assets().unwrap();
-    for asset in [&assets.kernel, &assets.initrd, &assets.rootfs] {
-        std::fs::write(
-            arch_dir.join(profile_asset_hash_name(asset).expect("profile asset hash name")),
-            b"test-asset",
-        )
-        .unwrap();
+/// The pins a VM created from the test runtime asset set records.
+pub(crate) fn test_asset_pins() -> BootAssetPins {
+    let pin = |(name, body): (&str, &[u8])| BootAssetPin {
+        name: name.to_string(),
+        hash: format!("blake3:{}", test_asset_hex(body)),
+    };
+    BootAssetPins {
+        kernel: pin(TEST_RUNTIME_ASSETS[0]),
+        initrd: pin(TEST_RUNTIME_ASSETS[1]),
+        rootfs: pin(TEST_RUNTIME_ASSETS[2]),
     }
-    refresh_profile_route_caches(state).expect("test profile route caches should refresh");
 }
 
-fn install_test_profile_catalog(state: &ServiceState, profile: &ProfileConfigFile) {
-    let config_root = state.run_dir.join("config");
-    let profile_dir = config_root.join("profiles").join(&profile.id);
-    copy_dir_all(checked_in_profile_dir(&profile.id).as_path(), &profile_dir);
+/// Install the test manifest, on disk and as the state's, without its images.
+fn install_test_runtime_manifest(state: &ServiceState) {
+    let manifest = test_runtime_manifest();
+    std::fs::create_dir_all(&state.assets_dir).unwrap();
     std::fs::write(
-        profile_dir.join("profile.toml"),
-        toml::to_string_pretty(&profile).unwrap(),
+        state.assets_dir.join("manifest.json"),
+        serde_json::to_vec_pretty(&manifest).unwrap(),
     )
     .unwrap();
-    super::set_test_profile_dir_override(Some(config_root.join("profiles")));
+    *state.manifest.write().unwrap() = Some(Arc::new(manifest));
+}
+
+/// Install the test runtime asset set: the manifest and every image under
+/// its hash name, so a new VM's assets are ready.
+pub(crate) fn install_test_runtime_assets(state: &ServiceState) {
+    install_test_runtime_manifest(state);
+    let arch_dir = state.assets_dir.join(host_manifest_arch());
+    std::fs::create_dir_all(&arch_dir).unwrap();
+    for (name, body) in TEST_RUNTIME_ASSETS {
+        std::fs::write(arch_dir.join(hash_filename(name, &test_asset_hex(body))), body).unwrap();
+    }
 }
 
 pub(crate) fn test_persistent_entry(name: &str, session_dir: PathBuf) -> PersistentVmEntry {
     PersistentVmEntry {
         id: new_persistent_vm_id(),
         name: name.into(),
-        profile_id: "code".into(),
-        profile_revision: test_profile_revision(),
-        profile_payload_hash: test_profile_payload_hash(),
+        legacy_profile_id: None,
         asset_pins: test_asset_pins(),
         ram_mb: 2048,
         cpus: 2,
@@ -494,299 +496,59 @@ pub(crate) fn test_persistent_entry(name: &str, session_dir: PathBuf) -> Persist
         last_error: None,
         checkpoint_path: None,
         env: None,
+        labels: None,
     }
 }
 
-/// Copy a checked-in profile tree into a test's scratch directory.
-///
-/// Two details that are not incidental.
-///
-/// `std::fs::copy` gives the destination the *source's* permissions, and then
-/// fails with `EACCES` if it is asked to write a destination that already
-/// exists without write permission. Copying a tree twice into one place is
-/// therefore self-blocking, so an existing target is removed first.
-///
-/// And every failure names the file. This panicked as a bare
-/// `Os { code: 13, kind: PermissionDenied }` with no path, which under
-/// parallel `nextest` inside the Linux container produced an intermittent
-/// failure nobody could place -- the message identified neither which file
-/// nor which side of the copy.
-fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) {
-    std::fs::create_dir_all(dst).unwrap_or_else(|e| panic!("create {}: {e}", dst.display()));
-    let entries = std::fs::read_dir(src).unwrap_or_else(|e| panic!("read dir {}: {e}", src.display()));
-    for entry in entries {
-        let entry = entry.unwrap_or_else(|e| panic!("read entry under {}: {e}", src.display()));
-        let ty = entry
-            .file_type()
-            .unwrap_or_else(|e| panic!("stat {}: {e}", entry.path().display()));
-        let target = dst.join(entry.file_name());
-        if ty.is_dir() {
-            copy_dir_all(&entry.path(), &target);
-        } else {
-            if target.exists() {
-                std::fs::remove_file(&target).unwrap_or_else(|e| panic!("replace {}: {e}", target.display()));
-            }
-            std::fs::copy(entry.path(), &target)
-                .unwrap_or_else(|e| panic!("copy {} -> {}: {e}", entry.path().display(), target.display()));
-        }
+pub(crate) fn test_provision_options<'a>(id: &'a str, name: &'a str) -> ProvisionOptions<'a> {
+    ProvisionOptions {
+        id,
+        name,
+        ram_mb: 2048,
+        cpus: 2,
+        scratch_disk_size_gb: 16,
+        version_override: None,
+        persistent: false,
+        env: None,
+        labels: None,
+        from: None,
+        description: None,
     }
-}
-
-fn checked_in_profile_dir(profile_id: &str) -> PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../config/profiles")
-        .join(profile_id)
-}
-
-fn install_code_profile_fixture(dir: &tempfile::TempDir) -> PathBuf {
-    let config_root = dir.path().join("config");
-    let profile_dir = config_root.join("profiles/code");
-    copy_dir_all(checked_in_profile_dir("code").as_path(), &profile_dir);
-    config_root
-}
-
-fn profile_file_descriptor(
-    config_root: &std::path::Path,
-    path: &std::path::Path,
-) -> capsem_core::net::policy_config::ProfileFileDescriptor {
-    let bytes = std::fs::metadata(path).unwrap().len();
-    let hash = capsem_assets::asset_manager::hash_file(path).unwrap();
-    let relative = path
-        .strip_prefix(config_root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .to_string();
-    capsem_core::net::policy_config::ProfileFileDescriptor {
-        path: relative,
-        hash: Some(format!("blake3:{hash}")),
-        size: Some(bytes),
-    }
-}
-
-fn assign_file_descriptor_profile(
-    profile: &mut ProfileConfigFile,
-    descriptor: capsem_core::net::policy_config::ProfileFileDescriptor,
-) {
-    match std::path::Path::new(&descriptor.path)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap()
-    {
-        "enforcement.toml" => {
-            profile.files.enforcement = Some(descriptor);
-        }
-        "detection.yaml" => {
-            profile.files.detection = Some(descriptor);
-        }
-        "mcp.json" => {
-            profile.files.mcp = Some(descriptor);
-        }
-        "apt-packages.txt" => {
-            profile.files.apt_packages = Some(descriptor);
-        }
-        "python-requirements.txt" => {
-            profile.files.python_requirements = Some(descriptor);
-        }
-        "python-requirements.lock" => {
-            profile.files.python_requirements_lock = Some(descriptor);
-        }
-        "npm-packages.txt" => {
-            profile.files.npm_packages = Some(descriptor);
-        }
-        "npm-package-lock.json" => {
-            profile.files.npm_package_lock = Some(descriptor);
-        }
-        "build.sh" => {
-            profile.files.build = Some(descriptor);
-        }
-        "tips.txt" => {
-            profile.files.tips = Some(descriptor);
-        }
-        "root.manifest.json" => {
-            profile.files.root_manifest = Some(descriptor);
-        }
-        other => panic!("unsupported profile fixture descriptor {other}"),
-    }
-}
-
-fn write_file_descriptor_profile(
-    profile: &mut ProfileConfigFile,
-    config_root: &std::path::Path,
-    path: &std::path::Path,
-) {
-    assign_file_descriptor_profile(profile, profile_file_descriptor(config_root, path));
-}
-
-fn pin_checked_in_profile_files(profile: &mut ProfileConfigFile) {
-    let repo_config_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config");
-    let profile_dir = repo_config_root.join("profiles").join(&profile.id);
-    for filename in [
-        "enforcement.toml",
-        "detection.yaml",
-        "mcp.json",
-        "apt-packages.txt",
-        "python-requirements.txt",
-        "python-requirements.lock",
-        "npm-packages.txt",
-        "npm-package-lock.json",
-        "build.sh",
-        "tips.txt",
-        "root.manifest.json",
-    ] {
-        write_file_descriptor_profile(profile, &repo_config_root, &profile_dir.join(filename));
-    }
-}
-
-fn install_file_asset_profile_fixture(dir: &tempfile::TempDir) -> (PathBuf, ProfileConfigFile) {
-    let config_root = install_code_profile_fixture(dir);
-    let profile_dir = config_root.join("profiles/code");
-    let arch = capsem_core::net::policy_config::current_profile_arch();
-    let source_dir = dir.path().join("asset-source").join(arch);
-    std::fs::create_dir_all(&source_dir).unwrap();
-
-    let mut profile = ProfileConfigFile::builtin_primary();
-    for (name, body) in [
-        ("vmlinuz", b"fixture-kernel".as_slice()),
-        ("initrd.img", b"fixture-initrd".as_slice()),
-        ("rootfs.erofs", b"fixture-rootfs".as_slice()),
-    ] {
-        std::fs::write(source_dir.join(name), body).unwrap();
-    }
-    let arch_assets = profile.assets.arch.get_mut(arch).unwrap();
-    for asset in [
-        &mut arch_assets.kernel,
-        &mut arch_assets.initrd,
-        &mut arch_assets.rootfs,
-    ] {
-        let source = source_dir.join(&asset.name);
-        let hash = capsem_assets::asset_manager::hash_file(&source).unwrap();
-        asset.url = format!("file://{}", source.display());
-        asset.hash = Some(format!("blake3:{hash}"));
-        asset.size = Some(std::fs::metadata(&source).unwrap().len());
-    }
-    for filename in [
-        "enforcement.toml",
-        "detection.yaml",
-        "mcp.json",
-        "apt-packages.txt",
-        "python-requirements.txt",
-        "python-requirements.lock",
-        "npm-packages.txt",
-        "npm-package-lock.json",
-        "build.sh",
-        "tips.txt",
-        "root.manifest.json",
-    ] {
-        write_file_descriptor_profile(&mut profile, &config_root, &profile_dir.join(filename));
-    }
-    std::fs::write(
-        profile_dir.join("profile.toml"),
-        toml::to_string_pretty(&profile).unwrap(),
-    )
-    .unwrap();
-    (config_root, profile)
-}
-
-fn add_profile_enforcement_rule(
-    config_root: &std::path::Path,
-    rule_id: &str,
-    rule: capsem_core::net::policy_config::SecurityRule,
-) {
-    let profile_dir = config_root.join("profiles/code");
-    let enforcement_path = profile_dir.join("enforcement.toml");
-    let content = std::fs::read_to_string(&enforcement_path).unwrap();
-    let mut rule_profile = SecurityRuleProfile::parse_toml(&content).unwrap();
-    rule_profile.profiles.rules.insert(rule_id.to_string(), rule);
-    std::fs::write(&enforcement_path, toml::to_string_pretty(&rule_profile).unwrap()).unwrap();
-    let mut profile: ProfileConfigFile =
-        toml::from_str(&std::fs::read_to_string(profile_dir.join("profile.toml")).unwrap()).unwrap();
-    write_file_descriptor_profile(&mut profile, config_root, &enforcement_path);
-    std::fs::write(
-        profile_dir.join("profile.toml"),
-        toml::to_string_pretty(&profile).unwrap(),
-    )
-    .unwrap();
 }
 
 // Image handler tests (service-level unit tests)
 // -----------------------------------------------------------------------
 
-fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
+pub(crate) fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
-    let run_dir = dir.path().join("run");
-    std::fs::create_dir_all(&run_dir).unwrap();
-    let registry_path = run_dir.join("persistent_registry.json");
-    let asset_status_path = asset_status_path_for_run_dir(&run_dir);
-    let state = Arc::new(ServiceState {
-        instances: Mutex::new(HashMap::new()),
-        session_db_handles: Mutex::new(HashMap::new()),
-        persistent_registry: SharedRegistry::new(PersistentRegistry::load(registry_path).expect("registry loads")),
-        networks: tokio::sync::Mutex::new(capsem_core::net::network_registry::NetworkRegistry::new(
-            run_dir.join("networks"),
-        )),
-        process_binary: PathBuf::from("/nonexistent/capsem-process"),
-        assets_dir: dir.path().join("assets"),
-        run_dir: run_dir.clone(),
-        service_socket: run_dir.join("service.sock"),
-        switches: switches::Switches::in_process(),
-        job_counter: AtomicU64::new(1),
-        manifest: RwLock::new(None),
-        current_version: "0.0.0".into(),
-        asset_reconcile: Mutex::new(AssetReconcileState::default()),
-        asset_reconcile_inflight: AtomicBool::new(false),
-        asset_status_path,
-        plugin_policy_by_profile: Mutex::new(HashMap::new()),
-        profile_summary_cache: Mutex::new(test_profile_summary_cache()),
-        profile_cache: Mutex::new(test_profile_cache()),
-        profile_status_cache: Mutex::new(None),
-        profile_rule_cache: test_profile_rule_cache(),
-        profile_mcp_default_cache: test_profile_mcp_default_cache(),
-        profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
-        mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
-        profile_mutation_db: test_profile_mutation_db(&run_dir),
-        last_defunct_reconcile_ms: AtomicU64::new(0),
-        stats_response_cache: Mutex::new(None),
-        stats_detail_response_cache: Mutex::new(HashMap::new()),
-        containers: Default::default(),
-        storage_diagnostics_cache: Mutex::new(HashMap::new()),
-        persistent_resume_state_cache: Mutex::new(HashMap::new()),
-        evaluate_rule_cache: Mutex::new(HashMap::new()),
-        profile_rule_response_cache: Mutex::new(HashMap::new()),
-        profile_plugin_response_cache: Mutex::new(HashMap::new()),
-        evaluate_response_cache: Mutex::new(HashMap::new()),
-        list_response_cache: Mutex::new(None),
-        evaluate_last_response_cache: Mutex::new(None),
-        lifecycle: capsem_service::lifecycle::VmLifecycle::default(),
-        shutdown_lock: tokio::sync::Mutex::new(()),
-        update_lock: tokio::sync::Mutex::new(()),
-        policy_mutation: policy_mutation::PolicyMutationLock::default(),
-        update_restart: tokio::sync::Notify::new(),
-        _test_tempdir: None,
-    });
-    (state, dir)
+    let state = test_state(dir.path().join("run"), dir.path().join("assets"), None);
+    (Arc::new(state), dir)
 }
 
 mod assets_registry;
 mod async_io_contract;
 mod db_handle_ownership;
+mod exec_target;
 mod files_api;
 mod files_paths;
 mod fork;
+mod host_ledger_events;
 mod inspection;
 mod interactions;
 mod ipc_command;
 mod ledger_routes;
 mod lifecycle;
 mod logs_api;
+mod mcp_routes;
 mod network_routes;
 mod persist_purge;
+mod plugin_routes;
 mod polled_route_cost;
-mod profile_mutations;
-mod profile_routes;
 mod restart;
 mod route_query_plans;
 mod session_identity;
 mod settings_files;
+mod stop_cleanup;
 mod system_contracts;
 mod telemetry_export;
 mod transcript;
@@ -794,7 +556,6 @@ mod update_routes;
 mod vm_info;
 
 pub(crate) use assets_registry::make_state_in;
-use settings_files::{
-    ensure_test_builtin_mcp_binary, install_empty_settings_env, make_test_state_with_tempdir_at, EnvVarGuard,
-};
+use settings_files::make_test_state_with_tempdir_at;
+pub(crate) use settings_files::{install_empty_settings_env, EnvVarGuard};
 use update_routes::decode_response_json;

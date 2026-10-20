@@ -1,8 +1,12 @@
 # CAPSEM Hardened Kernel Configuration
 # Minimal ARM64 for Apple Virtualization.framework
 #
-# Apply on top of allnoconfig:
-#   cp defconfig.arm64 .config && make olddefconfig
+# Applied on top of allnoconfig:
+#   make KCONFIG_ALLCONFIG=defconfig.arm64 allnoconfig
+#
+# Nothing is enabled unless this file pins it, so every option below is a
+# decision with its reason. The build fails if the kernel does not honor a
+# pin: a misspelled or renamed symbol, or one whose dependency is not pinned.
 #
 # Produces a ~5MB kernel with only VirtIO drivers, no loadable modules,
 # air-gapped IP stack (dummy NIC + iptables REDIRECT), and full exploit
@@ -18,10 +22,23 @@ CONFIG_ARM_GIC_V3=y
 CONFIG_ARM_ARCH_TIMER=y
 CONFIG_OF=y
 
+# Userspace virtual address space.
+#
+# Google Antigravity CLI's Linux ARM64 binary uses TCMalloc and assumes a
+# 48-bit userspace VA layout; on a smaller layout it crashes before it can
+# print --version. Keep 4K pages for ordinary Linux userland compatibility
+# and 4-level, 48-bit VA tables. Pinned, not defaulted: 6.18's default is
+# 52-bit with 5-level tables, and this pin was once lost in a config rewrite.
+CONFIG_ARM64_4K_PAGES=y
+CONFIG_ARM64_VA_BITS_48=y
+CONFIG_ARM64_VA_BITS=48
+
 # ARM64 hardware security (Apple Silicon supports BTI + PAC)
 CONFIG_ARM64_BTI=y
 CONFIG_ARM64_PTR_AUTH=y
 CONFIG_ARM64_PTR_AUTH_KERNEL=y
+# Spectre-BHB: arm64 has no HARDEN_BRANCH_PREDICTOR (a 32-bit ARM symbol).
+CONFIG_MITIGATE_SPECTRE_BRANCH_HISTORY=y
 
 # ==========================================
 # 2. BOOT ESSENTIALS
@@ -85,7 +102,6 @@ CONFIG_TMPFS=y
 CONFIG_TMPFS_XATTR=y
 CONFIG_DEVTMPFS=y
 CONFIG_DEVTMPFS_MOUNT=y
-CONFIG_DEVPTS_FS=y
 CONFIG_UNIX98_PTYS=y
 
 # ==========================================
@@ -161,6 +177,9 @@ CONFIG_FHANDLE=y
 
 # Offline OCI workloads: isolated processes and bounded resource usage.
 CONFIG_NAMESPACES=y
+# User namespaces let the OCI workload hold its capabilities over a mapped uid
+# range instead of over the VM (google/capsem#289).
+CONFIG_USER_NS=y
 CONFIG_UTS_NS=y
 CONFIG_IPC_NS=y
 CONFIG_PID_NS=y
@@ -191,7 +210,6 @@ CONFIG_RANDOMIZE_BASE=y
 CONFIG_STACKPROTECTOR=y
 CONFIG_STACKPROTECTOR_STRONG=y
 CONFIG_FORTIFY_SOURCE=y
-CONFIG_HARDEN_BRANCH_PREDICTOR=y
 
 # Restrict information leaks
 CONFIG_SECURITY_DMESG_RESTRICT=y
@@ -203,7 +221,7 @@ CONFIG_COMPAT_BRK=n
 
 # Memory hardening
 CONFIG_INIT_ON_ALLOC_DEFAULT_ON=y
-CONFIG_SLAB_FREELIST_RANDOMIZE=y
+CONFIG_SLAB_FREELIST_RANDOM=y
 CONFIG_SLAB_FREELIST_HARDENED=y
 CONFIG_SHUFFLE_PAGE_ALLOCATOR=y
 CONFIG_HARDENED_USERCOPY=y
@@ -256,3 +274,160 @@ CONFIG_NFS_FS=n
 CONFIG_NETWORK_FILESYSTEMS=n
 CONFIG_SCSI=n
 CONFIG_ATA=n
+
+# ==========================================
+# 12. WHAT THE KERNEL DEFAULTS USED TO SUPPLY
+# ==========================================
+# Nothing is on unless pinned here or above. Before the build started from
+# allnoconfig, olddefconfig filled ~270 unpinned options with upstream
+# defaults: some the guest needs, some hardening, some surface nobody chose.
+
+# --- Needed by the guest ---
+CONFIG_SHMEM=y
+CONFIG_MEMFD_CREATE=y
+CONFIG_FILE_LOCKING=y
+CONFIG_SWAP=y
+CONFIG_RSEQ=y
+CONFIG_MEMBARRIER=y
+CONFIG_COMPACTION=y
+CONFIG_MIGRATION=y
+CONFIG_MISC_FILESYSTEMS=y
+CONFIG_NET_CORE=y
+CONFIG_RPS=y
+# ss(8) in capsem-init polls TCP, UDP and vsock listeners through sock_diag.
+CONFIG_INET_DIAG=y
+CONFIG_INET_TCP_DIAG=y
+CONFIG_INET_UDP_DIAG=y
+CONFIG_VSOCKETS_DIAG=y
+# The initrd is gzip-compressed.
+CONFIG_RD_GZIP=y
+CONFIG_FUSE_PASSTHROUGH=y
+# /proc/<pid>/smaps and smaps_rollup: workloads read their own memory map.
+# Redis refuses to start on arm64 without it (its copy-on-write kernel-bug
+# probe reads smaps), and jemalloc and browsers account memory through it.
+# pagemap hides physical addresses from unprivileged readers.
+CONFIG_PROC_PAGE_MONITOR=y
+# Keep file capabilities, ACLs and security labels the rootfs image carries.
+CONFIG_EROFS_FS_XATTR=y
+CONFIG_EROFS_FS_POSIX_ACL=y
+CONFIG_EROFS_FS_SECURITY=y
+# ext4 metadata checksums (the system overlay) use the accelerated crc32c.
+CONFIG_CRC_OPTIMIZATIONS=y
+CONFIG_HW_RANDOM_ARM_SMCCC_TRNG=y
+CONFIG_ARM_ARCH_TIMER_EVTSTREAM=y
+CONFIG_SCHED_MC=y
+CONFIG_SCHED_SMT=y
+CONFIG_SLUB_CPU_PARTIAL=y
+CONFIG_ZONE_DMA32=y
+CONFIG_PCI_QUIRKS=y
+
+# --- Upstream hardening and CPU features, kept deliberately ---
+# Yama: ptrace only of your own descendants (kernel.yama.ptrace_scope=1 at
+# boot), so a package script in a workload cannot attach to the agent CLI
+# running beside it as the same user and read its credentials.
+CONFIG_SECURITY=y
+CONFIG_SECURITY_YAMA=y
+# TCP SYN cookies (net.ipv4.tcp_syncookies=1 at boot).
+CONFIG_SYN_COOKIES=y
+CONFIG_RANDOMIZE_KSTACK_OFFSET=y
+CONFIG_RANDOMIZE_KSTACK_OFFSET_DEFAULT=y
+CONFIG_HARDENED_USERCOPY_DEFAULT_ON=y
+CONFIG_SLAB_BUCKETS=y
+CONFIG_ARM64_PAN=y
+CONFIG_ARM64_EPAN=y
+CONFIG_ARM64_E0PD=y
+CONFIG_ARM64_MTE=y
+CONFIG_ARM64_TAGGED_ADDR_ABI=y
+CONFIG_ARM64_GCS=y
+CONFIG_ARM64_POE=y
+CONFIG_ARM64_CNP=y
+CONFIG_ARM64_SVE=y
+CONFIG_ARM64_SME=y
+CONFIG_ARM64_LSE_ATOMICS=y
+CONFIG_ARM64_USE_LSE_ATOMICS=y
+CONFIG_ARM64_HW_AFDBM=y
+CONFIG_ARM64_HAFT=y
+CONFIG_ARM64_TLB_RANGE=y
+CONFIG_ARM64_RAS_EXTN=y
+
+# CPU errata. Apple silicon needs none, but Capsem also runs KVM on Linux
+# arm64 servers (Ampere, Graviton, ThunderX) where these are correctness
+# fixes; allnoconfig would silently drop every one.
+CONFIG_AMPERE_ERRATUM_AC03_CPU_38=y
+CONFIG_AMPERE_ERRATUM_AC04_CPU_23=y
+CONFIG_ARM64_ERRATUM_1024718=y
+CONFIG_ARM64_ERRATUM_1165522=y
+CONFIG_ARM64_ERRATUM_1319367=y
+CONFIG_ARM64_ERRATUM_1463225=y
+CONFIG_ARM64_ERRATUM_1508412=y
+CONFIG_ARM64_ERRATUM_1530923=y
+CONFIG_ARM64_ERRATUM_2051678=y
+CONFIG_ARM64_ERRATUM_2054223=y
+CONFIG_ARM64_ERRATUM_2067961=y
+CONFIG_ARM64_ERRATUM_2077057=y
+CONFIG_ARM64_ERRATUM_2645198=y
+CONFIG_ARM64_ERRATUM_2658417=y
+CONFIG_ARM64_ERRATUM_2966298=y
+CONFIG_ARM64_ERRATUM_3117295=y
+CONFIG_ARM64_ERRATUM_3194386=y
+CONFIG_ARM64_ERRATUM_4118414=y
+CONFIG_ARM64_ERRATUM_4193714=y
+CONFIG_ARM64_ERRATUM_819472=y
+CONFIG_ARM64_ERRATUM_824069=y
+CONFIG_ARM64_ERRATUM_826319=y
+CONFIG_ARM64_ERRATUM_827319=y
+CONFIG_ARM64_ERRATUM_832075=y
+CONFIG_ARM64_ERRATUM_843419=y
+CONFIG_ARM64_ERRATUM_858921=y
+CONFIG_ARM64_WORKAROUND_CLEAN_CACHE=y
+CONFIG_ARM64_WORKAROUND_REPEAT_TLBI=y
+CONFIG_ARM64_WORKAROUND_SPECULATIVE_AT=y
+CONFIG_ARM64_WORKAROUND_SPECULATIVE_UNPRIV_LOAD=y
+CONFIG_ARM64_WORKAROUND_TSB_FLUSH_FAILURE=y
+CONFIG_CAVIUM_ERRATUM_22375=y
+CONFIG_CAVIUM_ERRATUM_23154=y
+CONFIG_CAVIUM_ERRATUM_27456=y
+CONFIG_CAVIUM_ERRATUM_30115=y
+CONFIG_CAVIUM_TX2_ERRATUM_219=y
+CONFIG_FSL_ERRATUM_A008585=y
+CONFIG_FUJITSU_ERRATUM_010001=y
+CONFIG_HISILICON_ERRATUM_161010101=y
+CONFIG_HISILICON_ERRATUM_161600802=y
+CONFIG_HISILICON_ERRATUM_162100801=y
+CONFIG_NVIDIA_CARMEL_CNP_ERRATUM=y
+CONFIG_QCOM_FALKOR_ERRATUM_1003=y
+CONFIG_QCOM_FALKOR_ERRATUM_1009=y
+CONFIG_QCOM_FALKOR_ERRATUM_E1041=y
+CONFIG_QCOM_QDF2400_ERRATUM_0065=y
+CONFIG_ROCKCHIP_ERRATUM_3568002=y
+CONFIG_ROCKCHIP_ERRATUM_3588001=y
+
+# --- Surface no sandbox VM needs, off on purpose ---
+# Keystroke injection into another terminal; tty line-discipline autoload.
+CONFIG_LEGACY_TIOCSTI=n
+CONFIG_LDISC_AUTOLOAD=n
+CONFIG_LEGACY_PTYS=n
+# process_vm_readv/writev: reading another process's memory.
+CONFIG_CROSS_MEMORY_ATTACH=n
+CONFIG_COREDUMP=n
+CONFIG_FTRACE=n
+CONFIG_SLUB_DEBUG=n
+CONFIG_TIME_NS=n
+CONFIG_CACHESTAT_SYSCALL=n
+CONFIG_SECRETMEM=n
+CONFIG_AF_UNIX_OOB=n
+CONFIG_VHOST_MENU=n
+CONFIG_EFI=n
+CONFIG_PM=n
+CONFIG_SUSPEND=n
+CONFIG_HID_SUPPORT=n
+CONFIG_INPUT=n
+CONFIG_SERIO=n
+CONFIG_FW_LOADER=n
+CONFIG_IOMMU_SUPPORT=n
+# Writes to a mounted block device; merged slab caches; overlayfs following
+# redirects it did not create.
+CONFIG_BLK_DEV_WRITE_MOUNTED=n
+CONFIG_BLOCK_LEGACY_AUTOLOAD=n
+CONFIG_SLAB_MERGE_DEFAULT=n
+CONFIG_OVERLAY_FS_REDIRECT_ALWAYS_FOLLOW=n

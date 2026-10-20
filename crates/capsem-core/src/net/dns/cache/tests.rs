@@ -32,6 +32,27 @@ fn miss_on_empty_cache() {
 }
 
 #[test]
+fn shared_cache_stats_cover_dns_hits_and_misses() {
+    let cache = DnsAnswerCache::new(16, 300);
+    let policy = allow_all();
+    assert!(get(&cache, "stats.example", 1, 1, 1, &policy).is_none());
+    insert(
+        &cache,
+        "stats.example",
+        1,
+        1,
+        &build_answer("stats.example.", 60, [192, 0, 2, 1]),
+    );
+    assert!(get(&cache, "stats.example", 1, 1, 2, &policy).is_some());
+
+    let stats = cache.inner.stats();
+    assert_eq!(stats.misses, 1);
+    assert_eq!(stats.hits, 1);
+    assert_eq!(stats.insertions, 1);
+    assert_eq!(stats.entries, 1);
+}
+
+#[test]
 fn hit_after_insert_within_ttl() {
     let cache = DnsAnswerCache::new(16, 300);
     let policy = allow_all();
@@ -130,10 +151,13 @@ fn evicts_when_capacity_exceeded() {
     insert(&cache, "b.com", 1, 1, &build_answer("b.com.", 60, [2, 2, 2, 2]));
     assert_eq!(cache.len(), 2);
     insert(&cache, "c.com", 1, 1, &build_answer("c.com.", 60, [3, 3, 3, 3]));
-    assert_eq!(cache.len(), 2); // a.com evicted (LRU)
-    assert!(get(&cache, "a.com", 1, 1, 0, &policy).is_none());
-    assert!(get(&cache, "b.com", 1, 1, 0, &policy).is_some());
-    assert!(get(&cache, "c.com", 1, 1, 0, &policy).is_some());
+    assert!(cache.len() <= 2);
+    let resident = ["a.com", "b.com", "c.com"]
+        .into_iter()
+        .filter(|name| get(&cache, name, 1, 1, 0, &policy).is_some())
+        .count();
+    assert!(resident <= 2, "admission must never exceed the configured bound");
+    assert!(cache.inner.stats().evictions > 0);
 }
 
 #[test]
@@ -154,20 +178,6 @@ fn capacity_zero_clamped_to_one() {
     let policy = allow_all();
     insert(&cache, "a.com", 1, 1, &build_answer("a.com.", 60, [1, 2, 3, 4]));
     assert!(get(&cache, "a.com", 1, 1, 0, &policy).is_some());
-}
-
-#[test]
-fn lru_order_updates_on_access() {
-    let cache = DnsAnswerCache::new(2, 300);
-    let policy = allow_all();
-    insert(&cache, "a.com", 1, 1, &build_answer("a.com.", 60, [1, 1, 1, 1]));
-    insert(&cache, "b.com", 1, 1, &build_answer("b.com.", 60, [2, 2, 2, 2]));
-    // Access a -> a becomes most-recently-used; b is now LRU.
-    let _ = get(&cache, "a.com", 1, 1, 0, &policy);
-    insert(&cache, "c.com", 1, 1, &build_answer("c.com.", 60, [3, 3, 3, 3]));
-    // b should be evicted, not a.
-    assert!(get(&cache, "a.com", 1, 1, 0, &policy).is_some());
-    assert!(get(&cache, "b.com", 1, 1, 0, &policy).is_none());
 }
 
 #[test]
@@ -260,9 +270,12 @@ fn default_capacity_and_max_ttl_match_constants() {
             &build_answer(&format!("{name}."), 60, [1, 2, 3, 4]),
         );
     }
-    assert_eq!(cache.len(), DEFAULT_CAPACITY);
-    // First one should now be evicted.
-    assert!(get(&cache, "h0.example.com", 1, 1, 0, &policy).is_none());
+    assert!(cache.len() <= DEFAULT_CAPACITY);
+    assert!(cache.inner.stats().evictions > 0);
+    let resident = (0..=DEFAULT_CAPACITY)
+        .filter(|i| get(&cache, &format!("h{i}.example.com"), 1, 1, 0, &policy).is_some())
+        .count();
+    assert_eq!(resident, cache.len());
 }
 
 /// An NXDOMAIN response for `qname`, optionally carrying a SOA in the
@@ -351,7 +364,14 @@ fn a_cache_hit_decrements_record_ttls_by_the_time_already_spent_cached() {
         &build_answer("aged.example.", 60, [192, 0, 2, 1]),
     );
     let key = query_key("aged.example", 1, 1, 0).1;
-    cache.inner.lock().unwrap().get_mut(&key).unwrap().expires_at = Instant::now() + Duration::from_secs(30);
+    let entry = cache.inner.get(&key).unwrap();
+    cache.inner.insert(
+        key,
+        Entry {
+            bytes: entry.bytes.clone(),
+            expires_at: Instant::now() + Duration::from_secs(30),
+        },
+    );
     let hit = get(&cache, "aged.example", 1, 1, 1, &allow_all()).unwrap();
     let message = Message::from_vec(&hit).unwrap();
     assert!(

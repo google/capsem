@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::HashMap;
 
 /// Every published asset path is `release_dir/<arch>-<name>` and every source
 /// path is `assets_dir/<arch>/<name>`. Both are built from manifest keys, and
@@ -122,7 +123,6 @@ fn assets_channel_build_refuses_a_manifest_whose_arch_key_escapes() {
     let error = build_assets_channel(
         &file_url(&manifest_path),
         &temp.path().join("assets"),
-        &repo_config_profiles_dir(),
         "stable",
         "1.0.2",
         &out_dir,

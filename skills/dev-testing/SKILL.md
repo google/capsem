@@ -29,6 +29,40 @@ let five through; the rule is now a whitelist for that reason.
 
 ## Test execution
 
+Write code first with TDD and minimal focused feedback. During routine edits
+run the regression being changed and only necessary file/behavior checks.
+Broad workspace, contract, Citadel, VM, installed-package and performance runs
+belong at major phase boundaries, not after every edit or commit. Pending full
+proof must not block independent implementation. Qualify the complete phase
+before calling it qualified, and retain the exact-source merge/release gates.
+The bounded wrapper provides timeout and cleanup without a default machine
+lease; reserve `--machine-lease` for explicitly isolated qualification work.
+
+Finish a focused build/test command before editing its inputs. Cargo may have
+already compiled a test when a later edit lands, so its green result can cover
+older bytes. If inputs changed during compilation or execution, that result
+does not verify the final source; rerun the focused regression after the edit.
+
+SDK acceptance launchers use `uv run --frozen --no-sync` against the environment
+prepared by the gate. Snapshot refresh changes source mtimes; an implicit sync
+can rebuild the editable SDK and fetch its backend inside the sealed namespace.
+Dependency preparation belongs to the earlier environment owner.
+
+Linux managed-supervisor acceptance hands the private manager's runtime and PID
+explicitly through the privilege transition. The worker checks its socket peer,
+native owner and network namespace before restoring the manager environment.
+Never adopt an ambient user manager outside the sealed worker's namespace:
+its service can be healthy while localhost is unreachable from the test.
+Pass that authenticated manager's runtime and bus address explicitly into the
+service unit too. A user manager's default unit environment can point at a
+different session; worker-only binding leaves a healthy service unable to
+verify its own restart policy.
+
+Focused Ruff commands must select `--config build_system/pyproject.toml`, as
+the gate does. Auto-discovery from a root-level test used a different Python
+version and reversed `tomllib` import grouping, passing locally then failing
+the canonical source phase.
+
 | Command | What | VM? |
 |---------|------|-----|
 | `just fast-test` | Incomplete source feedback only | No |
@@ -38,9 +72,15 @@ let five through; the rule is now a whitelist for that reason.
 
 A release requires a passing `just test` for its source first; hosted release
 lanes then qualify what they publish.
-`just fast-test` is incomplete feedback, and `just focus-test <group>` is the normal
-targeted regression path. During TDD use the smallest native test; run `just test`
-when complete local whole-system verification is useful.
+`just fast-test` and `just focus-test <group>` are broader feedback tools for a
+phase boundary or a failure that needs their scope. During TDD use the smallest
+native test directly; use complete verification at major phase boundaries.
+
+Pick the narrowest lens, in this order: one test file run directly with pytest
+in the latest `cache/worktrees/<run>` (it reuses that run's built assets; rebuild
+and re-sign only what changed), then `focus-test <owner>` (`kingslanding` for
+containers, `assets` to rebuild the guest), then `functional --slow` once on the
+final head. Ask the user before adding a new owner.
 
 The full gate is a construction boundary, not the edit loop. During TDD,
 reproduce the failure with the smallest focused test, run that test red/green,
@@ -72,14 +112,14 @@ Release CI reuses the same checked-in private modules as local `just test`:
 - `_test-release-contracts`
 
 The build scope is selective; the quality scope is not. Binary CI builds only
-packages and resolves every channel profile by recorded digest. Profile CI
-builds exactly one channel/profile and resolves the current package by recorded
+packages and resolves the channel's runtime by recorded digest. Runtime CI
+builds the runtime for one channel and resolves the current package by recorded
 digest. The resolved complementary artifacts are staged into the production
 test harness, not replaced by source-built substitutes.
 
 Every activated pairing must pass artifact validation, all VM suites,
 Winterfell/MCP lifecycle, IronBank, injection, integration, benchmarks, full
-`capsem-doctor`, exact native install, and update glow-up. A staged profile
+`capsem-doctor`, exact native install, and update glow-up. A staged runtime
 whose minimum package is not yet satisfied may run only the self-consistency,
 integrity, isolation, and boot proof; the following binary lane must run the
 complete functional and glow-up modules before activation.
@@ -94,7 +134,7 @@ boundary through `build_system/packaging/macos/macos_release_glowup.py`: it buil
 production assembler, installs that exact file in a disposable headless Tart
 guest, verifies the receipt, app bundle, complete binary cohort, service and
 gateway health, then extracts the same package on the physical Mac and boots a
-real Capsem guest VM from its exact binary/profile payload to a shell marker.
+real Capsem guest VM from its exact binary/runtime payload to a shell marker.
 The local package is unsigned; its postinstall ad-hoc signs the installed
 Mach-O payload with the required entitlements. Local qualification must not
 load Developer ID material or create a signing keychain. The tagged publication
@@ -146,11 +186,11 @@ Write tests first:
 3. Write minimal implementation to pass them
 4. Refactor
 
-Without a failing test first, it's easy to write tests that pass by accident or don't actually verify the behavior you intended.
+Without a failing test first, tests can pass by accident. Cargo fixtures, including tiny probes, use `tests/helpers/bounded.py`: its `env` argument applies explicit probe compiler and target overrides after containment; never serialize inherited secrets. The wrapper owns the finite child timeout and cleanup; routine probes do not acquire a machine lease. Do not add an outer subprocess timeout.
 
 ## Functional slice proof matrix
 
-Every non-trivial feature slice needs evidence in all of these categories before it can be called done. A green unit suite or a benchmark is not a substitute for functional or end-to-end proof.
+Use the matrix below for qualification at each major phase boundary. During implementation run only the focused checks needed for the changed behavior and record outstanding phase proof. A green unit suite or a benchmark is not a substitute for complete phase qualification.
 
 | Category | What it proves | Minimum expectation |
 |----------|----------------|---------------------|
@@ -240,51 +280,10 @@ Do not add another local HTTP/MCP/OAuth/model mock server for a feature. Extend
 the shared mock server and its fixtures instead, then assert the route through
 the relevant black-box test.
 
-## Parallel tests as dogfooding (n=4 is non-negotiable)
+## Parallel VM and process lifecycle tests
 
-`just test` runs the python suite under `pytest -n 4 --dist=loadfile`. Four real VMs boot simultaneously. **This is the canary, not just a speed-up.** We ship Capsem as a multi-VM sandbox for AI agents -- if our own test suite cannot safely boot 4 concurrent VMs, real users running an agent farm will hit the exact same bug. Treat any concurrency flake as a Capsem-side bug, not a test-tuning problem:
-
-- "Suspend timed out" under load -> service IPC handling is racy, not "bump the timeout"
-- "Session did not become ready" -> Apple VZ resource serialization, VirtioFS lock contention, or service handling concurrent provisions; investigate, don't suppress
-- Two tests both want the same VM name -> name-collision bug in `validate_vm_name` / registry, not "isolate test names better"
-- Stale socket between tests -> service didn't reap a child cleanly, real production bug
-
-Anti-patterns when a test flakes under `-n 4`:
-- Adding `time.sleep()` to "let things settle" -- masking a race
-- Bumping the per-test timeout -- buying time for a real bug to manifest in prod instead of CI
-- Marking the test `serial` so it runs alone -- defeating the dogfooding signal
-
-The exception is a true timing or benchmark probe whose assertion is the
-measured number. Those tests must already be marked `serial` and `just test`
-runs them immediately after the `-n 4` canary. That is not a flake escape
-hatch: it prevents another benchmark file from stealing the same Apple VZ
-launch budget and corrupting the number we are trying to publish.
-
-The host has plenty of headroom (48 GB RAM, 14 cores; 4 VMs at 2 GB / 2 CPU each = 8 GB / 8 cores). If concurrency surfaces a flake, fix the product, then re-run. Bumping `-n` higher (8, 12) is the natural follow-on once n=4 is stable -- real users will run more.
-
-### Orphan processes across runs are a product bug (not a test bug)
-
-If a previous `just test -n 4` run was interrupted (ctrl-C, pytest-xdist worker death, host crash) and the NEXT run flakes with "vm-ready never asserted", UDS "connection refused", or mysterious HTTP 500s -- the cause is companion processes from the interrupted run still alive under PID 1. `pkill -f "cache/target/cargo/debug/capsem-(service|process|gateway|tray|mcp)"` will make the flake vanish, but that is cleanup-after-the-fact. The fix is on the COMPANION side: every spawned companion (gateway, tray, and any new one) must use `capsem-guard::install(parent_pid, lock_path)` to enforce (a) refuse-standalone, (b) singleton, (c) self-exit on parent death. See `/dev-rust-patterns` lesson 18. Regression tests live in `tests/capsem-service/test_companion_lifecycle.py` -- never remove them; when adding a new companion, extend that file.
-
-**Never `pkill -f capsem-` with a broad pattern** during test debugging: `capsem-` matches `--crate-name capsem-core` in running rustc/cargo invocations and will SIGKILL the compiler mid-build. Use a binary-path pattern like `pkill -f "cache/target/cargo/debug/capsem-(service|process|gateway|tray|mcp)"` instead.
-
-### Apple VZ lifecycle serialization is part of the product
-
-Apple's Virtualization.framework does not tolerate overlapping checkpoint
-lifecycle operations (`saveMachineStateToURL` and `restoreMachineStateFromURL`)
-on sibling VMs, and teardown must not cross those checkpoint edges. Capsem uses
-`ServiceState::save_restore_lock` plus the host-wide `VzHostLock` flock:
-cold starts and teardown take shared/read guards, save and restore take
-exclusive/write guards. The rail holds even when pytest-xdist spawns one
-`capsem-service` per worker, while independent cold starts can still run
-together for the boot-latency gate.
-
-Do not demote suspend/resume, lifecycle, provisioning, or teardown tests to
-`-n 1` to sidestep VZ races. `just test` at `-n 4` is the contract; if a
-concurrent run sees restore permission errors, loop-device corruption,
-connection-refused startup races, or readiness misses, fix the lifecycle rail.
-Full context and failure signatures live in
-`web/docs/src/content/docs/gotchas/concurrent-suspend-resume.md`.
+Read [parallel-lifecycle-tests.md](references/parallel-lifecycle-tests.md) before
+changing VM concurrency, companion supervision, or Apple VZ lifecycle tests.
 
 ## Adversarial testing
 
@@ -313,7 +312,7 @@ When touching security-relevant code, check these invariants have test coverage:
 | CORS rejects external origins | Only localhost/127.0.0.1/tauri allowed | `capsem-gateway::tests` |
 | Body size limit | 413 for >10MB payloads | `capsem-gateway::proxy::tests` |
 | VM ID validation | Path traversal (`../`), dots, spaces, null bytes rejected | `capsem-gateway::terminal::tests` |
-| Rootfs read-only | profile rootfs asset mounted ro, guest binaries 555 | `capsem-doctor` in-VM tests |
+| Rootfs read-only | runtime rootfs asset mounted ro, guest binaries 555 | `capsem-doctor` in-VM tests |
 | Suspend reports errors | IPC failure and timeout both return 500, not silent success | `capsem-service` tests |
 
 ## Test fixture anti-pattern: masking races with polling
@@ -433,7 +432,7 @@ All Python integration tests live under `tests/capsem-*/` and use pytest markers
 |-------|-----------|--------|-----|---------------|
 | Service API | `capsem-service/` | `integration` | Yes | HTTP endpoints: provision, list, info, exec, logs, file I/O, delete |
 | CLI | `capsem-cli/` | `integration` | Yes | CLI subcommands via subprocess |
-| npm MCP | `ironbank/test_mcp_profile_ledger.py` | `ironbank` | Yes | Packed npm stdio -> authenticated gateway -> guest MCP ledger proof |
+| npm MCP | `ironbank/test_mcp_settings_ledger.py` | `ironbank` | Yes | Packed npm stdio -> authenticated gateway -> guest MCP ledger proof |
 | Session DB | `capsem-session/` | `session` | Yes | Telemetry: net/model/tool/mcp/fs events |
 | Isolation | `capsem-isolation/` | `isolation` | Yes | Multi-VM filesystem + network isolation |
 | Security | `capsem-security/` | `security` | Yes | Binary perms, codesigning, asset integrity, env blocklist |
@@ -475,14 +474,17 @@ so meaningful coverage gains raise their ratchets in the same change.
 Read `references/mcp-debug-tools.md` for interactive VM debugging through the
 capsem MCP server: tool table, one-shot vs iterative workflows, and common
 session-DB queries. MCP tools are for fast targeted checks; just recipes are
-for comprehensive validation before committing.
+for complete validation at major phase boundaries and before merge or release.
 
 ## End-to-end validation is not optional
 
-After any change touching guest binaries, network policy, telemetry, MCP, or VM lifecycle:
+At the major phase boundary for changes touching guest binaries, network policy, telemetry, MCP, or VM lifecycle:
 
 1. `just exec "capsem-doctor"` -- verifies sandbox integrity inside the VM
-2. After telemetry/logging changes: run a real session and verify with `python3 build_system/scripts/doctor/check_session.py` that net_events, model_calls, tool_calls, tool_responses, fs_events, dns_events, and security_rule_events are populated correctly for the exercised protocols
+2. After telemetry/logging changes: run a real session and verify the exercised
+   protocols through the typed timeline, history, statistics, and security
+   routes. Use `check_session.py --db` only on a coherent, quiesced evidence
+   copy after its ledger worker has stopped.
 
 ## When tests fail
 
@@ -538,7 +540,7 @@ Both are enforced by `build_system/tests/gate/test_path_and_log_wrappers_are_man
 
 ### Verify with the gate's environment, not a bare shell
 
-`just test` exports `CAPSEM_HOME`, `CAPSEM_RUN_DIR`, `CAPSEM_TEST_PROFILE`, and
+`just test` exports `CAPSEM_HOME`, `CAPSEM_RUN_DIR`, and
 `CAPSEM_BENCHMARK_OUTPUT_ROOT`. A test that reads ambient state passes in your
 shell and fails in the gate:
 
@@ -572,22 +574,7 @@ Prove it derives rather than hardcodes: change the source value and confirm the 
 Read `/dev-cache` for the common cache model; tests must not recreate backend
 accounting or machine-capacity rails.
 
-## Platform gating tests
+## Source guards and testable design
 
-`cargo test --test platform_gating` scans all `.rs` files under `crates/` for macOS-only and Linux-only symbols (`libc::clonefile`, `AppleVzHypervisor`, `KvmHypervisor`, `FICLONE`, etc.) and verifies they appear inside `#[cfg(target_os = "...")]` blocks. This catches ungated platform APIs before they reach CI. Run this test when adding any platform-specific code.
-
-## Excluding something from a guard
-
-Real trees contain things a guard should not fail on. One legal shape, in
-`capsem.gate.exclusions`: **exact** (the thing, not a category), **hashed**
-where the subject is content, **with a stated reason** whose length the schema
-checks, and **reconciled both ways** so a stale entry fails too. Never a count
--- it fails on a harmless addition and passes on a dangerous change to
-something already listed. `/dev-gate` has why each wrong shape was tried.
-
-## Testable design
-
-Extract logic from presentation and process entrypoints into the
-lowest-dependency crate that owns its domain. If logic cannot be tested without
-booting a VM or launching the GUI, first separate the pure decision from its
-runtime adapter; do not default unrelated shared code into `capsem-core`.
+See [source-guards-and-design.md](references/source-guards-and-design.md) for
+platform gating, exact guard exclusions and separating pure decisions from runtime adapters.

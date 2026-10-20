@@ -77,6 +77,15 @@ fn trace_state_registers_workspace_file_hints_from_tool_arguments() {
 }
 
 #[test]
+fn trace_state_accepts_only_contained_hints_from_an_external_proxy() {
+    let mut state = TraceState::new();
+    assert!(state.register_file_hint("trace_file", "/root/direct.txt"));
+    assert_eq!(state.lookup_file_path("direct.txt").as_deref(), Some("trace_file"));
+    assert!(!state.register_file_hint("trace_file", "../escape.txt"));
+    assert!(!state.register_file_hint("", "empty-trace.txt"));
+}
+
+#[test]
 fn trace_state_keeps_file_hints_after_tool_trace_completes() {
     let mut state = TraceState::new();
     state.register_tool_calls("trace_file", &["call_1".to_string()]);

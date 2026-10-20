@@ -40,11 +40,14 @@ HERMETIC_AGY_MODEL_DISPLAY = {json.dumps(HERMETIC_AGY_MODEL_DISPLAY)}
 LIVE_OPENAI_RESPONSES_MODEL = {json.dumps(LIVE_OPENAI_RESPONSES_MODEL)}
 LIVE_GEMINI_TEXT_MODEL = {json.dumps(LIVE_GEMINI_TEXT_MODEL)}
 LIVE_CLAUDE_MODEL = {json.dumps(LIVE_CLAUDE_MODEL)}
+# The workload's workspace and its user's home: its root is read-only.
+WORKSPACE = "/workspace"
+HOME = os.environ.get("HOME") or "/home/capsem"
 DNS_QNAME = "model.capsem.test"
 DNS_IP = socket.gethostbyname(DNS_QNAME)
 NONCE = uuid.uuid4().hex
 FILENAME = {json.dumps(filename_prefix)} + "-" + uuid.uuid4().hex + ".txt"
-TARGET = "/root/" + FILENAME
+TARGET = WORKSPACE + "/" + FILENAME
 PROMPT = "Write uuid4 hex value " + NONCE + " to " + TARGET + "."
 
 def run_tool(arguments):
@@ -53,11 +56,16 @@ def run_tool(arguments):
         completed = subprocess.run(
             command,
             shell=True,
-            cwd="/root",
+            cwd=WORKSPACE,
             capture_output=True,
             text=True,
             timeout=30,
         )
+        if completed.returncode != 0:
+            raise RuntimeError(
+                f"tool command failed (exit {{completed.returncode}}): {{command!r}}\\n"
+                f"stdout: {{completed.stdout}}\\nstderr: {{completed.stderr}}"
+            )
         return "Process exited with code " + str(completed.returncode)
     path = arguments.get("file_path") or arguments.get("path")
     content = arguments.get("content")
@@ -152,7 +160,7 @@ first_events = parse_sse(post(first_body))
 tool_item = next(
     event["item"]
     for event in first_events
-    if event.get("type") in {"response.output_item.added", "response.output_item.done"}
+    if event.get("type") == "response.output_item.done"
     and event.get("item", {}).get("type") == "function_call"
 )
 call_args = json.loads(tool_item["arguments"])
@@ -654,7 +662,7 @@ def post(body):
 def run_one(index):
     nonce = uuid.uuid4().hex
     filename = "openai-two-" + uuid.uuid4().hex + ".txt"
-    target = "/root/" + filename
+    target = WORKSPACE + "/" + filename
     prompt = "Write uuid4 hex value " + nonce + " to " + target + "."
     first_events = parse_sse(post({
         "model": HERMETIC_OPENAI_PRICED_MODEL,
@@ -665,7 +673,7 @@ def run_one(index):
     tool_item = next(
         event["item"]
         for event in first_events
-        if event.get("type") in {"response.output_item.added", "response.output_item.done"}
+        if event.get("type") == "response.output_item.done"
         and event.get("item", {}).get("type") == "function_call"
     )
     call_args = json.loads(tool_item["arguments"])
@@ -875,7 +883,8 @@ def codex_cli_script(base_url: str) -> str:
     return textwrap.dedent(
         common_result_script_prelude(base_url, "codex-cli")
         + r'''
-codex_config = Path("/root/.codex/config.toml")
+codex_config = Path(HOME + "/.codex/config.toml")
+codex_config.parent.mkdir(parents=True, exist_ok=True)
 codex_config.write_text(
     "\n".join([
         'model = "' + HERMETIC_OPENAI_COMPAT_MODEL + '"',
@@ -895,7 +904,7 @@ codex_config.write_text(
         'plugin_sharing = false',
         '',
         '[mcp_servers.capsem]',
-        'command = "/run/capsem-mcp-server"',
+        'url = "http://mcp.capsem.internal/mcp"',
         '',
         '[model_providers.capsem-ironbank]',
         'name = "Ironbank OpenAI-compatible fixture"',
@@ -908,7 +917,7 @@ codex_config.write_text(
     encoding="utf-8",
 )
 env = os.environ.copy()
-env["HOME"] = "/root"
+env["HOME"] = HOME
 env["NO_COLOR"] = "1"
 env["TERM"] = "dumb"
 env["OPENAI_API_KEY"] = "sk-" + NONCE
@@ -919,10 +928,10 @@ completed = subprocess.run(
         "--dangerously-bypass-approvals-and-sandbox",
         "--skip-git-repo-check",
         "--cd",
-        "/root",
+        WORKSPACE,
         PROMPT,
     ],
-    cwd="/root",
+    cwd=WORKSPACE,
     env=env,
     capture_output=True,
     text=True,
@@ -930,7 +939,7 @@ completed = subprocess.run(
 )
 if completed.returncode != 0:
     raise SystemExit((completed.stdout or "") + (completed.stderr or ""))
-call_args = {"cmd": "printf '%s\\n' " + NONCE + " > " + TARGET, "yield_time_ms": 1000, "max_output_tokens": 2000}
+call_args = {"cmd": "printf '%s\\n' " + "'" + NONCE + "' > '" + TARGET + "'", "yield_time_ms": 1000, "max_output_tokens": 2000}
 emit_result("ollama", BASE_DOMAIN, "/v1/responses", HERMETIC_OPENAI_COMPAT_MODEL, NONCE, "ledger reasoning", "exec_command", call_args, "Process exited with code 0", credential_provider="openai")
 '''
     ).strip()
@@ -941,10 +950,14 @@ def claude_ollama_launch_script(base_url: str) -> str:
         common_result_script_prelude(base_url, "claude-ollama-launch")
         + r'''
 env = os.environ.copy()
-env["HOME"] = "/root"
+env["HOME"] = HOME
 env["NO_COLOR"] = "1"
 env["TERM"] = "xterm-256color"
 env["OLLAMA_HOST"] = BASE_URL
+# One model exchange: no side calls (a session title, suggestions) that the
+# replay would answer with the same tool call.
+env["DISABLE_NON_ESSENTIAL_MODEL_CALLS"] = "1"
+env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
 completed = subprocess.run(
     [
         "ollama",
@@ -954,10 +967,14 @@ completed = subprocess.run(
         "--model",
         HERMETIC_OPENAI_COMPAT_MODEL,
         "--",
+        # Claude Code asks before running a tool unless told not to, and a
+        # print-mode session has no one to ask. The VM ran it as root, where
+        # it allows its tools; the workload's user is not root.
+        "--dangerously-skip-permissions",
         "-p",
         PROMPT,
     ],
-    cwd="/root",
+    cwd=WORKSPACE,
     env=env,
     capture_output=True,
     text=True,
@@ -965,8 +982,8 @@ completed = subprocess.run(
 )
 if completed.returncode != 0:
     raise SystemExit((completed.stdout or "") + (completed.stderr or ""))
-call_args = {"command": "printf '%s\\n' " + NONCE + " > " + TARGET, "description": "write ironbank token"}
-emit_result("ollama", "127.0.0.1", "/v1/messages", HERMETIC_OPENAI_COMPAT_MODEL, NONCE, "ledger reasoning", "Bash", call_args, "(Bash completed with no output)")
+call_args = {"command": "printf '%s\\n' " + "'" + NONCE + "' > '" + TARGET + "'", "description": "write ironbank token"}
+emit_result("ollama", BASE_DOMAIN, "/v1/messages", HERMETIC_OPENAI_COMPAT_MODEL, NONCE, "ledger reasoning", "Bash", call_args, "(Bash completed with no output)")
 '''
     ).strip()
 
@@ -976,7 +993,7 @@ def codex_ollama_launch_script(base_url: str) -> str:
         common_result_script_prelude(base_url, "codex-ollama-launch")
         + r'''
 env = os.environ.copy()
-env["HOME"] = "/root"
+env["HOME"] = HOME
 env["NO_COLOR"] = "1"
 env["TERM"] = "xterm-256color"
 env["OLLAMA_HOST"] = BASE_URL
@@ -993,10 +1010,10 @@ completed = subprocess.run(
         "--dangerously-bypass-approvals-and-sandbox",
         "--skip-git-repo-check",
         "--cd",
-        "/root",
+        WORKSPACE,
         PROMPT,
     ],
-    cwd="/root",
+    cwd=WORKSPACE,
     env=env,
     capture_output=True,
     text=True,
@@ -1004,21 +1021,21 @@ completed = subprocess.run(
 )
 if completed.returncode != 0:
     raise SystemExit((completed.stdout or "") + (completed.stderr or ""))
-call_args = {"cmd": "printf '%s\\n' " + NONCE + " > " + TARGET, "yield_time_ms": 1000, "max_output_tokens": 2000}
-emit_result("ollama", "127.0.0.1", "/v1/responses", HERMETIC_OPENAI_COMPAT_MODEL, NONCE, "ledger reasoning", "exec_command", call_args, "Process exited with code 0")
+call_args = {"cmd": "printf '%s\\n' " + "'" + NONCE + "' > '" + TARGET + "'", "yield_time_ms": 1000, "max_output_tokens": 2000}
+emit_result("ollama", BASE_DOMAIN, "/v1/responses", HERMETIC_OPENAI_COMPAT_MODEL, NONCE, "ledger reasoning", "exec_command", call_args, "Process exited with code 0")
 '''
     ).strip()
 
 
-def agy_cli_script(_base_url: str) -> str:
+def agy_cli_script(base_url: str) -> str:
     return textwrap.dedent(
-        common_result_script_prelude("http://127.0.0.1:3713", "agy-cli")
+        common_result_script_prelude(base_url, "agy-cli")
         + r'''
 env = os.environ.copy()
-env["HOME"] = "/root"
+env["HOME"] = HOME
 env["NO_COLOR"] = "1"
 env["TERM"] = "xterm-256color"
-token_path = Path("/root/.gemini/antigravity-cli/antigravity-oauth-token")
+token_path = Path(HOME + "/.gemini/antigravity-cli/antigravity-oauth-token")
 token_path.parent.mkdir(parents=True, exist_ok=True)
 token_path.write_text(json.dumps({
     "token": {
@@ -1030,9 +1047,9 @@ token_path.write_text(json.dumps({
     "auth_method": "consumer"
 }), encoding="utf-8")
 token_path.chmod(0o600)
-settings_path = Path("/root/.gemini/antigravity-cli/settings.json")
+settings_path = Path(HOME + "/.gemini/antigravity-cli/settings.json")
 agy_model_settings = {
-    "trustedWorkspaces": ["/root"],
+    "trustedWorkspaces": [WORKSPACE],
     "telemetry": {"enabled": False},
     "autoUpdate": {"enabled": False}
 }
@@ -1048,7 +1065,7 @@ completed = subprocess.run(
         "--print-timeout",
         "90s",
     ],
-    cwd="/root",
+    cwd=WORKSPACE,
     env=env,
     capture_output=True,
     text=True,
@@ -1065,8 +1082,8 @@ if not Path(TARGET).exists():
         + (completed.stderr or "")[-12000:]
     )
 call_args = {
-    "CommandLine": "printf '%s\\n' " + NONCE + " > " + TARGET,
-    "Cwd": "/root",
+    "CommandLine": "printf '%s\\n' " + "'" + NONCE + "' > '" + TARGET + "'",
+    "Cwd": WORKSPACE,
     "WaitMsBeforeAsync": 1000,
     "toolSummary": "Write proof",
     "toolAction": "Writing file",

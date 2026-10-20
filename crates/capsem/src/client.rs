@@ -1,7 +1,4 @@
-//! HTTP-over-UDS client for the capsem service daemon.
-//!
-//! Contains the `UdsClient`, all request/response types shared with the
-//! service API, and small helpers used across command handlers.
+//! Gateway-backed CLI requests and explicitly scoped local service administration.
 
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -22,310 +19,15 @@ use crate::{paths, service_install};
 // Request / Response types
 // ---------------------------------------------------------------------------
 
-/// The wire contract is `capsem-api`'s. The CLI used to mirror these types by
-/// hand, which is how `ForkResponse` lost its `id` and `env`/`from` lost their
-/// serde defaults.
-pub use capsem_api::{ForkRequest, ForkResponse, ProvisionRequest, ProvisionResponse, VmLifecycleState};
+/// SDK and CLI consume the same public wire contract.
+pub use capsem_api::{
+    AssetStatus, ErrorResponse, ExecRequest, ExecResponse, ForkRequest, ForkResponse, HistoryResponse, ListResponse,
+    LogsResponse, PersistRequest, ProvisionRequest, ProvisionResponse, PurgeRequest, PurgeResponse, RunRequest,
+    SandboxInfo as SessionInfo, UpdateStatusResponse, VmLifecycleState,
+};
+#[cfg(test)]
+pub use capsem_api::{SupplyChainEvidence, UpdateCompatibilityState, UpdateTrackState, UpdateTrackStatus};
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct SessionInfo {
-    pub id: String,
-    #[serde(default)]
-    pub profile_id: String,
-    #[serde(default)]
-    pub name: Option<String>,
-    pub pid: u32,
-    pub status: VmLifecycleState,
-    #[serde(default)]
-    pub persistent: bool,
-    #[serde(default)]
-    pub ram_mb: Option<u64>,
-    #[serde(default)]
-    pub cpus: Option<u32>,
-    #[serde(default)]
-    pub version: Option<String>,
-    #[serde(default)]
-    pub forked_from: Option<String>,
-    #[serde(default)]
-    pub description: Option<String>,
-    #[serde(default)]
-    pub created_at: Option<String>,
-    #[serde(default)]
-    pub uptime_secs: Option<u64>,
-    #[serde(default)]
-    pub total_input_tokens: Option<u64>,
-    #[serde(default)]
-    pub total_output_tokens: Option<u64>,
-    #[serde(default)]
-    pub total_estimated_cost: Option<f64>,
-    #[serde(default)]
-    pub total_tool_calls: Option<u64>,
-    #[serde(default)]
-    pub total_requests: Option<u64>,
-    #[serde(default)]
-    pub allowed_requests: Option<u64>,
-    #[serde(default)]
-    pub denied_requests: Option<u64>,
-    #[serde(default)]
-    pub total_file_events: Option<u64>,
-    #[serde(default)]
-    pub model_call_count: Option<u64>,
-    /// Tail of `process.log` from the last failed boot when
-    /// `status == "Defunct"`. Rendered inline by `capsem list` so a
-    /// crashed VM shows its own reason on screen.
-    #[serde(default)]
-    pub last_error: Option<String>,
-    #[serde(default)]
-    pub can_resume: bool,
-    #[serde(default)]
-    pub resume_blocked_reason: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ListResponse {
-    #[serde(rename = "sandboxes")]
-    pub sessions: Vec<SessionInfo>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct PersistRequest {
-    pub name: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct RunRequest {
-    pub command: String,
-    pub profile_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timeout_secs: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ram_mb: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cpus: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub env: Option<HashMap<String, String>>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct PurgeRequest {
-    pub all: bool,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct PurgeResponse {
-    pub purged: u32,
-    pub persistent_purged: u32,
-    pub ephemeral_purged: u32,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct LogsResponse {
-    pub logs: String,
-    pub serial_logs: Option<String>,
-    pub process_logs: Option<String>,
-}
-
-/// A single command history entry from the service.
-#[derive(Serialize, Deserialize, Debug)]
-pub struct HistoryEntry {
-    pub timestamp: String,
-    pub layer: String,
-    pub command: String,
-    pub exit_code: Option<i32>,
-    pub duration_ms: Option<u64>,
-    pub stdout_preview: Option<String>,
-    pub stderr_preview: Option<String>,
-    pub details: serde_json::Value,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct HistoryResponse {
-    pub commands: Vec<HistoryEntry>,
-    pub total: u64,
-    pub has_more: bool,
-}
-
-pub use capsem_api::{ExecRequest, ExecResponse};
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct AssetEntry {
-    pub name: String,
-    pub status: String,
-    #[serde(default)]
-    pub path: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct AssetManifestStatus {
-    pub origin: String,
-    pub path: String,
-    #[serde(default)]
-    pub origin_path: Option<String>,
-    #[serde(default)]
-    pub origin_source: Option<String>,
-    #[serde(default)]
-    pub packaged_at: Option<String>,
-    #[serde(default)]
-    pub refreshed_at: Option<String>,
-    #[serde(default)]
-    pub validation_status: Option<String>,
-    #[serde(default)]
-    pub validation_error: Option<String>,
-    #[serde(default)]
-    pub blake3: Option<String>,
-    #[serde(default)]
-    pub format: Option<u32>,
-    #[serde(default)]
-    pub refresh_policy: Option<String>,
-    #[serde(default)]
-    pub assets_current: Option<String>,
-    #[serde(default)]
-    pub binaries_current: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct AssetStatusResponse {
-    pub ready: bool,
-    #[serde(default)]
-    pub downloading: bool,
-    #[serde(default)]
-    pub manifest: Option<AssetManifestStatus>,
-    #[serde(default)]
-    pub current_asset: Option<String>,
-    #[serde(default)]
-    pub bytes_done: Option<u64>,
-    #[serde(default)]
-    pub bytes_total: Option<u64>,
-    #[serde(default)]
-    pub asset_version: Option<String>,
-    #[serde(default)]
-    pub assets: Vec<AssetEntry>,
-    #[serde(default)]
-    pub error: Option<String>,
-    #[serde(default)]
-    pub ensured: Option<bool>,
-    #[serde(default)]
-    pub started: Option<bool>,
-    #[serde(default)]
-    pub downloaded: Option<usize>,
-    #[serde(default)]
-    pub reconcile_error: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct UpdateStatusResponse {
-    #[serde(default)]
-    pub checked_at: Option<u64>,
-    #[serde(default)]
-    pub channel_url: Option<String>,
-    #[serde(default)]
-    pub channel_hash: Option<String>,
-    #[serde(default)]
-    pub validation_status: Option<String>,
-    #[serde(default)]
-    pub validation_error: Option<String>,
-    pub stale: bool,
-    #[serde(default)]
-    pub last_error: Option<String>,
-    pub binary: UpdateTrackStatus,
-    pub assets: UpdateTrackStatus,
-    pub profiles: UpdateTrackStatus,
-    pub images: UpdateTrackStatus,
-    #[serde(default)]
-    pub supply_chain: SupplyChainEvidence,
-}
-
-#[derive(Serialize, Deserialize, Debug, Default)]
-pub struct SupplyChainEvidence {
-    #[serde(default)]
-    pub manifest: SupplyChainManifestEvidence,
-    #[serde(default)]
-    pub channel_index: SupplyChainChannelEvidence,
-    #[serde(default)]
-    pub host_sbom: SupplyChainReference,
-    #[serde(default)]
-    pub vm_obom: SupplyChainReference,
-    #[serde(default)]
-    pub attestations: Vec<SupplyChainReference>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Default)]
-pub struct SupplyChainManifestEvidence {
-    #[serde(default)]
-    pub origin: Option<String>,
-    #[serde(default)]
-    pub source: Option<String>,
-    #[serde(default)]
-    pub path: String,
-    #[serde(default)]
-    pub blake3: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Default)]
-pub struct SupplyChainChannelEvidence {
-    #[serde(default)]
-    pub url: Option<String>,
-    #[serde(default)]
-    pub sha256: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Default)]
-pub struct SupplyChainReference {
-    #[serde(default)]
-    pub name: String,
-    #[serde(default)]
-    pub format: Option<String>,
-    #[serde(default)]
-    pub scope: Option<String>,
-    #[serde(default)]
-    pub generator: Option<String>,
-    #[serde(default)]
-    pub release_artifact: Option<String>,
-    #[serde(default)]
-    pub route: Option<String>,
-    #[serde(default)]
-    pub workflow: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct UpdateTrackStatus {
-    #[serde(default)]
-    pub current: Option<String>,
-    #[serde(default)]
-    pub latest: Option<String>,
-    #[serde(default)]
-    pub blocked_reason: Option<String>,
-    pub update_available: bool,
-    pub state: UpdateTrackState,
-    pub compatibility: UpdateCompatibilityState,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum UpdateTrackState {
-    Current,
-    UpdateAvailable,
-    Unknown,
-    NotPublished,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum UpdateCompatibilityState {
-    Compatible,
-    Unknown,
-    NotApplicable,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub(crate) struct ErrorResponse {
-    error: String,
-}
-
-/// Wrapper for service API responses that may be success or error.
-///
-/// IMPORTANT: `Ok` must be listed before `Err` so serde's untagged
-/// deserialization tries the success variant first.
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(untagged)]
 pub(crate) enum ApiResponse<T> {
@@ -336,8 +38,8 @@ pub(crate) enum ApiResponse<T> {
 impl<T> ApiResponse<T> {
     pub fn into_result(self) -> Result<T> {
         match self {
-            ApiResponse::Ok(t) => Ok(t),
-            ApiResponse::Err(e) => Err(anyhow::anyhow!(e.error)),
+            Self::Ok(value) => Ok(value),
+            Self::Err(error) => Err(anyhow::anyhow!(error.error)),
         }
     }
 }
@@ -383,6 +85,10 @@ fn direct_spawn_service_args(
         paths.assets_dir.clone().into_os_string(),
         "--process-binary".into(),
         paths.process_bin.clone().into_os_string(),
+        "--ledger-binary".into(),
+        paths.ledger_bin.clone().into_os_string(),
+        "--proxy-binary".into(),
+        paths.proxy_bin.clone().into_os_string(),
     ];
     if isolated {
         args.extend([OsString::from("--gateway-port"), OsString::from("0")]);
@@ -412,7 +118,7 @@ pub fn validate_id(id: &str) -> Result<()> {
 // UDS Client
 // ---------------------------------------------------------------------------
 
-/// How `UdsClient::connect_with_timeout` should interpret socket-absent
+/// How `ServiceAdminClient::connect_with_timeout` should interpret socket-absent
 /// errors (`NotFound` / `ConnectionRefused`).
 ///
 /// Both values run the same 5s `poll_until` budget; they differ only in
@@ -441,14 +147,14 @@ pub(crate) enum DirectServiceLifetime {
     BoundToCommand,
 }
 
-pub struct UdsClient {
+pub struct ServiceAdminClient {
     uds_path: PathBuf,
     auto_launch: bool,
     direct_service_lifetime: DirectServiceLifetime,
     owned_direct_service: tokio::sync::Mutex<Option<tokio::process::Child>>,
 }
 
-impl UdsClient {
+impl ServiceAdminClient {
     pub fn new(uds_path: PathBuf, auto_launch: bool) -> Self {
         Self {
             uds_path,
@@ -718,6 +424,10 @@ impl UdsClient {
         path: &str,
         body: Option<T>,
     ) -> Result<R> {
+        anyhow::ensure!(
+            method == "GET" && matches!(path, "/system/status" | "/assets/status"),
+            "direct service access is restricted to local status/asset administration"
+        );
         let stream = match self.connect_with_timeout(ConnectMode::FailFast).await {
             Ok(s) => s,
             Err(e) if !self.auto_launch => {
@@ -782,92 +492,8 @@ impl UdsClient {
         self.try_ensure_service().await.map(drop)
     }
 
-    pub async fn post<T: Serialize, R: for<'de> Deserialize<'de>>(&self, path: &str, body: T) -> Result<R> {
-        self.request("POST", path, Some(body)).await
-    }
-
     pub async fn get<R: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<R> {
         self.request::<(), R>("GET", path, None).await
-    }
-
-    /// Resolve a live session's exact route id from either its id or name.
-    /// Preserved failed sessions are absent from the live-session list.
-    pub async fn listed_session_id(&self, typed: &str) -> Result<Option<String>> {
-        let response: ApiResponse<ListResponse> = self.get("/vms/list").await?;
-        let list = response.into_result()?;
-        Ok(list
-            .sessions
-            .iter()
-            .find(|session| session.id == typed || session.name.as_deref() == Some(typed))
-            .map(|session| session.id.clone()))
-    }
-
-    /// Like `request` but returns the raw response bytes + content-type
-    /// instead of deserializing JSON. Used for the file-download
-    /// endpoint which returns arbitrary binary payloads with a
-    /// detected mime type.
-    pub async fn request_bytes(
-        &self,
-        method: &str,
-        path: &str,
-        body: Option<Vec<u8>>,
-        content_type: Option<&str>,
-    ) -> Result<(Vec<u8>, Option<String>)> {
-        let stream = match self.connect_with_timeout(ConnectMode::FailFast).await {
-            Ok(s) => s,
-            Err(e) if !self.auto_launch => {
-                return Err(anyhow::anyhow!(
-                    "cannot connect to service at {}: {e}",
-                    self.uds_path.display()
-                ));
-            }
-            Err(_) => self.try_ensure_service().await?,
-        };
-
-        let io = TokioIo::new(stream);
-        let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await?;
-        tokio::task::spawn(async move {
-            if let Err(err) = conn.await {
-                error!("Connection failed: {:?}", err);
-            }
-        });
-
-        let mut builder = Request::builder()
-            .method(method)
-            .uri(format!("http://localhost{}", path));
-        if let Some(ct) = content_type {
-            builder = builder.header("Content-Type", ct);
-        }
-        let req = match body {
-            Some(b) => builder.body(Full::new(Bytes::from(b)))?,
-            None => builder.body(Full::new(Bytes::new()))?,
-        };
-
-        let res = sender.send_request(req).await?;
-        let status = res.status();
-        let resp_ct = res
-            .headers()
-            .get(hyper::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string());
-        let body_bytes = res.collect().await?.to_bytes().to_vec();
-
-        if !status.is_success() {
-            if let Ok(err) = serde_json::from_slice::<ErrorResponse>(&body_bytes) {
-                return Err(anyhow::anyhow!(err.error));
-            }
-            return Err(anyhow::anyhow!(
-                "request failed ({}): {}",
-                status,
-                String::from_utf8_lossy(&body_bytes)
-            ));
-        }
-
-        Ok((body_bytes, resp_ct))
-    }
-
-    pub async fn delete<R: for<'de> Deserialize<'de>>(&self, path: &str) -> Result<R> {
-        self.request::<(), R>("DELETE", path, None).await
     }
 }
 
@@ -879,6 +505,8 @@ mod networks;
 mod stream;
 pub use networks::*;
 pub use stream::StreamEvent;
+mod gateway;
+pub use gateway::GatewayClient;
 
 #[cfg(test)]
 pub(crate) mod tests;

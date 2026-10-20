@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import hashlib
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from .. import crypto as hashlib
 from . import imagecache
 from .cachecontrol import CacheControl
 from .config import GateConfig

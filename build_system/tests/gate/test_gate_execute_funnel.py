@@ -513,7 +513,6 @@ def test_build_assets_exports_its_effective_sandbox_policy(
             graph=False,
             timing=False,
             sandbox=parsed,
-            profile=None,
             arch=None,
             template="all",
         ),

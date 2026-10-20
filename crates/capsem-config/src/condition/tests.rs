@@ -2,6 +2,16 @@ use serde_json::json;
 
 use super::*;
 
+#[test]
+fn grouped_alternatives_cannot_expand_policy_without_a_bound() {
+    let condition = std::iter::repeat_n(r#"(http.path == "a" || http.path == "b")"#, 12)
+        .collect::<Vec<_>>()
+        .join(" && ");
+    let error = CompiledCondition::parse_with(&condition, |_| Ok(()))
+        .expect_err("A short policy must not allocate an exponential number of compiled clauses");
+    assert!(error.contains("too complex"), "{error}");
+}
+
 fn compile(condition: &str) -> CompiledCondition {
     CompiledCondition::parse_with(condition, |_| Ok(())).unwrap_or_else(|e| panic!("{condition} must compile: {e}"))
 }

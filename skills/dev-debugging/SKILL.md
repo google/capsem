@@ -11,10 +11,16 @@ Never fix code before you understand why it broke. The temptation to "just make 
 
 ## Choose the cheapest truthful feedback loop
 
+Keep implementation moving. Use a minimal reproducer and focused TDD checks
+during coding, then return to the next implementation item. Broad qualification
+runs belong at the end of a major phase; a small fix does not justify another
+whole contract/workspace/VM/install run. The bounded wrapper retains timeout
+and cleanup without a routine machine lease.
+
 Capsem now has two distinct execution surfaces:
 
 - Just exposes the small public product interface.
-- Python under `src/capsem/gate/` owns build/test/release plans, graph edges,
+- Python under `build_system/builder/gate/` owns build/test/release plans, graph edges,
   locking, resources, evidence, and cleanup.
 
 For a gate failure, debug the Python step and action that failed; do not infer
@@ -73,10 +79,14 @@ outputs with current source and therefore answers only whether the new segment
 can proceed. It does not prove the complete current tree.
 
 Never use diagnostic continuation with `release-binaries` or
-`release-profile`, and never let it authorize publication. After the fix, use
-the smallest owning `focus-test` group. Run `just test <commit>` when complete
-local whole-system proof is useful. It is not required before release: the
-hosted release lane owns qualification and never consumes the local journal.
+`release-assets`, and never let it authorize publication. After the fix, use
+the smallest owning `focus-test` group. Before release, run `just test <commit>`
+to success: the public release command requires its complete local journal for
+that commit or an identical Git tree. Only the unattended nightly scheduler is
+exempt (`[release].unattended_channels` in
+[`config/gate.toml`](../../config/gate.toml); see
+[`RELEASE.md`](../../RELEASE.md) section 8). The hosted lane then independently
+qualifies the artifact pairing it publishes.
 
 ## Step 1: Reproduce with a test
 
@@ -90,10 +100,10 @@ If you can't reproduce it in a test, you don't understand it well enough to fix 
 just exec "<command that triggers the bug>"
 ```
 
-For telemetry issues, use session inspection:
-```bash
-python3 build_system/scripts/doctor/check_session.py
-```
+For telemetry issues, inspect a live session through the typed timeline,
+history, statistics, and security routes. Use `check_session.py --db` only on
+a coherent, quiesced evidence copy after its ledger worker has stopped; see
+`/dev-session-debug`.
 
 ## Step 2: Diagnose the root cause
 
@@ -140,11 +150,10 @@ Check boot logs for daemon startup failures, vsock connection issues, or timing 
 HTTP/DNS/model normalization, cert minting, `SecurityEvent` construction,
 security rule evaluation, plugin execution, runtime materialization, and ledger
 materialization. Do not debug by adding credential handling to formatters,
-routes, DB readers, frontend transforms, or harnesses. Use session DB to see
-what actually happened:
-```bash
-python3 build_system/scripts/doctor/check_session.py   # Check net_events for domain, decision, status_code
-```
+routes, DB readers, frontend transforms, or harnesses. Inspect the typed
+timeline and security routes to see what the live ledger recorded. For page or
+archive integrity, preserve a quiesced evidence copy and follow
+`/dev-session-debug`.
 
 **Frontend issues**: Run `just dev ui`, open Chrome DevTools, check console errors, use `take_screenshot` to capture state. See dev-testing-frontend for the full visual verification workflow.
 
@@ -221,7 +230,8 @@ Now that you understand the root cause, write the fix. The fix should:
 After the fix, run the full validation:
 1. `just test` -- unit + cross-compile + frontend
 2. `just exec "capsem-doctor"` -- VM smoke test
-3. If the bug touched telemetry: `python3 build_system/scripts/doctor/check_session.py` after a real session
+3. If the bug touched telemetry: inspect the real session through typed routes;
+   run `check_session.py --db` only on a preserved, quiesced evidence copy
 
 A diagnostic continuation may shorten investigation before this validation;
 it never replaces any item in the final proof.

@@ -67,8 +67,8 @@ def main():
     # Summary
     settings = defaults.get("settings", {})
     print(f"  Settings groups: {[k for k in settings if k not in ('name','description','collapsed')]}")
-    print("  MCP servers: profile routes")
-    print("  MCP tools: profile routes")
+    print("  MCP servers: service MCP routes")
+    print("  MCP tools: service MCP routes")
 
 
 if __name__ == "__main__":

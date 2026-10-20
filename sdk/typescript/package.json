@@ -1,7 +1,9 @@
 {
   "name": "@capsem/sdk",
-  "version": "0.6.3",
+  "version": "0.7.1",
   "description": "Typed async client for the Capsem HTTP gateway",
+  "license": "Apache-2.0",
+  "repository": {"type": "git", "url": "git+https://github.com/google/capsem.git", "directory": "sdk/typescript"},
   "type": "module",
   "engines": {"node": ">=20"},
   "files": ["dist", "README.md"],
@@ -24,6 +26,7 @@
     "build": "node tools/build.mjs",
     "prepack": "pnpm run build",
     "pretest": "pnpm run build",
+    "prewarm:package": "node tools/prewarm-package.mjs",
     "test": "vitest run --coverage",
     "test:sdk": "vitest run --coverage"
   },
@@ -33,6 +36,7 @@
     "@types/node": "^24.0.0",
     "@vitest/coverage-v8": "4.1.11",
     "eslint": "10.10.0",
+    "openai": "7.31.0",
     "typescript": "5.9.3",
     "typescript-eslint": "8.70.0",
     "vitest": "4.1.11"

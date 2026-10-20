@@ -250,6 +250,17 @@ else
     boot_mark "overlayfs"
 fi
 
+# The image workload's own layer (container/launch.py LAYER): an overlay upper,
+# so it needs a real filesystem, not this overlay root. On the ext4 system disk
+# it lives and dies with the session's other state; block mode has only tmpfs.
+if [ "$STORAGE_MODE" = "virtiofs" ]; then LAYER_BACKING=/mnt/system/workload; else LAYER_BACKING=/mnt/b/workload; fi
+mkdir -p "$LAYER_BACKING" /newroot/var/lib/capsem/layer
+chmod 700 "$LAYER_BACKING"
+mount --bind "$LAYER_BACKING" /newroot/var/lib/capsem/layer || {
+    echo "[capsem-init] FATAL: cannot bind the workload layer -- aborting" >&2
+    exit 1
+}
+
 # The overlay root can inherit a restrictive mount-point mode from the initrd
 # staging directory. Unprivileged tools such as apt's `_apt` sandbox must be
 # able to traverse `/` even though most writes remain constrained elsewhere.
@@ -271,6 +282,51 @@ mount -t cgroup2 -o nosuid,nodev,noexec cgroup2 /newroot/sys/fs/cgroup || {
 mount -t devtmpfs devtmpfs /newroot/dev
 mkdir -p /newroot/dev/pts
 mount -t devpts   devpts   /newroot/dev/pts
+
+# Kernel hardening that is runtime state rather than build configuration, set
+# before any service starts. A value the kernel refuses stops the boot: a
+# guest that silently runs without one is not the guest capsem-doctor proves.
+harden() {
+    if ! echo "$2" > "/proc/sys/$1"; then
+        echo "[capsem-init] FATAL: hardening sysctl $1 = $2 failed" >&2
+        exit 1
+    fi
+}
+# Kernel pointers and the kernel log stay out of reach of every process.
+harden kernel/kptr_restrict 2
+harden kernel/dmesg_restrict 1
+harden kernel/randomize_va_space 2
+# ptrace only of your own descendants: a package script cannot attach to the
+# agent CLI beside it and read its credentials.
+harden kernel/yama/ptrace_scope 1
+# x86 cannot compile perf_event_open out; deny it to everything unprivileged.
+if [ -e /proc/sys/kernel/perf_event_paranoid ]; then
+    harden kernel/perf_event_paranoid 2
+fi
+# Links, FIFOs and files in world-writable sticky directories (systemd's
+# defaults), and no core dumps of setuid programs.
+harden fs/protected_symlinks 1
+harden fs/protected_hardlinks 1
+harden fs/protected_fifos 1
+harden fs/protected_regular 1
+harden fs/suid_dumpable 0
+harden vm/mmap_min_addr 65536
+harden dev/tty/ldisc_autoload 0
+harden dev/tty/legacy_tiocsti 0
+# The guest is no router: ignore redirects and source routes, and keep
+# TCP listeners responsive under SYN floods. rp_filter stays off: the VM
+# routes between its cables and the workload's veth asymmetrically.
+for scope in all default; do
+    harden "net/ipv4/conf/$scope/accept_redirects" 0
+    harden "net/ipv4/conf/$scope/secure_redirects" 0
+    harden "net/ipv4/conf/$scope/send_redirects" 0
+    harden "net/ipv4/conf/$scope/accept_source_route" 0
+done
+harden net/ipv4/icmp_echo_ignore_broadcasts 1
+harden net/ipv4/icmp_ignore_bogus_error_responses 1
+harden net/ipv4/tcp_syncookies 1
+harden net/ipv4/tcp_rfc1337 1
+init_log "kernel hardened"
 
 # `/` is overlayfs, which does not implement FIFREEZE.  Suspend must freeze
 # the ext4 filesystem that owns the overlay upperdir before KVM snapshots
@@ -344,42 +400,6 @@ rm -rf /newroot/run/capsem-venv /newroot/run/capsem-venv-ready
 rm -rf /newroot/root/.venv
 ln -sfn /run/capsem-venv /newroot/root/.venv
 
-# Project profile-owned seed files into the writable runtime root.
-# The image stores them under /usr/local/share/capsem/profile-root because
-# rootfs /root is hidden by the runtime workspace mount above.
-if [ -d /newroot/usr/local/share/capsem/profile-root ]; then
-    echo "[capsem-init] projecting profile root seed..."
-    # Seeded files are root's already, and the VirtioFS workspace refuses
-    # the chown `cp -a` repeats for each of them: its "can't preserve
-    # ownership" lines are expected noise, not console errors.
-    cp -a /newroot/usr/local/share/capsem/profile-root/. /newroot/ 2>&1 || {
-        echo "[capsem-init] FATAL: cannot project profile root seed" >&2
-        exit 1
-    }
-    boot_mark "profile_root_seed"
-fi
-
-# The profile root seed may carry `/etc` metadata. Re-assert traversal after
-# projection so apt's `_apt` sandbox can always read the TLS trust bundle.
-chmod 755 /newroot/etc
-
-# Curl-installed AI CLIs are promoted to /usr/local/bin at image build time
-# because /root is mounted fresh at runtime. Recreate the user-local shims that
-# their own doctor/config checks expect after the runtime /root mount exists.
-for cli in claude agy; do
-    mkdir -p /newroot/usr/local/bin /newroot/root/.local/bin
-    if [ ! -e "/newroot/usr/local/bin/$cli" ] && [ -x "/newroot/opt/ai-clis/bin/$cli" ]; then
-        ln -sf "/opt/ai-clis/bin/$cli" "/newroot/usr/local/bin/$cli"
-    fi
-    rm -f "/newroot/root/.local/bin/$cli"
-    ln -sf "/usr/local/bin/$cli" "/newroot/root/.local/bin/$cli"
-    if [ -x "/newroot/usr/local/bin/$cli" ]; then
-        chroot /newroot /bin/chmod 555 "/root/.local/bin/$cli" 2>/dev/null || true
-    else
-        init_log "WARNING: /usr/local/bin/$cli missing; created expected user-local shim"
-    fi
-done
-
 chroot /newroot /bin/chmod 755 /
 
 # Remove legacy HTTP sources.list if present (belt-and-suspenders).
@@ -415,6 +435,12 @@ chroot /newroot ip route add default dev dummy0
 # libc waits longer so it receives that answer before retransmitting.
 printf 'nameserver 127.0.0.1\noptions timeout:6 attempts:2\n' > /newroot/run/resolv.conf
 mount --bind /newroot/run/resolv.conf /newroot/etc/resolv.conf
+# localhost resolves through /etc/hosts before DNS, which never answers it.
+# The exported rootfs ships it empty: Docker writes /etc/hosts only into a
+# running container and discards build-time writes. IPv4 only -- the guest
+# kernel is built without IPv6.
+printf '127.0.0.1 localhost\n' > /newroot/run/hosts
+mount --bind /newroot/run/hosts /newroot/etc/hosts
 
 # iptables-nft REDIRECT: use the nftables backend, not legacy xtables.
 # Port 53 (DNS, UDP+TCP) goes to capsem-dns-proxy on :1053 -- T3.4.
@@ -619,12 +645,32 @@ boot_mark "deploy"
 if [ -x /newroot/usr/sbin/auditd ]; then
     mkdir -p /newroot/var/log/audit
     chroot /newroot /usr/sbin/auditd -s disable 2>/dev/null &
-    # Brief wait for auditd to create its socket
-    sleep 0.1
+    # A nonzero kernel audit PID confirms registration; a fixed sleep does not.
+    _i=0
+    while [ "$_i" -lt 100 ]; do
+        if _audit_status=$(chroot /newroot /usr/sbin/auditctl -s 2>/dev/null) \
+            && printf '%s\n' "$_audit_status" | awk '
+                $1 == "pid" { pids++; ready = NF == 2 && $2 ~ /^[1-9][0-9]*$/ }
+                END { exit !(pids == 1 && ready) }'; then
+            break
+        fi
+        _i=$((_i + 1))
+        sleep 0.05
+    done
+    if [ "$_i" -ge 100 ]; then
+        echo "[capsem-init] FATAL: auditd did not register with the kernel" >&2
+        exit 1
+    fi
     # Record all execve syscalls with the capsem_exec key
-    chroot /newroot /usr/sbin/auditctl -a always,exit -F arch=b64 -S execve -k capsem_exec 2>/dev/null || true
+    if ! chroot /newroot /usr/sbin/auditctl -a always,exit -F arch=b64 -S execve -k capsem_exec 2>/dev/null; then
+        echo "[capsem-init] FATAL: could not install the execve audit rule" >&2
+        exit 1
+    fi
     # Lock audit config: even root cannot disable until reboot
-    chroot /newroot /usr/sbin/auditctl -e 2 2>/dev/null || true
+    if ! chroot /newroot /usr/sbin/auditctl -e 2 2>/dev/null; then
+        echo "[capsem-init] FATAL: could not lock the audit configuration" >&2
+        exit 1
+    fi
     echo "[capsem-init] auditd started, rules locked"
 fi
 boot_mark "audit"
@@ -632,9 +678,9 @@ boot_mark "audit"
 # Increase open file descriptor limit to prevent EMFILE/Errno 24 crashes
 ulimit -n 65536
 
-# Minimal PATH for chroot commands below (uv, npm, python3 are in /usr/local/bin).
+# Minimal PATH for chroot commands below (python3 for the venv).
 # The interactive shell PATH is set by the host via BootConfig SetEnv later.
-export PATH=/opt/ai-clis/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export HOME=/root
 export TERM=xterm-256color
 export COLORTERM=truecolor
@@ -642,15 +688,6 @@ export IS_SANDBOX=1
 export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 export NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
-
-# Optimize Node.js and Python for the sandboxed VM environment
-# 1. Prevent kernel OOMs by capping Node's V8 heap (VM has 4GB RAM by default)
-export NODE_OPTIONS="--max-old-space-size=2048"
-# 2. Disable slow network checks and ads during CLI executions
-export NO_UPDATE_NOTIFIER=1
-export NPM_CONFIG_UPDATE_NOTIFIER=false
-export NPM_CONFIG_FUND=false
-export NPM_CONFIG_AUDIT=false
 export PIP_DISABLE_PIP_VERSION_CHECK=1
 
 # Create Python virtualenv in the background so it doesn't block the PTY agent.
@@ -667,12 +704,12 @@ boot_mark "venv"
 
 # Ensure PATH and venv survive login shells (tmux panes).
 # /etc/profile resets PATH, so we must restore the host-injected dirs here.
-# Source of truth for the base PATH is config/defaults.toml.
+# Source of truth for the base PATH is config/docker/image/vm/environment.toml.
 cat > /newroot/etc/profile.d/capsem.sh << 'PROFILE'
 # Prepend dirs that the host injects via BootConfig but /etc/profile drops.
 case ":$PATH:" in
-    *:/opt/ai-clis/bin:*) ;;
-    *) export PATH="/opt/ai-clis/bin:/root/.local/bin:$PATH" ;;
+    *:/root/.local/bin:*) ;;
+    *) export PATH="/root/.local/bin:$PATH" ;;
 esac
 export TERM=xterm-256color
 export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
@@ -724,10 +761,13 @@ else
 fi
 
 # A configured container is session state, so existing cold restart/fork boots
-# its saved command. Runtime namespaces/cgroups belong only to this boot.
+# its saved command. Runtime namespaces/cgroups belong only to this boot, so a
+# previous boot's runtime state goes on every boot: a clone of a running VM
+# carries it in the overlay, and a launch later in this boot refuses to start
+# over what looks like a live workload.
+rm -rf /newroot/var/tmp/capsem-container
 if [ -f /newroot/root/.capsem-image/ready ]; then
-    rm -rf /newroot/var/tmp/capsem-container
-    /bin/busybox unshare -m /bin/sh -ec 'mount --make-rprivate /; cd /newroot; mount --move . /; exec chroot . /usr/bin/python3 /root/.capsem-image/launch.py /root/.capsem-image' &
+    /bin/busybox unshare -m /bin/sh -ec 'mount --make-rprivate /; cd /newroot; mount --move . /; exec chroot . /usr/bin/python3 /root/.capsem-image/launch.py --detached /root/.capsem-image' &
 fi
 
 AGENT_STDIO_LOG=/tmp/capsem-agent-stdio.log

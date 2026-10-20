@@ -1,8 +1,8 @@
-"""Ironbank profile UI route contract through service and gateway.
+"""Ironbank settings UI route contract through service and gateway.
 
 This is the black-box guard for the "API error 404" class of UI bugs: every
-profile-facing surface the UI uses must exist for every shipped profile through
-both the service UDS route and the authenticated gateway route.
+asset, plugin and MCP surface the UI uses must exist through both the service
+UDS route and the authenticated gateway route.
 """
 
 from __future__ import annotations
@@ -11,10 +11,8 @@ import json
 from typing import Any
 
 from helpers.gateway import GatewayInstance, TcpHttpClient
-from helpers.route_matrix import RouteSpec, assert_profile_route_matrix
+from helpers.route_matrix import RouteSpec, assert_settings_route_matrix
 from helpers.service import ServiceInstance
-
-PROFILES = ("code", "co-work")
 
 
 def _service_request(client: Any, spec: RouteSpec) -> Any:
@@ -42,7 +40,7 @@ def _gateway_post_status_and_body(client: TcpHttpClient, spec: RouteSpec) -> tup
     return status, body.decode(errors="replace")
 
 
-def test_profile_ui_routes_exist_through_service_and_gateway() -> None:
+def test_settings_ui_routes_exist_through_service_and_gateway() -> None:
     service = ServiceInstance()
     gateway: GatewayInstance | None = None
     try:
@@ -53,14 +51,8 @@ def test_profile_ui_routes_exist_through_service_and_gateway() -> None:
         service_client = service.client()
         gateway_client = TcpHttpClient(gateway.base_url, gateway.token)
 
-        for client_name, request in (
-            ("service", lambda spec: _service_request(service_client, spec)),
-            ("gateway", lambda spec: _gateway_request(gateway_client, spec)),
-        ):
-            profiles = service_client.get("/profiles/list", timeout=30)
-            listed_ids = {profile["id"] for profile in profiles["profiles"]}
-            assert set(PROFILES) <= listed_ids, (client_name, listed_ids)
-            assert_profile_route_matrix(profiles=PROFILES, request=request)
+        assert_settings_route_matrix(lambda spec: _service_request(service_client, spec))
+        assert_settings_route_matrix(lambda spec: _gateway_request(gateway_client, spec))
     finally:
         if gateway is not None:
             gateway.stop()

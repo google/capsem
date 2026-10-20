@@ -83,17 +83,10 @@ if [ -z "$MANIFEST_SOURCE" ]; then
     echo "capsem: packaged manifest-metadata.json has no manifest_url" >&2
     exit 1
 fi
-CAPSEM_INSTALL_PHASE="install_profiles"
-if [ -d "/usr/share/capsem/profiles" ]; then
-    rm -rf "$CAPSEM_DIR/profiles"
-    mkdir -p "$CAPSEM_DIR/profiles"
-    cp -R /usr/share/capsem/profiles/. "$CAPSEM_DIR/profiles/" 2>/dev/null || true
-    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=profiles_copied"
-fi
 
 # Symlink system binaries into user dir
 CAPSEM_INSTALL_PHASE="link_binaries"
-for bin in capsem capsem-service capsem-process capsem-tui capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin capsem-mock-server capsem-bench-rs; do
+for bin in capsem capsem-service capsem-process capsem-ledger capsem-proxy capsem-tui capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin capsem-mock-server capsem-bench-rs; do
     if [ ! -f "/usr/bin/$bin" ]; then
         echo "capsem: packaged binary missing: /usr/bin/$bin" >&2
         echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=binary_missing bin=$bin src=/usr/bin/$bin"
