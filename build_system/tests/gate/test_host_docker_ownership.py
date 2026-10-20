@@ -83,8 +83,8 @@ def test_repository_context_copies_name_the_moved_helpers() -> None:
     assert "COPY --chmod=555 build_system/docker/apt-with-retries.sh" in package
     assert "COPY sources-multiarch.sh /tmp/" in host
     assert "COPY --chmod=555 materialize-host-apt.sh" in host
-    assert "COPY apt-with-retries.sh /usr/local/bin/apt-with-retries.sh" in host
-    assert "COPY swap-dev-libs.sh /usr/local/bin/swap-dev-libs" in host
+    assert "apt-with-retries.sh" not in host
+    assert "swap-dev-libs.sh" not in host
 
 
 def test_node_dependency_images_receive_the_declared_patch_inputs() -> None:

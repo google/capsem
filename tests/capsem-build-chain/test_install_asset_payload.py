@@ -1280,7 +1280,7 @@ def test_cross_compile_reuses_only_the_exact_host_builder_identity() -> None:
     assert "org.capsem.host-builder.input-key" in issued
     assert "docker build -t capsem-host-builder" not in issued
     assert "org.capsem.host-builder.input-key" in host_builder
-    assert host_builder.index("COPY swap-dev-libs.sh") > host_builder.index("FROM")
+    assert "swap-dev-libs.sh" not in host_builder
 
 
 def test_cross_compile_enforces_docker_cache_after_builder_before_package() -> None:

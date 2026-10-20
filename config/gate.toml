@@ -1636,10 +1636,8 @@ dockerfile = "build_system/docker/Dockerfile.host-builder"
 context = "build_system/docker/"
 builder_identity_inputs = [
     "build_system/docker/Dockerfile.host-builder",
-    "build_system/docker/apt-with-retries.sh",
     "build_system/docker/materialize-host-apt.sh",
     "build_system/docker/sources-multiarch.sh",
-    "build_system/docker/swap-dev-libs.sh",
     "rust-toolchain.toml",
 ]
 materialize_network = "default"

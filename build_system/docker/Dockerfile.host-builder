@@ -56,7 +56,7 @@ RUN bash /tmp/sources-multiarch.sh "$APT_SNAPSHOT_BASE" "$APT_SNAPSHOT_ID" \
 # ---- Native build tools + cross-compilation toolchains ----
 # Native-arch Tauri dev libraries are installed in the same transaction so
 # the complete multiarch indexes are fetched exactly once. Cross builds swap
-# these packages at container runtime (see swap-dev-libs.sh).
+# these packages in its own exact dependency helper.
 # Bound each network phase: a snapshot outage once held this layer for 57 minutes.
 # ---- Native-arch Tauri dev libraries ----
 COPY --chmod=555 materialize-host-apt.sh /usr/local/bin/materialize-host-apt
@@ -110,13 +110,6 @@ RUN installed=0; for attempt in 1 2 3; do CARGO_NET_RETRY=10 cargo install cargo
 # ---- Exact uv binary (for capsem-builder scripts) ----
 COPY --from=uv-runtime /uv /uvx /usr/local/bin/
 RUN uv --version
-
-# ---- Helper script to swap -dev libs for cross-compilation ----
-# Keep this after the expensive stable toolchain layers so edits to the swap
-# contract do not rebuild Node, Rust, Tauri CLI, or Python tooling.
-COPY apt-with-retries.sh /usr/local/bin/apt-with-retries.sh
-COPY swap-dev-libs.sh /usr/local/bin/swap-dev-libs
-RUN chmod +x /usr/local/bin/apt-with-retries.sh /usr/local/bin/swap-dev-libs.sh
 
 # ---- Cargo cross-compilation config ----
 ENV CARGO_TARGET_DIR=/cargo-target
