@@ -1026,10 +1026,17 @@ def _normalize_cyclonedx_obom(
         if isinstance(value, dict):
             normalized = {key: normalize(item) for key, item in value.items()}
             license_value = normalized.get("license")
-            if isinstance(license_value, dict) and license_value.get("id") == "sendmail":
-                # cdxgen 12.7.0 emits Debian's lowercase spelling, while the
-                # SPDX identifier embedded in the CycloneDX schema is Sendmail.
-                license_value["id"] = "Sendmail"
+            if isinstance(license_value, dict):
+                # cdxgen 12.7.0 copies these Debian copyright spellings as
+                # license IDs. SPDX IDs are case-sensitive, so CycloneDX's
+                # strict schema rejects the otherwise valid OBOM.
+                spdx_id = license_value.get("id")
+                canonical = {
+                    "bitstream-vera": "Bitstream-Vera",
+                    "sendmail": "Sendmail",
+                }.get(spdx_id)
+                if canonical is not None:
+                    license_value["id"] = canonical
             return normalized
         return value
 

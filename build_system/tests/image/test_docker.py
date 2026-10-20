@@ -1273,7 +1273,13 @@ class TestBuildLedger:
                                             "value": f"{extracted_rootfs}/usr/bin/sendmail",
                                         }
                                     ],
-                                }
+                                },
+                                {
+                                    "type": "library",
+                                    "name": "fonts-bitstream-vera",
+                                    "purl": "pkg:deb/debian/fonts-bitstream-vera@1.10",
+                                    "licenses": [{"license": {"id": "bitstream-vera"}}],
+                                },
                             ],
                         }
                     )
@@ -1365,8 +1371,13 @@ class TestBuildLedger:
                 {"name": "capsem:guest:architecture", "value": "arm64"},
             ],
         }
-        assert document["components"][0]["licenses"][0]["license"]["id"] == "Sendmail"
-        assert document["components"][0]["properties"][0]["value"] == "/usr/bin/sendmail"
+        components = {component["name"]: component for component in document["components"]}
+        assert components["sendmail-bin"]["licenses"][0]["license"]["id"] == "Sendmail"
+        assert (
+            components["fonts-bitstream-vera"]["licenses"][0]["license"]["id"]
+            == "Bitstream-Vera"
+        )
+        assert components["sendmail-bin"]["properties"][0]["value"] == "/usr/bin/sendmail"
 
     def test_validate_cyclonedx_obom_rejects_live_host_inventory(self, tmp_path):
         output = tmp_path / "obom.cdx.json"
