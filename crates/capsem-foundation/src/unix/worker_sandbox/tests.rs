@@ -13,6 +13,14 @@ use std::time::Duration;
 mod mcp;
 
 #[test]
+fn execution_probe_runs_before_confinement() {
+    assert!(Command::new(EXECUTION_PROBE)
+        .status()
+        .expect("execution probe must exist")
+        .success());
+}
+
+#[test]
 fn seatbelt_profile_keeps_grant_values_out_of_policy_source() {
     let policy = Policy::new(Role::VmOwner)
         .allow("/session/with \"quotes\"", Access::ReadWrite)

@@ -3,6 +3,10 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
+/// An installed executable on both supported hosts. A missing program cannot
+/// prove that confinement denied execution.
+pub const EXECUTION_PROBE: &str = "/usr/bin/true";
+
 /// The worker's post-startup process authority.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Role {
@@ -120,7 +124,7 @@ pub fn attest_descriptor_only() -> io::Result<()> {
     denied(
         // Test exec itself, without a spawn path requiring unrelated runtime
         // facilities. If exec succeeds, this worker cannot publish Ready.
-        Err(std::process::Command::new("/usr/bin/true").exec()),
+        Err(std::process::Command::new(EXECUTION_PROBE).exec()),
         "process execution",
     )?;
     let parent = super::process::parent_process_id().ok_or_else(|| io::Error::other("worker parent unavailable"))?;
