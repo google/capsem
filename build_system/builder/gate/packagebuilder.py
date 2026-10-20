@@ -17,7 +17,7 @@ from .imageidentity import (
     require_input_key,
 )
 from .invocation import ConsoleMode
-from .privateimagecache import PrivateImage, try_import
+from .privateimagecache import PrivateImage, try_import, try_import_previous
 from .proc import Runner
 
 INPUT_KEY_LABEL = "org.capsem.package-builder.input-key"
@@ -107,10 +107,6 @@ def image_tag(
         settings.runtime_network,
         config.apt_snapshot.base,
         config.apt_snapshot.id,
-        str(config.apt_snapshot.update_timeout_seconds),
-        str(config.apt_snapshot.install_timeout_seconds),
-        str(config.apt_snapshot.request_timeout_seconds),
-        str(config.apt_snapshot.retries),
         " ".join(config.toolchain.linux.cross_dev_packages),
         " ".join(config.toolchain.linux.cross_host_packages),
         settings.cargo_store,
@@ -170,34 +166,49 @@ def materialize(runner: Runner, config: GateConfig, target: Arch) -> PackageBuil
         _require_input_key(docker, tag)
         runner.note(f"package helper input key is already present: {tag}")
     else:
-        docker.build(
-            tag=tag,
-            dockerfile=config.path(settings.dockerfile).as_posix(),
-            context=str(config.root),
-            args=[
-                f"BASE={parent_reference}",
-                f"RUST_TARGET={target.rust_target}",
-                f"HOST_RUST_TARGET={host_arch.rust_target}",
-                f"DPKG_ARCH={target.dpkg}",
-                f"APT_SNAPSHOT_BASE={config.apt_snapshot.base}",
-                f"APT_SNAPSHOT_ID={config.apt_snapshot.id}",
-                f"APT_UPDATE_TIMEOUT_SECONDS={config.apt_snapshot.update_timeout_seconds}",
-                f"APT_INSTALL_TIMEOUT_SECONDS={config.apt_snapshot.install_timeout_seconds}",
-                f"APT_REQUEST_TIMEOUT_SECONDS={config.apt_snapshot.request_timeout_seconds}",
-                f"APT_RETRIES={config.apt_snapshot.retries}",
-                "CROSS_DEV_PACKAGES=" + " ".join(config.toolchain.linux.cross_dev_packages),
-                "HOST_PACKAGES=" + " ".join(config.toolchain.linux.cross_host_packages),
-                f"CARGO_STORE={settings.cargo_store}",
-                f"PNPM_STORE={settings.pnpm_store}",
-                f"APT_LISTS_CACHE_ID={settings.apt_lists_cache_id}",
-                f"APT_ARCHIVES_CACHE_ID={settings.apt_archives_cache_id}",
-                f"INPUT_IDENTITY={tag}",
-            ],
+        previous = try_import_previous(
+            runner,
+            config,
+            repository=image_repository(config, target),
             platform=host_arch.docker_platform,
-            network=settings.materialize_build_network,
-            console=ConsoleMode.LOG_ONLY,
-            timeout_seconds=config.apt_snapshot.install_timeout_seconds,
+            identity_label=INPUT_KEY_LABEL,
+            current_generation=tag.rsplit(":", 1)[1],
         )
+        for attempt in range(1, config.apt_snapshot.retries + 1):
+            try:
+                docker.build(
+                    tag=tag,
+                    dockerfile=config.path(settings.dockerfile).as_posix(),
+                    context=str(config.root),
+                    args=[
+                        f"BASE={parent_reference}",
+                        f"RUST_TARGET={target.rust_target}",
+                        f"HOST_RUST_TARGET={host_arch.rust_target}",
+                        f"DPKG_ARCH={target.dpkg}",
+                        f"APT_SNAPSHOT_BASE={config.apt_snapshot.base}",
+                        f"APT_SNAPSHOT_ID={config.apt_snapshot.id}",
+                        "CROSS_DEV_PACKAGES=" + " ".join(config.toolchain.linux.cross_dev_packages),
+                        "HOST_PACKAGES=" + " ".join(config.toolchain.linux.cross_host_packages),
+                        f"CARGO_STORE={settings.cargo_store}",
+                        f"PNPM_STORE={settings.pnpm_store}",
+                        f"APT_LISTS_CACHE_ID={settings.apt_lists_cache_id}",
+                        f"APT_ARCHIVES_CACHE_ID={settings.apt_archives_cache_id}",
+                        f"INPUT_IDENTITY={tag}",
+                    ],
+                    platform=host_arch.docker_platform,
+                    network=settings.materialize_build_network,
+                    console=ConsoleMode.LOG_ONLY,
+                    cache_from=(previous,) if previous else (),
+                    timeout_seconds=config.apt_snapshot.install_timeout_seconds,
+                )
+                break
+            except GateError:
+                if attempt >= config.apt_snapshot.retries:
+                    raise
+                runner.note(
+                    "package helper build failed "
+                    f"(attempt {attempt}/{config.apt_snapshot.retries}); retrying"
+                )
         require_exact_image(
             docker,
             parent_reference,

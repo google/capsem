@@ -15,12 +15,6 @@ APT_SNAPSHOT_BASE="${2:?Ubuntu snapshot base is required}"
 APT_SNAPSHOT_ID="${3:?Ubuntu snapshot ID is required}"
 DEV_PACKAGES_RAW="${4:?cross-architecture dev packages are required}"
 HOST_PACKAGES_RAW="${5:?host-architecture packages are required}"
-: "${APT_UPDATE_TIMEOUT_SECONDS:?apt update timeout is required}"
-: "${APT_INSTALL_TIMEOUT_SECONDS:?apt install timeout is required}"
-: "${APT_REQUEST_TIMEOUT_SECONDS:?apt request timeout is required}"
-: "${APT_RETRIES:?apt retry count is required}"
-# shellcheck source=build_system/docker/apt-with-retries.sh
-source "$(dirname "${BASH_SOURCE[0]}")/apt-with-retries.sh"
 if [[ ! "$APT_SNAPSHOT_BASE" =~ ^https://[^[:space:]]+$ ]]; then
     echo "ERROR: Ubuntu snapshot base must be an HTTPS URL" >&2
     exit 1
@@ -78,11 +72,7 @@ EOF
 # Prove every architecture-scoped index is fresh before mutating the installed
 # toolchain. The image-level apt policy retries transient downloads and makes a
 # partial update fatal.
-capsem_apt_with_retry "$APT_UPDATE_TIMEOUT_SECONDS" apt-get update -qq \
-    -o Acquire::https::Timeout="$APT_REQUEST_TIMEOUT_SECONDS" \
-    -o Acquire::Retries="$APT_RETRIES"
-
-INSTALL_ATTEMPT_TIMEOUT=$(capsem_apt_install_attempt_timeout)
+apt-get update -qq
 
 if [ "$TARGET_ARCH" = "$NATIVE_ARCH" ]; then
     NATIVE_PKGS=()
@@ -90,10 +80,7 @@ if [ "$TARGET_ARCH" = "$NATIVE_ARCH" ]; then
         NATIVE_PKGS+=("${pkg}:${NATIVE_ARCH}")
     done
     echo "Reinstalling $NATIVE_ARCH dev libraries via $SNAPSHOT_URL"
-    capsem_apt_with_retry "$INSTALL_ATTEMPT_TIMEOUT" apt-get install \
-        -y --reinstall --allow-downgrades --no-install-recommends \
-        -o Acquire::https::Timeout="$APT_REQUEST_TIMEOUT_SECONDS" \
-        -o Acquire::Retries="$APT_RETRIES" \
+    apt-get install -y --reinstall --allow-downgrades --no-install-recommends \
         -o Dpkg::Options::="--force-overwrite" "${NATIVE_PKGS[@]}"
     echo "Reinstalled $NATIVE_ARCH dev libraries from the selected snapshot."
     exit 0
@@ -118,11 +105,7 @@ for pkg in "${HOST_PACKAGES[@]}"; do
     HOST_PKGS+=("${pkg}:${NATIVE_ARCH}")
 done
 
-capsem_apt_with_retry "$INSTALL_ATTEMPT_TIMEOUT" apt-get install \
-    -y --no-install-recommends \
-    -o Acquire::https::Timeout="$APT_REQUEST_TIMEOUT_SECONDS" \
-    -o Acquire::Retries="$APT_RETRIES" \
-    -o Dpkg::Options::="--force-overwrite" \
+apt-get install -y --no-install-recommends -o Dpkg::Options::="--force-overwrite" \
     "${HOST_PKGS[@]}" "${FOREIGN_PKGS[@]}"
 
 echo "Installed ${TARGET_ARCH} -dev libraries."

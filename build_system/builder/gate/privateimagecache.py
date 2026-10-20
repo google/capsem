@@ -61,6 +61,59 @@ def try_import_tag(
     )
 
 
+def try_import_previous(
+    runner: Runner,
+    config: GateConfig,
+    *,
+    repository: str,
+    platform: str,
+    identity_label: str,
+    current_generation: str,
+) -> str | None:
+    """Import the prior published generation as a BuildKit cache source."""
+    manifest = config.path(config.private_images.manifest)
+    if not manifest.is_file():
+        return None
+    try:
+        records = json.loads(manifest.read_text(encoding="utf-8"))["images"]
+    except (KeyError, TypeError, json.JSONDecodeError) as error:
+        raise GateError(f"invalid private image manifest {manifest}: {error}") from error
+    if not isinstance(records, list) or not all(isinstance(record, dict) for record in records):
+        raise GateError(f"invalid private image records in {manifest}")
+    package = PrivateImage(
+        local=f"{repository}:{current_generation}",
+        platform=platform,
+        generation=current_generation,
+        identity_label=identity_label,
+        identity=f"{repository}:{current_generation}",
+    ).package(config.private_images.registry)
+    for record in reversed(records):
+        if (
+            record.get("package") != package
+            or record.get("platform") != platform
+            or record.get("generation") == current_generation
+        ):
+            continue
+        generation = record.get("generation")
+        if not isinstance(generation, str) or not generation:
+            raise GateError(f"invalid private image generation in {manifest}")
+        local = f"{repository}:{generation}"
+        image = PrivateImage(
+            local=local,
+            platform=platform,
+            generation=generation,
+            identity_label=identity_label,
+            identity=local,
+        )
+        if try_import(runner, config, image):
+            runner.note(
+                f"using prior private generation as build cache: {image.remote(config.private_images.registry)}"
+            )
+            return local
+        return None
+    return None
+
+
 def publish(
     runner: Runner,
     config: GateConfig,

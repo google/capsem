@@ -15,6 +15,7 @@ from capsem_builder.gate.privateimagecache import (
     PrivateImage,
     publish,
     try_import,
+    try_import_previous,
 )
 from helpers.gate import RECORDED_IMAGE_ID, RecordingRunner
 
@@ -119,6 +120,61 @@ def test_private_pull_retags_and_validates_both_identity_labels() -> None:
     )
     assert any(IMAGE.identity_label in command for command in runner.rendered)
     assert any(SOURCE_LABEL in command for command in runner.rendered)
+
+
+def test_prior_manifest_generation_is_imported_as_a_validated_build_cache(
+    tmp_path: Path,
+) -> None:
+    manifest = tmp_path / "private-images.json"
+    repository = "capsem-package-builder-arm64"
+    generation = "previous"
+    local = f"{repository}:{generation}"
+    image = PrivateImage(
+        local=local,
+        platform="linux/amd64",
+        generation=generation,
+        identity_label="org.capsem.package-builder.input-key",
+        identity=local,
+    )
+    manifest.write_text(
+        json.dumps(
+            {
+                "images": [
+                    {
+                        "generation": generation,
+                        "package": image.package(CONFIG.private_images.registry),
+                        "platform": image.platform,
+                        "reference": image.remote(CONFIG.private_images.registry),
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    config = CONFIG.model_copy(
+        update={
+            "private_images": CONFIG.private_images.model_copy(update={"manifest": str(manifest)})
+        }
+    )
+    runner = RecordingRunner(
+        PROJECT_ROOT,
+        replies={SOURCE_LABEL: CONFIG.private_images.source},
+    )
+
+    found = try_import_previous(
+        runner,
+        config,
+        repository=repository,
+        platform=image.platform,
+        identity_label=image.identity_label,
+        current_generation="current",
+    )
+
+    assert found == local
+    assert any(
+        image.remote(CONFIG.private_images.registry) in command for command in runner.rendered
+    )
+    assert any(image.identity_label in command for command in runner.rendered)
 
 
 def test_publish_is_append_only_and_writes_retention_manifest(tmp_path: Path) -> None:

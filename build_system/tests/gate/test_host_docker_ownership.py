@@ -20,7 +20,6 @@ EXPECTED = {
     "Dockerfile.linux-rust-base",
     "Dockerfile.package",
     "Dockerfile.package-builder",
-    "apt-with-retries.sh",
     "materialize-host-apt.sh",
     "materialize-install-os.sh",
     "sources-multiarch.sh",
@@ -78,13 +77,10 @@ def test_repository_context_copies_name_the_moved_helpers() -> None:
     package = (OWNER / "Dockerfile.package-builder").read_text(encoding="utf-8")
     host = (OWNER / "Dockerfile.host-builder").read_text(encoding="utf-8")
     assert "COPY --chmod=555 build_system/docker/materialize-install-os.sh" in install
-    assert "COPY --chmod=555 build_system/docker/apt-with-retries.sh" in install
     assert "COPY --chmod=555 build_system/docker/swap-dev-libs.sh" in package
-    assert "COPY --chmod=555 build_system/docker/apt-with-retries.sh" in package
     assert "COPY sources-multiarch.sh /tmp/" in host
     assert "COPY --chmod=555 materialize-host-apt.sh" in host
-    assert "apt-with-retries.sh" not in host
-    assert "swap-dev-libs.sh" not in host
+    assert "COPY swap-dev-libs.sh /usr/local/bin/swap-dev-libs" in host
 
 
 def test_node_dependency_images_receive_the_declared_patch_inputs() -> None:
@@ -118,11 +114,6 @@ def test_network_open_apt_layers_persist_partial_snapshot_downloads() -> None:
         assert "rm -f /etc/apt/apt.conf.d/docker-clean" in source
         assert "rm -f /var/lib/apt/lists/lock /var/cache/apt/archives/lock" in source
 
-    for helper in (
-        "apt-with-retries.sh",
-        "materialize-host-apt.sh",
-        "materialize-install-os.sh",
-        "swap-dev-libs.sh",
-    ):
+    for helper in ("materialize-host-apt.sh", "materialize-install-os.sh", "swap-dev-libs.sh"):
         source = (OWNER / helper).read_text(encoding="utf-8")
         assert "rm -rf /var/lib/apt/lists" not in source

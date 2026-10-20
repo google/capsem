@@ -49,6 +49,7 @@ class ImageOperations:
         network: BuildNetwork,
         console: ConsoleMode = ConsoleMode.STREAM,
         no_cache: bool = False,
+        cache_from: tuple[str, ...] = (),
         timeout_seconds: float | None = None,
     ) -> None:
         """Build an image. The context streams from the CLI, so it does not
@@ -59,6 +60,8 @@ class ImageOperations:
         argv += ["--network", require_build_network(network)]
         if no_cache:
             argv.append("--no-cache")
+        for image in cache_from:
+            argv += ["--cache-from", image]
         for value in args or []:
             argv += ["--build-arg", value]
         argv.append(context)

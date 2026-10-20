@@ -343,7 +343,6 @@ identity_inputs = [
     "build_system/patches/http-cache-semantics@4.3.0.patch",
     "build_system/docker/Dockerfile.install-builder",
     "build_system/scripts/build/rustc-workspace-wrapper.sh",
-    "build_system/docker/apt-with-retries.sh",
     "build_system/docker/materialize-install-os.sh",
     "build_system/scripts/build/configure-apt-snapshot.sh",
 ]
@@ -625,7 +624,6 @@ identity_inputs = [
     "build_system/patches/http-cache-semantics@4.3.0.patch",
     "build_system/docker/Dockerfile.package-builder",
     "build_system/scripts/build/rustc-workspace-wrapper.sh",
-    "build_system/docker/apt-with-retries.sh",
     "build_system/docker/swap-dev-libs.sh",
 ]
 identity_globs = ["crates/*/Cargo.toml"]
@@ -1638,6 +1636,7 @@ builder_identity_inputs = [
     "build_system/docker/Dockerfile.host-builder",
     "build_system/docker/materialize-host-apt.sh",
     "build_system/docker/sources-multiarch.sh",
+    "build_system/docker/swap-dev-libs.sh",
     "rust-toolchain.toml",
 ]
 materialize_network = "default"
