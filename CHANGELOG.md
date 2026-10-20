@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Upgrade Hono to 4.13.11 in the MCP package lock, fixing a double-decoding
+  static-path middleware bypass.
+
 - Upgrade aiohttp to 3.14.5 across shipped Python locks and the debug image,
   fixing request-header timeout and connection resource-exhaustion advisories.
 

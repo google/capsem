@@ -8,6 +8,7 @@
   "engines": {"node": ">=20"},
   "bin": {"capsem-mcp": "./dist/cli.js"},
   "files": ["dist", "README.md"],
+  "pnpm": {"overrides": {"hono": "4.13.11"}},
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "tsc --noEmit -p tsconfig.test.json",
