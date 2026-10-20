@@ -19,6 +19,16 @@ beforeEach(() => {
   api.getStatus.mockResolvedValue({ service: 'running', vms: [], resource_summary: null });
 });
 
+it('carries a catalog launch choice into the create dialog and clears it on close', () => {
+  vmStore.openCreateModal('claude-code');
+  expect(vmStore.showCreateModal).toBe(true);
+  expect(vmStore.createImageName).toBe('claude-code');
+  vmStore.closeCreateModal();
+  expect(vmStore.createImageName).toBe('');
+  vmStore.openCreateModal();
+  expect(vmStore.createImageName).toBe('');
+});
+
 it('dispatches the currently advertised recovery operation', async () => {
   vmStore.vms = [session(VmLifecycleState.STOPPED, [VmAction.START])];
   await vmStore.resume('session-id');

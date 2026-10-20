@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The desktop lists catalog images with architecture and cache state, supports
+  explicit caching and launch selection, and retries catalog failures without
+  silently changing a removed image selection into a plain VM.
+
 - VM owners use the verified host execution probe so macOS image sessions can
   complete their sandbox attestation before boot.
 

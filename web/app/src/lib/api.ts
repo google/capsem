@@ -4,7 +4,7 @@ import * as gateway from '@capsem/sdk/operations';
 import { Connections, CredentialGrants, HostLogSource, NetworkError, ServiceAvailability } from '@capsem/sdk';
 import type { AuthorizeGoogleRequest, CreateSessionGrantRequest } from '@capsem/sdk';
 import type { StopResponse, VmActionResponse, LogsResponse, VmStatsDetailResponse, EventBodiesResponse } from '@capsem/sdk';
-import type { ContainerStatusResponse, ImageListResponse, CredentialInjectProvider, CredentialInjectResponse, CredentialStorage } from '@capsem/sdk';
+import type { ContainerStatusResponse, ImageListResponse, ImagePullResponse, CredentialInjectProvider, CredentialInjectResponse, CredentialStorage } from '@capsem/sdk';
 import { surfaceLauncherUrl } from './models/surface';
 import type { AssetStatus, UpdateApplyRequest } from '@capsem/sdk';
 export type { LogsResponse as RawLogsResponse, VmStatsDetailResponse } from '@capsem/sdk';
@@ -609,8 +609,12 @@ export async function fetchEventBodies(id: string, eventId: string): Promise<Eve
 
 // -- Images --
 
-export async function getImages(signal?: AbortSignal): Promise<ImageListResponse> {
-  return _sdk.call(transport => gateway.listImages(transport, {}, { signal }));
+export async function getImages(signal?: AbortSignal, refresh = false): Promise<ImageListResponse> {
+  return _sdk.call(transport => gateway.listImages(transport, { refresh }, { signal }));
+}
+
+export async function pullImage(image: string): Promise<ImagePullResponse> {
+  return _sdk.call(transport => gateway.pullImage(transport, { body: { image } }, { timeoutMs: 900_000 }));
 }
 
 // -- Stats --

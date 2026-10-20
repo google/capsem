@@ -11,6 +11,7 @@
   import { sessionActionError } from '../../models/session-action-error';
   import Modal from './Modal.svelte';
   import SessionCredentials from './SessionCredentials.svelte';
+  import ImageCatalog from './ImageCatalog.svelte';
   import Pause from 'phosphor-svelte/lib/Pause';
   import Trash from 'phosphor-svelte/lib/Trash';
   import Play from 'phosphor-svelte/lib/Play';
@@ -369,6 +370,8 @@
       Refresh
     </button>
   </div>
+
+  <ImageCatalog {ready} />
 
   <!-- New session launcher -->
   <div class="bg-card border border-card-line rounded-xl p-4 mb-6">

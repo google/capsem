@@ -19,6 +19,7 @@ class VmStore {
   acting = $state(false);
   polled = $state(false);
   showCreateModal = $state(false);
+  createImageName = $state('');
   activeStatsId = $state<string | null>(null);
   activeStats = $state<VmStatsSummary | null>(null);
 
@@ -173,12 +174,14 @@ class VmStore {
     }
   }
 
-  openCreateModal(): void {
+  openCreateModal(imageName = ''): void {
+    this.createImageName = imageName;
     this.showCreateModal = true;
   }
 
   closeCreateModal(): void {
     this.showCreateModal = false;
+    this.createImageName = '';
   }
 
   async fork(id: string, opts: ForkRequest): Promise<ForkResponse> {

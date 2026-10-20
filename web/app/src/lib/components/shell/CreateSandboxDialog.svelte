@@ -4,7 +4,7 @@
   import Modal from './Modal.svelte';
   import { ImageCacheState, type ImageInfo } from '@capsem/sdk';
   import { getImages } from '../../api';
-  import { sessionCreateRequest } from '../../models/session-create';
+  import { selectedSessionImage, sessionCreateRequest } from '../../models/session-create';
   import { sessionActionError } from '../../models/session-action-error';
 
   // Mirrors the service's defaults for a session created without explicit resources.
@@ -20,14 +20,21 @@
   let imageName = $state('');
   let imagesLoading = $state(false);
   let imagesError = $state<string | null>(null);
+  let catalogRefresh = $state(0);
   let selectedImage = $derived(images.find(image => image.name === imageName) ?? null);
 
   $effect(() => {
     if (!vmStore.showCreateModal) return;
+    imageName = vmStore.createImageName;
+  });
+
+  $effect(() => {
+    if (!vmStore.showCreateModal) return;
+    const refresh = catalogRefresh > 0;
     const controller = new AbortController();
     imagesLoading = true;
     imagesError = null;
-    void getImages(controller.signal).then(result => {
+    void getImages(controller.signal, refresh).then(result => {
       if (!controller.signal.aborted) images = result.images;
     }).catch((e: unknown) => {
       if (!controller.signal.aborted) imagesError = sessionActionError(e);
@@ -50,7 +57,7 @@
   }
 
   async function handleSubmit() {
-    if (creating) return;
+    if (creating || imagesLoading) return;
     error = null;
     const trimmedName = name.trim();
     if (!trimmedName) {
@@ -59,7 +66,9 @@
     }
     creating = true;
     try {
-      const { id, name: finalName } = await vmStore.provision(sessionCreateRequest(trimmedName, ramMb, cpus, selectedImage));
+      if (imageName && imagesError) throw new Error('Refresh the image catalog before creating this session.');
+      const image = selectedSessionImage(images, imageName);
+      const { id, name: finalName } = await vmStore.provision(sessionCreateRequest(trimmedName, ramMb, cpus, image));
       tabStore.openVM(id, finalName);
       creating = false;
       close();
@@ -77,7 +86,7 @@
   confirmLabel={creating ? 'Creating...' : 'Create'}
   onconfirm={handleSubmit}
   oncancel={close}
-  disabled={creating}
+  disabled={creating || imagesLoading}
 >
   <div class="space-y-4 py-2">
     {#if error}
@@ -115,9 +124,15 @@
         <p class="text-xs text-muted-foreground-1">{selectedImage.description}</p>
         <p class="text-xs text-muted-foreground-1">Compatible · Cache: {selectedImage.cached === ImageCacheState.UNKNOWN ? 'unknown' : selectedImage.cached}</p>
         <p class="text-xs text-muted-foreground break-all">{selectedImage.image}</p>
+      {:else if imageName}
+        <p class="text-xs text-destructive" role="alert">The selected image is no longer available. Refresh the catalog or choose another image.</p>
       {:else}
         <p class="text-xs text-muted-foreground-1">Uses the service's default environment.</p>
       {/if}
+      <button type="button" class="text-xs text-primary hover:underline disabled:opacity-50"
+        disabled={creating || imagesLoading} onclick={() => { catalogRefresh++; }}>
+        {imagesError ? 'Retry image catalog' : 'Refresh image catalog'}
+      </button>
     </div>
 
     <div class="grid grid-cols-2 gap-4">
