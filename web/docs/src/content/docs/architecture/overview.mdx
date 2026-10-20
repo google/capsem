@@ -4,7 +4,7 @@ description: How do Capsem's components work together?
 ---
 
 import Diagram from '@capsem/diagrams/Diagram.astro';
-import { systemOverview } from '../../../lib/overview-diagrams';
+import { systemOverview, standaloneProxy } from '../../../lib/overview-diagrams';
 
 This page explains how Capsem's clients, shared service, and per-VM workers
 work together to run agents and tools in Linux VMs on your computer. It follows
@@ -39,8 +39,23 @@ Private networks connect guest interfaces through a separate switch process.
 Published ports use a separate relay. Neither path passes through HTTP
 inspection. See the [network boundaries](/architecture/security/#network-connections).
 
-The standalone model proxy uses the security engine without creating a VM.
-It exposes a service-selected model provider through a revocable proxy lease.
+## Run model requests without a VM
+
+`capsem proxy` creates a separate security engine and log writer for a model
+client running on your computer. The CLI controls the lease through the
+authenticated gateway; the model client sends requests to a separate HTTP
+listener. The service accepts connections and passes connected sockets to the
+confined engine. No VM owner, guest helper, or container is started.
+
+<Diagram diagram={standaloneProxy} />
+
+The provider configuration fixes the upstream destination and wire protocol.
+The engine applies policy, credential processing, and logging through the same
+pipeline used for VM traffic. The listener is unauthenticated HTTP, so keep it
+on loopback. This mode cannot restrict the host client's other activity.
+Follow [Use model APIs through the proxy](/guides/users/use-the-proxy/) to
+connect a client, or use the [Proxy reference](/reference/proxy/) to implement
+lease control.
 
 ## State and ownership
 
@@ -48,6 +63,7 @@ It exposes a service-selected model provider through a revocable proxy lease.
 | --- | --- |
 | Shared | Service, gateway, credential store, installed runtime assets, image cache, and settings. |
 | Per VM | VM owner, security engine, log writer, native MCP workers, guest filesystem, and ledger. |
+| Per proxy lease | Security engine, log writer, provider routing, and temporary records; no VM. |
 | Per private network | Switch process, member cables, and network audit records. |
 | Per published connection | Granted host and guest connections passed to the VM's expose relay. |
 

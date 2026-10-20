@@ -10,6 +10,7 @@ Choose the guide for your task below; planned workflows are marked explicitly.
 ## Users
 
 - [Use Capsem from the terminal](/guides/users/use-the-terminal/)
+- [Block a model response with proxy mode](/guides/users/use-the-proxy/)
 - [Configure and reuse your environment](/guides/users/reuse-your-environment/)
 - [Run evaluations with Inspect AI](/guides/users/run-evaluations/) — integration pending.
 - [Configure security through the Capsem UI](/guides/users/configure-security/) — planned workflow.

@@ -126,6 +126,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Publish the Capsem 0.7 documentation: getting started, task guides, security architecture, and SDK/API references.
 ### Changed
 
+- Document standalone proxy flags, lease control, provider routing and process
+  boundaries, with a tested OpenAI/Ollama guide that allows Paris responses
+  and blocks London responses.
+
 - Regenerate Python/TypeScript SDK and MCP tool references in docs CI, check
   reference drift in pull requests, and rebuild docs when SDK/MCP source changes.
 

@@ -93,8 +93,13 @@ lists tools; `capsem mcp refresh` rediscovers tools.
 `capsem mcp call SERVER__TOOL --args '{}'` sends JSON arguments through policy.
 See the [MCP reference](/reference/mcp/).
 
-`capsem proxy --help` describes the VM-free OpenAI-compatible endpoint and its
-provider selection. It processes only requests sent to that endpoint.
+`capsem proxy [--provider PROVIDER] [--bind IP] [--port PORT]` starts a VM-free
+model endpoint. Defaults: provider `openai`, bind `127.0.0.1`, and an available
+port. Keep the command running; Ctrl-C stops it and removes its temporary
+records. The separate model listener is unauthenticated HTTP.
+Use the [Proxy reference](/reference/proxy/) for provider routing and lease
+control, or [block a model response](/guides/users/use-the-proxy/) with the
+OpenAI/Ollama example.
 
 ## Service and updates
 
