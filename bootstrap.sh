@@ -168,14 +168,14 @@ fi
 # by the Linux release rail. Ubuntu dpkg currently writes data.tar.zst, while
 # macOS bsdtar delegates that member to the external zstd executable. Install
 # it during canonical bootstrap so `just test` cannot discover the missing
-# decoder only after both release packages and the macOS package are built.
-if [ "$(uname -s)" = "Darwin" ] && ! command -v zstd >/dev/null 2>&1; then
+# decoder late. Host-backed guest permission tests also require GNU stat.
+if [ "$(uname -s)" = "Darwin" ] && { ! command -v zstd >/dev/null 2>&1 || ! command -v gstat >/dev/null 2>&1; }; then
     if command -v brew >/dev/null 2>&1; then
-        if confirm "zstd (Debian package/SBOM archive support, via brew)"; then
-            brew install zstd
+        if confirm "zstd and coreutils (package archives and guest permission tests, via brew)"; then
+            brew install zstd coreutils
         fi
     else
-        printf "  [SKIP] zstd (Homebrew not installed -- install brew, then: brew install zstd)\n"
+        printf "  [SKIP] host tools (Homebrew not installed -- install brew, then: brew install zstd coreutils)\n"
     fi
 fi
 

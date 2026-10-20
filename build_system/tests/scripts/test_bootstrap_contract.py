@@ -908,6 +908,12 @@ def test_bootstrap_and_doctor_do_not_require_an_external_flock_binary() -> None:
     assert " b3sum flock zstd" not in doctor_common
 
 
+def test_macos_bootstrap_provisions_gnu_guest_permission_tools() -> None:
+    bootstrap = _read("bootstrap.sh")
+    assert '! command -v gstat >/dev/null 2>&1' in bootstrap
+    assert 'brew install zstd coreutils' in bootstrap
+
+
 def test_just_test_invokes_bootstrap_and_release_quality_gates() -> None:
     justfile = _read("justfile")
     web_gate = _read("build_system/scripts/web/check-web-surface.sh")
