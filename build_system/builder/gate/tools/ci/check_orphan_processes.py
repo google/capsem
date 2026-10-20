@@ -17,8 +17,8 @@ Two modes, both driven from the `test` recipe:
   baseline  snapshot the capsem processes that already existed, so a developer's
             own `just run-service` daemon or an editor's `capsem-mcp` is never
             blamed on the gate.
-  check     anything running now that is not in that snapshot was started by
-            this run and outlived it. Report it, reap it, fail.
+  check     processes outside that snapshot and its live descendants outlived
+            this run. Report them, reap them, fail.
 
 Scope is this repository's own build tree. An installed `~/.capsem/bin`
 service belongs to the user, not to the gate, and is never touched.
@@ -156,13 +156,18 @@ def started_during_run(current: dict[int, dict], baseline: dict[int, float]) -> 
     fresh capsem process during a multi-hour gate would otherwise be waved
     through as pre-existing -- which is precisely a leak we are here to catch.
     """
-    leaked = {}
-    for pid, facts in current.items():
-        known = baseline.get(pid)
-        if known is not None and abs(known - facts["created"]) < 0.001:
-            continue
-        leaked[pid] = facts
-    return leaked
+    protected = {
+        pid for pid, facts in current.items()
+        if pid in baseline and abs(baseline[pid] - facts["created"]) < 0.001
+    }
+    # A developer's baselined service can launch VMs while the gate runs.
+    # Shared Cargo output identifies the binary, not the run that owns it.
+    while descendants := {
+        pid for pid, facts in current.items()
+        if pid not in protected and facts["ppid"] in protected
+    }:
+        protected.update(descendants)
+    return {pid: facts for pid, facts in current.items() if pid not in protected}
 
 
 def _settle(root: Path, baseline: dict[int, float], budget_s: float) -> dict[int, dict]:

@@ -34,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Gate orphan cleanup preserves new VM children of an existing live service,
+  allowing product sessions to continue during release qualification.
+
 - Unreadable configured image catalogs report a retryable error instead of an
   empty list; disabled catalogs and valid empty catalogs remain distinct.
 

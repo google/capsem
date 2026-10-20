@@ -374,6 +374,51 @@ def test_a_recycled_pid_is_not_waved_through() -> None:
     )
 
 
+def test_new_descendants_of_a_preexisting_service_are_not_gate_orphans() -> None:
+    current = {pid: _facts(pid, float(pid)) for pid in (10, 11, 12, 13)}
+    current[11]["ppid"] = 10
+    current[12]["ppid"] = 11
+
+    assert set(ORPHANS.started_during_run(current, {10: 10.0})) == {13}
+    assert set(ORPHANS.started_during_run(current, {10: 9.0})) == {10, 11, 12, 13}
+
+
+def test_check_preserves_real_children_started_by_a_baselined_service(tmp_path: Path) -> None:
+    binary = tmp_path / "capsem-test-service"
+    shutil.copy("/bin/bash", binary)
+    sign_binary(binary)
+    child_script = 'trap "exit" TERM; while :; do /bin/sleep 1; done'
+    script = 'read -r _; "$1" -c "$2" & echo $!; wait'
+    baseline_file = tmp_path / "baseline.json"
+    with subprocess.Popen(
+        [str(binary), "-c", script, "service", str(binary), child_script],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, start_new_session=True,
+    ) as service:
+        try:
+            deadline = time.monotonic() + 5
+            while service.pid not in ORPHANS.repo_capsem_processes(tmp_path):
+                assert time.monotonic() < deadline, "service never became visible"
+                time.sleep(0.01)
+            ORPHANS.write_baseline(baseline_file, tmp_path)
+            assert service.stdin is not None and service.stdout is not None
+            service.stdin.write("start\n")
+            service.stdin.flush()
+            child_pid = int(service.stdout.readline())
+            deadline = time.monotonic() + 5
+            while child_pid not in ORPHANS.repo_capsem_processes(tmp_path):
+                assert time.monotonic() < deadline, "workload never became visible"
+                time.sleep(0.01)
+            assert ORPHANS.main([
+                "check", "--baseline-file", str(baseline_file), "--root", str(tmp_path),
+            ]) == 0
+            assert service.poll() is None
+            assert child_pid in ORPHANS.repo_capsem_processes(tmp_path)
+        finally:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(service.pid, signal.SIGTERM)
+            service.wait(timeout=5)
+
+
 def test_a_process_outside_the_checkout_is_never_ours(tmp_path: Path) -> None:
     installed = _facts(12, 100.0, exe=str(Path.home() / ".capsem/bin/capsem-service"))
 
