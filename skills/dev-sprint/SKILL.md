@@ -26,6 +26,19 @@ Call `mcp__sprinty.info()` first on every new session or continuation.
 Never start a replacement sprint because the work is difficult or context was
 compacted. Resume the existing ledger and inspect its artifacts.
 
+## Select the release channel from product intent
+
+Nightly builds from `main` serve development. Qualification for general
+availability uses **stable**, including the intended binary, runtime and
+official image catalog. Capsem 0.7.1 GA qualification therefore uses stable.
+
+Record the intended channel in Sprinty before publication or product proof.
+A `main` checkout, a development worktree, or an older local installation does
+not change stable qualification into nightly work. Keep catalog discovery,
+caching, launch and installed-product checks on the selected channel; do not
+switch channels to work around missing publication. Follow `RELEASE.md` and
+`/release-process` for release authority and exact-source proof.
+
 ## Plan the dependency graph
 
 Use `mcp__sprinty.subsprint_new()` for independently reviewable features or
