@@ -85,7 +85,13 @@ def sweep(config: GateConfig) -> list[Path]:
     kept = sorted((p for p in root.iterdir() if p.is_dir()), key=lambda p: p.stat().st_mtime)
     stale = kept[: max(len(kept) - config.prefix.keep, 0)]
     reclaimed: list[Path] = []
+    source = config.root.resolve()
     for path in stale:
+        # A checkout placed below the configured cache root is still source.
+        # The release gate once deleted its own invoking Git worktree here
+        # before trying to copy it into the exact-commit prefix.
+        if path.resolve() == source:
+            continue
         try:
             with lease(config, path):
                 reclaim(config, path)

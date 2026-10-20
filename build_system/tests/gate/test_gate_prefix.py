@@ -915,6 +915,33 @@ def test_a_sweep_keeps_the_newest_and_reclaims_the_rest(tmp_path: Path) -> None:
     assert newer.is_dir(), "the newest survives, so a failed run can still be resumed"
 
 
+def test_a_sweep_never_reclaims_its_source_checkout(tmp_path: Path) -> None:
+    """A developer worktree under the prefix root is still source, not cache."""
+    import time
+
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate import prefix
+
+    source, stale, newest = (
+        tmp_path / "source-checkout",
+        tmp_path / "aaaaaaaa",
+        tmp_path / "bbbbbbbb",
+    )
+    for path in (source, stale, newest):
+        path.mkdir()
+        (path / "tracked.txt").write_text(path.name, encoding="utf-8")
+        time.sleep(0.01)
+    config = gate_config.load(PROJECT_ROOT).model_copy(
+        update={"root": source, "prefix": _relocated_prefix(tmp_path, keep=1)}
+    )
+
+    reclaimed = prefix.sweep(config)
+
+    assert reclaimed == [stale]
+    assert source.is_dir(), "cache retention must never delete the invoking checkout"
+    assert newest.is_dir()
+
+
 def _own_checkout(tmp_path: Path) -> Path:
     """An empty checkout, so a driven run has nothing expensive to adopt.
 
