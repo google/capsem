@@ -33,6 +33,7 @@ class LocalInstallCommand(
         package = config.path(config.outputs.packages) / (
             config.sbom.macos_package_name.format(version=version)
         )
+        sbom = config.path(config.sbom.output)
 
         assets = assetplan.fragment(plan, config)
         verified = plan.add(
@@ -66,10 +67,12 @@ class LocalInstallCommand(
                         (content.assets / config.install.manifest_name).resolve().as_uri(),
                         "--assets-dir",
                         str(content.assets),
+                        "--sbom",
+                        str(sbom),
                     ]
                 ),
                 contends=(config.exclusive("workspace_binaries"),),
-                produces=(package,),
+                produces=(package, sbom),
                 kind=Kind.PACKAGE,
                 needs=frozenset({Needs.DISK, Needs.SIGNING}),
                 speed=Speed.SLOW,
