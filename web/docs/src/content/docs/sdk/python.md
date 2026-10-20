@@ -18,7 +18,11 @@ class Hypervisor(Client):
     images: Images
     mcp: Mcp
     networks: Networks
-    def __init__(self, url: str, token: str, *, timeout: float=30) -> None:
+    def __init__(self, url: str | None=None, token: str | None=None, *, run_dir: str | Path | None=None, timeout: float=30) -> None:
+        ...
+    @classmethod
+    def connect(cls, url: str | None=None, token: str | None=None, *, run_dir: str | Path | None=None, timeout: float=30) -> Self:
+        'Create a `Hypervisor` client using gateway discovery when `url` or `token` is omitted.'
         ...
     async def info(self) -> models.HypervisorInfo:
         ...
@@ -27,9 +31,10 @@ class Hypervisor(Client):
     def vm(self, *, name: str | None=None, id: str | None=None) -> VM:
         "A handle for an existing VM on this hypervisor's transport, selected by\nexactly one nonempty name or id."
         ...
-    async def create(self, *, name: str='', cpus: int | None=None, memory: int | None=None, env: dict[str, str] | None=None, networks: Sequence[models.NetworkInfo]=(), image: str | None=None, command: Sequence[str]=(), registry: Registry | None=None) -> VM:
+    async def create(self, *, name: str='', cpus: int | None=None, memory: int | None=None, env: dict[str, str] | None=None, labels: dict[str, str] | None=None, networks: Sequence[models.NetworkInfo]=(), image: str | None=None, command: Sequence[str]=(), registry: Registry | None=None) -> VM:
+        'Provision a VM or container workload.\n\nArgs:\n    name: Persistent VM name; omit or pass empty string for an ephemeral VM.\n    cpus: Optional vCPU count override.\n    memory: Optional RAM size in GiB.\n    env: Optional environment variables for the VM or container workload.\n    labels: Optional string labels attached at creation.\n    networks: Private networks to attach to the VM at creation.\n    image: Optional OCI image reference to run as a container workload.\n    command: Optional command argv override for the container workload.\n    registry: Optional custom OCI registry configuration for pulling ``image``.'
         ...
-    def managed(self, *, cpus: int | None=None, memory: int | None=None, env: dict[str, str] | None=None, networks: Sequence[models.NetworkInfo]=(), image: str | None=None, command: Sequence[str]=(), registry: Registry | None=None) -> ManagedSession:
+    def managed(self, *, cpus: int | None=None, memory: int | None=None, env: dict[str, str] | None=None, labels: dict[str, str] | None=None, networks: Sequence[models.NetworkInfo]=(), image: str | None=None, command: Sequence[str]=(), registry: Registry | None=None) -> ManagedSession:
         'An ephemeral ownership scope: renew while entered, await cleanup on exit.'
         ...
     async def log(self, source: models.HostLogSource=models.HostLogSource.SERVICE, *, grep: str | None=None, tail: int | None=None, max_bytes: int | None=None) -> models.HostLogsResponse:
@@ -55,7 +60,7 @@ class VM(Client):
     networks: VmNetworks
     ports: Ports
     stats: Stats
-    def __init__(self, url: str, token: str, *, name: str | None=None, id: str | None=None, timeout: float=30) -> None:
+    def __init__(self, url: str | None=None, token: str | None=None, *, name: str | None=None, id: str | None=None, run_dir: str | Path | None=None, timeout: float=30) -> None:
         ...
     @property
     def id(self) -> str | None:
@@ -80,7 +85,8 @@ class VM(Client):
         ...
     async def delete(self) -> models.VmActionResponse:
         ...
-    async def fork(self, name: str, *, description: str | None=None) -> VM:
+    async def fork(self, name: str, *, description: str | None=None, labels: dict[str, str] | None=None) -> VM:
+        "Fork this VM into a new persistent VM.\n\nArgs:\n    name: Persistent name for the forked VM.\n    description: Optional description for the forked VM.\n    labels: Optional labels overriding the source VM's labels (`{}` clears)."
         ...
     async def log(self, *, grep: str | None=None, tail: int | None=None, max_bytes: int | None=None) -> models.LogsResponse:
         ...
@@ -321,18 +327,78 @@ class Stats(Resource):
         ...
 ```
 
-## HttpError
+## CapsemError, HttpError
 
 ```python
-class HttpError(Exception):
+class CapsemError(Exception):
+    'Base exception for Capsem SDK errors.'
+
+class HttpError(CapsemError):
     'The gateway returned an unsuccessful HTTP status.'
+    args: object
     body: object
+    code: object
+    response: ErrorResponse.model_validate_json
     status: object
+    status: int
+    body: str
+    response: ErrorResponse | None
+    code: ErrorCode | None
     def __init__(self, status: int, body: str) -> None:
         ...
     @property
     def credential_code(self) -> CredentialErrorCode | None:
         'Known credential refusal code; future/non-JSON errors remain HTTP errors.'
+        ...
+```
+
+## GatewayEndpoint
+
+```python
+class GatewayEndpoint():
+    'Resolved HTTP gateway base URL and bearer token.'
+    url: str
+    token: str = field(repr=False)
+    run_dir: Path | None = None
+```
+
+## CapsemTimeoutError, CreateTimeoutError, ExecTimeoutError, VmNotFoundError
+
+```python
+class CapsemTimeoutError(TimeoutError, CapsemError):
+    'Base exception for Capsem SDK operation timeouts.'
+    body: object
+    command: object
+    deadline_secs: object
+    status: object
+    timeout_secs: object
+    vm: object
+    vm_id: object
+    vm_name: object
+    status: int | None
+    body: str | None
+    vm_id: str | None
+    vm_name: str | None
+    vm: VM | None
+    command: str | None
+    timeout_secs: int | None
+    deadline_secs: float | None
+    def __init__(self, message: str, *, vm_id: str | None=None, vm_name: str | None=None, vm: VM | None=None, command: str | None=None, timeout_secs: int | None=None, deadline_secs: float | None=None, status: int | None=None, body: str | None=None) -> None:
+        ...
+
+class CreateTimeoutError(CapsemTimeoutError):
+    'Raised when `Hypervisor.create` crosses the HTTP 504 or client deadline.'
+
+class ExecTimeoutError(CapsemTimeoutError):
+    'Raised when `VM.exec` or `Hypervisor.run` times out on the service or client.'
+
+class VmNotFoundError(HttpError, LookupError):
+    'Raised when a VM handle cannot be resolved by name or ID (HTTP 404).'
+    vm_id: object
+    vm_name: object
+    vm_id: str | None
+    vm_name: str | None
+    def __init__(self, body: str, *, vm_id: str | None=None, vm_name: str | None=None, status: int=404) -> None:
         ...
 ```
 
@@ -814,6 +880,34 @@ class EnrollmentKind(StrEnum):
     NATIVE_CONSUMER_SIGN_IN = 'native_consumer_sign_in'
 ```
 
+## models.ErrorCode
+
+```python
+class ErrorCode(StrEnum):
+    VM_NOT_FOUND = 'vm_not_found'
+    CREATE_TIMEOUT = 'create_timeout'
+    EXEC_TIMEOUT = 'exec_timeout'
+    CONFIGURATION_REQUIRED = 'configuration_required'
+    UNSUPPORTED_CAPABILITY = 'unsupported_capability'
+    UNKNOWN_SCOPE_PROFILE = 'unknown_scope_profile'
+    POLICY_DENIED = 'policy_denied'
+    SCOPE_DENIED = 'scope_denied'
+    CONNECTION_UNAVAILABLE = 'connection_unavailable'
+    REAUTH_REQUIRED = 'reauth_required'
+    STORAGE_UNAVAILABLE = 'storage_unavailable'
+    STORAGE_COMMIT_FAILED = 'storage_commit_failed'
+    TRANSACTION_EXPIRED = 'transaction_expired'
+    TRANSACTION_CANCELLED = 'transaction_cancelled'
+    INVALID_CALLBACK = 'invalid_callback'
+    PROVIDER_REJECTED = 'provider_rejected'
+    PROVIDER_TIMEOUT = 'provider_timeout'
+    OWNER_CHANGED = 'owner_changed'
+    SESSION_UNAVAILABLE = 'session_unavailable'
+    GRANT_UNAVAILABLE = 'grant_unavailable'
+    REQUEST_CONFLICT = 'request_conflict'
+    REVOCATION_PENDING = 'revocation_pending'
+```
+
 ## models.ErrorEvent
 
 ```python
@@ -829,8 +923,10 @@ class ErrorEvent(Model):
 
 ```python
 class ErrorResponse(Model):
-    code: StrictStr | None = None
+    code: ErrorCode | None = None
     error: StrictStr
+    timeout_secs: Annotated[StrictInt, Field(ge=0)] | None = None
+    vm_id: StrictStr | None = None
 ```
 
 ## models.EventBodiesResponse
@@ -1034,6 +1130,7 @@ class FileListResponse(Model):
 ```python
 class ForkRequest(Model):
     description: StrictStr | None = None
+    labels: dict[str, StrictStr] | None = None
     name: StrictStr
 ```
 
@@ -1787,6 +1884,7 @@ class ProvisionRequest(Model):
     cpus: Annotated[StrictInt, Field(ge=0)] | None = None
     env: dict[str, StrictStr] | None = None
     from_: StrictStr | None = Field(default=None, alias='from')
+    labels: dict[str, StrictStr] | None = None
     managed: ManagedSessionCreate | None = None
     name: StrictStr | None = None
     networks: list[StrictStr] | None = None
@@ -1950,6 +2048,7 @@ class SandboxInfo(Model):
     files: VmFilesInfo | None = None
     forked_from: StrictStr | None = None
     id: StrictStr
+    labels: dict[str, StrictStr] | None = None
     last_error: StrictStr | None = None
     model_call_count: Annotated[StrictInt, Field(ge=0)] | None = None
     name: StrictStr | None = None

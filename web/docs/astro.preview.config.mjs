@@ -7,8 +7,13 @@ const links = (...slugs) => slugs.map((slug) => ({ slug }));
 function localDocsLinks() {
   return (tree) => {
     function visit(node) {
-      // rustdoc ignores application-context fragments; the site still highlights Rust.
-      if (node.type === 'code' && node.lang === 'rust,ignore') node.lang = 'rust';
+      // Keep rustdoc test attributes and hidden scaffolding out of the lesson.
+      if (node.type === 'code' && node.lang?.split(',')[0] === 'rust') {
+        node.lang = 'rust';
+        node.value = node.value.split('\n')
+          .filter((line) => !/^\s*#(?: |$)/.test(line))
+          .map((line) => line.replace(/^(\s*)##/, '$1#')).join('\n');
+      }
       if (node.type === 'link' && node.url?.startsWith('https://docs.capsem.org/')) {
         node.url = node.url.slice('https://docs.capsem.org'.length);
       }

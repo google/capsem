@@ -13,7 +13,10 @@ was lost. SDKs do not automatically replay mutations.
 
 | Language | Failure | Information retained |
 | --- | --- | --- |
-| Python | `HttpError` | HTTP `status`, response `body`, and recognized `credential_code`. |
+| Python | `HttpError` | HTTP `status`, response `body`, parsed `response`, recognized `code`, and `credential_code`. |
+| Python | `CreateTimeoutError` | VM ID/name when known, a VM handle when recoverable, and `deadline_secs`. Inspect that VM before retrying create. |
+| Python | `ExecTimeoutError` | VM ID when known, command, and effective `timeout_secs`; service errors retain HTTP status and body. |
+| Python | `VmNotFoundError` | HTTP status/body and the VM ID/name used for lookup. Also a `LookupError`. |
 | Python | Pydantic `ValidationError` | Invalid typed input or response. |
 | Python | `LookupError` | A VM name matched zero or multiple VMs. |
 | TypeScript | `HttpError` | HTTP `status`, response `body`, and recognized `credentialCode`. |
@@ -23,7 +26,8 @@ was lost. SDKs do not automatically replay mutations.
 | Rust | `Error::Json` / `Error::InvalidResponse` | Invalid response encoding or contract. |
 | Rust | `Error::VmLookup` | The requested name did not resolve to exactly one VM. |
 
-See each [language reference](/sdk/) for its exact error types. Credential
+Look up error types in the [Python](/sdk/python/),
+[TypeScript](/sdk/typescript/), or [Rust](/sdk/rust/) reference. Credential
 refusal codes are defined in the [credentials reference](/reference/credentials/).
 
 ## Deadlines and cancellation

@@ -20,7 +20,8 @@ shared target root. Regenerate declarations and rustdoc on the same source
 revision before generating Markdown. Append `--check` to the final command
 to reject drift without writing.
 
-The public onboarding examples intentionally omit local gateway setup.
-Their executable qualification depends on #344 and #345; these bugs belong
-to SDK implementation, not a workaround in the tutorial. Do not claim the
-draft examples passed against the currently published packages.
+The public onboarding examples use implemented local gateway discovery and
+omit URL/token setup. Check registry availability separately from source API
+compatibility: npm currently serves 0.7.0, while the 0.7.1 Python and Rust
+instructions pin source until their packages are published. Regenerating a
+reference does not prove that a VM example ran successfully.
