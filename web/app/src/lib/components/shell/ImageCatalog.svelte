@@ -13,6 +13,7 @@
   let caching = $state<string | null>(null);
   let cacheError = $state<string | null>(null);
   let cachedImage = $state<string | null>(null);
+  let observationTimer: ReturnType<typeof setTimeout> | null = null;
 
   async function cache(image: ImageInfo) {
     if (!image.image || caching) return;
@@ -30,15 +31,23 @@
     }
   }
 
-  async function load(refresh = false) {
+  async function load(refresh = false, quiet = false) {
+    if (observationTimer) clearTimeout(observationTimer);
     controller?.abort();
     const request = new AbortController();
     controller = request;
-    loading = true;
+    if (!quiet) loading = true;
     error = null;
     try {
       const result = await getImages(request.signal, refresh);
-      if (!request.signal.aborted) images = result.images;
+      if (!request.signal.aborted) {
+        images = result.images;
+        // Cache observation runs outside the polled route. Follow its pending
+        // result without repeatedly fetching the registry or hiding the cards.
+        if (images.some(image => image.image && image.cached === ImageCacheState.UNKNOWN)) {
+          observationTimer = setTimeout(() => void load(false, true), 1000);
+        }
+      }
     } catch (e) {
       if (!request.signal.aborted) error = sessionActionError(e);
     } finally {
@@ -48,7 +57,10 @@
 
   onMount(() => {
     void load();
-    return () => controller?.abort();
+    return () => {
+      controller?.abort();
+      if (observationTimer) clearTimeout(observationTimer);
+    };
   });
 </script>
 
