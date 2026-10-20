@@ -31,6 +31,69 @@ fn upgrade_request(host: &str, upgrade: &str, connection: &str) -> String {
     )
 }
 
+#[tokio::test]
+async fn rejected_websocket_upgrade_preserves_error_body_and_keeps_proxy_usable() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let upstream = tokio::spawn(async move {
+        for (status, body) in [("401 Unauthorized", "missing authentication"), ("200 OK", "ok")] {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            read_http11_request(&mut socket).await;
+            socket
+                .write_all(
+                    format!(
+                        "HTTP/1.1 {status}\r\nContent-Length: {}\r\nX-Request-Id: rejected-upgrade\r\n\r\n{body}",
+                        body.len(),
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+        }
+    });
+    let (config, _db) = make_proxy_config_full(&[], &[], true, &[80, port]);
+    let (proxy, address) = spawn_proxy(config).await;
+    let socket = tokio::net::TcpStream::connect(address).await.unwrap();
+    let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(socket))
+        .await
+        .unwrap();
+    let client = tokio::spawn(connection.with_upgrades());
+    let request = hyper::Request::builder()
+        .uri("/socket")
+        .header("host", format!("127.0.0.1:{port}"))
+        .header("upgrade", "websocket")
+        .header("connection", "Upgrade")
+        .header("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")
+        .header("sec-websocket-version", "13")
+        .body(http_body_util::Empty::<Bytes>::new())
+        .unwrap();
+    let response = tokio::time::timeout(Duration::from_secs(5), sender.send_request(request))
+        .await
+        .unwrap()
+        .expect("rejected upgrade must return an HTTP response without panicking");
+    assert_eq!(response.status(), http::StatusCode::UNAUTHORIZED);
+    assert_eq!(response.headers()["x-request-id"], "rejected-upgrade");
+    assert_eq!(
+        response.into_body().collect().await.unwrap().to_bytes(),
+        "missing authentication"
+    );
+    let request = hyper::Request::builder()
+        .uri("/health")
+        .header("host", format!("127.0.0.1:{port}"))
+        .body(http_body_util::Empty::<Bytes>::new())
+        .unwrap();
+    let response = tokio::time::timeout(Duration::from_secs(5), sender.send_request(request))
+        .await
+        .unwrap()
+        .expect("the proxy must still serve the next request");
+    assert_eq!(response.status(), http::StatusCode::OK);
+    assert_eq!(response.into_body().collect().await.unwrap().to_bytes(), "ok");
+    drop(sender);
+    client.await.unwrap().unwrap();
+    proxy.await.unwrap();
+    upstream.await.unwrap();
+}
+
 /// Read until the end of the response head. The 403 body may or may not
 /// share the read; the caller drops the socket afterwards either way.
 async fn read_response_head(tcp: &mut tokio::net::TcpStream) -> String {

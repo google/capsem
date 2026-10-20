@@ -37,6 +37,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Rejected WebSocket upgrades preserve their upstream HTTP error body and
+  framing, preventing Codex authentication errors from crashing the VM proxy.
+
 - Inspect host builds preserve Colima's local daemon and Docker CLI plugins
   while keeping registry credentials isolated by default.
 

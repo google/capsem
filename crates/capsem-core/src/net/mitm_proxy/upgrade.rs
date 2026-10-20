@@ -304,7 +304,7 @@ pub(super) async fn handle_upgrade(
     } else {
         None
     };
-    let (resp_parts, _resp_body) = upstream_resp.into_parts();
+    let (resp_parts, resp_body) = upstream_resp.into_parts();
     if responses_websocket && resp_parts.headers.contains_key(http::header::SEC_WEBSOCKET_EXTENSIONS) {
         return Ok(make_ws_error(&"upstream returned an unnegotiated WebSocket extension"));
     }
@@ -387,10 +387,13 @@ pub(super) async fn handle_upgrade(
         credential_injections: Vec::new(),
     };
 
-    let empty_body = Full::new(Bytes::new()).map_err(|never| match never {}).boxed();
-
     Ok(hyper::Response::from_parts(
         resp_parts,
-        seal_with_telemetry(empty_body, req_ctx, ai_provider, ai_protocol),
+        seal_with_telemetry(
+            resp_body.map_err(anyhow::Error::from).boxed(),
+            req_ctx,
+            ai_provider,
+            ai_protocol,
+        ),
     ))
 }
