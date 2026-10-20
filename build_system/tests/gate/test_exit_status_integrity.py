@@ -250,10 +250,6 @@ def test_dockerfile_fail_open_instructions_are_an_exact_reviewed_inventory() -> 
 
     assert dict(found) == {
         "build_system/docker/Dockerfile.install-builder": ["missing-user-cleanup"],
-        "build_system/docker/Dockerfile.linux-rust-base": [
-            "ordinary-cache-prewarm",
-            "coverage-cache-prewarm",
-        ],
     }
 
 

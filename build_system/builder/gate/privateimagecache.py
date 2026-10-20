@@ -9,6 +9,7 @@ from ..privateimages import SOURCE_LABEL, PrivateImage
 from .config import GateConfig
 from .docker import Docker
 from .errors import GateError
+from .fileactions import write_text
 from .proc import Runner
 
 
@@ -22,19 +23,19 @@ def _valid(docker: Docker, config: GateConfig, image: PrivateImage) -> bool:
 def try_import(runner: Runner, config: GateConfig, image: PrivateImage) -> bool:
     """Pull and validate an exact helper, returning false for a cold fallback."""
     remote = image.remote(config.private_images.registry)
-    if not runner.succeeds(["docker", "pull", "--platform", image.platform, remote]):
+    docker = Docker(runner)
+    if not docker.try_pull(remote, platform=image.platform):
         runner.note(f"private image generation unavailable; building locally: {remote}")
         return False
-    runner.run(["docker", "tag", remote, image.local])
-    docker = Docker(runner)
+    docker.tag(remote, image.local)
     valid = docker.image_id(image.local, platform=image.platform).startswith("sha256:") and _valid(
         docker, config, image
     )
     if not valid:
-        runner.succeeds(["docker", "image", "rm", image.local, remote])
+        docker.remove_image(image.local, remote)
         runner.note(f"private image generation failed identity validation: {remote}")
         return False
-    runner.succeeds(["docker", "image", "rm", remote])
+    docker.remove_image(remote)
     runner.note(f"reused private image generation: {remote}")
     return True
 
@@ -129,12 +130,12 @@ def publish(
         ):
             raise GateError(f"private image is not the expected local generation: {image.local}")
         remote = image.remote(config.private_images.registry)
-        if runner.succeeds(["docker", "manifest", "inspect", remote]):
+        if docker.manifest_exists(remote):
             runner.note(f"private image generation is already published: {remote}")
         else:
-            runner.run(["docker", "tag", image.local, remote])
+            docker.tag(image.local, remote)
             for attempt in range(1, config.private_images.publish_attempts + 1):
-                if runner.succeeds(["docker", "push", remote]):
+                if docker.try_push(remote):
                     break
                 runner.note(
                     "private image manifest publication failed "
@@ -145,7 +146,7 @@ def publish(
                     "private image publication exhausted "
                     f"{config.private_images.publish_attempts} attempts: {remote}"
                 )
-            runner.succeeds(["docker", "image", "rm", remote])
+            docker.remove_image(remote)
         records.append(
             {
                 "generation": image.generation,
@@ -154,8 +155,8 @@ def publish(
                 "reference": remote,
             }
         )
-    manifest.parent.mkdir(parents=True, exist_ok=True)
-    manifest.write_text(
+    write_text(
+        manifest,
         json.dumps(
             {
                 "keep_generations": config.private_images.keep_generations,
@@ -165,5 +166,4 @@ def publish(
             sort_keys=True,
         )
         + "\n",
-        encoding="utf-8",
     )
