@@ -23,7 +23,7 @@ const project = resolve(dirname(fileURLToPath(import.meta.url)));
 assert.ok(!project.startsWith(resolve(sourceRoot) + '/'));
 const packageRoot = join(project, 'node_modules/@capsem/sdk');
 assert.ok(!lstatSync(packageRoot).isSymbolicLink());
-/** @typedef {{name:string,version:string,engines:Record<string,string>,dependencies:Record<string,string>,devDependencies:Record<string,string>,exports:Record<string,{types:string,import:string}>,scripts:Record<string,string>}} Manifest */
+/** @typedef {{name:string,version:string,engines:Record<string,string>,dependencies:Record<string,string>,devDependencies:Record<string,string>,exports:Record<string,{types:string,import:string}>,scripts:Record<string,string>,pnpm?:{overrides:Record<string,string>}}} Manifest */
 /** @param {string} path @returns {unknown} */
 function readJson(path) { return JSON.parse(readFileSync(path, 'utf8')); }
 const manifest = /** @type {Manifest} */ (readJson(join(packageRoot, 'package.json')));
