@@ -39,6 +39,28 @@ def try_import(runner: Runner, config: GateConfig, image: PrivateImage) -> bool:
     return True
 
 
+def try_import_tag(
+    runner: Runner,
+    config: GateConfig,
+    *,
+    tag: str,
+    platform: str,
+    identity_label: str,
+) -> bool:
+    """Import a helper whose tag is also its complete input identity."""
+    return try_import(
+        runner,
+        config,
+        PrivateImage(
+            local=tag,
+            platform=platform,
+            generation=tag.rsplit(":", 1)[1],
+            identity_label=identity_label,
+            identity=tag,
+        ),
+    )
+
+
 def publish(
     runner: Runner,
     config: GateConfig,

@@ -59,38 +59,10 @@ RUN bash /tmp/sources-multiarch.sh "$APT_SNAPSHOT_BASE" "$APT_SNAPSHOT_ID" \
 # these packages at container runtime (see swap-dev-libs.sh).
 # Bound each network phase: a snapshot outage once held this layer for 57 minutes.
 # ---- Native-arch Tauri dev libraries ----
+COPY --chmod=555 materialize-host-apt.sh /usr/local/bin/materialize-host-apt
 RUN --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    test -n "$WORKSPACE_APT_PACKAGES" \
-    && test -n "$WORKSPACE_CROSS_APT_PACKAGES" \
-    && rm -f /etc/apt/apt.conf.d/docker-clean \
-    && rm -f /var/lib/apt/lists/lock /var/cache/apt/archives/lock \
-    && if ! test -f "/var/lib/apt/lists/.capsem-${APT_SNAPSHOT_ID}-complete"; then \
-    attempt=0; \
-    while ! timeout --signal=TERM --kill-after=5s "${APT_UPDATE_TIMEOUT_SECONDS}s" apt-get \
-    -o Acquire::https::Timeout="${APT_REQUEST_TIMEOUT_SECONDS}" \
-    -o Acquire::Retries="${APT_RETRIES}" update; do \
-    attempt=$((attempt + 1)); \
-    test "$attempt" -lt "$APT_RETRIES" || exit 1; \
-    done; \
-    touch "/var/lib/apt/lists/.capsem-${APT_SNAPSHOT_ID}-complete"; \
-    fi \
-    && attempt=0 \
-    && while ! timeout --signal=TERM --kill-after=5s \
-    "$((APT_INSTALL_TIMEOUT_SECONDS / APT_RETRIES))s" apt-get \
-    -o Acquire::https::Timeout="${APT_REQUEST_TIMEOUT_SECONDS}" \
-    -o Acquire::Retries="${APT_RETRIES}" install -y --no-install-recommends \
-    $WORKSPACE_APT_PACKAGES \
-    $WORKSPACE_CROSS_APT_PACKAGES \
-    curl \
-    wget \
-    ca-certificates \
-    git \
-    sqlite3 \
-    python3-venv; do \
-    attempt=$((attempt + 1)); \
-    test "$attempt" -lt "$APT_RETRIES" || exit 1; \
-    done
+    materialize-host-apt
 
 # ---- Node.js 24 + pnpm 10 ----
 # Copy the complete runtime tree from an immutable official image. Keeping the

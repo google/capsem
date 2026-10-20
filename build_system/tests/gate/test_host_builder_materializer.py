@@ -115,7 +115,8 @@ def test_host_builder_uses_exact_stages_snapshot_and_tool_versions() -> None:
 
 def test_host_builder_mutable_tool_inventory_is_closed() -> None:
     dockerfile = PROJECT_ROOT / CONFIG.hostimage.dockerfile
-    assert _tool_inventory(dockerfile) == Counter(
+    apt_helper = PROJECT_ROOT / "build_system/docker/materialize-host-apt.sh"
+    assert _tool_inventory(dockerfile) + _tool_inventory(apt_helper) == Counter(
         {
             "cargo": 9,
             "rustup": 4,
@@ -123,7 +124,7 @@ def test_host_builder_mutable_tool_inventory_is_closed() -> None:
             "curl": 1,
             "npm": 1,
             "wget": 1,
-            "apt": 6,
+            "apt": 12,
             "pnpm": 1,
             "uv": 2,
         }
@@ -145,7 +146,9 @@ def test_host_builder_multiarch_sources_require_the_shared_snapshot() -> None:
 
 def test_host_builder_apt_snapshot_outage_has_a_deadline() -> None:
     """A 503 from the pinned snapshot must not occupy a release runner for an hour."""
-    source = (PROJECT_ROOT / CONFIG.hostimage.dockerfile).read_text(encoding="utf-8")
+    source = (PROJECT_ROOT / "build_system/docker/materialize-host-apt.sh").read_text(
+        encoding="utf-8"
+    )
     assert '"${APT_UPDATE_TIMEOUT_SECONDS}s" apt-get' in source
     assert '"$((APT_INSTALL_TIMEOUT_SECONDS / APT_RETRIES))s" apt-get' in source
     assert 'Acquire::https::Timeout="${APT_REQUEST_TIMEOUT_SECONDS}"' in source
@@ -157,14 +160,17 @@ def test_host_builder_apt_snapshot_outage_has_a_deadline() -> None:
 
 
 def test_host_builder_preserves_downloads_across_a_bounded_snapshot_retry() -> None:
-    source = (PROJECT_ROOT / CONFIG.hostimage.dockerfile).read_text(encoding="utf-8")
+    dockerfile = (PROJECT_ROOT / CONFIG.hostimage.dockerfile).read_text(encoding="utf-8")
+    source = (PROJECT_ROOT / "build_system/docker/materialize-host-apt.sh").read_text(
+        encoding="utf-8"
+    )
 
-    assert "--mount=type=cache,target=/var/lib/apt/lists,sharing=locked" in source
-    assert "--mount=type=cache,target=/var/cache/apt,sharing=locked" in source
+    assert "--mount=type=cache,target=/var/lib/apt/lists,sharing=locked" in dockerfile
+    assert "--mount=type=cache,target=/var/cache/apt,sharing=locked" in dockerfile
     assert "rm -f /etc/apt/apt.conf.d/docker-clean" in source
     assert "rm -f /var/lib/apt/lists/lock /var/cache/apt/archives/lock" in source
     assert ".capsem-${APT_SNAPSHOT_ID}-complete" in source
-    assert 'test "$attempt" -lt "$APT_RETRIES" || exit 1' in source
+    assert '[[ "$attempt" -lt "$APT_RETRIES" ]] || exit 1' in source
     assert source.count("while ! timeout --signal=TERM") == 2
     assert '"$((APT_INSTALL_TIMEOUT_SECONDS / APT_RETRIES))s" apt-get' in source
     assert "rm -rf /var/lib/apt/lists" not in source
