@@ -427,6 +427,10 @@ def test_package_helper_materializes_locked_inputs_and_runtime_is_offline() -> N
         "COPY --chmod=555 build_system/docker/swap-dev-libs.sh /usr/local/bin/swap-dev-libs"
         in dockerfile
     )
+    assert (
+        "COPY --chmod=555 build_system/docker/apt-with-retries.sh "
+        "/usr/local/bin/apt-with-retries.sh" in dockerfile
+    )
     assert "ARG INPUT_IDENTITY" in dockerfile
     assert "org.capsem.package-builder.input-key=${INPUT_IDENTITY}" in dockerfile
     assert "ARG INPUT_KEY" not in dockerfile
@@ -547,7 +551,13 @@ def test_cross_host_package_authority_changes_the_dependency_helper_input_key(
     assert image_tag(changed, changed.arch("arm64"), docker) != before
 
 
-def _stubbed_swap(tmp_path: Path, *, native: str, remove_status: int = 0):
+def _stubbed_swap(
+    tmp_path: Path,
+    *,
+    native: str,
+    remove_status: int = 0,
+    update_failures: int = 0,
+):
     apt_root = tmp_path / "apt"
     (apt_root / "sources.list.d").mkdir(parents=True)
     apt_lists = tmp_path / "apt-lists"
@@ -559,6 +569,9 @@ def _stubbed_swap(tmp_path: Path, *, native: str, remove_status: int = 0):
         encoding="utf-8",
     )
     script.chmod(0o755)
+    (tmp_path / "apt-with-retries.sh").write_bytes(
+        (PROJECT_ROOT / "build_system/docker/apt-with-retries.sh").read_bytes()
+    )
     binary = tmp_path / "bin"
     binary.mkdir()
     log = tmp_path / "commands.log"
@@ -575,19 +588,30 @@ def _stubbed_swap(tmp_path: Path, *, native: str, remove_status: int = 0):
         "#!/bin/sh\n"
         'printf \'apt-get %s\\n\' "$*" >> "$CAPSEM_STUB_LOG"\n'
         'case "$1" in\n'
-        '  update) exit "${CAPSEM_STUB_UPDATE_STATUS:-0}" ;;\n'
+        "  update)\n"
+        "    count=$(grep -c '^apt-get update' \"$CAPSEM_STUB_LOG\")\n"
+        '    if [ "$count" -le "${CAPSEM_STUB_UPDATE_FAILURES:-0}" ]; then exit 42; fi\n'
+        "    ;;\n"
         '  remove) exit "${CAPSEM_STUB_REMOVE_STATUS:-0}" ;;\n'
         '  install) exit "${CAPSEM_STUB_INSTALL_STATUS:-0}" ;;\n'
         "esac\n",
         encoding="utf-8",
     )
     apt_get.chmod(0o755)
+    sleep = binary / "sleep"
+    sleep.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    sleep.chmod(0o755)
     environment = {
         **os.environ,
         "PATH": f"{binary}:/usr/bin:/bin",
         "CAPSEM_STUB_LOG": str(log),
         "CAPSEM_STUB_NATIVE": native,
         "CAPSEM_STUB_REMOVE_STATUS": str(remove_status),
+        "CAPSEM_STUB_UPDATE_FAILURES": str(update_failures),
+        "APT_UPDATE_TIMEOUT_SECONDS": "30",
+        "APT_INSTALL_TIMEOUT_SECONDS": "90",
+        "APT_REQUEST_TIMEOUT_SECONDS": "5",
+        "APT_RETRIES": "3",
     }
 
     def run(*arguments: str) -> subprocess.CompletedProcess[str]:
@@ -687,6 +711,40 @@ def test_foreign_package_swap_updates_then_removes_then_installs(tmp_path: Path)
     assert "python3:amd64" in recorded
 
 
+def test_package_swap_retries_a_transient_snapshot_update(tmp_path: Path) -> None:
+    run, log, _sources = _stubbed_swap(tmp_path, native="amd64", update_failures=2)
+
+    result = run(
+        "arm64",
+        "https://snapshot.ubuntu.com/ubuntu",
+        "20260810T000000Z",
+        " ".join(CONFIG.toolchain.linux.cross_dev_packages),
+        " ".join(CONFIG.toolchain.linux.cross_host_packages),
+    )
+
+    assert result.returncode == 0, result.stderr
+    recorded = log.read_text(encoding="utf-8")
+    assert recorded.count("apt-get update -qq") == 3
+    assert "apt-get remove" in recorded
+
+
+def test_package_swap_stops_after_the_configured_update_attempts(tmp_path: Path) -> None:
+    run, log, _sources = _stubbed_swap(tmp_path, native="amd64", update_failures=3)
+
+    result = run(
+        "arm64",
+        "https://snapshot.ubuntu.com/ubuntu",
+        "20260810T000000Z",
+        " ".join(CONFIG.toolchain.linux.cross_dev_packages),
+        " ".join(CONFIG.toolchain.linux.cross_host_packages),
+    )
+
+    assert result.returncode == 42
+    recorded = log.read_text(encoding="utf-8")
+    assert recorded.count("apt-get update -qq") == 3
+    assert "apt-get remove" not in recorded
+
+
 def test_foreign_package_swap_stops_when_native_removal_fails(tmp_path: Path) -> None:
     run, log, _sources = _stubbed_swap(tmp_path, native="amd64", remove_status=19)
 
@@ -749,6 +807,10 @@ def test_package_helper_is_host_native_and_target_specific(
     assert f"DPKG_ARCH={target.dpkg}" in build
     assert f"APT_SNAPSHOT_BASE={config.apt_snapshot.base}" in build
     assert f"APT_SNAPSHOT_ID={config.apt_snapshot.id}" in build
+    assert f"APT_UPDATE_TIMEOUT_SECONDS={config.apt_snapshot.update_timeout_seconds}" in build
+    assert f"APT_INSTALL_TIMEOUT_SECONDS={config.apt_snapshot.install_timeout_seconds}" in build
+    assert f"APT_REQUEST_TIMEOUT_SECONDS={config.apt_snapshot.request_timeout_seconds}" in build
+    assert f"APT_RETRIES={config.apt_snapshot.retries}" in build
     assert "HOST_PACKAGES=" + " ".join(config.toolchain.linux.cross_host_packages) in build
     assert f"CARGO_STORE={config.package.builder.cargo_store}" in build
     assert f"PNPM_STORE={config.package.builder.pnpm_store}" in build

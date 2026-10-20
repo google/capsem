@@ -3,6 +3,13 @@
 # immutable Ubuntu snapshot. This runs only in the network-open helper stage.
 set -euo pipefail
 
+: "${APT_UPDATE_TIMEOUT_SECONDS:?apt update timeout is required}"
+: "${APT_INSTALL_TIMEOUT_SECONDS:?apt install timeout is required}"
+: "${APT_REQUEST_TIMEOUT_SECONDS:?apt request timeout is required}"
+: "${APT_RETRIES:?apt retry count is required}"
+# shellcheck source=build_system/docker/apt-with-retries.sh
+source "$(dirname "${BASH_SOURCE[0]}")/apt-with-retries.sh"
+
 snapshot_base="${1:?Ubuntu snapshot base is required}"
 snapshot_id="${2:?Ubuntu snapshot ID is required}"
 shift 2
@@ -36,5 +43,11 @@ case "$native_arch" in
 esac
 
 configure-apt-snapshot "$snapshot_base" "$snapshot_id"
-apt-get update -qq
-apt-get install -y --reinstall --allow-downgrades --no-install-recommends "$@"
+capsem_apt_with_retry "$APT_UPDATE_TIMEOUT_SECONDS" apt-get update -qq \
+    -o Acquire::https::Timeout="$APT_REQUEST_TIMEOUT_SECONDS" \
+    -o Acquire::Retries="$APT_RETRIES"
+install_attempt_timeout=$(capsem_apt_install_attempt_timeout)
+capsem_apt_with_retry "$install_attempt_timeout" apt-get install \
+    -y --reinstall --allow-downgrades --no-install-recommends \
+    -o Acquire::https::Timeout="$APT_REQUEST_TIMEOUT_SECONDS" \
+    -o Acquire::Retries="$APT_RETRIES" "$@"

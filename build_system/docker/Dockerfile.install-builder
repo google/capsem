@@ -34,6 +34,10 @@ FROM ${BASE}
 
 ARG APT_SNAPSHOT_BASE
 ARG APT_SNAPSHOT_ID
+ARG APT_UPDATE_TIMEOUT_SECONDS
+ARG APT_INSTALL_TIMEOUT_SECONDS
+ARG APT_REQUEST_TIMEOUT_SECONDS
+ARG APT_RETRIES
 ARG APT_PACKAGES
 ARG INSTALL_VENV
 ARG CARGO_STORE
@@ -42,9 +46,14 @@ ARG APT_LISTS_CACHE_ID
 ARG APT_ARCHIVES_CACHE_ID
 
 COPY --chmod=555 build_system/scripts/build/configure-apt-snapshot.sh /usr/local/bin/configure-apt-snapshot
+COPY --chmod=555 build_system/docker/apt-with-retries.sh /usr/local/bin/apt-with-retries.sh
 COPY --chmod=555 build_system/docker/materialize-install-os.sh /usr/local/bin/materialize-install-os
 RUN test -n "${APT_SNAPSHOT_BASE}" \
     && test -n "${APT_SNAPSHOT_ID}" \
+    && test -n "${APT_UPDATE_TIMEOUT_SECONDS}" \
+    && test -n "${APT_INSTALL_TIMEOUT_SECONDS}" \
+    && test -n "${APT_REQUEST_TIMEOUT_SECONDS}" \
+    && test -n "${APT_RETRIES}" \
     && test -n "${APT_PACKAGES}" \
     && test -n "${INSTALL_VENV}" \
     && test -n "${CARGO_STORE}" \
@@ -55,7 +64,11 @@ RUN --mount=type=cache,id=${APT_LISTS_CACHE_ID},target=/var/lib/apt/lists,sharin
     --mount=type=cache,id=${APT_ARCHIVES_CACHE_ID},target=/var/cache/apt,sharing=locked \
     rm -f /etc/apt/apt.conf.d/docker-clean \
     && rm -f /var/lib/apt/lists/lock /var/cache/apt/archives/lock \
-    && materialize-install-os "${APT_SNAPSHOT_BASE}" "${APT_SNAPSHOT_ID}" ${APT_PACKAGES}
+    && APT_UPDATE_TIMEOUT_SECONDS="${APT_UPDATE_TIMEOUT_SECONDS}" \
+        APT_INSTALL_TIMEOUT_SECONDS="${APT_INSTALL_TIMEOUT_SECONDS}" \
+        APT_REQUEST_TIMEOUT_SECONDS="${APT_REQUEST_TIMEOUT_SECONDS}" \
+        APT_RETRIES="${APT_RETRIES}" \
+        materialize-install-os "${APT_SNAPSHOT_BASE}" "${APT_SNAPSHOT_ID}" ${APT_PACKAGES}
 
 # The privileged proof needs a real systemd userspace but must not disturb
 # Colima's host-owned Rosetta binfmt registration when PID 1 starts.

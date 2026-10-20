@@ -10,11 +10,11 @@ import json
 import os
 import re
 import subprocess
-import tomllib
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
+import tomllib
 import yaml
 from blake3 import blake3
 from capsem_builder.release.tools import (
@@ -866,6 +866,7 @@ def test_local_release_glowup_has_zstd_extraction_support_in_install_image() -> 
 
     assert "zstd" in config.install.builder.apt_packages
     assert "APT_PACKAGES" in dockerfile
+    assert "apt-with-retries.sh" in dockerfile
     assert "materialize-install-os" in dockerfile
 
 
@@ -1524,7 +1525,9 @@ def test_cross_arch_tauri_swap_refreshes_indexes_before_removing_native_libs() -
 
     update = swap_script.index("apt-get update -qq")
     remove = swap_script.index('apt-get remove -y "${DEV_PACKAGES[@]}"')
-    install = swap_script.index("apt-get install -y --no-install-recommends")
+    install = swap_script.index(
+        'capsem_apt_with_retry "$INSTALL_ATTEMPT_TIMEOUT" apt-get install', remove
+    )
     assert update < remove < install
     assert swap_script.count("apt-get update -qq") == 1
 
@@ -1532,6 +1535,9 @@ def test_cross_arch_tauri_swap_refreshes_indexes_before_removing_native_libs() -
 def test_host_builder_uses_shared_apt_authority_without_refetching_for_python() -> None:
     host_builder = (
         PROJECT_ROOT / "build_system/docker/Dockerfile.host-builder"
+    ).read_text()
+    materializer = (
+        PROJECT_ROOT / "build_system/docker/materialize-host-apt.sh"
     ).read_text()
     gate = tomllib.loads((PROJECT_ROOT / "config/gate.toml").read_text())
     native_tools = host_builder.split(
@@ -1542,11 +1548,12 @@ def test_host_builder_uses_shared_apt_authority_without_refetching_for_python() 
     )[0]
 
     assert "python3" in gate["toolchain"]["linux"]["apt_packages"]
-    assert "$WORKSPACE_APT_PACKAGES" in native_tools
-    assert "    python3 \\" not in native_tools
-    assert "python3-venv \\" in native_tools
-    assert native_tools.count("apt-get update") == 1
-    assert host_builder.count("apt-get update") == 1
+    assert "$WORKSPACE_APT_PACKAGES" in materializer
+    assert "    python3 \\" not in materializer
+    assert "python3-venv" in materializer
+    assert native_tools.count("apt-get update") == 0
+    assert materializer.count('update; do') == 1
+    assert host_builder.count("apt-get update") == 0
     assert "apt-get update" not in python
     assert "COPY --from=uv-runtime /uv /uvx /usr/local/bin/" in python
 
