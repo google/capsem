@@ -3,6 +3,8 @@
 import fcntl
 import json
 import os
+import socket
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -82,6 +84,24 @@ def test_apply_refuses_a_target_outside_the_cache_root(tmp_path: Path) -> None:
         apply_prune(cache_paths, plan(outside), reason="bad plan")
 
     assert outside.read_bytes() == b"keep"
+
+
+@pytest.mark.parametrize("kind", ["socket", "fifo"])
+def test_apply_unlinks_special_inodes_without_treating_them_as_directories(
+    kind: str,
+) -> None:
+    with tempfile.TemporaryDirectory(prefix="capsem-cache-", dir="/tmp") as directory, \
+         socket.socket(socket.AF_UNIX) as listener:
+        cache_paths = paths(Path(directory))
+        target = cache_paths.stage("objects") / "old"
+        target.parent.mkdir(parents=True)
+        if kind == "socket":
+            listener.bind(str(target))
+        else:
+            os.mkfifo(target)
+        result = apply_prune(cache_paths, plan(target), reason="expired special inode")
+        assert result.removed == (target,)
+        assert not target.exists()
 
 
 def test_apply_prunes_an_explicit_external_disk_stage(tmp_path: Path) -> None:

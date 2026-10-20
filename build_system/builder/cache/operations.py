@@ -49,7 +49,7 @@ def _make_owner_removable(root: Path) -> None:
 
 
 def _remove(path: Path) -> None:
-    if path.is_symlink() or path.is_file():
+    if not stat.S_ISDIR(path.lstat().st_mode):
         path.unlink()
         return
     try:
