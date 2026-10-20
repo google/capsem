@@ -20,6 +20,7 @@ from .context import Context
 from .docker import Docker
 from .errors import GateError
 from .imageidentity import require_input_key
+from .privateimagecache import PrivateImage, try_import
 from .proc import Runner
 
 
@@ -115,6 +116,18 @@ def materialize_asset_tools(runner: Runner, config: GateConfig) -> None:
             "run guest base prefetch first"
         )
     tag = assettools.image_tag(build, name, config.root)
+    if not docker.image_exists(tag, platform=arch.docker_platform):
+        try_import(
+            runner,
+            config,
+            PrivateImage(
+                local=tag,
+                platform=arch.docker_platform,
+                generation=tag.rsplit(":", 1)[1],
+                identity_label=assettools.INPUT_KEY_LABEL,
+                identity=tag,
+            ),
+        )
     if docker.image_exists(tag, platform=arch.docker_platform):
         require_input_key(
             docker,
@@ -163,16 +176,40 @@ def materialize_rust_builders(
                 f"{resolved.base_image}; run guest base prefetch first"
             )
         builder = image_tag(build, name, config.root)
+        if not docker.image_exists(builder, platform=resolved.docker_platform):
+            try_import(
+                runner,
+                config,
+                PrivateImage(
+                    local=builder,
+                    platform=resolved.docker_platform,
+                    generation=builder.rsplit(":", 1)[1],
+                    identity_label=guestbuilder.INPUT_KEY_LABEL,
+                    identity=builder,
+                ),
+            )
         if docker.image_exists(builder, platform=resolved.docker_platform):
+            require_input_key(
+                docker,
+                builder,
+                label=guestbuilder.INPUT_KEY_LABEL,
+                subject=f"{name} guest Rust builder",
+            )
             runner.note(f"locked {name} guest Rust builder is already present: {builder}")
         else:
             docker.build(
                 tag=builder,
                 dockerfile=config.path(build.guest_rust_builder.dockerfile).as_posix(),
                 context=str(config.root),
-                args=build_arguments(resolved),
+                args=build_arguments(resolved, builder),
                 platform=resolved.docker_platform,
                 network=build.materialize_network,
+            )
+            require_input_key(
+                docker,
+                builder,
+                label=guestbuilder.INPUT_KEY_LABEL,
+                subject=f"{name} guest Rust builder",
             )
         exact_id = docker.image_id(builder, platform=resolved.docker_platform)
         runner.note(f"sealed {name} guest Rust builder identity: {builder} -> {exact_id}")
@@ -245,6 +282,12 @@ class RequireRustBuilders(Action, name="guest-rust-builder-require"):
             builder = image_tag(build, name, context.config.root)
             if not docker.image_exists(builder, platform=resolved.docker_platform):
                 raise GateError(f"locked guest Rust builder is missing: {builder}")
+            require_input_key(
+                docker,
+                builder,
+                label=guestbuilder.INPUT_KEY_LABEL,
+                subject=f"carried {name} guest Rust builder",
+            )
 
 
 class MaterializeAssetTools(Action, name="asset-tools-materialize"):

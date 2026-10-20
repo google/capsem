@@ -95,3 +95,4 @@ ENV CAPSEM_INSTALL_PNPM_STORE=${PNPM_STORE}
 # Metadata must not enter the environment of expensive RUN layers.
 ARG INPUT_IDENTITY
 LABEL org.capsem.install-builder.input-key=${INPUT_IDENTITY}
+LABEL org.opencontainers.image.source="https://github.com/google/capsem"

@@ -79,3 +79,7 @@ RUN cargo fetch --locked --target "${RUST_TARGET}" \
 # stale source from this layer must never shadow the source being qualified.
 RUN rm -rf /prefetch
 WORKDIR /build
+
+ARG INPUT_IDENTITY
+LABEL org.capsem.guest-rust-builder.input-key="${INPUT_IDENTITY}"
+LABEL org.opencontainers.image.source="https://github.com/google/capsem"

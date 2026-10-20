@@ -83,6 +83,20 @@ class HostImageConfig(Strict):
     mount: str
 
 
+class PrivateImagesConfig(Strict):
+    registry: Annotated[
+        str,
+        StringConstraints(pattern=r"^ghcr\.io/[a-z0-9](?:[a-z0-9._/-]*[a-z0-9])$"),
+    ]
+    source: Annotated[
+        str,
+        StringConstraints(pattern=r"^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"),
+    ]
+    keep_generations: PositiveInt
+    publish_attempts: PositiveInt
+    manifest: str
+
+
 class SbomConfig(Strict):
     script: str
     output: str

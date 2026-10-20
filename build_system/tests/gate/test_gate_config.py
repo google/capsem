@@ -57,6 +57,18 @@ def test_the_checked_in_configuration_is_valid(config: gate_config.GateConfig) -
     assert config.root == PROJECT_ROOT
 
 
+def test_private_builder_image_policy_is_one_typed_record(
+    config: gate_config.GateConfig,
+) -> None:
+    assert config.private_images.model_dump() == {
+        "registry": "ghcr.io/google/capsem-ci",
+        "source": "https://github.com/google/capsem",
+        "keep_generations": 3,
+        "publish_attempts": 3,
+        "manifest": "cache/target/private-images/manifest.json",
+    }
+
+
 def test_generated_output_roots_are_target_owned_and_distinct(
     config: gate_config.GateConfig,
 ) -> None:
@@ -482,8 +494,14 @@ def test_every_architecture_knows_its_own_key() -> None:
 @pytest.mark.parametrize(
     "name",
     (
-        "ModulesConfig", "FunctionalConfig", "DependencyAuditConfig", "AuditsConfig",
-        "KingslandingConfig", "GreyjoyConfig", "PinnedImageConfig", "QualificationConfig",
+        "ModulesConfig",
+        "FunctionalConfig",
+        "DependencyAuditConfig",
+        "AuditsConfig",
+        "KingslandingConfig",
+        "GreyjoyConfig",
+        "PinnedImageConfig",
+        "QualificationConfig",
     ),
 )
 def test_qualification_schema_reexports_keep_one_model_identity(name: str) -> None:
@@ -524,13 +542,19 @@ def test_source_package_and_sdk_keep_required_fields_and_reviewed_order() -> Non
     for owner, model in (("sdk_typescript", TypeScriptSdkConfig), ("sdk_rust", SdkConfig)):
         assert gate_config.GateConfig.model_fields[owner].annotation is model
         assert isinstance(getattr(CONFIG, owner), SdkConfig)
-    assert tuple(TypeScriptSdkConfig.model_fields) == (*SdkConfig.model_fields, "build_timeout_seconds")
+    assert tuple(TypeScriptSdkConfig.model_fields) == (
+        *SdkConfig.model_fields,
+        "build_timeout_seconds",
+    )
     assert all(field.is_required() for field in TypeScriptSdkConfig.model_fields.values())
     assert gate_config.GateConfig.model_fields["sdk_python"].annotation is PythonSdkConfig
     assert issubclass(PythonPackageConfig, source)
     assert tuple(PythonPackageConfig.model_fields) == (*fields, "pytest_scratch")
     assert all(field.is_required() for field in PythonPackageConfig.model_fields.values())
-    assert gate_config.GateConfig.model_fields["integrations_inspect_ai"].annotation is PythonPackageConfig
+    assert (
+        gate_config.GateConfig.model_fields["integrations_inspect_ai"].annotation
+        is PythonPackageConfig
+    )
     assert tuple(PythonSdkConfig.model_fields) == (
         *PythonPackageConfig.model_fields,
         "specification",

@@ -44,6 +44,8 @@ def main() -> None:
     parser.add_argument("--output", type=Path)
     parser.add_argument("--materialize-dependencies", action="store_true")
     parser.add_argument("--require-dependencies", action="store_true")
+    parser.add_argument("--private-image-registry")
+    parser.add_argument("--private-image-source")
     args = parser.parse_args()
 
     config = load_guest_config(args.guest_dir)
@@ -55,6 +57,8 @@ def main() -> None:
             args.arch,
             template=args.template,
             repo_root=Path.cwd(),
+            private_registry=args.private_image_registry,
+            private_source=args.private_image_source,
         )
         declare_current(config, resolved, Path.cwd())
         print(resolved.image_id)

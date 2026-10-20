@@ -1,0 +1,77 @@
+name: Private Build Images
+run-name: Private build images
+
+on:
+  schedule:
+    - cron: "17 3 * * 3"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/private-images.yaml"
+      - "build_system/docker/**"
+      - "build_system/builder/gate/**"
+      - "build_system/builder/image/**"
+      - "config/docker/**"
+      - "config/gate.toml"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "rust-toolchain.toml"
+      - "crates/*/Cargo.toml"
+      - "sdk/**/Cargo.toml"
+      - "sdk/**/package.json"
+      - "sdk/**/pnpm-lock.yaml"
+      - "web/app/package.json"
+      - "web/app/pnpm-lock.yaml"
+      - "build_system/pyproject.toml"
+      - "build_system/uv.lock"
+
+concurrency:
+  group: capsem-private-build-images
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: arm64
+            runner: ubuntu-24.04-arm
+          - architecture: amd64
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+        with:
+          enable-cache: false
+      - name: Log in to private GHCR
+        env:
+          TOKEN: ${{ github.token }}
+        run: printf '%s' "$TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Materialize and publish exact helper generations
+        run: uv run --project build_system --frozen capsem-gate private-images --publish
+      - name: Keep the latest configured generations of every package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          manifest=cache/target/private-images/manifest.json
+          keep="$(jq -er .keep_generations "$manifest")"
+          jq -er '.images[].package' "$manifest" | sort -u | while IFS= read -r package; do
+            package="${package#${OWNER}/}"
+            encoded="$(jq -rn --arg value "$package" '$value|@uri')"
+            gh api --paginate --slurp "/orgs/$OWNER/packages/container/$encoded/versions?per_page=100" \
+              --jq "add | map(select(.metadata.container.tags | length > 0)) | sort_by(.created_at) | reverse | .[$keep:][] | .id" | \
+              while IFS= read -r version; do
+                gh api --method DELETE "/orgs/$OWNER/packages/container/$encoded/versions/$version"
+              done
+          done

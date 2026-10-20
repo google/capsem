@@ -129,6 +129,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Publish the Capsem 0.7 documentation: getting started, task guides, security architecture, and SDK/API references.
 ### Changed
 
+- Local and hosted qualification now reuse exact, validated private GHCR
+  generations for network-open build helpers before the deterministic local
+  fallback; a weekly publisher retains three generations per platform.
+
 - Define diagram colors with shared semantic Tailwind tokens, include color meanings in each Legend, and distinguish process boundaries from permission levels.
 
 - Compact diagram controls inside the canvas, rename the text disclosure to Legend, and remove repeated visible library credits.

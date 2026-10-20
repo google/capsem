@@ -17,6 +17,7 @@ from .imageidentity import (
     require_input_key,
 )
 from .invocation import ConsoleMode
+from .privateimagecache import PrivateImage, try_import
 from .proc import Runner
 
 INPUT_KEY_LABEL = "org.capsem.package-builder.input-key"
@@ -149,6 +150,18 @@ def materialize(runner: Runner, config: GateConfig, target: Arch) -> PackageBuil
     )
     tag = image_tag(config, target, docker, parent_id=parent_id)
     runner.step(f"Materializing locked package dependencies ({target.name})")
+    if not docker.image_exists(tag, platform=host_arch.docker_platform):
+        try_import(
+            runner,
+            config,
+            PrivateImage(
+                local=tag,
+                platform=host_arch.docker_platform,
+                generation=tag.rsplit(":", 1)[1],
+                identity_label=INPUT_KEY_LABEL,
+                identity=tag,
+            ),
+        )
     if docker.image_exists(tag, platform=host_arch.docker_platform):
         _require_input_key(docker, tag)
         runner.note(f"package helper input key is already present: {tag}")
@@ -175,6 +188,7 @@ def materialize(runner: Runner, config: GateConfig, target: Arch) -> PackageBuil
             platform=host_arch.docker_platform,
             network=settings.materialize_build_network,
             console=ConsoleMode.LOG_ONLY,
+            timeout_seconds=config.apt_snapshot.install_timeout_seconds,
         )
         require_exact_image(
             docker,

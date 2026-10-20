@@ -766,6 +766,7 @@ def test_package_helper_is_host_native_and_target_specific(
     from capsem_builder.gate.invocation import ConsoleMode
 
     assert build_command.console is ConsoleMode.LOG_ONLY
+    assert build_command.timeout_seconds == config.apt_snapshot.install_timeout_seconds
 
 
 def test_package_helper_key_uses_the_platform_child_not_the_provenance_index(

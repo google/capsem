@@ -34,6 +34,7 @@ from .buildschema import (
     LogsConfig,
     ModulesConfig,
     NodePackageConfig,
+    PrivateImagesConfig,
     PythonPackageConfig,
     PythonSdkConfig,
     SbomConfig,
@@ -128,6 +129,7 @@ class GateConfig(Strict):
     sdk_rust: SdkConfig
     imagebuild: ImageBuildConfig
     hostimage: HostImageConfig
+    private_images: PrivateImagesConfig
     sbom: SbomConfig
     signing: SigningConfig
     frontend: FrontendConfig

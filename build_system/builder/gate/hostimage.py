@@ -31,6 +31,7 @@ from .invocation import ConsoleMode
 from .outside import Outside
 from .packageinputs import pinned_toolchain
 from .plan import Plan
+from .privateimagecache import PrivateImage, try_import
 
 #: One name, so every lane that needs the builder depends on the same step
 #: rather than each spelling its own label.
@@ -76,6 +77,10 @@ def input_key(config: GateConfig) -> str:
         config.apt_snapshot.base,
         config.apt_snapshot.id,
         settings.materialize_network,
+        str(config.apt_snapshot.update_timeout_seconds),
+        str(config.apt_snapshot.install_timeout_seconds),
+        str(config.apt_snapshot.request_timeout_seconds),
+        str(config.apt_snapshot.retries),
         settings.pnpm_version,
         settings.rust_image,
         settings.uv_image,
@@ -172,10 +177,23 @@ class _Build(Action, name="host-image-materialize"):
                 context.runner.note(
                     f"host builder input changed from {found or '<unlabelled>'} to {identity}"
                 )
+        cached = PrivateImage(
+            local=settings.tag,
+            platform=platform,
+            generation=identity,
+            identity_label=INPUT_KEY_LABEL,
+            identity=identity,
+        )
+        if found != identity and try_import(context.runner, context.config, cached):
+            found = identity
         if found != identity:
             arguments = [
                 f"APT_SNAPSHOT_BASE={context.config.apt_snapshot.base}",
                 f"APT_SNAPSHOT_ID={context.config.apt_snapshot.id}",
+                f"APT_UPDATE_TIMEOUT_SECONDS={context.config.apt_snapshot.update_timeout_seconds}",
+                f"APT_INSTALL_TIMEOUT_SECONDS={context.config.apt_snapshot.install_timeout_seconds}",
+                f"APT_REQUEST_TIMEOUT_SECONDS={context.config.apt_snapshot.request_timeout_seconds}",
+                f"APT_RETRIES={context.config.apt_snapshot.retries}",
                 f"PNPM_VERSION={settings.pnpm_version}",
                 f"RUST_IMAGE={settings.rust_image}",
                 f"UV_IMAGE={settings.uv_image}",

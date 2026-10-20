@@ -49,6 +49,7 @@ class ImageOperations:
         network: BuildNetwork,
         console: ConsoleMode = ConsoleMode.STREAM,
         no_cache: bool = False,
+        timeout_seconds: float | None = None,
     ) -> None:
         """Build an image. The context streams from the CLI, so it does not
         have to be visible inside the Lima VM the way a bind mount does."""
@@ -61,7 +62,7 @@ class ImageOperations:
         for value in args or []:
             argv += ["--build-arg", value]
         argv.append(context)
-        self._runner.run(argv, console=console)
+        self._runner.run(argv, console=console, timeout_seconds=timeout_seconds)
 
     def read(
         self,

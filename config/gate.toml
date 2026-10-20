@@ -189,6 +189,25 @@ digest = "sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07
 base = "https://snapshot.ubuntu.com/ubuntu"
 id = "20260810T000000Z"
 configure_script = "build_system/scripts/build/configure-apt-snapshot.sh"
+# Snapshot requests occasionally return a transient 5xx. Every image
+# materializer uses these finite request and operation bounds with persistent
+# BuildKit caches, so a retry resumes downloaded archives.
+update_timeout_seconds = 300
+install_timeout_seconds = 1800
+request_timeout_seconds = 15
+retries = 3
+
+[private_images]
+# Network-open dependency helpers are private build inputs, never release
+# artifacts. A scheduled workflow publishes exact input-keyed generations;
+# gates try them before the deterministic cold-build fallback.
+registry = "ghcr.io/google/capsem-ci"
+source = "https://github.com/google/capsem"
+keep_generations = 3
+# GHCR can accept every layer and transiently deny the final manifest write.
+# Repeating the immutable push only commits that same exact manifest.
+publish_attempts = 3
+manifest = "cache/target/private-images/manifest.json"
 
 [install]
 # The source image, smoke, and privileged systemd runtime are all sealed. The

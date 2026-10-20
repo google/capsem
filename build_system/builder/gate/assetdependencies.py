@@ -128,14 +128,20 @@ def _backend_action(
     template: str,
     operation: DependencyOperation,
 ) -> Run:
-    return Run(
-        [
-            *config.imagebuild.dependency_backend,
-            str(PurePosixPath(workspace) / config.imagebuild.workspace_guest_dir),
-            "--arch",
-            arch,
-            "--template",
-            template,
-            operation.value,
+    argv = [
+        *config.imagebuild.dependency_backend,
+        str(PurePosixPath(workspace) / config.imagebuild.workspace_guest_dir),
+        "--arch",
+        arch,
+        "--template",
+        template,
+    ]
+    if operation is DependencyOperation.MATERIALIZE:
+        argv += [
+            "--private-image-registry",
+            config.private_images.registry,
+            "--private-image-source",
+            config.private_images.source,
         ]
-    )
+    argv.append(operation.value)
+    return Run(argv)
