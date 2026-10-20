@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Reject WebSocket handshakes carrying HTTP body framing before dialing,
+  keeping guest-controlled lengths out of the empty upstream request path.
+
 - Use SHA256 signatures and named EC curves for Inspect's loopback registry
   certificates so macOS creates certificates accepted by strict TLS clients.
 

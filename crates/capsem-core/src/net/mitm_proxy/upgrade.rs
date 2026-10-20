@@ -81,8 +81,8 @@ pub(super) async fn handle_upgrade(
         status = tracing::field::Empty,
         error_kind = tracing::field::Empty,
     );
-    let make_ws_error = |error: &dyn std::fmt::Display| -> hyper::Response<ProxyBoxBody> {
-        let body_text = format!("Capsem: websocket upstream error ({error})\n");
+    let make_error = |status: http::StatusCode, error: &dyn std::fmt::Display| -> hyper::Response<ProxyBoxBody> {
+        let body_text = format!("Capsem: websocket error ({error})\n");
         let req_ctx = TelemetryRequestContext {
             policy_snapshot: Arc::clone(policy_snapshot),
             domain: domain.to_string(),
@@ -93,7 +93,7 @@ pub(super) async fn handle_upgrade(
             method: method.clone(),
             path: path.clone(),
             query: query.clone(),
-            status_code: Some(502),
+            status_code: Some(status.as_u16()),
             decision: Decision::Denied,
             matched_rule: Some(matched_rule.clone()),
             request_headers: Some(req_hdrs.clone()),
@@ -115,10 +115,25 @@ pub(super) async fn handle_upgrade(
             .map_err(|never| match never {})
             .boxed();
         hyper::Response::builder()
-            .status(http::StatusCode::BAD_GATEWAY)
+            .status(status)
             .body(seal_with_telemetry(body, req_ctx, ai_provider, ai_protocol))
             .unwrap()
     };
+    let make_ws_error = |error: &dyn std::fmt::Display| make_error(http::StatusCode::BAD_GATEWAY, error);
+    // This handshake branch constructs an empty upstream HTTP body. Refuse
+    // body framing instead of copying headers that disagree with those bytes.
+    if original_headers.contains_key(http::header::TRANSFER_ENCODING)
+        || original_headers
+            .get(http::header::CONTENT_LENGTH)
+            .and_then(|length| length.to_str().ok())
+            .and_then(|length| length.parse::<u64>().ok())
+            .is_some_and(|length| length > 0)
+    {
+        return Ok(make_error(
+            http::StatusCode::BAD_REQUEST,
+            &"WebSocket upgrades cannot contain an HTTP request body",
+        ));
+    }
 
     // Upgrades ride the same rail as every other request: the port
     // allowlist and the security boundary run before any dial. This

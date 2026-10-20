@@ -94,6 +94,30 @@ async fn rejected_websocket_upgrade_preserves_error_body_and_keeps_proxy_usable(
     upstream.await.unwrap();
 }
 
+#[tokio::test]
+async fn websocket_upgrade_with_http_body_is_rejected_before_dialing() {
+    for (framing, body) in [
+        ("Content-Length: 4", "body"),
+        ("Transfer-Encoding: chunked", "4\r\nbody\r\n0\r\n\r\n"),
+    ] {
+        let (port, dialed) = dial_probe().await;
+        let (config, _db) = make_proxy_config_full(&[], &[], true, &[80, port]);
+        let (proxy, address) = spawn_proxy(config).await;
+        let mut socket = tokio::net::TcpStream::connect(address).await.unwrap();
+        let request = upgrade_request(&format!("127.0.0.1:{port}"), "websocket", "Upgrade");
+        let head = request.split_once("\r\n\r\n").unwrap().0;
+        socket
+            .write_all(format!("{head}\r\n{framing}\r\n\r\n{body}").as_bytes())
+            .await
+            .unwrap();
+        let response = read_response_head(&mut socket).await;
+        assert!(response.starts_with("HTTP/1.1 400"), "{framing}: {response}");
+        assert!(!dialed.await.unwrap(), "a body-framed upgrade must not reach upstream");
+        drop(socket);
+        proxy.await.unwrap();
+    }
+}
+
 /// Read until the end of the response head. The 403 body may or may not
 /// share the read; the caller drops the socket afterwards either way.
 async fn read_response_head(tcp: &mut tokio::net::TcpStream) -> String {
