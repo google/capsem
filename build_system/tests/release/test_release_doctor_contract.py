@@ -1971,6 +1971,8 @@ def test_release_lanes_reuse_complete_modules_without_independent_sha_authority(
     assert "workflow_dispatch:" not in runtime_preflight
     assert "inputs.sha" not in runtime_preflight
     assert "EXPECTED_SHA" not in runtime_preflight
+    assert "steps.manifest.outputs.runtime-present == 'true'" in runtime_preflight
+    assert "channel has no public runtime to validate before its first runtime release" in runtime_preflight
     assert (
         "**Run `just test <source-commit>` to success first**: both commands refuse a "
         "source without a complete, passing journal on this machine" in normalized_release_skill
