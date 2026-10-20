@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Refresh the Rust and Python trust stores after the emSign intermediate-key
+  compromise, and update WebSocket TLS dependencies to the patched root cohort.
+
 - Upgrade the MCP SDK to 1.32.0 and pin Vite 8.3.3 across every Node project,
   fixing task-session authorization and Windows command-argument injection flaws.
 
