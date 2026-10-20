@@ -537,21 +537,25 @@ async fn renewal_reschedules_expiry_without_duplicate_creation() {
     fixture.cleanup_release.add_permits(1);
     let request = capsem_crypto::uuid_v4();
     let cap = Capability::from_bytes([26; 32]);
-    let policy = LeasePolicy::new(Duration::from_millis(400)).unwrap();
+    let policy = LeasePolicy::new(Duration::from_secs(10)).unwrap();
     let original = owner
         .create(request, cap.clone(), policy, effects(&fixture))
         .await
         .unwrap();
+    let work = owner.0.works.lock().await.get(&request).unwrap().clone();
+    let original_deadline = work.deadline.borrow().unwrap();
     assert!(owner
         .create(request, cap.clone(), policy, effects(&fixture))
         .await
         .is_err());
-    tokio::time::sleep(Duration::from_millis(140)).await;
     assert!(owner.claim(request, Capability::from_bytes([27; 32])).await.is_err());
     let renewed = owner.claim(request, cap.clone()).await.unwrap();
     assert_eq!(renewed.generation(), original.generation());
-    assert!(renewed.expires_wall_ms().unwrap() > original.expires_wall_ms().unwrap());
-    tokio::time::sleep(Duration::from_millis(280)).await;
+    assert_eq!(renewed.state(), State::Active);
+    let renewed_deadline = work.deadline.borrow().unwrap();
+    assert_eq!(renewed_deadline.revision, original_deadline.revision + 1);
+    assert!(renewed_deadline.at > original_deadline.at);
+    assert!(Arc::ptr_eq(&work, owner.0.works.lock().await.get(&request).unwrap()));
     assert_eq!(
         owner.inspect(request, cap.clone()).await.unwrap().unwrap().state(),
         State::Active
@@ -565,18 +569,28 @@ async fn renewal_reschedules_expiry_without_duplicate_creation() {
 #[tokio::test]
 async fn interrupted_create_requires_an_absence_barrier_and_never_replays() {
     let root = tempfile::tempdir().unwrap();
-    let owner = Controller::new(
-        Registry::open(&root.path().join("ownership")).unwrap(),
-        EffectBounds::new(Duration::from_millis(30), Duration::from_secs(2)).unwrap(),
-    );
+    let owner = controller(&root.path().join("ownership"));
     let fixture = Fixture::new();
     let request = capsem_crypto::uuid_v4();
     let cap = Capability::from_bytes([28; 32]);
     let policy = LeasePolicy::new(Duration::from_secs(10)).unwrap();
-    assert!(matches!(
-        owner.create(request, cap.clone(), policy, effects(&fixture)).await,
-        Err(Failure::CreationFailed)
-    ));
+    let creating = tokio::spawn({
+        let owner = owner.clone();
+        let cap = cap.clone();
+        let effects = effects(&fixture);
+        async move { owner.create(request, cap, policy, effects).await }
+    });
+    tokio::time::timeout(Duration::from_secs(1), fixture.create_entered.acquire())
+        .await
+        .unwrap()
+        .unwrap()
+        .forget();
+    // Drive the timeout after intent preparation so host I/O timing cannot
+    // choose the lifecycle phase under test.
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(3)).await;
+    tokio::time::resume();
+    assert!(matches!(creating.await.unwrap(), Err(Failure::CreationFailed)));
     tokio::time::timeout(Duration::from_secs(1), async {
         loop {
             if owner.inspect(request, cap.clone()).await.unwrap().unwrap().state() == State::Closed {
