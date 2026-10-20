@@ -595,8 +595,9 @@ async fn with_no_catalog_ever_read_only_explicit_grants_admit() {
     let fx = Fixture::new(grants(&["registry.example"], &["registry.example"]));
     *fx.catalog.lock().unwrap() = None;
     let (status, body) = fx.list().await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body, json!({"images": []}));
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert!(body["error"].as_str().unwrap().contains("catalog:stable"));
+    assert!(body["error"].as_str().unwrap().contains("unavailable"));
     let (status, body) = fx.pull("codex-cli").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(
@@ -612,6 +613,25 @@ async fn with_no_catalog_ever_read_only_explicit_grants_admit() {
     assert_eq!(status, StatusCode::FORBIDDEN, "an unread catalog admits nothing");
     let (status, _) = fx.pull("registry.example/app:1").await;
     assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn disabled_and_valid_empty_catalogs_are_distinct_from_unreadable_catalogs() {
+    let disabled = Fixture::new(ImagePolicyConfig {
+        catalog: Some(CatalogSetting::Enabled(false)),
+        ..ImagePolicyConfig::default()
+    });
+    let (status, body) = disabled.list().await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!({"images": []}));
+    assert_eq!(disabled.reads(), 0);
+
+    let empty = Fixture::default_policy();
+    empty.catalog.lock().unwrap().as_mut().unwrap()["entries"] = json!({});
+    let (status, body) = empty.list().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["images"], json!([]));
+    assert_eq!(body["catalog"]["channel"], "stable");
 }
 
 /// An administrator who moves the catalog gets that catalog or none, never

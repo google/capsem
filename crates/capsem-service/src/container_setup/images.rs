@@ -383,6 +383,13 @@ pub(crate) async fn handle_list_images(
         if let Err(error) = decision.setups.source.observe_cache(&[], &decision.parent) {
             warn!(%error, "cache verification cancellation remains pending");
         }
+        if let Some(source) = decision.policy.catalog_source() {
+            return Err(ImageError::Failed(format!(
+                "Image catalog {} is unavailable. Check registry access and publication, then refresh the catalog.",
+                source.reference
+            ))
+            .into());
+        }
         return Ok(Json(ImageListResponse {
             catalog: None,
             images: Vec::new(),

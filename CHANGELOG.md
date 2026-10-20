@@ -34,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Unreadable configured image catalogs report a retryable error instead of an
+  empty list; disabled catalogs and valid empty catalogs remain distinct.
+
 - Image publishers rebuild on shared scanner, recipe and inventory changes as
   well as their weekly schedules, keeping catalog evidence current.
 
