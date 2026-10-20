@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- VM owners use the verified host execution probe so macOS image sessions can
+  complete their sandbox attestation before boot.
+
 - The macOS gateway checks execution confinement using an installed program,
   allowing the service and desktop to become ready without weakening denial.
 
