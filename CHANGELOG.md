@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The macOS gateway checks execution confinement using an installed program,
+  allowing the service and desktop to become ready without weakening denial.
+
 - Official image rootfs inventories preserve Debian license evidence while
   normalizing SPDX spellings for strict validation, unblocking Claude Desktop
   ARM64 and the complete image catalog.

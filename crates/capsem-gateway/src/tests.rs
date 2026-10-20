@@ -9,6 +9,14 @@ mod hostile;
 mod route_forwarding;
 
 #[test]
+fn execution_attestation_probe_runs_outside_confinement() {
+    assert!(std::process::Command::new(EXECUTION_PROBE)
+        .status()
+        .expect("the probe must exist before denial can prove confinement")
+        .success());
+}
+
+#[test]
 fn entry_closes_ambient_descriptors_before_runtime_construction() {
     let source = include_str!("main.rs");
     let entry = source.split_once("fn main() -> Result<()> {").unwrap().1;
