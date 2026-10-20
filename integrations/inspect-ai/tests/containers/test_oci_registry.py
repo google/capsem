@@ -112,6 +112,8 @@ def test_oci_ingest_and_registry_https_serving(
             ["openssl", "x509", "-in", str(crt), "-noout", "-text"], text=True
         )
         assert "X509v3 Subject Key Identifier" in txt and "X509v3 Authority Key Identifier" in txt
+        assert "ecdsa-with-SHA256" in txt
+        assert "ASN1 OID: prime256v1" in txt
 
     tar1, tar_v2, tar_legacy = tmp_path / "oci1.tar", tmp_path / "v2.tar", tmp_path / "leg.tar"
     m_hex = _make_oci_tar(tar1, nested_index=True)

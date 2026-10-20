@@ -72,12 +72,16 @@ def ensure_localhost_tls(cache_dir: Path | None = None) -> tuple[Path, Path, str
                 "authorityKeyIdentifier=keyid:always\n",
                 encoding="utf-8",
             )
-            ec_args = ["-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes"]
+            ec_args = [
+                "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
+                "-pkeyopt", "ec_param_enc:named_curve", "-nodes",
+            ]
             for cmd in (
                 [
                     openssl,
                     "req",
                     "-x509",
+                    "-sha256",
                     *ec_args,
                     "-days",
                     "3650",
@@ -105,6 +109,7 @@ def ensure_localhost_tls(cache_dir: Path | None = None) -> tuple[Path, Path, str
                     openssl,
                     "x509",
                     "-req",
+                    "-sha256",
                     "-in",
                     str(csr),
                     "-CA",
