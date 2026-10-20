@@ -37,7 +37,13 @@ from .guestbuilder import image_tag
 from .models import BuildConfig, ErofsConfig, GuestImageConfig, RootfsConfig
 
 TEMPLATES_DIR = Path(__file__).resolve().parents[3] / "config" / "docker"
-CLOCK_SYNC_SCRIPT = Path(__file__).resolve().parents[3] / "build_system" / "scripts" / "build" / "sync-container-clock.py"
+CLOCK_SYNC_SCRIPT = (
+    Path(__file__).resolve().parents[3]
+    / "build_system"
+    / "scripts"
+    / "build"
+    / "sync-container-clock.py"
+)
 BOOT_ASSETS = ("vmlinuz", "initrd.img")
 ROOTFS_ASSET_PREFERENCE = ("rootfs.erofs",)
 OBOM_ASSET = "obom.cdx.json"
@@ -1026,10 +1032,18 @@ def _normalize_cyclonedx_obom(
         if isinstance(value, dict):
             normalized = {key: normalize(item) for key, item in value.items()}
             license_value = normalized.get("license")
-            if isinstance(license_value, dict) and license_value.get("id") == "sendmail":
-                # cdxgen 12.7.0 emits Debian's lowercase spelling, while the
-                # SPDX identifier embedded in the CycloneDX schema is Sendmail.
-                license_value["id"] = "Sendmail"
+            if isinstance(license_value, dict):
+                # cdxgen 12.7.0 emits Debian copyright spellings which differ
+                # from the SPDX identifiers accepted by CycloneDX's schema.
+                aliases = {
+                    "sendmail": "Sendmail",
+                    "bitstream-vera": "Bitstream-Vera",
+                    "BSD-1-clause": "BSD-1-Clause",
+                    "LIBTIFF": "libtiff",
+                }
+                identifier = license_value.get("id")
+                if isinstance(identifier, str) and identifier in aliases:
+                    license_value["id"] = aliases[identifier]
             return normalized
         return value
 
@@ -1475,9 +1489,7 @@ def _restore_canonical_assets_from_existing_manifest(
                 auditfs.stage(alias, canonical)
 
 
-def generate_checksums(
-    output_dir: Path, version: str, *, arches: list[str] | None = None
-) -> Path:
+def generate_checksums(output_dir: Path, version: str, *, arches: list[str] | None = None) -> Path:
     """Generate checksums for selected architectures, or all assets if omitted."""
     if arches is not None and (
         not arches or any(arch not in {"arm64", "x86_64"} for arch in arches)
@@ -1647,14 +1659,7 @@ def prepare_build_context(
     if template_name == "Dockerfile.rootfs.j2":
         # CA cert
         shutil.copy2(
-            str(
-                repo_root
-                / "crates"
-                / "capsem-core"
-                / "resources"
-                / "ca"
-                / "capsem-ca.crt"
-            ),
+            str(repo_root / "crates" / "capsem-core" / "resources" / "ca" / "capsem-ca.crt"),
             str(context_dir / "capsem-ca.crt"),
         )
         artifacts = guest_dir / "artifacts"
@@ -1775,16 +1780,16 @@ def build_image(
             )
             build_inputs["dependency_image"] = dependency_image.as_record()
             component_identity = componentcache.build_identity(build_inputs)
-            restored = componentcache.restore(
-                repo_root, "kernel", component_identity, arch_output
-            )
+            restored = componentcache.restore(repo_root, "kernel", component_identity, arch_output)
             if restored is not None:
                 _append_build_ledger(
                     arch_output,
                     {
                         "stage": "kernel.cache_hit",
                         "input_digest": component_identity,
-                        "outputs": [_file_ledger_entry(path, base=arch_output) for path in restored],
+                        "outputs": [
+                            _file_ledger_entry(path, base=arch_output) for path in restored
+                        ],
                     },
                 )
                 print(f"  reused kernel component {component_identity}")
@@ -1864,21 +1869,23 @@ def build_image(
                 runtime=runtime,
             )
             build_inputs["dependency_image"] = dependency_image.as_record()
-            build_inputs["asset_tools_image"] = asset_tools_image = _asset_tools_image(config, repo_root)
+            build_inputs["asset_tools_image"] = asset_tools_image = _asset_tools_image(
+                config, repo_root
+            )
             rootfs_config = _rootfs_config_input_record(config, arch_name)
             component_identity = _rootfs_component_identity(
                 build_inputs, rootfs_config, asset_tools_image
             )
-            restored = componentcache.restore(
-                repo_root, "rootfs", component_identity, arch_output
-            )
+            restored = componentcache.restore(repo_root, "rootfs", component_identity, arch_output)
             if restored is not None:
                 _append_build_ledger(
                     arch_output,
                     {
                         "stage": "rootfs.cache_hit",
                         "input_digest": component_identity,
-                        "outputs": [_file_ledger_entry(path, base=arch_output) for path in restored],
+                        "outputs": [
+                            _file_ledger_entry(path, base=arch_output) for path in restored
+                        ],
                     },
                 )
                 print(f"  reused rootfs component {component_identity}")

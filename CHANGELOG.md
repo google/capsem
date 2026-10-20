@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Official image rootfs inventories preserve Debian license evidence while
+  normalizing SPDX spellings for strict validation, unblocking Claude Desktop
+  ARM64 and the complete image catalog.
+
 - OCI workspaces retain the workload's full UID/GID range while mapping stable
   VirtioFS metadata to the image user, so `chown` and archive extraction work.
 

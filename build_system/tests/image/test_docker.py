@@ -492,9 +492,7 @@ def test_asset_dependency_materializers_bootstrap_https_trust_before_apt(
 def test_asset_dependency_identity_changes_with_every_executable_input(real_config):
     original = _asset_dependency_tag(real_config, "arm64", "rootfs")
     rootfs = real_config.build.rootfs.model_copy(
-        update={
-            "runtime_apt_packages": (*real_config.build.rootfs.runtime_apt_packages, "jq")
-        }
+        update={"runtime_apt_packages": (*real_config.build.rootfs.runtime_apt_packages, "jq")}
     )
     more_packages = real_config.model_copy(
         update={"build": real_config.build.model_copy(update={"rootfs": rootfs})}
@@ -1522,6 +1520,48 @@ class TestBuildLedger:
         assert component["name"] == "ghcr.io/google/capsem/dev"
         assert component["version"] == "sha256:" + "a" * 64
         assert {"name": "capsem:guest:architecture", "value": "arm64"} in component["properties"]
+
+    @pytest.mark.parametrize(
+        "license_id, canonical",
+        [
+            ("bitstream-vera", "Bitstream-Vera"),
+            ("BSD-1-clause", "BSD-1-Clause"),
+            ("LIBTIFF", "libtiff"),
+        ],
+    )
+    def test_normalize_cyclonedx_obom_preserves_debian_license_evidence(
+        self, tmp_path, license_id, canonical
+    ):
+        output = tmp_path / "obom.json"
+        component = {
+            "type": "library",
+            "name": "fonts-dejavu-core",
+            "version": "2.37-6",
+            "bom-ref": "font-package",
+            "licenses": [
+                {"license": {"id": license_id, "url": "https://example.org/license"}},
+                {"license": {"id": "MIT"}},
+                {"license": {"name": "Custom license"}},
+            ],
+        }
+        output.write_text(json.dumps({"components": [component]}))
+        _normalize_cyclonedx_obom(output, architecture="arm64")
+        expected = dict(
+            component,
+            licenses=[
+                {"license": {"id": canonical, "url": "https://example.org/license"}},
+                {"license": {"id": "MIT"}},
+                {"license": {"name": "Custom license"}},
+            ],
+        )
+        [actual] = json.loads(output.read_text())["components"]
+        actual_licenses = actual.pop("licenses")
+        expected_licenses = expected.pop("licenses")
+        assert actual == expected
+        assert len(actual_licenses) == len(expected_licenses)
+        assert {json.dumps(license, sort_keys=True) for license in actual_licenses} == {
+            json.dumps(license, sort_keys=True) for license in expected_licenses
+        }
 
     @patch("capsem_builder.image.docker.remove_image")
     @patch("capsem_builder.image.docker.extract_software_inventory")
