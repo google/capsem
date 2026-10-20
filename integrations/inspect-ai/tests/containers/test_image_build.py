@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import os
 import shutil
 import subprocess
 import tarfile
@@ -57,6 +58,8 @@ async def test_build_and_stage_lifecycle_cache_and_admission_error(
     def fake_run(cmd: list[str], **kw: Any) -> subprocess.CompletedProcess[str]:
         if cmd and "openssl" in cmd[0]:
             return real_run(cmd, **kw)
+        if cmd[1:3] == ["context", "inspect"]:
+            return subprocess.CompletedProcess(cmd, 0, "unix:///var/run/docker.sock\n", "")
         calls.append((cmd, dict(kw.get("env") or {})))
         if fail_mode == "timeout":
             raise subprocess.TimeoutExpired(cmd, kw.get("timeout", 15.0))
@@ -142,6 +145,32 @@ async def test_build_and_stage_lifecycle_cache_and_admission_error(
     sdk_ctrl = SdkCapsemController(hypervisor=cast(Any, RejectingHypervisor()))
     with pytest.raises(RuntimeError, match=f'admit = \\["{authority}/inspect-capsem/build"\\]'):
         await sdk_ctrl.start_vm(cpu_count=2, ram_gb=4, image=started["image"], registry_ca_pem=r_ca)
+
+
+def test_isolated_build_keeps_local_daemon_and_plugins_without_registry_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("DOCKER_HOST", raising=False)
+    monkeypatch.setenv("DOCKER_CONTEXT", "colima")
+    original = tmp_path / "user-config"
+    original.mkdir()
+    (original / "config.json").write_text('{"auths":{"private.example":{"auth":"secret"}}}')
+    monkeypatch.setenv("DOCKER_CONFIG", str(original))
+    endpoint = "unix:///tmp/colima/docker.sock"
+    monkeypatch.setattr(ib_mod.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(
+        a[0], 0, endpoint + "\n", "",
+    ))
+    clean = tmp_path / "clean"
+    clean.mkdir()
+    environment = ib_mod._docker_build_environment("docker", clean, 15)
+    assert environment["DOCKER_HOST"] == endpoint
+    assert "DOCKER_CONTEXT" not in environment
+    config = json.loads((clean / "config.json").read_text())
+    assert config == {"auths": {}, "cliPluginsExtraDirs": [str(original / "cli-plugins")]}
+    assert os.environ["DOCKER_CONTEXT"] == "colima"
+    monkeypatch.delenv("DOCKER_CONTEXT")
+    monkeypatch.setenv("DOCKER_HOST", "unix:///explicit.sock")
+    assert ib_mod._docker_build_environment("docker", clean, 15)["DOCKER_HOST"] == "unix:///explicit.sock"
 
 
 @pytest.mark.requires_docker

@@ -61,6 +61,28 @@ def configured_build_timeout() -> float:
     return float(raw) if raw else DEFAULT_BUILD_TIMEOUT_SECS
 
 
+def _docker_build_environment(docker: str, clean: Path, timeout: float) -> dict[str, str]:
+    """Keep local daemon selection and CLI plugins, without registry credentials."""
+    environment = dict(os.environ)
+    if not environment.get("DOCKER_HOST") or environment.get("DOCKER_CONTEXT"):
+        selected = subprocess.run(
+            [docker, "context", "inspect", "--format", "{{.Endpoints.docker.Host}}"],
+            capture_output=True, text=True, timeout=timeout, check=True,
+        ).stdout.strip()
+        if not selected.startswith(("unix://", "npipe://")):
+            raise RuntimeError(
+                "Selected Docker context is not a local daemon; grant an explicit "
+                "docker_config_dir to use its connection and TLS configuration."
+            )
+        environment["DOCKER_HOST"] = selected
+    environment.pop("DOCKER_CONTEXT", None)
+    original = Path(os.environ.get("DOCKER_CONFIG") or Path.home() / ".docker")
+    (clean / "config.json").write_text(json.dumps({
+        "auths": {}, "cliPluginsExtraDirs": [str(original / "cli-plugins")],
+    }), encoding="utf-8")
+    return environment
+
+
 def run_host_build(
     spec: Mapping[str, Any],
     *,
@@ -95,12 +117,13 @@ def run_host_build(
         tmp_root = Path(tmp)
         tar_path = tmp_root / "image.tar"
         explicit_cfg = spec.get("docker_config_dir")
+        environment = None
         if explicit_cfg:
             cfg_dir = Path(str(explicit_cfg))
         else:
             cfg_dir = tmp_root / "docker-config"
             cfg_dir.mkdir(parents=True, exist_ok=True)
-            (cfg_dir / "config.json").write_text('{"auths":{}}', encoding="utf-8")
+            environment = _docker_build_environment(docker_bin, cfg_dir, timeout)
 
         build_ctx, build_df = prepare_build_inputs(spec, tmp_root)
         cmd = [
@@ -130,6 +153,7 @@ def run_host_build(
                 text=True,
                 timeout=timeout,
                 check=False,
+                env=environment,
             )
             if proc.returncode != 0:
                 detail = (proc.stderr or proc.stdout or "").strip()[-2000:]
@@ -151,6 +175,7 @@ def run_host_build(
                 text=True,
                 timeout=timeout,
                 check=False,
+                env=environment,
             )
             if save_proc.returncode != 0:
                 detail = (save_proc.stderr or save_proc.stdout or "").strip()[-2000:]
@@ -170,6 +195,7 @@ def run_host_build(
                     capture_output=True,
                     timeout=30,
                     check=False,
+                    env=environment,
                 )
 
 

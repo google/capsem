@@ -37,6 +37,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Inspect host builds preserve Colima's local daemon and Docker CLI plugins
+  while keeping registry credentials isolated by default.
+
 - Gate orphan cleanup preserves new VM children of an existing live service,
   allowing product sessions to continue during release qualification.
 

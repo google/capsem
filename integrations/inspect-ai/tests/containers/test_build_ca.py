@@ -30,6 +30,8 @@ _FAKE_DOCKER_SCRIPT = textwrap.dedent(
     from pathlib import Path
 
     args = sys.argv[3:] if sys.argv[1:2] == ["--config"] else sys.argv[1:]
+    if args[:2] == ["context", "inspect"]:
+        print("unix:///var/run/docker.sock")
     if args[:1] == ["build"]:
         df = Path(args[args.index("-f") + 1]).read_text(encoding="utf-8")
         ctx = Path(args[-1])
