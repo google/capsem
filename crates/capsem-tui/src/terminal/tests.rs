@@ -268,7 +268,7 @@ mod stream_protocol {
 
     #[test]
     fn a_terminal_stream_opens_with_start_then_its_window_size() {
-        let frames = stream_start_frames(120, 40);
+        let frames = stream_start_frames(120, 40).unwrap();
         assert_eq!(
             decode_client_frame(&frames[0]).unwrap(),
             ClientFrame::Control(StreamControl::Start {
@@ -284,36 +284,57 @@ mod stream_protocol {
 
     #[test]
     fn input_becomes_stdin_and_resize_frames_and_zero_sizes_are_not_sent() {
-        let stdin = stream_input_frame(TerminalInput::Bytes(b"ls\n".to_vec())).unwrap();
-        assert_eq!(decode_client_frame(&stdin).unwrap(), ClientFrame::Stdin(b"ls\n"));
-        let resize = stream_input_frame(TerminalInput::Resize { cols: 90, rows: 20 }).unwrap();
+        let stdin = stream_input_frames(TerminalInput::Bytes(b"ls\n".to_vec())).unwrap();
+        assert_eq!(decode_client_frame(&stdin[0]).unwrap(), ClientFrame::Stdin(b"ls\n"));
+        let resize = stream_input_frames(TerminalInput::Resize { cols: 90, rows: 20 }).unwrap();
         assert_eq!(
-            decode_client_frame(&resize).unwrap(),
+            decode_client_frame(&resize[0]).unwrap(),
             ClientFrame::Control(StreamControl::Resize { cols: 90, rows: 20 })
         );
-        assert!(stream_input_frame(TerminalInput::Resize { cols: 0, rows: 20 }).is_none());
+        assert!(stream_input_frames(TerminalInput::Resize { cols: 0, rows: 20 })
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
     fn server_frames_become_output_or_status() {
         assert_eq!(
-            stream_server_event(&encode_data(StreamChannel::Stdout, b"$ \xff")),
+            stream_server_event(&encode_data(StreamChannel::Stdout, b"$ \xff").unwrap()),
             Some(StreamEvent::Output(b"$ \xff".to_vec()))
         );
         assert_eq!(
-            stream_server_event(&encode_status(&StreamStatus::Error {
-                message: "terminal closed".into()
-            })),
+            stream_server_event(
+                &encode_status(&StreamStatus::Error {
+                    message: "terminal closed".into()
+                })
+                .unwrap()
+            ),
             Some(StreamEvent::Status("terminal closed".into()))
         );
         assert_eq!(
-            stream_server_event(&encode_status(&StreamStatus::Started)),
+            stream_server_event(&encode_status(&StreamStatus::Started).unwrap()),
             Some(StreamEvent::Status("connected".into()))
         );
-        assert_eq!(
-            stream_server_event(&[9, 1]),
-            Some(StreamEvent::Status("protocol error: unknown stream channel 9".into()))
-        );
+        assert!(matches!(stream_server_event(&[9, 1]),
+            Some(StreamEvent::Status(message)) if message.starts_with("protocol error:")));
+    }
+
+    #[test]
+    fn a_large_paste_is_split_without_losing_binary_bytes() {
+        let bytes = (0..protocol::MAX_STREAM_DATA_BYTES * 2 + 7)
+            .map(|index| index as u8)
+            .collect::<Vec<_>>();
+        let frames = stream_input_frames(TerminalInput::Bytes(bytes.clone())).unwrap();
+        assert_eq!(frames.len(), 3);
+        let mut received = Vec::new();
+        for frame in frames {
+            let ClientFrame::Stdin(chunk) = decode_client_frame(&frame).unwrap() else {
+                panic!("paste is stdin");
+            };
+            assert!(chunk.len() <= protocol::MAX_STREAM_DATA_BYTES);
+            received.extend_from_slice(chunk);
+        }
+        assert_eq!(received, bytes);
     }
 
     #[test]

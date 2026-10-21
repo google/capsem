@@ -247,7 +247,14 @@ async fn run_terminal_connection(
         }
     };
     let (mut write, mut read) = socket.split();
-    for frame in stream_start_frames(cols, rows) {
+    let frames = match stream_start_frames(cols, rows) {
+        Ok(frames) => frames,
+        Err(error) => {
+            send_status(&events, &session_id, format!("protocol error: {error}")).await;
+            return;
+        }
+    };
+    for frame in frames {
         if let Err(error) = write.send(Message::Binary(frame.into())).await {
             send_status(&events, &session_id, format!("send failed: {error:#}")).await;
             return;
@@ -261,12 +268,18 @@ async fn run_terminal_connection(
                     break;
                 };
                 for input in coalesced_terminal_inputs(input, &mut input_rx) {
-                    let Some(frame) = stream_input_frame(input) else {
-                        continue;
+                    let frames = match stream_input_frames(input) {
+                        Ok(frames) => frames,
+                        Err(error) => {
+                            send_status(&events, &session_id, format!("protocol error: {error}")).await;
+                            return;
+                        }
                     };
-                    if let Err(error) = write.send(Message::Binary(frame.into())).await {
-                        send_status(&events, &session_id, format!("send failed: {error:#}")).await;
-                        return;
+                    for frame in frames {
+                        if let Err(error) = write.send(Message::Binary(frame.into())).await {
+                            send_status(&events, &session_id, format!("send failed: {error:#}")).await;
+                            return;
+                        }
                     }
                 }
             }
@@ -305,28 +318,31 @@ fn http_header(value: &'static str) -> tokio_tungstenite::tungstenite::http::Hea
 }
 
 /// What a terminal stream opens with: `start`, then the window size.
-fn stream_start_frames(cols: u16, rows: u16) -> Vec<Vec<u8>> {
+fn stream_start_frames(cols: u16, rows: u16) -> Result<Vec<Vec<u8>>, protocol::StreamFrameError> {
     let mut frames = vec![protocol::encode_control(&StreamControl::Start {
         kind: StreamKind::Terminal,
         command: None,
-    })];
+    })?];
     if cols > 0 && rows > 0 {
-        frames.push(protocol::encode_control(&StreamControl::Focus { cols, rows }));
+        frames.push(protocol::encode_control(&StreamControl::Focus { cols, rows })?);
     }
-    frames
+    Ok(frames)
 }
 
 /// One client frame for terminal input; a zero-sized window is not a resize.
-fn stream_input_frame(input: TerminalInput) -> Option<Vec<u8>> {
+fn stream_input_frames(input: TerminalInput) -> Result<Vec<Vec<u8>>, protocol::StreamFrameError> {
     match input {
-        TerminalInput::Bytes(bytes) => Some(protocol::encode_data(StreamChannel::Stdin, &bytes)),
+        TerminalInput::Bytes(bytes) => bytes
+            .chunks(protocol::MAX_STREAM_DATA_BYTES)
+            .map(|chunk| protocol::encode_data(StreamChannel::Stdin, chunk))
+            .collect(),
         TerminalInput::Resize { cols, rows } if cols > 0 && rows > 0 => {
-            Some(protocol::encode_control(&StreamControl::Resize { cols, rows }))
+            Ok(vec![protocol::encode_control(&StreamControl::Resize { cols, rows })?])
         }
         TerminalInput::Focus { cols, rows } if cols > 0 && rows > 0 => {
-            Some(protocol::encode_control(&StreamControl::Focus { cols, rows }))
+            Ok(vec![protocol::encode_control(&StreamControl::Focus { cols, rows })?])
         }
-        TerminalInput::Resize { .. } | TerminalInput::Focus { .. } => None,
+        TerminalInput::Resize { .. } | TerminalInput::Focus { .. } => Ok(Vec::new()),
     }
 }
 

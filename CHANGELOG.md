@@ -76,6 +76,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Split large TUI pastes into bounded binary stream records without losing
+  bytes or disconnecting the terminal.
+
 - Keep the embedded app's reconnect message readable against its background.
 
 - Wait for a graphical app's initial connection during startup, and keep its
