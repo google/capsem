@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { ImageCacheState, type ImageInfo } from '@capsem/sdk';
-  import { getImages, pullImage } from '../../api';
+  import { ImageCacheState, ImageSurface, type ImageInfo } from '@capsem/sdk';
+  import { getImages, pullImage, getContainerStatus, getBaseUrl, openSurface } from '../../api';
   import { vmStore } from '../../stores/vms.svelte';
   import { tabStore } from '../../stores/tabs.svelte';
   import { sessionActionError } from '../../models/session-action-error';
   import { imageNeedsDownload, imageLaunchRequest, imageInterfaceLabel } from '../../models/image-launch';
+  import { surfaceLauncherUrl, waitForSurface } from '../../models/surface';
   import CircleNotch from 'phosphor-svelte/lib/CircleNotch';
   import DownloadSimple from 'phosphor-svelte/lib/DownloadSimple';
   import Play from 'phosphor-svelte/lib/Play';
@@ -28,10 +29,27 @@
       launching = image.name;
       cacheError = null;
       failedImage = null;
+      let appWindow: Window | null = null;
       try {
+        const graphical = image.surface === ImageSurface.XPRA;
+        if (graphical && !('__TAURI_INTERNALS__' in window)) {
+          // Reserve the tab during the click, before provisioning consumes
+          // the browser's user activation and its popup allowance.
+          appWindow = window.open('about:blank', '_blank');
+          if (!appWindow) throw new Error('Allow browser popups to open this graphical app.');
+          appWindow.opener = null;
+          appWindow.document.title = image.name;
+          appWindow.document.body.textContent = `Starting ${image.name}...`;
+        }
         const { id, name } = await vmStore.provision(imageLaunchRequest(image));
         tabStore.openVM(id, name);
+        if (graphical) {
+          await waitForSurface(() => getContainerStatus(id));
+          if (appWindow && !appWindow.closed) appWindow.location.replace(surfaceLauncherUrl(getBaseUrl(), id));
+          else await openSurface(id);
+        }
       } catch (e) {
+        appWindow?.close();
         failedImage = image.name;
         cacheError = sessionActionError(e);
       } finally {

@@ -34,6 +34,23 @@ export function surfaceMayAppear(status: ContainerStatusResponse | null | undefi
   }
 }
 
+/** A graphical launch waits for its exposure instead of opening an error page. */
+export async function waitForSurface(
+  read: () => Promise<ContainerStatusResponse | null>,
+  timeoutMs = 120_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const status = await read();
+    if (hasOpenableSurface(status)) return;
+    if (!surfaceMayAppear(status)) {
+      throw new Error(status?.error ?? 'The graphical app stopped before it could open.');
+    }
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+  throw new Error('The app is still starting. Open its session and choose Open app to try again.');
+}
+
 /** The gateway page that opens VM `vmId`'s surface. It carries no token. */
 export function surfaceLauncherUrl(gatewayUrl: string, vmId: string): string {
   return `${gatewayUrl.replace(/\/+$/, '')}/vms/${encodeURIComponent(vmId)}/surface/`;
