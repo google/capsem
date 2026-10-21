@@ -43,6 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- App downloads use a compact progress bar in their row instead of a spinner
+  button and explanatory text.
+
 - Launching a graphical app opens its authenticated graphical surface once
   ready, with browser popup handling tied to the original Launch click.
 

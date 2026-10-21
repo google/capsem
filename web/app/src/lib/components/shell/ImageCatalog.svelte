@@ -133,23 +133,28 @@
               </div>
               <p class="text-xs text-muted-foreground-1 truncate" title={image.description}>{image.description}</p>
             </div>
+            {#if caching === image.name}
+              <div class="shrink-0 w-24">
+                <div class="app-download-progress bg-muted rounded-full" role="progressbar" aria-label={`Downloading ${image.name}`}></div>
+                <span class="block mt-1 text-[10px] text-center text-muted-foreground-1">Downloading</span>
+              </div>
+            {:else}
             <button type="button" class="shrink-0 inline-flex items-center justify-center gap-1.5 min-w-24 text-xs rounded-lg px-3 py-2 bg-primary text-primary-foreground hover:bg-primary-hover disabled:opacity-50"
               aria-label={`${imageNeedsDownload(image, ready) ? 'Download' : 'Launch'} ${image.name}`}
               disabled={caching !== null || launching !== null || vmStore.acting}
               onclick={() => activate(image)}>
-              {#if caching === image.name || launching === image.name}
+              {#if launching === image.name}
                 <CircleNotch size={14} class="animate-spin" />
-                {caching === image.name ? 'Downloading...' : 'Launching...'}
+                Launching...
               {:else if imageNeedsDownload(image, ready)}
                 <DownloadSimple size={14} /> Download
               {:else}
                 <Play size={14} weight="fill" /> Launch
               {/if}
             </button>
+            {/if}
           </div>
-          {#if caching === image.name}
-            <p class="mt-2 text-xs text-muted-foreground-1" role="status">Downloading. You can leave this page open; the first download may take a few minutes.</p>
-          {:else if failedImage === image.name && cacheError}
+          {#if failedImage === image.name && cacheError}
             <div class="mt-2 text-xs text-destructive break-words" role="alert">
               <p>Couldn't prepare this app. Try again.</p>
               <details class="mt-1"><summary class="cursor-pointer">Details</summary>{cacheError}</details>
@@ -160,3 +165,28 @@
     </div>
   {/if}
 </section>
+
+<style>
+  .app-download-progress {
+    position: relative;
+    overflow: hidden;
+    width: 100%;
+    height: 6px;
+  }
+  .app-download-progress::after {
+    content: '';
+    position: absolute;
+    width: 40%;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--primary);
+    animation: app-download 1.2s ease-in-out infinite alternate;
+  }
+  @keyframes app-download {
+    from { transform: translateX(0); }
+    to { transform: translateX(150%); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .app-download-progress::after { animation: none; left: 30%; }
+  }
+</style>
