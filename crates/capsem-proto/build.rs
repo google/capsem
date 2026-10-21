@@ -28,6 +28,7 @@ fn main() {
         "lib.rs",
         "ipc.rs",
         "terminal.rs",
+        "stream.rs",
         "handshake.rs",
         "router.rs",
         "exec_stream.rs",

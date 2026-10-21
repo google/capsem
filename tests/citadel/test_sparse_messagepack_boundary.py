@@ -15,6 +15,7 @@ PROTOCOL = ROOT / "crates/capsem-proto/src"
 ENCODER_OWNERS = {
     Path("crates/capsem-proto/src/lib.rs"),
     Path("crates/capsem-proto/src/exec_stream.rs"),
+    Path("crates/capsem-proto/src/stream.rs"),
     Path("crates/capsem-proto/src/mcp_aggregator.rs"),
     Path("crates/capsem-proto/src/repeated.rs"),
     Path("crates/capsem-proto/src/forensic.rs"),

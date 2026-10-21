@@ -39,6 +39,7 @@ pub mod proxy_trace_hints;
 pub mod repeated;
 pub mod router;
 mod sparse;
+pub mod stream;
 pub mod terminal;
 pub mod upstream_grant;
 mod wire_bytes;
