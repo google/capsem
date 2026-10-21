@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import subprocess
+import sys
 from pathlib import Path
 
 
@@ -33,3 +35,22 @@ def test_python_reference_includes_resources_signatures_and_models() -> None:
     assert '_operations' not in result
     for block in result.split('```python\n')[1:]:
         ast.parse(block.split('```')[0])
+
+
+def test_python_only_generation_needs_no_rustdoc() -> None:
+    result = subprocess.run(
+        [sys.executable, str(Path(__file__).with_name('generate-sdk-reference.py')),
+         '--languages', 'python', '--check'],
+        capture_output=True, text=True, timeout=10, check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_rust_generation_requires_current_rustdoc() -> None:
+    result = subprocess.run(
+        [sys.executable, str(Path(__file__).with_name('generate-sdk-reference.py')),
+         '--languages', 'rust', '--check'],
+        capture_output=True, text=True, timeout=10, check=False,
+    )
+    assert result.returncode == 2
+    assert '--rustdoc-dir is required' in result.stderr

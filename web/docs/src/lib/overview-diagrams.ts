@@ -47,6 +47,32 @@ export const systemOverview: Diagram = {
   ],
 };
 
+export const standaloneProxy: Diagram = {
+  title: 'Standalone proxy: control and model requests', width: 720, height: 1160,
+  nodes: [
+    { id: 'lease', label: 'ONE PROXY LEASE · NO VM', x: 20, y: 460, width: 680, height: 490, boundary: 'group' },
+    { id: 'cli', label: 'capsem proxy', x: 40, y: 25, width: 260, tone: 'maximum' },
+    { id: 'client', label: 'Model client on host', x: 380, y: 25, width: 280, tone: 'maximum' },
+    { id: 'gateway', label: 'capsem-gateway', x: 40, y: 170, width: 260, tone: 'limited' },
+    { id: 'service', label: 'capsem-service', x: 40, y: 315, width: 260, tone: 'maximum' },
+    { id: 'listener', label: 'Service data listener\nHTTP · unauthenticated', x: 380, y: 315, width: 280, tone: 'maximum' },
+    { id: 'proxy', label: 'capsem-proxy\nSecurity engine', x: 380, y: 535, width: 280, tone: 'limited' },
+    { id: 'ledger', label: 'capsem-ledger\nTemporary records', x: 40, y: 825, width: 260, tone: 'limited' },
+    { id: 'upstream', label: 'Configured model provider', x: 380, y: 1060, width: 280 },
+  ],
+  links: [
+    { from: 'cli', to: 'gateway', label: 'authenticated control' },
+    { from: 'gateway', to: 'service', label: 'HTTP over UDS' },
+    { from: 'client', to: 'listener', label: 'model API requests' },
+    { from: 'service', to: 'listener', label: 'bind / accept', control: true, source: 'right', target: 'left' },
+    { from: 'listener', to: 'proxy', label: 'connected sockets' },
+    { from: 'service', to: 'proxy', label: 'policy / capabilities', control: true, source: 'bottom', target: 'left', via: [{ x: 170, y: 571 }] },
+    { from: 'service', to: 'ledger', label: 'ledger grants', control: true, source: 'left', target: 'left', via: [{ x: 10, y: 351 }, { x: 10, y: 861 }] },
+    { from: 'proxy', to: 'ledger', label: 'audit records', source: 'left', target: 'top', via: [{ x: 170, y: 730 }] },
+    { from: 'proxy', to: 'upstream', label: 'allowed requests\nservice-granted connections' },
+  ],
+};
+
 export const securityEngine: Diagram = {
   title: 'Security engine event flow', width: 1000, height: 1600,
   nodes: [

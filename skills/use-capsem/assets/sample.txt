@@ -1,0 +1,6 @@
+CAPSEM HARMLESS TRAINING FIXTURE
+This is plain text, not executable malware.
+claimed_filename=invoice.exe
+url=https://updates.example.invalid/payload
+command=powershell -EncodedCommand TRAINING_ONLY
+message=Inspect these strings; do not execute or fetch them.

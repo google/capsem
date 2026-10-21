@@ -33,6 +33,21 @@ Dashed arrows: control. Solid arrows: data.
 
 The private-network switch is shared by the VMs attached to that network.
 
+## Standalone proxy boundary
+
+`capsem proxy` starts one confined security engine and log writer per lease,
+without a VM or VM owner. Both workers use the same OS sandbox roles as their
+VM counterparts. The service owns the listener and grants accepted connections;
+the proxy cannot bind a listener or dial an arbitrary upstream itself.
+
+The gateway authenticates lease creation, renewal, and stop requests. The
+separate model listener is unauthenticated plain HTTP. Keep its default
+loopback bind: a model-provider API key is upstream credential material,
+not access control for this listener. Proxy mode does not isolate the host
+client's files, processes, or other traffic. See the
+[standalone process flow](/architecture/overview/#run-model-requests-without-a-vm)
+and [Proxy reference](/reference/proxy/).
+
 ## Roles and sandboxing rules
 
 Worker startup closes unrelated handles and clears inherited environment data.
@@ -45,14 +60,14 @@ The table lists each role's specific grants and exceptions.
 
 | Process | Role | Sandboxing rules |
 | --- | --- | --- |
-| `capsem-service` | Shared coordinator and authority broker. | Trusted with the launching user's permissions. Owns worker lifetimes, policy, credential storage, connection admission, and ledger commitments. Grants identify a VM, generation, and role; clients cannot select another worker by supplying a path. |
+| `capsem-service` | Shared coordinator and authority broker. | Trusted with the launching user's permissions. Owns worker lifetimes, policy, credential storage, connection admission, and ledger commitments. Grants identify a VM or proxy lease, generation, and role; clients cannot select another worker by supplying a path. |
 | `capsem-gateway` | Authenticated API for CLI, TUI, Capsem UI, SDKs, and host MCP. | Bind API/preview listeners and prepare runtime-file handles before confinement. **Linux:** Landlock grants no paths; seccomp permits accept on inherited listeners and I/O on granted coordinator channels. **macOS:** Seatbelt denies ambient file reads/writes, bind/connect, exec, and unrelated signals; permits inbound acceptance and exact token/port/PID/preview/log paths. No direct VM-owner socket dialing. |
 | `capsem-process` | Boot and control one VM. | Preopen workspace and IPC/vsock handles, then confine before hypervisor and worker threads start. Writable grants: own guest share, system overlay, owner-state directory, serial/PTY logs, and `/dev/null`. Read-only grants: runtime assets and immutable image share. **Linux:** Landlock/seccomp grant required KVM/vhost-vsock device operations, system libraries, and the router executable/loader. **macOS:** Seatbelt grants required system libraries and the router executable; the binary has the virtualization entitlement. Ledger files, sibling VMs, ambient outbound dialing, and unrelated signals are denied. Permission/timestamp changes use the coordinator broker. |
 | VM | Own Linux kernel and memory. | Apple Virtualization.framework or KVM hardware boundary. No host-network NIC. Only its guest share and read-only image share are mounted; the writable system overlay and ledger remain outside the guest share. |
 | OCI container | Agent and tools inside the VM. | `runc` creates user/PID/mount/IPC/UTS/network namespaces; `noNewPrivileges=true`; cgroup CPU/memory/PID limits. Seccomp denies vsock sockets; no `CAP_SYS_ADMIN`. Terminal images cannot create namespaces; the graphical workload allows the namespaces Chromium needs. Its container root is writable. |
 | Guest helpers | Terminal, network, and MCP transport inside the VM. | Outside the OCI container but inside the hardware boundary. Open assigned vsock channels on behalf of the container; they have no host filesystem grant. |
 | Security engine (`capsem-proxy`) | Parse traffic, evaluate policy, prepare credentials, and submit audit records. | Clear environment/handles; prepare a single-thread runtime; install confinement with **no filesystem path grants** before readiness. **macOS:** deny-default Seatbelt. **Linux:** Landlock plus seccomp deny file opens, socket creation/dialing, exec, and unrelated signals. Receives exact policy bytes, connected upstream descriptors, and typed credential/MCP/ledger capabilities. Cannot open credential storage or `session.db`. |
-| Log writer (`capsem-ledger`) | Store and query one VM's ledger and body archive. | Resolve its database directory, prepare a single-thread runtime, then confine before opening storage. **macOS:** deny-default Seatbelt grants that ledger directory. **Linux:** Landlock grants that directory; seccomp permits storage/runtime I/O while denying ambient networking, exec, and unrelated signals. Uses memory for temporary storage. Producer, reader, and maintainer operations arrive over distinct granted channels. |
+| Log writer (`capsem-ledger`) | Store and query one VM's or proxy lease's ledger and body archive. | Resolve its database directory, prepare a single-thread runtime, then confine before opening storage. **macOS:** deny-default Seatbelt grants that ledger directory. **Linux:** Landlock grants that directory; seccomp permits storage/runtime I/O while denying ambient networking, exec, and unrelated signals. Uses memory for temporary storage. Producer, reader, and maintainer operations arrive over distinct granted channels. |
 | `capsem-mcp-aggregator` | Dispatch MCP requests to configured servers and builtins. | Validate generation/role and adopt connected channels; confine and attest before readiness. **macOS:** deny-default Seatbelt with no path grants. **Linux:** Landlock/seccomp deny ambient files, sockets, fork/exec, and unrelated signals; runtime threads remain permitted. Holds a brokered HTTP capability for configured servers and a narrow builtin-spawn RPC; the service creates and reaps children. |
 | `capsem-mcp-builtin` | Execute first-party HTTP tools. | Same descriptor-only confinement and startup checks as the aggregator, with a separate builtin role and HTTP capability. The service checks current destination/address policy. No policy files, host credentials, ledger files, or VM controls. |
 | `capsem-router` (expose) | Relay one VM's published ports. | Close inherited handles; initialize runtime/parent watch; confine before the first connection grant. **macOS:** deny-default Seatbelt. **Linux:** `no_new_privs` and seccomp `TSYNC` across runtime threads. Only connected-handle I/O, polling, memory, and shutdown are allowed: no file opens, connect, accept, clone, exec, or signals. The owner accepts on coordinator-granted listeners and passes connected pairs. |

@@ -1,9 +1,11 @@
-// User-approved 33-route rebuild. Legacy manual files stay outside the preview.
+// Approved rebuild plus proxy pages and agent triage guide approved October 20, 2026.
 export const approvedDocs = [
   "getting-started/intro.mdx",
   "getting-started/installation.md",
   "getting-started/how-to-use-capsem.md",
   "guides/users/use-the-terminal.md",
+  "guides/users/analyze-a-file-with-an-agent.md",
+  "guides/users/use-the-proxy.md",
   "guides/users/reuse-your-environment.md",
   "guides/users/run-evaluations.md",
   "guides/users/configure-security.md",
@@ -24,6 +26,7 @@ export const approvedDocs = [
   "sdk/errors.md",
   "reference/cli.md",
   "reference/mcp.md",
+  "reference/proxy.md",
   "reference/configuration.md",
   "reference/credentials.md",
   "reference/enforcement-rules.md",

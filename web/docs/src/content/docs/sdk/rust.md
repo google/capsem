@@ -15,6 +15,14 @@ pub struct Hypervisor { /* private fields */ }
 
 // A gateway connection. Clones and VM handles share the HTTP connection pool.
 
+pub fn local() -> Result<Self>
+
+// Connect to the installed local gateway without copying its URL or token. Reconstruct after a service restart to read the new credentials.
+
+pub fn local_in(run_dir: &Path) -> Result<Self>
+
+// Connect through metadata in a custom runtime directory, always on loopback.
+
 pub fn new(url: &str, token: &str) -> Result<Self>
 
 pub fn with_timeout(self, timeout: Duration) -> Result<Self>
@@ -133,6 +141,7 @@ pub async fn fork(
     &self,
     name: &str,
     description: Option<String>,
+    labels: Option<HashMap<String, String>>,
 ) -> Result<Self>
 
 pub async fn persist(&self, name: &str) -> Result<PersistResponse>
@@ -1657,6 +1666,7 @@ pub struct CreateOptions {
     pub cpus: Option<u32>,
     pub memory: Option<u64>,
     pub env: Option<HashMap<String, String>>,
+    pub labels: Option<HashMap<String, String>>,
     pub networks: Vec<NetworkInfo>,
     pub image: Option<String>,
     pub command: Vec<String>,
@@ -2207,6 +2217,35 @@ pub enum CredentialStorage {
 pub enum EnrollmentKind {
     OwnedOauthClient,
     NativeConsumerSignIn,
+}
+```
+
+## capsem_api::ErrorCode
+
+```rust
+pub enum ErrorCode {
+Show 22 variants    VmNotFound,
+    CreateTimeout,
+    ExecTimeout,
+    ConfigurationRequired,
+    UnsupportedCapability,
+    UnknownScopeProfile,
+    PolicyDenied,
+    ScopeDenied,
+    ConnectionUnavailable,
+    ReauthRequired,
+    StorageUnavailable,
+    StorageCommitFailed,
+    TransactionExpired,
+    TransactionCancelled,
+    InvalidCallback,
+    ProviderRejected,
+    ProviderTimeout,
+    OwnerChanged,
+    SessionUnavailable,
+    GrantUnavailable,
+    RequestConflict,
+    RevocationPending,
 }
 ```
 
@@ -3428,7 +3467,9 @@ pub struct ErrorEvent {
 ```rust
 pub struct ErrorResponse {
     pub error: String,
-    pub code: Option<String>,
+    pub code: Option<ErrorCode>,
+    pub vm_id: Option<String>,
+    pub timeout_secs: Option<u64>,
 }
 ```
 
@@ -3605,7 +3646,10 @@ pub struct FileListResponse {
 pub struct ForkRequest {
     pub name: String,
     pub description: Option<String>,
+    pub labels: Option<HashMap<String, String>>,
 }
+
+// Key-value metadata labels for the forked sandbox. If absent, inherits the source’s labels.
 ```
 
 ## capsem_api::ForkResponse
@@ -4376,6 +4420,7 @@ pub struct ProvisionRequest {
     pub networks: Vec<String>,
     pub container: Option<ContainerSpec>,
     pub managed: Option<ManagedSessionCreate>,
+    pub labels: Option<HashMap<String, String>>,
 }
 
 // Unknown fields are refused rather than ignored.
@@ -4395,6 +4440,8 @@ pub struct ProvisionRequest {
 // OCI image the service pulls, stages and starts as this VM’s workload.
 
 // Optional finite ownership for an unnamed ephemeral SDK session.
+
+// Key-value metadata labels attached to the sandbox at creation.
 ```
 
 ## capsem_api::ProvisionResponse
@@ -4535,7 +4582,7 @@ pub struct RunRequest {
 ## capsem_api::SandboxInfo
 
 ```rust
-pub struct SandboxInfo {Show 32 fields
+pub struct SandboxInfo {Show 33 fields
     pub id: String,
     pub name: Option<String>,
     pub pid: u32,
@@ -4546,6 +4593,7 @@ pub struct SandboxInfo {Show 32 fields
     pub version: Option<String>,
     pub forked_from: Option<String>,
     pub description: Option<String>,
+    pub labels: Option<HashMap<String, String>>,
     pub size_bytes: Option<u64>,
     pub storage: Option<StorageDiagnostics>,
     pub session_db: Option<SessionDbStatus>,
@@ -4569,6 +4617,8 @@ pub struct SandboxInfo {Show 32 fields
     pub resume_blocked_reason: Option<String>,
     pub available_actions: Vec<VmAction>,
 }
+
+// Key-value metadata labels attached when the sandbox was created.
 
 // On-disk size of the session dir in bytes. Populated for /info on persistent VMs; useful for verifying that fork produced a compact overlay and not a bloated sparse file.
 

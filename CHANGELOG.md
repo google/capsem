@@ -141,6 +141,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Publish the Capsem 0.7 documentation: getting started, task guides, security architecture, and SDK/API references.
 ### Changed
 
+- Separate MCP server installation, agent connection, and skill installation in
+  the agent file-analysis guide.
+
+- Document standalone proxy flags, lease control, provider routing and process
+  boundaries, with a tested OpenAI/Ollama guide that allows Paris responses
+  and blocks London responses.
+
+- Regenerate Python/TypeScript SDK and MCP tool references in docs CI, check
+  reference drift in pull requests, and rebuild docs when SDK/MCP source changes.
+
+- Refresh SDK API references from 0.7.1, document Python timeout recovery,
+  distinguish published packages from source installs, and render the Rust
+  onboarding example without doctest scaffolding.
 - Local and hosted qualification now reuse exact, validated private GHCR
   generations for network-open build helpers before the deterministic local
   fallback; a weekly publisher retains three generations per platform.
@@ -772,6 +785,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python SDK distributions use the 0.7.0 client version.
 
 ### Added
+
+- Add the agent-facing `use-capsem` skill and a static suspicious-file triage
+  guide with a harmless fixture and downloadable report helper.
 
 - TypeScript SDK connection and credential grant resources preserve explicit
   consent, typed refusal codes, ownership checks, deadlines and cancellation.
