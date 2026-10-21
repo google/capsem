@@ -29,22 +29,26 @@ from tests.fixtures.oci.test_launch_config import launcher
 __all__ = ["launcher"]
 
 
-def test_runtime_stderr_uses_the_same_sized_terminal_as_input_and_output(launcher):
+def test_runtime_input_is_sized_and_output_streams_are_merged(launcher):
     script = (
         "import fcntl, os, termios; "
-        "assert all(os.isatty(fd) for fd in (0, 1, 2)); "
-        "assert fcntl.ioctl(0, termios.TIOCGWINSZ, b'0'*8) == fcntl.ioctl(2, termios.TIOCGWINSZ, b'0'*8); "
-        "os.write(2, b'all terminal streams connected'); os.read(0, 1)"
+        "assert os.isatty(0); "
+        "assert any(fcntl.ioctl(0, termios.TIOCGWINSZ, b'0'*8)); "
+        "os.write(2, b'terminal streams connected'); os.write(1, os.read(0, 1))"
     )
     master, process = launcher.start_console([sys.executable, "-c", script])
     try:
-        assert os.read(master, 128) == b'all terminal streams connected'
+        assert process.stdout is not None
+        assert os.read(process.stdout.fileno(), 128) == b'terminal streams connected'
         os.write(master, b'x')
         assert process.wait(timeout=5) == 0
+        assert process.stdout.read() == b'x'
     finally:
         if process.poll() is None:
             process.kill()
             process.wait(timeout=5)
+        if process.stdout is not None:
+            process.stdout.close()
         os.close(master)
 
 
@@ -61,6 +65,33 @@ def test_the_runtime_terminal_delivers_escape_keys_without_newline_or_echo(launc
     finally:
         os.close(master)
         os.close(terminal)
+
+
+def test_runtime_output_preserves_control_bytes_after_runtime_terminal_setup(launcher):
+    # runc re-enables OPOST/ONLCR on its host terminal. Its workload already
+    # owns output processing, so a second terminal must not change LF to CRLF.
+    expected = b"abcdefgh\n\n\b\bX\r\nstderr\n"
+    script = (
+        "import os, termios; "
+        "attrs = termios.tcgetattr(0); "
+        "attrs[1] |= termios.OPOST | termios.ONLCR; "
+        "termios.tcsetattr(0, termios.TCSANOW, attrs); "
+        "os.write(1, b'abcdefgh\\n\\n\\b\\bX'); "
+        "os.write(2, b'\\r\\nstderr\\n'); raise SystemExit(7)"
+    )
+    master, process = launcher.start_console([sys.executable, "-c", script])
+    try:
+        output = process.stdout.fileno() if process.stdout is not None else master
+        assert select.select([output], [], [], 5)[0]
+        assert process.wait(timeout=5) == 7
+        assert os.read(output, 128) == expected
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+        if process.stdout is not None:
+            process.stdout.close()
+        os.close(master)
 
 
 def test_input_and_resize_frames_survive_any_read_boundary(launcher):
@@ -111,7 +142,7 @@ def held(launcher):
     listener.listen()
     resizes = []
     console = launcher.Console(
-        master, listener, replay_limit=64, resized=lambda: resizes.append(1)
+        master, listener, output_fd=master, replay_limit=64, resized=lambda: resizes.append(1)
     )
     server = threading.Thread(target=console.serve, daemon=True)
     server.start()

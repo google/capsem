@@ -61,6 +61,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve workload terminal control bytes through the runtime relay, keeping
+  incremental redraws intact after resizing.
+
 - Preserve terminal cursor columns across bare line feeds during application
   redraws instead of inserting an extra carriage return in the UI.
 

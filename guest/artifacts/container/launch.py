@@ -1033,7 +1033,8 @@ def run(stage, detached=False):
             listener.listen()
             master, process = start_console([*argv, CONTAINER])
             try:
-                Console(master, listener, resized=lambda: process.send_signal(signal.SIGWINCH)).serve()
+                with process.stdout:
+                    Console(master, listener, output_fd=process.stdout.fileno(), resized=lambda: process.send_signal(signal.SIGWINCH)).serve()
             finally:
                 os.close(master)
         code = process.wait()
@@ -1161,18 +1162,19 @@ class FrameReader:
 
 
 class Console:
-    """A detached workload's terminal: the PTY master runc handed over.
+    """A detached workload's terminal: sized PTY input and raw runtime output.
 
     Its output is always drained -- into a bounded replay of the newest bytes,
     and to every attached terminal -- so the workload never blocks on a full
     terminal. A terminal that attaches is shown the replay, then the live
     output; its keystrokes and window size reach the workload. A terminal that
-    leaves leaves the workload running. When the workload exits (the master
+    leaves leaves the workload running. When the workload exits (the output
     reads end-of-file) every terminal is closed and `serve` returns.
     """
 
-    def __init__(self, master, listener, replay_limit=REPLAY_LIMIT, resized=None):
+    def __init__(self, master, listener, *, output_fd, replay_limit=REPLAY_LIMIT, resized=None):
         self._master = master
+        self._output = output_fd
         # Called after a resize: runc copies its terminal's size to the
         # workload's when signalled, not by itself.
         self._resized = resized
@@ -1208,14 +1210,14 @@ class Console:
 
     def serve(self):
         selector = selectors.DefaultSelector()
-        selector.register(self._master, selectors.EVENT_READ, "master")
+        selector.register(self._output, selectors.EVENT_READ, "output")
         selector.register(self._listener, selectors.EVENT_READ, "listener")
         try:
             while True:
                 for key, _ in selector.select():
-                    if key.data == "master":
+                    if key.data == "output":
                         try:
-                            data = os.read(self._master, 65536)
+                            data = os.read(self._output, 65536)
                         except OSError:
                             data = b""
                         if not data:
@@ -1273,9 +1275,9 @@ def console_terminal():
 def start_console(argv):
     master, terminal = console_terminal()
     try:
-        # runc selects stderr first as its host console for raw mode and
-        # resize. Leaving it on the VM serial console gives the app size 0x0.
-        return master, subprocess.Popen(argv, stdin=terminal, stdout=terminal, stderr=terminal)
+        # runc takes size/raw input from stdin. Its output must bypass this
+        # outer PTY: runc enables ONLCR there, corrupting workload cursor moves.
+        return master, subprocess.Popen(argv, stdin=terminal, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     except BaseException:
         os.close(master)
         raise
