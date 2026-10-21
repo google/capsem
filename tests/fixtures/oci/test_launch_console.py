@@ -11,6 +11,7 @@ workload has exited, and the stage says so with its code.
 import contextlib
 import fcntl
 import os
+import runpy
 import socket
 import struct
 import subprocess
@@ -24,7 +25,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.fixtures.oci.test_launch_config import launcher
+from tests.fixtures.oci.test_launch_config import SOURCE, launcher
 
 __all__ = ["launcher"]
 
@@ -53,7 +54,7 @@ def _winsize(fd):
 
 
 def _read_until(sock, wanted, timeout=5.0):
-    from runtime_console import FrameReader
+    FrameReader = runpy.run_path(str(SOURCE.with_name("runtime_console.py")))["FrameReader"]
     reader = FrameReader("server")
     sock.settimeout(timeout)
     received = b""

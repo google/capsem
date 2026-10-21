@@ -95,6 +95,7 @@ def test_terminal_snapshot_keeps_colors_and_focus_controls_the_actual_pty(servic
                     if size["exit_code"] == 0 and size["stdout_text"].strip() == "20 60":
                         break
                     time.sleep(0.05)
+                assert size is not None
                 assert size["exit_code"] == 0 and size["stdout_text"].strip() == "20 60", size
         # SIGWINCH may redraw bash's prompt and publish its own newer title.
         latest = next(row for row in client.get("/vms/list")["sandboxes"] if row["id"] == vm_id)["terminal"]

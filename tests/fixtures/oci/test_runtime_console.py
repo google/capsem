@@ -20,6 +20,7 @@ from tests.fixtures.oci.test_launch_config import SOURCE
 @pytest.fixture
 def runtime():
     spec = importlib.util.spec_from_file_location("runtime_console", SOURCE.with_name("runtime_console.py"))
+    assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

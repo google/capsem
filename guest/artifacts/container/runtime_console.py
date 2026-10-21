@@ -190,6 +190,8 @@ class RuntimeConsole:
                 if self.returncode < 0:
                     self.returncode = 128 - self.returncode
             if pid == 0:
+                # Only WNOHANG can return zero; that branch always has a deadline.
+                assert deadline is not None and timeout is not None
                 if time.monotonic() >= deadline:
                     raise subprocess.TimeoutExpired("workload exit", timeout)
                 time.sleep(min(0.01, max(0, deadline - time.monotonic())))
