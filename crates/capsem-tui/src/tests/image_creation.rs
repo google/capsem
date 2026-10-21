@@ -94,6 +94,7 @@ fn catalog() -> capsem_sdk::models::ImageListResponse {
                 architectures: vec!["amd64".into()],
                 image: Some(format!("registry.example/code@sha256:{}", "a".repeat(64))),
                 cached: ImageCacheState::Unknown,
+                surface: None,
             },
             ImageInfo {
                 name: "other".into(),
@@ -101,6 +102,7 @@ fn catalog() -> capsem_sdk::models::ImageListResponse {
                 architectures: vec!["arm64".into()],
                 image: None,
                 cached: ImageCacheState::Unknown,
+                surface: None,
             },
         ],
     }
