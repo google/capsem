@@ -28,6 +28,23 @@ fn image_build_runs_from_defaults_alone() {
 }
 
 #[test]
+fn manifest_generation_forwards_an_explicit_runtime_revision() {
+    let report = manifest_generate_command_report(&ManifestGenerateArgs {
+        assets_dir: PathBuf::from("assets"),
+        version: None,
+        asset_version: Some("0.7.1-0123456789ab".to_string()),
+        arches: Vec::new(),
+        json: false,
+    });
+
+    assert!(report
+        .argv
+        .last()
+        .expect("python command")
+        .contains("asset_version=\"0.7.1-0123456789ab\""));
+}
+
+#[test]
 fn image_workspace_requires_only_an_output() {
     let error = Cli::try_parse_from(["capsem-admin", "image", "workspace"]).expect_err("workspace output is required");
 

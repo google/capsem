@@ -671,7 +671,8 @@ def test_runtime_release_deploys_generated_preview_only_when_activation_ready() 
     assert "build_system/scripts/release/check-runtime-release-delta.py" in resolve
     assert "release_needed: ${{ steps.runtime-delta.outputs.release_needed }}" in resolve
     assert "cargo run -p capsem-admin -- manifest generate cache/target/assets" in author
-    assert '--version "$RUNTIME_REVISION"' in author
+    assert '--asset-version "$RUNTIME_REVISION"' in author
+    assert '--version "$RUNTIME_REVISION"' not in author
     assert "cargo run -p capsem-admin -- release" in author
     assert '--runtime-revision "$RUNTIME_REVISION"' in author
     assert "build_system/scripts/release/build-complete-release-channel.py" in author

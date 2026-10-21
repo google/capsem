@@ -120,6 +120,7 @@ pub(super) fn image_build_plan(args: &ImageBuildArgs) -> Result<ImageBuildPlan> 
             assets_dir: args.output.clone(),
             arches,
             version: None,
+            asset_version: None,
             json: false,
         }));
     }

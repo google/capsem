@@ -34,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Runtime publication preserves the immutable version-and-commit revision selected
+  by release preflight instead of replacing it with a date-derived asset revision.
+
 - Official image publication canonicalizes cdxgen's lowercase SPDX identifiers,
   allowing the Claude Desktop OBOM, image index, and catalog to publish.
 

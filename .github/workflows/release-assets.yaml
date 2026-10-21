@@ -509,7 +509,7 @@ jobs:
       - name: Generate asset manifest
         run: |
           cargo run -p capsem-admin -- manifest generate cache/target/assets \
-            --version "$RUNTIME_REVISION"
+            --asset-version "$RUNTIME_REVISION"
 
       - name: Verify runtime release lane policy
         run: |

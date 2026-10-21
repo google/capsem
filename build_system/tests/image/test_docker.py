@@ -2102,6 +2102,24 @@ class TestGetProjectVersion:
 
 
 class TestGenerateChecksums:
+    def test_explicit_asset_version_becomes_runtime_identity(self, tmp_path):
+        arm64 = tmp_path / "arm64"
+        arm64.mkdir()
+        (arm64 / "vmlinuz").write_bytes(b"kernel")
+        (arm64 / "initrd.img").write_bytes(b"initrd")
+        (arm64 / "rootfs.erofs").write_bytes(b"rootfs")
+
+        generate_checksums(
+            tmp_path,
+            "0.7.1",
+            asset_version="0.7.1-0123456789ab",
+        )
+
+        manifest = json.loads((tmp_path / "manifest.json").read_text())
+        assert manifest["assets"]["current"] == "0.7.1-0123456789ab"
+        assert "0.7.1-0123456789ab" in manifest["assets"]["releases"]
+        assert manifest["binaries"]["current"] == "0.7.1"
+
     def test_b3sum_and_manifest(self, tmp_path):
         # Create fake arch dirs with files
         arm64 = tmp_path / "arm64"

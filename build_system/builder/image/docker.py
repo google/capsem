@@ -1558,7 +1558,13 @@ def _restore_canonical_assets_from_existing_manifest(
                 auditfs.stage(alias, canonical)
 
 
-def generate_checksums(output_dir: Path, version: str, *, arches: list[str] | None = None) -> Path:
+def generate_checksums(
+    output_dir: Path,
+    version: str,
+    *,
+    arches: list[str] | None = None,
+    asset_version: str | None = None,
+) -> Path:
     """Generate checksums for selected architectures, or all assets if omitted."""
     if arches is not None and (
         not arches or any(arch not in {"arm64", "x86_64"} for arch in arches)
@@ -1658,11 +1664,14 @@ def generate_checksums(output_dir: Path, version: str, *, arches: list[str] | No
 
     today = datetime.date.today()
     date_prefix = today.strftime("%Y.%m%d")
-    asset_version = _next_or_existing_asset_version(
-        output_dir,
-        date_prefix,
-        arch_assets,
-    )
+    if asset_version is None:
+        asset_version = _next_or_existing_asset_version(
+            output_dir,
+            date_prefix,
+            arch_assets,
+        )
+    elif not asset_version:
+        raise ValueError("explicit asset version must not be empty")
 
     manifest = {
         "format": 2,
