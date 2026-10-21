@@ -5,6 +5,8 @@ body {
 }
 
 .capsem-surface-disconnected {
+  color: CanvasText;
+  background-color: Canvas;
   display: flex;
   height: 100vh;
   align-items: center;

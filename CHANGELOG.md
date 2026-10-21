@@ -76,6 +76,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep the embedded app's reconnect message readable against its background.
+
 - Wait for a graphical app's initial connection during startup, and keep its
   reconnect control inside the Capsem UI tab after a disconnect.
 
