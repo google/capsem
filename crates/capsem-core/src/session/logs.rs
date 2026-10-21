@@ -84,7 +84,14 @@ fn read_directory(session_dir: &Path) -> io::Result<ContainedDir> {
 }
 
 pub fn read_session_serial_tail(session_dir: &Path, max_bytes: usize) -> io::Result<Option<Vec<u8>>> {
-    capsem_foundation::telemetry::read_capped_log_tail_bytes_in(
+    Ok(read_session_serial_log(session_dir, max_bytes)?.map(|tail| tail.bytes))
+}
+
+pub fn read_session_serial_log(
+    session_dir: &Path,
+    max_bytes: usize,
+) -> io::Result<Option<capsem_foundation::telemetry::LogTail>> {
+    capsem_foundation::telemetry::read_capped_log_tail_in(
         &read_directory(session_dir)?,
         OsStr::new("serial.log"),
         max_bytes,

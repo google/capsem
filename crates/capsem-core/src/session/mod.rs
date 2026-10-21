@@ -18,7 +18,9 @@ pub use image_share::{
     carry_image_share, clear_image_share, image_share_blobs, image_share_path, prepare_image_share,
     publish_image_share, IMAGE_SHARE_DIR, IMAGE_SHARE_TAG,
 };
-pub use logs::{prepare_session_logs, read_session_serial_tail, read_session_transcript, SessionLogs};
+pub use logs::{
+    prepare_session_logs, read_session_serial_log, read_session_serial_tail, read_session_transcript, SessionLogs,
+};
 pub use maintenance::*;
 pub use overlay::{
     adopt_system_overlay, open_system_overlay, system_overlay_image_path, system_overlay_metadata, SYSTEM_OVERLAY_DIR,
