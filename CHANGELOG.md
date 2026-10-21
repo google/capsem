@@ -61,6 +61,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Restrict private CI helper publication to the 20 approved GHCR package names;
+  reject unexpected names before publishing any image in the batch.
+
 - Let TUI image downloads use the complete transfer deadline declared by the API.
 
 - Refresh pending app downloads in the TUI until cache verification settles,

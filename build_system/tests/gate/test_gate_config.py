@@ -60,7 +60,9 @@ def test_the_checked_in_configuration_is_valid(config: gate_config.GateConfig) -
 def test_private_builder_image_policy_is_one_typed_record(
     config: gate_config.GateConfig,
 ) -> None:
-    assert config.private_images.model_dump() == {
+    # The complete namespace is checked against both real host inventories in
+    # test_private_image_cache; keep the remaining policy pinned here.
+    assert config.private_images.model_dump(exclude={"approved_packages"}) == {
         "registry": "ghcr.io/google/capsem-ci",
         "source": "https://github.com/google/capsem",
         "keep_generations": 3,

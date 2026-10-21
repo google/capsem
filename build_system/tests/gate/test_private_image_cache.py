@@ -5,11 +5,14 @@ from __future__ import annotations
 import json
 import subprocess
 from argparse import Namespace
+from dataclasses import replace
 from pathlib import Path
 
+import pytest
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate import privateimages
 from capsem_builder.gate.docker import Docker
+from capsem_builder.gate.errors import GateError
 from capsem_builder.gate.privateimagecache import (
     SOURCE_LABEL,
     PrivateImage,
@@ -54,7 +57,9 @@ def test_failed_private_push_keeps_the_registry_diagnostic(tmp_path, monkeypatch
     from capsem_builder.gate.proc import Runner
 
     docker = tmp_path / "docker"
-    docker.write_text("#!/bin/sh\nprintf '%s\\n' 'denied: package publication permission missing' >&2\nexit 1\n")
+    docker.write_text(
+        "#!/bin/sh\nprintf '%s\\n' 'denied: package publication permission missing' >&2\nexit 1\n"
+    )
     docker.chmod(0o755)
     monkeypatch.setenv("PATH", str(tmp_path))
     assert not Docker(Runner(PROJECT_ROOT)).try_push("ghcr.io/example/private:exact-inputs")
@@ -96,6 +101,20 @@ def test_private_inventory_covers_every_network_open_helper() -> None:
         f"capsem-kernel-dependencies-{CONFIG.host_arch().name}",
         f"capsem-rootfs-dependencies-{CONFIG.host_arch().name}",
     }
+
+
+def test_both_hosts_use_exactly_the_twenty_approved_packages(monkeypatch) -> None:
+    packages: set[str] = set()
+    for host in ("arm64", "x86_64"):
+        monkeypatch.setattr("platform.machine", lambda host=host: host)
+        packages.update(
+            image.package(CONFIG.private_images.registry)
+            for image in privateimages.inventory(CONFIG, Docker(_runner()))
+        )
+
+    approved = CONFIG.private_images.approved_packages
+    assert len(approved) == len(set(approved)) == 20
+    assert packages == set(approved)
 
 
 def test_private_image_plan_publishes_only_after_every_materializer() -> None:
@@ -213,6 +232,28 @@ def test_publish_is_append_only_and_writes_retention_manifest(tmp_path: Path) ->
     assert RECORDED_IMAGE_ID in runner.capture(
         ["docker", "image", "inspect", "--format", "{{.Id}}", IMAGE.local]
     )
+
+
+@pytest.mark.parametrize(
+    "unexpected",
+    [
+        replace(IMAGE, local="capsem-another-helper:input-key"),
+        replace(IMAGE, platform="linux/riscv64"),
+    ],
+)
+def test_unapproved_package_aborts_entire_batch_before_registry_access(
+    tmp_path: Path,
+    unexpected: PrivateImage,
+) -> None:
+    runner = _runner(failures=("docker manifest inspect",))
+    manifest = tmp_path / "private-images.json"
+    manifest.write_text("previous manifest\n")
+
+    with pytest.raises(GateError, match="unapproved private image package"):
+        publish(runner, CONFIG, (IMAGE, unexpected), manifest)
+
+    assert runner.rendered == []
+    assert manifest.read_text() == "previous manifest\n"
 
 
 def test_publish_retries_a_transient_final_manifest_denial(tmp_path: Path) -> None:

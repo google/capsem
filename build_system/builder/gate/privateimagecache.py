@@ -122,6 +122,15 @@ def publish(
     manifest: Path,
 ) -> None:
     """Push absent immutable generations and record packages for retention."""
+    # Validate the whole batch before even the first approved image can push.
+    unexpected = {image.package(config.private_images.registry) for image in images} - set(
+        config.private_images.approved_packages
+    )
+    if unexpected:
+        raise GateError(
+            "unapproved private image package (maintainer approval required): "
+            + ", ".join(sorted(unexpected))
+        )
     docker = Docker(runner)
     records = []
     for image in images:

@@ -203,6 +203,30 @@ retries = 3
 # gates try them before the deterministic cold-build fallback.
 registry = "ghcr.io/google/capsem-ci"
 source = "https://github.com/google/capsem"
+# Fixed namespace approved by the maintainer: rebuilds add versions, never
+# packages. Adding or renaming a package requires explicit maintainer approval.
+approved_packages = [
+    "google/capsem-ci/capsem-asset-tools-arm64-linux-arm64",
+    "google/capsem-ci/capsem-asset-tools-x86_64-linux-amd64",
+    "google/capsem-ci/capsem-guest-rust-arm64-linux-amd64",
+    "google/capsem-ci/capsem-guest-rust-arm64-linux-arm64",
+    "google/capsem-ci/capsem-guest-rust-x86_64-linux-amd64",
+    "google/capsem-ci/capsem-guest-rust-x86_64-linux-arm64",
+    "google/capsem-ci/capsem-host-builder-linux-amd64",
+    "google/capsem-ci/capsem-host-builder-linux-arm64",
+    "google/capsem-ci/capsem-install-builder-linux-amd64",
+    "google/capsem-ci/capsem-install-builder-linux-arm64",
+    "google/capsem-ci/capsem-kernel-dependencies-arm64-linux-arm64",
+    "google/capsem-ci/capsem-kernel-dependencies-x86_64-linux-amd64",
+    "google/capsem-ci/capsem-linux-rust-base-linux-amd64",
+    "google/capsem-ci/capsem-linux-rust-base-linux-arm64",
+    "google/capsem-ci/capsem-package-builder-arm64-linux-amd64",
+    "google/capsem-ci/capsem-package-builder-arm64-linux-arm64",
+    "google/capsem-ci/capsem-package-builder-x86_64-linux-amd64",
+    "google/capsem-ci/capsem-package-builder-x86_64-linux-arm64",
+    "google/capsem-ci/capsem-rootfs-dependencies-arm64-linux-arm64",
+    "google/capsem-ci/capsem-rootfs-dependencies-x86_64-linux-amd64",
+]
 keep_generations = 3
 # GHCR can accept every layer and transiently deny the final manifest write.
 # Repeating the immutable push only commits that same exact manifest.

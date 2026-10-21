@@ -84,6 +84,7 @@ class HostImageConfig(Strict):
 
 
 class PrivateImagesConfig(Strict):
+    approved_packages: tuple[str, ...]
     registry: Annotated[
         str,
         StringConstraints(pattern=r"^ghcr\.io/[a-z0-9](?:[a-z0-9._/-]*[a-z0-9])$"),
