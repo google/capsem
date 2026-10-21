@@ -19,6 +19,7 @@ use audit::handle_audit_frame;
 use audit::serve_audit_records;
 mod handshake;
 mod streams;
+mod terminal;
 use handshake::{collect_terminal_control_pair, is_retryable_handshake_error, perform_handshake};
 mod guest_report;
 use guest_report::{ackable_id, ackable_response_id, is_guest_liveness_message};
@@ -65,7 +66,7 @@ pub(crate) struct VsockOptions {
     pub(crate) ipc_tx: broadcast::Sender<ProcessToService>,
     pub(crate) _ctrl_tx: mpsc::Sender<ServiceToProcess>,
     pub(crate) ctrl_rx: mpsc::Receiver<ServiceToProcess>,
-    pub(crate) terminal_output: Arc<capsem_core::TerminalOutputQueue>,
+    pub(crate) terminal_output: Arc<capsem_core::terminal::SessionTerminal>,
     pub(crate) job_store: Arc<JobStore>,
     pub(crate) session_dir: PathBuf,
     pub(crate) cli_env: Vec<(String, String)>,
@@ -112,10 +113,10 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
 
     // Stable channels to re-key the bridges when connections reset
     let (control_rekey_tx, control_rekey_rx) = mpsc::channel::<Arc<VsockConnection>>(4);
-    let (terminal_rekey_tx, mut terminal_rekey_rx) = mpsc::channel::<Arc<VsockConnection>>(4);
+    let (terminal_rekey_tx, terminal_rekey_rx) = mpsc::channel::<Arc<VsockConnection>>(4);
 
     // Channel for stable terminal input across reconnections
-    let (term_in_tx, mut term_in_rx) = mpsc::channel::<Vec<u8>>(128);
+    let (term_in_tx, term_in_rx) = mpsc::channel::<Vec<u8>>(128);
 
     let mut deferred_conns: Vec<VsockConnection> = Vec::new();
     let (initial_t, initial_c) = {
@@ -185,100 +186,13 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
         warn!(error = %e, "failed to create ready sentinel");
     }
 
-    // 1. Stable Terminal Bridge (Read + Write)
-    let term_out = Arc::clone(&terminal_output);
-    let pty_log_out = pty_log.clone();
-    let (serial_log_tx, serial_log_handle) = spawn_serial_log_writer(move || Ok(serial_log));
-
-    tokio::spawn(async move {
-        let mut current_conn = terminal_rekey_rx.recv().await;
-        loop {
-            let conn = match current_conn.take() {
-                Some(c) => c,
-                None => match terminal_rekey_rx.recv().await {
-                    Some(c) => c,
-                    None => break,
-                },
-            };
-
-            info!("terminal bridge: active");
-            let Some(mut reader) = clone_fd(&conn, "duplicate-terminal-vsock-reader") else {
-                continue;
-            };
-            let Some(mut writer) = clone_fd(&conn, "duplicate-terminal-vsock-writer") else {
-                continue;
-            };
-            let (tx, mut rx) = mpsc::channel::<Vec<u8>>(128);
-
-            // Blocking read thread for this specific FD
-            let read_handle = std::thread::spawn(move || {
-                let mut buf = vec![0u8; 65536];
-                while let Ok(n) = reader.read(&mut buf) {
-                    if n == 0 {
-                        break;
-                    }
-                    if tx.blocking_send(buf[..n].to_vec()).is_err() {
-                        break;
-                    }
-                }
-            });
-
-            let mut coalesce = capsem_core::vm::vsock::CoalesceBuffer::new();
-            loop {
-                tokio::select! {
-                    // Incoming from Guest
-                    res = rx.recv() => {
-                        match res {
-                            Some(data) => {
-                                coalesce.push(&data);
-                                let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(coalesce.window_ms());
-                                while !coalesce.is_full() {
-                                    match tokio::time::timeout_at(deadline, rx.recv()).await {
-                                        Ok(Some(d)) => { coalesce.push(&d); }
-                                        _ => break,
-                                    }
-                                }
-                                let batch = coalesce.flush_to(<[u8]>::to_vec);
-                                let _ = serial_log_tx.send(batch.clone()).await;
-                                if let Some(ref pl) = pty_log_out { pl.record_output(&batch); }
-                                term_out.push(batch);
-                            }
-                            None => break, // FD closed
-                        }
-                    }
-                    // Outgoing to Guest (Terminal Input)
-                    Some(data) = term_in_rx.recv() => {
-                        if writer.write_all(&data).is_err() { break; }
-                        let _ = writer.flush();
-                    }
-                    // Reconnection arriving
-                    Some(new_conn) = terminal_rekey_rx.recv() => {
-                        current_conn = Some(new_conn);
-                        break;
-                    }
-                }
-            }
-            // The reader thread is parked in read() on a dup of this socket.
-            // Closing our fd does not wake it and a half-open post-restore
-            // socket never EOFs, so joining here parked a runtime worker for
-            // good and the new connection was never activated. Shut the
-            // socket down so the read returns, then join off the runtime.
-            if let Err(error) = conn.shutdown_both() {
-                if error.kind() != std::io::ErrorKind::NotConnected {
-                    warn!(
-                        operation = "shutdown-terminal-vsock",
-                        errno = error.raw_os_error(),
-                        error = %error,
-                        "failed to wake terminal reader"
-                    );
-                }
-            }
-            let _ = tokio::task::spawn_blocking(move || read_handle.join()).await;
-        }
-        drop(serial_log_tx);
-        let _ = tokio::task::spawn_blocking(move || serial_log_handle.join()).await;
-        term_out.close();
-    });
+    terminal::spawn(
+        Arc::clone(&terminal_output),
+        terminal_rekey_rx,
+        term_in_rx,
+        pty_log.clone(),
+        serial_log,
+    );
 
     // 2. Stable Control Bridge (Read + Write)
     let (ctrl_out_tx, mut ctrl_out_rx) = mpsc::channel::<HostToGuest>(128);

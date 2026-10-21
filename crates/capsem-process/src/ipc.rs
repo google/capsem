@@ -14,7 +14,7 @@ use tracing::{debug, error, info, warn};
 use crate::job_store::{JobResult, JobStore};
 use crate::mcp_runtime::McpRuntime;
 use crate::runtime_config::RuntimePolicySource;
-use crate::terminal::TerminalRelay;
+use capsem_core::terminal::SessionTerminal;
 
 mod container_pull;
 mod credentials;
@@ -22,6 +22,7 @@ mod exec;
 pub(crate) mod file_boundary;
 mod private;
 mod publication;
+mod terminal;
 
 type ProcessIpcChannel = (Sender<ProcessToService>, Receiver<ServiceToProcess>);
 
@@ -61,7 +62,7 @@ const GUEST_FILE_WRITE_MODE: u32 = 0o644;
 async fn open_ipc_channel(
     stream: tokio::net::UnixStream,
     controller: PeerIdentity,
-) -> Result<Option<(ProcessIpcChannel, bool)>> {
+) -> Result<Option<(ProcessIpcChannel, bool, bool)>> {
     use std::os::fd::AsFd;
     if let Err(error) = capsem_foundation::unix::peer::require(stream.as_fd(), controller) {
         warn!(target: "ipc", %error, "unauthorized IPC peer; refusing connection before Hello");
@@ -78,10 +79,13 @@ async fn open_ipc_channel(
     .await
     .context("join IPC handshake task")?;
 
-    let stream_role = match handshake {
+    let (stream_role, terminal_observer) = match handshake {
         Ok(peer) => {
             info!(target: "ipc", peer = %peer.peer, "IPC handshake ok");
-            peer.peer == capsem_proto::handshake::STREAM_PEER_ID
+            (
+                peer.peer == capsem_proto::handshake::STREAM_PEER_ID,
+                peer.peer == "capsem-terminal-observer",
+            )
         }
         Err(error) => {
             error!(target: "ipc", %error, "IPC handshake failed; refusing connection");
@@ -89,7 +93,7 @@ async fn open_ipc_channel(
         }
     };
 
-    Ok(Some((channel_from_std(std_stream)?, stream_role)))
+    Ok(Some((channel_from_std(std_stream)?, stream_role, terminal_observer)))
 }
 
 async fn await_exec_result(j_rx: oneshot::Receiver<JobResult>) -> Result<JobResult, String> {
@@ -134,7 +138,7 @@ pub(crate) async fn handle_ipc_connection(
     controller: PeerIdentity,
     ctrl_tx: mpsc::Sender<ServiceToProcess>,
     ipc_tx: broadcast::Sender<ProcessToService>,
-    term_relay: Arc<TerminalRelay>,
+    session_terminal: Arc<SessionTerminal>,
     job_store: Arc<JobStore>,
     net_state: Arc<capsem_core::SandboxNetworkState>,
     mcp_runtime: Arc<McpRuntime>,
@@ -146,7 +150,7 @@ pub(crate) async fn handle_ipc_connection(
     // First frame on every IPC connection is a Hello -- detect cross-version
     // mixes (capsem-service built before X, capsem-process built after) in
     // ~1s with a structured log line instead of a 30s silent timeout.
-    let Some(((tx, rx), stream_role)) = open_ipc_channel(stream, controller).await? else {
+    let Some(((tx, rx), stream_role, terminal_observer)) = open_ipc_channel(stream, controller).await? else {
         return Ok(());
     };
 
@@ -169,12 +173,34 @@ pub(crate) async fn handle_ipc_connection(
     // a suspend-only connection never sees StateChanged { state: "Suspended" }
     // and the service times out waiting for confirmation.
     // A stream-role connection carries one stream and nothing else.
-    if !stream_role {
+    if terminal_observer {
+        let mut summaries = session_terminal.subscribe_summary();
+        let summary_tx = ipc_tx_out.clone();
+        connection_tasks.spawn(async move {
+            loop {
+                let summary = summaries.borrow_and_update().clone();
+                if summary_tx
+                    .send(ProcessToService::TerminalSummary { summary })
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+                if summaries.changed().await.is_err() {
+                    break;
+                }
+            }
+        });
+    }
+
+    if !stream_role && !terminal_observer {
         let out_tx = ipc_tx_out.clone();
         let mut rx_bcast = ipc_tx.subscribe();
         connection_tasks.spawn(async move {
             while let Ok(msg) = rx_bcast.recv().await {
-                if matches!(msg, ProcessToService::TerminalOutput { .. }) {
+                if matches!(msg, ProcessToService::TerminalOutput { .. })
+                    || matches!(msg, ProcessToService::TerminalSummary { .. })
+                {
                     continue;
                 }
                 if out_tx.send(msg).await.is_err() {
@@ -188,6 +214,7 @@ pub(crate) async fn handle_ipc_connection(
     // StopTerminalStream and connection teardown can abort it instead of
     // letting it outlive the IPC connection.
     let mut stream_task: Option<tokio::task::JoinHandle<()>> = None;
+    let mut terminal_view = None;
     let mut connection_execs = std::collections::HashSet::new();
 
     loop {
@@ -224,55 +251,17 @@ pub(crate) async fn handle_ipc_connection(
                 if let Some(p) = prev {
                     p.abort();
                 }
-                let out_tx = ipc_tx_out.clone();
-                // Atomic snapshot + subscribe so the client sees buffered
-                // banner bytes and then a gap-free live stream.
-                let (replay, mut term_rx) = term_relay.subscribe();
-                let h = tokio::spawn(async move {
-                    // Smoking-gun trace. If a buffer at the head of the
-                    // PTY stream looks like an IPC frame, log it loudly
-                    // -- something inside the guest is writing protocol
-                    // bytes to its PTY and we want to know which session,
-                    // which buffer prefix, and how often.
-                    let warn_if_ipc_shaped = |buf: &[u8]| {
-                        if capsem_proto::looks_like_ipc_frame(buf) {
-                            let preview: Vec<String> = buf.iter().take(16).map(|b| format!("{:02x}", b)).collect();
-                            warn!(
-                                    bytes = preview.join(" "),
-                                    len = buf.len(),
-                                    "PTY stream starts with IPC-frame-shaped bytes -- guest may be leaking control data into the terminal channel"
-                                );
-                        }
-                    };
-                    if !replay.is_empty() {
-                        warn_if_ipc_shaped(&replay);
-                        if out_tx
-                            .send(ProcessToService::TerminalOutput { data: replay })
-                            .await
-                            .is_err()
-                        {
-                            return;
-                        }
-                    }
-                    let reason = loop {
-                        match term_rx.recv().await {
-                            Ok(data) => {
-                                warn_if_ipc_shaped(&data);
-                                if out_tx.send(ProcessToService::TerminalOutput { data }).await.is_err() {
-                                    return;
-                                }
-                            }
-                            Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                                break format!("terminal output fell behind by {skipped} chunks");
-                            }
-                            Err(broadcast::error::RecvError::Closed) => break "terminal closed".to_string(),
-                        }
-                    };
-                    let _ = out_tx.send(ProcessToService::TerminalStreamEnded { reason }).await;
-                });
-                stream_task = Some(h);
+                if let Some(view) = terminal_view.take() {
+                    session_terminal.release(view);
+                }
+                let (view, snapshot, updates) = session_terminal.subscribe();
+                terminal_view = Some(view);
+                stream_task = Some(terminal::stream(ipc_tx_out.clone(), snapshot, updates));
             }
             ServiceToProcess::StopTerminalStream => {
+                if let Some(view) = terminal_view.take() {
+                    session_terminal.release(view);
+                }
                 info!("Stopping terminal stream for connection");
                 if let Some(h) = stream_task.take() {
                     h.abort();
@@ -287,16 +276,37 @@ pub(crate) async fn handle_ipc_connection(
                 }
             }
             ServiceToProcess::TerminalInput { data } => {
+                if stream_role && !terminal_view.is_some_and(|view| session_terminal.controls(view)) {
+                    continue;
+                }
                 capsem_core::try_send!(
                     "ctrl_terminal_input",
                     ctrl_tx.send(ServiceToProcess::TerminalInput { data }).await
                 );
             }
-            ServiceToProcess::TerminalResize { cols, rows } => {
-                capsem_core::try_send!(
-                    "ctrl_terminal_resize",
-                    ctrl_tx.send(ServiceToProcess::TerminalResize { cols, rows }).await
-                );
+            ServiceToProcess::TerminalFocus { cols, rows } | ServiceToProcess::TerminalResize { cols, rows } => {
+                let focused = matches!(msg, ServiceToProcess::TerminalFocus { .. });
+                let result = terminal_view.map_or(Err("terminal stream has not started"), |view| {
+                    if focused {
+                        session_terminal.focus(view, cols, rows)
+                    } else {
+                        session_terminal.resize(view, cols, rows)
+                    }
+                });
+                match result {
+                    Ok(true) => {
+                        capsem_core::try_send!(
+                            "ctrl_terminal_resize",
+                            ctrl_tx.send(ServiceToProcess::TerminalResize { cols, rows }).await
+                        );
+                    }
+                    Ok(false) => {}
+                    Err(reason) => {
+                        let _ = ipc_tx_out
+                            .send(ProcessToService::TerminalStreamEnded { reason: reason.into() })
+                            .await;
+                    }
+                }
             }
             ServiceToProcess::Exec { .. } | ServiceToProcess::ExecStream { .. } => {
                 let (id, job, streaming) = match msg {
@@ -905,6 +915,9 @@ pub(crate) async fn handle_ipc_connection(
                 });
             }
         }
+    }
+    if let Some(view) = terminal_view {
+        session_terminal.release(view);
     }
     for id in connection_execs {
         if let Err(error) = exec::cancel(id, &job_store, &ctrl_tx).await {

@@ -61,6 +61,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Give the focused terminal view exclusive input and resize authority, keeping
+  stale views from changing another view's terminal dimensions.
+
 - Keep terminal screen, cursor, modes, colors and notifications in the session
   instead of reconstructing views from a truncated output history.
 

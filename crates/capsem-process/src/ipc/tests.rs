@@ -64,7 +64,7 @@ async fn negotiated_channel_carries_typed_messages_in_both_directions() {
         channel
     });
 
-    let ((process_tx, process_rx), stream_role) = open_ipc_channel(process_stream, controller_identity())
+    let ((process_tx, process_rx), stream_role, _) = open_ipc_channel(process_stream, controller_identity())
         .await
         .unwrap()
         .unwrap();
@@ -93,7 +93,7 @@ async fn malformed_handshake_is_refused_before_typed_ipc_starts() {
 /// with an in-memory ledger and a canned MCP aggregator.
 pub(in crate::ipc) struct Dispatcher {
     job_store: Arc<JobStore>,
-    term_relay: Arc<TerminalRelay>,
+    session_terminal: Arc<SessionTerminal>,
     ctrl_tx: mpsc::Sender<ServiceToProcess>,
     events_tx: broadcast::Sender<ProcessToService>,
     pub(in crate::ipc) net_state: Arc<capsem_core::SandboxNetworkState>,
@@ -196,14 +196,14 @@ impl Dispatcher {
             plugin_policy,
             proxy_policy,
         });
-        let term_relay = TerminalRelay::new(8);
+        let session_terminal = SessionTerminal::new(8);
         let job_store = Arc::new(JobStore::new());
         let (ctrl_tx, ctrl_rx) = mpsc::channel(16);
         let (events_tx, _) = broadcast::channel(16);
         (
             Self {
                 job_store,
-                term_relay,
+                session_terminal,
                 ctrl_tx,
                 events_tx,
                 net_state,
@@ -222,7 +222,7 @@ impl Dispatcher {
             controller_identity(),
             self.ctrl_tx.clone(),
             self.events_tx.clone(),
-            Arc::clone(&self.term_relay),
+            Arc::clone(&self.session_terminal),
             Arc::clone(&self.job_store),
             Arc::clone(&self.net_state),
             Arc::clone(&self.mcp_runtime),
@@ -238,7 +238,7 @@ impl Dispatcher {
 async fn negotiated_dispatcher_covers_stream_jobs_queries_and_lifecycle() {
     let temp = tempfile::tempdir().unwrap();
     let (dispatcher, mut ctrl_rx) = Dispatcher::new(temp.path());
-    dispatcher.term_relay.publish(b"boot banner\n".to_vec());
+    dispatcher.session_terminal.publish(b"boot banner\n");
     let job_store = Arc::clone(&dispatcher.job_store);
     let (process_stream, service_stream) = tokio::net::UnixStream::pair().unwrap();
     let handler = dispatcher.connection(process_stream);
@@ -253,9 +253,30 @@ async fn negotiated_dispatcher_covers_stream_jobs_queries_and_lifecycle() {
 
     service_tx.send(ServiceToProcess::StartTerminalStream).await.unwrap();
     match service_rx.recv().await.unwrap() {
-        ProcessToService::TerminalOutput { data } => assert_eq!(data, b"boot banner\n"),
+        ProcessToService::TerminalState { state } => assert!(state.reset),
         other => panic!("unexpected stream response: {other:?}"),
     }
+    match service_rx.recv().await.unwrap() {
+        ProcessToService::TerminalOutput { data } => assert!(String::from_utf8_lossy(&data).contains("boot banner")),
+        other => panic!("unexpected display projection: {other:?}"),
+    }
+    service_tx
+        .send(ServiceToProcess::TerminalFocus { cols: 120, rows: 40 })
+        .await
+        .unwrap();
+    assert!(matches!(
+        ctrl_rx.recv().await.unwrap(),
+        ServiceToProcess::TerminalResize { cols: 120, rows: 40 }
+    ));
+    // The resize publication is state followed by a reconstructed display.
+    assert!(matches!(
+        service_rx.recv().await.unwrap(),
+        ProcessToService::TerminalState { .. }
+    ));
+    assert!(matches!(
+        service_rx.recv().await.unwrap(),
+        ProcessToService::TerminalOutput { .. }
+    ));
     service_tx.send(ServiceToProcess::StopTerminalStream).await.unwrap();
 
     service_tx.send(ServiceToProcess::Ping).await.unwrap();
@@ -275,10 +296,9 @@ async fn negotiated_dispatcher_covers_stream_jobs_queries_and_lifecycle() {
         .send(ServiceToProcess::TerminalResize { cols: 120, rows: 40 })
         .await
         .unwrap();
-    assert!(matches!(
-        ctrl_rx.recv().await.unwrap(),
-        ServiceToProcess::TerminalResize { cols: 120, rows: 40 }
-    ));
+    assert!(
+        matches!(service_rx.recv().await.unwrap(), ProcessToService::TerminalStreamEnded { reason } if reason.contains("not started"))
+    );
 
     service_tx
         .send(ServiceToProcess::Exec {

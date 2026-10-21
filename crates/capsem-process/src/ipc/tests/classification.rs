@@ -6,7 +6,9 @@ pub(super) fn classify_ipc_message(msg: &ServiceToProcess) -> IpcAction {
     match msg {
         ServiceToProcess::StartTerminalStream | ServiceToProcess::StopTerminalStream => IpcAction::StreamSetup,
         ServiceToProcess::Ping => IpcAction::HealthCheck,
-        ServiceToProcess::TerminalInput { .. } | ServiceToProcess::TerminalResize { .. } => IpcAction::Forward,
+        ServiceToProcess::TerminalInput { .. }
+        | ServiceToProcess::TerminalResize { .. }
+        | ServiceToProcess::TerminalFocus { .. } => IpcAction::Forward,
         ServiceToProcess::Exec { .. }
         | ServiceToProcess::ExecStream { .. }
         | ServiceToProcess::ExecStreamInput { .. }

@@ -10,7 +10,6 @@ mod owner_sandbox;
 mod private_seats;
 mod proxy_mcp;
 mod runtime_config;
-mod terminal;
 mod trace_hints;
 mod vsock;
 
@@ -609,7 +608,7 @@ async fn run_async_main_loop(
         builtin_env,
         ledger,
     } = prepared;
-    let terminal_output = Arc::new(capsem_core::TerminalOutputQueue::new());
+    let terminal_output = capsem_core::terminal::SessionTerminal::new(capsem_proto::TERMINAL_SUBSCRIBER_UPDATES);
 
     let ledger_path = session_dir.join("session.db");
     // The config-owned queue covers the supported concurrent network burst.
@@ -840,22 +839,13 @@ async fn run_async_main_loop(
         }
     });
 
-    // Terminal relay: fan-out broadcast + ring buffer so a newly-attached
-    // terminal stream sees the shell's startup banner (printed before it joined).
-    let term_relay = terminal::TerminalRelay::new(1024);
-    let term_c_bcast = Arc::clone(&terminal_output);
-    let term_relay_pump = Arc::clone(&term_relay);
-    tokio::spawn(async move {
-        while let Some(data) = term_c_bcast.poll().await {
-            term_relay_pump.publish(data);
-        }
-    });
+    let session_terminal = Arc::clone(&terminal_output);
 
     loop {
         let (stream, _) = listener.accept().await?;
         let tx_c = ctrl_tx_ipc.clone();
         let ipc_tx_pass = ipc_tx.clone();
-        let term_c = Arc::clone(&term_relay);
+        let term_c = Arc::clone(&session_terminal);
         let job_c = Arc::clone(&job_store);
         let net_c = Arc::clone(&net_state);
         let mcp_c = Arc::clone(&mcp_runtime);
