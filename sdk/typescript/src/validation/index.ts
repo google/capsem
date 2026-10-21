@@ -81,6 +81,7 @@ export {ImageInfoSchema} from "./ImageInfo.js";
 export {ImageListResponseSchema} from "./ImageListResponse.js";
 export {ImagePullRequestSchema} from "./ImagePullRequest.js";
 export {ImagePullResponseSchema} from "./ImagePullResponse.js";
+export {ImageSurfaceSchema} from "./ImageSurface.js";
 export {InteractionSchema} from "./Interaction.js";
 export {InteractionBlockSchema} from "./InteractionBlock.js";
 export {InteractionBlockKindSchema} from "./InteractionBlockKind.js";

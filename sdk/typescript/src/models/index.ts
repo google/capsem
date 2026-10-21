@@ -81,6 +81,7 @@ export type { ImageInfo } from "./ImageInfo.js";
 export type { ImageListResponse } from "./ImageListResponse.js";
 export type { ImagePullRequest } from "./ImagePullRequest.js";
 export type { ImagePullResponse } from "./ImagePullResponse.js";
+export { ImageSurface } from "./ImageSurface.js";
 export type { Interaction } from "./Interaction.js";
 export type { InteractionBlock } from "./InteractionBlock.js";
 export { InteractionBlockKind } from "./InteractionBlockKind.js";

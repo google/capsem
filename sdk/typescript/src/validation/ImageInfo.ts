@@ -3,6 +3,7 @@
 import {z} from "zod";
 import type {ImageInfo} from "../models/ImageInfo.js";
 import {ImageCacheStateSchema} from "./ImageCacheState.js";
+import {ImageSurfaceSchema} from "./ImageSurface.js";
 
 export const ImageInfoSchema: z.ZodType<ImageInfo> = z.object({
   "architectures": z.array(z.string()),
@@ -10,4 +11,5 @@ export const ImageInfoSchema: z.ZodType<ImageInfo> = z.object({
   "description": z.string(),
   "image": z.string().nullable().exactOptional(),
   "name": z.string(),
+  "surface": z.union([z.null(), z.lazy(() => ImageSurfaceSchema)]).exactOptional(),
 });

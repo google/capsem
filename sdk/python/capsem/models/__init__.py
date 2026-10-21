@@ -95,6 +95,7 @@ from .image_info import ImageInfo as ImageInfo
 from .image_list_response import ImageListResponse as ImageListResponse
 from .image_pull_request import ImagePullRequest as ImagePullRequest
 from .image_pull_response import ImagePullResponse as ImagePullResponse
+from .image_surface import ImageSurface as ImageSurface
 from .interaction import Interaction as Interaction
 from .interaction_block import InteractionBlock as InteractionBlock
 from .interaction_block_kind import InteractionBlockKind as InteractionBlockKind
