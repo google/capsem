@@ -75,7 +75,7 @@ pub fn open_single_link_append_no_follow(path: &Path) -> io::Result<File> {
     Ok(file)
 }
 
-fn require_single_link(file: &File, path: &Path) -> io::Result<()> {
+pub(super) fn require_single_link(file: &File, path: &Path) -> io::Result<()> {
     if file.metadata()?.nlink() == 1 {
         return Ok(());
     }

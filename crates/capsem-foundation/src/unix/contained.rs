@@ -31,6 +31,7 @@ pub struct ContainedDir {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ContainedOpenOptions {
     write: bool,
+    append: bool,
     truncate: bool,
     exclusive: bool,
     mode: u32,
@@ -64,6 +65,7 @@ impl ContainedOpenOptions {
     pub const fn read_only() -> Self {
         Self {
             write: false,
+            append: false,
             truncate: false,
             exclusive: false,
             mode: 0,
@@ -73,6 +75,7 @@ impl ContainedOpenOptions {
     pub const fn write_create(mode: u32) -> Self {
         Self {
             write: true,
+            append: false,
             truncate: false,
             exclusive: false,
             mode,
@@ -84,6 +87,7 @@ impl ContainedOpenOptions {
     pub const fn write_create_new(mode: u32) -> Self {
         Self {
             write: true,
+            append: false,
             truncate: false,
             exclusive: true,
             mode,
@@ -93,7 +97,19 @@ impl ContainedOpenOptions {
     pub const fn write_create_truncate(mode: u32) -> Self {
         Self {
             write: true,
+            append: false,
             truncate: true,
+            exclusive: false,
+            mode,
+        }
+    }
+
+    /// Append-only creation below a held directory, without reopening its path.
+    pub const fn append_create(mode: u32) -> Self {
+        Self {
+            write: true,
+            append: true,
+            truncate: false,
             exclusive: false,
             mode,
         }
@@ -102,6 +118,9 @@ impl ContainedOpenOptions {
     fn flags(self) -> OFlag {
         if self.write {
             let mut flags = OFlag::O_WRONLY | OFlag::O_CREAT;
+            if self.append {
+                flags |= OFlag::O_APPEND;
+            }
             if self.truncate {
                 flags |= OFlag::O_TRUNC;
             }
@@ -508,6 +527,13 @@ impl ContainedDir {
                 format!("{} is not a regular file", Path::new(name).display()),
             ));
         }
+        Ok(file)
+    }
+
+    /// Open one regular, unshared child without following any replaced name.
+    pub fn open_single_link_file(&self, name: &OsStr, options: ContainedOpenOptions) -> io::Result<File> {
+        let file = self.open_file(name, options)?;
+        super::fs::require_single_link(&file, &self.path.join(name))?;
         Ok(file)
     }
 

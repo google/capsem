@@ -272,6 +272,76 @@ fn a_capped_writer_rotates_instead_of_growing_without_bound() {
 }
 
 #[test]
+fn capped_rotation_keeps_its_directory_when_the_name_is_replaced() {
+    use std::io::Write;
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().join("logs");
+    let moved = root.path().join("moved");
+    let outside = root.path().join("outside");
+    std::fs::create_dir(&directory).unwrap();
+    std::fs::create_dir(&outside).unwrap();
+    std::fs::write(outside.join("serial.log"), b"host-only fixture").unwrap();
+    let mut writer = CappedLogWriter::open(&directory.join("serial.log"), 8).unwrap();
+    writer.write_all(b"old data").unwrap();
+    std::fs::rename(&directory, &moved).unwrap();
+    std::os::unix::fs::symlink(&outside, &directory).unwrap();
+    writer.write_all(b"new data").unwrap();
+    assert_eq!(std::fs::read(outside.join("serial.log")).unwrap(), b"host-only fixture");
+    assert_eq!(std::fs::read(moved.join("serial.log")).unwrap(), b"new data");
+    assert_eq!(std::fs::read(moved.join("serial.1.log")).unwrap(), b"old data");
+    assert!(!outside.join("serial.1.log").exists());
+}
+
+#[test]
+fn shared_producers_use_one_rotation_counter() {
+    use std::io::Write;
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("serial.log");
+    let mut console = CappedLogWriter::open(&path, 8).unwrap().shared();
+    let mut terminal = console.clone();
+    console.write_all(b"aaaa").unwrap();
+    terminal.write_all(b"bbbb").unwrap();
+    console.write_all(b"cccc").unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), b"cccc");
+    assert_eq!(std::fs::read(root.path().join("serial.1.log")).unwrap(), b"aaaabbbb");
+}
+
+#[test]
+fn reopening_a_capped_log_appends_to_the_existing_generation() {
+    use std::io::Write;
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("serial.log");
+    std::fs::write(&path, b"before\n").unwrap();
+    CappedLogWriter::open(&path, 64).unwrap().write_all(b"after\n").unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), b"before\nafter\n");
+}
+
+#[test]
+fn capped_reader_retains_its_directory_and_reads_only_the_two_generations() {
+    use std::ffi::OsStr;
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("logs");
+    let moved = root.path().join("moved");
+    let outside = root.path().join("outside");
+    std::fs::create_dir(&path).unwrap();
+    std::fs::create_dir(&outside).unwrap();
+    std::fs::write(path.join("serial.log"), b"current\n").unwrap();
+    std::fs::write(path.join("serial.1.log"), b"older\n").unwrap();
+    std::fs::write(path.join("serial.extra.log"), b"must not enter the stream\n").unwrap();
+    std::fs::write(outside.join("serial.log"), b"host-only fixture\n").unwrap();
+    let directory = crate::unix::contained::ContainedDir::open_root(&path).unwrap();
+    std::fs::rename(&path, &moved).unwrap();
+    std::os::unix::fs::symlink(&outside, &path).unwrap();
+    assert_eq!(
+        read_capped_log_tail_bytes_in(&directory, OsStr::new("serial.log"), 1024)
+            .unwrap()
+            .unwrap(),
+        b"older\ncurrent\n"
+    );
+    assert!(read_capped_log_tail_bytes_in(&directory, OsStr::new("../serial.log"), 1024).is_err());
+}
+
+#[test]
 fn a_rotated_serial_file_stays_inside_its_stream() {
     use std::io::Write;
     let dir = tempfile::tempdir().unwrap();

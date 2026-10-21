@@ -229,8 +229,10 @@ pub const SERIAL_LOG_MAX_BYTES: u64 = 32 * 1024 * 1024;
 /// stream [`log_stream_files`] enumerates, so readers pick up both halves with
 /// no extra knowledge. Both hypervisor backends write serial output through
 /// this rather than each opening the file themselves.
+#[derive(Debug)]
 pub struct CappedLogWriter {
-    path: PathBuf,
+    directory: crate::unix::contained::ContainedDir,
+    name: std::ffi::OsString,
     file: std::fs::File,
     written: u64,
     max_bytes: u64,
@@ -238,40 +240,94 @@ pub struct CappedLogWriter {
 
 impl CappedLogWriter {
     pub fn open(path: &std::path::Path, max_bytes: u64) -> std::io::Result<Self> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let file = crate::unix::fs::open_single_link_append_no_follow(path)?;
-        let written = file.metadata().map(|m| m.len()).unwrap_or(0);
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or(std::path::Path::new("."));
+        std::fs::create_dir_all(parent)?;
+        let directory = crate::unix::contained::ContainedDir::open_root(parent)?;
+        let name = path
+            .file_name()
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "log needs a file name"))?;
+        Self::open_in(directory, name, max_bytes)
+    }
+
+    /// Retain the supplied directory capability across every rotation.
+    pub fn open_in(
+        directory: crate::unix::contained::ContainedDir,
+        name: &std::ffi::OsStr,
+        max_bytes: u64,
+    ) -> std::io::Result<Self> {
+        let file = directory
+            .open_single_link_file(name, crate::unix::contained::ContainedOpenOptions::append_create(0o600))?;
+        let written = file.metadata()?.len();
         Ok(Self {
-            path: path.to_path_buf(),
+            directory,
+            name: name.to_owned(),
             file,
             written,
             max_bytes,
         })
     }
 
-    fn rotated_path(&self) -> PathBuf {
-        let stem = self
-            .path
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "serial".to_string());
-        let ext = self
-            .path
-            .extension()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "log".to_string());
-        self.path.with_file_name(format!("{stem}.1.{ext}"))
+    fn rotated_name(&self) -> std::ffi::OsString {
+        capped_rotation_name(&self.name)
     }
 
     fn rotate(&mut self) -> std::io::Result<()> {
-        let rotated = self.rotated_path();
-        let _ = std::fs::remove_file(&rotated);
-        std::fs::rename(&self.path, &rotated)?;
-        self.file = crate::unix::fs::open_single_link_append_no_follow(&self.path)?;
+        self.directory
+            .rename_to(&self.name, &self.directory, &self.rotated_name())?;
+        self.file = self.directory.open_single_link_file(
+            &self.name,
+            crate::unix::contained::ContainedOpenOptions::append_create(0o600),
+        )?;
         self.written = 0;
         Ok(())
+    }
+
+    /// Console and terminal producers share one size counter and rotation owner.
+    pub fn shared(self) -> SharedLogWriter {
+        SharedLogWriter(std::sync::Arc::new(std::sync::Mutex::new(self)))
+    }
+}
+
+fn capped_rotation_name(name: &std::ffi::OsStr) -> std::ffi::OsString {
+    let path = std::path::Path::new(name);
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "serial".to_string());
+    let ext = path
+        .extension()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "log".to_string());
+    format!("{stem}.1.{ext}").into()
+}
+
+/// Cloneable access to one bounded diagnostic stream, never independent rotators.
+#[derive(Clone, Debug)]
+pub struct SharedLogWriter(std::sync::Arc<std::sync::Mutex<CappedLogWriter>>);
+
+impl std::io::Write for SharedLogWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .lock()
+            .map_err(|_| std::io::Error::other("log writer poisoned"))?
+            .write(bytes)
+    }
+
+    fn write_all(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        self.0
+            .lock()
+            .map_err(|_| std::io::Error::other("log writer poisoned"))?
+            .write_all(bytes)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0
+            .lock()
+            .map_err(|_| std::io::Error::other("log writer poisoned"))?
+            .flush()
     }
 }
 
@@ -307,12 +363,41 @@ pub fn read_log_tail(path: &std::path::Path, max_bytes: usize) -> Option<String>
 
 /// The same bounded, rotation-aware tail with exact bytes for support exports.
 pub fn read_log_tail_bytes(path: &std::path::Path, max_bytes: usize) -> Option<Vec<u8>> {
-    use std::io::{Read, Seek, SeekFrom};
-
     let files = log_stream_files(path);
-    if files.is_empty() {
-        return None;
+    read_tail_files(
+        files
+            .into_iter()
+            .filter_map(|path| crate::unix::fs::open_single_link_file_no_follow(&path).ok()),
+        max_bytes,
+    )
+}
+
+/// Read only the two capped generations below a held directory. A worker can
+/// neither redirect a parent component nor expand this read by adding files.
+pub fn read_capped_log_tail_bytes_in(
+    directory: &crate::unix::contained::ContainedDir,
+    name: &std::ffi::OsStr,
+    max_bytes: usize,
+) -> std::io::Result<Option<Vec<u8>>> {
+    if std::path::Path::new(name).file_name() != Some(name) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "log needs one file name",
+        ));
     }
+    let mut files = Vec::new();
+    for entry in [name.to_owned(), capped_rotation_name(name)] {
+        match directory.open_single_link_file(&entry, crate::unix::contained::ContainedOpenOptions::read_only()) {
+            Ok(file) => files.push(file),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(read_tail_files(files.into_iter(), max_bytes))
+}
+
+fn read_tail_files(files: impl Iterator<Item = std::fs::File>, max_bytes: usize) -> Option<Vec<u8>> {
+    use std::io::{Read, Seek, SeekFrom};
 
     // Seek to each file's tail rather than reading it and slicing. Guest
     // console output grows on the guest's terms, so reading whole files to
@@ -320,13 +405,10 @@ pub fn read_log_tail_bytes(path: &std::path::Path, max_bytes: usize) -> Option<V
     // caller allocates.
     let mut newest_first: Vec<Vec<u8>> = Vec::new();
     let mut budget = max_bytes;
-    for file in files {
+    for mut handle in files {
         if budget == 0 {
             break;
         }
-        let Ok(mut handle) = crate::unix::fs::open_single_link_file_no_follow(&file) else {
-            continue;
-        };
         let Ok(meta) = handle.metadata() else {
             continue;
         };

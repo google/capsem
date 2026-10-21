@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Keep rotating diagnostic logs anchored to their opened directory, preventing
+  a replaced directory name from redirecting subsequent writes.
+
 - Redact credentials in mixed binary/text log lines, preserving unrelated
   non-UTF8 bytes without letting them disable support-bundle redaction.
 
