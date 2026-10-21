@@ -138,6 +138,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Publish the Capsem 0.7 documentation: getting started, task guides, security architecture, and SDK/API references.
 ### Changed
 
+- Separate MCP server installation, agent connection, and skill installation in
+  the agent file-analysis guide.
+
 - Document standalone proxy flags, lease control, provider routing and process
   boundaries, with a tested OpenAI/Ollama guide that allows Paris responses
   and blocks London responses.

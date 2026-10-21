@@ -8,22 +8,31 @@ Capsem VM, and retrieve a report on your computer. This walkthrough uses a
 harmless text fixture containing suspicious-looking strings. It performs
 static triage: it does not execute the sample or contact its URLs.
 
-## Connect your agent to Capsem
+## Install the MCP server
 
 [Install Capsem](/getting-started/installation/) and start it on your computer.
-You also need Node.js 20 or later to run the host MCP server. In your agent's
-MCP settings, register a **stdio** server with these fields:
+With Node.js 20 or later installed, run:
+
+```sh
+npm install --global @capsem/mcp@0.7.0
+```
+
+This installs `capsem-mcp`, which gives your agent tools to create VMs, run
+commands, and transfer files. The package was tested against Capsem 0.7.1.
+
+## Connect your agent to Capsem
+
+In your agent's MCP settings, register a **stdio** server with these fields:
 
 | Field | Value |
 | --- | --- |
-| Executable | `npx` |
-| Arguments | `--yes`, `@capsem/mcp@0.7.0`, `--gateway-url`, `http://127.0.0.1:19222`, `--token-file`, `/absolute/path/to/.capsem/run/gateway.token` |
+| Executable | `capsem-mcp` |
+| Arguments | `--gateway-url`, `http://127.0.0.1:19222`, `--token-file`, `/absolute/path/to/.capsem/run/gateway.token` |
 
 Replace the token-file path with the absolute path under your home directory.
 If Capsem uses another port, read it from `~/.capsem/run/gateway.port` and
 replace `19222`. The server reads the token file on the host; do not paste
-its contents into the agent's prompt or upload it to the VM. The package was
-tested against the native Capsem 0.7.1 service.
+its contents into the agent's prompt or upload it to the VM.
 
 Reconnect the agent and check that it lists `capsem_create`, `capsem_exec`,
 `capsem_write_file`, `capsem_read_file`, and `capsem_delete`. If they are missing,
