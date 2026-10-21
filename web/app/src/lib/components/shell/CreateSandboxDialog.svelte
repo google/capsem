@@ -2,10 +2,11 @@
   import { vmStore } from '../../stores/vms.svelte.ts';
   import { tabStore } from '../../stores/tabs.svelte.ts';
   import Modal from './Modal.svelte';
-  import { ImageCacheState, type ImageInfo } from '@capsem/sdk';
+  import type { ImageInfo } from '@capsem/sdk';
   import { getImages } from '../../api';
   import { selectedSessionImage, sessionCreateRequest } from '../../models/session-create';
   import { sessionActionError } from '../../models/session-action-error';
+  import { imageInterfaceLabel } from '../../models/image-launch';
 
   // Mirrors the service's defaults for a session created without explicit resources.
   const DEFAULT_RAM_MB = 12288;
@@ -122,8 +123,9 @@
         <p class="text-xs text-destructive break-words" role="alert">{imagesError}</p>
       {:else if selectedImage}
         <p class="text-xs text-muted-foreground-1">{selectedImage.description}</p>
-        <p class="text-xs text-muted-foreground-1">Compatible · Cache: {selectedImage.cached === ImageCacheState.UNKNOWN ? 'unknown' : selectedImage.cached}</p>
-        <p class="text-xs text-muted-foreground break-all">{selectedImage.image}</p>
+        {#if imageInterfaceLabel(selectedImage)}
+          <p class="text-xs text-muted-foreground-1">{imageInterfaceLabel(selectedImage)} app</p>
+        {/if}
       {:else if imageName}
         <p class="text-xs text-destructive" role="alert">The selected image is no longer available. Refresh the catalog or choose another image.</p>
       {:else}

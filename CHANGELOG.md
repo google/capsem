@@ -43,6 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- App listings distinguish terminal and graphical interfaces using published
+  catalog metadata, including the session customization dialog.
+
 - Local package runtime downloads honor the recorded file source, including
   repair after an interrupted setup, instead of requesting unpublished assets
   from the public release server.

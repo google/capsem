@@ -5,7 +5,7 @@
   import { vmStore } from '../../stores/vms.svelte';
   import { tabStore } from '../../stores/tabs.svelte';
   import { sessionActionError } from '../../models/session-action-error';
-  import { imageNeedsDownload, imageLaunchRequest } from '../../models/image-launch';
+  import { imageNeedsDownload, imageLaunchRequest, imageInterfaceLabel } from '../../models/image-launch';
   import CircleNotch from 'phosphor-svelte/lib/CircleNotch';
   import DownloadSimple from 'phosphor-svelte/lib/DownloadSimple';
   import Play from 'phosphor-svelte/lib/Play';
@@ -107,7 +107,12 @@
         <article class="px-4 py-3">
           <div class="flex items-center gap-3">
             <div class="min-w-0 flex-1">
-              <h4 class="text-sm font-semibold text-foreground">{image.name}</h4>
+              <div class="flex items-center gap-2">
+                <h4 class="text-sm font-semibold text-foreground truncate">{image.name}</h4>
+                {#if imageInterfaceLabel(image)}
+                  <span class="shrink-0 text-[10px] text-muted-foreground-1">{imageInterfaceLabel(image)}</span>
+                {/if}
+              </div>
               <p class="text-xs text-muted-foreground-1 truncate" title={image.description}>{image.description}</p>
             </div>
             <button type="button" class="shrink-0 inline-flex items-center justify-center gap-1.5 min-w-24 text-xs rounded-lg px-3 py-2 bg-primary text-primary-foreground hover:bg-primary-hover disabled:opacity-50"

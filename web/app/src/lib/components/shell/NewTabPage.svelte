@@ -164,8 +164,9 @@
   function assetText(status: AssetStatus | null): string {
     if (!status) return 'Checking Capsem setup.';
     if (status.downloading) return assetProgressText(status);
+    if (status.ready) return 'Start a terminal or customize a session.';
     if (status.reconcile_error) return 'Setup download failed. Try again to continue.';
-    return status.ready ? 'Start a terminal or customize a session.' : 'Download Capsem setup once to launch any app.';
+    return 'Download Capsem setup once to launch any app.';
   }
 
   function assetPercent(status: AssetStatus | null): number {
@@ -396,7 +397,7 @@
       <div class="min-w-0 flex-1">
         <p class="text-sm font-semibold text-foreground">New session</p>
         <p class="text-xs text-muted-foreground-1 mt-1">{assetsLoading ? 'Checking Capsem setup.' : assetText(assets)}</p>
-        {#if assetsError || assets?.reconcile_error}
+        {#if !ready && (assetsError || assets?.reconcile_error)}
           <details class="text-xs text-destructive mt-2 break-words"><summary class="cursor-pointer">Download details</summary>{assetsError ?? assets?.reconcile_error}</details>
         {/if}
         <div class="mt-3 flex flex-wrap items-center gap-2">
