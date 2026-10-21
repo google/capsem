@@ -77,6 +77,8 @@ export {HostTriageResponseSchema} from "./HostTriageResponse.js";
 export {HttpEventSchema} from "./HttpEvent.js";
 export {HypervisorInfoSchema} from "./HypervisorInfo.js";
 export {ImageCacheStateSchema} from "./ImageCacheState.js";
+export {ImageDownloadPhaseSchema} from "./ImageDownloadPhase.js";
+export {ImageDownloadProgressSchema} from "./ImageDownloadProgress.js";
 export {ImageInfoSchema} from "./ImageInfo.js";
 export {ImageListResponseSchema} from "./ImageListResponse.js";
 export {ImagePullRequestSchema} from "./ImagePullRequest.js";

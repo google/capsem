@@ -61,6 +61,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- SDK catalog models preserve observed download progress and unknown transfer totals.
+
 - Catalog responses describe live app-download phases, byte counts and optional totals.
 
 - Rotate console and terminal logs inside the confined session owner's storage,

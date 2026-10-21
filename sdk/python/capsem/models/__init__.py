@@ -91,6 +91,8 @@ from .host_triage_response import HostTriageResponse as HostTriageResponse
 from .http_event import HttpEvent as HttpEvent
 from .hypervisor_info import HypervisorInfo as HypervisorInfo
 from .image_cache_state import ImageCacheState as ImageCacheState
+from .image_download_phase import ImageDownloadPhase as ImageDownloadPhase
+from .image_download_progress import ImageDownloadProgress as ImageDownloadProgress
 from .image_info import ImageInfo as ImageInfo
 from .image_list_response import ImageListResponse as ImageListResponse
 from .image_pull_request import ImagePullRequest as ImagePullRequest

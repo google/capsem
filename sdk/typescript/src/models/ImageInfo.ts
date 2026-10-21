@@ -1,6 +1,7 @@
 // Generated from Capsem OpenAPI. Do not edit.
 
 import type { ImageCacheState } from "./ImageCacheState.js";
+import type { ImageDownloadProgress } from "./ImageDownloadProgress.js";
 import type { ImageSurface } from "./ImageSurface.js";
 
 export interface ImageInfo {
@@ -9,5 +10,6 @@ export interface ImageInfo {
   "description": string;
   "image"?: string | null;
   "name": string;
+  "progress"?: null | ImageDownloadProgress;
   "surface"?: null | ImageSurface;
 }
