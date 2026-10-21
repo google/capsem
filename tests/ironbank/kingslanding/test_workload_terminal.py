@@ -75,11 +75,40 @@ def probe(socket, after=b"", deadline=90):
     raise AssertionError(f"the terminal never answered the probe: {seen[-2000:]!r}")
 
 
+def expect_output(socket, expected, timeout=10):
+    seen = b""
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        try:
+            frame = socket.recv(timeout=max(0.01, end - time.monotonic()))
+        except TimeoutError:
+            break
+        if isinstance(frame, bytes) and frame[:1] in (bytes([STDOUT]), bytes([STDERR])):
+            seen += frame[1:]
+            if expected in seen:
+                return
+    raise AssertionError(f"terminal did not emit {expected!r}: {seen[-2000:]!r}")
+
+
+def resize_workload(socket):
+    # The application's trap, not a host-side size query, proves both the
+    # dimensions and SIGWINCH crossed every terminal boundary.
+    socket.send(
+        bytes([STDIN]) + b"trap 'printf \"RESIZE-%s\\n\" \"$(stty size)\"' WINCH; printf 'RESIZE-%s\\n' ready\n"
+    )
+    expect_output(socket, b"RESIZE-ready\r\n")
+    for rows, cols in ((33, 101), (20, 60), (45, 150)):
+        socket.send(bytes([CONTROL]) + json.dumps({"type": "resize", "cols": cols, "rows": rows}).encode())
+        expect_output(socket, f"RESIZE-{rows} {cols}\r\n".encode())
+    socket.send(bytes([STDIN]) + b"trap - WINCH\n")
+
+
 def test_an_image_session_terminal_is_its_workloads_command(service, tmp_path):
     client = service.client()
     with image_session(service, tmp_path, "workload-terminal") as vm_id:
         with terminal(service, vm_id) as socket:
             assert probe(socket) == ("1000", "100000", "workload")
+            resize_workload(socket)
             socket.send(bytes([STDIN]) + b"echo MARK-BEFORE-DETACH\n")
         # Leaving the terminal leaves the workload running; attaching again
         # replays its screen and types into the same shell.
