@@ -3,6 +3,60 @@ use crate::gateway_provider::GatewayProvider;
 use crate::tests::{read_http_request, write_json_response, write_response};
 
 #[tokio::test]
+async fn cache_image_honors_the_generated_complete_pull_deadline() {
+    use std::{sync::Arc, time::Duration};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let image = format!("registry.example/dev@sha256:{}", "a".repeat(64));
+    let requested = Arc::new(tokio::sync::Notify::new());
+    let reply = Arc::new(tokio::sync::Notify::new());
+    let seen = Arc::clone(&requested);
+    let release = Arc::clone(&reply);
+    let expected = image.clone();
+    let server = tokio::spawn(async move {
+        let (mut token, _) = listener.accept().await.unwrap();
+        assert!(read_http_request(&mut token).await.starts_with("GET /token "));
+        write_json_response(&mut token, r#"{"token":"test-token"}"#).await;
+        let (mut request, _) = listener.accept().await.unwrap();
+        let body = read_http_request(&mut request).await;
+        assert!(body.starts_with("POST /images/pull "), "{body}");
+        assert_eq!(request_body(&body), serde_json::json!({"image": expected}));
+        seen.notify_one();
+        release.notified().await;
+        write_json_response(
+            &mut request,
+            &serde_json::json!({
+                "image":expected,"resolved":expected,"digest":format!("sha256:{}", "a".repeat(64))
+            })
+            .to_string(),
+        )
+        .await;
+    });
+    let action = tokio::spawn(async move {
+        GatewayProvider::new(url)
+            .invoke_async(&ControlAction::CacheImage {
+                image,
+                name: "dev".into(),
+            })
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(3), requested.notified())
+        .await
+        .unwrap();
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(901)).await;
+    tokio::time::resume();
+    reply.notify_one();
+    let outcome = action
+        .await
+        .unwrap()
+        .expect("the TUI must allow the complete published image-pull deadline");
+    assert_eq!(outcome.message, "cached dev");
+    assert!(outcome.focus_session.is_none());
+    server.await.unwrap();
+}
+
+#[tokio::test]
 async fn cache_image_uses_the_advertised_pin_and_does_not_create_a_session() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());

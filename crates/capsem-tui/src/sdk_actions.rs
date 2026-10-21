@@ -23,9 +23,7 @@ pub async fn invoke(hypervisor: &Hypervisor, transport: &Transport, action: &Con
                         registry: None,
                     },
                 },
-                CallOptions {
-                    timeout: Some(std::time::Duration::from_secs(900)),
-                },
+                CallOptions::default(),
             )
             .await?;
             Ok(ActionOutcome {

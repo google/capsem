@@ -29,3 +29,6 @@ vt100 = "0.16.2"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
