@@ -36,9 +36,19 @@ pub enum StreamControl {
         command: Option<String>,
     },
     /// Terminal window size; both dimensions must be non-zero.
-    Resize { cols: u16, rows: u16 },
+    Resize {
+        #[cfg_attr(feature = "schema", schema(schema_with = crate::terminal::schema::cols))]
+        cols: u16,
+        #[cfg_attr(feature = "schema", schema(schema_with = crate::terminal::schema::rows))]
+        rows: u16,
+    },
     /// This view explicitly takes input and resize authority.
-    Focus { cols: u16, rows: u16 },
+    Focus {
+        #[cfg_attr(feature = "schema", schema(schema_with = crate::terminal::schema::cols))]
+        cols: u16,
+        #[cfg_attr(feature = "schema", schema(schema_with = crate::terminal::schema::rows))]
+        rows: u16,
+    },
     /// No more stdin will follow.
     CloseStdin,
 }
@@ -128,6 +138,22 @@ pub fn encode(message: &Message<'_>) -> Result<Vec<u8>, FrameError> {
 fn decode(payload: &[u8]) -> Result<Message<'_>, FrameError> {
     if payload.len() > MAX_FRAME_BYTES {
         return Err(FrameError::TooLarge);
+    }
+    // serde_bytes accepts MessagePack strings too, including invalid UTF-8.
+    // Use the underlying codec's header readers to require the named-map and
+    // binary-field contract before Serde borrows the payload.
+    let mut fields = payload;
+    let invalid = |error: rmp::decode::ValueReadError| FrameError::Invalid(error.to_string());
+    if rmp::decode::read_map_len(&mut fields).map_err(invalid)? != 1 {
+        return Err(FrameError::Invalid("stream record must have one named field".into()));
+    }
+    let mut key = [0; 16];
+    let lane = rmp::decode::read_str(&mut fields, &mut key).map_err(|error| FrameError::Invalid(error.to_string()))?;
+    if matches!(lane, "stdin" | "stdout" | "stderr") {
+        let length = rmp::decode::read_bin_len(&mut fields).map_err(invalid)? as usize;
+        if length > MAX_DATA_BYTES || fields.len() != length {
+            return Err(FrameError::Invalid("invalid stream binary payload length".into()));
+        }
     }
     let mut decoder = rmp_serde::Deserializer::from_read_ref(payload);
     decoder.set_max_depth(64);

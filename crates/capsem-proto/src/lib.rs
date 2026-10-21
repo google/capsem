@@ -94,7 +94,9 @@ pub const MAX_BOOT_FILES: usize = 64;
 /// Version 13 fixes suspend to the owner's confined checkpoint location.
 /// Version 14 adds host-only credential injection; version 15 carries active-policy bytes.
 /// Version 16 adds session-owned terminal state and explicit view focus.
-pub const PROTOCOL_VERSION: u16 = 16;
+/// Version 17 unifies terminal stream records and the held-console bridge on
+/// named MessagePack; old console payloads must never reach a new peer.
+pub const PROTOCOL_VERSION: u16 = 17;
 
 /// Guest loopback port of the agent's DNS proxy (port 53 is redirected here).
 pub const GUEST_DNS_PROXY_PORT: u16 = 1053;

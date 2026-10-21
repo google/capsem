@@ -61,6 +61,14 @@ fn invalid_dimensions_directions_lengths_and_old_wire_formats_are_refused() {
         decode_client(b"\x81\xa5stdin\x93\x00\x01\x02").is_err(),
         "bytes must be binary, not integer arrays"
     );
+    assert!(
+        decode_client(b"\x81\xa5stdin\xa3raw").is_err(),
+        "bytes must not be strings"
+    );
+    assert!(
+        decode_client(b"\x81\xa5stdin\xa1\xff").is_err(),
+        "invalid UTF-8 strings are not binary either"
+    );
     assert!(decode_client(&vec![0; MAX_FRAME_BYTES + 1]).is_err());
     assert!(encode(&Message::Stdin(&vec![0; MAX_DATA_BYTES + 1])).is_err());
     let largest = vec![0; MAX_DATA_BYTES];

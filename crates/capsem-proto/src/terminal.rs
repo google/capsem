@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 mod validation;
 pub use validation::validate_size;
 #[cfg(feature = "schema")]
-mod schema;
+pub(crate) mod schema;
 
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -52,6 +52,7 @@ pub enum TerminalEventKind {
 pub struct TerminalEvent {
     pub kind: TerminalEventKind,
     pub visual: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notification: Option<TerminalNotification>,
 }
 
@@ -73,6 +74,7 @@ pub struct TerminalState {
     #[cfg_attr(feature = "schema", schema(schema_with = schema::text))]
     pub icon_name: String,
     pub bell_count: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_notification: Option<TerminalNotification>,
     #[cfg_attr(feature = "schema", schema(schema_with = schema::events))]
     pub events: Vec<TerminalEvent>,
@@ -85,6 +87,7 @@ pub struct TerminalSummary {
     #[cfg_attr(feature = "schema", schema(schema_with = schema::text))]
     pub title: String,
     pub bell_count: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_notification: Option<TerminalNotification>,
 }
 
