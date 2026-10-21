@@ -43,6 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reopening an existing app session refreshes its terminal launcher after an
+  upgrade, so terminal resize fixes reach saved sessions on macOS too.
+
 - Resolve VM asset and share paths before host confinement, preventing macOS
   disk-image failures when development assets are reached through directory aliases.
 

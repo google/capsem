@@ -25,6 +25,7 @@ fn legacy_stage(session: &std::path::Path) -> std::path::PathBuf {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn legacy_stage_is_upgraded_once_without_losing_options() {
     let root = tempfile::tempdir().unwrap();
     let session = root.path().join("session");
@@ -41,6 +42,41 @@ fn legacy_stage_is_upgraded_once_without_losing_options() {
         assert_eq!(mode, 0o600, "migration must not widen {name}");
     }
     assert!(!refresh(&session).unwrap(), "current stage must be idempotent");
+}
+
+#[test]
+fn an_existing_owner_policy_does_not_keep_an_obsolete_launcher() {
+    let root = tempfile::tempdir().unwrap();
+    let session = root.path().join("session");
+    let stage = legacy_stage(&session);
+    let options = br#"{ "workspace_owner": "image_user", "env": {"KEEP":"yes"} }"#;
+    std::fs::write(stage.join("options.json"), options).unwrap();
+    std::fs::write(stage.parent().unwrap().join("user-data"), b"keep workspace").unwrap();
+
+    assert!(refresh(&session).unwrap());
+    assert_eq!(std::fs::read(stage.join("launch.py")).unwrap(), super::super::LAUNCHER);
+    assert_eq!(std::fs::read(stage.join("options.json")).unwrap(), options);
+    assert_eq!(
+        std::fs::read(stage.parent().unwrap().join("user-data")).unwrap(),
+        b"keep workspace"
+    );
+    let mode = std::fs::metadata(stage.join("launch.py")).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+    assert!(!refresh(&session).unwrap());
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn macos_launcher_refresh_preserves_the_image_ownership_contract() {
+    let root = tempfile::tempdir().unwrap();
+    let session = root.path().join("session");
+    let stage = legacy_stage(&session);
+    let options = std::fs::read(stage.join("options.json")).unwrap();
+
+    assert!(refresh(&session).unwrap());
+    assert_eq!(std::fs::read(stage.join("options.json")).unwrap(), options);
+    assert_eq!(std::fs::read(stage.join("launch.py")).unwrap(), super::super::LAUNCHER);
+    assert!(!refresh(&session).unwrap());
 }
 
 #[test]
