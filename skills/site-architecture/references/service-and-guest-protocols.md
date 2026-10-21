@@ -43,8 +43,23 @@ Tray app  -> capsem-gateway (TCP)-> HTTP/UDS -> capsem-service
 | CLI -> gateway | Rust SDK HTTP/WebSocket over TCP | runtime gateway URL and Bearer token |
 | CLI local administration -> service | HTTP/1.1 over UDS | status/asset reads and startup only |
 | SDK/npm MCP -> gateway | HTTP/1.1 over TCP | explicit gateway URL (Bearer token auth) |
-| Service -> process | bincode over UDS (after a MessagePack Hello) | `~/.capsem/run/instances/{id}.sock` |
+| Service -> process | bounded, named MessagePack over UDS (after a MessagePack Hello) | `~/.capsem/run/instances/{id}.sock` |
 | Process -> guest agent | Binary frames over vsock | ports 5000 (control), 5001 (terminal), 5004 (lifecycle), 5005 (exec) |
+
+Internal typed messages use named MessagePack records and binary byte fields
+(`serde_bytes`), not positional enums or JSON byte arrays. Byte streams prefix
+each record with a bounded four-byte big-endian payload length. The foundation
+IPC channel preserves partial reads across cancellation and serializes whole
+frame writes; protocol version and schema hash are checked during Hello.
+Guest control and framed exec lanes use the same encoding convention in
+`capsem-proto`. Operating-system PTYs themselves still carry terminal bytes.
+
+The current browser `capsem.stream.v2` adapter is an exception: its WebSocket
+binary messages carry a channel byte, raw data, and JSON control/status.
+The guest Python console bridge also has a custom input/resize framing format.
+These are current implementations, not the convention to copy when extending
+terminal messages. Keep shared Rust contracts authoritative and verify every
+client when changing an encoding; WebSocket already supplies message framing.
 
 The CLI discovers the local gateway from `gateway.port` and `gateway.token`
 beside its administration socket. `CAPSEM_GATEWAY_URL` and
