@@ -805,6 +805,8 @@
   "dependencies": [
    "base64",
    "capsem-crypto",
+   "capsem-proto",
+   "rmp-serde",
    "serde",
    "serde_json",
    "utoipa"
@@ -958,6 +960,7 @@
    "tracing-subscriber",
    "uuid",
    "vm-fdt",
+   "vt100",
    "webpki-roots"
   ]
  },
@@ -1239,6 +1242,7 @@
    "anyhow",
    "capsem-crypto",
    "quote",
+   "rmp",
    "rmp-serde",
    "serde",
    "serde_bytes",
@@ -1247,7 +1251,8 @@
    "tempfile",
    "thiserror",
    "tokio",
-   "toml"
+   "toml",
+   "utoipa"
   ]
  },
  "capsem-proxy": {
