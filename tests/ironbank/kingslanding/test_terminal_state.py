@@ -1,13 +1,19 @@
 """Session terminal metadata remains observable without any terminal viewer."""
 
 import json
+import shlex
 import time
 
 import pytest
 from helpers.image_session import image_session, workload_exec
 
 from tests.ironbank.kingslanding.test_run import service
-from tests.ironbank.kingslanding.test_workload_terminal import CONTROL, terminal
+from tests.ironbank.kingslanding.test_workload_terminal import (
+    CONTROL,
+    STDIN,
+    probe,
+    terminal,
+)
 
 __all__ = ["service"]
 pytestmark = pytest.mark.integration
@@ -104,6 +110,54 @@ def test_workload_advertises_full_color_to_its_terminal_apps(service, tmp_path):
         result = workload_exec(client, vm_id, 'printf "%s\\n%s\\n" "$TERM" "$COLORTERM"')
         assert result["exit_code"] == 0, result
         assert result["stdout_text"].splitlines() == ["xterm-256color", "truecolor"], result
+
+
+def test_the_application_owns_cooked_and_raw_terminal_modes(service, tmp_path):
+    client = service.client()
+    with image_session(service, tmp_path, "terminal-line-discipline") as vm_id, terminal(service, vm_id) as socket:
+        assert probe(socket) == ("1000", "100000", "workload")
+        modes = workload_exec(client, vm_id, "stty -F /proc/1/fd/0 -a")
+        assert modes["exit_code"] == 0, modes
+        flags = {flag.rstrip(";") for flag in modes["stdout_text"].split()}
+        assert {"opost", "onlcr"} <= flags, modes
+        result = workload_exec(client, vm_id, (
+            r"printf '\033[2J\033[Hfirst\nsecond\n\033]2;Cooked checkpoint\007' > /proc/1/fd/1"
+        ))
+        assert result["exit_code"] == 0, result
+        state = next_state(socket, lambda state: state["title"] == "Cooked checkpoint")
+        assert (state["cursor"]["row"], state["cursor"]["col"]) == (2, 0), state
+
+        # This is a real foreground app on the image command's terminal.
+        # Bare LF preserves its column in raw mode; escape keys arrive
+        # immediately without a newline or an intervening terminal echo.
+        script = r"""
+import os, signal, termios, tty
+before = termios.tcgetattr(0)
+def resized(*_):
+    size = os.get_terminal_size(0)
+    os.write(1, f'\x1b]2;Raw size {size.lines} {size.columns}\x07'.encode())
+try:
+    tty.setraw(0)
+    signal.signal(signal.SIGWINCH, resized)
+    os.write(1, b'\x1b[2J\x1b[Habcdefgh\n\n\b\bX\x1b]2;Raw checkpoint\x07')
+    if os.read(0, 3) == b'\x1b[A':
+        os.write(1, b'\x1b]2;Raw key received\x07')
+    os.read(0, 1)
+finally:
+    termios.tcsetattr(0, termios.TCSANOW, before)
+"""
+        command = "python3 -c " + shlex.quote(script) + "\n"
+        socket.send(bytes([STDIN]) + command.encode())
+        state = next_state(socket, lambda state: state["title"] == "Raw checkpoint")
+        assert (state["cursor"]["row"], state["cursor"]["col"]) == (2, 7), state
+        socket.send(bytes([STDIN]) + b"\x1b[A")
+        state = next_state(socket, lambda state: state["title"] == "Raw key received")
+        assert (state["cursor"]["row"], state["cursor"]["col"]) == (2, 7), state
+        for rows, cols in ((33, 101), (20, 60), (45, 150)):
+            socket.send(bytes([CONTROL]) + json.dumps({"type": "resize", "cols": cols, "rows": rows}).encode())
+            state = next_state(socket, lambda state, title=f"Raw size {rows} {cols}": state["title"] == title)
+            assert (state["rows"], state["cols"]) == (rows, cols), state
+        socket.send(bytes([STDIN]) + b"q")
 
 
 def test_unterminated_control_string_burst_recovers_without_replacing_title(service, tmp_path):

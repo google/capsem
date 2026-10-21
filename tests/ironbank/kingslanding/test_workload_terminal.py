@@ -121,11 +121,11 @@ def test_an_image_session_terminal_is_its_workloads_command(service, tmp_path):
                 "workload",
             )
             # The command is the workload: when it exits, the workload has.
-            socket.send(bytes([STDIN]) + b"exit\n")
+            socket.send(bytes([STDIN]) + b"exit 7\n")
             deadline = time.monotonic() + 60
             status = client.get(f"/vms/{vm_id}/container")
             while status["state"] != "exited" and time.monotonic() < deadline:
                 time.sleep(0.5)
                 status = client.get(f"/vms/{vm_id}/container")
             assert status["state"] == "exited", status
-            assert status["exit_code"] == 0, status
+            assert status["exit_code"] == 7, status

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 
-use super::LAUNCHER;
+use super::LAUNCHER_FILES;
 
 /// One small control file written into [`super::STAGE`]. The image itself is
 /// never staged there: it reaches the guest through the read-only image share
@@ -97,7 +97,8 @@ pub fn image_blobs(root: &Path, files: &[PathBuf]) -> Result<ImageBlobs> {
 /// The stage, in write order: `options.json` (the image's manifest digest,
 /// the command override, container environment, where the container sees
 /// the workspace, and the capabilities, syscall filter, user-namespace map
-/// and resources the workload gets), then the launcher. `surface` is what
+/// and resources the workload gets), then the console owner and launcher.
+/// `surface` is what
 /// [`image_surface`] read from the image; `manifest` is the digest the image
 /// share holds the image under ([`image_blobs`]).
 pub fn stage_plan<'a>(
@@ -139,16 +140,15 @@ pub fn stage_plan<'a>(
         options["rootfs"] =
             serde_json::json!({"digest": rootfs.digest, "integrity": rootfs.integrity, "size": rootfs.size});
     }
-    Ok(vec![
-        StagedFile {
-            name: "options.json".into(),
-            bytes: serde_json::to_vec(&options)?,
-        },
-        StagedFile {
-            name: "launch.py".into(),
-            bytes: LAUNCHER.to_vec(),
-        },
-    ])
+    let mut files = vec![StagedFile {
+        name: "options.json".into(),
+        bytes: serde_json::to_vec(&options)?,
+    }];
+    files.extend(LAUNCHER_FILES.iter().map(|(name, bytes)| StagedFile {
+        name: (*name).into(),
+        bytes: bytes.to_vec(),
+    }));
+    Ok(files)
 }
 
 /// The hex of a `sha256:<hex>` digest, refused unless it is one.

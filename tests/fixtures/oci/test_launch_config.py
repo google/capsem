@@ -16,6 +16,7 @@ SOURCE = Path(__file__).resolve().parents[3] / "guest/artifacts/container/launch
 
 @pytest.fixture
 def launcher(monkeypatch):
+    monkeypatch.syspath_prepend(str(SOURCE.parent))
     spec = importlib.util.spec_from_file_location("container_launch", SOURCE)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)

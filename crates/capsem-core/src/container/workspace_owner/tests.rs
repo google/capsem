@@ -21,6 +21,7 @@ fn legacy_stage(session: &std::path::Path) -> std::path::PathBuf {
     )
     .unwrap();
     std::fs::write(stage.join("launch.py"), b"legacy launcher").unwrap();
+    std::fs::write(stage.join("runtime_console.py"), b"legacy console owner").unwrap();
     stage
 }
 
@@ -37,7 +38,7 @@ fn legacy_stage_is_upgraded_once_without_losing_options() {
     assert_eq!(options["workspace_owner"], "image_user");
     assert_eq!(options["env"]["KEEP"], "yes");
     assert_eq!(std::fs::read(stage.join("launch.py")).unwrap(), super::super::LAUNCHER);
-    for name in ["options.json", "launch.py"] {
+    for name in ["options.json", "runtime_console.py", "launch.py"] {
         let mode = std::fs::metadata(stage.join(name)).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600, "migration must not widen {name}");
     }
@@ -100,8 +101,24 @@ fn missing_launcher_is_repaired_for_a_valid_stage() {
 }
 
 #[test]
+fn a_current_launcher_still_refreshes_its_missing_console_module() {
+    let root = tempfile::tempdir().unwrap();
+    let session = root.path().join("session");
+    let stage = legacy_stage(&session);
+    std::fs::write(stage.join("options.json"), br#"{"workspace_owner":"image_user"}"#).unwrap();
+    std::fs::write(stage.join("launch.py"), super::super::LAUNCHER).unwrap();
+    std::fs::remove_file(stage.join("runtime_console.py")).unwrap();
+    assert!(refresh(&session).unwrap());
+    assert_eq!(
+        std::fs::read(stage.join("runtime_console.py")).unwrap(),
+        include_bytes!("../../../../../guest/artifacts/container/runtime_console.py")
+    );
+    assert!(!refresh(&session).unwrap());
+}
+
+#[test]
 fn control_file_links_are_refused_without_touching_their_targets() {
-    for name in ["options.json", "launch.py"] {
+    for name in ["options.json", "runtime_console.py", "launch.py"] {
         let root = tempfile::tempdir().unwrap();
         let session = root.path().join("session");
         let stage = legacy_stage(&session);

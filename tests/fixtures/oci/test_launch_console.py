@@ -11,9 +11,9 @@ workload has exited, and the stage says so with its code.
 import contextlib
 import fcntl
 import os
-import select
 import socket
 import struct
+import subprocess
 import sys
 import tempfile
 import termios
@@ -27,71 +27,6 @@ import pytest
 from tests.fixtures.oci.test_launch_config import launcher
 
 __all__ = ["launcher"]
-
-
-def test_runtime_input_is_sized_and_output_streams_are_merged(launcher):
-    script = (
-        "import fcntl, os, termios; "
-        "assert os.isatty(0); "
-        "assert any(fcntl.ioctl(0, termios.TIOCGWINSZ, b'0'*8)); "
-        "os.write(2, b'terminal streams connected'); os.write(1, os.read(0, 1))"
-    )
-    master, process = launcher.start_console([sys.executable, "-c", script])
-    try:
-        assert process.stdout is not None
-        assert os.read(process.stdout.fileno(), 128) == b'terminal streams connected'
-        os.write(master, b'x')
-        assert process.wait(timeout=5) == 0
-        assert process.stdout.read() == b'x'
-    finally:
-        if process.poll() is None:
-            process.kill()
-            process.wait(timeout=5)
-        if process.stdout is not None:
-            process.stdout.close()
-        os.close(master)
-
-
-def test_the_runtime_terminal_delivers_escape_keys_without_newline_or_echo(launcher):
-    master, terminal = launcher.console_terminal()
-    try:
-        keys = b"\x1b[A\x1b[3;1R"
-        os.write(master, keys)
-        assert select.select([terminal], [], [], 1)[0], "runc input must not wait for a newline"
-        assert os.read(terminal, 64) == keys
-        assert not select.select([master], [], [], 0.05)[0], "terminal replies must not echo back"
-        rows, cols = _winsize(terminal)
-        assert rows > 0 and cols > 0, "an app must be able to draw before a client attaches"
-    finally:
-        os.close(master)
-        os.close(terminal)
-
-
-def test_runtime_output_preserves_control_bytes_after_runtime_terminal_setup(launcher):
-    # runc re-enables OPOST/ONLCR on its host terminal. Its workload already
-    # owns output processing, so a second terminal must not change LF to CRLF.
-    expected = b"abcdefgh\n\n\b\bX\r\nstderr\n"
-    script = (
-        "import os, termios; "
-        "attrs = termios.tcgetattr(0); "
-        "attrs[1] |= termios.OPOST | termios.ONLCR; "
-        "termios.tcsetattr(0, termios.TCSANOW, attrs); "
-        "os.write(1, b'abcdefgh\\n\\n\\b\\bX'); "
-        "os.write(2, b'\\r\\nstderr\\n'); raise SystemExit(7)"
-    )
-    master, process = launcher.start_console([sys.executable, "-c", script])
-    try:
-        output = process.stdout.fileno() if process.stdout is not None else master
-        assert select.select([output], [], [], 5)[0]
-        assert process.wait(timeout=5) == 7
-        assert os.read(output, 128) == expected
-    finally:
-        if process.poll() is None:
-            process.kill()
-            process.wait(timeout=5)
-        if process.stdout is not None:
-            process.stdout.close()
-        os.close(master)
 
 
 def test_input_and_resize_frames_survive_any_read_boundary(launcher):
@@ -132,7 +67,7 @@ def _read_until(sock, wanted, timeout=5.0):
 @pytest.fixture
 def held(launcher):
     """A console holding a real PTY's master, serving on a socket; yields
-    (console, slave fd, socket path, server thread, resize callbacks)."""
+    (console, slave fd, socket path, server thread, unused)."""
     master, slave = os.openpty()
     tty.setraw(slave)
     # AF_UNIX paths are short (104 bytes on macOS); pytest's tmp_path is not.
@@ -140,13 +75,12 @@ def held(launcher):
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     listener.bind(str(path))
     listener.listen()
-    resizes = []
     console = launcher.Console(
-        master, listener, output_fd=master, replay_limit=64, resized=lambda: resizes.append(1)
+        master, listener, replay_limit=64
     )
     server = threading.Thread(target=console.serve, daemon=True)
     server.start()
-    yield console, slave, path, server, resizes
+    yield console, slave, path, server, None
     with contextlib.suppress(OSError):
         os.close(slave)
     server.join(timeout=5)
@@ -193,8 +127,6 @@ def test_an_attached_terminal_types_and_resizes_the_workload(launcher, held):
                 time.sleep(0.01)
         assert received == b"typed"
         assert _winsize(slave) == (33, 101)
-        # runc copies the size to the workload only when told.
-        assert held[4] == [1]
 
 
 def test_a_departed_terminal_leaves_the_workload_running(held):
@@ -257,7 +189,39 @@ def test_a_detached_launch_runs_its_command_on_a_terminal(launcher):
     )
     assert attached["process"]["terminal"] is False
     assert detached["process"]["terminal"] is True
+    assert detached["process"]["consoleSize"] == {"height": 24, "width": 80}
+    assert "consoleSize" not in attached["process"]
     assert all(f"{key}={value}" in detached["process"]["env"] for key, value in launcher.TERMINAL_ENV.items())
+
+
+def test_resize_signals_the_actual_foreground_application(launcher, held):
+    _, slave, path, _, _ = held
+    script = """
+import fcntl, os, signal, struct, termios
+os.setsid()
+fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+def resized(*_):
+    rows, cols, _, _ = struct.unpack('HHHH', fcntl.ioctl(0, termios.TIOCGWINSZ, b'\\0' * 8))
+    os.write(1, f'SIZE-{rows}-{cols}'.encode())
+signal.signal(signal.SIGWINCH, resized)
+os.write(1, b'READY')
+while os.read(0, 1) != b'x':
+    pass
+"""
+    process = subprocess.Popen([sys.executable, "-c", script], stdin=slave, stdout=slave, stderr=slave)
+    try:
+        with socket.socket(socket.AF_UNIX) as client:
+            client.connect(str(path))
+            _read_until(client, b"READY")
+            for rows, cols in ((33, 101), (20, 60), (45, 150)):
+                client.sendall(launcher.encode_resize(rows, cols))
+                _read_until(client, f"SIZE-{rows}-{cols}".encode())
+            client.sendall(launcher.encode_input(b"x"))
+            assert process.wait(timeout=5) == 0
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=5)
 
 
 def test_the_terminal_relays_keys_out_and_output_in_until_the_workload_ends(launcher):

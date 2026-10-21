@@ -121,11 +121,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keep terminal screen, cursor, modes, colors and notifications in the session
   instead of reconstructing views from a truncated output history.
 
-- Start workload terminals with cooked shell output while allowing interactive
-  applications to switch to raw output without a second newline conversion.
-
-- Preserve workload terminal control bytes through the runtime relay, keeping
-  incremental redraws intact after resizing.
+- Own the application's actual workload terminal, preserving cooked shell
+  newlines, raw application control bytes, resize signals, and exit status
+  without an extra PTY or runtime output relay.
 
 - Preserve terminal cursor columns across bare line feeds during application
   redraws instead of inserting an extra carriage return in the UI.

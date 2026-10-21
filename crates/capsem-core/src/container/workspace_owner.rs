@@ -31,7 +31,10 @@ pub fn refresh(session_dir: &std::path::Path) -> Result<bool> {
     let Some(options_bytes) = read_control_file(&stage, "options.json")? else {
         return Ok(false);
     };
-    let launcher = read_control_file(&stage, "launch.py")?;
+    let mut controllers_current = true;
+    for (name, bytes) in super::LAUNCHER_FILES {
+        controllers_current &= read_control_file(&stage, name)?.as_deref() == Some(*bytes);
+    }
     let mut options: serde_json::Value =
         serde_json::from_slice(&options_bytes).context("parse staged workload options")?;
     let object = options
@@ -39,7 +42,7 @@ pub fn refresh(session_dir: &std::path::Path) -> Result<bool> {
         .context("staged workload options are not an object")?;
     let current_policy = object.get("workspace_owner").and_then(serde_json::Value::as_str) == Some(OWNER_POLICY);
     let upgrade_owner = cfg!(target_os = "linux") && !current_policy;
-    if !upgrade_owner && launcher.as_deref() == Some(super::LAUNCHER) {
+    if !upgrade_owner && controllers_current {
         return Ok(false);
     }
 
@@ -58,7 +61,9 @@ pub fn refresh(session_dir: &std::path::Path) -> Result<bool> {
     // Publish the controller first. A crash before the options replacement
     // leaves the legacy mapping selected; a crash after it leaves a complete
     // new controller contract.
-    crate::session::publish_contained_private(&stage, "launch.py", super::LAUNCHER)?;
+    for (name, bytes) in super::LAUNCHER_FILES {
+        crate::session::publish_contained_private(&stage, name, bytes)?;
+    }
     if let Some(encoded) = encoded {
         crate::session::publish_contained_private(&stage, "options.json", &encoded)?;
     }

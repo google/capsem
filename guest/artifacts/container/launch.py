@@ -27,6 +27,8 @@ import time
 import tty
 from pathlib import Path, PurePosixPath
 
+from runtime_console import RuntimeConsole
+
 RUNTIME = Path("/var/tmp/capsem-container")
 HOSTNAME = "container"
 # The VM workspace seen through the workload's id map. Outside RUNTIME, which
@@ -90,11 +92,8 @@ COMMAND_TIMEOUT = 30
 # Large test-tooling images can take longer to materialize when several VMs
 # unpack in parallel. Keep this below the service's 110-second create wait.
 IMAGE_UNPACK_TIMEOUT = 90
-# A detached workload's terminal: runc runs in the foreground on a PTY this
-# launcher holds (runc gives the container its own and relays the two; it
-# allows a console socket only when it detaches, which would lose the exit
-# code), and the launcher serves that PTY to the session terminal on CONSOLE,
-# in RUNTIME, which only root can enter.
+# A detached workload's actual terminal, handed off by runc. The launcher
+# owns its master and reaps the workload, retaining its exit status.
 CONSOLE = RUNTIME / "console.sock"
 # What a terminal that attaches late is shown first: the newest output, enough
 # for a TUI's last screen.
@@ -239,6 +238,10 @@ def configure(unpacked, image, options, detached=False):
         },
         rlimits=[{"type": "RLIMIT_NOFILE", "hard": 4096, "soft": 4096}],
     )
+    if detached:
+        process["consoleSize"] = {"height": 24, "width": 80}
+    else:
+        process.pop("consoleSize", None)
     volumes = metadata.get("Volumes") or {}
     if len(volumes) > 32:
         raise ValueError("image declares too many volumes")
@@ -1031,12 +1034,9 @@ def run(stage, detached=False):
             listener.bind(str(CONSOLE))
             CONSOLE.chmod(0o600)
             listener.listen()
-            master, process = start_console([*argv, CONTAINER])
-            try:
-                with process.stdout:
-                    Console(master, listener, output_fd=process.stdout.fileno(), resized=lambda: process.send_signal(signal.SIGWINCH)).serve()
-            finally:
-                os.close(master)
+            process = RuntimeConsole()
+            master = process.start(argv, CONTAINER, RUNTIME / "runc-console.sock", pid_file, COMMAND_TIMEOUT)
+            Console(master, listener).serve()
         code = process.wait()
         return code
     finally:
@@ -1046,7 +1046,10 @@ def run(stage, detached=False):
             launch_ended(stage, code)
             if (state / CONTAINER).exists():
                 command(*RUNC, "delete", "--force", CONTAINER)
-            if process is not None and process.poll() is None:
+            if isinstance(process, RuntimeConsole):
+                process.close()
+                process.wait(timeout=5)
+            elif process is not None and process.poll() is None:
                 process.wait(timeout=5)
             if os.path.ismount(MERGED):
                 command("umount", str(MERGED))
@@ -1163,7 +1166,7 @@ class FrameReader:
 
 
 class Console:
-    """A detached workload's terminal: sized PTY input and raw runtime output.
+    """A detached workload's terminal: its actual PTY master, input and output.
 
     Its output is always drained -- into a bounded replay of the newest bytes,
     and to every attached terminal -- so the workload never blocks on a full
@@ -1173,12 +1176,8 @@ class Console:
     reads end-of-file) every terminal is closed and `serve` returns.
     """
 
-    def __init__(self, master, listener, *, output_fd, replay_limit=REPLAY_LIMIT, resized=None):
+    def __init__(self, master, listener, *, replay_limit=REPLAY_LIMIT):
         self._master = master
-        self._output = output_fd
-        # Called after a resize: runc copies its terminal's size to the
-        # workload's when signalled, not by itself.
-        self._resized = resized
         self._listener = listener
         self._replay = collections.deque()
         self._replay_size = 0
@@ -1211,14 +1210,14 @@ class Console:
 
     def serve(self):
         selector = selectors.DefaultSelector()
-        selector.register(self._output, selectors.EVENT_READ, "output")
+        selector.register(self._master, selectors.EVENT_READ, "output")
         selector.register(self._listener, selectors.EVENT_READ, "listener")
         try:
             while True:
                 for key, _ in selector.select():
                     if key.data == "output":
                         try:
-                            data = os.read(self._output, 65536)
+                            data = os.read(self._master, 65536)
                         except OSError:
                             data = b""
                         if not data:
@@ -1254,41 +1253,11 @@ class Console:
                             else:
                                 rows, cols = value
                                 fcntl.ioctl(self._master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
-                                if self._resized is not None:
-                                    self._resized()
         finally:
             for client in list(self._clients):
                 with contextlib.suppress(OSError, KeyError):
                     self._drop(selector, client)
             selector.close()
-
-
-def console_terminal():
-    """The terminal runc forwards to its workload, ready before it starts."""
-    master, terminal = os.openpty()
-    # runc relays this outer PTY to the workload's own PTY. Canonical input
-    # here buffers escape replies until newline and echoes them to the screen.
-    tty.setraw(terminal)
-    # runc copies this mode to the workload: shells need cooked output until
-    # an application explicitly switches its own terminal to raw mode.
-    attrs = termios.tcgetattr(terminal)
-    attrs[1] |= termios.OPOST | termios.ONLCR
-    termios.tcsetattr(terminal, termios.TCSANOW, attrs)
-    fcntl.ioctl(terminal, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
-    return master, terminal
-
-
-def start_console(argv):
-    master, terminal = console_terminal()
-    try:
-        # runc takes size/raw input from stdin. Its output must bypass this
-        # outer PTY: runc enables ONLCR there, corrupting workload cursor moves.
-        return master, subprocess.Popen(argv, stdin=terminal, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    except BaseException:
-        os.close(master)
-        raise
-    finally:
-        os.close(terminal)
 
 
 def window_size(fd):

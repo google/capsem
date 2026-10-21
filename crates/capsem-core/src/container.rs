@@ -88,6 +88,15 @@ pub fn workload_resources(ram_mb: u64, cpus: u32) -> Result<WorkloadResources> {
 }
 
 pub const LAUNCHER: &[u8] = include_bytes!("../../../guest/artifacts/container/launch.py");
+/// Dependencies precede the entrypoint so refresh never publishes a launcher
+/// before its modules. Staging and saved-session refresh share this inventory.
+pub const LAUNCHER_FILES: &[(&str, &[u8])] = &[
+    (
+        "runtime_console.py",
+        include_bytes!("../../../guest/artifacts/container/runtime_console.py"),
+    ),
+    ("launch.py", LAUNCHER),
+];
 /// The launcher's stage in the VM workspace: its options, the launcher itself
 /// and its markers, nothing else. The image's bytes are never here; the
 /// launcher reads them from the read-only image share

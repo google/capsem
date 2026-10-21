@@ -1,3 +1,4 @@
+use super::super::LAUNCHER;
 use super::*;
 
 const MANIFEST: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -17,7 +18,7 @@ fn published_root_stage_metadata_is_typed_and_keeps_the_single_stage_path() {
     let plan = stage_plan(image, &[], &BTreeMap::new(), resources, DeclaredSurface::Terminal).unwrap();
     assert_eq!(
         plan.iter().map(|file| file.name.as_str()).collect::<Vec<_>>(),
-        ["options.json", "launch.py"]
+        ["options.json", "runtime_console.py", "launch.py"]
     );
     let options: serde_json::Value = serde_json::from_slice(&plan[0].bytes).unwrap();
     assert_eq!(options["manifest"], MANIFEST);
@@ -59,10 +60,10 @@ fn published_root_stage_metadata_rejects_bad_digests_and_out_of_bound_sizes() {
     }
 }
 
-/// The stage holds only the two control files: the image is in the share,
+/// The stage holds only the control files: the image is in the share,
 /// named here by its manifest digest, and no layer byte is staged.
 #[test]
-fn stage_plan_writes_only_the_options_and_the_launcher() {
+fn stage_plan_writes_only_options_and_launcher_modules() {
     let root = tempfile::tempdir().unwrap();
     std::fs::write(root.path().join("index.json"), b"{}").unwrap();
     let env = [("LANG".to_string(), "C".to_string())].into();
@@ -75,7 +76,7 @@ fn stage_plan_writes_only_the_options_and_the_launcher() {
     );
     let plan = stage_plan(MANIFEST, &["serve".to_string()], &env, resources, surface).unwrap();
     let names: Vec<&str> = plan.iter().map(|file| file.name.as_str()).collect();
-    assert_eq!(names, ["options.json", "launch.py"]);
+    assert_eq!(names, ["options.json", "runtime_console.py", "launch.py"]);
     let mut expected =
         // The launcher mounts the VM workspace where the service says the
         // container sees it: one owner for that path, not two.
@@ -100,7 +101,11 @@ fn stage_plan_writes_only_the_options_and_the_launcher() {
         expected
     );
     assert_eq!(super::super::CONTAINER_WORKSPACE, "/workspace");
-    assert_eq!(plan[1].bytes, LAUNCHER);
+    assert_eq!(plan[2].bytes, LAUNCHER);
+    assert_eq!(
+        plan[1].bytes,
+        include_bytes!("../../../../../guest/artifacts/container/runtime_console.py")
+    );
     let resources = super::super::workload_resources(2048, 2).unwrap();
     assert!(
         stage_plan("sha256:short", &[], &BTreeMap::new(), resources, surface).is_err(),
