@@ -127,10 +127,10 @@ pub struct VmConfig {
     /// mismatched identifier causes restoreMachineStateFromURL to fail with
     /// VZErrorRestore.
     pub machine_identifier_path: Option<PathBuf>,
-    /// Append every byte from the VM serial console to this file. Writer is
+    /// Append every byte from the VM serial console to this shared sink. It is
     /// attached before the VM is started/resumed so no post-resume output is
     /// dropped while a tokio broadcast subscriber is still scheduling.
-    pub serial_log_path: Option<PathBuf>,
+    pub serial_log: Option<capsem_foundation::telemetry::SharedLogWriter>,
 }
 
 impl VmConfig {
@@ -477,7 +477,16 @@ impl VmConfigBuilder {
             checkpoint_path: self.checkpoint_path,
             expected_disk_hash: self.expected_disk_hash,
             machine_identifier_path: self.machine_identifier_path,
-            serial_log_path: self.serial_log_path,
+            serial_log: self
+                .serial_log_path
+                .map(|path| {
+                    capsem_foundation::telemetry::CappedLogWriter::open(
+                        &path,
+                        capsem_foundation::telemetry::SERIAL_LOG_MAX_BYTES,
+                    )
+                    .map(capsem_foundation::telemetry::CappedLogWriter::shared)
+                })
+                .transpose()?,
         })
     }
 }

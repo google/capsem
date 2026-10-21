@@ -392,7 +392,7 @@ impl KvmHypervisor {
             )
         };
 
-        serial_console.spawn_reader_with_log(config.serial_log_path.clone());
+        serial_console.spawn_reader_with_log(config.serial_log.clone());
 
         let mmio_bus = Arc::new(mmio::MmioBus::new());
         #[cfg(target_arch = "x86_64")]

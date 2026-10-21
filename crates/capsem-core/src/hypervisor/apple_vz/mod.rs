@@ -35,25 +35,12 @@ impl Hypervisor for AppleVzHypervisor {
         // until after boot_vm() returns -- during restore, that window drops
         // ~100ms of guest output (the reconnect handshake). Subscribing here
         // closes the race.
-        if let Some(log_path) = config.serial_log_path.as_deref() {
+        if let Some(mut file) = config.serial_log.clone() {
             use crate::hypervisor::SerialConsole;
             use std::io::Write;
             let mut rx = SerialConsole::subscribe(&serial_console);
-            let path = log_path.to_path_buf();
             std::thread::spawn(move || {
-                // Capped: guest console output is guest-controlled and a
-                // persistent VM runs for weeks, so appending forever bounds
-                // the log only by the disk.
-                let mut file = match capsem_foundation::telemetry::CappedLogWriter::open(
-                    &path,
-                    capsem_foundation::telemetry::SERIAL_LOG_MAX_BYTES,
-                ) {
-                    Ok(f) => f,
-                    Err(e) => {
-                        tracing::warn!(error = %e, path = %path.display(), "failed to open serial log file");
-                        return;
-                    }
-                };
+                // The preopened capped sink shares rotation with terminal output.
                 loop {
                     match rx.blocking_recv() {
                         Ok(bytes) => {

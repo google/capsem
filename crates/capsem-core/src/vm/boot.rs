@@ -238,6 +238,13 @@ pub struct PreparedVm {
 }
 
 impl PreparedVm {
+    /// Give console and terminal producers the same preopened size/rotation
+    /// owner. Supplying a capability requires no pathname access after confinement.
+    pub fn with_serial_log(mut self, log: capsem_foundation::telemetry::SharedLogWriter) -> Self {
+        self.config.serial_log = Some(log);
+        self
+    }
+
     pub fn boot(
         self,
     ) -> Result<(

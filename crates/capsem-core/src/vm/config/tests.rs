@@ -15,6 +15,26 @@ fn temp_file(name: &str) -> PathBuf {
 // --- valid configs ---
 
 #[test]
+fn serial_log_is_opened_during_config_preparation() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("serial.log");
+    let config = VmConfig::builder()
+        .kernel_path(temp_file("vmlinuz-serial-prepared"))
+        .serial_log_path(&path)
+        .build()
+        .unwrap();
+    assert!(
+        path.is_file(),
+        "serial output must be prepared before owner confinement"
+    );
+    let mut console = config.serial_log.unwrap();
+    let mut terminal = console.clone();
+    console.write_all(b"console\n").unwrap();
+    terminal.write_all(b"terminal\n").unwrap();
+    assert_eq!(std::fs::read(path).unwrap(), b"console\nterminal\n");
+}
+
+#[test]
 fn valid_config_minimal() {
     let kernel = temp_file("vmlinuz-valid-min");
     let config = VmConfig::builder().kernel_path(&kernel).build().unwrap();

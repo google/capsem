@@ -4,9 +4,9 @@
 //! virtio-console device to the SerialConsole trait. A background thread
 //! reads from the guest-output pipe and broadcasts via tokio broadcast.
 
+use capsem_foundation::telemetry::SharedLogWriter;
 use std::io::{Read, Write};
 use std::os::unix::io::{FromRawFd, RawFd};
-use std::path::PathBuf;
 
 use tokio::sync::broadcast;
 use tracing::{debug, warn};
@@ -47,13 +47,13 @@ impl KvmSerialConsole {
 
     /// Spawn a background thread that reads from the pipe, optionally mirrors
     /// bytes to a durable serial log, and broadcasts chunks to subscribers.
-    pub fn spawn_reader_with_log(&self, log_path: Option<PathBuf>) {
+    pub fn spawn_reader_with_log(&self, log: Option<SharedLogWriter>) {
         let read_fd = self.read_fd;
         let tx = self.tx.clone();
         std::thread::Builder::new()
             .name("kvm-serial-reader".to_string())
             .spawn(move || {
-                read_loop(read_fd, &tx, log_path);
+                read_loop(read_fd, &tx, log);
             })
             .expect("failed to spawn serial reader thread");
     }
@@ -70,18 +70,9 @@ impl crate::hypervisor::SerialConsole for KvmSerialConsole {
 }
 
 /// Core read loop: reads bytes from fd and sends through broadcast.
-fn read_loop(fd: RawFd, tx: &broadcast::Sender<Vec<u8>>, log_path: Option<PathBuf>) {
+fn read_loop(fd: RawFd, tx: &broadcast::Sender<Vec<u8>>, mut log_file: Option<SharedLogWriter>) {
     let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
-    // Same capped writer the Apple VZ backend uses: one rule, one function,
-    // and a persistent VM cannot fill the disk with console output.
-    let mut log_file = log_path.and_then(|path| {
-        capsem_foundation::telemetry::CappedLogWriter::open(&path, capsem_foundation::telemetry::SERIAL_LOG_MAX_BYTES)
-            .map_err(|e| {
-                warn!(error = %e, path = %path.display(), "failed to open KVM serial log file");
-                e
-            })
-            .ok()
-    });
+    // Same preopened rotation owner as terminal output and Apple VZ.
     let mut buf = [0u8; 4096];
 
     loop {

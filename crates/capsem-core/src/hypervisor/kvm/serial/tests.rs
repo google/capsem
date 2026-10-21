@@ -43,7 +43,10 @@ fn reader_mirrors_bytes_to_serial_log() {
     let (read_fd, write_fd) = make_pipe();
     let console = KvmSerialConsole::new(read_fd, -1);
     let mut rx = console.subscribe();
-    console.spawn_reader_with_log(Some(log_path.clone()));
+    let log = capsem_foundation::telemetry::CappedLogWriter::open(&log_path, 1024)
+        .unwrap()
+        .shared();
+    console.spawn_reader_with_log(Some(log));
     drop(console);
 
     let mut writer = unsafe { std::fs::File::from_raw_fd(write_fd) };

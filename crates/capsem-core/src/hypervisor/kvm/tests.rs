@@ -500,7 +500,7 @@ fn kvm_boot_rejects_checkpoint_path_on_unsupported_arch() {
         checkpoint_path: Some("/tmp/checkpoint.kvm".into()),
         expected_disk_hash: None,
         machine_identifier_path: None,
-        serial_log_path: None,
+        serial_log: None,
     };
 
     let err = match h.boot(&config, &[]) {
@@ -549,7 +549,7 @@ fn every_mmio_slot_up_to_the_last_share_is_announced() {
         checkpoint_path: None,
         expected_disk_hash: None,
         machine_identifier_path: None,
-        serial_log_path: None,
+        serial_log: None,
     };
     assert_eq!(virtio_mmio_device_count(&config, &[1]), 6);
     config.scratch_disk_path = None;
@@ -587,7 +587,7 @@ fn writable_virtiofs_requires_brokered_metadata_authority() {
         checkpoint_path: None,
         expected_disk_hash: None,
         machine_identifier_path: None,
-        serial_log_path: None,
+        serial_log: None,
     };
 
     let error = require_metadata_authority(&config).unwrap_err();
