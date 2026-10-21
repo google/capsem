@@ -43,6 +43,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Local macOS installation repairs valid ad-hoc signatures with the required
+  VM entitlement, so installed sessions can boot, while confined workers keep
+  their narrower signing authority.
+
 - App listings distinguish terminal and graphical interfaces using published
   catalog metadata, including the session customization dialog.
 
