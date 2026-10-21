@@ -233,6 +233,19 @@ async fn catalog_listing_schedules_native_compatible_cache_keys_without_waiting_
 }
 
 #[tokio::test]
+async fn catalog_listing_preserves_terminal_and_graphical_metadata() {
+    for surface in [None, Some("terminal"), Some("xpra")] {
+        let fx = Fixture::default_policy();
+        if let Some(surface) = surface {
+            fx.catalog.lock().unwrap().as_mut().unwrap()["entries"]["codex-cli"]["surface"] = json!(surface);
+        }
+        let (status, response) = fx.list().await;
+        assert_eq!(status, StatusCode::OK, "{response}");
+        assert_eq!(response["images"][0]["surface"], json!(surface));
+    }
+}
+
+#[tokio::test]
 async fn catalog_disk_status_uses_only_the_selected_pins_local_owner_observation() {
     use capsem_assets::oci::CacheState;
     let fx = Fixture::default_policy();
