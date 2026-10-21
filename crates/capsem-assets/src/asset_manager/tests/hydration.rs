@@ -554,3 +554,248 @@ async fn download_accepts_bodies_that_match_the_manifest() {
     assert_eq!(downloaded.len(), 3);
     assert_eq!(std::fs::read(&downloaded[2]).unwrap(), b"kernel");
 }
+
+#[tokio::test]
+async fn stalled_runtime_body_times_out_cleans_up_and_can_be_retried() {
+    use std::{sync::Arc, time::Duration};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let partial = Arc::new(tokio::sync::Notify::new());
+    tokio::spawn(async move {
+        let mut first = true;
+        loop {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let stall = std::mem::replace(&mut first, false);
+            tokio::spawn(async move {
+                let mut request = Vec::new();
+                let mut buffer = [0; 1024];
+                while !request.windows(4).any(|chunk| chunk == b"\r\n\r\n") {
+                    let size = socket.read(&mut buffer).await.unwrap();
+                    if size == 0 {
+                        return;
+                    }
+                    request.extend_from_slice(&buffer[..size]);
+                }
+                let request = String::from_utf8_lossy(&request);
+                let path = request.split_whitespace().nth(1).unwrap();
+                let (_, body) = DECLARED_ASSETS.iter().find(|(name, _)| path.ends_with(name)).unwrap();
+                socket
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            body.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+                socket.write_all(if stall { &body[..1] } else { body }).await.unwrap();
+                if stall {
+                    // Keep the connection open without another byte, as a stalled origin does.
+                    std::future::pending::<()>().await;
+                }
+            });
+        }
+    });
+    let manifest = declared_manifest(format!("http://{address}/assets/{{asset_version}}"));
+    let directory = tempfile::tempdir().unwrap();
+    let task_manifest = manifest.clone();
+    let path = directory.path().to_path_buf();
+    let observed = Arc::clone(&partial);
+    let download = tokio::spawn(async move {
+        download_missing_assets(&task_manifest, "9.9.9", "arm64", &path, move |progress| {
+            if progress.bytes_done == 1 {
+                observed.notify_one();
+            }
+        })
+        .await
+    });
+    tokio::time::timeout(Duration::from_secs(3), partial.notified())
+        .await
+        .expect("one real body byte is written");
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(31)).await;
+    let result = tokio::time::timeout(Duration::from_secs(1), download)
+        .await
+        .expect("stalled runtime read must terminate")
+        .unwrap();
+    tokio::time::resume();
+    let error = result.expect_err("a stalled body cannot become a verified asset");
+    assert!(
+        error.chain().any(|cause| cause
+            .downcast_ref::<reqwest::Error>()
+            .is_some_and(reqwest::Error::is_timeout)),
+        "{error:#}"
+    );
+    assert_eq!(
+        std::fs::read_dir(directory.path().join("arm64")).unwrap().count(),
+        0,
+        "the partial file must be removed"
+    );
+    let downloaded = download_missing_assets(&manifest, "9.9.9", "arm64", directory.path(), |_| {})
+        .await
+        .unwrap();
+    assert_eq!(downloaded.len(), 3);
+    for (name, body) in DECLARED_ASSETS {
+        let hash = capsem_crypto::blake3::hash(body).to_hex().to_string();
+        let path = directory.path().join("arm64").join(hash_filename(name, &hash));
+        assert_eq!(std::fs::read(path).unwrap(), body);
+    }
+}
+
+#[tokio::test]
+async fn runtime_download_deadline_is_shared_across_files() {
+    use std::{
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        },
+        time::Duration,
+    };
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let bytes = vec![b'r'; 31];
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let next_byte = Arc::new(tokio::sync::Notify::new());
+    let fast = Arc::new(AtomicBool::new(false));
+    let server_next = Arc::clone(&next_byte);
+    let server_fast = Arc::clone(&fast);
+    let body = bytes.clone();
+    tokio::spawn(async move {
+        loop {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            socket.set_nodelay(true).unwrap();
+            let next = Arc::clone(&server_next);
+            let fast = Arc::clone(&server_fast);
+            let body = body.clone();
+            tokio::spawn(async move {
+                let mut request = Vec::new();
+                let mut buffer = [0; 1024];
+                while !request.windows(4).any(|chunk| chunk == b"\r\n\r\n") {
+                    let size = socket.read(&mut buffer).await.unwrap();
+                    if size == 0 {
+                        return;
+                    }
+                    request.extend_from_slice(&buffer[..size]);
+                }
+                socket
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            body.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+                if fast.load(Ordering::Relaxed) {
+                    socket.write_all(&body).await.unwrap();
+                } else {
+                    for (index, byte) in body.into_iter().enumerate() {
+                        if index > 0 {
+                            next.notified().await;
+                        }
+                        if socket.write_all(&[byte]).await.is_err() {
+                            return;
+                        }
+                    }
+                }
+            });
+        }
+    });
+    let mut manifest = declared_manifest(format!("http://{address}/assets/{{asset_version}}"));
+    for asset in manifest
+        .assets
+        .releases
+        .get_mut("2030.0101.1")
+        .unwrap()
+        .arches
+        .get_mut("arm64")
+        .unwrap()
+        .values_mut()
+    {
+        asset.size = bytes.len() as u64;
+        asset.hash = capsem_crypto::blake3::hash(&bytes).to_hex().to_string();
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().to_path_buf();
+    let selected = manifest.clone();
+    let (updates, mut progress) = tokio::sync::mpsc::unbounded_channel();
+    let task = tokio::spawn(async move {
+        download_missing_assets(&selected, "9.9.9", "arm64", &path, move |value| {
+            updates.send(value).unwrap();
+        })
+        .await
+    });
+    // Read an actual byte before pausing, so virtual time cannot outrun TCP setup.
+    let first = tokio::time::timeout(Duration::from_secs(3), progress.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(first.bytes_done, 1);
+    // Keep the paused clock from auto-advancing while real loopback I/O settles.
+    let clock = tokio::spawn(async {
+        loop {
+            tokio::task::yield_now().await;
+        }
+    });
+    tokio::time::pause();
+    let wall_deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let mut done = first.done;
+    let mut elapsed = 0;
+    while !task.is_finished() {
+        if !done {
+            tokio::time::advance(Duration::from_secs(20)).await;
+            elapsed += 20;
+            next_byte.notify_one();
+        }
+        loop {
+            if task.is_finished() {
+                break;
+            }
+            if let Ok(update) = progress.try_recv() {
+                done = update.done;
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < wall_deadline,
+                "the real loopback transfer stopped making progress"
+            );
+            tokio::task::yield_now().await;
+        }
+    }
+    tokio::time::resume();
+    clock.abort();
+    let error = task
+        .await
+        .unwrap()
+        .expect_err("three moving files cannot reset the runtime deadline");
+    assert!(
+        error.chain().any(|cause| cause
+            .downcast_ref::<reqwest::Error>()
+            .is_some_and(reqwest::Error::is_timeout)),
+        "{error:#}"
+    );
+    assert_eq!(elapsed, 900, "the full runtime has one fifteen-minute network budget");
+    let first = directory.path().join("arm64").join(hash_filename(
+        "initrd.img",
+        capsem_crypto::blake3::hash(&bytes).to_hex().as_ref(),
+    ));
+    assert_eq!(std::fs::read(first).unwrap(), bytes);
+    assert_eq!(
+        std::fs::read_dir(directory.path().join("arm64")).unwrap().count(),
+        1,
+        "keep verified files but remove the timed-out partial"
+    );
+    fast.store(true, Ordering::Relaxed);
+    assert_eq!(
+        download_missing_assets(&manifest, "9.9.9", "arm64", directory.path(), |_| {})
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+}

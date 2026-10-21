@@ -1,7 +1,10 @@
 //! Hydration: download or copy the VM assets a manifest promises into the
 //! installed `base_dir/{arch}/{hash_filename}` layout.
 
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use anyhow::{bail, Context, Result};
 use tracing::info;
@@ -10,6 +13,10 @@ use super::{
     arch_assets_to_materialize, asset_download_url_with_base, asset_storage_dir, copy_hashed, hash_file, hash_filename,
     remote_asset_release_base_url, ManifestV2,
 };
+
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const READ_TIMEOUT: Duration = Duration::from_secs(30);
+const HYDRATION_TIMEOUT: Duration = Duration::from_secs(900);
 
 /// Per-file download progress for [`download_missing_assets`].
 #[derive(Debug, Clone)]
@@ -107,8 +114,13 @@ where
 
     let client = reqwest::Client::builder()
         .user_agent(concat!("capsem/", env!("CARGO_PKG_VERSION")))
+        .connect_timeout(CONNECT_TIMEOUT)
+        .read_timeout(READ_TIMEOUT)
         .build()
         .context("build reqwest client")?;
+    // One budget for the complete runtime set. A slow origin must not obtain
+    // a fresh fifteen minutes for each file while the UI waits for setup.
+    let deadline = tokio::time::Instant::now() + HYDRATION_TIMEOUT;
 
     let mut downloaded = Vec::new();
 
@@ -147,7 +159,12 @@ where
         let url = asset_download_url_with_base(&asset_base_url, asset_version, arch, name);
         info!(name = %name, url = %url, "downloading asset");
 
-        let resp = client.get(&url).send().await.with_context(|| format!("GET {url}"))?;
+        let resp = client
+            .get(&url)
+            .timeout(deadline.saturating_duration_since(tokio::time::Instant::now()))
+            .send()
+            .await
+            .with_context(|| format!("GET {url}"))?;
         if !resp.status().is_success() {
             bail!("GET {} returned {}", url, resp.status());
         }

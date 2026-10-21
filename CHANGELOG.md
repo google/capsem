@@ -61,6 +61,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Time out stalled runtime downloads, remove their partial files, and allow setup to retry.
+
 - Connect embedded terminals to the same gateway as their dashboard, so debug
   sessions do not accidentally use the installed service.
 
