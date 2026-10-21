@@ -41,6 +41,49 @@ fn parser_state_survives_split_utf8_csi_and_osc_and_preserves_modes() {
     );
 }
 
+#[test]
+fn every_utf8_split_preserves_ascii_before_the_next_multibyte_character() {
+    let input = "\x1b[38;2;23;89;144m漢字 e\u{301} 🦀\x1b]2;Ready\x07";
+    let whole = SessionTerminal::new(8);
+    whole.publish(input.as_bytes());
+    let (_, expected, _) = whole.subscribe();
+    for split in 0..=input.len() {
+        let terminal = SessionTerminal::new(8);
+        terminal.publish(&input.as_bytes()[..split]);
+        terminal.publish(&input.as_bytes()[split..]);
+        let (_, snapshot, _) = terminal.subscribe();
+        assert_eq!(snapshot.render, expected.render, "split at byte {split}");
+        assert_eq!(snapshot.state.cursor, expected.state.cursor);
+        assert_eq!(snapshot.state.title, "Ready");
+        assert_eq!(snapshot.state.bell_count, 0);
+    }
+}
+
+#[test]
+fn interrupted_utf8_keeps_control_sequences_and_invalid_bytes_consistent() {
+    for input in [
+        b"\xc3\xc3\xa9 visible".as_slice(),
+        b"\xe2\x82\x1b[31mred",
+        b"\xe0\x80 invalid",
+        b"\x80\x9f\xff\xfe visible",
+        b"\xf0\x9f\xa6\x1b]2;Title\x07visible",
+    ] {
+        let whole = SessionTerminal::new(8);
+        whole.publish(input);
+        let (_, expected, _) = whole.subscribe();
+        for split in 0..=input.len() {
+            let terminal = SessionTerminal::new(8);
+            terminal.publish(&input[..split]);
+            terminal.publish([]);
+            terminal.publish(&input[split..]);
+            let (_, snapshot, _) = terminal.subscribe();
+            assert_eq!(snapshot.render, expected.render, "{input:?} split {split}");
+            assert_eq!(snapshot.state.title, expected.state.title);
+            assert_eq!(snapshot.state.bell_count, expected.state.bell_count);
+        }
+    }
+}
+
 #[tokio::test]
 async fn alternate_screen_and_saved_cursor_restore_without_client_history() {
     let terminal = SessionTerminal::new(8);

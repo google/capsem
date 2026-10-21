@@ -73,6 +73,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve spaces and other text after multibyte characters when terminal
+  output arrives across UTF-8 byte boundaries.
+
 - Honor session terminal cursor and input modes in the TUI, preserve modified
   navigation/function keys, and reclaim input authority when focused.
 

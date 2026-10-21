@@ -9,6 +9,7 @@ use tokio::sync::{broadcast, watch};
 
 mod callbacks;
 mod osc_budget;
+mod utf8_boundary;
 use callbacks::Callbacks;
 
 #[derive(Clone, Debug)]
@@ -24,6 +25,7 @@ pub struct SessionTerminal {
 struct Inner {
     parser: vt100::Parser<Callbacks>,
     osc_budget: osc_budget::OscBudget,
+    input_boundary: utf8_boundary::Utf8Boundary,
     revision: u64,
     next_view: u64,
     controller: Option<u64>,
@@ -44,6 +46,7 @@ impl SessionTerminal {
                     Callbacks::default(),
                 ),
                 osc_budget: Default::default(),
+                input_boundary: Default::default(),
                 revision: 0,
                 next_view: 0,
                 controller: None,
@@ -58,8 +61,15 @@ impl SessionTerminal {
     pub fn publish(&self, data: impl AsRef<[u8]>) -> Vec<u8> {
         let mut inner = self.inner.lock().unwrap();
         let previous = inner.parser.screen().clone();
-        let Inner { parser, osc_budget, .. } = &mut *inner;
-        osc_budget.process(data.as_ref(), |bytes| parser.process(bytes));
+        let Inner {
+            parser,
+            osc_budget,
+            input_boundary,
+            ..
+        } = &mut *inner;
+        osc_budget.process(data.as_ref(), |bytes| {
+            input_boundary.process(bytes, |bytes| parser.process(bytes))
+        });
         inner.revision += 1;
         let reset = previous.alternate_screen() != inner.parser.screen().alternate_screen();
         let mut update = inner.update(reset, Some(&previous));
