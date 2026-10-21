@@ -40,7 +40,7 @@ describe('typed image catalog', () => {
 
   it('retains compatibility, pin, description and cache truth', async () => {
     const response = { images: [
-      { name: 'code', description: 'Development tools', architectures: ['amd64'], cached: 'unknown', surface: 'terminal', image: `registry.example/code@sha256:${'a'.repeat(64)}` },
+      { name: 'code', description: 'Development tools', architectures: ['amd64'], cached: 'unknown', surface: 'terminal', image: `registry.example/code@sha256:${'a'.repeat(64)}`, progress: { phase: 'downloading', completed_bytes: 1024, total_bytes: 4096 } },
       { name: 'other', description: 'Other architecture', architectures: ['arm64'], cached: 'unknown', image: null },
     ] };
     mockFetch.mockReturnValueOnce(json(response));

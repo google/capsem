@@ -29,7 +29,6 @@ import type {
   SettingsResponse,
 } from './types/settings';
 import type {
-  DownloadProgress,
   McpDefaultPermission,
   McpServerInfo,
   McpToolInfo,
@@ -655,7 +654,6 @@ interface VmStateEvent {
 
 let _eventWs: WebSocket | null = null;
 const _vmStateCallbacks: ((payload: VmStateEvent) => void)[] = [];
-const _downloadProgressCallbacks: ((progress: DownloadProgress) => void)[] = [];
 
 function _connectEventWs() {
   if (_eventWs) return;
@@ -672,8 +670,6 @@ function _connectEventWs() {
       const msg = JSON.parse(ev.data as string);
       if (msg.type === 'vm-state-changed') {
         for (const cb of _vmStateCallbacks) cb(msg.payload);
-      } else if (msg.type === 'download-progress') {
-        for (const cb of _downloadProgressCallbacks) cb(msg.payload);
       }
     } catch {
       // Ignore malformed messages.
@@ -701,15 +697,6 @@ export function onVmStateChanged(cb: (payload: VmStateEvent) => void): () => voi
   return () => {
     const i = _vmStateCallbacks.indexOf(cb);
     if (i >= 0) _vmStateCallbacks.splice(i, 1);
-  };
-}
-
-/** Subscribe to download progress events. Returns an unsubscribe function. */
-export function onDownloadProgress(cb: (progress: DownloadProgress) => void): () => void {
-  _downloadProgressCallbacks.push(cb);
-  return () => {
-    const i = _downloadProgressCallbacks.indexOf(cb);
-    if (i >= 0) _downloadProgressCallbacks.splice(i, 1);
   };
 }
 

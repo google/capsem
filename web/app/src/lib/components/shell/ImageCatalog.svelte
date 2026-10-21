@@ -6,6 +6,7 @@
   import { tabStore } from '../../stores/tabs.svelte';
   import { sessionActionError } from '../../models/session-action-error';
   import { imageNeedsDownload, imageLaunchRequest, imageInterfaceLabel } from '../../models/image-launch';
+  import { imageDownloadView } from '../../models/image-download';
   import { surfaceLauncherUrl, waitForSurface } from '../../models/surface';
   import CircleNotch from 'phosphor-svelte/lib/CircleNotch';
   import DownloadSimple from 'phosphor-svelte/lib/DownloadSimple';
@@ -60,6 +61,7 @@
     caching = image.name;
     cacheError = null;
     failedImage = null;
+    void load(false, true);
     try {
       if (!ready) await prepareRuntime();
       if (image.cached !== ImageCacheState.READY) await pullImage(image.image);
@@ -85,14 +87,17 @@
         images = result.images;
         // Cache observation runs outside the polled route. Follow its pending
         // result without repeatedly fetching the registry or hiding the cards.
-        if (images.some(image => image.image && image.cached === ImageCacheState.UNKNOWN)) {
-          observationTimer = setTimeout(() => void load(false, true), 1000);
-        }
       }
     } catch (e) {
-      if (!request.signal.aborted) error = sessionActionError(e);
+      if (!request.signal.aborted && (!quiet || images.length === 0)) error = sessionActionError(e);
     } finally {
-      if (!request.signal.aborted) loading = false;
+      if (!request.signal.aborted) {
+        loading = false;
+        const downloading = caching !== null || images.some(image => image.progress);
+        if (downloading || images.some(image => image.image && image.cached === ImageCacheState.UNKNOWN)) {
+          observationTimer = setTimeout(() => void load(false, true), downloading ? 500 : 1000);
+        }
+      }
     }
   }
 
@@ -122,6 +127,7 @@
   {:else}
     <div class="border border-card-line rounded-xl divide-y divide-card-line overflow-hidden">
       {#each availableImages as image (image.name)}
+        {@const download = imageDownloadView(image.progress)}
         <article class="px-4 py-3">
           <div class="flex items-center gap-3">
             <div class="min-w-0 flex-1">
@@ -133,10 +139,16 @@
               </div>
               <p class="text-xs text-muted-foreground-1 truncate" title={image.description}>{image.description}</p>
             </div>
-            {#if caching === image.name}
+            {#if caching === image.name || image.progress}
               <div class="shrink-0 w-24">
-                <div class="app-download-progress bg-muted rounded-full" role="progressbar" aria-label={`Downloading ${image.name}`}></div>
-                <span class="block mt-1 text-[10px] text-center text-muted-foreground-1">Downloading</span>
+                <div class="app-download-progress bg-muted rounded-full" class:indeterminate={download.percent === null}
+                  role="progressbar" aria-label={`${download.phase} ${image.name}`}
+                  aria-valuemin={download.percent === null ? undefined : 0}
+                  aria-valuemax={download.percent === null ? undefined : 100}
+                  aria-valuenow={download.percent ?? undefined} aria-valuetext={download.valueText}>
+                  {#if download.percent !== null}<span style:width={`${download.percent}%`}></span>{/if}
+                </div>
+                <span class="block mt-1 text-[10px] text-center text-muted-foreground-1" title={download.valueText}>{download.label}</span>
               </div>
             {:else}
             <button type="button" class="shrink-0 inline-flex items-center justify-center gap-1.5 min-w-24 text-xs rounded-lg px-3 py-2 bg-primary text-primary-foreground hover:bg-primary-hover disabled:opacity-50"
@@ -173,7 +185,14 @@
     width: 100%;
     height: 6px;
   }
-  .app-download-progress::after {
+  .app-download-progress > span {
+    display: block;
+    height: 100%;
+    background: var(--primary);
+    border-radius: inherit;
+    transition: width 150ms linear;
+  }
+  .app-download-progress.indeterminate::after {
     content: '';
     position: absolute;
     width: 40%;
@@ -187,6 +206,7 @@
     to { transform: translateX(150%); }
   }
   @media (prefers-reduced-motion: reduce) {
-    .app-download-progress::after { animation: none; left: 30%; }
+    .app-download-progress.indeterminate::after { animation: none; left: 30%; }
+    .app-download-progress > span { transition: none; }
   }
 </style>

@@ -61,6 +61,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- App rows show observed download bytes, known percentages and verification in a compact progress bar.
+
 - App downloads expose observed progress through catalog reads and remove it when requests end.
 
 - SDK catalog models preserve observed download progress and unknown transfer totals.

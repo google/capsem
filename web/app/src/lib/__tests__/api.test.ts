@@ -768,17 +768,10 @@ describe('api', () => {
     });
   });
 
-  describe('onVmStateChanged / onDownloadProgress', () => {
+  describe('onVmStateChanged', () => {
     it('onVmStateChanged returns unsubscribe function', () => {
       const cb = vi.fn();
       const unsub = api.onVmStateChanged(cb);
-      expect(typeof unsub).toBe('function');
-      unsub();
-    });
-
-    it('onDownloadProgress returns unsubscribe function', () => {
-      const cb = vi.fn();
-      const unsub = api.onDownloadProgress(cb);
       expect(typeof unsub).toBe('function');
       unsub();
     });

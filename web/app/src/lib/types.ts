@@ -78,14 +78,6 @@ export interface QueryResult {
   rows: unknown[][];
 }
 
-/** Progress of a VM asset download (rootfs). */
-export interface DownloadProgress {
-  asset: string;
-  bytes_downloaded: number;
-  total_bytes: number;
-  phase: string;
-}
-
 /** Info about an available app update. */
 export interface UpdateInfo {
   version: string;
