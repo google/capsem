@@ -20,7 +20,7 @@ RATIONALE = """\
 Only capsem-service and capsem-process talk to a VM owner.
 
 Clients (CLI, gateway, TUI, tray, desktop app, MCP) use service HTTP routes:
-/vms/{id}/container, /vms/{id}/exposures and the capsem.stream.v2 WebSocket
+/vms/{id}/container, /vms/{id}/exposures and the capsem.stream.v3 WebSocket
 at /vms/{id}/stream. The owner IPC protocol (ServiceToProcess and
 ProcessToService), the per-VM socket paths and the owner handshake stay
 inside the service, the owner and the library crates they are built from, so
