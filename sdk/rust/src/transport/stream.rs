@@ -1,4 +1,4 @@
-//! Authenticated `capsem.stream.v2`; dropping the socket cancels the stream.
+//! Authenticated `capsem.stream.v3`; dropping the socket cancels the stream.
 
 use super::{CallOptions, Transport};
 use crate::{Error, Result};
@@ -33,6 +33,7 @@ impl Transport {
         if timeout.is_zero() {
             return Err(Error::InvalidInput("request timeout must be positive"));
         }
+        let start_frame = stream::encode_control(&start).map_err(frame_error)?;
         let mut url = self.operation_url("/vms/{id}/stream", &[("id", id)])?;
         let scheme = if url.scheme() == "https" { "wss" } else { "ws" };
         url.set_scheme(scheme).expect("HTTP URL converts to WebSocket");
@@ -57,10 +58,10 @@ impl Transport {
                 .map(HeaderValue::as_bytes)
                 != Some(stream::STREAM_SUBPROTOCOL.as_bytes())
             {
-                return Err(Error::InvalidResponse("gateway did not negotiate capsem.stream.v2"));
+                return Err(Error::InvalidResponse("gateway did not negotiate capsem.stream.v3"));
             }
             let mut attached = GatewayStream { socket };
-            attached.send_frame(stream::encode_control(&start)).await?;
+            attached.send_frame(start_frame).await?;
             match attached.next_frame().await? {
                 Frame::Status(StreamStatus::Started) => {
                     if matches!(
@@ -71,10 +72,13 @@ impl Transport {
                         }
                     ) {
                         attached
-                            .send_frame(stream::encode_control(&StreamControl::Focus {
-                                cols: capsem_api::stream::DEFAULT_TERMINAL_COLS as u16,
-                                rows: capsem_api::stream::DEFAULT_TERMINAL_ROWS as u16,
-                            }))
+                            .send_frame(
+                                stream::encode_control(&StreamControl::Focus {
+                                    cols: capsem_api::stream::DEFAULT_TERMINAL_COLS as u16,
+                                    rows: capsem_api::stream::DEFAULT_TERMINAL_ROWS as u16,
+                                })
+                                .map_err(frame_error)?,
+                            )
                             .await?;
                     }
                     Ok(attached)
@@ -98,6 +102,10 @@ fn stream_error(error: tokio_tungstenite::tungstenite::Error) -> Error {
     }
 }
 
+fn frame_error(error: stream::StreamFrameError) -> Error {
+    Error::Stream(error.to_string())
+}
+
 enum Frame {
     Output(Vec<u8>),
     ErrorOutput(Vec<u8>),
@@ -113,16 +121,18 @@ impl GatewayStream {
     }
 
     pub async fn send_stdin(&mut self, bytes: &[u8]) -> Result<()> {
-        self.send_frame(stream::encode_data(StreamChannel::Stdin, bytes)).await
+        self.send_frame(stream::encode_data(StreamChannel::Stdin, bytes).map_err(frame_error)?)
+            .await
     }
 
     /// Send a typed control, including focus or resize, on this stream.
     pub async fn control(&mut self, control: &StreamControl) -> Result<()> {
-        self.send_frame(stream::encode_control(control)).await
+        self.send_frame(stream::encode_control(control).map_err(frame_error)?)
+            .await
     }
 
     pub async fn close_stdin(&mut self) -> Result<()> {
-        self.send_frame(stream::encode_control(&StreamControl::CloseStdin))
+        self.send_frame(stream::encode_control(&StreamControl::CloseStdin).map_err(frame_error)?)
             .await
     }
 

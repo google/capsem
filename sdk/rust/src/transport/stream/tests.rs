@@ -58,7 +58,7 @@ async fn authenticated_stream_preserves_binary_input_output_and_exit() {
         };
         assert_eq!(decode_client_frame(&bytes).unwrap(), ClientFrame::Control(start()));
         socket
-            .send(Message::Binary(encode_status(&StreamStatus::Started).into()))
+            .send(Message::Binary(encode_status(&StreamStatus::Started).unwrap().into()))
             .await
             .unwrap();
         let Some(Ok(Message::Binary(focus))) = socket.next().await else {
@@ -73,6 +73,7 @@ async fn authenticated_stream_preserves_binary_input_output_and_exit() {
                 encode_status(&StreamStatus::Terminal {
                     state: Box::new(terminal_state()),
                 })
+                .unwrap()
                 .into(),
             ))
             .await
@@ -100,18 +101,21 @@ async fn authenticated_stream_preserves_binary_input_output_and_exit() {
                 encode_status(&StreamStatus::Terminal {
                     state: Box::new(terminal_state()),
                 })
+                .unwrap()
                 .into(),
             ))
             .await
             .unwrap();
         socket
             .send(Message::Binary(
-                encode_data(StreamChannel::Stderr, b"reason\xff").into(),
+                encode_data(StreamChannel::Stderr, b"reason\xff").unwrap().into(),
             ))
             .await
             .unwrap();
         socket
-            .send(Message::Binary(encode_data(StreamChannel::Stdout, b"\0\xfe").into()))
+            .send(Message::Binary(
+                encode_data(StreamChannel::Stdout, b"\0\xfe").unwrap().into(),
+            ))
             .await
             .unwrap();
         socket
@@ -120,6 +124,7 @@ async fn authenticated_stream_preserves_binary_input_output_and_exit() {
                     code: 7,
                     truncated: true,
                 })
+                .unwrap()
                 .into(),
             ))
             .await
@@ -164,6 +169,7 @@ async fn startup_denial_preserves_the_gateways_reason() {
                 encode_status(&StreamStatus::Error {
                     message: "session retired".into(),
                 })
+                .unwrap()
                 .into(),
             ))
             .await
@@ -224,13 +230,11 @@ async fn frames_over_the_public_limit_are_refused() {
     let (transport, task) = gateway(|mut socket| async move {
         socket.next().await.unwrap().unwrap();
         socket
-            .send(Message::Binary(encode_status(&StreamStatus::Started).into()))
+            .send(Message::Binary(encode_status(&StreamStatus::Started).unwrap().into()))
             .await
             .unwrap();
         socket
-            .send(Message::Binary(
-                encode_data(StreamChannel::Stdout, &vec![0; stream::MAX_STREAM_FRAME_BYTES]).into(),
-            ))
+            .send(Message::Binary(vec![0; stream::MAX_STREAM_FRAME_BYTES + 1].into()))
             .await
             .unwrap();
     })
