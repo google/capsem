@@ -61,6 +61,26 @@ it('leaves refused deletions and their original error intact', async () => {
   expect(vmStore.acting).toBe(false);
 });
 
+it('purges exactly broken sessions, including incompatible persistent sessions', async () => {
+  const broken = [
+    { ...session(VmLifecycleState.INCOMPATIBLE, [VmAction.DELETE]), id: 'legacy' },
+    { ...session(VmLifecycleState.DEFUNCT, [VmAction.DELETE]), id: 'defunct' },
+  ];
+  const healthy = { ...session(VmLifecycleState.STOPPED, [VmAction.DELETE]), id: 'healthy', persistent: false };
+  vmStore.vms = [...broken, healthy];
+  api.getStatus.mockImplementation(async () => ({ service: 'running', vms: vmStore.vms }));
+  expect(await vmStore.deleteBroken()).toEqual(['legacy', 'defunct']);
+  expect(api.deleteVm.mock.calls).toEqual([['legacy'], ['defunct']]);
+  expect(vmStore.vms).toEqual([healthy]);
+});
+
+it('reports a refused broken-session deletion without hiding the remaining sessions', async () => {
+  vmStore.vms = [session(VmLifecycleState.INCOMPATIBLE, [VmAction.DELETE])];
+  api.deleteVm.mockRejectedValue(new Error('credential retirement pending'));
+  await expect(vmStore.deleteBroken()).rejects.toThrow('credential retirement pending');
+  expect(vmStore.vms).toHaveLength(1);
+});
+
 it('revokes actions when the session vanishes or status becomes unavailable', async () => {
   for (const condition of ['missing', 'offline', 'failed-poll']) {
     vmStore.vms = condition === 'missing' ? [] : [session(VmLifecycleState.RUNNING, [VmAction.STOP])];

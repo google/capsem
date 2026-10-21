@@ -43,6 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Purge broken deletes the incompatible and defunct sessions shown in the
+  dashboard, preserving healthy sessions and reporting refused deletions.
+
 - Failed desktop terminal connections offer an in-place retry and clear the
   overlay after each reconnection, without reloading the application.
 

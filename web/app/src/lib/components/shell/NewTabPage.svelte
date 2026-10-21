@@ -158,6 +158,7 @@
   }
 
   let creatingVm = $state(false);
+  let purging = $state(false);
   let actionError = $state<string | null>(null);
 
   function assetText(status: AssetStatus | null): string {
@@ -262,12 +263,18 @@
   }
 
   async function handlePurgeBroken() {
+    if (purging) return;
     actionError = null;
+    purging = true;
     try {
-      await api.purge();
-      await vmStore.refresh();
+      const ids = await vmStore.deleteBroken();
+      for (const tab of [...tabStore.tabs]) {
+        if (tab.vmId && ids.includes(tab.vmId)) tabStore.close(tab.id);
+      }
     } catch (err) {
       actionError = parseApiError(err);
+    } finally {
+      purging = false;
     }
   }
 </script>
@@ -475,11 +482,11 @@
           type="button"
           class="inline-flex items-center justify-center gap-x-2 rounded-lg bg-surface border border-line-2 px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted-hover focus:outline-hidden disabled:opacity-50 disabled:pointer-events-none"
           onclick={handlePurgeBroken}
-          disabled={vmStore.acting}
-          title="Purge temporary and broken sessions"
+          disabled={purging || vmStore.acting}
+          title="Delete broken sessions"
         >
           <Trash size={14} />
-          Purge broken
+          {purging ? 'Removing...' : 'Purge broken'}
         </button>
       </div>
       <div class="mt-3">

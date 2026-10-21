@@ -3,7 +3,7 @@
 
 import * as api from '../api';
 import { VmAction } from '@capsem/sdk';
-import { hasVmAction } from '../vm-actions';
+import { canOpenSession, hasVmAction } from '../vm-actions';
 import type { VmSummary, VmStatsSummary, ResourceSummary, ProvisionRequest, ForkRequest, ForkResponse } from '../types/gateway';
 
 function assetStatusError(e: unknown): string {
@@ -138,6 +138,12 @@ class VmStore {
     } finally {
       this.acting = false;
     }
+  }
+
+  async deleteBroken(): Promise<string[]> {
+    const ids = this.vms.filter(vm => !canOpenSession(vm)).map(vm => vm.id);
+    for (const id of ids) await this.delete(id);
+    return ids;
   }
 
   async resume(id: string): Promise<void> {
