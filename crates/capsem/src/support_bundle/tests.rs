@@ -361,6 +361,44 @@ fn one_invalid_byte_does_not_disable_redaction_for_the_whole_file() {
 }
 
 #[test]
+fn invalid_utf8_in_the_same_line_does_not_disable_credential_redaction() {
+    let secret = b"sk-ant-abcdefghijklmnopqrstuvwxyz";
+    for prefix in [&b"\xff"[..], &b"binary:\x00\xfe "[..]] {
+        let mut line = prefix.to_vec();
+        line.extend_from_slice(b"Authorization: Bearer ");
+        line.extend_from_slice(secret);
+        line.extend_from_slice(b" tail\xfd\n");
+        let output = super::redact_log_bytes(&line);
+        assert!(!output.windows(secret.len()).any(|bytes| bytes == secret));
+        assert!(output.starts_with(prefix));
+        assert!(output.ends_with(b" tail\xfd\n"));
+    }
+}
+
+#[test]
+fn exported_mixed_binary_log_redacts_opaque_bearer_credentials() {
+    let _guard = crate::lock_test_env();
+    let home = fake_capsem_home();
+    let session = home.path().join("sessions/vm-binary-log");
+    fs::create_dir_all(&session).unwrap();
+    let secret = b"opaque-credential-without-a-provider-prefix";
+    let mut bytes = b"\xffAuthorization: Bearer ".to_vec();
+    bytes.extend_from_slice(secret);
+    bytes.extend_from_slice(b" tail\xfe\n");
+    write(&session.join("serial.log"), &bytes);
+    let bundle = crate::support_bundle::run(None, 3, false, false).unwrap();
+    let entries = read_tar_entries(&bundle);
+    let (_, exported) = entries
+        .iter()
+        .find(|(name, _)| name.ends_with("/vm-binary-log/serial.log"))
+        .unwrap();
+    assert_eq!(exported, b"\xffAuthorization: Bearer <redacted> tail\xfe\n");
+    assert!(entries
+        .iter()
+        .all(|(_, bytes)| !bytes.windows(secret.len()).any(|window| window == secret)));
+}
+
+#[test]
 fn undecodable_lines_pass_through_byte_exact() {
     // The original intent -- do not mangle binary -- still holds, just per
     // line instead of per file.

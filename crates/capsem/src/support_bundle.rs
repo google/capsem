@@ -776,18 +776,14 @@ fn redact_log_bytes(bytes: &[u8]) -> Vec<u8> {
     // single invalid UTF-8 byte anywhere in the file disabled redaction for all
     // of it -- every credential in that log shipped in the bundle in the clear.
     //
-    // Lines that genuinely are not UTF-8 still pass through byte-exact, so
-    // binary content keeps the property the original was reaching for; only
-    // the blast radius shrinks from the file to the line.
+    // Byte regexes redact credentials in mixed text/binary lines too, keeping
+    // every unrelated byte exact rather than making UTF-8 validity a bypass.
     let mut out = Vec::with_capacity(bytes.len());
     for (index, line) in bytes.split(|byte| *byte == b'\n').enumerate() {
         if index > 0 {
             out.push(b'\n');
         }
-        match std::str::from_utf8(line) {
-            Ok(text) => out.extend_from_slice(redact::redact_line(text).as_bytes()),
-            Err(_) => out.extend_from_slice(line),
-        }
+        out.extend_from_slice(&redact::redact_line_bytes(line));
     }
     out
 }

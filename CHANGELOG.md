@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Redact credentials in mixed binary/text log lines, preserving unrelated
+  non-UTF8 bytes without letting them disable support-bundle redaction.
+
 - Support bundles refuse redirected session logs and export bounded log tails
   without changing unrelated binary bytes.
 

@@ -20,21 +20,22 @@
 
 use std::sync::OnceLock;
 
+use regex::bytes::Regex as ByteRegex;
 use regex::Regex;
 
-/// Public entry: redact a single line of log output.
-pub fn redact_line(line: &str) -> String {
+/// Redact recognized credentials without decoding unrelated binary bytes.
+pub fn redact_line_bytes(line: &[u8]) -> Vec<u8> {
     let bearer = RE_BEARER.get_or_init(bearer_re);
     let api = RE_API_KEY.get_or_init(api_key_re);
     let home = RE_HOME_PATH.get_or_init(home_path_re);
     if !bearer.is_match(line) && !api.is_match(line) && !home.is_match(line) {
-        return line.to_string();
+        return line.to_vec();
     }
     // Keep the matched header prefix so a JSON-shaped log line stays valid
     // JSON after redaction; only the credential itself is replaced.
-    let s = bearer.replace_all(line, "${1}<redacted>");
-    let s = api.replace_all(&s, "<redacted-key>");
-    let s = home.replace_all(&s, "~/");
+    let s = bearer.replace_all(line, &b"${1}<redacted>"[..]);
+    let s = api.replace_all(&s, &b"<redacted-key>"[..]);
+    let s = home.replace_all(&s, &b"~/"[..]);
     s.into_owned()
 }
 
@@ -69,28 +70,28 @@ pub fn redact_config_text(text: &str) -> String {
 // One-time-compiled regex slots. Compiled lazily on first call; the
 // Regex crate's compile cost is non-trivial so we cache. Memoized via
 // OnceLock rather than `lazy_static` to keep deps minimal.
-static RE_BEARER: OnceLock<Regex> = OnceLock::new();
-static RE_API_KEY: OnceLock<Regex> = OnceLock::new();
-static RE_HOME_PATH: OnceLock<Regex> = OnceLock::new();
+static RE_BEARER: OnceLock<ByteRegex> = OnceLock::new();
+static RE_API_KEY: OnceLock<ByteRegex> = OnceLock::new();
+static RE_HOME_PATH: OnceLock<ByteRegex> = OnceLock::new();
 static RE_SECRET_KEY: OnceLock<Regex> = OnceLock::new();
 
-fn bearer_re() -> Regex {
+fn bearer_re() -> ByteRegex {
     // The header name may be quoted and the value may be quoted, because our
     // own logs are JSON: `{"Authorization": "Bearer <token>"}`. Requiring a
     // bare `Authorization:` missed exactly the shape a support bundle carries.
     // Group 1 is the prefix, kept verbatim; group 2 is the credential and
     // stops at whitespace or a quote so the surrounding JSON survives.
-    Regex::new("(?i)(Authorization\"?\\s*:\\s*\"?\\s*Bearer\\s+)([^\\s\"]+)").unwrap()
+    ByteRegex::new("(?i)(Authorization\"?\\s*:\\s*\"?\\s*Bearer\\s+)([^\\s\"]+)").unwrap()
 }
 
-fn api_key_re() -> Regex {
+fn api_key_re() -> ByteRegex {
     // sk- (Anthropic / OpenAI), AIza (Google), xox[baprs]- (Slack),
     // gh[pousr]_ (GitHub personal/OAuth/user/server/refresh tokens -- the
     // module already treats `github_token` as a secret key name, so a bare
     // one in a log line has to go too).
     // 20+ char tail is the conservative threshold to avoid eating
     // shorter unrelated strings.
-    Regex::new(concat!(
+    ByteRegex::new(concat!(
         "(sk-[A-Za-z0-9_\\-]{20,}",
         "|AIza[A-Za-z0-9_\\-]{20,}",
         "|xox[baprs]-[A-Za-z0-9_\\-]+",
@@ -99,8 +100,8 @@ fn api_key_re() -> Regex {
     .unwrap()
 }
 
-fn home_path_re() -> Regex {
-    Regex::new("/(?:Users|home)/[^/\\s\"]+/").unwrap()
+fn home_path_re() -> ByteRegex {
+    ByteRegex::new("/(?:Users|home)/[^/\\s\"]+/").unwrap()
 }
 
 fn secret_key_re() -> Regex {

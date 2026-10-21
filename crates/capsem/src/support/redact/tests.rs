@@ -1,5 +1,9 @@
 use super::*;
 
+fn redact_line(line: &str) -> String {
+    String::from_utf8(redact_line_bytes(line.as_bytes())).unwrap()
+}
+
 #[test]
 fn bearer_token_in_log_line_is_redacted() {
     let line = r#"GET /v1/messages HTTP/1.1, Authorization: Bearer sk-ant-abcdefghijklmnopqrstuv"#;
