@@ -165,3 +165,19 @@ def test_colliding_enum_members_fail_instead_of_overwriting() -> None:
     schema = Schema.model_validate({"type": "string", "enum": ["http.request", "http_request"]})
     with pytest.raises(ValueError, match="colliding"):
         render_models({"Event": schema})
+
+
+def test_generated_text_and_collection_budgets_reject_oversize_values() -> None:
+    from typing import Annotated
+
+    from pydantic import Field, StrictStr
+
+    namespace = {"Annotated": Annotated, "Field": Field, "StrictStr": StrictStr}
+    for schema, valid, oversized in [
+        ({"type": "string", "maxLength": 4}, "four", "large"),
+        ({"type": "array", "items": {"type": "string"}, "maxItems": 2}, ["a", "b"], ["a", "b", "c"]),
+    ]:
+        adapter = TypeAdapter(eval(type_name(Schema.model_validate(schema)), namespace))
+        assert adapter.validate_python(valid) == valid
+        with pytest.raises(ValidationError):
+            adapter.validate_python(oversized)

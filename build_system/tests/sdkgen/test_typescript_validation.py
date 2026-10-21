@@ -43,3 +43,10 @@ def test_fixed_private_token_pattern_and_uuid_format_survive_generation() -> Non
         'z.string().length(64).regex(new RegExp("^[0-9a-f]{64}$"))'
     )
     assert expression(Schema.model_validate({"type": "string", "format": "uuid"})) == "z.uuid()"
+
+
+def test_text_and_array_budgets_survive_generation() -> None:
+    assert expression(Schema.model_validate({"type": "string", "maxLength": 1024})) == "z.string().max(1024)"
+    assert expression(Schema.model_validate({
+        "type": "array", "items": {"type": "boolean"}, "maxItems": 32,
+    })) == "z.array(z.boolean()).max(32)"

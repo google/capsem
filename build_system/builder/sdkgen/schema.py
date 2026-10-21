@@ -30,6 +30,8 @@ class Schema(BaseModel):
     pattern: str | None = None
     minimum: int | float | None = None
     maximum: int | float | None = None
+    max_length: int | None = Field(default=None, alias="maxLength", ge=0)
+    max_items: int | None = Field(default=None, alias="maxItems", ge=0)
     enum: list[str] | None = None
     properties: dict[str, Schema] = Field(default_factory=dict)
     required: list[str] = Field(default_factory=list)
@@ -74,11 +76,11 @@ class Schema(BaseModel):
                     and self.property_names.model_dump(exclude_unset=True) != {"type": "string"}):
                 raise ValueError("map keys must be unconstrained strings")
         elif kind == "array":
-            allowed.add("items")
+            allowed |= {"items", "max_items"}
             if self.items is None:
                 raise ValueError("array requires an item schema")
         elif kind == "string":
-            allowed |= {"enum", "format", "write_only", "pattern"}
+            allowed |= {"enum", "format", "write_only", "pattern", "max_length"}
             if self.enum is not None and (not self.enum or len(set(self.enum)) != len(self.enum)):
                 raise ValueError("enum must contain distinct values")
             if self.format not in (None, "binary", "ipv4", "uuid", "date-time"):

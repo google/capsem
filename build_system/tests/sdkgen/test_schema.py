@@ -109,3 +109,14 @@ def test_empty_schema_document_fails(tmp_path: Path) -> None:
     path.write_text('{"components": {"schemas": {}}}')
     with pytest.raises(ValueError, match="no schemas"):
         read_schemas(path)
+
+
+@pytest.mark.parametrize("value", [
+    {"type": "integer", "maxLength": 4},
+    {"type": "string", "maxItems": 4},
+    {"type": "string", "maxLength": -1},
+    {"type": "array", "items": {"type": "boolean"}, "maxItems": -1},
+])
+def test_length_budgets_must_match_their_shape(value: dict) -> None:
+    with pytest.raises(ValidationError):
+        Schema.model_validate(value)

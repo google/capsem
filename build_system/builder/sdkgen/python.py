@@ -120,7 +120,8 @@ def type_name(schema: Schema) -> str:
             raise ValueError("inline objects must be named models or typed maps")
         return f"dict[str, {type_name(schema.additional_properties)}]"
     if schema.type == "array" and schema.items is not None:
-        return f"list[{type_name(schema.items)}]"
+        result = f"list[{type_name(schema.items)}]"
+        return result if schema.max_items is None else f"Annotated[{result}, Field(max_length={schema.max_items})]"
     if schema.type is None or schema.type == "array":
         raise ValueError("missing type")
     primitive = {"string": "StrictStr", "integer": "StrictInt", "number": "StrictFloat",
@@ -135,6 +136,8 @@ def type_name(schema: Schema) -> str:
         primitive = "DateTimeString"
     if schema.pattern is not None:
         primitive = f"Annotated[{primitive}, Field(pattern={schema.pattern!r}, min_length={schema.pattern_width}, max_length={schema.pattern_width})]"
+    if schema.max_length is not None:
+        primitive = f"Annotated[{primitive}, Field(max_length={schema.max_length})]"
     if schema.minimum is not None:
         primitive = f"Annotated[{primitive}, Field(ge={schema.minimum!r})]"
     if schema.maximum is not None:

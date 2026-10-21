@@ -28,7 +28,8 @@ def expression(schema: Schema) -> str:
                   for key, field in schema.properties.items()]
         return constructor + "({" + ("\n  " + ",\n  ".join(fields) + ",\n" if fields else "") + "})"
     if schema.type == "array" and schema.items is not None:
-        return f"z.array({expression(schema.items)})"
+        result = f"z.array({expression(schema.items)})"
+        return result if schema.max_items is None else result + f".max({schema.max_items})"
     if schema.type is None or schema.type == "array":
         raise ValueError("missing type")
     if schema.format == "binary":
@@ -43,6 +44,8 @@ def expression(schema: Schema) -> str:
               "boolean": "z.boolean()", "null": "z.null()"}[schema.type]
     if schema.pattern is not None:
         result += f".length({schema.pattern_width}).regex(new RegExp({json.dumps(schema.pattern)}))"
+    if schema.max_length is not None:
+        result += f".max({schema.max_length})"
     if schema.minimum is not None:
         result += f".min({schema.minimum})"
     if schema.maximum is not None:
