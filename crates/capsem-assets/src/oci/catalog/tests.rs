@@ -45,6 +45,21 @@ fn parse(value: &Value) -> Result<Catalog> {
     Catalog::parse(&serde_json::to_vec(value).unwrap())
 }
 
+#[test]
+fn catalog_exposes_declared_surfaces_without_guessing_missing_metadata() {
+    let mut value = document();
+    assert_eq!(parse(&value).unwrap().entry("codex").unwrap().surface(), None);
+    for surface in ["terminal", "xpra"] {
+        value["entries"]["codex"]["surface"] = json!(surface);
+        assert_eq!(parse(&value).unwrap().entry("codex").unwrap().surface(), Some(surface));
+    }
+    value["entries"]["codex"]["surface"] = json!("web");
+    assert!(
+        parse(&value).is_err(),
+        "unknown surfaces must not masquerade as terminal apps"
+    );
+}
+
 fn rejected(value: &Value, needle: &str) {
     let error = format!("{:#}", parse(value).expect_err("invalid catalog accepted"));
     assert!(error.contains(needle), "expected {needle:?} in {error:?}");

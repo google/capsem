@@ -68,6 +68,7 @@ pub struct Catalog {
 pub struct CatalogEntry {
     description: String,
     icon: Option<String>,
+    surface: Option<String>,
     versions: Vec<CatalogVersion>,
 }
 
@@ -164,6 +165,10 @@ impl CatalogEntry {
             "invalid catalog entry name: use 1-63 of [a-z0-9-], starting with a letter or digit"
         );
         ensure!(!entry.versions.is_empty(), "entry lists no versions");
+        ensure!(
+            matches!(entry.surface.as_deref(), None | Some("terminal" | "xpra")),
+            "surface must be terminal or xpra"
+        );
         let mut versions: Vec<CatalogVersion> = Vec::with_capacity(entry.versions.len());
         for (index, version) in entry.versions.into_iter().enumerate() {
             let version = CatalogVersion::validate(version).with_context(|| format!("version {index}"))?;
@@ -179,6 +184,7 @@ impl CatalogEntry {
         Ok(Self {
             description: entry.description,
             icon: entry.icon,
+            surface: entry.surface,
             versions,
         })
     }
@@ -189,6 +195,11 @@ impl CatalogEntry {
 
     pub fn icon(&self) -> Option<&str> {
         self.icon.as_deref()
+    }
+
+    /// The image's declared interface; absent on older catalogs.
+    pub fn surface(&self) -> Option<&str> {
+        self.surface.as_deref()
     }
 
     /// Oldest to newest.
@@ -268,6 +279,8 @@ struct EntryDocument {
     description: String,
     #[serde(default)]
     icon: Option<String>,
+    #[serde(default)]
+    surface: Option<String>,
     versions: Vec<VersionDocument>,
 }
 
