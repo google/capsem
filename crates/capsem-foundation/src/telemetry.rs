@@ -372,13 +372,19 @@ pub fn read_log_tail_bytes(path: &std::path::Path, max_bytes: usize) -> Option<V
     )
 }
 
+/// A bounded read and whether its opened stream exceeded the byte budget.
+pub struct LogTail {
+    pub bytes: Vec<u8>,
+    pub truncated: bool,
+}
+
 /// Read only the two capped generations below a held directory. A worker can
 /// neither redirect a parent component nor expand this read by adding files.
-pub fn read_capped_log_tail_bytes_in(
+pub fn read_capped_log_tail_in(
     directory: &crate::unix::contained::ContainedDir,
     name: &std::ffi::OsStr,
     max_bytes: usize,
-) -> std::io::Result<Option<Vec<u8>>> {
+) -> std::io::Result<Option<LogTail>> {
     if std::path::Path::new(name).file_name() != Some(name) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -393,7 +399,21 @@ pub fn read_capped_log_tail_bytes_in(
             Err(error) => return Err(error),
         }
     }
-    Ok(read_tail_files(files.into_iter(), max_bytes))
+    let size = files.iter().try_fold(0u64, |size, file| {
+        Ok::<_, std::io::Error>(size.saturating_add(file.metadata()?.len()))
+    })?;
+    Ok(read_tail_files(files.into_iter(), max_bytes).map(|bytes| LogTail {
+        bytes,
+        truncated: size > max_bytes as u64,
+    }))
+}
+
+pub fn read_capped_log_tail_bytes_in(
+    directory: &crate::unix::contained::ContainedDir,
+    name: &std::ffi::OsStr,
+    max_bytes: usize,
+) -> std::io::Result<Option<Vec<u8>>> {
+    Ok(read_capped_log_tail_in(directory, name, max_bytes)?.map(|tail| tail.bytes))
 }
 
 fn read_tail_files(files: impl Iterator<Item = std::fs::File>, max_bytes: usize) -> Option<Vec<u8>> {

@@ -333,12 +333,18 @@ fn capped_reader_retains_its_directory_and_reads_only_the_two_generations() {
     std::fs::rename(&path, &moved).unwrap();
     std::os::unix::fs::symlink(&outside, &path).unwrap();
     assert_eq!(
-        read_capped_log_tail_bytes_in(&directory, OsStr::new("serial.log"), 1024)
+        read_capped_log_tail_in(&directory, OsStr::new("serial.log"), 1024)
             .unwrap()
-            .unwrap(),
+            .unwrap()
+            .bytes,
         b"older\ncurrent\n"
     );
-    assert!(read_capped_log_tail_bytes_in(&directory, OsStr::new("../serial.log"), 1024).is_err());
+    assert!(read_capped_log_tail_in(&directory, OsStr::new("../serial.log"), 1024).is_err());
+    let tail = read_capped_log_tail_in(&directory, OsStr::new("serial.log"), 5)
+        .unwrap()
+        .unwrap();
+    assert!(tail.truncated);
+    assert!(tail.bytes.len() <= 5);
 }
 
 #[test]
