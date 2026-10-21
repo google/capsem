@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { StreamKind, MAX_STREAM_DATA_BYTES } from '@capsem/sdk';
   import { initTauriLog } from '../../tauri-log';
   import { gatewayBaseUrl } from '../../gateway-url';
   import { Terminal } from '@xterm/xterm';
@@ -84,7 +85,9 @@
 
   function sendTerminalBytes(bytes: Uint8Array): void {
     if (ws?.readyState === WebSocket.OPEN) {
-      ws.send(encodeStdin(bytes));
+      for (let offset = 0; offset < bytes.length; offset += MAX_STREAM_DATA_BYTES) {
+        ws.send(encodeStdin(bytes.subarray(offset, offset + MAX_STREAM_DATA_BYTES)));
+      }
     }
   }
 
@@ -171,7 +174,7 @@
       console.log('[terminal] ws-open vmId=%s', vmId);
       reconnectAttempt = 0;
       postToParent({ type: 'connected' });
-      socket.send(encodeControl({ type: 'start', kind: 'terminal' }));
+      socket.send(encodeControl({ type: 'start', kind: StreamKind.TERMINAL }));
       projection?.reconnect();
       requestDimensions(true);
       // No keystroke is injected to "redraw the prompt": a newline typed into

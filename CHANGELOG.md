@@ -79,6 +79,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Split large TUI pastes into bounded binary stream records without losing
   bytes or disconnecting the terminal.
 
+- Use the shared SDK stream codec in the app terminal and split large browser
+  pastes at the same binary payload limit.
+
 - Keep the embedded app's reconnect message readable against its background.
 
 - Wait for a graphical app's initial connection during startup, and keep its

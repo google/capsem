@@ -14,3 +14,5 @@ export {HttpError, NetworkError, type CallOptions, type TransportOptions} from '
 export type * from './options.js';
 
 export {TerminalStateSchema} from "./validation/TerminalState.js";
+export {STREAM_SUBPROTOCOL, MAX_STREAM_FRAME_BYTES, MAX_STREAM_DATA_BYTES,
+  encodeStdin, encodeControl, decodeServerFrame, type ServerFrame} from './stream.js';
