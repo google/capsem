@@ -11,6 +11,7 @@ use utoipa::{IntoParams, ToSchema};
 /// Build the same contract served by the gateway and exported for SDK generation.
 pub fn openapi() -> OpenApi {
     let mut doc = Document::default();
+    doc.schema::<crate::stream::TerminalState>();
     doc.get::<HypervisorInfo>("/status", "getHypervisorInfo");
     let restart = doc.operation_status::<RestartResponse>("/restart", "restartHypervisor", "202")
         .description(Some("Restart a managed hypervisor with no active or starting VMs. The gateway rotates its bearer token; obtain fresh credentials and reconnect explicitly. Never replay this mutation."));
@@ -99,7 +100,7 @@ struct Document {
 /// force every generated SDK to be regenerated, and an SDK built against the
 /// contract keeps working across binary releases. Raise it when the contract
 /// changes in a way clients must notice.
-pub const CONTRACT_VERSION: &str = "3.3.0";
+pub const CONTRACT_VERSION: &str = "3.4.0";
 
 impl Document {
     fn connections(&mut self) {

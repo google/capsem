@@ -7,6 +7,7 @@ from typing import Annotated
 from pydantic import Field, StrictBool, StrictFloat, StrictInt, StrictStr
 
 from .model_base import Model
+from .terminal_summary import TerminalSummary
 from .vm_action import VmAction
 from .vm_lifecycle_state import VmLifecycleState
 
@@ -24,6 +25,7 @@ class VmSummary(Model):
     persistent: StrictBool
     resume_blocked_reason: StrictStr | None = None
     status: VmLifecycleState
+    terminal: TerminalSummary | None = None
     total_estimated_cost: StrictFloat | None = None
     total_file_events: Annotated[StrictInt, Field(ge=0)] | None = None
     total_input_tokens: Annotated[StrictInt, Field(ge=0)] | None = None

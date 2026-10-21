@@ -12,3 +12,5 @@ export {
 } from './resources.js';
 export {HttpError, NetworkError, type CallOptions, type TransportOptions} from './transport.js';
 export type * from './options.js';
+
+export {TerminalStateSchema} from "./validation/TerminalState.js";

@@ -305,6 +305,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Publish the Capsem 0.7 documentation: getting started, task guides, security architecture, and SDK/API references.
 ### Changed
 
+- Version terminal streams explicitly as `capsem.stream.v2`, carrying typed
+  session state alongside reconstructed display updates.
+
 - Local and hosted qualification now reuse exact, validated private GHCR
   generations for network-open build helpers before the deterministic local
   fallback; a weekly publisher retains three generations per platform.

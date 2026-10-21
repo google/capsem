@@ -2,6 +2,7 @@
 
 import type { SessionDbStatus } from "./SessionDbStatus.js";
 import type { StorageDiagnostics } from "./StorageDiagnostics.js";
+import type { TerminalSummary } from "./TerminalSummary.js";
 import type { VmAction } from "./VmAction.js";
 import type { VmAiInfo } from "./VmAiInfo.js";
 import type { VmFilesInfo } from "./VmFilesInfo.js";
@@ -33,6 +34,7 @@ export interface SandboxInfo {
   "size_bytes"?: number | null;
   "status": VmLifecycleState;
   "storage"?: null | StorageDiagnostics;
+  "terminal"?: null | TerminalSummary;
   "total_estimated_cost"?: number | null;
   "total_file_events"?: number | null;
   "total_input_tokens"?: number | null;

@@ -134,7 +134,7 @@ fn control_wire_shape_is_tagged_snake_case_json() {
         message: "no VM".into(),
     });
     assert_eq!(&frame[1..], br#"{"type":"error","message":"no VM"}"#);
-    assert_eq!(STREAM_SUBPROTOCOL, "capsem.stream.v1");
+    assert_eq!(STREAM_SUBPROTOCOL, "capsem.stream.v2");
 }
 
 /// Finding 32: the web app carries its own copy of this codec. The checked-in
@@ -142,13 +142,13 @@ fn control_wire_shape_is_tagged_snake_case_json() {
 /// be exactly what this module encodes and decodes.
 #[test]
 fn checked_in_golden_frames_match_the_rust_codec() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../sdk/specification/stream-v1.json");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../sdk/specification/stream-v2.json");
     let checked_in: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap_or_default()).unwrap_or(serde_json::Value::Null);
     assert_eq!(
         checked_in,
         golden_frames(),
-        "Regenerate sdk/specification/stream-v1.json with the capsem-api export_stream_fixture example"
+        "Regenerate sdk/specification/stream-v2.json with the capsem-api export_stream_fixture example"
     );
 }
 

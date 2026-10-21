@@ -225,6 +225,13 @@ from .supply_chain_manifest_evidence import (
     SupplyChainManifestEvidence as SupplyChainManifestEvidence,
 )
 from .supply_chain_reference import SupplyChainReference as SupplyChainReference
+from .terminal_cursor import TerminalCursor as TerminalCursor
+from .terminal_event import TerminalEvent as TerminalEvent
+from .terminal_event_kind import TerminalEventKind as TerminalEventKind
+from .terminal_modes import TerminalModes as TerminalModes
+from .terminal_notification import TerminalNotification as TerminalNotification
+from .terminal_state import TerminalState as TerminalState
+from .terminal_summary import TerminalSummary as TerminalSummary
 from .text_content import TextContent as TextContent
 from .text_content_kind import TextContentKind as TextContentKind
 from .timeline_event import TimelineEvent as TimelineEvent

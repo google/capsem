@@ -175,6 +175,13 @@ export type { SupplyChainChannelEvidence } from "./SupplyChainChannelEvidence.js
 export type { SupplyChainEvidence } from "./SupplyChainEvidence.js";
 export type { SupplyChainManifestEvidence } from "./SupplyChainManifestEvidence.js";
 export type { SupplyChainReference } from "./SupplyChainReference.js";
+export type { TerminalCursor } from "./TerminalCursor.js";
+export type { TerminalEvent } from "./TerminalEvent.js";
+export { TerminalEventKind } from "./TerminalEventKind.js";
+export type { TerminalModes } from "./TerminalModes.js";
+export type { TerminalNotification } from "./TerminalNotification.js";
+export type { TerminalState } from "./TerminalState.js";
+export type { TerminalSummary } from "./TerminalSummary.js";
 export type { TextContent } from "./TextContent.js";
 export { TextContentKind } from "./TextContentKind.js";
 export type { TimelineEvent } from "./TimelineEvent.js";

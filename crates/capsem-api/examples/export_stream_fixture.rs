@@ -1,4 +1,4 @@
-//! Print the capsem.stream.v1 golden frames (sdk/specification/stream-v1.json).
+//! Print the capsem.stream.v2 golden frames (sdk/specification/stream-v2.json).
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "{}",

@@ -273,7 +273,7 @@ fn openapi_describes_standalone_proxy_leases() {
         "heartbeatProxy"
     );
     assert_eq!(paths["/proxies/{id}/stop"]["post"]["operationId"], "stopProxy");
-    assert_eq!(crate::CONTRACT_VERSION, "3.3.0");
+    assert_eq!(crate::CONTRACT_VERSION, "3.4.0");
 }
 
 #[test]

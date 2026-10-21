@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Capsem Gateway",
-    "version": "3.3.0"
+    "version": "3.4.0"
   },
   "paths": {
     "/assets/status": {
@@ -7661,6 +7661,17 @@
               }
             ]
           },
+          "terminal": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TerminalSummary",
+                "description": "Session terminal metadata, including while no terminal view is open."
+              }
+            ]
+          },
           "total_estimated_cost": {
             "type": [
               "number",
@@ -8124,6 +8135,213 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "TerminalCursor": {
+        "type": "object",
+        "required": [
+          "row",
+          "col",
+          "hidden"
+        ],
+        "properties": {
+          "col": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "hidden": {
+            "type": "boolean"
+          },
+          "row": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "TerminalEvent": {
+        "type": "object",
+        "required": [
+          "kind",
+          "visual"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/TerminalEventKind"
+          },
+          "notification": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TerminalNotification"
+              }
+            ]
+          },
+          "visual": {
+            "type": "boolean"
+          }
+        }
+      },
+      "TerminalEventKind": {
+        "type": "string",
+        "enum": [
+          "bell",
+          "notification"
+        ]
+      },
+      "TerminalModes": {
+        "type": "object",
+        "required": [
+          "alternate_screen",
+          "application_cursor",
+          "application_keypad",
+          "bracketed_paste",
+          "mouse_protocol",
+          "mouse_encoding"
+        ],
+        "properties": {
+          "alternate_screen": {
+            "type": "boolean"
+          },
+          "application_cursor": {
+            "type": "boolean"
+          },
+          "application_keypad": {
+            "type": "boolean"
+          },
+          "bracketed_paste": {
+            "type": "boolean"
+          },
+          "mouse_encoding": {
+            "type": "string"
+          },
+          "mouse_protocol": {
+            "type": "string"
+          }
+        }
+      },
+      "TerminalNotification": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "body"
+        ],
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "TerminalState": {
+        "type": "object",
+        "description": "Metadata precedes the corresponding display projection. A reset replaces\nthe display at these dimensions. Snapshot events are always empty.",
+        "required": [
+          "revision",
+          "reset",
+          "cols",
+          "rows",
+          "cursor",
+          "modes",
+          "title",
+          "icon_name",
+          "bell_count",
+          "events"
+        ],
+        "properties": {
+          "bell_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "cols": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "cursor": {
+            "$ref": "#/components/schemas/TerminalCursor"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TerminalEvent"
+            }
+          },
+          "icon_name": {
+            "type": "string"
+          },
+          "last_notification": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TerminalNotification"
+              }
+            ]
+          },
+          "modes": {
+            "$ref": "#/components/schemas/TerminalModes"
+          },
+          "reset": {
+            "type": "boolean"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "rows": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "TerminalSummary": {
+        "type": "object",
+        "required": [
+          "revision",
+          "title",
+          "bell_count"
+        ],
+        "properties": {
+          "bell_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "last_notification": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TerminalNotification"
+              }
+            ]
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "title": {
+            "type": "string"
           }
         }
       },
@@ -9088,6 +9306,17 @@
           },
           "status": {
             "$ref": "#/components/schemas/VmLifecycleState"
+          },
+          "terminal": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TerminalSummary",
+                "description": "Session terminal metadata, including while no terminal view is open."
+              }
+            ]
           },
           "total_estimated_cost": {
             "type": [

@@ -199,6 +199,9 @@ pub struct SessionDbStatus {
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct SandboxInfo {
+    /// Session terminal metadata, including while no terminal view is open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal: Option<crate::TerminalSummary>,
     pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -285,6 +288,7 @@ impl SandboxInfo {
     pub fn new(id: String, pid: u32, status: VmLifecycleState, persistent: bool) -> Self {
         let available_actions = status.available_actions(false);
         Self {
+            terminal: None,
             id,
             name: None,
             pid,

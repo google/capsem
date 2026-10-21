@@ -175,6 +175,13 @@ export {SupplyChainChannelEvidenceSchema} from "./SupplyChainChannelEvidence.js"
 export {SupplyChainEvidenceSchema} from "./SupplyChainEvidence.js";
 export {SupplyChainManifestEvidenceSchema} from "./SupplyChainManifestEvidence.js";
 export {SupplyChainReferenceSchema} from "./SupplyChainReference.js";
+export {TerminalCursorSchema} from "./TerminalCursor.js";
+export {TerminalEventSchema} from "./TerminalEvent.js";
+export {TerminalEventKindSchema} from "./TerminalEventKind.js";
+export {TerminalModesSchema} from "./TerminalModes.js";
+export {TerminalNotificationSchema} from "./TerminalNotification.js";
+export {TerminalStateSchema} from "./TerminalState.js";
+export {TerminalSummarySchema} from "./TerminalSummary.js";
 export {TextContentSchema} from "./TextContent.js";
 export {TextContentKindSchema} from "./TextContentKind.js";
 export {TimelineEventSchema} from "./TimelineEvent.js";

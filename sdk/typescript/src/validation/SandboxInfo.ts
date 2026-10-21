@@ -4,6 +4,7 @@ import {z} from "zod";
 import type {SandboxInfo} from "../models/SandboxInfo.js";
 import {SessionDbStatusSchema} from "./SessionDbStatus.js";
 import {StorageDiagnosticsSchema} from "./StorageDiagnostics.js";
+import {TerminalSummarySchema} from "./TerminalSummary.js";
 import {VmActionSchema} from "./VmAction.js";
 import {VmAiInfoSchema} from "./VmAiInfo.js";
 import {VmFilesInfoSchema} from "./VmFilesInfo.js";
@@ -35,6 +36,7 @@ export const SandboxInfoSchema: z.ZodType<SandboxInfo> = z.object({
   "size_bytes": z.int().min(0).nullable().exactOptional(),
   "status": z.lazy(() => VmLifecycleStateSchema),
   "storage": z.union([z.null(), z.lazy(() => StorageDiagnosticsSchema)]).exactOptional(),
+  "terminal": z.union([z.null(), z.lazy(() => TerminalSummarySchema)]).exactOptional(),
   "total_estimated_cost": z.number().nullable().exactOptional(),
   "total_file_events": z.int().min(0).nullable().exactOptional(),
   "total_input_tokens": z.int().min(0).nullable().exactOptional(),

@@ -1,5 +1,6 @@
 // Generated from Capsem OpenAPI. Do not edit.
 
+import type { TerminalSummary } from "./TerminalSummary.js";
 import type { VmAction } from "./VmAction.js";
 import type { VmLifecycleState } from "./VmLifecycleState.js";
 
@@ -15,6 +16,7 @@ export interface VmSummary {
   "persistent": boolean;
   "resume_blocked_reason"?: string | null;
   "status": VmLifecycleState;
+  "terminal"?: null | TerminalSummary;
   "total_estimated_cost"?: number | null;
   "total_file_events"?: number | null;
   "total_input_tokens"?: number | null;

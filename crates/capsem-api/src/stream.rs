@@ -1,14 +1,18 @@
-//! `capsem.stream.v1`: one WebSocket protocol for terminal I/O, streaming exec
+//! `capsem.stream.v2`: one WebSocket protocol for terminal I/O, streaming exec
 //! and container attach.
 //!
 //! Every message is a binary WebSocket frame whose first byte names a channel.
 //! Data channels carry raw bytes; the control and status channels carry one
 //! typed JSON object. Each side decodes only the channels it may receive.
 
+pub use capsem_proto::terminal::TerminalState;
+pub use capsem_proto::{
+    TERMINAL_DEFAULT_COLS as DEFAULT_TERMINAL_COLS, TERMINAL_DEFAULT_ROWS as DEFAULT_TERMINAL_ROWS,
+};
 use serde::{Deserialize, Serialize};
 
 /// WebSocket subprotocol a client must request.
-pub const STREAM_SUBPROTOCOL: &str = "capsem.stream.v1";
+pub const STREAM_SUBPROTOCOL: &str = "capsem.stream.v2";
 
 /// Largest frame either side accepts, channel byte included.
 pub const MAX_STREAM_FRAME_BYTES: usize = 256 * 1024;
@@ -32,7 +36,7 @@ pub enum StreamChannel {
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum StreamKind {
-    /// The VM's interactive terminal, with its replayed recent output.
+    /// The VM's interactive terminal, with its reconstructed current display.
     Terminal,
     /// One command, streaming its output until it exits.
     Exec,
@@ -52,6 +56,8 @@ pub enum StreamControl {
     },
     /// Terminal window size; both dimensions must be non-zero.
     Resize { cols: u16, rows: u16 },
+    /// This view explicitly takes input and resize authority.
+    Focus { cols: u16, rows: u16 },
     /// No more stdin will follow.
     CloseStdin,
 }
@@ -61,6 +67,8 @@ pub enum StreamControl {
 pub enum StreamStatus {
     /// The stream is attached; data may follow.
     Started,
+    /// Authoritative terminal metadata, followed by normalized display bytes.
+    Terminal { state: Box<TerminalState> },
     /// The command or workload ended. `truncated` means output was dropped.
     Exit { code: i32, truncated: bool },
     /// The stream ended without an exit status.
@@ -145,7 +153,9 @@ pub fn decode_server_frame(frame: &[u8]) -> Result<ServerFrame<'_>, StreamFrameE
 fn validate_control(control: &StreamControl) -> Result<(), StreamFrameError> {
     let invalid = |reason: &str| Err(StreamFrameError::Control(reason.to_owned()));
     match control {
-        StreamControl::Resize { cols, rows } if *cols == 0 || *rows == 0 => invalid("resize needs non-zero dimensions"),
+        StreamControl::Resize { cols, rows } | StreamControl::Focus { cols, rows } if *cols == 0 || *rows == 0 => {
+            invalid("resize needs non-zero dimensions")
+        }
         StreamControl::Start {
             kind: StreamKind::Exec,
             command,
@@ -181,7 +191,7 @@ pub fn encode_status(status: &StreamStatus) -> Vec<u8> {
 }
 
 /// The frames every other implementation of this protocol is held to,
-/// exported as `sdk/specification/stream-v1.json`. Client frames are what this
+/// exported as `sdk/specification/stream-v2.json`. Client frames are what this
 /// module encodes; each server frame's expectation is this module's own
 /// decoding of it, refusals included, so the fixture cannot disagree with Rust.
 pub fn golden_frames() -> serde_json::Value {
@@ -200,6 +210,7 @@ pub fn golden_frames() -> serde_json::Value {
             command: Some("echo hi".into()),
         },
         StreamControl::Resize { cols: 120, rows: 40 },
+        StreamControl::Focus { cols: 120, rows: 40 },
         StreamControl::CloseStdin,
     ];
     let mut client: Vec<_> = controls
@@ -210,6 +221,29 @@ pub fn golden_frames() -> serde_json::Value {
     client.push(json!({ "stdin": stdin, "frame": encode_data(StreamChannel::Stdin, &stdin) }));
 
     let statuses = [
+        StreamStatus::Terminal {
+            state: Box::new(TerminalState {
+                revision: 7,
+                reset: true,
+                cols: 120,
+                rows: 40,
+                cursor: capsem_proto::terminal::TerminalCursor {
+                    row: 3,
+                    col: 7,
+                    hidden: false,
+                },
+                modes: capsem_proto::terminal::TerminalModes::default(),
+                title: "agent".into(),
+                icon_name: "".into(),
+                bell_count: 1,
+                last_notification: Some(crate::TerminalNotification {
+                    id: "notice-1".into(),
+                    title: "Ready".into(),
+                    body: "Review output".into(),
+                }),
+                events: Vec::new(),
+            }),
+        },
         StreamStatus::Started,
         StreamStatus::Exit {
             code: 0,

@@ -10,6 +10,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+capsem-proto = { path = "../capsem-proto", version = "0.7.1", features = ["schema"] }
 base64.workspace = true
 capsem-crypto = { path = "../capsem-crypto", version = "0.7.1", default-features = false, features = ["secrets"] }
 serde.workspace = true

@@ -1,5 +1,5 @@
 //! HTTP wire contracts shared by the gateway and service.
-//! No runtime, filesystem, or service dependencies belong here.
+//! No VM runtime, filesystem, or service dependencies belong here.
 
 mod credentials;
 mod document;
@@ -57,3 +57,5 @@ pub use mcp::*;
 
 #[cfg(test)]
 mod tests;
+
+pub use capsem_proto::terminal::{TerminalNotification, TerminalSummary};

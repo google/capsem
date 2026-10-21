@@ -2,6 +2,7 @@
 
 import {z} from "zod";
 import type {VmSummary} from "../models/VmSummary.js";
+import {TerminalSummarySchema} from "./TerminalSummary.js";
 import {VmActionSchema} from "./VmAction.js";
 import {VmLifecycleStateSchema} from "./VmLifecycleState.js";
 
@@ -17,6 +18,7 @@ export const VmSummarySchema: z.ZodType<VmSummary> = z.object({
   "persistent": z.boolean(),
   "resume_blocked_reason": z.string().nullable().exactOptional(),
   "status": z.lazy(() => VmLifecycleStateSchema),
+  "terminal": z.union([z.null(), z.lazy(() => TerminalSummarySchema)]).exactOptional(),
   "total_estimated_cost": z.number().nullable().exactOptional(),
   "total_file_events": z.int().min(0).nullable().exactOptional(),
   "total_input_tokens": z.int().min(0).nullable().exactOptional(),

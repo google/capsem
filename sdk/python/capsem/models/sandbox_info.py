@@ -9,6 +9,7 @@ from pydantic import Field, StrictBool, StrictFloat, StrictInt, StrictStr
 from .model_base import Model
 from .session_db_status import SessionDbStatus
 from .storage_diagnostics import StorageDiagnostics
+from .terminal_summary import TerminalSummary
 from .vm_action import VmAction
 from .vm_ai_info import VmAiInfo
 from .vm_files_info import VmFilesInfo
@@ -42,6 +43,7 @@ class SandboxInfo(Model):
     size_bytes: Annotated[StrictInt, Field(ge=0)] | None = None
     status: VmLifecycleState
     storage: StorageDiagnostics | None = None
+    terminal: TerminalSummary | None = None
     total_estimated_cost: StrictFloat | None = None
     total_file_events: Annotated[StrictInt, Field(ge=0)] | None = None
     total_input_tokens: Annotated[StrictInt, Field(ge=0)] | None = None
