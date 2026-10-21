@@ -1,0 +1,6 @@
+# Capsem publishes tool updates as verified images; the image's user cannot
+# replace the root-owned npm installation from Codex's startup prompt.
+check_for_update_on_startup = false
+
+[mcp_servers.capsem]
+url = "http://mcp.capsem.internal/mcp"

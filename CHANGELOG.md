@@ -43,6 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The packaged Codex app uses image-managed updates instead of offering an
+  npm self-update that its unprivileged user cannot install.
+
 - Detached app terminals deliver keystrokes immediately without echoing
   terminal replies, and start with usable dimensions so agent interfaces draw.
 

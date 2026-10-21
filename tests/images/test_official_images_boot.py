@@ -65,6 +65,16 @@ def test_the_images_agent_reaches_capsem_mcp_over_http(service, tmp_path, name):
     _run_in_image(service, tmp_path, name, ["cat", MCP_CONFIGS[name]], MCP_URL)
 
 
+def test_codex_uses_the_managed_image_update_policy(service, tmp_path):
+    _run_in_image(service, tmp_path, "codex-cli", ["python3", "-c", (
+        "import pathlib, tomllib; "
+        "config = tomllib.loads(pathlib.Path('/home/capsem/.codex/config.toml').read_text()); "
+        "assert config['check_for_update_on_startup'] is False; "
+        "assert config['mcp_servers']['capsem']['url'] == 'http://mcp.capsem.internal/mcp'; "
+        "print('managed updates; MCP configured')"
+    )], "managed updates; MCP configured")
+
+
 CHROMIUM_PROCESSES = (
     # Each Chromium process: its pid, its pid in every PID namespace it is in
     # (NSpid, readable without ptrace access to a non-dumpable renderer), and
