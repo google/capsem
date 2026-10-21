@@ -46,6 +46,9 @@ REFERENCE_PATTERNS = {
         r"(?<![\w-])(?<!tests/)benchmarks/|['\"]benchmarks['\"]"
     ),
 }
+OWNED_WEB_PATH = re.compile(r"(?<![\w./-])web/(?:app|docs|marketing)/(?:[\w.-]+/)*[\w.-]+")
+
+
 STATIC_LITERAL = re.compile(
     r"['\"](/[^'\"?#]+[.](?:png|svg|ico|wasm|ttf|woff2?))(?:[?#][^'\"]*)?['\"]"
 )
@@ -124,6 +127,13 @@ def _text_sources(
     return sources
 
 
+def _without_owned_paths(line: str) -> str:
+    # Canonical docs contain src/content/docs; the second docs is not an old root.
+    return OWNED_WEB_PATH.sub(
+        lambda match: match[0] if ".." in match[0].split("/") else "", line
+    )
+
+
 def _legacy_references(sources: dict[str, str]) -> tuple[str, ...]:
     enums = contract_enums(sources)
     return tuple(
@@ -140,7 +150,7 @@ def _legacy_references(sources: dict[str, str]) -> tuple[str, ...]:
             for path, text in sources.items()
             for line in reference_source(path, text, enums).splitlines()
             for family, pattern in REFERENCE_PATTERNS.items()
-            if pattern.search(line)
+            if pattern.search(_without_owned_paths(line))
         )
     )
 
@@ -474,6 +484,11 @@ def test_tauri_icon_owner_and_duplicate_are_observed_red() -> None:
 
 def test_canonical_docs_paths_are_owned_and_retired_roots_still_fail() -> None:
     assert not _legacy_references({"example.md": "web/docs/src/content/guide.md"}), RATIONALE
+    canonical = "web/docs/src/content/docs/architecture/service-architecture.md"
+    assert not _legacy_references({"example.md": canonical}), RATIONALE
+    assert _legacy_references({"example.md": canonical + " docs/retired.md"}), RATIONALE
+    assert _legacy_references({"example.md": "archive/" + canonical}), RATIONALE
+    assert _legacy_references({"example.md": "web/docs/../../docs/retired.md"}), RATIONALE
     assert _legacy_references({"example.md": "docs/guide.md"}), RATIONALE
     assert _legacy_references({"example.md": "../docs/guide.md"}), RATIONALE
 
