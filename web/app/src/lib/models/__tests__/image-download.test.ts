@@ -26,6 +26,12 @@ it('keeps verification visible after all bytes arrive', () => {
   expect(view.valueText).toContain('Verifying');
 });
 
+it('keeps the last observation while the local download action settles', () => {
+  const last = { phase: ImageDownloadPhase.VERIFYING, completed_bytes: 1024, total_bytes: 1024 };
+  expect(imageDownloadView(undefined, last)).toMatchObject({ phase: 'Verifying', label: 'Verifying', percent: 100 });
+  expect(imageDownloadView(undefined)).toMatchObject({ phase: 'Preparing', percent: null });
+});
+
 it('never turns absent, zero or inconsistent totals into a fake full bar', () => {
   for (const total_bytes of [undefined, null, 0, 10]) {
     expect(imageDownloadView({ phase: ImageDownloadPhase.DOWNLOADING, completed_bytes: 20, total_bytes }).percent).toBeNull();

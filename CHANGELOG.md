@@ -61,6 +61,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep completed download verification visible until Launch replaces it,
+  avoiding a brief reset to preparation.
+
 - Keep incomplete catalog apps downloadable until their exact published
   filesystem is verified, including after a failed filesystem transfer.
 

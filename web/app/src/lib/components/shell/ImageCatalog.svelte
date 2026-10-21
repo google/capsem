@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { ImageCacheState, ImageSurface, type ImageInfo } from '@capsem/sdk';
+  import { ImageCacheState, ImageSurface, type ImageInfo, type ImageDownloadProgress } from '@capsem/sdk';
   import { getImages, pullImage, getContainerStatus, getBaseUrl, openSurface } from '../../api';
   import { vmStore } from '../../stores/vms.svelte';
   import { tabStore } from '../../stores/tabs.svelte';
@@ -18,6 +18,7 @@
   let error = $state<string | null>(null);
   let controller: AbortController | null = null;
   let caching = $state<string | null>(null);
+  let lastProgress = $state<ImageDownloadProgress | null>(null);
   let cacheError = $state<string | null>(null);
   let launching = $state<string | null>(null);
   let failedImage = $state<string | null>(null);
@@ -59,6 +60,7 @@
       return;
     }
     caching = image.name;
+    lastProgress = null;
     cacheError = null;
     failedImage = null;
     void load(false, true);
@@ -71,6 +73,7 @@
       cacheError = sessionActionError(e);
     } finally {
       caching = null;
+      lastProgress = null;
     }
   }
 
@@ -84,6 +87,8 @@
     try {
       const result = await getImages(request.signal, refresh);
       if (!request.signal.aborted) {
+        const progress = result.images.find(image => image.name === caching)?.progress;
+        if (progress) lastProgress = progress;
         images = result.images;
         // Cache observation runs outside the polled route. Follow its pending
         // result without repeatedly fetching the registry or hiding the cards.
@@ -127,7 +132,7 @@
   {:else}
     <div class="border border-card-line rounded-xl divide-y divide-card-line overflow-hidden">
       {#each availableImages as image (image.name)}
-        {@const download = imageDownloadView(image.progress)}
+        {@const download = imageDownloadView(image.progress, caching === image.name ? lastProgress : null)}
         <article class="px-4 py-3">
           <div class="flex items-center gap-3">
             <div class="min-w-0 flex-1">
