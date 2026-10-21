@@ -299,7 +299,14 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
             for fname in ["session.db", "serial.log", "process.log", "metadata.json"] {
                 let path = dir.path().join(fname);
                 let entry_path = format!("{bundle_root}/sessions/{id}/{fname}");
-                match fs::read(&path) {
+                let is_log = fname.ends_with(".log");
+                let contents = if is_log {
+                    read_tail(&path, MAX_LOG_TAIL_BYTES)
+                        .ok_or_else(|| std::io::Error::other("log stream unavailable or refused"))
+                } else {
+                    fs::read(&path)
+                };
+                match contents {
                     Ok(bytes) => {
                         // session.db is binary; don't redact. Logs get redacted unless --no-redact.
                         let bytes = if !no_redact && (fname.ends_with(".log") || fname.ends_with(".json")) {
@@ -315,7 +322,9 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
                             bytes: Some(len),
                             missing: false,
                             reason: None,
-                            truncated_to_last_bytes: None,
+                            truncated_to_last_bytes: (is_log
+                                && path.metadata().is_ok_and(|meta| meta.len() > MAX_LOG_TAIL_BYTES))
+                            .then_some(MAX_LOG_TAIL_BYTES),
                         });
                     }
                     Err(_) => {
@@ -324,7 +333,14 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
                             kind: "log",
                             bytes: None,
                             missing: true,
-                            reason: Some("file-not-found".into()),
+                            reason: Some(
+                                if is_log {
+                                    "log-stream-unavailable"
+                                } else {
+                                    "file-not-found"
+                                }
+                                .into(),
+                            ),
                             truncated_to_last_bytes: None,
                         });
                     }
@@ -709,7 +725,7 @@ fn read_tail(path: &Path, max_bytes: u64) -> Option<Vec<u8>> {
     // Delegates: the shared reader seeks to each file's tail, so guest console
     // output cannot decide how much memory `capsem support` allocates, and a
     // rotated stream resolves the same way it does for every other consumer.
-    capsem_foundation::telemetry::read_log_tail(path, max_bytes as usize).map(String::into_bytes)
+    capsem_foundation::telemetry::read_log_tail_bytes(path, max_bytes as usize)
 }
 
 fn config_diagnostics(home: &Path) -> serde_json::Value {

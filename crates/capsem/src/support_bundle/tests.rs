@@ -77,6 +77,36 @@ fn bundle_happy_path_writes_tar_gz_with_manifest() {
 }
 
 #[test]
+fn bundle_does_not_export_unrelated_files_through_session_log_links() {
+    let _guard = crate::lock_test_env();
+    let home = fake_capsem_home();
+    let session = home.path().join("sessions/vm-linked-log");
+    fs::create_dir_all(&session).unwrap();
+    write(&session.join("process.log"), b"legitimate process fixture\n");
+    let outside = home.path().join("unrelated-file");
+    let marker = b"UNRELATED_HOST_FIXTURE_DO_NOT_EXPORT";
+    write(&outside, marker);
+    let linked = session.join("serial.log");
+    for hard_link in [false, true] {
+        if hard_link {
+            fs::hard_link(&outside, &linked).unwrap();
+        } else {
+            std::os::unix::fs::symlink(&outside, &linked).unwrap();
+        }
+        let bundle = crate::support_bundle::run(None, 3, false, false).unwrap();
+        let entries = read_tar_entries(&bundle);
+        assert!(entries
+            .iter()
+            .any(|(name, bytes)| name.ends_with("process.log") && bytes == b"legitimate process fixture\n"));
+        assert!(entries
+            .iter()
+            .all(|(_, bytes)| !bytes.windows(marker.len()).any(|window| window == marker)));
+        fs::remove_file(&linked).unwrap();
+    }
+    assert_eq!(fs::read(outside).unwrap(), marker);
+}
+
+#[test]
 fn bundle_redacts_secrets_in_settings_toml() {
     let _g = crate::lock_test_env();
     let _dir = fake_capsem_home();

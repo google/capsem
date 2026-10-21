@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Support bundles refuse redirected session logs and export bounded log tails
+  without changing unrelated binary bytes.
+
 - Refuse linked and oversized terminal transcripts before reading or appending,
   preventing a confined VM owner from redirecting privileged transcript access.
 
