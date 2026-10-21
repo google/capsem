@@ -43,6 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Resolve VM asset and share paths before host confinement, preventing macOS
+  disk-image failures when development assets are reached through directory aliases.
+
 - Plain URLs and explicit hyperlinks in terminals open in the browser,
   including agent sign-in links, through the app's validated web-link opener.
 

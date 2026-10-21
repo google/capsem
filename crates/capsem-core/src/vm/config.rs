@@ -401,7 +401,7 @@ impl VmConfigBuilder {
         Ok(())
     }
 
-    pub fn build(self) -> Result<VmConfig, ConfigError> {
+    pub fn build(mut self) -> Result<VmConfig, ConfigError> {
         if self.cpu_count < MIN_CPU || self.cpu_count > MAX_CPU {
             return Err(ConfigError::CpuOutOfRange(self.cpu_count));
         }
@@ -446,7 +446,7 @@ impl VmConfigBuilder {
 
         // Validate VirtioFS shares
         let mut seen_tags = std::collections::HashSet::new();
-        for share in &self.virtio_fs_shares {
+        for share in &mut self.virtio_fs_shares {
             if share.tag.is_empty() || share.tag.len() > 36 || !share.tag.is_ascii() {
                 return Err(ConfigError::InvalidVirtioFsTag(share.tag.clone()));
             }
@@ -456,15 +456,20 @@ impl VmConfigBuilder {
             if !share.host_path.is_dir() {
                 return Err(ConfigError::MissingVirtioFsDir(share.host_path.clone()));
             }
+            share.host_path = share.host_path.canonicalize()?;
         }
 
         Ok(VmConfig {
             cpu_count: self.cpu_count,
             ram_bytes: self.ram_bytes,
-            kernel_path,
-            initrd_path: self.initrd_path,
-            disk_path: self.disk_path,
-            scratch_disk_path: self.scratch_disk_path,
+            // Owner confinement grants canonical resources. Resolve aliases
+            // before confinement so the hypervisor opens those same paths.
+            // DiskImages2 can throw a C++ exception when stat of an alias is
+            // denied, rather than returning the documented NSError.
+            kernel_path: kernel_path.canonicalize()?,
+            initrd_path: self.initrd_path.map(std::fs::canonicalize).transpose()?,
+            disk_path: self.disk_path.map(std::fs::canonicalize).transpose()?,
+            scratch_disk_path: self.scratch_disk_path.map(std::fs::canonicalize).transpose()?,
             virtio_fs_shares: self.virtio_fs_shares,
             kernel_cmdline: self.kernel_cmdline,
             expected_kernel_hash: self.expected_kernel_hash,

@@ -9,7 +9,7 @@ fn temp_file(name: &str) -> PathBuf {
     let path = dir.join(name);
     let mut f = std::fs::File::create(&path).unwrap();
     f.write_all(b"fake").unwrap();
-    path
+    path.canonicalize().unwrap()
 }
 
 // --- valid configs ---
@@ -630,4 +630,35 @@ fn x86_default_boot_keeps_dma_bouncing_with_a_small_initial_pool() {
         .filter(|flag| flag.starts_with("swiotlb="))
         .collect();
     assert_eq!(pools, ["swiotlb=2048"], "bouncing must not be disabled or overridden");
+}
+
+#[test]
+fn resolves_asset_and_share_aliases_before_host_confinement() {
+    let root = tempfile::tempdir().unwrap();
+    let actual = root.path().join("actual");
+    std::fs::create_dir(&actual).unwrap();
+    for file in ["kernel", "initrd", "disk", "scratch"] {
+        std::fs::write(actual.join(file), b"fake").unwrap();
+    }
+    let alias = root.path().join("alias");
+    std::os::unix::fs::symlink(&actual, &alias).unwrap();
+    let config = VmConfig::builder()
+        .kernel_path(alias.join("kernel"))
+        .initrd_path(alias.join("initrd"))
+        .disk_path(alias.join("disk"))
+        .scratch_disk_path(alias.join("scratch"))
+        .virtio_fs_share("workspace", &alias, false)
+        .build()
+        .unwrap();
+    assert_eq!(config.kernel_path, actual.join("kernel").canonicalize().unwrap());
+    assert_eq!(
+        config.initrd_path.unwrap(),
+        actual.join("initrd").canonicalize().unwrap()
+    );
+    assert_eq!(config.disk_path.unwrap(), actual.join("disk").canonicalize().unwrap());
+    assert_eq!(
+        config.scratch_disk_path.unwrap(),
+        actual.join("scratch").canonicalize().unwrap()
+    );
+    assert_eq!(config.virtio_fs_shares[0].host_path, actual.canonicalize().unwrap());
 }
