@@ -44,7 +44,7 @@ urlencoding = "2"
 tempfile = "3"
 
 [dev-dependencies]
-tokio-tungstenite = "0.29.0"
+tokio-tungstenite = "0.30.0"
 
 [lints]
 workspace = true

@@ -85,12 +85,22 @@ def test_private_backend_materializes_dependencies_and_prints_exact_image(
         lambda path: loaded_config,
     )
 
-    def fake_materialize(config, arch, *, template, repo_root) -> AssetDependencyImage:
+    def fake_materialize(
+        config,
+        arch,
+        *,
+        template,
+        repo_root,
+        private_registry,
+        private_source,
+    ) -> AssetDependencyImage:
         calls.update(
             config=config,
             arch=arch,
             template=template,
             repo_root=repo_root,
+            private_registry=private_registry,
+            private_source=private_source,
         )
         return AssetDependencyImage(
             reference="capsem-kernel-dependencies-arm64:fixture",
@@ -118,6 +128,10 @@ def test_private_backend_materializes_dependencies_and_prints_exact_image(
             "--template",
             "kernel",
             "--materialize-dependencies",
+            "--private-image-registry",
+            "ghcr.io/google/capsem-ci",
+            "--private-image-source",
+            "https://github.com/google/capsem",
         ],
     )
 
@@ -128,6 +142,8 @@ def test_private_backend_materializes_dependencies_and_prints_exact_image(
         "arch": "arm64",
         "template": "kernel",
         "repo_root": tmp_path,
+        "private_registry": "ghcr.io/google/capsem-ci",
+        "private_source": "https://github.com/google/capsem",
     }
     assert capsys.readouterr().out == "sha256:materialized\n"
     assert declared == [(loaded_config, "capsem-kernel-dependencies-arm64:fixture", tmp_path)]

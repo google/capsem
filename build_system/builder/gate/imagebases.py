@@ -1,9 +1,4 @@
-"""Exact container bases for guest image builds.
-
-The Docker daemon is the declared container-fetch boundary.  The gate itself
-stays inside its kernel sandbox, asks the daemon for immutable child manifests,
-then runs every image build from those locally materialized inputs.
-"""
+"""Exact Docker-materialized container bases for guest image builds."""
 
 from __future__ import annotations
 
@@ -20,6 +15,7 @@ from .context import Context
 from .docker import Docker
 from .errors import GateError
 from .imageidentity import require_input_key
+from .privateimagecache import try_import_tag
 from .proc import Runner
 
 
@@ -74,8 +70,7 @@ def prefetch(
     if asset_tools and config.host_arch().name not in base_names:
         base_names.append(config.host_arch().name)
     for name, arch in selected(config, base_names):
-        # Asset Dockerfiles copy CA certificates from the target's Rust child.
-        # Cross-compiling with the host's child does not materialize that input.
+        # Assets copy CA certificates from the target Rust child.
         for subject, reference in (
             ("guest base", arch.base_image),
             ("asset truststore", arch.rust_builder_base_image),
@@ -85,10 +80,8 @@ def prefetch(
             else:
                 docker.pull(reference, platform=arch.docker_platform)
 
-    # The Rust builder base is the *host* platform's exact child even for a
-    # foreign target, because a foreign target is cross-compiled rather than
-    # emulated. Two requested architectures therefore normally resolve to one
-    # pull, which `image_exists` collapses on the second.
+    # Foreign targets are cross-compiled with the host platform's exact child;
+    # `image_exists` collapses the shared pull.
     build = build_config(config)
     rust_scope = names if rust_names is None else rust_names
     for name, _arch in selected(config, rust_scope):
@@ -96,10 +89,7 @@ def prefetch(
         if docker.image_exists(resolved.base_image, platform=resolved.docker_platform):
             runner.note(f"exact {name} Rust builder base is already present: {resolved.base_image}")
         else:
-            docker.pull(
-                resolved.base_image,
-                platform=resolved.docker_platform,
-            )
+            docker.pull(resolved.base_image, platform=resolved.docker_platform)
 
 
 def materialize_asset_tools(runner: Runner, config: GateConfig) -> None:
@@ -115,6 +105,14 @@ def materialize_asset_tools(runner: Runner, config: GateConfig) -> None:
             "run guest base prefetch first"
         )
     tag = assettools.image_tag(build, name, config.root)
+    if not docker.image_exists(tag, platform=arch.docker_platform):
+        try_import_tag(
+            runner,
+            config,
+            tag=tag,
+            platform=arch.docker_platform,
+            identity_label=assettools.INPUT_KEY_LABEL,
+        )
     if docker.image_exists(tag, platform=arch.docker_platform):
         require_input_key(
             docker,
@@ -163,16 +161,36 @@ def materialize_rust_builders(
                 f"{resolved.base_image}; run guest base prefetch first"
             )
         builder = image_tag(build, name, config.root)
+        if not docker.image_exists(builder, platform=resolved.docker_platform):
+            try_import_tag(
+                runner,
+                config,
+                tag=builder,
+                platform=resolved.docker_platform,
+                identity_label=guestbuilder.INPUT_KEY_LABEL,
+            )
         if docker.image_exists(builder, platform=resolved.docker_platform):
+            require_input_key(
+                docker,
+                builder,
+                label=guestbuilder.INPUT_KEY_LABEL,
+                subject=f"{name} guest Rust builder",
+            )
             runner.note(f"locked {name} guest Rust builder is already present: {builder}")
         else:
             docker.build(
                 tag=builder,
                 dockerfile=config.path(build.guest_rust_builder.dockerfile).as_posix(),
                 context=str(config.root),
-                args=build_arguments(resolved),
+                args=build_arguments(resolved, builder),
                 platform=resolved.docker_platform,
                 network=build.materialize_network,
+            )
+            require_input_key(
+                docker,
+                builder,
+                label=guestbuilder.INPUT_KEY_LABEL,
+                subject=f"{name} guest Rust builder",
             )
         exact_id = docker.image_id(builder, platform=resolved.docker_platform)
         runner.note(f"sealed {name} guest Rust builder identity: {builder} -> {exact_id}")
@@ -214,8 +232,6 @@ class Prefetch(Action, name="guest-base-prefetch"):
 
 
 class MaterializeRustBuilders(Action, name="guest-rust-builder-materialize"):
-    """Build the locked helper images at the preflight's network-open edge."""
-
     def __init__(self, names: Iterable[str] | None = None) -> None:
         self._names = tuple(names) if names is not None else None
 
@@ -228,8 +244,6 @@ class MaterializeRustBuilders(Action, name="guest-rust-builder-materialize"):
 
 
 class RequireRustBuilders(Action, name="guest-rust-builder-require"):
-    """Prove a carried materializer's exact local images still exist."""
-
     def __init__(self, names: Iterable[str] | None = None) -> None:
         self._names = tuple(names) if names is not None else None
 
@@ -245,11 +259,15 @@ class RequireRustBuilders(Action, name="guest-rust-builder-require"):
             builder = image_tag(build, name, context.config.root)
             if not docker.image_exists(builder, platform=resolved.docker_platform):
                 raise GateError(f"locked guest Rust builder is missing: {builder}")
+            require_input_key(
+                docker,
+                builder,
+                label=guestbuilder.INPUT_KEY_LABEL,
+                subject=f"carried {name} guest Rust builder",
+            )
 
 
 class MaterializeAssetTools(Action, name="asset-tools-materialize"):
-    """Build the one host-native helper before publishable post-processing."""
-
     def render(self) -> str:
         return "materialize locked host EROFS and CycloneDX tools"
 

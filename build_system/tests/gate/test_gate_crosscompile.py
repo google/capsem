@@ -717,6 +717,10 @@ def test_package_helper_is_host_native_and_target_specific(
     from capsem_builder.gate.packagebuilder import materialize
 
     monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: host_name)
+    monkeypatch.setattr(
+        "capsem_builder.gate.packagebuilder.try_import_previous",
+        lambda *_args, **_kwargs: "capsem-package-builder-cache:previous",
+    )
     root = _checkout(tmp_path)
     config = gate_config.load(root)
     host = config.arch(host_name)
@@ -742,6 +746,7 @@ def test_package_helper_is_host_native_and_target_specific(
     build = str(build_command)
     assert f"--platform {host.docker_platform}" in build
     assert "--network default" in build
+    assert "--cache-from capsem-package-builder-cache:previous" in build
     assert f"BASE=capsem-host-builder@sha256:{'0' * 64}" in build
     assert f"BASE=sha256:{'0' * 64}" not in build
     assert f"RUST_TARGET={target.rust_target}" in build
@@ -766,6 +771,7 @@ def test_package_helper_is_host_native_and_target_specific(
     from capsem_builder.gate.invocation import ConsoleMode
 
     assert build_command.console is ConsoleMode.LOG_ONLY
+    assert build_command.timeout_seconds == config.apt_snapshot.install_timeout_seconds
 
 
 def test_package_helper_key_uses_the_platform_child_not_the_provenance_index(

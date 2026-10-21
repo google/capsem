@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Refresh the Rust and Python trust stores after the emSign intermediate-key
+  compromise, and update WebSocket TLS dependencies to the patched root cohort.
+
+- Upgrade the MCP SDK to 1.32.0 and pin Vite 8.3.3 across every Node project,
+  fixing task-session authorization and Windows command-argument injection flaws.
+
+- Upgrade Hono to 4.13.11 in the MCP package lock, fixing a double-decoding
+  static-path middleware bypass.
+
 - Upgrade aiohttp to 3.14.5 across shipped Python locks and the debug image,
   fixing request-header timeout and connection resource-exhaustion advisories.
 
@@ -24,6 +33,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and one connected stream descriptor before service adoption or switch grants.
 
 ### Fixed
+
+- Official image publication canonicalizes cdxgen's lowercase SPDX identifiers,
+  allowing the Claude Desktop OBOM, image index, and catalog to publish.
 
 - OCI workspaces retain the workload's full UID/GID range while mapping stable
   VirtioFS metadata to the image user, so `chown` and archive extraction work.
@@ -136,6 +148,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Refresh SDK API references from 0.7.1, document Python timeout recovery,
   distinguish published packages from source installs, and render the Rust
   onboarding example without doctest scaffolding.
+- Local and hosted qualification now reuse exact, validated private GHCR
+  generations for network-open build helpers before the deterministic local
+  fallback; a weekly publisher retains three generations per platform.
 
 - Define diagram colors with shared semantic Tailwind tokens, include color meanings in each Legend, and distinguish process boundaries from permission levels.
 

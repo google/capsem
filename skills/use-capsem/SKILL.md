@@ -45,7 +45,7 @@ Do not attach a private network, publish ports, mount host paths, or inject
 credentials unless the user's task needs that access.
 
 The [static triage guide](https://docs.capsem.org/guides/users/analyze-a-file-with-an-agent/)
-uses an inert fixture and the bundled `scripts/triage.py` helper. It produces
+uses an inert fixture and the bundled `skills/use-capsem/scripts/triage.py` helper. It produces
 hashes, format hints, printable strings, and URL indicators. Those facts do not
 establish that a file is malware or safe. Dynamic execution is a separate task.
 

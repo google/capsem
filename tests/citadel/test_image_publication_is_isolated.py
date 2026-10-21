@@ -1,9 +1,10 @@
-"""Citadel guard: only the image workflow publishes images, and it does so alone.
+"""Citadel guard: image publishers stay isolated by purpose and scheduling.
 
 The official OCI images under `images/` are built and pushed by
-`.github/workflows/images.yaml`, and by nothing else. Why, and what each
-check below refuses, is in `IMAGE_PUBLICATION_RATIONALE` -- stated there so a
-violation prints it rather than a bare assertion.
+`.github/workflows/images.yaml`. Exact private build helpers are published by
+`.github/workflows/private-images.yaml`. Why, and what each check below
+refuses, is in `IMAGE_PUBLICATION_RATIONALE` -- stated there so a violation
+prints it rather than a bare assertion.
 
 Every predicate here is pure over workflow text, so the adversarial cases at
 the bottom drive the same code the sweep does.
@@ -21,12 +22,15 @@ import yaml
 from helpers.workflow_contract import canonical_shell_commands
 
 IMAGE_PUBLICATION_RATIONALE = """\
-Official images are published by .github/workflows/images.yaml and nothing else.
+Official images are published by .github/workflows/images.yaml. Exact private
+build helpers are published by .github/workflows/private-images.yaml. No other
+workflow writes packages.
 
 `packages: write` lets a job push, overwrite or retag anything under
 ghcr.io/google/capsem -- the images every Capsem session boots. A token that
-can do that belongs to one workflow, granted per publishing job, so the set of
-code that can replace a published image is one file a reviewer can read.
+can do that belongs only to the two purpose-built publishers, granted per
+publishing job, so the set of code that can replace a published image is small
+and reviewable.
 Granted to a trunk workflow, every PR-triggered dependency, action and script
 in that workflow inherits it. `write-all` grants it too, and counts.
 
@@ -36,19 +40,26 @@ published without the input key, smoke test, OBOM, EROFS, provenance and
 append-only catalog that images.yaml attaches to every version, and a second
 publisher is a second opinion about what is current.
 
-images.yaml never shares a concurrency group with another workflow. A shared
+Neither publisher shares a concurrency group with another workflow. A shared
 group would queue a PR's gate behind a multi-hour image build, or -- with
-cancel-in-progress -- let one cancel the other half way through a catalog
-publication. Its group is a literal, so no expression can evaluate into a
-trunk group, and no trunk group's literal prefix may cover it.
+cancel-in-progress -- let one cancel the other half way through a publication.
+Publisher groups are literals, so no expression can evaluate into one, and no
+trunk group's literal prefix may cover one.
 
-See .github/workflows/images.yaml and images/ci/.
+The helper publisher may materialize only input-keyed build dependencies under
+ghcr.io/google/capsem-ci; it must never touch `images/` or the official
+ghcr.io/google/capsem namespace.
+
+See .github/workflows/images.yaml, .github/workflows/private-images.yaml and
+images/ci/.
 """
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = PROJECT_ROOT / ".github" / "workflows"
 IMAGES_WORKFLOW = "images.yaml"
-REGISTRY = "ghcr.io/google/capsem"
+PRIVATE_IMAGES_WORKFLOW = "private-images.yaml"
+PUBLISH_WORKFLOWS = frozenset({IMAGES_WORKFLOW, PRIVATE_IMAGES_WORKFLOW})
+OFFICIAL_REGISTRY = re.compile(r"ghcr\.io/google/capsem(?=[:/\s\"']|$)")
 EXPRESSION = "${{"
 
 #: `images/` as a path from the repository root, however it is reached: bare,
@@ -123,7 +134,7 @@ def official_image_references(text: str) -> list[str]:
             value.strip().splitlines()[0] if value.strip() else value
             for value in _strings(document)
             if IMAGES_PATH.search(value)
-            or REGISTRY in value
+            or OFFICIAL_REGISTRY.search(value)
             or f"workflows/{IMAGES_WORKFLOW}" in value
         }
     )
@@ -164,13 +175,13 @@ def _read(path: Path) -> str:
 
 
 def _trunk() -> list[Path]:
-    return [path for path in workflow_paths() if path.name != IMAGES_WORKFLOW]
+    return [path for path in workflow_paths() if path.name not in PUBLISH_WORKFLOWS]
 
 
 def test_the_sweep_sees_the_workflows() -> None:
     """A guard over an empty directory, or one missing images.yaml, holds nothing."""
     names = {path.name for path in workflow_paths()}
-    assert IMAGES_WORKFLOW in names
+    assert names >= PUBLISH_WORKFLOWS
     assert {"ci.yaml", "fast-gate.yaml", "release.yaml"} <= names
 
 
@@ -178,40 +189,67 @@ def test_the_sweep_sees_the_workflows() -> None:
 def test_no_trunk_workflow_can_write_packages(workflow: Path) -> None:
     grants = packages_write_grants(_read(workflow))
     assert not grants, (
-        IMAGE_PUBLICATION_RATIONALE + f"\n{workflow.name} grants packages: write at {grants}."
+        IMAGE_PUBLICATION_RATIONALE
+        + f"\n{workflow.name} grants packages: write at {grants}."
     )
 
 
-def test_the_image_workflow_writes_packages_only_where_it_publishes() -> None:
-    text = _read(WORKFLOWS / IMAGES_WORKFLOW)
+@pytest.mark.parametrize("name", sorted(PUBLISH_WORKFLOWS))
+def test_publisher_workflows_write_packages_only_in_publishing_jobs(name: str) -> None:
+    text = _read(WORKFLOWS / name)
     grants = packages_write_grants(text)
     assert "workflow" not in grants, (
         IMAGE_PUBLICATION_RATIONALE
-        + "\nimages.yaml must default to read-only and grant packages: write per job."
+        + f"\n{name} must default to read-only and grant packages: write per job."
     )
-    assert grants, "images.yaml publishes images, so some job must hold packages: write"
+    assert grants, f"{name} publishes images, so some job must hold packages: write"
 
 
 @pytest.mark.parametrize("workflow", _trunk(), ids=lambda path: path.name)
 def test_no_trunk_workflow_builds_official_images(workflow: Path) -> None:
     references = official_image_references(_read(workflow))
     assert not references, (
-        IMAGE_PUBLICATION_RATIONALE + f"\n{workflow.name} reaches the official images: {references}"
+        IMAGE_PUBLICATION_RATIONALE
+        + f"\n{workflow.name} reaches the official images: {references}"
     )
 
 
-def test_the_image_workflow_shares_no_concurrency_group() -> None:
-    images = concurrency_groups(_read(WORKFLOWS / IMAGES_WORKFLOW))
-    assert images, IMAGE_PUBLICATION_RATIONALE + "\nimages.yaml must declare its own group."
-    assert all(EXPRESSION not in group for group in images), (
-        IMAGE_PUBLICATION_RATIONALE + f"\nimages.yaml groups must be literal: {images}"
+def test_private_helper_publisher_cannot_reach_official_images() -> None:
+    references = official_image_references(_read(WORKFLOWS / PRIVATE_IMAGES_WORKFLOW))
+    assert not references, (
+        IMAGE_PUBLICATION_RATIONALE
+        + f"\n{PRIVATE_IMAGES_WORKFLOW} reaches official images: {references}"
+    )
+
+
+def test_publishers_share_no_concurrency_group() -> None:
+    publisher_groups = {
+        name: concurrency_groups(_read(WORKFLOWS / name)) for name in PUBLISH_WORKFLOWS
+    }
+    assert all(publisher_groups.values()), (
+        IMAGE_PUBLICATION_RATIONALE + f"\nPublisher groups: {publisher_groups}"
+    )
+    assert all(
+        EXPRESSION not in group
+        for groups in publisher_groups.values()
+        for group in groups
+    ), (
+        IMAGE_PUBLICATION_RATIONALE
+        + f"\nPublisher groups must be literal: {publisher_groups}"
+    )
+    flat = [group for groups in publisher_groups.values() for group in groups]
+    assert len(flat) == len(set(flat)), (
+        IMAGE_PUBLICATION_RATIONALE + f"\nPublisher groups collide: {publisher_groups}"
     )
     collisions = [
-        f"{path.name}: {collision}"
+        f"{path.name}: {publisher}: {collision}"
         for path in _trunk()
-        for collision in colliding_groups(images, concurrency_groups(_read(path)))
+        for publisher, groups in publisher_groups.items()
+        for collision in colliding_groups(groups, concurrency_groups(_read(path)))
     ]
-    assert not collisions, IMAGE_PUBLICATION_RATIONALE + f"\nShared groups: {collisions}"
+    assert not collisions, (
+        IMAGE_PUBLICATION_RATIONALE + f"\nShared groups: {collisions}"
+    )
 
 
 # --- adversarial cases: the predicates above must see each of these ---------
@@ -240,7 +278,9 @@ jobs:
         (JOB_LEVEL_WRITE.replace("packages: write", "packages: read"), []),
     ],
 )
-def test_packages_write_is_seen_wherever_it_is_granted(text: str, where: list[str]) -> None:
+def test_packages_write_is_seen_wherever_it_is_granted(
+    text: str, where: list[str]
+) -> None:
     assert packages_write_grants(text) == where
 
 
@@ -276,7 +316,10 @@ def test_official_images_are_seen_outside_run_bodies() -> None:
                 "build": {
                     "runs-on": "x",
                     "steps": [
-                        {"uses": "example/build-push-action@x", "with": {"context": "images/dev"}}
+                        {
+                            "uses": "example/build-push-action@x",
+                            "with": {"context": "images/dev"},
+                        }
                     ],
                 },
                 "call": {"uses": "./.github/workflows/images.yaml"},
@@ -308,6 +351,11 @@ def test_other_directories_named_images_are_not_official_images(body: str) -> No
         ("ci-${{ github.ref }}", False),
     ],
 )
-def test_a_shared_or_covering_concurrency_group_is_seen(other: str, collides: bool) -> None:
+def test_a_shared_or_covering_concurrency_group_is_seen(
+    other: str, collides: bool
+) -> None:
     text = f"on: push\nconcurrency:\n  group: {other}\njobs: {{}}\n"
-    assert bool(colliding_groups(["capsem-official-images"], concurrency_groups(text))) is collides
+    assert (
+        bool(colliding_groups(["capsem-official-images"], concurrency_groups(text)))
+        is collides
+    )

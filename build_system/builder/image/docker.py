@@ -29,6 +29,7 @@ from ..policy.dockerpolicy import (
     require_build_network,
     require_container_network,
 )
+from ..privateimages import SOURCE_LABEL, PrivateImage
 from ..release.obom import ObomSubject, validate_exported_rootfs_obom
 from . import assetdependencies, componentcache, guestbinarycache, guestbuilder
 from .assettools import image_tag as asset_tools_image_tag
@@ -37,7 +38,13 @@ from .guestbuilder import image_tag
 from .models import BuildConfig, ErofsConfig, GuestImageConfig, RootfsConfig
 
 TEMPLATES_DIR = Path(__file__).resolve().parents[3] / "config" / "docker"
-CLOCK_SYNC_SCRIPT = Path(__file__).resolve().parents[3] / "build_system" / "scripts" / "build" / "sync-container-clock.py"
+CLOCK_SYNC_SCRIPT = (
+    Path(__file__).resolve().parents[3]
+    / "build_system"
+    / "scripts"
+    / "build"
+    / "sync-container-clock.py"
+)
 BOOT_ASSETS = ("vmlinuz", "initrd.img")
 ROOTFS_ASSET_PREFERENCE = ("rootfs.erofs",)
 OBOM_ASSET = "obom.cdx.json"
@@ -219,11 +226,12 @@ def run_cmd(
     capture: bool = False,
     echo: bool = True,
     timeout: float | None = None,
+    check: bool = True,
 ) -> subprocess.CompletedProcess[str]:
     """Run a subprocess command. Single mock seam for tests."""
     if echo:
         print(f"  -> {' '.join(str(c) for c in cmd)}")
-    kwargs: dict[str, Any] = {"check": True, "text": True}
+    kwargs: dict[str, Any] = {"check": check, "text": True}
     if cwd:
         kwargs["cwd"] = str(cwd)
     if capture:
@@ -375,7 +383,7 @@ def _asset_dependency_template(config: GuestImageConfig, template: str) -> str:
     raise ValueError(f"unsupported asset dependency template: {template}")
 
 
-def _asset_dependency_tag(
+def asset_dependency_tag(
     config: GuestImageConfig,
     arch_name: str,
     template: str,
@@ -400,7 +408,7 @@ def require_asset_dependencies(
     template: str,
 ) -> assetdependencies.AssetDependencyImage:
     """Bind one input-keyed runnable reference to its exact local image ID."""
-    tag = _asset_dependency_tag(config, arch_name, template)
+    tag = asset_dependency_tag(config, arch_name, template)
     arch = config.build.architectures[arch_name]
     result = run_cmd(
         [
@@ -432,12 +440,66 @@ def require_asset_dependencies(
     return assetdependencies.AssetDependencyImage(reference=tag, image_id=image_id)
 
 
+def _try_import_asset_dependencies(
+    runtime: str,
+    image: PrivateImage,
+    *,
+    registry: str | None,
+    source: str | None,
+) -> bool:
+    """Reuse a private exact generation while preserving the cold fallback."""
+    if registry is None or source is None:
+        return False
+    remote = image.remote(registry)
+    pulled = run_cmd(
+        [runtime, "pull", "--platform", image.platform, remote],
+        capture=True,
+        echo=False,
+        check=False,
+    )
+    if pulled.returncode != 0:
+        return False
+    run_cmd([runtime, "tag", remote, image.local])
+    inspected = run_cmd(
+        [
+            runtime,
+            "image",
+            "inspect",
+            "--format",
+            (
+                "{{.Os}}/{{.Architecture}}\t{{.Id}}\t"
+                f'{{{{ index .Config.Labels "{image.identity_label}" }}}}\t'
+                f'{{{{ index .Config.Labels "{SOURCE_LABEL}" }}}}'
+            ),
+            image.local,
+        ],
+        capture=True,
+    ).stdout.strip()
+    fields = inspected.split("\t")
+    valid = (
+        len(fields) == 4
+        and fields[0] == image.platform
+        and fields[1].startswith("sha256:")
+        and fields[2] == image.identity
+        and fields[3] == source
+    )
+    if not valid:
+        remove_image(runtime, image.local)
+        remove_image(runtime, remote)
+        return False
+    remove_image(runtime, remote)
+    print(f"  reused private image generation: {remote}")
+    return True
+
+
 def materialize_asset_dependencies(
     config: GuestImageConfig,
     arch_name: str,
     *,
     template: str,
     repo_root: Path | None = None,
+    private_registry: str | None = None,
+    private_source: str | None = None,
 ) -> assetdependencies.AssetDependencyImage:
     """Build one input-keyed network-open helper before the sealed source lane."""
     import tempfile
@@ -445,7 +507,7 @@ def materialize_asset_dependencies(
     if repo_root is None:
         repo_root = Path.cwd()
     runtime = detect_runtime()
-    tag = _asset_dependency_tag(config, arch_name, template)
+    tag = asset_dependency_tag(config, arch_name, template)
     try:
         run_cmd([runtime, "image", "inspect", tag], capture=True)
     except subprocess.CalledProcessError:
@@ -454,6 +516,20 @@ def materialize_asset_dependencies(
         return require_asset_dependencies(runtime, config, arch_name, template)
 
     arch = config.build.architectures[arch_name]
+    cached = PrivateImage(
+        local=tag,
+        platform=arch.docker_platform,
+        generation=tag.rsplit(":", 1)[1],
+        identity_label=assetdependencies.INPUT_KEY_LABEL,
+        identity=tag,
+    )
+    if _try_import_asset_dependencies(
+        runtime,
+        cached,
+        registry=private_registry,
+        source=private_source,
+    ):
+        return require_asset_dependencies(runtime, config, arch_name, template)
     build_tmp = repo_root / "cache" / "tmp"
     build_tmp.mkdir(parents=True, exist_ok=True)
     dependency_template = _asset_dependency_template(config, template)
@@ -1026,10 +1102,17 @@ def _normalize_cyclonedx_obom(
         if isinstance(value, dict):
             normalized = {key: normalize(item) for key, item in value.items()}
             license_value = normalized.get("license")
-            if isinstance(license_value, dict) and license_value.get("id") == "sendmail":
-                # cdxgen 12.7.0 emits Debian's lowercase spelling, while the
-                # SPDX identifier embedded in the CycloneDX schema is Sendmail.
-                license_value["id"] = "Sendmail"
+            if isinstance(license_value, dict):
+                # cdxgen 12.7.0 copies these Debian copyright spellings as
+                # license IDs. SPDX IDs are case-sensitive, so CycloneDX's
+                # strict schema rejects the otherwise valid OBOM.
+                spdx_id = license_value.get("id")
+                canonical = {
+                    "bitstream-vera": "Bitstream-Vera",
+                    "sendmail": "Sendmail",
+                }.get(spdx_id)
+                if canonical is not None:
+                    license_value["id"] = canonical
             return normalized
         return value
 
@@ -1475,9 +1558,7 @@ def _restore_canonical_assets_from_existing_manifest(
                 auditfs.stage(alias, canonical)
 
 
-def generate_checksums(
-    output_dir: Path, version: str, *, arches: list[str] | None = None
-) -> Path:
+def generate_checksums(output_dir: Path, version: str, *, arches: list[str] | None = None) -> Path:
     """Generate checksums for selected architectures, or all assets if omitted."""
     if arches is not None and (
         not arches or any(arch not in {"arm64", "x86_64"} for arch in arches)
@@ -1647,14 +1728,7 @@ def prepare_build_context(
     if template_name == "Dockerfile.rootfs.j2":
         # CA cert
         shutil.copy2(
-            str(
-                repo_root
-                / "crates"
-                / "capsem-core"
-                / "resources"
-                / "ca"
-                / "capsem-ca.crt"
-            ),
+            str(repo_root / "crates" / "capsem-core" / "resources" / "ca" / "capsem-ca.crt"),
             str(context_dir / "capsem-ca.crt"),
         )
         artifacts = guest_dir / "artifacts"
@@ -1775,16 +1849,16 @@ def build_image(
             )
             build_inputs["dependency_image"] = dependency_image.as_record()
             component_identity = componentcache.build_identity(build_inputs)
-            restored = componentcache.restore(
-                repo_root, "kernel", component_identity, arch_output
-            )
+            restored = componentcache.restore(repo_root, "kernel", component_identity, arch_output)
             if restored is not None:
                 _append_build_ledger(
                     arch_output,
                     {
                         "stage": "kernel.cache_hit",
                         "input_digest": component_identity,
-                        "outputs": [_file_ledger_entry(path, base=arch_output) for path in restored],
+                        "outputs": [
+                            _file_ledger_entry(path, base=arch_output) for path in restored
+                        ],
                     },
                 )
                 print(f"  reused kernel component {component_identity}")
@@ -1864,21 +1938,23 @@ def build_image(
                 runtime=runtime,
             )
             build_inputs["dependency_image"] = dependency_image.as_record()
-            build_inputs["asset_tools_image"] = asset_tools_image = _asset_tools_image(config, repo_root)
+            build_inputs["asset_tools_image"] = asset_tools_image = _asset_tools_image(
+                config, repo_root
+            )
             rootfs_config = _rootfs_config_input_record(config, arch_name)
             component_identity = _rootfs_component_identity(
                 build_inputs, rootfs_config, asset_tools_image
             )
-            restored = componentcache.restore(
-                repo_root, "rootfs", component_identity, arch_output
-            )
+            restored = componentcache.restore(repo_root, "rootfs", component_identity, arch_output)
             if restored is not None:
                 _append_build_ledger(
                     arch_output,
                     {
                         "stage": "rootfs.cache_hit",
                         "input_digest": component_identity,
-                        "outputs": [_file_ledger_entry(path, base=arch_output) for path in restored],
+                        "outputs": [
+                            _file_ledger_entry(path, base=arch_output) for path in restored
+                        ],
                     },
                 )
                 print(f"  reused rootfs component {component_identity}")

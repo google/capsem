@@ -136,6 +136,33 @@ must revalidate every helper; it must not silently rebuild inside the sealed
 lane. The dependency helpers reuse the one checked-in Debian snapshot
 authority rather than the mutable sources inherited from the base image.
 
+## Private build-helper generations
+
+Local qualification and hosted qualification use one materialization path.
+Whenever an exact input-keyed helper is absent locally, its owning materializer
+first tries the platform-scoped generation under
+`ghcr.io/google/capsem-ci`. It validates the pulled image's platform, input-key
+label, and `org.opencontainers.image.source` label before retagging it locally.
+An unavailable, unauthenticated, or invalid remote generation falls through to
+the same deterministic network-open local build; there is no cache-only build
+path and no opt-in environment switch.
+
+The private inventory contains the host builder, Linux parity base, install
+builder, both package builders, both guest Rust builders, the host asset-tools
+builder, and the host architecture's kernel and rootfs dependency builders.
+`capsem-gate private-images --publish` materializes that inventory before it
+publishes immutable generation tags. `.github/workflows/private-images.yaml`
+runs it weekly and on defining-input changes, independently of the release and
+official OCI image workflows, and retains the latest three tagged generations
+per helper and platform.
+
+Developers who can read the repository's private packages may authenticate
+Docker to GHCR for warm local qualification. Missing credentials only select
+the local fallback; they do not change the resulting helper identity. Keep all
+helper Dockerfiles under `build_system/docker/` and dependency templates under
+`config/docker/`; add any new network-open helper to the single inventory and
+the repository-source-label guard.
+
 Templates use Jinja2 with variables from the admin-materialized image
 workspace. Do not add a second preview rail for product truth; if a build input
 needs validation, add it to the normal admin validation path.

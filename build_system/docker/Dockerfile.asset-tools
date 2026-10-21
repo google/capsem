@@ -80,3 +80,4 @@ RUN set -eux; \
 # Metadata must not enter the environment of expensive RUN layers.
 ARG INPUT_IDENTITY
 LABEL org.capsem.asset-tools.input-key="${INPUT_IDENTITY}"
+LABEL org.opencontainers.image.source="https://github.com/google/capsem"

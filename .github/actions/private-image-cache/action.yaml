@@ -1,0 +1,22 @@
+name: Enable private build-image cache
+description: Authenticate GHCR and allow exact helper generations to replace network rebuilds.
+
+inputs:
+  token:
+    description: GitHub token with read access to this repository's packages.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Log in to the private helper registry
+      shell: bash
+      env:
+        TOKEN: ${{ inputs.token }}
+      run: |
+        set -euo pipefail
+        if printf '%s' "$TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin; then
+          echo "Private GHCR helper generations are available"
+        else
+          echo "::notice::Private GHCR login unavailable; exact helpers will use the local build fallback"
+        fi

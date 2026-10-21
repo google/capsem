@@ -31,7 +31,11 @@ from .docker import Docker
 from .errors import GateError
 from .execution import Kind, Needs, Speed, Step, step
 from .filesystem import make_dir
+from .imageidentity import require_input_key
 from .plan import Plan
+from .privateimagecache import PrivateImage, try_import
+
+INPUT_KEY_LABEL = "org.capsem.linux-rust-base.input-key"
 
 
 def base_tag(config: GateConfig, docker: Docker) -> str:
@@ -91,6 +95,7 @@ def require_base(config: GateConfig, docker: Docker) -> str:
             f"run `just {config.hostimage.warm_recipe}` to build it with "
             "network before the gate runs without."
         )
+    require_input_key(docker, tag, label=INPUT_KEY_LABEL, subject="Linux parity base")
     return tag
 
 
@@ -118,16 +123,28 @@ class WarmBase(Action, name="linux-rust-warm-base"):
         settings = config.hostimage
         docker = Docker(context.runner)
         tag = base_tag(config, docker)
-        if docker.image_exists(tag):
+        platform = config.host_arch().docker_platform
+        cached = PrivateImage(
+            local=tag,
+            platform=platform,
+            generation=tag.rsplit(":", 1)[1],
+            identity_label=INPUT_KEY_LABEL,
+            identity=tag,
+        )
+        if not docker.image_exists(tag, platform=platform):
+            try_import(context.runner, config, cached)
+        if docker.image_exists(tag, platform=platform):
+            require_input_key(docker, tag, label=INPUT_KEY_LABEL, subject="Linux parity base")
             context.journal.note(f"Linux parity base image {tag} is already present")
         else:
             docker.build(
                 tag=tag,
                 dockerfile=config.path(settings.base_dockerfile).as_posix(),
                 context=str(config.root),
-                args=[f"BASE={settings.tag}"],
+                args=[f"BASE={settings.tag}", f"INPUT_IDENTITY={tag}"],
                 network=settings.materialize_network,
             )
+            require_input_key(docker, tag, label=INPUT_KEY_LABEL, subject="Linux parity base")
         # On the already-present path too, not only after a build. A machine
         # sitting at the current tag with stale ones beside it is exactly the
         # state this exists to clear, and reclaiming only after a build would

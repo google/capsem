@@ -32,6 +32,10 @@ FROM ubuntu:24.04@sha256:561618e2c15bf2397621dd04f96926663a3b5616c189cf7e38db7e8
 
 ARG APT_SNAPSHOT_BASE
 ARG APT_SNAPSHOT_ID
+ARG APT_UPDATE_TIMEOUT_SECONDS
+ARG APT_INSTALL_TIMEOUT_SECONDS
+ARG APT_REQUEST_TIMEOUT_SECONDS
+ARG APT_RETRIES
 ARG WORKSPACE_APT_PACKAGES
 ARG WORKSPACE_CROSS_APT_PACKAGES
 
@@ -55,19 +59,10 @@ RUN bash /tmp/sources-multiarch.sh "$APT_SNAPSHOT_BASE" "$APT_SNAPSHOT_ID" \
 # these packages at container runtime (see swap-dev-libs.sh).
 # Bound each network phase: a snapshot outage once held this layer for 57 minutes.
 # ---- Native-arch Tauri dev libraries ----
-RUN test -n "$WORKSPACE_APT_PACKAGES" \
-    && test -n "$WORKSPACE_CROSS_APT_PACKAGES" \
-    && timeout --signal=TERM --kill-after=5s 300s apt-get update \
-    && timeout --signal=TERM --kill-after=5s 600s apt-get install -y --no-install-recommends \
-    $WORKSPACE_APT_PACKAGES \
-    $WORKSPACE_CROSS_APT_PACKAGES \
-    curl \
-    wget \
-    ca-certificates \
-    git \
-    sqlite3 \
-    python3-venv \
-    && rm -rf /var/lib/apt/lists/*
+COPY --chmod=555 materialize-host-apt.sh /usr/local/bin/materialize-host-apt
+RUN --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    materialize-host-apt
 
 # ---- Node.js 24 + pnpm 10 ----
 # Copy the complete runtime tree from an immutable official image. Keeping the
@@ -161,3 +156,4 @@ WORKDIR /src
 # Metadata must not enter the environment of expensive RUN layers.
 ARG INPUT_IDENTITY
 LABEL org.capsem.host-builder.input-key="${INPUT_IDENTITY}"
+LABEL org.opencontainers.image.source="https://github.com/google/capsem"
