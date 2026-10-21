@@ -2,6 +2,7 @@ use std::{
     collections::BTreeMap,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 
@@ -110,6 +111,20 @@ impl ImageLayout {
     }
 }
 
+/// Descriptor-bounded materialization progress, without registry credentials.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlobProgress {
+    pub digest: String,
+    /// Bytes written or reused from a verified cache hit.
+    pub completed_bytes: u64,
+    pub total_bytes: u64,
+    /// True only after integrity verification and cache publication/reuse.
+    pub verified: bool,
+}
+
+/// Request-scoped observer. It must return promptly and never perform I/O.
+pub type ProgressObserver = Arc<dyn Fn(BlobProgress) + Send + Sync>;
+
 /// Registry transport remains on the host; no registry credentials enter a VM.
 pub struct Puller {
     registry: Client,
@@ -118,9 +133,26 @@ pub struct Puller {
     architecture: String,
     scheme: &'static str,
     cache: Option<BlobCache>,
+    progress: Option<ProgressObserver>,
 }
 
 impl Puller {
+    pub fn with_progress(mut self, observer: ProgressObserver) -> Self {
+        self.progress = Some(observer);
+        self
+    }
+
+    fn report_progress(&self, descriptor: &OciDescriptor, completed_bytes: u64, verified: bool) {
+        if let Some(observer) = &self.progress {
+            observer(BlobProgress {
+                digest: descriptor.digest.clone(),
+                completed_bytes,
+                total_bytes: descriptor.size as u64,
+                verified,
+            });
+        }
+    }
+
     pub fn new(architecture: &str, authentication: RegistryAuth) -> Result<Self> {
         Self::new_with_root_certificate(architecture, authentication, None)
     }
@@ -180,6 +212,7 @@ impl Puller {
             architecture: architecture.into(),
             scheme: if secure { "https" } else { "http" },
             cache: None,
+            progress: None,
         })
     }
 
@@ -579,6 +612,7 @@ impl Puller {
         integrity: Option<&str>,
     ) -> Result<()> {
         let destination = directory.join(digest_hex(&descriptor.digest)?);
+        self.report_progress(descriptor, 0, false);
         let cache = self.cache.as_ref().map(|cache| cache.for_repository(reference));
         let _lease = match &cache {
             Some(cache) => {
@@ -602,6 +636,7 @@ impl Puller {
                 };
                 if hit {
                     tracing::debug!(digest = %descriptor.digest, "OCI blob cache hit");
+                    self.report_progress(descriptor, descriptor.size as u64, true);
                     return Ok(());
                 }
                 if lease.is_none() {
@@ -636,6 +671,7 @@ impl Puller {
                 verifier.update(&chunk);
             }
             file.write_all(&chunk).await?;
+            self.report_progress(descriptor, count, false);
         }
         ensure!(count == descriptor.size as u64, "blob size mismatch");
         ensure!(
@@ -676,6 +712,7 @@ impl Puller {
                 }
             }
         }
+        self.report_progress(descriptor, count, true);
         Ok(())
     }
 }
