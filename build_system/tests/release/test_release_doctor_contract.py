@@ -677,7 +677,7 @@ def test_pr_gate_blocks_broken_docs_and_marketing_builds() -> None:
     assert "bash build_system/scripts/web/check-web-surface.sh site" in site_job
     assert "pages deploy" not in site_job
 
-    assert "pull_request:" not in docs_deploy
+    assert "pull_request:" in docs_deploy
     assert "pull_request:" not in site_deploy
     assert "push:" in docs_deploy
     assert "push:" in site_deploy
@@ -1605,7 +1605,7 @@ def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
         trigger = workflow.split("\njobs:", maxsplit=1)[0]
         push_trigger = trigger.split("  push:", maxsplit=1)[1]
         ci_block = _workflow_job_block(ci_job)
-        assert "pull_request:" not in trigger, workflow_name
+        assert ("pull_request:" in trigger) == (surface == "docs"), workflow_name
         assert "push:" in workflow, workflow_name
         assert "branches: [main]" in workflow, workflow_name
         assert "paths:" in push_trigger, workflow_name
@@ -1613,7 +1613,8 @@ def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
         assert f"cd {directory} && pnpm install --frozen-lockfile" in ci_block
         assert f"bash build_system/scripts/web/check-web-surface.sh {surface}" in ci_block
         assert frozenset(_workflow_job("pr-gate")["needs"]) == REQUIRED_PR_GATE_JOBS
-        assert f"cd {directory} && pnpm install --frozen-lockfile" in workflow
+        assert (f"pnpm --dir {directory} install --frozen-lockfile" if surface == "docs"
+                else f"cd {directory} && pnpm install --frozen-lockfile") in workflow
         assert f"bash build_system/scripts/web/check-web-surface.sh {surface}" in workflow
         assert (
             "if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}" in workflow
