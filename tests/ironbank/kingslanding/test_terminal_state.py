@@ -104,3 +104,24 @@ def test_workload_advertises_full_color_to_its_terminal_apps(service, tmp_path):
         result = workload_exec(client, vm_id, 'printf "%s\\n%s\\n" "$TERM" "$COLORTERM"')
         assert result["exit_code"] == 0, result
         assert result["stdout_text"].splitlines() == ["xterm-256color", "truecolor"], result
+
+
+def test_unterminated_control_string_burst_recovers_without_replacing_title(service, tmp_path):
+    client = service.client()
+    with image_session(service, tmp_path, "terminal-control-budget") as vm_id:
+        result = workload_exec(client, vm_id, r"printf '\033]2;Retained\007' > /proc/1/fd/1")
+        assert result["exit_code"] == 0, result
+        terminal_summary(client, vm_id, "Retained")
+        result = workload_exec(client, vm_id, (
+            r"(printf '\033]2;'; head -c 8388608 /dev/zero | tr '\000' x; "
+            r"printf '\007\033]777;notify;Recovered;Ready\007') > /proc/1/fd/1"
+        ))
+        assert result["exit_code"] == 0, result
+        end = time.monotonic() + 10
+        while time.monotonic() < end:
+            summary = terminal_summary(client, vm_id, "Retained")
+            if summary["last_notification"] and summary["last_notification"]["title"] == "Recovered":
+                break
+            time.sleep(0.05)
+        assert summary["title"] == "Retained", summary
+        assert summary["last_notification"]["body"] == "Ready", summary
