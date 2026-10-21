@@ -148,10 +148,15 @@ def rust_reference(directory: Path) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--rustdoc-dir', type=Path, required=True)
+    parser.add_argument('--rustdoc-dir', type=Path)
+    parser.add_argument('--languages', nargs='+', choices=('python', 'typescript', 'rust'), default=['python', 'typescript', 'rust'])
     parser.add_argument('--check', action='store_true')
     args = parser.parse_args()
-    bodies = {'python': python_reference(), 'typescript': typescript_reference(), 'rust': rust_reference(args.rustdoc_dir)}
+    if 'rust' in args.languages and args.rustdoc_dir is None:
+        parser.error('--rustdoc-dir is required when generating Rust')
+    generators = {'python': python_reference, 'typescript': typescript_reference,
+                  'rust': lambda: rust_reference(args.rustdoc_dir)}
+    bodies = {language: generators[language]() for language in args.languages}
     changed = []
     for language, body in bodies.items():
         title = {'python': 'Python', 'typescript': 'TypeScript', 'rust': 'Rust'}[language]

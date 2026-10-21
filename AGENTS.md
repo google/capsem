@@ -138,6 +138,7 @@ Skills contain hard-won lessons and project-specific patterns. **Before writing 
 | Rust patterns | `/dev-rust-patterns` | Writing any Rust code in capsem-core/app/agent |
 | MITM proxy | `/dev-mitm-proxy` | TLS, HTTP inspection, SSE parsing, ai_traffic |
 | MCP | `/dev-mcp` | capsem-mcp server, MCP gateway, aggregator, builtin, tool routing |
+| Use Capsem | `/use-capsem` | Agent-facing MCP VM tasks, input/output transfer, static file triage |
 | Testing | `/dev-testing` | Running or writing tests, TDD, coverage |
 | VM testing | `/dev-testing-vm` | In-VM diagnostics, capsem-doctor, session DB |
 | Hypervisor testing | `/dev-testing-hypervisor` | Apple VZ / KVM, VirtioFS, vsock tests |

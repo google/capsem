@@ -11,7 +11,8 @@ whether it can proceed, supplies authorized credentials, and records the result.
 It also describes where inspection and enforcement apply, so you can understand
 what a security decision does and does not protect.
 
-The engine runs in `capsem-proxy`, a host subprocess assigned to one VM.
+The engine runs in `capsem-proxy`, a confined host subprocess assigned to one
+VM or one standalone proxy lease.
 Its responsibilities are:
 
 - **Network analysis:** decrypt HTTPS and identify the destination, HTTP request,
@@ -19,11 +20,13 @@ Its responsibilities are:
 - **Security decisions:** check those facts against rules and detections before
   forwarding traffic. Refuse blocked requests and requests awaiting approval.
 - **Credentials:** replace credential references with the real credentials
-  assigned to the VM and destination, after the request is allowed.
+  authorized for that runtime and destination, after the request is allowed.
 - **Audit records:** remove observed secrets from the recorded data and send the
   request, decision, and detections to the log writer.
 
-It sits inside the [per-VM process group](/architecture/security/), outside the VM's hardware boundary.
+For VM traffic it sits inside the [per-VM process group](/architecture/security/),
+outside the VM's hardware boundary. In standalone mode, the service grants it
+accepted HTTP connections instead of guest vsock traffic; there is no VM.
 
 ## Event flow
 
@@ -37,7 +40,7 @@ It sits inside the [per-VM process group](/architecture/security/), outside the 
 | Preprocess plugins | Prepare facts before rule evaluation. The credential broker identifies credentials, records their references, and marks requests needing credential substitution. | Rules inspect the prepared event. |
 | Rules | Evaluate CEL conditions against typed event facts; record matches and select enforcement. | Defaults, user settings, and corp rules compile into one `SecurityRuleSet`. Corp constraints take precedence. |
 | Postprocess plugins | Inspect or change the event after rule evaluation; they may require approval or block an otherwise allowed operation. | Decisions only tighten: `allow` → `ask` → `block`. A plugin cannot undo a block. |
-| Runtime request preparation | Restore real credentials into an allowed upstream request. | Uses credentials assigned to the VM and destination; refused operations are not forwarded. |
+| Runtime request preparation | Restore real credentials into an allowed upstream request. | Uses credentials authorized for the runtime and destination; refused operations are not forwarded. |
 | Logging plugins | Prepare a separate event for storage, replacing observed secrets with references or redacted values. | Real credentials restored for an upstream request do not belong in its stored event. |
 | Log writer | Store events, matched rules, decisions, plugin execution evidence, and body records. | A separate confined process owns SQLite and archive access. The engine sends typed records; it does not open `session.db`. |
 
@@ -50,6 +53,12 @@ Network connection and probe events require an explicit allow rule.
 Guest helpers send traffic over vsock to the network analysis engine. It parses
 DNS questions, HTTP requests and responses, model API messages, and MCP messages
 into fields that rules and plugins can inspect.
+
+Standalone clients instead send plain HTTP model requests to a service-owned
+listener. The service fixes the provider destination from policy and grants
+connections to the same engine. This path uses no client-side MITM certificate
+and performs no protocol translation; upstream HTTPS still validates the real
+provider's certificate. See [Proxy reference](/reference/proxy/).
 
 HTTPS inspection uses a **man-in-the-middle (MITM) certificate**:
 

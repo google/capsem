@@ -15,9 +15,11 @@ lint_mapping_count = 4
 lint_mapping_sha256 = "ac42e4aac5f97bab38e19bf3691343d0f79934dabef4137ac501baa6f164d538"
 coverage_mapping_count = 4
 coverage_mapping_sha256 = "6e6d023b00ea5f0dcdb1f2373c3217907ef1b14075697ad50c4a3ebf5884aee0"
-legacy_reference_count = 268
+# Includes four valid documentation paths/URLs matched by the legacy scanner;
+# the Python source-root inventory line also changes when the skill helper is added.
+legacy_reference_count = 274
 # Includes the runtime benchmark store documented for users and the benchmark
 # helper root recorded by repository surface ownership.
 # The Linux Rust base copies the security docs needed by compile-time include
 # paths; its guard records the same owned input.
-legacy_reference_sha256 = "2fe69016014f36336eac74617ea096d36bf2f0c686388236f3fa80cf0be188c6"
+legacy_reference_sha256 = "878acd7e829bc5e52f88a2317f71fa08b61a73324fa9fe2ac5f3d6ed02a62632"

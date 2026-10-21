@@ -5,10 +5,12 @@ your application.
 
 ## Installation
 
-Requires Python 3.11 or later.
+Requires Python 3.11 or later. This example targets Capsem 0.7.1. Until its
+Python package is published, install the SDK from the 0.7.1 source revision;
+PyPI's `capsem` 0.3.2 does not provide this API.
 
 ```sh
-python -m pip install capsem
+python -m pip install "capsem @ git+https://github.com/google/capsem.git@3c17b44f7a4c0457cb4b168df829daf293415c12#subdirectory=sdk/python"
 ```
 
 [Install Capsem](https://docs.capsem.org/getting-started/installation/) and
@@ -16,8 +18,8 @@ start it on your computer before using the SDK.
 
 ## Usage
 
-`Hypervisor()` discovers the local running service. For a remote service,
-pass its complete gateway URL and bearer token explicitly.
+`Hypervisor()` connects to Capsem running on your computer without requiring
+you to copy a gateway URL or token.
 
 Once Capsem is running, create a VM and run a command inside it. Use an unused
 VM name in place of `sdk-demo`.
@@ -47,8 +49,7 @@ Pass `labels={"suite": "eval"}` to `create(...)` to attach advisory metadata.
 VM inventory includes those labels. Forks inherit them by default;
 `fork(name, labels={})` clears them and a nonempty map replaces them.
 
-For more, use the [SDK guides](https://docs.capsem.org/guides/developers/integrate-the-sdk/) or the
-[Python SDK reference](https://docs.capsem.org/sdk/python/).
-
-Use `Hypervisor.connect(run_dir=...)` for an explicit local runtime directory.
-Timeout errors expose structured VM IDs, codes and deadline metadata.
+Use [managed scopes](https://docs.capsem.org/guides/developers/integrate-the-sdk/#bound-temporary-work)
+to remove temporary VMs automatically. Look up methods and options in the
+[Python SDK reference](https://docs.capsem.org/sdk/python/), and handle failed
+commands with [Errors and recovery](https://docs.capsem.org/sdk/errors/).

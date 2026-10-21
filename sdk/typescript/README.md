@@ -8,7 +8,7 @@ your application.
 Requires Node.js 20 or later for this example.
 
 ```sh
-npm install @capsem/sdk
+npm install @capsem/sdk@0.7.0
 ```
 
 [Install Capsem](https://docs.capsem.org/getting-started/installation/) and
@@ -16,8 +16,8 @@ start it on your computer before using the SDK.
 
 ## Usage
 
-`new Hypervisor()` discovers the local running service in Node.js. For a remote
-service or a browser client, pass its complete gateway URL and bearer token.
+`new Hypervisor()` connects to Capsem running on your computer in Node.js
+without requiring you to copy a gateway URL or token.
 
 Once Capsem is running, create a VM and run a command inside it. Use an unused
 VM name in place of `sdk-demo`.
@@ -43,5 +43,7 @@ image or your own OCI image when permitted by your administrator.
 The example runs `echo hello`, displays its output, and leaves `sdk-demo`
 stopped with its work preserved.
 
-For more, use the [SDK guides](https://docs.capsem.org/guides/developers/integrate-the-sdk/) or the
-[TypeScript SDK reference](https://docs.capsem.org/sdk/typescript/).
+Use [managed scopes](https://docs.capsem.org/guides/developers/integrate-the-sdk/#bound-temporary-work)
+to remove temporary VMs automatically. Look up methods and options in the
+[TypeScript SDK reference](https://docs.capsem.org/sdk/typescript/), and handle
+failed commands with [Errors and recovery](https://docs.capsem.org/sdk/errors/).

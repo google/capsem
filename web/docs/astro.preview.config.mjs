@@ -7,8 +7,13 @@ const links = (...slugs) => slugs.map((slug) => ({ slug }));
 function localDocsLinks() {
   return (tree) => {
     function visit(node) {
-      // rustdoc ignores application-context fragments; the site still highlights Rust.
-      if (node.type === 'code' && node.lang === 'rust,ignore') node.lang = 'rust';
+      // Keep rustdoc test attributes and hidden scaffolding out of the lesson.
+      if (node.type === 'code' && node.lang?.split(',')[0] === 'rust') {
+        node.lang = 'rust';
+        node.value = node.value.split('\n')
+          .filter((line) => !/^\s*#(?: |$)/.test(line))
+          .map((line) => line.replace(/^(\s*)##/, '$1#')).join('\n');
+      }
       if (node.type === 'link' && node.url?.startsWith('https://docs.capsem.org/')) {
         node.url = node.url.slice('https://docs.capsem.org'.length);
       }
@@ -37,7 +42,7 @@ export default defineConfig({
         { label: 'Getting started', items: links('getting-started/intro', 'getting-started/installation', 'getting-started/how-to-use-capsem') },
         { label: 'Guides', items: [
           { slug: 'guides' },
-          { label: 'Users', items: links('guides/users/use-the-terminal', 'guides/users/reuse-your-environment', 'guides/users/run-evaluations', 'guides/users/configure-security') },
+          { label: 'Users', items: links('guides/users/use-the-terminal', 'guides/users/analyze-a-file-with-an-agent', 'guides/users/use-the-proxy', 'guides/users/reuse-your-environment', 'guides/users/run-evaluations', 'guides/users/configure-security') },
           { label: 'Enterprise', items: [
             ...links('guides/enterprise/build-an-image', 'guides/enterprise/deploy-capsem', 'guides/enterprise/configure-a-vm', 'guides/enterprise/enforce-security-policy', 'guides/enterprise/write-detection-rules'),
             { label: 'Observability', items: links('guides/enterprise/investigate-a-vm', 'reference/telemetry') },
@@ -47,7 +52,7 @@ export default defineConfig({
         ] },
         { label: 'Architecture', items: links('architecture/overview', 'architecture/security', 'architecture/security-engine') },
         { label: 'SDK', items: links('sdk', 'sdk/python', 'sdk/typescript', 'sdk/rust', 'sdk/errors') },
-        { label: 'Reference', items: links('reference', 'reference/cli', 'reference/mcp', 'reference/configuration', 'reference/credentials', 'reference/enforcement-rules', 'reference/cel', 'reference/sigma', 'reference/telemetry', 'reference/manifests') },
+        { label: 'Reference', items: links('reference', 'reference/cli', 'reference/mcp', 'reference/proxy', 'reference/configuration', 'reference/credentials', 'reference/enforcement-rules', 'reference/cel', 'reference/sigma', 'reference/telemetry', 'reference/manifests') },
       ],
     }),
   ],

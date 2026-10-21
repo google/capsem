@@ -13,6 +13,18 @@ on:
       - web/docs/**
       - web/diagrams/**
       - build_system/patches/**
+      - skills/use-capsem/**
+      - sdk/**
+      - mcp/typescript/**
+  pull_request:
+    paths:
+      - .github/workflows/docs.yaml
+      - web/docs/**
+      - web/diagrams/**
+      - build_system/patches/**
+      - skills/use-capsem/**
+      - sdk/**
+      - mcp/typescript/**
 
 jobs:
   build:
@@ -37,7 +49,24 @@ jobs:
           cache-dependency-path: web/docs/pnpm-lock.yaml
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
       - name: Install
-        run: cd web/docs && pnpm install --frozen-lockfile
+        run: pnpm --dir web/docs install --frozen-lockfile
+      - name: Install SDK and MCP dependencies
+        run: pnpm --dir mcp/typescript install --frozen-lockfile
+      - name: Build TypeScript SDK declarations
+        run: pnpm --dir sdk/typescript run build
+      - name: Build MCP server
+        run: pnpm --dir mcp/typescript run build
+      - name: Generate Python and TypeScript API references
+        run: uv run --project build_system --frozen python web/docs/tools/generate-sdk-reference.py --languages python typescript
+      - name: Generate MCP tool reference
+        run: node web/docs/tools/mcp-reference.mjs
+      - name: Test reference generators
+        run: |
+          uv run --project build_system --frozen python -m pytest web/docs/tools/test_sdk_reference.py -q
+          node --test web/docs/tools/test-mcp-reference.mjs
+      - name: Reject stale references in pull requests
+        if: ${{ github.event_name == 'pull_request' }}
+        run: git diff --exit-code -- web/docs/src/content/docs/sdk/python.md web/docs/src/content/docs/sdk/typescript.md web/docs/src/content/docs/reference/mcp.md
       - name: Build
         run: bash build_system/scripts/web/check-web-surface.sh docs
       - name: Deploy

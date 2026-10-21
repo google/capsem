@@ -263,6 +263,9 @@ def test_public_web_deployments_run_only_for_owned_and_shared_inputs() -> None:
     }
     assert _push_paths("docs.yaml") == shared | {
         ".github/workflows/docs.yaml",
+        "sdk/**",
+        "mcp/typescript/**",
+        "skills/use-capsem/**",
         "config/gate.toml",
         "web/docs/**",
         "build_system/patches/**",
