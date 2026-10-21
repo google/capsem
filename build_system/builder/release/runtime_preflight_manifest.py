@@ -45,15 +45,19 @@ class ChannelResolution:
     detail: str
     manifest_url: str | None = None
     manifest_sha256: str | None = None
+    runtime_present: bool | None = None
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        resolution = {
             "channel": self.channel.value,
             "state": self.state.value,
             "manifest_url": self.manifest_url,
             "manifest_sha256": self.manifest_sha256,
             "detail": self.detail,
         }
+        if self.runtime_present is not None:
+            resolution["runtime_present"] = self.runtime_present
+        return resolution
 
 
 def _current_manifest_authority(
@@ -180,6 +184,7 @@ def resolve_channel_state(
             f"public channel {channel.value} selects an explicitly retired graph",
             manifest_url,
             expected_sha256,
+            manifest.get("runtime") is not None,
         )
     return ChannelResolution(
         channel,
@@ -187,6 +192,7 @@ def resolve_channel_state(
         f"public channel {channel.value} selects a verified graph",
         manifest_url,
         expected_sha256,
+        manifest.get("runtime") is not None,
     )
 
 
@@ -244,12 +250,15 @@ def select_runtime_preflight_manifest(
         raise ValueError(selected.detail)
     if manifest.manifest_url is None:
         raise AssertionError("resolved manifest state must carry its URL")
+    if manifest.runtime_present is None:
+        raise AssertionError("resolved manifest state must classify its runtime")
     return {
         "channel": channel,
         "state": selected.state.value,
         "manifest_channel": manifest_channel.value,
         "manifest_url": manifest.manifest_url,
         "manifest_sha256": manifest.manifest_sha256,
+        "runtime_present": manifest.runtime_present,
         "bootstrap": bootstrap,
         "retired": retired,
     }
@@ -341,6 +350,7 @@ def _write_github_output(path: Path, selection: Mapping[str, Any]) -> None:
             "manifest_url",
             "manifest_sha256",
             "manifest_channel",
+            "runtime_present",
             "bootstrap",
             "retired",
         ):
