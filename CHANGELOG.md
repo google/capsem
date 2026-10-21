@@ -73,6 +73,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Honor session terminal cursor and input modes in the TUI, preserve modified
+  navigation/function keys, and reclaim input authority when focused.
+
 - Advertise 256-color and true-color support to interactive container apps,
   preserving explicit user terminal overrides.
 

@@ -52,6 +52,10 @@ impl TerminalBridge {
         let _ = self.commands.send(TerminalCommand::Resize { cols, rows });
     }
 
+    pub fn focus(&self, cols: u16, rows: u16) {
+        let _ = self.commands.send(TerminalCommand::Focus { cols, rows });
+    }
+
     pub fn disconnect(&self) {
         let _ = self.commands.send(TerminalCommand::Disconnect);
     }
@@ -79,6 +83,7 @@ enum TerminalCommand {
     Connect { session_id: String, cols: u16, rows: u16 },
     Input(Vec<u8>),
     Resize { cols: u16, rows: u16 },
+    Focus { cols: u16, rows: u16 },
     Disconnect,
     Shutdown,
 }
@@ -149,7 +154,7 @@ async fn run_terminal_manager(
                 if session_id == active_session_id && active_input.is_some() {
                     let resize_sent = active_input
                         .as_ref()
-                        .is_some_and(|input| input.send(TerminalInput::Resize { cols, rows }).is_ok());
+                        .is_some_and(|input| input.send(TerminalInput::Focus { cols, rows }).is_ok());
                     if resize_sent {
                         continue;
                     }
@@ -179,6 +184,11 @@ async fn run_terminal_manager(
                     let _ = input.send(TerminalInput::Resize { cols, rows });
                 }
             }
+            TerminalCommand::Focus { cols, rows } => {
+                if let Some(input) = &active_input {
+                    let _ = input.send(TerminalInput::Focus { cols, rows });
+                }
+            }
             TerminalCommand::Disconnect => {
                 if let Some(task) = active_task.take() {
                     task.abort();
@@ -199,6 +209,7 @@ async fn run_terminal_manager(
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum TerminalInput {
     Bytes(Vec<u8>),
+    Focus { cols: u16, rows: u16 },
     Resize { cols: u16, rows: u16 },
 }
 
@@ -312,7 +323,10 @@ fn stream_input_frame(input: TerminalInput) -> Option<Vec<u8>> {
         TerminalInput::Resize { cols, rows } if cols > 0 && rows > 0 => {
             Some(protocol::encode_control(&StreamControl::Resize { cols, rows }))
         }
-        TerminalInput::Resize { .. } => None,
+        TerminalInput::Focus { cols, rows } if cols > 0 && rows > 0 => {
+            Some(protocol::encode_control(&StreamControl::Focus { cols, rows }))
+        }
+        TerminalInput::Resize { .. } | TerminalInput::Focus { .. } => None,
     }
 }
 
@@ -451,6 +465,38 @@ impl TerminalSurface {
             .get(session_id)
             .map(|buffer| buffer.visible_lines(height))
             .unwrap_or_default()
+    }
+
+    pub fn cursor_for(&self, session_id: &str, width: u16, height: u16) -> Option<(u16, u16)> {
+        let state = self.buffers.get(session_id)?.state.as_ref()?;
+        if state.cursor.hidden || width == 0 || height == 0 {
+            return None;
+        }
+        let row = state.cursor.row.checked_sub(state.rows.saturating_sub(height))?;
+        let col = state.cursor.col.min(state.cols - 1);
+        (row < height && col < width).then_some((col, row))
+    }
+
+    pub fn input_for(&self, session_id: &str, key: KeyEvent) -> Option<Vec<u8>> {
+        let application = self
+            .buffers
+            .get(session_id)
+            .and_then(|b| b.state.as_ref())
+            .is_some_and(|state| state.modes.application_cursor);
+        key_bytes(key, application)
+    }
+
+    pub fn paste_for(&self, session_id: &str, text: &str) -> Vec<u8> {
+        let bracketed = self
+            .buffers
+            .get(session_id)
+            .and_then(|b| b.state.as_ref())
+            .is_some_and(|state| state.modes.bracketed_paste);
+        if bracketed {
+            format!("\x1b[200~{text}\x1b[201~").into_bytes()
+        } else {
+            text.as_bytes().to_vec()
+        }
     }
 
     pub fn status_for(&self, session_id: &str) -> Option<&str> {
@@ -606,8 +652,56 @@ fn color_from_vt100(color: vt100::Color) -> TerminalColor {
 }
 
 pub fn key_to_terminal_bytes(key: KeyEvent) -> Option<Vec<u8>> {
+    key_bytes(key, false)
+}
+
+fn key_bytes(key: KeyEvent, application_cursor: bool) -> Option<Vec<u8>> {
     if key.modifiers.intersects(KeyModifiers::SUPER) {
         return None;
+    }
+    let modifier = 1
+        + u8::from(key.modifiers.contains(KeyModifiers::SHIFT))
+        + 2 * u8::from(key.modifiers.contains(KeyModifiers::ALT))
+        + 4 * u8::from(key.modifiers.contains(KeyModifiers::CONTROL));
+    let final_byte = match key.code {
+        KeyCode::Up => Some('A'),
+        KeyCode::Down => Some('B'),
+        KeyCode::Right => Some('C'),
+        KeyCode::Left => Some('D'),
+        KeyCode::Home => Some('H'),
+        KeyCode::End => Some('F'),
+        KeyCode::F(n @ 1..=4) => Some(char::from(b'P' + n - 1)),
+        _ => None,
+    };
+    if let Some(final_byte) = final_byte {
+        return Some(
+            if modifier > 1 {
+                format!("\x1b[1;{modifier}{final_byte}")
+            } else if application_cursor || matches!(key.code, KeyCode::F(_)) {
+                format!("\x1bO{final_byte}")
+            } else {
+                format!("\x1b[{final_byte}")
+            }
+            .into_bytes(),
+        );
+    }
+    let number = match key.code {
+        KeyCode::Insert => Some(2),
+        KeyCode::Delete => Some(3),
+        KeyCode::PageUp => Some(5),
+        KeyCode::PageDown => Some(6),
+        KeyCode::F(n @ 5..=12) => Some([15, 17, 18, 19, 20, 21, 23, 24][usize::from(n - 5)]),
+        _ => None,
+    };
+    if let Some(number) = number {
+        return Some(
+            if modifier > 1 {
+                format!("\x1b[{number};{modifier}~")
+            } else {
+                format!("\x1b[{number}~")
+            }
+            .into_bytes(),
+        );
     }
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         return control_key_bytes(key.code);
@@ -619,18 +713,8 @@ pub fn key_to_terminal_bytes(key: KeyEvent) -> Option<Vec<u8>> {
     match key.code {
         KeyCode::Backspace => bytes.push(0x7f),
         KeyCode::Enter => bytes.push(b'\r'),
-        KeyCode::Left => bytes.extend_from_slice(b"\x1b[D"),
-        KeyCode::Right => bytes.extend_from_slice(b"\x1b[C"),
-        KeyCode::Up => bytes.extend_from_slice(b"\x1b[A"),
-        KeyCode::Down => bytes.extend_from_slice(b"\x1b[B"),
-        KeyCode::Home => bytes.extend_from_slice(b"\x1b[H"),
-        KeyCode::End => bytes.extend_from_slice(b"\x1b[F"),
-        KeyCode::PageUp => bytes.extend_from_slice(b"\x1b[5~"),
-        KeyCode::PageDown => bytes.extend_from_slice(b"\x1b[6~"),
         KeyCode::Tab => bytes.push(b'\t'),
         KeyCode::BackTab => bytes.extend_from_slice(b"\x1b[Z"),
-        KeyCode::Delete => bytes.extend_from_slice(b"\x1b[3~"),
-        KeyCode::Insert => bytes.extend_from_slice(b"\x1b[2~"),
         KeyCode::Esc => bytes.push(0x1b),
         KeyCode::Char(ch) => bytes.extend(ch.to_string().as_bytes()),
         _ => return None,

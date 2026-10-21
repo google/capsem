@@ -17,6 +17,7 @@ fn fixture_creation_does_not_leave_an_outstanding_create() {
     super::handle_terminal_event(
         Event::Key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::ALT)),
         &mut app,
+        &super::TerminalSurface::default(),
         None,
         None,
     )
@@ -24,6 +25,7 @@ fn fixture_creation_does_not_leave_an_outstanding_create() {
     super::handle_terminal_event(
         Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
         &mut app,
+        &super::TerminalSurface::default(),
         None,
         None,
     )

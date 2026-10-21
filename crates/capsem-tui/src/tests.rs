@@ -1,6 +1,7 @@
 mod gateway_fixtures;
 mod image_creation;
 mod lifecycle;
+mod terminal_cursor;
 mod updates;
 use gateway_fixtures::*;
 

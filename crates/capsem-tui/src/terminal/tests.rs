@@ -327,16 +327,20 @@ mod stream_protocol {
 }
 
 fn resize(surface: &mut TerminalSurface, id: &str, cols: u16, rows: u16) {
-    let state = serde_json::from_value(serde_json::json!({
-        "revision": 1, "reset": false, "cols": cols, "rows": rows,
-        "cursor": {"row": 0, "col": 0, "hidden": false},
-        "modes": {"alternate_screen": false, "application_cursor": false, "application_keypad": false, "bracketed_paste": false, "mouse_protocol": "None", "mouse_encoding": "Default"},
-        "title": "", "icon_name": "", "bell_count": 0, "last_notification": null, "events": []
-    })).unwrap();
+    let state = state(cols, rows);
     surface.apply(TerminalEvent::State {
         session_id: id.into(),
         state,
     });
+}
+
+fn state(cols: u16, rows: u16) -> Box<super::protocol::TerminalState> {
+    serde_json::from_value(serde_json::json!({
+        "revision": 1, "reset": false, "cols": cols, "rows": rows,
+        "cursor": {"row": 0, "col": 0, "hidden": false},
+        "modes": {"alternate_screen": false, "application_cursor": false, "application_keypad": false, "bracketed_paste": false, "mouse_protocol": "None", "mouse_encoding": "Default"},
+        "title": "", "icon_name": "", "bell_count": 0, "last_notification": null, "events": []
+    })).unwrap()
 }
 
 #[tokio::test]
@@ -361,4 +365,61 @@ async fn terminal_event_delivery_backpressures_and_unblocks_when_the_view_leaves
     tokio::time::timeout(std::time::Duration::from_secs(1), producer)
         .await
         .expect("dropping the view releases the blocked producer");
+}
+
+#[test]
+fn modified_navigation_keys_reach_the_application() {
+    assert_eq!(
+        key_to_terminal_bytes(KeyEvent::new(KeyCode::Up, KeyModifiers::CONTROL)),
+        Some(b"\x1b[1;5A".to_vec())
+    );
+    assert_eq!(
+        key_to_terminal_bytes(KeyEvent::new(KeyCode::F(5), KeyModifiers::SHIFT)),
+        Some(b"\x1b[15;2~".to_vec())
+    );
+}
+
+#[test]
+fn session_modes_control_navigation_paste_and_cursor_projection() {
+    let mut surface = TerminalSurface::new();
+    let mut state = state(80, 24);
+    state.modes.application_cursor = true;
+    state.modes.bracketed_paste = true;
+    state.cursor.row = 23;
+    state.cursor.col = 80;
+    surface.apply(TerminalEvent::State {
+        session_id: "vm".into(),
+        state: state.clone(),
+    });
+    assert_eq!(
+        surface.input_for("vm", KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)),
+        Some(b"\x1bOA".to_vec())
+    );
+    assert_eq!(
+        surface.input_for("vm", KeyEvent::new(KeyCode::Up, KeyModifiers::CONTROL)),
+        Some(b"\x1b[1;5A".to_vec())
+    );
+    assert_eq!(surface.paste_for("vm", "line\nnext"), b"\x1b[200~line\nnext\x1b[201~");
+    assert_eq!(surface.cursor_for("vm", 80, 10), Some((79, 9)));
+    assert_eq!(surface.cursor_for("vm", 40, 10), None);
+    state.cursor.row = 0;
+    assert!(state.validate().is_ok());
+    surface.apply(TerminalEvent::State {
+        session_id: "vm".into(),
+        state: state.clone(),
+    });
+    assert_eq!(surface.cursor_for("vm", 80, 10), None);
+    state.cursor.hidden = true;
+    state.modes.application_cursor = false;
+    state.modes.bracketed_paste = false;
+    surface.apply(TerminalEvent::State {
+        session_id: "vm".into(),
+        state,
+    });
+    assert_eq!(surface.cursor_for("vm", 80, 24), None);
+    assert_eq!(
+        surface.input_for("vm", KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)),
+        Some(b"\x1b[A".to_vec())
+    );
+    assert_eq!(surface.paste_for("vm", "plain"), b"plain");
 }

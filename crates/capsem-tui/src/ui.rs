@@ -94,6 +94,18 @@ fn render_layout(frame: &mut Frame<'_>, ctx: RenderLayoutCtx<'_>) {
     } else {
         render_terminal_surface(frame, chunks[0], ctx.state, ctx.terminal);
     }
+    if ctx.overlay == AppOverlay::None
+        && ctx.control_progress.is_none()
+        && !service_needs_start(ctx.state.service.status)
+    {
+        if let (Some(terminal), Some(session)) = (ctx.terminal, ctx.state.active_session()) {
+            if session_accepts_terminal(session.lifecycle) {
+                if let Some((col, row)) = terminal.cursor_for(&session.id, chunks[0].width, chunks[0].height) {
+                    frame.set_cursor_position((chunks[0].x + col, chunks[0].y + row));
+                }
+            }
+        }
+    }
     render_status_bar(frame, ctx.state, chunks[1]);
     render_overlay(
         frame,
