@@ -95,6 +95,7 @@ fn catalog() -> capsem_sdk::models::ImageListResponse {
                 image: Some(format!("registry.example/code@sha256:{}", "a".repeat(64))),
                 cached: ImageCacheState::Unknown,
                 surface: None,
+                progress: None,
             },
             ImageInfo {
                 name: "other".into(),
@@ -103,6 +104,7 @@ fn catalog() -> capsem_sdk::models::ImageListResponse {
                 image: None,
                 cached: ImageCacheState::Unknown,
                 surface: None,
+                progress: None,
             },
         ],
     }
