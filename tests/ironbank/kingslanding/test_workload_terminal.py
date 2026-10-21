@@ -39,7 +39,7 @@ def terminal(service, vm_id):
     token = (service.tmp_dir / "gateway.token").read_text().strip()
     with connect(
         f"ws://127.0.0.1:{port}/vms/{vm_id}/stream",
-        subprotocols=[Subprotocol("capsem.stream.v1")],
+        subprotocols=[Subprotocol("capsem.stream.v2")],
         additional_headers={"Authorization": f"Bearer {token}"},
         open_timeout=10,
     ) as socket:
@@ -47,6 +47,7 @@ def terminal(service, vm_id):
             bytes([CONTROL])
             + json.dumps({"type": "start", "kind": "terminal"}).encode()
         )
+        socket.send(bytes([CONTROL]) + json.dumps({"type": "focus", "cols": 80, "rows": 24}).encode())
         yield socket
 
 
