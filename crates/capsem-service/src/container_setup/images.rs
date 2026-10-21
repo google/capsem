@@ -309,7 +309,7 @@ impl<'a> Decision<'a> {
         image: &PulledImage,
         resolved: &ResolvedImage,
         access: RegistryAccess,
-        mode: ImageFetch,
+        options: ImageFetchOptions,
     ) -> Result<Option<capsem_assets::oci::RootfsLayout>, ImageError> {
         let Some(loaded) = self.load(false).await else {
             return Ok(None);
@@ -347,7 +347,7 @@ impl<'a> Decision<'a> {
                 image.digest.clone(),
                 access,
                 self.parent.clone(),
-                mode,
+                options,
                 image.cache_key.clone(),
             )
             .await
@@ -418,6 +418,7 @@ pub(crate) async fn handle_list_images(
                 .ok()
                 .map(|image| image.to_string()),
             cached: ImageCacheState::Unknown,
+            progress: None,
             surface: match entry.surface() {
                 Some("terminal") => Some(capsem_api::ImageSurface::Terminal),
                 Some("xpra") => Some(capsem_api::ImageSurface::Xpra),
@@ -435,6 +436,10 @@ pub(crate) async fn handle_list_images(
         .collect::<anyhow::Result<Vec<_>>>()
         .map_err(|error| ImageError::Failed(format!("cache identity: {error:#}")))?;
     for (image, key) in images.iter_mut().filter(|image| image.image.is_some()).zip(&keys) {
+        image.progress = image
+            .image
+            .as_deref()
+            .and_then(|image| decision.setups.downloads.snapshot(image));
         use capsem_assets::oci::CacheState;
         image.cached = match decision.setups.source.cache_state(key) {
             Ok(Some(CacheState::Missing)) => ImageCacheState::Missing,
@@ -493,6 +498,7 @@ async fn pull_image(state: &ServiceState, request: ImagePullRequest) -> Result<J
     let mut decision = Decision::new(state).await?;
     let requested = decision.resolve(&request.image).await?;
     decision.check_source(&requested).await?;
+    let download = state.containers.downloads.begin(&requested.pull);
     let access = request.registry.unwrap_or_default();
     let image = state
         .containers
@@ -501,13 +507,19 @@ async fn pull_image(state: &ServiceState, request: ImagePullRequest) -> Result<J
             requested.pull.clone(),
             access.clone(),
             decision.parent.clone(),
-            ImageFetch::Fresh,
+            ImageFetch::Fresh.with_progress(download.observer(false)),
         )
         .await
         .map_err(|e| ImageError::Failed(format!("pull {}: {e:#}", requested.pull)))?;
     let resolved = decision.admit(&requested, &image).await?;
     decision
-        .published_root(&requested, &image, &resolved, access, ImageFetch::Fresh)
+        .published_root(
+            &requested,
+            &image,
+            &resolved,
+            access,
+            ImageFetch::Fresh.with_progress(download.observer(true)),
+        )
         .await?;
     info!(image = %request.image, resolved = %resolved, "pulled image into the host cache");
     Ok(Json(ImagePullResponse {

@@ -16,6 +16,68 @@ fn host() -> &'static str {
     stage::catalog_architecture().unwrap().as_str()
 }
 
+#[tokio::test]
+async fn catalog_reports_live_pull_bytes_and_forgets_success_failure_and_cancellation() {
+    for outcome in ["success", "failure", "cancel"] {
+        let fx = Fixture::default_policy();
+        let release = Arc::new(tokio::sync::Notify::new());
+        *fx.pull_release.lock().unwrap() = Some(release.clone());
+        if outcome == "failure" {
+            fx.catalog.lock().unwrap().as_mut().unwrap()["entries"]["codex-cli"]["versions"][1]["erofs"] =
+                json!({host(): digest('8')});
+        }
+        let state = fx.state.clone();
+        let task = tokio::spawn(async move {
+            route_request(
+                build_service_router(state),
+                axum::http::Method::POST,
+                "/images/pull",
+                Some(json!({"image":"codex-cli"})),
+            )
+            .await
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(5), fx.pull_started.notified())
+            .await
+            .unwrap();
+        let (status, body) = fx.list().await;
+        assert_eq!(status, StatusCode::OK);
+        let row = body["images"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["name"] == "codex-cli")
+            .unwrap();
+        assert_eq!(row["progress"], json!({"phase":"downloading", "completed_bytes":40}));
+        assert!(body["images"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|row| row["name"] != "codex-cli")
+            .all(|row| row.get("progress").is_none()));
+        if outcome == "cancel" {
+            task.abort();
+            assert!(task.await.unwrap_err().is_cancelled());
+        } else {
+            release.notify_one();
+            let (status, _) = task.await.unwrap();
+            assert_eq!(
+                status,
+                if outcome == "success" {
+                    StatusCode::OK
+                } else {
+                    StatusCode::BAD_GATEWAY
+                }
+            );
+        }
+        let (_, body) = fx.list().await;
+        assert!(body["images"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row.get("progress").is_none()));
+    }
+}
+
 fn other() -> &'static str {
     match stage::catalog_architecture().unwrap() {
         PackageArchitecture::Arm64 => "amd64",
@@ -55,6 +117,7 @@ type RootCall = (String, String, RegistryAccess, Option<capsem_assets::oci::Cach
 
 struct CatalogImages {
     pull_delay: Arc<Mutex<std::time::Duration>>,
+    pull_release: Arc<Mutex<Option<Arc<tokio::sync::Notify>>>>,
     pull_started: Arc<tokio::sync::Notify>,
     disk_states: Arc<Mutex<std::collections::HashMap<capsem_assets::oci::CacheKey, capsem_assets::oci::CacheState>>>,
     observations: Arc<Mutex<Vec<Vec<capsem_assets::oci::CacheKey>>>>,
@@ -83,14 +146,14 @@ impl ImageSource for CatalogImages {
         subject: String,
         access: RegistryAccess,
         _parent: PathBuf,
-        mode: ImageFetch,
+        options: ImageFetchOptions,
         cache_key: Option<capsem_assets::oci::CacheKey>,
     ) -> RootfsFuture {
         assert!(
             cache_key.is_some(),
             "published filesystem requests must carry the producer cache key"
         );
-        self.fetches.lock().unwrap().push(mode);
+        self.fetches.lock().unwrap().push(options.mode);
         self.roots.lock().unwrap().push((reference, subject, access, cache_key));
         Box::pin(async { anyhow::bail!("fixture artifact unavailable") })
     }
@@ -112,14 +175,34 @@ impl ImageSource for CatalogImages {
     }
 
     /// Serves any reference: a pinned one at its pin, a tag at digest `f`.
-    fn pull(&self, image: String, _access: RegistryAccess, _parent: PathBuf, mode: ImageFetch) -> PullFuture {
-        self.fetches.lock().unwrap().push(mode);
+    fn pull(&self, image: String, _access: RegistryAccess, _parent: PathBuf, options: ImageFetchOptions) -> PullFuture {
+        self.fetches.lock().unwrap().push(options.mode);
         self.pulls.lock().unwrap().push(image.clone());
         let delay = *self.pull_delay.lock().unwrap();
-        self.pull_started.notify_one();
+        let release = self.pull_release.lock().unwrap().clone();
+        let started = self.pull_started.clone();
         Box::pin(async move {
-            if !delay.is_zero() {
+            if let Some(observer) = &options.progress {
+                observer(capsem_assets::oci::BlobProgress {
+                    digest: digest('6'),
+                    completed_bytes: 40,
+                    total_bytes: 100,
+                    verified: false,
+                });
+            }
+            started.notify_one();
+            if let Some(release) = release {
+                release.notified().await;
+            } else if !delay.is_zero() {
                 tokio::time::sleep(delay).await;
+            }
+            if let Some(observer) = options.progress {
+                observer(capsem_assets::oci::BlobProgress {
+                    digest: digest('6'),
+                    completed_bytes: 100,
+                    total_bytes: 100,
+                    verified: true,
+                });
             }
             let image_digest = image
                 .rsplit_once('@')
@@ -142,6 +225,7 @@ impl ImageSource for CatalogImages {
 
 struct Fixture {
     pull_delay: Arc<Mutex<std::time::Duration>>,
+    pull_release: Arc<Mutex<Option<Arc<tokio::sync::Notify>>>>,
     pull_started: Arc<tokio::sync::Notify>,
     disk_states: Arc<Mutex<std::collections::HashMap<capsem_assets::oci::CacheKey, capsem_assets::oci::CacheState>>>,
     observations: Arc<Mutex<Vec<Vec<capsem_assets::oci::CacheKey>>>>,
@@ -156,6 +240,7 @@ struct Fixture {
 impl Fixture {
     fn new(images: ImagePolicyConfig) -> Self {
         let pull_delay = Arc::new(Mutex::new(std::time::Duration::ZERO));
+        let pull_release = Arc::new(Mutex::new(None));
         let pull_started = Arc::new(tokio::sync::Notify::new());
         let disk_states = Arc::new(Mutex::new(std::collections::HashMap::new()));
         let observations = Arc::new(Mutex::new(Vec::new()));
@@ -167,6 +252,7 @@ impl Fixture {
         let mut state = crate::tests::make_test_state_owned();
         state.containers = ContainerSetups::with_source(Box::new(CatalogImages {
             pull_delay: pull_delay.clone(),
+            pull_release: pull_release.clone(),
             pull_started: pull_started.clone(),
             disk_states: Arc::clone(&disk_states),
             observations: Arc::clone(&observations),
@@ -182,6 +268,7 @@ impl Fixture {
         }));
         Self {
             pull_delay,
+            pull_release,
             pull_started,
             disk_states,
             observations,

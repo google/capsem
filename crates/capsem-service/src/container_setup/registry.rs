@@ -71,13 +71,16 @@ impl ImageSource for RegistryImages {
         Ok(())
     }
 
-    fn pull(&self, image: String, access: RegistryAccess, parent: PathBuf, mode: ImageFetch) -> PullFuture {
+    fn pull(&self, image: String, access: RegistryAccess, parent: PathBuf, options: ImageFetchOptions) -> PullFuture {
         let source = self.clone();
         Box::pin(async move {
             capsem_assets::oci::image_reference(&image)
                 .context("container image expects docker://IMAGE or registry/repository:tag")?;
-            let puller = source.registry_puller(access)?;
-            let layout = match mode {
+            let mut puller = source.registry_puller(access)?;
+            if let Some(observer) = options.progress {
+                puller = puller.with_progress(observer);
+            }
+            let layout = match options.mode {
                 ImageFetch::Fresh => puller.pull(&image, &parent).await?,
                 ImageFetch::PreferCached => puller.pull_prefer_cached(&image, &parent).await?,
             };
@@ -119,14 +122,17 @@ impl ImageSource for RegistryImages {
         subject: String,
         access: RegistryAccess,
         parent: PathBuf,
-        mode: ImageFetch,
+        options: ImageFetchOptions,
         cache_key: Option<capsem_assets::oci::CacheKey>,
     ) -> RootfsFuture {
         let source = self.clone();
         Box::pin(async move {
             let subject = capsem_assets::oci::Digest::parse(&subject)?;
-            let puller = source.registry_puller(access)?;
-            let root = match mode {
+            let mut puller = source.registry_puller(access)?;
+            if let Some(observer) = options.progress {
+                puller = puller.with_progress(observer);
+            }
+            let root = match options.mode {
                 ImageFetch::Fresh => puller.fetch_rootfs(&reference, &subject, &parent).await?,
                 ImageFetch::PreferCached => puller.fetch_rootfs_prefer_cached(&reference, &subject, &parent).await?,
             };

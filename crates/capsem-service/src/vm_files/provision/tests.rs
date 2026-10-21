@@ -1,5 +1,5 @@
 use super::*;
-use crate::container_setup::{ContainerSetups, ImageFetch, ImageSource, PullFuture};
+use crate::container_setup::{ContainerSetups, ImageFetchOptions, ImageSource, PullFuture};
 use crate::tests::insert_fake_instance_with_session_dir;
 
 /// Re-executed owner stays alive until the create's real teardown kills it.
@@ -58,7 +58,13 @@ impl ImageSource for RefusingImages {
         )
     }
 
-    fn pull(&self, _image: String, _access: api::RegistryAccess, _parent: PathBuf, _mode: ImageFetch) -> PullFuture {
+    fn pull(
+        &self,
+        _image: String,
+        _access: api::RegistryAccess,
+        _parent: PathBuf,
+        _options: ImageFetchOptions,
+    ) -> PullFuture {
         Box::pin(async { anyhow::bail!("registry refused the image") })
     }
 

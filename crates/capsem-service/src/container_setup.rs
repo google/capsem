@@ -18,6 +18,7 @@ use tracing::debug;
 
 mod activity;
 mod cache_owners;
+mod progress;
 mod registry;
 use registry::RegistryImages;
 pub(crate) mod images;
@@ -50,6 +51,26 @@ pub(crate) enum ImageFetch {
     PreferCached,
 }
 
+pub(crate) struct ImageFetchOptions {
+    mode: ImageFetch,
+    progress: Option<capsem_assets::oci::ProgressObserver>,
+}
+
+impl ImageFetch {
+    fn with_progress(self, observer: capsem_assets::oci::ProgressObserver) -> ImageFetchOptions {
+        ImageFetchOptions {
+            mode: self,
+            progress: Some(observer),
+        }
+    }
+}
+
+impl From<ImageFetch> for ImageFetchOptions {
+    fn from(mode: ImageFetch) -> Self {
+        Self { mode, progress: None }
+    }
+}
+
 /// Where images come from, and which may be fetched and run. Production
 /// pulls from registries under the installation's policy; tests substitute.
 pub(crate) trait ImageSource: Send + Sync {
@@ -66,7 +87,7 @@ pub(crate) trait ImageSource: Send + Sync {
         Ok(())
     }
 
-    fn pull(&self, image: String, access: RegistryAccess, parent: PathBuf, mode: ImageFetch) -> PullFuture;
+    fn pull(&self, image: String, access: RegistryAccess, parent: PathBuf, options: ImageFetchOptions) -> PullFuture;
 
     /// Read the catalog `source` names, anonymously: catalogs are public.
     fn fetch_catalog(&self, source: CatalogSource, parent: PathBuf) -> images::CatalogFuture;
@@ -78,7 +99,7 @@ pub(crate) trait ImageSource: Send + Sync {
         _subject: String,
         _access: RegistryAccess,
         _parent: PathBuf,
-        _mode: ImageFetch,
+        _options: ImageFetchOptions,
         _cache_key: Option<capsem_assets::oci::CacheKey>,
     ) -> RootfsFuture {
         Box::pin(async { anyhow::bail!("image source does not provide published filesystems") })
@@ -117,6 +138,7 @@ pub(crate) struct ContainerSetups {
     source: Box<dyn ImageSource>,
     /// The last good image catalog, shared by every image request.
     catalog: images::CatalogCache,
+    downloads: Arc<progress::Downloads>,
     retiring: activity::Retiring,
 }
 
@@ -133,6 +155,7 @@ impl ContainerSetups {
             generation: AtomicU64::new(0),
             source,
             catalog: Default::default(),
+            downloads: Default::default(),
             retiring: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -386,7 +409,7 @@ async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: Contain
             requested.pull.clone(),
             access.clone(),
             decision.parent.clone(),
-            ImageFetch::PreferCached,
+            ImageFetch::PreferCached.into(),
         )
         .await
         .map_err(|e| format!("pull {}: {e:#}", requested.pull))?;
@@ -400,7 +423,7 @@ async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: Contain
     // Admission is on the resolved digest, before anything is staged.
     let resolved = decision.admit(&requested, &image).await?;
     let rootfs = decision
-        .published_root(&requested, &image, &resolved, access, ImageFetch::PreferCached)
+        .published_root(&requested, &image, &resolved, access, ImageFetch::PreferCached.into())
         .await?;
     debug!(
         vm_id = id,

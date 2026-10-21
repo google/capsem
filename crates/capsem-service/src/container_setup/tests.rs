@@ -88,17 +88,17 @@ impl ImageSource for FixtureImages {
         _subject: String,
         _access: RegistryAccess,
         _parent: PathBuf,
-        mode: ImageFetch,
+        options: ImageFetchOptions,
         cache_key: Option<capsem_assets::oci::CacheKey>,
     ) -> RootfsFuture {
         self.root_keys.lock().unwrap().push(cache_key);
-        self.fetches.lock().unwrap().push(mode);
+        self.fetches.lock().unwrap().push(options.mode);
         self.root_calls.fetch_add(1, Ordering::Relaxed);
         Box::pin(async { anyhow::bail!("fixture artifact unavailable") })
     }
 
-    fn pull(&self, _image: String, access: RegistryAccess, _parent: PathBuf, mode: ImageFetch) -> PullFuture {
-        self.fetches.lock().unwrap().push(mode);
+    fn pull(&self, _image: String, access: RegistryAccess, _parent: PathBuf, options: ImageFetchOptions) -> PullFuture {
+        self.fetches.lock().unwrap().push(options.mode);
         let (fail, gate, seen) = (self.fail, self.gate.clone(), Arc::clone(&self.access));
         let labels = self.labels.clone();
         let cache_key = self.cache_key.clone();
