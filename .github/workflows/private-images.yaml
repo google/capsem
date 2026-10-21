@@ -59,6 +59,15 @@ jobs:
         run: printf '%s' "$TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
       - name: Materialize and publish exact helper generations
         run: uv run --project build_system --frozen capsem-gate private-images --publish
+      - name: Preserve publisher diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: private-image-diagnostics-${{ matrix.architecture }}
+          path: |
+            cache/target/gate-runs/
+            cache/target/private-images/manifest.json
+          if-no-files-found: error
       - name: Keep the latest configured generations of every package
         env:
           GH_TOKEN: ${{ github.token }}

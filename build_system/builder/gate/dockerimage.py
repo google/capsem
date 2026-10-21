@@ -147,7 +147,9 @@ class ImageOperations:
 
     def try_push(self, image: str) -> bool:
         """Push an immutable generation while preserving the attempt verdict."""
-        return self._runner.succeeds(["docker", "push", image])
+        # Publishing is work, not a quiet existence probe. Keep the registry's
+        # denial or transport error in the step log before retrying it.
+        return self._runner.run(["docker", "push", image], check=False) == 0
 
     def image_id(self, tag: str, *, platform: str | None = None) -> str:
         """The exact image a mutable tag currently names.

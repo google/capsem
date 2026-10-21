@@ -50,6 +50,17 @@ def test_private_reference_is_platform_scoped_for_three_generation_retention() -
     )
 
 
+def test_failed_private_push_keeps_the_registry_diagnostic(tmp_path, monkeypatch, capfd) -> None:
+    from capsem_builder.gate.proc import Runner
+
+    docker = tmp_path / "docker"
+    docker.write_text("#!/bin/sh\nprintf '%s\\n' 'denied: package publication permission missing' >&2\nexit 1\n")
+    docker.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    assert not Docker(Runner(PROJECT_ROOT)).try_push("ghcr.io/example/private:exact-inputs")
+    assert "denied: package publication permission missing" in capfd.readouterr().err
+
+
 def test_every_private_helper_dockerfile_links_the_owning_repository() -> None:
     paths = (
         "build_system/docker/Dockerfile.host-builder",
