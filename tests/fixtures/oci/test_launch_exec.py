@@ -71,7 +71,7 @@ def test_the_exec_is_the_workload_process_with_another_command(launcher):
     assert process["user"] == {"uid": 999, "gid": 999, "additionalGids": [999, 1000]}
     assert process["cwd"] == "/data"
     # A terminal gets a terminal type when the image names none.
-    assert process["env"] == [*workload["env"], "TERM=xterm-256color"]
+    assert process["env"] == [*workload["env"], "TERM=xterm-256color", "COLORTERM=truecolor"]
     assert launcher.exec_process(config, ["id"], False)["env"] == workload["env"]
     assert "APP=1" in process["env"]
     assert any(entry.startswith("SSL_CERT_FILE=") for entry in process["env"])

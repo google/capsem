@@ -96,3 +96,11 @@ def test_terminal_snapshot_keeps_colors_and_focus_controls_the_actual_pty(servic
         latest = next(row for row in client.get("/vms/list")["sandboxes"] if row["id"] == vm_id)["terminal"]
         assert latest["title"] and latest["revision"] >= summary["revision"], latest
         assert latest["bell_count"] == summary["bell_count"], latest
+
+
+def test_workload_advertises_full_color_to_its_terminal_apps(service, tmp_path):
+    client = service.client()
+    with image_session(service, tmp_path, "terminal-colors") as vm_id:
+        result = workload_exec(client, vm_id, 'printf "%s\\n%s\\n" "$TERM" "$COLORTERM"')
+        assert result["exit_code"] == 0, result
+        assert result["stdout_text"].splitlines() == ["xterm-256color", "truecolor"], result

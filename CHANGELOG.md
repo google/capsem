@@ -73,6 +73,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Advertise 256-color and true-color support to interactive container apps,
+  preserving explicit user terminal overrides.
+
 - Include terminal title, bell count, and latest notification in gateway
   status so shell and future tray consumers share session metadata.
 

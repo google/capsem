@@ -84,7 +84,7 @@ CONTAINER = "workload"
 RUNC = ("runc", "--rootless=true", "--root", str(RUNTIME / "state"))
 # The terminal's shell in the workload: the image's bash when it has one.
 TERMINAL_SHELL = ["/bin/sh", "-c", "command -v bash >/dev/null 2>&1 && exec bash -l; exec sh -l"]
-TERMINAL_TYPE = "TERM=xterm-256color"
+TERMINAL_ENV = {"TERM": "xterm-256color", "COLORTERM": "truecolor"}
 ATTACH_INTERVAL = 1.0
 COMMAND_TIMEOUT = 30
 # Large test-tooling images can take longer to materialize when several VMs
@@ -220,12 +220,12 @@ def configure(unpacked, image, options, detached=False):
     environment.update(
         dict.fromkeys(("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "NODE_EXTRA_CA_CERTS"), CA_BUNDLE)
     )
-    environment.update(options["env"])
     # Detached, nothing is attached when the command starts: an interactive
     # one (a shell, an agent's TUI) would read end-of-file and exit at once.
     # It runs on a terminal the launcher holds, as `docker run -dit` does.
     if detached:
-        environment.setdefault("TERM", TERMINAL_TYPE.split("=", 1)[1])
+        environment.update(TERMINAL_ENV)
+    environment.update(options["env"])
     process.update(
         terminal=detached,
         env=[f"{key}={value}" for key, value in environment.items()],
@@ -1081,8 +1081,9 @@ def exec_process(config, argv, tty):
     gave it. runc exec joins its namespaces, cgroup and seccomp filter."""
     process = json.loads(json.dumps(config["process"]))
     process.update(args=argv, terminal=tty)
-    if tty and not any(entry.startswith("TERM=") for entry in process["env"]):
-        process["env"].append(TERMINAL_TYPE)
+    if tty:
+        existing = {entry.split("=", 1)[0] for entry in process["env"]}
+        process["env"] += [f"{key}={value}" for key, value in TERMINAL_ENV.items() if key not in existing]
     return process
 
 

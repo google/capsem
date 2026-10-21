@@ -257,7 +257,7 @@ def test_a_detached_launch_runs_its_command_on_a_terminal(launcher):
     )
     assert attached["process"]["terminal"] is False
     assert detached["process"]["terminal"] is True
-    assert launcher.TERMINAL_TYPE in detached["process"]["env"]
+    assert all(f"{key}={value}" in detached["process"]["env"] for key, value in launcher.TERMINAL_ENV.items())
 
 
 def test_the_terminal_relays_keys_out_and_output_in_until_the_workload_ends(launcher):
