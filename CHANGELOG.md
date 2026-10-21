@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Refuse linked and oversized terminal transcripts before reading or appending,
+  preventing a confined VM owner from redirecting privileged transcript access.
+
 - Reject redirected serial log files when opening writers and diagnostics,
   keeping worker-controlled links from exposing or modifying unrelated files.
 

@@ -12,11 +12,13 @@
 //! [{length} bytes: raw terminal data]
 //! ```
 
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::SystemTime;
+
+use capsem_foundation::unix::fs::{open_single_link_append_no_follow as open_append, open_single_link_file_no_follow};
 
 /// Direction tag for PTY log entries.
 pub const DIR_INPUT: u8 = 0x00;
@@ -24,6 +26,9 @@ pub const DIR_OUTPUT: u8 = 0x01;
 
 /// Default max size before rotation (20 MB).
 const DEFAULT_MAX_BYTES: u64 = 20 * 1024 * 1024;
+// Include an overshooting final frame, while refusing corrupt or previously
+// unbounded transcripts before allocating their claimed size.
+const MAX_READ_BYTES: u64 = 2 * DEFAULT_MAX_BYTES;
 
 /// Thread-safe PTY transcript writer with rotation support.
 pub struct PtyLog {
@@ -45,8 +50,8 @@ impl PtyLog {
 
     /// Open with a custom max size before rotation.
     pub fn open_with_max(path: &Path, max_bytes: u64) -> std::io::Result<Self> {
-        let existing_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
         let file = open_append(path)?;
+        let existing_size = file.metadata()?.len();
         Ok(Self {
             inner: Mutex::new(PtyLogInner {
                 file,
@@ -116,24 +121,25 @@ impl PtyLog {
     }
 }
 
-#[cfg(unix)]
-fn open_append(path: &Path) -> std::io::Result<File> {
-    use std::os::unix::fs::OpenOptionsExt;
-    OpenOptions::new().create(true).append(true).mode(0o600).open(path)
-}
-
-#[cfg(not(unix))]
-fn open_append(path: &Path) -> std::io::Result<File> {
-    OpenOptions::new().create(true).append(true).open(path)
-}
-
 /// Read and iterate over PTY log entries from a file.
 /// Returns entries as (direction, timestamp_us, data).
 pub fn read_pty_log(path: &Path) -> std::io::Result<Vec<(u8, u64, Vec<u8>)>> {
     use std::io::Read;
-    let mut file = File::open(path)?;
+    let file = open_single_link_file_no_follow(path)?;
+    if file.metadata()?.len() > MAX_READ_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "transcript exceeds read limit",
+        ));
+    }
     let mut all = Vec::new();
-    file.read_to_end(&mut all)?;
+    file.take(MAX_READ_BYTES + 1).read_to_end(&mut all)?;
+    if all.len() as u64 > MAX_READ_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "transcript exceeds read limit",
+        ));
+    }
     parse_pty_log(&all)
 }
 

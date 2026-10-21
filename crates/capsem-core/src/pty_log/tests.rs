@@ -1,6 +1,33 @@
 use super::*;
 
 #[test]
+fn transcript_links_are_refused_before_reading_or_appending() {
+    let directory = tempfile::tempdir().unwrap();
+    let outside = directory.path().join("host-file");
+    std::fs::write(&outside, record_bytes(DIR_OUTPUT, 1, b"host-only")).unwrap();
+    let before = std::fs::read(&outside).unwrap();
+    for name in ["symbolic", "hard"] {
+        let linked = directory.path().join(name);
+        if name == "symbolic" {
+            std::os::unix::fs::symlink(&outside, &linked).unwrap();
+        } else {
+            std::fs::hard_link(&outside, &linked).unwrap();
+        }
+        assert!(read_pty_log(&linked).is_err());
+        assert!(PtyLog::open(&linked).is_err());
+    }
+    assert_eq!(std::fs::read(&outside).unwrap(), before);
+}
+
+#[test]
+fn an_oversized_transcript_is_rejected_before_allocation() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("pty.log");
+    File::create(&path).unwrap().set_len(40 * 1024 * 1024 + 1).unwrap();
+    assert!(matches!(read_pty_log(&path), Err(error) if error.kind() == std::io::ErrorKind::InvalidData));
+}
+
+#[test]
 fn record_and_read_roundtrip() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("pty.log");
