@@ -14,4 +14,4 @@ class TerminalSummary(Model):
     bell_count: Annotated[StrictInt, Field(ge=0)]
     last_notification: TerminalNotification | None = None
     revision: Annotated[StrictInt, Field(ge=0)]
-    title: StrictStr
+    title: Annotated[StrictStr, Field(max_length=1024)]

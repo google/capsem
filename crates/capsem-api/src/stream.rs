@@ -6,6 +6,7 @@
 //! typed JSON object. Each side decodes only the channels it may receive.
 
 pub use capsem_proto::terminal::TerminalState;
+pub use capsem_proto::TERMINAL_SUBSCRIBER_UPDATES as MAX_TERMINAL_VIEW_UPDATES;
 pub use capsem_proto::{
     TERMINAL_DEFAULT_COLS as DEFAULT_TERMINAL_COLS, TERMINAL_DEFAULT_ROWS as DEFAULT_TERMINAL_ROWS,
 };
@@ -143,9 +144,14 @@ pub fn decode_server_frame(frame: &[u8]) -> Result<ServerFrame<'_>, StreamFrameE
     match channel {
         c if c == StreamChannel::Stdout as u8 => Ok(ServerFrame::Stdout(payload)),
         c if c == StreamChannel::Stderr as u8 => Ok(ServerFrame::Stderr(payload)),
-        c if c == StreamChannel::Status as u8 => serde_json::from_slice(payload)
-            .map(ServerFrame::Status)
-            .map_err(|e| StreamFrameError::Control(e.to_string())),
+        c if c == StreamChannel::Status as u8 => {
+            let status: StreamStatus =
+                serde_json::from_slice(payload).map_err(|e| StreamFrameError::Control(e.to_string()))?;
+            if let StreamStatus::Terminal { state } = &status {
+                state.validate().map_err(|e| StreamFrameError::Control(e.into()))?;
+            }
+            Ok(ServerFrame::Status(status))
+        }
         other => Err(StreamFrameError::WrongDirection(other)),
     }
 }
@@ -153,8 +159,8 @@ pub fn decode_server_frame(frame: &[u8]) -> Result<ServerFrame<'_>, StreamFrameE
 fn validate_control(control: &StreamControl) -> Result<(), StreamFrameError> {
     let invalid = |reason: &str| Err(StreamFrameError::Control(reason.to_owned()));
     match control {
-        StreamControl::Resize { cols, rows } | StreamControl::Focus { cols, rows } if *cols == 0 || *rows == 0 => {
-            invalid("resize needs non-zero dimensions")
+        StreamControl::Resize { cols, rows } | StreamControl::Focus { cols, rows } => {
+            capsem_proto::terminal::validate_size(*cols, *rows).map_err(|e| StreamFrameError::Control(e.into()))
         }
         StreamControl::Start {
             kind: StreamKind::Exec,

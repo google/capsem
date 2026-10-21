@@ -8,6 +8,6 @@ export const TerminalModesSchema: z.ZodType<TerminalModes> = z.object({
   "application_cursor": z.boolean(),
   "application_keypad": z.boolean(),
   "bracketed_paste": z.boolean(),
-  "mouse_encoding": z.string(),
-  "mouse_protocol": z.string(),
+  "mouse_encoding": z.string().max(1024),
+  "mouse_protocol": z.string().max(1024),
 });

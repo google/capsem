@@ -8217,10 +8217,12 @@
             "type": "boolean"
           },
           "mouse_encoding": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 1024
           },
           "mouse_protocol": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 1024
           }
         }
       },
@@ -8233,13 +8235,16 @@
         ],
         "properties": {
           "body": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 1024
           },
           "id": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 1024
           },
           "title": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 1024
           }
         }
       },
@@ -8266,8 +8271,8 @@
           },
           "cols": {
             "type": "integer",
-            "format": "int32",
-            "minimum": 0
+            "maximum": 512,
+            "minimum": 1
           },
           "cursor": {
             "$ref": "#/components/schemas/TerminalCursor"
@@ -8276,10 +8281,12 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/TerminalEvent"
-            }
+            },
+            "maxItems": 32
           },
           "icon_name": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 1024
           },
           "last_notification": {
             "oneOf": [
@@ -8304,11 +8311,12 @@
           },
           "rows": {
             "type": "integer",
-            "format": "int32",
-            "minimum": 0
+            "maximum": 256,
+            "minimum": 1
           },
           "title": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 1024
           }
         }
       },
@@ -8341,7 +8349,8 @@
             "minimum": 0
           },
           "title": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 1024
           }
         }
       },

@@ -12,6 +12,7 @@ use utoipa::{IntoParams, ToSchema};
 pub fn openapi() -> OpenApi {
     let mut doc = Document::default();
     doc.schema::<crate::stream::TerminalState>();
+    doc.schema::<capsem_proto::terminal::TerminalEvent>();
     doc.get::<HypervisorInfo>("/status", "getHypervisorInfo");
     let restart = doc.operation_status::<RestartResponse>("/restart", "restartHypervisor", "202")
         .description(Some("Restart a managed hypervisor with no active or starting VMs. The gateway rotates its bearer token; obtain fresh credentials and reconnect explicitly. Never replay this mutation."));

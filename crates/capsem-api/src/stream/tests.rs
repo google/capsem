@@ -176,3 +176,36 @@ fn golden_frames_cover_every_channel_and_each_refusal() {
         assert!(controls.contains(&control), "no {control} control: {controls:?}");
     }
 }
+
+#[test]
+fn terminal_state_is_validated_before_renderer_allocation() {
+    let fixture = golden_frames();
+    let mut state = fixture["server"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find_map(|entry| entry["expect"]["status"].get("state").cloned())
+        .unwrap();
+    for (key, value) in [
+        ("cols", serde_json::json!(0)),
+        ("rows", serde_json::json!(65535)),
+        (
+            "title",
+            serde_json::json!("x".repeat(capsem_proto::TERMINAL_METADATA_BYTES + 1)),
+        ),
+        (
+            "events",
+            serde_json::json!(vec![
+                serde_json::json!({"kind":"bell","visual":false,"notification":null});
+                capsem_proto::TERMINAL_EVENTS_PER_UPDATE + 1
+            ]),
+        ),
+    ] {
+        let previous = state[key].clone();
+        state[key] = value;
+        let mut frame = vec![StreamChannel::Status as u8];
+        frame.extend(serde_json::to_vec(&serde_json::json!({"type":"terminal","state":state})).unwrap());
+        assert!(decode_server_frame(&frame).is_err(), "invalid {key} must be refused");
+        state[key] = previous;
+    }
+}

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Reject invalid terminal stream state in Rust clients and publish matching
+  screen, text, and event limits in generated SDK validators.
+
 - Validate terminal screen dimensions, cursor positions, metadata, and events
   before owner-provided state can allocate client screens.
 
