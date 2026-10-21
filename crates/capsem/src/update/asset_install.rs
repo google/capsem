@@ -393,31 +393,6 @@ pub(super) async fn hydrate_assets_for_binary(assets_dir: &Path, binary_version:
     };
 
     println!("Refreshing VM assets into {}...", assets_dir.display());
-    if let Some(local_source) = local_manifest_asset_source(assets_dir)? {
-        println!("Using local asset source {}...", local_source.display());
-        let copied = capsem_assets::asset_manager::copy_missing_local_assets(
-            &manifest,
-            binary_version,
-            arch,
-            &local_source,
-            assets_dir,
-            |p| {
-                if p.done {
-                    let mb = p.bytes_done as f64 / 1_048_576.0;
-                    println!("  {} ({:.1} MB)", p.logical_name, mb);
-                }
-            },
-        )
-        .context("local asset hydration failed")?;
-
-        if copied.is_empty() {
-            println!("All assets already up to date.");
-        } else {
-            println!("Refreshed {} asset(s).", copied.len());
-        }
-        return Ok(());
-    }
-
     let downloaded =
         capsem_assets::asset_manager::download_missing_assets(&manifest, binary_version, arch, assets_dir, |p| {
             if p.done {
@@ -1052,44 +1027,6 @@ pub(super) fn restore_optional_file(path: &Path, bytes: Option<&[u8]>) -> Result
     } else {
         Ok(())
     }
-}
-
-pub(super) fn local_manifest_asset_source(assets_dir: &std::path::Path) -> Result<Option<PathBuf>> {
-    let metadata_path = assets_dir.join("manifest-metadata.json");
-    if !metadata_path.exists() {
-        return Ok(None);
-    }
-    let content =
-        std::fs::read_to_string(&metadata_path).with_context(|| format!("read {}", metadata_path.display()))?;
-    let value: serde_json::Value =
-        serde_json::from_str(&content).with_context(|| format!("parse {}", metadata_path.display()))?;
-    let Some(source) = value.get("manifest_url").and_then(|v| v.as_str()) else {
-        return Ok(None);
-    };
-    if source.starts_with("http://") || source.starts_with("https://") {
-        return Ok(None);
-    }
-    let parsed = reqwest::Url::parse(source).with_context(|| {
-        format!(
-            "asset manifest metadata source must be a URL: use https://..., http://..., or file:///absolute/path, got {source}"
-        )
-    })?;
-    if parsed.scheme() != "file" {
-        anyhow::bail!(
-            "unsupported asset manifest metadata URL scheme {}: use https://, http://, or file://",
-            parsed.scheme()
-        );
-    }
-    if !has_scheme_authority_prefix(source, "file") {
-        anyhow::bail!("asset manifest metadata file URL must start with file://: {source}");
-    }
-    let path = parsed
-        .to_file_path()
-        .map_err(|_| anyhow::anyhow!("asset manifest metadata file URL must be absolute: {source}"))?;
-    if !path.is_file() {
-        return Ok(None);
-    }
-    Ok(path.parent().map(|parent| parent.to_path_buf()))
 }
 
 pub(super) fn remote_manifest_asset_source(assets_dir: &std::path::Path) -> Result<Option<String>> {

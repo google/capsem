@@ -2112,48 +2112,6 @@ fn explicit_corporate_manifest_locks_channel_one_way() {
 }
 
 #[test]
-fn local_manifest_asset_source_uses_manifest_metadata_parent() {
-    let dir = tempfile::tempdir().unwrap();
-    let assets_dir = dir.path().join("installed-assets");
-    let source_dir = dir.path().join("source-assets");
-    std::fs::create_dir_all(&assets_dir).unwrap();
-    std::fs::create_dir_all(&source_dir).unwrap();
-    let manifest = source_dir.join("manifest.json");
-    std::fs::write(&manifest, "{}").unwrap();
-    std::fs::write(
-        assets_dir.join("manifest-metadata.json"),
-        serde_json::json!({
-            "schema": "capsem.manifest_metadata.v1",
-            "origin": "package",
-            "manifest_url": format!("file://{}", manifest.display())
-        })
-        .to_string(),
-    )
-    .unwrap();
-
-    assert_eq!(local_manifest_asset_source(&assets_dir).unwrap(), Some(source_dir));
-}
-
-#[test]
-fn local_manifest_asset_source_ignores_remote_origin() {
-    let dir = tempfile::tempdir().unwrap();
-    let assets_dir = dir.path().join("installed-assets");
-    std::fs::create_dir_all(&assets_dir).unwrap();
-    std::fs::write(
-        assets_dir.join("manifest-metadata.json"),
-        serde_json::json!({
-            "schema": "capsem.manifest_metadata.v1",
-            "origin": "package",
-            "manifest_url": "https://example.invalid/manifest.json"
-        })
-        .to_string(),
-    )
-    .unwrap();
-
-    assert_eq!(local_manifest_asset_source(&assets_dir).unwrap(), None);
-}
-
-#[test]
 fn remote_manifest_asset_source_uses_remote_origin() {
     let dir = tempfile::tempdir().unwrap();
     let assets_dir = dir.path().join("installed-assets");
@@ -2198,67 +2156,6 @@ fn remote_manifest_asset_source_ignores_file_origin() {
 
     assert_eq!(remote_manifest_asset_source(&assets_dir).unwrap(), None);
 }
-
-#[test]
-fn local_manifest_asset_source_rejects_bare_paths() {
-    let dir = tempfile::tempdir().unwrap();
-    let assets_dir = dir.path().join("installed-assets");
-    std::fs::create_dir_all(&assets_dir).unwrap();
-    std::fs::write(
-        assets_dir.join("manifest-metadata.json"),
-        serde_json::json!({
-            "schema": "capsem.manifest_metadata.v1",
-            "origin": "package",
-            "manifest_url": "/tmp/corp/assets/stable/manifest.json"
-        })
-        .to_string(),
-    )
-    .unwrap();
-
-    let err = local_manifest_asset_source(&assets_dir).unwrap_err();
-    assert!(
-        format!("{err:#}").contains("asset manifest metadata source must be a URL"),
-        "{err:#}"
-    );
-}
-
-#[test]
-fn local_manifest_asset_source_rejects_file_url_shorthand_paths() {
-    let dir = tempfile::tempdir().unwrap();
-    let assets_dir = dir.path().join("installed-assets");
-    std::fs::create_dir_all(&assets_dir).unwrap();
-    std::fs::write(
-        assets_dir.join("manifest-metadata.json"),
-        serde_json::json!({
-            "schema": "capsem.manifest_metadata.v1",
-            "origin": "package",
-            "manifest_url": "file:assets/stable/manifest.json"
-        })
-        .to_string(),
-    )
-    .unwrap();
-
-    let err = local_manifest_asset_source(&assets_dir).unwrap_err();
-    assert!(
-        format!("{err:#}").contains("asset manifest metadata file URL must start with file://"),
-        "{err:#}"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// What a rejected manifest URL says.
-//
-// A release glow-up served `http://127.0.0.1:33029/transitions/current/manifest.json`
-// and the service reported
-//
-//     manifest_url must be an http(s) channel manifest URL, got http://...
-//
-// of a URL that is plainly http. The requirement it actually enforces -- a
-// path with an `assets` segment, a channel after it, ending in
-// `manifest.json` -- appeared nowhere, so diagnosing it cost a full CI cycle
-// and a read of this file. A rejection that does not name what it wanted is a
-// rejection that has to be reverse-engineered.
-// ---------------------------------------------------------------------------
 
 #[test]
 fn a_url_that_is_not_channel_shaped_says_what_was_expected() {
