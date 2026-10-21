@@ -10,10 +10,14 @@
 (function () {
   const status = document.getElementById("status");
   const open = document.getElementById("open");
+  const progress = document.getElementById("progress");
+  const parentOrigin = document.body.dataset.parent;
   const vm = decodeURIComponent(location.pathname.split("/")[2] || "");
 
   async function launch() {
     open.disabled = true;
+    open.hidden = true;
+    progress.hidden = false;
     status.textContent = "Opening the app...";
     try {
       const tokenResponse = await fetch("/token", { cache: "no-store" });
@@ -21,11 +25,17 @@
         throw new Error(`the gateway did not answer (${tokenResponse.status})`);
       }
       const { token } = await tokenResponse.json();
-      const response = await fetch(`/vms/${encodeURIComponent(vm)}/surface/session`, {
+      const request = () => fetch(`/vms/${encodeURIComponent(vm)}/surface/session`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
         cache: "no-store",
       });
+      const deadline = Date.now() + 120_000;
+      let response = await request();
+      while (response.status === 404 && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        response = await request();
+      }
       if (response.status === 404) {
         throw new Error("this session has no app to open, or the app is not running yet");
       }
@@ -36,6 +46,16 @@
       const form = document.createElement("form");
       form.method = "POST";
       form.action = session.url;
+      if (parentOrigin) {
+        const target = new URL(session.url);
+        target.pathname = "/_capsem/surface/index.html";
+        form.action = target.href;
+        const parent = document.createElement("input");
+        parent.type = "hidden";
+        parent.name = "parent_origin";
+        parent.value = parentOrigin;
+        form.append(parent);
+      }
       const input = document.createElement("input");
       input.type = "hidden";
       input.name = "bootstrap_token";
@@ -46,6 +66,8 @@
     } catch (error) {
       status.textContent = `Could not open the app: ${error.message}.`;
       open.disabled = false;
+      open.hidden = false;
+      progress.hidden = true;
     }
   }
 
@@ -55,6 +77,7 @@
   if (document.body.dataset.auto === "true") {
     launch();
   } else {
+    progress.hidden = true;
     status.textContent = "Open this session's app?";
   }
 })();

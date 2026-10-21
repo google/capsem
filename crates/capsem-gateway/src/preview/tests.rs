@@ -101,6 +101,20 @@ fn duplicate_origin_or_control_cookie_is_refused() {
 }
 
 #[test]
+fn embedded_credentials_and_parent_origins_cannot_be_ambiguous() {
+    for headers in [
+        "Origin: http://127.0.0.1:5173\r\nOrigin: https://attacker.test\r\n",
+        "Sec-WebSocket-Protocol: binary, capsem-preview.first, capsem-preview.second\r\n",
+        "Sec-WebSocket-Protocol: capsem-preview.first\r\nSec-WebSocket-Protocol: capsem-preview.second\r\n",
+        "Sec-WebSocket-Protocol: capsem-preview.\r\n",
+        "Sec-WebSocket-Protocol: capsem-preview.invalid%20token\r\n",
+    ] {
+        let request = format!("GET / HTTP/1.1\r\nHost: preview.localhost:19444\r\n{headers}\r\n");
+        assert!(parse_head(request.as_bytes()).is_err(), "ambiguous credential accepted");
+    }
+}
+
+#[test]
 fn origin_port_is_part_of_preview_isolation() {
     let parsed = parse_head(b"GET / HTTP/1.1\r\nHost: preview.localhost:19445\r\n\r\n").unwrap();
     assert!(validate_origin_port(&parsed, 19444).is_err());
@@ -108,6 +122,16 @@ fn origin_port_is_part_of_preview_isolation() {
 
 #[tokio::test]
 async fn bootstrap_is_posted_once_on_its_scoped_origin_and_becomes_an_http_only_cookie() {
+    assert_bootstrap_is_scoped(false).await;
+}
+
+#[tokio::test]
+async fn embedded_bootstrap_returns_a_parent_bound_client_without_cookies() {
+    assert_bootstrap_is_scoped(true).await;
+}
+
+async fn assert_bootstrap_is_scoped(surface: bool) {
+    const SESSION: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const EXPOSURE: &str = "0199df26-d0f2-74f2-a304-ef67b79d1217";
     let dir = tempfile::tempdir().unwrap();
     let service_path = dir.path().join("service.sock");
@@ -139,7 +163,7 @@ async fn bootstrap_is_posted_once_on_its_scoped_origin_and_becomes_an_http_only_
                         return StatusCode::FORBIDDEN.into_response();
                     }
                     Json(PreviewBootstrapExchangeResponse {
-                        session_token: "scoped-session".into(),
+                        session_token: SESSION.into(),
                         expires_in_seconds: 900,
                     })
                     .into_response()
@@ -165,24 +189,30 @@ async fn bootstrap_is_posted_once_on_its_scoped_origin_and_becomes_an_http_only_
             post(create_session),
         )
         .with_state(Arc::clone(&state));
-    let response = control
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(format!("/vms/box/exposures/{EXPOSURE}/preview-session"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = if surface {
+        mint(&state, "box".into(), EXPOSURE.into(), true).await
+    } else {
+        control
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/vms/box/exposures/{EXPOSURE}/preview-session"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    };
     assert_eq!(response.status(), StatusCode::OK);
     let session: PreviewSessionResponse =
         serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
     assert!(!session.url.contains(&session.bootstrap_token));
     tokio::spawn(serve(preview_listener, Arc::clone(&state)));
 
-    let exchange = |label: &str| {
+    let exchange = |label: &str, parent: Option<&str>| {
         let label = label.to_owned();
+        let origin = parent.map(|value| format!("Origin: {value}\r\n")).unwrap_or_default();
+        let path = if surface { embedded::PATH } else { "/_capsem/bootstrap" };
         async move {
             let mut client = tokio::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, preview_port))
                 .await
@@ -191,7 +221,7 @@ async fn bootstrap_is_posted_once_on_its_scoped_origin_and_becomes_an_http_only_
             client
             .write_all(
                 format!(
-                    "POST /_capsem/bootstrap HTTP/1.1\r\nHost: {label}.localhost:{preview_port}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    "POST {path} HTTP/1.1\r\nHost: {label}.localhost:{preview_port}\r\n{origin}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
                     body.len()
                 )
                 .as_bytes(),
@@ -205,19 +235,37 @@ async fn bootstrap_is_posted_once_on_its_scoped_origin_and_becomes_an_http_only_
             String::from_utf8(response).unwrap()
         }
     };
-    let response = exchange(EXPOSURE).await;
-    assert!(response.starts_with("HTTP/1.1 303 See Other\r\n"), "{response}");
-    assert!(
-        response.contains("Set-Cookie: capsem_preview=scoped-session; Path=/; HttpOnly; SameSite=Lax; Max-Age=900"),
-        "{response}"
-    );
+    let parent = surface.then_some("http://127.0.0.1:5173");
+    if surface {
+        let denied = exchange(EXPOSURE, Some("https://attacker.test")).await;
+        assert!(denied.starts_with("HTTP/1.1 403 Forbidden"));
+        assert!(
+            !exchanged.load(Ordering::SeqCst),
+            "untrusted parent cannot consume bootstrap"
+        );
+    }
+    let response = exchange(EXPOSURE, parent).await;
+    if surface {
+        assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
+        assert!(response.contains("frame-ancestors http://127.0.0.1:5173;"));
+        assert!(response.contains(&format!("capsem-preview.{SESSION}")));
+        assert!(!response.contains("Set-Cookie:") && !response.contains("X-Frame-Options:"));
+    } else {
+        assert!(response.starts_with("HTTP/1.1 303 See Other\r\n"), "{response}");
+        assert!(
+            response.contains(&format!(
+                "Set-Cookie: capsem_preview={SESSION}; Path=/; HttpOnly; SameSite=Lax; Max-Age=900"
+            )),
+            "{response}"
+        );
+    }
     // Fail closed means no session is minted. A refusal is answered with a
     // status rather than a dropped socket, which a browser shows as an empty
     // response instead of an expired preview.
     let refused = |response: &str| response.starts_with("HTTP/1.1 4") && !response.contains("Set-Cookie");
-    let replay = exchange(EXPOSURE).await;
+    let replay = exchange(EXPOSURE, parent).await;
     assert!(refused(&replay), "bootstrap replay must fail closed: {replay}");
-    let foreign = exchange("1199df26-d0f2-74f2-a304-ef67b79d1217").await;
+    let foreign = exchange("1199df26-d0f2-74f2-a304-ef67b79d1217", parent).await;
     assert!(
         refused(&foreign),
         "another exposure origin must not share this scope: {foreign}"

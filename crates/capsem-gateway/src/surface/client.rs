@@ -19,6 +19,7 @@ pub(crate) const CLIENT_ROOT: &str = "/_capsem/surface/";
 static VENDORED: &[(&str, &[u8])] = include!(concat!(env!("OUT_DIR"), "/xpra_html5.rs"));
 
 const CAPSEM_SURFACE: &str = include_str!("static/capsem-surface.js");
+const SURFACE_WORKER: &str = include_str!("static/capsem-surface-worker.js");
 const SURFACE_STYLE: &str = include_str!("static/capsem-surface.css");
 const SETTINGS: &str = include_str!("static/default-settings.txt");
 const DISCONNECTED: &str = include_str!("static/connect.html");
@@ -93,6 +94,7 @@ fn asset(relative: &str) -> Option<(&'static [u8], &'static str)> {
         "" | "index.html" => page?.index.as_bytes(),
         "xpra-main.js" => page?.main.as_bytes(),
         "capsem-surface.js" => CAPSEM_SURFACE.as_bytes(),
+        "js/capsem-surface-worker.js" => SURFACE_WORKER.as_bytes(),
         "capsem-surface.css" => SURFACE_STYLE.as_bytes(),
         "default-settings.txt" => SETTINGS.as_bytes(),
         "connect.html" => DISCONNECTED.as_bytes(),
@@ -123,7 +125,9 @@ pub(crate) fn response(method: &str, path: &str, authenticated: bool, origin: &s
         .next()
         .and_then(|path| path.strip_prefix(CLIENT_ROOT));
     let (status, content_type, body): (&str, &str, &[u8]) = match (method, relative) {
-        _ if !authenticated => ("401 Unauthorized", "text/plain; charset=utf-8", EXPIRED.as_bytes()),
+        _ if !authenticated && !public_asset(relative) => {
+            ("401 Unauthorized", "text/plain; charset=utf-8", EXPIRED.as_bytes())
+        }
         ("GET" | "HEAD", Some(relative)) => match asset(relative) {
             Some((bytes, content_type)) => ("200 OK", content_type, bytes),
             None => ("404 Not Found", "text/plain; charset=utf-8", b"Not found."),
@@ -148,6 +152,39 @@ pub(crate) fn response(method: &str, path: &str, authenticated: bool, origin: &s
         response.extend_from_slice(body);
     }
     response
+}
+
+fn public_asset(relative: Option<&str>) -> bool {
+    relative
+        .and_then(asset)
+        .is_some_and(|(_, media)| !media.starts_with("text/html"))
+}
+
+/// Only the single-use, trusted-parent POST can return an embeddable page.
+/// No credential enters a URL, cookie, inline script, or workload response.
+pub(crate) fn embedded_response(token: &str, origin: &str, parent: &str) -> anyhow::Result<Vec<u8>> {
+    anyhow::ensure!(
+        token.len() == 64 && token.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "invalid surface session credential"
+    );
+    anyhow::ensure!(
+        crate::cors::is_allowed_origin(&http::HeaderValue::from_str(parent)?),
+        "untrusted surface parent"
+    );
+    let page = PAGE.as_ref().map_err(|error| anyhow::anyhow!("{error}"))?;
+    let marker = format!(
+        "<meta name=\"capsem-surface-protocol\" content=\"{}{token}\" />",
+        capsem_proto::PREVIEW_WS_PROTOCOL_PREFIX
+    );
+    let body = page.index.replacen("</head>", &format!("{marker}</head>"), 1);
+    let policy =
+        content_security_policy(origin).replace("frame-ancestors 'none'", &format!("frame-ancestors {parent}"));
+    let mut response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nContent-Security-Policy: {policy}\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+        body.len()
+    ).into_bytes();
+    response.extend_from_slice(body.as_bytes());
+    Ok(response)
 }
 
 #[cfg(test)]

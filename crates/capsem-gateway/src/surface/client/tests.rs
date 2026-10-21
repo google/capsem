@@ -153,11 +153,49 @@ fn every_client_response_carries_a_policy_that_allows_no_inline_script() {
 }
 
 #[test]
-fn the_client_is_served_only_to_a_session_this_gateway_issued() {
-    for path in [CLIENT_ROOT.to_owned(), format!("{CLIENT_ROOT}js/Client.js")] {
+fn client_documents_require_a_session_while_static_code_needs_no_cookie() {
+    for path in [
+        CLIENT_ROOT.to_owned(),
+        format!("{CLIENT_ROOT}index.html"),
+        format!("{CLIENT_ROOT}connect.html"),
+    ] {
         let (head, body) = split(&response("GET", &path, false, ORIGIN));
         assert!(head.starts_with("HTTP/1.1 401 Unauthorized\r\n"), "{head}");
         assert!(String::from_utf8(body).unwrap().contains("expired"));
+    }
+    let (head, body) = split(&response("GET", &format!("{CLIENT_ROOT}js/Client.js"), false, ORIGIN));
+    assert!(head.starts_with("HTTP/1.1 200 OK\r\n"));
+    assert_eq!(body, vendored("js/Client.js").unwrap());
+    assert!(!body.windows(15).any(|bytes| bytes == b"scoped-session-"));
+}
+
+#[test]
+fn embedded_page_binds_one_trusted_parent_without_inline_script_or_url_credentials() {
+    let token = "b".repeat(64);
+    let parent = "http://127.0.0.1:5173";
+    let (head, body) = split(&embedded_response(&token, ORIGIN, parent).unwrap());
+    assert!(head.starts_with("HTTP/1.1 200 OK\r\n"));
+    assert!(head.contains(&format!("frame-ancestors {parent};")));
+    assert!(!head.contains("X-Frame-Options:") && !head.contains("Set-Cookie:"));
+    assert!(head.contains("script-src 'self';") && head.contains("worker-src 'self';"));
+    assert!(head.contains("Cache-Control: no-store") && head.contains("Referrer-Policy: no-referrer"));
+    assert!(!head.contains(&token));
+    let body = String::from_utf8(body).unwrap();
+    assert!(body.contains(&format!(
+        "content=\"{}{token}\"",
+        capsem_proto::PREVIEW_WS_PROTOCOL_PREFIX
+    )));
+    assert!(!body.contains("<script>") && !body.contains(&format!("?{token}")));
+    for parent in [
+        "null",
+        "https://attacker.test",
+        "http://localhost.evil.test",
+        "http://127.0.0.1:5173/?x=y",
+    ] {
+        assert!(embedded_response(&token, ORIGIN, parent).is_err());
+    }
+    for token in ["bad", "\"><script>bad()</script>"] {
+        assert!(embedded_response(token, ORIGIN, parent).is_err());
     }
 }
 

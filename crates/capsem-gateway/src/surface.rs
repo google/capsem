@@ -13,10 +13,11 @@
 
 mod client;
 
+pub(crate) use client::embedded_response;
 pub(crate) use client::{response as client_response, CLIENT_ROOT};
 
 use crate::AppState;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -101,15 +102,43 @@ fn hardened(response: impl IntoResponse, content_type: &'static str, policy: Str
 /// GET /vms/{id}/surface/ -- the launcher page. It holds nothing secret, so
 /// it is served without a bearer token. A page another site opened must be
 /// clicked through: it can open this tab, but not open the app in it.
-pub async fn launcher(State(state): State<Arc<AppState>>, Path(vm_id): Path<String>, headers: HeaderMap) -> Response {
+#[derive(Default, serde::Deserialize)]
+pub struct LaunchOptions {
+    parent_origin: Option<String>,
+}
+
+pub async fn launcher(
+    State(state): State<Arc<AppState>>,
+    Path(vm_id): Path<String>,
+    Query(options): Query<LaunchOptions>,
+    headers: HeaderMap,
+) -> Response {
     if !crate::preview::safe_id(&vm_id) {
         return StatusCode::BAD_REQUEST.into_response();
     }
     let cross_site = headers
         .get("sec-fetch-site")
         .is_some_and(|site| site.as_bytes().eq_ignore_ascii_case(b"cross-site"));
-    let page = LAUNCHER.replace("{{auto}}", if cross_site { "false" } else { "true" });
-    hardened(page, "text/html; charset=utf-8", launcher_policy(state.previews.port()))
+    let mut policy = launcher_policy(state.previews.port());
+    let parent = options.parent_origin.unwrap_or_default();
+    if !parent.is_empty() {
+        let Ok(value) = http::HeaderValue::from_str(&parent) else {
+            return StatusCode::BAD_REQUEST.into_response();
+        };
+        if !crate::cors::is_allowed_origin(&value) {
+            return StatusCode::FORBIDDEN.into_response();
+        }
+        policy = policy.replace("frame-ancestors 'none'", &format!("frame-ancestors {parent}"));
+    }
+    let embedded = !parent.is_empty() && headers.get("sec-fetch-dest").is_some_and(|value| value == "iframe");
+    let page = LAUNCHER
+        .replace("{{auto}}", if cross_site && !embedded { "false" } else { "true" })
+        .replace("{{parent}}", &parent);
+    let mut response = hardened(page, "text/html; charset=utf-8", policy);
+    if !parent.is_empty() {
+        response.headers_mut().remove(http::header::X_FRAME_OPTIONS);
+    }
+    response
 }
 
 /// GET /vms/{id}/surface/launch.js -- the launcher's script.

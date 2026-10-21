@@ -14,6 +14,32 @@
 "use strict";
 
 (function () {
+  // Embedded documents receive a scoped session in trusted HTML, independently
+  // of third-party cookies. Only the pinned transport worker gets it, and the
+  // confined router removes it before the workload sees the WebSocket offer.
+  const session = document.querySelector('meta[name="capsem-surface-protocol"]');
+  if (session) {
+    const credential = session.content;
+    session.remove();
+    const NativeWorker = globalThis.Worker;
+    const protocolURL = new URL("js/Protocol.js", location.href).href;
+    globalThis.Worker = class extends NativeWorker {
+      constructor(url, options) {
+        const protocol = new URL(url, location.href).href === protocolURL;
+        super(protocol ? new URL("js/capsem-surface-worker.js", location.href) : url, options);
+        if (protocol) this.postMessage({ type: "capsem-surface-init", credential });
+      }
+    };
+    const NativeWebSocket = globalThis.WebSocket;
+    globalThis.WebSocket = class extends NativeWebSocket {
+      constructor(url, protocols) {
+        if (new URL(url).origin !== location.origin.replace(/^http/, "ws")) throw new Error("Surface origin mismatch");
+        const offered = typeof protocols === "string" ? [protocols] : [...(protocols || [])];
+        super(url, [...offered, credential]);
+      }
+    };
+  }
+
   /** The geometry a window gets inside a viewport of `width` x `height`. */
   function fitGeometry(win, width, height, main) {
     const left = win.leftoffset || 0;

@@ -12,9 +12,10 @@
     </style>
     <script src="launch.js" defer></script>
   </head>
-  <body data-auto="{{auto}}">
+  <body data-auto="{{auto}}" data-parent="{{parent}}">
     <main>
       <p id="status">Opening the app...</p>
+      <progress id="progress" aria-label="Opening app"></progress>
       <button id="open" type="button">Open app</button>
     </main>
   </body>

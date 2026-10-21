@@ -76,6 +76,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Support authenticated graphical-session embedding with a trusted parent and
+  scoped WebSocket credentials when browsers block third-party cookies.
+
 - Preserve spaces and other text after multibyte characters when terminal
   output arrives across UTF-8 byte boundaries.
 

@@ -22,6 +22,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+mod embedded;
+
 const MAX_HEADER_BYTES: usize = 16 * 1024;
 const MAX_BOOTSTRAP_BODY_BYTES: usize = 256;
 const SERVICE_RESPONSE_BYTES: usize = 64 * 1024;
@@ -215,6 +217,8 @@ struct Head {
     label: String,
     port: u16,
     cookie: Option<String>,
+    origin: Option<String>,
+    protocol_token: Option<String>,
     websocket: bool,
     transfer_encoded: bool,
     header_bytes: usize,
@@ -261,7 +265,11 @@ async fn admit(
             anyhow::anyhow!("unknown or expired preview origin"),
         )
     })?;
-    if head.method == "POST" && head.path == "/_capsem/bootstrap" {
+    let embed = scope.surface && head.method == "POST" && head.path == embedded::PATH;
+    if embed || (head.method == "POST" && head.path == "/_capsem/bootstrap") {
+        if embed {
+            embedded::trusted_parent(&head).map_err(|error| refuse("403 Forbidden", DENIED, error))?;
+        }
         return exchange_bootstrap(stream, state, &scope, &head)
             .await
             .map(|()| None)
@@ -273,13 +281,16 @@ async fn admit(
             .map(|()| None)
             .map_err(|error| refuse("400 Bad Request", MALFORMED, error));
     }
-    let session_token = head.cookie.ok_or_else(|| {
-        refuse(
-            "401 Unauthorized",
-            EXPIRED,
-            anyhow::anyhow!("preview session cookie missing"),
-        )
-    })?;
+    let session_token = embedded::session_token(&head, &scope)
+        .map_err(|error| refuse("401 Unauthorized", EXPIRED, error))?
+        .ok_or_else(|| {
+            refuse(
+                "401 Unauthorized",
+                EXPIRED,
+                anyhow::anyhow!("preview session cookie missing"),
+            )
+        })?
+        .to_owned();
     let kind = if head.websocket {
         PreviewAdmissionKind::WebsocketUpgrade
     } else {
@@ -321,6 +332,11 @@ async fn exchange_bootstrap(
     tokio::time::timeout(HEADER_DEADLINE, stream.read_exact(&mut request)).await??;
     let body = std::str::from_utf8(&request[head.header_bytes..])?;
     let token = parse_bootstrap_token(body)?;
+    let embedded_parent = if head.path == embedded::PATH && scope.surface {
+        Some(embedded::parent_from_form(body, head)?)
+    } else {
+        None
+    };
     let path = format!(
         "/internal/vms/{}/exposures/{}/preview-bootstrap",
         scope.vm_id, scope.exposure_id
@@ -341,16 +357,21 @@ async fn exchange_bootstrap(
     } else {
         "/"
     };
-    let response = format!(
+    let response = if let Some(parent) = embedded_parent {
+        let origin = format!("{}.localhost:{}", head.label, state.previews.port);
+        crate::surface::embedded_response(&exchanged.session_token, &origin, &parent)?
+    } else {
+        format!(
         "HTTP/1.1 303 See Other\r\nLocation: {location}\r\nSet-Cookie: {PREVIEW_COOKIE}={}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}\r\nCache-Control: no-store\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
         exchanged.session_token, exchanged.expires_in_seconds
-    );
+        ).into_bytes()
+    };
     state.previews.remember_session(
         &head.label,
         exchanged.session_token,
         Duration::from_secs(u64::from(exchanged.expires_in_seconds)),
     );
-    stream.write_all(response.as_bytes()).await?;
+    stream.write_all(&response).await?;
     stream.shutdown().await?;
     tracing::info!(exposure_id = %scope.exposure_id, "preview bootstrap exchanged");
     Ok(())
@@ -484,6 +505,8 @@ fn parse_head(bytes: &[u8]) -> anyhow::Result<Head> {
     anyhow::ensure!(request.next().is_some(), "preview HTTP version missing");
     let mut host = None;
     let mut cookie = None;
+    let mut origin = None;
+    let mut protocol_token = None;
     let mut websocket = false;
     let mut content_length = 0;
     let mut saw_content_length = false;
@@ -494,6 +517,11 @@ fn parse_head(bytes: &[u8]) -> anyhow::Result<Head> {
         if name.eq_ignore_ascii_case("host") {
             anyhow::ensure!(host.is_none(), "duplicate preview host");
             host = Some(value);
+        } else if name.eq_ignore_ascii_case("origin") {
+            anyhow::ensure!(origin.is_none(), "duplicate preview origin");
+            origin = Some(value.to_owned());
+        } else if name.eq_ignore_ascii_case("sec-websocket-protocol") {
+            embedded::parse_protocol_token(value, &mut protocol_token)?;
         } else if name.eq_ignore_ascii_case("cookie") {
             for value in value
                 .split(';')
@@ -529,6 +557,8 @@ fn parse_head(bytes: &[u8]) -> anyhow::Result<Head> {
         label,
         port,
         cookie,
+        origin,
+        protocol_token,
         websocket,
         transfer_encoded,
         header_bytes: bytes.len(),

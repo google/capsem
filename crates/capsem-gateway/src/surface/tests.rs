@@ -171,6 +171,44 @@ async fn a_launcher_another_site_opened_waits_for_a_click() {
 }
 
 #[tokio::test]
+async fn an_embedded_launcher_binds_its_parent_without_bypassing_top_level_click_through() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = state(&service(dir.path(), Arc::default()).await, 19444);
+    let app = gateway(&state);
+    let path = "/vms/gui/surface/?parent_origin=http%3A%2F%2Flocalhost%3A5173";
+    let (status, headers, page) = call(
+        &app,
+        "GET",
+        path,
+        &[("sec-fetch-site", "cross-site"), ("sec-fetch-dest", "iframe")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(headers[http::header::CONTENT_SECURITY_POLICY]
+        .to_str()
+        .unwrap()
+        .contains("frame-ancestors http://localhost:5173;"));
+    assert!(!headers.contains_key(http::header::X_FRAME_OPTIONS));
+    assert!(page.contains("data-auto=\"true\"") && page.contains("data-parent=\"http://localhost:5173\""));
+    let (_, _, page) = call(
+        &app,
+        "GET",
+        path,
+        &[("sec-fetch-site", "cross-site"), ("sec-fetch-dest", "document")],
+    )
+    .await;
+    assert!(page.contains("data-auto=\"false\""));
+    let (status, _, _) = call(
+        &app,
+        "GET",
+        "/vms/gui/surface/?parent_origin=https%3A%2F%2Fattacker.test",
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
 async fn only_the_static_launcher_skips_authentication() {
     let dir = tempfile::tempdir().unwrap();
     let state = state(&service(dir.path(), Arc::default()).await, 19444);

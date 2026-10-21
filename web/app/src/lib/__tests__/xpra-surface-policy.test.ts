@@ -9,6 +9,10 @@ const POLICY = readFileSync(
   new URL('../../../../../crates/capsem-gateway/src/surface/static/capsem-surface.js', import.meta.url),
   'utf8',
 );
+const WORKER_POLICY = readFileSync(
+  new URL('../../../../../crates/capsem-gateway/src/surface/static/capsem-surface-worker.js', import.meta.url),
+  'utf8',
+);
 
 // The client's classes, reduced to what the policy touches.
 const CLIENT = `
@@ -36,14 +40,68 @@ class XpraWindow {
 }
 `;
 
-function load() {
-  const context = vm.createContext({});
+function load(globals: Record<string, unknown> = {}) {
+  const context = vm.createContext({ document: { querySelector: () => null }, ...globals });
   vm.runInContext(CLIENT, context);
   vm.runInContext(POLICY, context);
   return (source: string) => vm.runInContext(source, context);
 }
 
 describe('capsem-surface.js', () => {
+  it('gives only the pinned transport worker a scoped credential and confines WebSockets', () => {
+    const credential = `capsem-preview.${'a'.repeat(64)}`;
+    let removed = false;
+    class Worker {
+      messages: unknown[] = [];
+      constructor(public url: string | URL) {}
+      postMessage(value: unknown) { this.messages.push(value); }
+    }
+    class WebSocket {
+      constructor(public url: string, public protocols: string[]) {}
+    }
+    const run = load({
+      URL, Worker, WebSocket,
+      location: { href: 'http://preview.localhost:19444/_capsem/surface/index.html', origin: 'http://preview.localhost:19444' },
+      document: { querySelector: () => ({ content: credential, remove: () => { removed = true; } }) },
+    });
+    const worker = run('new Worker("js/Protocol.js")') as Worker;
+    expect(String(worker.url)).toBe('http://preview.localhost:19444/_capsem/surface/js/capsem-surface-worker.js');
+    expect(worker.messages).toEqual([{ type: 'capsem-surface-init', credential }]);
+    const decoder = run('new Worker("js/OffscreenDecodeWorker.js")') as Worker;
+    expect(String(decoder.url)).toBe('js/OffscreenDecodeWorker.js');
+    expect(decoder.messages).toEqual([]);
+    const socket = run('new WebSocket("ws://preview.localhost:19444/", "binary")') as WebSocket;
+    expect(socket.protocols).toEqual(['binary', credential]);
+    expect(() => run('new WebSocket("ws://other.localhost:19444/", "binary")')).toThrow('Surface origin mismatch');
+    expect(removed).toBe(true);
+  });
+
+  it('initializes the protocol worker before loading its unchanged vendor script', () => {
+    const credential = `capsem-preview.${'b'.repeat(64)}`;
+    let initialize: ((event: {data: unknown}) => void) | undefined;
+    const imported: string[] = [];
+    let removed = false;
+    class WebSocket {
+      constructor(public url: string, public protocols: string[]) {}
+    }
+    const self = {
+      WebSocket,
+      addEventListener: (_name: string, listener: typeof initialize) => { initialize = listener; },
+      removeEventListener: () => { removed = true; },
+    };
+    const context = vm.createContext({ self, URL, location: {origin: 'http://preview.localhost:19444'}, importScripts: (script: string) => imported.push(script) });
+    vm.runInContext(WORKER_POLICY, context);
+    expect(imported).toEqual([]);
+    initialize!({data: {type: 'unrelated'}});
+    expect(imported).toEqual([]);
+    initialize!({data: {type: 'capsem-surface-init', credential}});
+    expect(removed).toBe(true);
+    expect(imported).toEqual(['Protocol.js']);
+    const socket = new self.WebSocket('ws://preview.localhost:19444/', ['binary']);
+    expect(socket.protocols).toEqual(['binary', credential]);
+    expect(() => new self.WebSocket('ws://other.localhost:19444/', ['binary'])).toThrow('Surface origin mismatch');
+  });
+
   it('sizes the main window to the viewport and tells the server', () => {
     const run = load();
     const win = run('new XpraWindow(new XpraClient(1000, 700), { x: 2400, y: 900, w: 1200, h: 800 })');
