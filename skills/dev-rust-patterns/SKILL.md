@@ -340,7 +340,8 @@ reaches the others.
 
 | Need | Call | Never |
 |---|---|---|
-| Recent log content | `telemetry::read_log_tail(stream, max)` | `File::open`/`fs::read` on a `*.log` path |
+| Host log content | `telemetry::read_log_tail(stream, max)` | `File::open`/`fs::read` on a `*.log` path |
+| Session console/transcript | `session::read_session_serial_log` / `read_session_transcript` | Reopening a root-level log path or resolving worker-writable parents by path |
 | Enumerate a stream | `telemetry::log_stream_files(stream)` | `read_dir` + name filtering |
 | Redirect paths in a fixture | `paths::CapsemPathsGuard::redirect(root)` | `set_var("CAPSEM_HOME", ...)` |
 | Any `~/.capsem/...` path | a `paths::` helper | `home.join(".capsem")` |
@@ -392,9 +393,9 @@ looked for, with nothing wrong at either site.
 
 13. **Never process::exit() on guest-controlled I/O**: A guest can close a vsock fd at any time. If the host handler calls `process::exit(1)` on read error, the guest has an unconditional DoS. Use `break` to exit the read loop and let the process shut down through normal channels.
 
-14. **Sensitive logs cross a worker boundary**: Terminal and serial files contain raw user data. Use `unix::fs` single-link, no-follow file helpers and bound reads; a confined writer can still plant a redirect at its own log path. Below worker-writable directories, anchor access through `ContainedDir` descriptors. Create private files with mode 0600 and prepare or repair permissions before confinement or through the authorized broker; confined writers must not call `set_permissions`. Support exports redact recognized credential bytes even in mixed binary/text lines, preserving unrelated bytes without a UTF-8 bypass. The PTY, telemetry and support-export regressions prove both ordinary files and malicious redirects.
+14. **Sensitive logs cross a worker boundary**: Terminal and serial files contain raw user data. Use `unix::fs` single-link, no-follow file helpers and bound reads; a confined writer can still plant a redirect at its own log path. Below worker-writable directories, anchor access through `ContainedDir` descriptors. Prepare `session::prepare_session_logs` under the exclusive owner lock before confinement: it retains `owner/logs/` and migrates legacy generations without overwriting conflicts. Hypervisor console and terminal output share one `SharedLogWriter` and rotation counter; never open an independent appender. Writers retain directory descriptors across rotation, which needs directory authority rather than exact-file grants. Keep session root and ledger outside that grant. Create files with mode 0600 and repair permissions before confinement or through the authorized broker; confined writers must not call `set_permissions`. Session readers use the shared console/transcript APIs, falling back only for a missing layout. Support exports redact recognized credential bytes even in mixed binary/text lines, preserving unrelated bytes without a UTF-8 bypass. The PTY, telemetry, support-export and actual owner-sandbox regressions prove retention and malicious redirects.
 
-15. **VirtioFS share boundary -- only guest/ subtree**: The VirtioFS share must point at `session_dir/guest/`, not `session_dir` itself. Host-only files (`session.db`, `serial.log`, `checkpoint.vzsave`) must stay outside the share. When adding new host-side files to `session_dir`, they are automatically outside the guest boundary. When adding new guest-visible content, put it under `guest/`. Compat symlinks (`session_dir/{system,workspace} -> guest/{system,workspace}`) let existing host code reference the old paths. Use `capsem_core::guest_share_dir(session_dir)` to get the share root.
+15. **VirtioFS share boundary -- only guest/ subtree**: The VirtioFS share must point at `session_dir/guest/`, not `session_dir` itself. Host-only state (`session.db`, `owner/logs/`, `owner/checkpoint.vzsave`, `system/rootfs.img`) stays outside the share. The system disk lives in the host-only `system/` directory; never restore a compatibility link into guest storage. Put guest-visible content under `guest/`. Use `capsem_core::guest_share_dir(session_dir)` to get the share root.
 
 16. **VM route id is not the display name**: `SandboxInfo.id`, route path ids,
 `InstanceInfo.id`, DB handle keys, session directory basenames, and
