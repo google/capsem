@@ -5,6 +5,13 @@ use utoipa::{IntoParams, ToSchema};
 
 use crate::RegistryAccess;
 
+/// Whole image-pull operation: catalog resolution, image and published rootfs.
+/// Each registry stage can take five minutes; clients allow gateway headroom.
+pub const IMAGE_PULL_TIMEOUT_SECS: u64 = 15 * 60;
+
+/// HTTP budget for image pulls, including the gateway's ordinary request budget.
+pub const IMAGE_PULL_REQUEST_TIMEOUT_MS: u64 = (IMAGE_PULL_TIMEOUT_SECS + 120) * 1000;
+
 /// `GET /images`: the catalog entries the current image policy permits.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, ToSchema)]
 pub struct ImageListResponse {

@@ -243,7 +243,21 @@ impl Document {
             .operation::<ImageListResponse>("/images", "listImages")
             .parameters(Some(ImageListQuery::into_params(|| Some(ParameterIn::Query))));
         self.add("/images", HttpMethod::Get, list);
-        self.post::<ImagePullRequest, ImagePullResponse>("/images/pull", "pullImage");
+        let request = self.schema::<ImagePullRequest>();
+        let pull = self
+            .operation::<ImagePullResponse>("/images/pull", "pullImage")
+            .request_body(Some(
+                RequestBodyBuilder::new()
+                    .required(Some(Required::True))
+                    .content("application/json", Content::new(Some(request)))
+                    .build(),
+            ))
+            .extensions(Some(
+                [("x-capsem-request-timeout-ms", IMAGE_PULL_REQUEST_TIMEOUT_MS)]
+                    .into_iter()
+                    .collect(),
+            ));
+        self.add("/images/pull", HttpMethod::Post, pull);
     }
 
     fn networks(&mut self) {

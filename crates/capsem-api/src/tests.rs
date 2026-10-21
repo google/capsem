@@ -165,6 +165,18 @@ fn checked_in_openapi_matches_the_rust_contract() {
 }
 
 #[test]
+fn image_pull_contract_allows_download_and_verification_before_client_timeout() {
+    let document = serde_json::to_value(crate::openapi()).unwrap();
+    assert_eq!(
+        document["paths"]["/images/pull"]["post"]["x-capsem-request-timeout-ms"],
+        1_020_000
+    );
+    assert!(document["paths"]["/images"]["get"]
+        .get("x-capsem-request-timeout-ms")
+        .is_none());
+}
+
+#[test]
 fn every_schema_reference_resolves_including_recursive_file_entries() {
     fn check(value: &serde_json::Value, document: &serde_json::Value) {
         match value {

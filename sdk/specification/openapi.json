@@ -500,7 +500,8 @@
               }
             }
           }
-        }
+        },
+        "x-capsem-request-timeout-ms": 1020000
       }
     },
     "/mcp/default/info": {
