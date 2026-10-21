@@ -73,6 +73,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Project session-owned terminal state in the browser in order, with confirmed
+  dimensions and snapshot recovery instead of dropping display bytes.
+
 - Keep session terminal titles, bell counts, and notifications available in
   VM inventory even when no terminal view is attached.
 

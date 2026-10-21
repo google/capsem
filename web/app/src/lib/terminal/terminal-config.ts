@@ -13,7 +13,7 @@ export const TERMINAL_OPTIONS: ITerminalOptions = {
     'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
   fontSize: 14,
   lineHeight: 1.0,
-  scrollback: 10_000,
+  scrollback: 0,
   allowProposedApi: false,
   allowTransparency: false,
   disableStdin: false,

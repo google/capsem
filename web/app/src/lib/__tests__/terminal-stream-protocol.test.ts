@@ -17,7 +17,7 @@ function frame(channel: number, payload: string | number[]): ArrayBuffer {
   return new Uint8Array([channel, ...body]).buffer;
 }
 
-describe('capsem.stream.v1 client frames', () => {
+describe('capsem.stream.v2 client frames', () => {
   it('prefixes stdin with its channel byte and keeps bytes raw', () => {
     expect(Array.from(encodeStdin(new Uint8Array([0x6c, 0xff])))).toEqual([0, 0x6c, 0xff]);
   });
@@ -31,7 +31,7 @@ describe('capsem.stream.v1 client frames', () => {
   });
 });
 
-describe('capsem.stream.v1 server frames', () => {
+describe('capsem.stream.v2 server frames', () => {
   it('decodes stdout bytes and status JSON', () => {
     expect(decodeServerFrame(frame(1, [0x24, 0x20, 0xff]))).toEqual({
       kind: 'output',
@@ -55,7 +55,7 @@ describe('capsem.stream.v1 server frames', () => {
 
 describe('stream URL', () => {
   it('names the VM stream route with the token for the browser upgrade', () => {
-    expect(STREAM_SUBPROTOCOL).toBe('capsem.stream.v1');
+    expect(STREAM_SUBPROTOCOL).toBe('capsem.stream.v2');
     expect(streamUrl('ws://127.0.0.1:19222', 'vm 1', 't/k')).toBe('ws://127.0.0.1:19222/vms/vm%201/stream?token=t%2Fk');
   });
 });
@@ -87,10 +87,10 @@ interface GoldenFrames {
 }
 
 const golden: GoldenFrames = JSON.parse(
-  readFileSync(new URL('../../../../../sdk/specification/stream-v1.json', import.meta.url), 'utf8'),
+  readFileSync(new URL('../../../../../sdk/specification/stream-v2.json', import.meta.url), 'utf8'),
 );
 
-describe('capsem.stream.v1 against the Rust golden frames', () => {
+describe('capsem.stream.v2 against the Rust golden frames', () => {
   it('shares the protocol name and frame bound', () => {
     expect(STREAM_SUBPROTOCOL).toBe(golden.subprotocol);
     expect(MAX_STREAM_FRAME_BYTES).toBe(golden.max_frame_bytes);
@@ -121,4 +121,17 @@ describe('capsem.stream.v1 against the Rust golden frames', () => {
     oversized[0] = 1;
     expect(decodeServerFrame(oversized.buffer).kind).toBe('invalid');
   });
+});
+
+
+it('rejects oversized terminal state before allocating a renderer grid', () => {
+  const entry = golden.server.find(entry => entry.expect.status &&
+    (entry.expect.status as { type: string }).type === 'terminal');
+  const original = entry!.expect.status as { type: string; state: Record<string, unknown> };
+  for (const [key, value] of [
+    ['cols', 0], ['cols', 65535], ['rows', 65535], ['title', 'x'.repeat(1025)],
+    ['events', Array.from({ length: 33 }, () => ({ kind: 'bell', visual: false, notification: null }))],
+  ]) {
+    expect(decodeServerFrame(frame(4, JSON.stringify({ ...original, state: { ...original.state, [key as string]: value } }))).kind).toBe('invalid');
+  }
 });

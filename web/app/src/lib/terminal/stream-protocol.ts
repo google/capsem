@@ -1,8 +1,9 @@
-// capsem.stream.v1, mirrored from capsem-api's stream module: binary frames
+import { TerminalStateSchema, type TerminalState } from "@capsem/sdk";
+// capsem.stream.v2, mirrored from capsem-api's stream module: binary frames
 // whose first byte is a channel. Data stays raw bytes; control and status are
 // typed JSON. A client only ever decodes server channels.
 
-export const STREAM_SUBPROTOCOL = 'capsem.stream.v1';
+export const STREAM_SUBPROTOCOL = 'capsem.stream.v2';
 
 /** Largest frame the protocol carries, as capsem-api's stream module bounds it. */
 export const MAX_STREAM_FRAME_BYTES = 256 * 1024;
@@ -16,11 +17,12 @@ const STATUS = 4;
 export type StreamControl =
   | { type: 'start'; kind: 'terminal' | 'container' }
   | { type: 'start'; kind: 'exec'; command: string }
-  | { type: 'resize'; cols: number; rows: number }
+  | { type: 'resize' | 'focus'; cols: number; rows: number }
   | { type: 'close_stdin' };
 
 export type StreamStatus =
   | { type: 'started' }
+  | { type: 'terminal'; state: TerminalState }
   | { type: 'exit'; code: number; truncated: boolean }
   | { type: 'error'; message: string };
 
@@ -48,6 +50,8 @@ function isStatus(value: unknown): value is StreamStatus {
   if (typeof value !== 'object' || value === null) return false;
   const status = value as Record<string, unknown>;
   switch (status.type) {
+    case 'terminal':
+      return TerminalStateSchema.safeParse(status.state).success;
     case 'started':
       return true;
     case 'exit':

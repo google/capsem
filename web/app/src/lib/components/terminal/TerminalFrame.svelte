@@ -9,7 +9,8 @@
   import '@xterm/xterm/css/xterm.css';
   import { TERMINAL_OPTIONS } from '../../terminal/terminal-config';
   import { getTheme, DEFAULT_THEME } from '../../terminal/themes';
-  import { TerminalInputCoalescer, TerminalOutputCoalescer } from '../../terminal/io-coalescer';
+  import { TerminalInputCoalescer } from '../../terminal/io-coalescer';
+  import { SessionProjection } from '../../terminal/session-projection';
   import { parseParentMessage } from '../../terminal/postmessage';
   import { STREAM_SUBPROTOCOL, decodeServerFrame, encodeControl, encodeStdin, streamUrl } from '../../terminal/stream-protocol';
 
@@ -30,8 +31,9 @@
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let reconnectAttempt = $state(0);
   let destroyed = false;
+  let connectionGeneration = 0;
   let everConnected = false;
-  let outputCoalescer: TerminalOutputCoalescer | null = null;
+  let projection: SessionProjection | null = null;
   let inputCoalescer: TerminalInputCoalescer | null = null;
 
   // Reactive overlay state -- drives the loading animation shown on top of
@@ -69,6 +71,16 @@
     // URL and uses the same native/browser opener as the rest of the app.
     postToParent({ type: 'open-url', url });
   }
+
+  function requestDimensions(focus = false): void {
+    if (ws?.readyState !== WebSocket.OPEN || !containerEl || containerEl.clientWidth <= 0 || containerEl.clientHeight <= 0 || document.hidden) return;
+    const dims = fitAddon?.proposeDimensions();
+    if (!dims || dims.cols <= 0 || dims.rows <= 0) return;
+    // Layout requests a size. Only the session's acknowledgement sizes xterm.
+    ws.send(encodeControl({ type: focus ? 'focus' : 'resize', cols: dims.cols, rows: dims.rows }));
+  }
+
+  function onWindowFocus(): void { requestDimensions(true); }
 
   function sendTerminalBytes(bytes: Uint8Array): void {
     if (ws?.readyState === WebSocket.OPEN) {
@@ -123,6 +135,8 @@
 
   async function connect(): Promise<void> {
     if (destroyed) return;
+    const generation = ++connectionGeneration;
+    inputCoalescer?.reset();
     if (!vmId) {
       terminal?.write('\r\n\x1b[1;31m[No VM ID provided]\x1b[0m\r\n');
       postToParent({ type: 'error', code: 'token-failed', message: 'missing vm id' });
@@ -134,6 +148,7 @@
     }
 
     const token = await fetchToken();
+    if (destroyed || generation !== connectionGeneration) return;
     if (!token) {
       scheduleReconnect('token fetch failed');
       return;
@@ -152,17 +167,16 @@
     socket.binaryType = 'arraybuffer';
 
     socket.onopen = () => {
+      if (socket !== ws || destroyed) return;
       console.log('[terminal] ws-open vmId=%s', vmId);
       reconnectAttempt = 0;
       postToParent({ type: 'connected' });
       socket.send(encodeControl({ type: 'start', kind: 'terminal' }));
-      const dims = fitAddon?.proposeDimensions();
-      if (dims && dims.cols > 0 && dims.rows > 0) {
-        socket.send(encodeControl({ type: 'resize', cols: dims.cols, rows: dims.rows }));
-      }
+      projection?.reconnect();
+      requestDimensions(true);
       // No keystroke is injected to "redraw the prompt": a newline typed into
       // whatever the user left running (an editor, a half-typed command) is
-      // input they never gave. The stream replays recent output instead.
+      // input they never gave. The session sends its current display instead.
       // NOTE: do not flip `everConnected` here. The gateway sometimes
       // completes the WS handshake and closes moments later when the
       // per-VM UDS isn't ready yet. Using that as "first connect" makes
@@ -174,7 +188,12 @@
     socket.onmessage = (event: MessageEvent) => {
       if (!terminal || !(event.data instanceof ArrayBuffer)) return;
       const frame = decodeServerFrame(event.data);
+      if (socket !== ws) return;
       if (frame.kind === 'status') {
+        if (frame.status.type === 'terminal') {
+          projection?.state(frame.status.state);
+          postToParent({ type: 'title-update', title: frame.status.state.title });
+        }
         if (frame.status.type === 'error') {
           console.warn('[terminal] stream ended vmId=%s reason=%s', vmId, frame.status.message);
         }
@@ -182,6 +201,7 @@
       }
       if (frame.kind === 'invalid') {
         console.error('[terminal] %s', frame.reason);
+        socket.close(1002, 'invalid terminal state');
         return;
       }
       if (!everConnected) {
@@ -189,11 +209,12 @@
         console.log('[terminal] first-data vmId=%s', vmId);
       }
       hideOverlay();
-      outputCoalescer?.push(frame.bytes);
+      projection?.output(frame.bytes);
     };
 
     socket.onclose = (ev) => {
       console.log('[terminal] closed vmId=%s code=%d', vmId, ev.code);
+      if (socket !== ws) return;
       ws = null;
       scheduleReconnect(`ws closed code=${ev.code}`);
     };
@@ -216,7 +237,7 @@
     document.body.style.backgroundColor = bg;
     if (fontSize >= 8 && fontSize <= 32) terminal.options.fontSize = fontSize;
     if (fontFamily) terminal.options.fontFamily = fontFamily;
-    fitAddon?.fit();
+    requestDimensions();
     terminal.refresh(0, terminal.rows - 1);
   }
 
@@ -230,6 +251,7 @@
         break;
       case 'focus':
         terminal?.focus();
+        requestDimensions(true);
         break;
       case 'clipboard-paste':
         terminal?.paste(msg.text);
@@ -239,6 +261,7 @@
 
   onMount(async () => {
     window.addEventListener('message', onMessage);
+    window.addEventListener('focus', onWindowFocus);
 
     await document.fonts.ready;
 
@@ -255,7 +278,7 @@
     terminal.loadAddon(fitAddon);
     terminal.loadAddon(new WebLinksAddon(openTerminalLink));
     terminal.open(containerEl);
-    outputCoalescer = new TerminalOutputCoalescer((bytes) => terminal?.write(bytes));
+    projection = new SessionProjection(terminal, () => ws?.close(1000, 'resync current display'));
     inputCoalescer = new TerminalInputCoalescer(sendTerminalBytes);
 
     try {
@@ -272,26 +295,16 @@
       if (resizeRafId) cancelAnimationFrame(resizeRafId);
       resizeRafId = requestAnimationFrame(() => {
         resizeRafId = 0;
-        fitAddon?.fit();
+        requestDimensions();
       });
     });
     resizeObserver.observe(containerEl);
-
-    terminal.onResize(({ cols, rows }) => {
-      if (ws?.readyState === WebSocket.OPEN && cols > 0 && rows > 0) {
-        ws.send(encodeControl({ type: 'resize', cols, rows }));
-      }
-    });
-
-    terminal.onTitleChange((title: string) => {
-      const sanitized = title.replace(/[\x00-\x1f\x7f-\x9f]/g, '').slice(0, 128);
-      postToParent({ type: 'title-update', title: sanitized });
-    });
 
     terminal.onData((data: string) => {
       inputCoalescer?.push(new TextEncoder().encode(data));
     });
 
+    containerEl.addEventListener('focusin', () => requestDimensions(true));
     terminal.focus();
 
     // Mark initial mode unused (already wired via theme name).
@@ -302,12 +315,14 @@
 
   onDestroy(() => {
     destroyed = true;
+    connectionGeneration++;
     window.removeEventListener('message', onMessage);
+    window.removeEventListener('focus', onWindowFocus);
     if (resizeRafId) cancelAnimationFrame(resizeRafId);
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     resizeObserver?.disconnect();
     if (ws) { try { ws.close(); } catch { /* already closed */ } ws = null; }
-    outputCoalescer?.reset();
+    projection?.reconnect();
     inputCoalescer?.reset();
     terminal?.dispose();
   });
