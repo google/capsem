@@ -4,6 +4,7 @@
   import { Terminal } from '@xterm/xterm';
   import { FitAddon } from '@xterm/addon-fit';
   import { WebglAddon } from '@xterm/addon-webgl';
+  import { WebLinksAddon } from '@xterm/addon-web-links';
   import '@xterm/xterm/css/xterm.css';
   import { TERMINAL_OPTIONS } from '../../terminal/terminal-config';
   import { getTheme, DEFAULT_THEME } from '../../terminal/themes';
@@ -61,6 +62,13 @@
 
   function postToParent(msg: unknown): void {
     try { window.parent.postMessage(msg, '*'); } catch { /* detached */ }
+  }
+
+  function openTerminalLink(event: MouseEvent, url: string): void {
+    event.preventDefault();
+    // The sandbox cannot open browser tabs itself. Its parent validates the
+    // URL and uses the same native/browser opener as the rest of the app.
+    postToParent({ type: 'open-url', url });
   }
 
   function sendTerminalBytes(bytes: Uint8Array): void {
@@ -239,12 +247,14 @@
       ...TERMINAL_OPTIONS,
       theme: getTheme(initialTheme),
       fontSize: initialFontSize,
+      linkHandler: { activate: openTerminalLink },
       ...(initialFontFamily ? { fontFamily: initialFontFamily } : {}),
     });
     document.body.style.backgroundColor = terminal.options.theme?.background ?? '#000';
 
     fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
+    terminal.loadAddon(new WebLinksAddon(openTerminalLink));
     terminal.open(containerEl);
     outputCoalescer = new TerminalOutputCoalescer((bytes) => terminal?.write(bytes));
     inputCoalescer = new TerminalInputCoalescer(sendTerminalBytes);

@@ -1,6 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import { parseIframeMessage, parseParentMessage } from '../terminal/postmessage.ts';
 
+it('opens terminal web links while rejecting non-web schemes and oversized URLs', () => {
+  expect(parseIframeMessage({ type: 'open-url', url: 'https://example.com/sign-in?state=abc' }))
+    .toEqual({ type: 'open-url', url: 'https://example.com/sign-in?state=abc' });
+  expect(parseIframeMessage({ type: 'open-url', url: 'http://localhost:1455/callback' }))
+    .toEqual({ type: 'open-url', url: 'http://localhost:1455/callback' });
+  for (const url of ['javascript:alert(1)', 'file:///etc/passwd', 'data:text/html,test', 'not a url', 'https://example.com/' + 'x'.repeat(8192)]) {
+    expect(parseIframeMessage({ type: 'open-url', url })).toBeNull();
+  }
+});
+
 // -- parseIframeMessage --
 
 describe('parseIframeMessage', () => {

@@ -4,6 +4,7 @@
   import type { ParentToIframeMsg } from '../../terminal/postmessage.ts';
   import { themeStore } from '../../stores/theme.svelte.ts';
   import { tabStore } from '../../stores/tabs.svelte.ts';
+  import { openUrl } from '../../api';
 
   let { vmId, tabId }: { vmId: string; tabId: string } = $props();
 
@@ -62,6 +63,9 @@
     if (!msg) return;
 
     switch (msg.type) {
+      case 'open-url':
+        void openUrl(msg.url);
+        break;
       case 'title-update':
         tabStore.updateSubtitle(tabId, msg.title);
         break;

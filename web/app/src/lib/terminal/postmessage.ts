@@ -5,6 +5,7 @@
 const MAX_TITLE_LENGTH = 128;
 const MAX_CLIPBOARD_SIZE = 1_048_576; // 1 MB
 const MAX_ERROR_MSG_LENGTH = 256;
+const MAX_LINK_LENGTH = 8192;
 
 // -- Parent -> Iframe --
 
@@ -46,6 +47,11 @@ export interface MsgClipboardRequest {
   type: 'clipboard-request';
 }
 
+export interface MsgOpenUrl {
+  type: 'open-url';
+  url: string;
+}
+
 export interface MsgConnected {
   type: 'connected';
 }
@@ -67,6 +73,7 @@ export type IframeToParentMsg =
   | MsgTitleUpdate
   | MsgClipboardCopy
   | MsgClipboardRequest
+  | MsgOpenUrl
   | MsgConnected
   | MsgDisconnected
   | MsgError;
@@ -79,6 +86,14 @@ export function parseIframeMessage(data: unknown): IframeToParentMsg | null {
   const msg = data as Record<string, unknown>;
 
   switch (msg.type) {
+    case 'open-url': {
+      if (typeof msg.url !== 'string' || msg.url.length > MAX_LINK_LENGTH) return null;
+      try {
+        const url = new URL(msg.url);
+        return url.protocol === 'https:' || url.protocol === 'http:'
+          ? { type: 'open-url', url: url.href } : null;
+      } catch { return null; }
+    }
     case 'title-update': {
       if (typeof msg.title !== 'string') return null;
       return { type: 'title-update', title: msg.title.slice(0, MAX_TITLE_LENGTH) };

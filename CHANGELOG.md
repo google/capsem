@@ -43,6 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Plain URLs and explicit hyperlinks in terminals open in the browser,
+  including agent sign-in links, through the app's validated web-link opener.
+
 - App downloads use a compact progress bar in their row instead of a spinner
   button and explanatory text.
 
