@@ -17,15 +17,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Interludes use passive copy, with links and clickable preview chrome removed
   from the animation; playback controls remain below it.
   The desktop narrative follows Install, Ship fast, Swap workflow and Scale,
-  ending with six parallel agents in Capsem's session UI and GUI, TUI, API,
-  then agent-driven MCP control examples.
+  ending with explicit GUI session creation, six agent tabs and independent
+  prompts progressing in parallel.
 
 ### Fixed
 
+- Corrected the hero's isolation narrative: removed guest-side cross-VM
+  inspection and the return to the TUI during Scale. New VMs are visibly named,
+  created and booted before their tabs receive prompts. TUI session creation
+  includes confirmation and the new running row. Dock magnification now uses
+  fixed anchors, distance falloff and springs; AGY uses one shared ANSI banner
+  and xterm renderer across both interfaces.
 - Rebuilt the marketing hero as continuous desktop usage: cursor and dock
   magnification, Terminal installation and VM creation, AGY website work in the
   real TUI layout, an “Email productivity” session created through Alt+N for
-  Codex, then GUI session terminals and parallel TUI/MCP control. Each of the
+  Codex, then GUI session terminals and parallel prompts. Each of the
   four chapters opens with its own interstitial.
 - Replaced marketing demo dock glyphs with macOSicons assets and the canonical
   Capsem app icon; aligned the Scale view with the product's Sessions table,

@@ -12,10 +12,13 @@ export interface TerminalStep {
   codex?: boolean;
   input?: boolean;
   scale?: number;
-  surface?: "gui" | "tui" | "api" | "mcp";
+  surface?: "gui" | "tui";
   window?: boolean;
-  cursor?: "start" | "terminal" | "app" | "body" | "link" | "preview" | "session";
-  guiTerminal?: boolean;
+  cursor?: "start" | "terminal" | "app" | "body" | "link" | "preview" | "gui-customize" | "gui-name" | "gui-create" | "gui-sessions" | `tab-${number}`;
+  guiView?: "sessions" | "create" | "boot" | "terminal";
+  guiSession?: number;
+  guiStage?: "shell" | "agent";
+  launch?: number;
   dock?: "terminal" | "app" | null;
   click?: boolean;
   tui?: boolean;
@@ -24,6 +27,7 @@ export interface TerminalStep {
   email?: boolean;
   profile?: "code" | "co-work";
   key?: string | null;
+  caption?: string | null;
 }
 
 export const stepDuration = (step: TerminalStep) =>
