@@ -2,6 +2,52 @@ use super::super::tests::{digest, Registry};
 use super::super::*;
 
 #[tokio::test]
+async fn catalog_readiness_requires_the_exact_verified_filesystem_binding() {
+    use crate::oci::{CacheState, Digest, ImageCache};
+    let registry = Registry::start(|_, _| {}).await;
+    let parent = tempfile::tempdir().unwrap();
+    let root = crate::oci::tests::private_dir();
+    let owner = ImageCache::at(root.path()).unwrap();
+    let puller = registry.puller().with_cache(&owner);
+    let image = puller.pull(&registry.reference(), parent.path()).await.unwrap();
+    let key = image.cache_identity().key();
+    let reference = registry.published_filesystem(&image.source_digest, None);
+    let expected = Digest::parse(reference.rsplit_once('@').unwrap().1).unwrap();
+    let native = Digest::parse(&image.source_digest).unwrap();
+    drop(image);
+    assert_eq!(
+        puller.reconcile_cache(&key, parent.path()).await.unwrap().state,
+        CacheState::Ready
+    );
+    assert_eq!(
+        owner.snapshot_for_root(&key, &expected).unwrap().state,
+        CacheState::Partial,
+        "complete OCI layers cannot stand in for the catalog-bound filesystem"
+    );
+    let filesystem = puller.fetch_rootfs(&reference, &native, parent.path()).await.unwrap();
+    puller.retain_cached_root(&key, &filesystem).await.unwrap();
+    drop(filesystem);
+    assert_eq!(
+        puller.reconcile_cache(&key, parent.path()).await.unwrap().state,
+        CacheState::Ready
+    );
+    assert_eq!(
+        owner.snapshot_for_root(&key, &expected).unwrap().state,
+        CacheState::Ready
+    );
+    let wrong = Digest::parse(&format!("sha256:{}", "0".repeat(64))).unwrap();
+    assert_eq!(
+        owner.snapshot_for_root(&key, &wrong).unwrap().state,
+        CacheState::Partial
+    );
+    assert_eq!(
+        owner.snapshot(&key).unwrap().state,
+        CacheState::Ready,
+        "a caller expectation must not overwrite the cache owner's verified graph"
+    );
+}
+
+#[tokio::test]
 async fn ancestor_rebinding_invalidates_ready_and_missing_cache_observations() {
     use std::os::unix::fs::DirBuilderExt;
     let registry = Registry::start(|_, _| {}).await;

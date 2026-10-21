@@ -40,6 +40,7 @@ struct Observation {
     reason: Option<CacheReason>,
     verified_at: Option<u64>,
     watch: Option<ChangeWatch>,
+    root: Option<String>,
 }
 
 struct InventoryObservation {
@@ -127,6 +128,7 @@ impl Tracking {
         reason: Option<CacheReason>,
         verified_at: Option<u64>,
         watch: Option<ChangeWatch>,
+        root: Option<String>,
     ) {
         self.entries.insert(
             key,
@@ -136,7 +138,23 @@ impl Tracking {
                 reason,
                 verified_at,
                 watch,
+                root,
             },
         );
+    }
+
+    pub(super) fn snapshot_for_root(&mut self, key: &CacheKey, root: &super::Digest) -> Result<CacheSnapshot> {
+        let snapshot = self.snapshot(key)?;
+        if snapshot.state == CacheState::Ready
+            && self.entries.get(key).and_then(|entry| entry.root.as_deref()) != Some(root.as_str())
+        {
+            return Ok(CacheSnapshot {
+                state: CacheState::Partial,
+                reason: Some(CacheReason::BlobMissing),
+                verified_at_unix_ns: None,
+                ..snapshot
+            });
+        }
+        Ok(snapshot)
     }
 }

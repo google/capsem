@@ -68,6 +68,17 @@ impl BlobCache {
             .snapshot(key)
     }
 
+    pub(in super::super) fn snapshot_for_root(
+        &self,
+        key: &CacheKey,
+        root: &super::super::Digest,
+    ) -> Result<CacheSnapshot> {
+        self.tracking
+            .lock()
+            .map_err(|_| anyhow::anyhow!("OCI tracking lock poisoned"))?
+            .snapshot_for_root(key, root)
+    }
+
     /// Reobserve negative facts after installing inode/name watches. A prior
     /// error alone cannot publish a fresh observation: external repair may
     /// already have happened while the failed materialization was unwinding.
@@ -129,7 +140,7 @@ impl BlobCache {
                 tracking.epoch() == epoch && epoch != u64::MAX,
                 "incomplete observation was invalidated"
             );
-            tracking.observed(key.clone(), state, Some(reason), None, Some(watch));
+            tracking.observed(key.clone(), state, Some(reason), None, Some(watch), None);
             tracking.snapshot(&key)
         })
         .await?
@@ -177,6 +188,15 @@ impl BlobCache {
             }
             ensure!(!watch.changed()?, "cache changed during readiness verification");
             let verified_at = u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos())?;
+            let root = receipt
+                .root()
+                .map(|root| {
+                    super::super::image_reference(&root.origin)?
+                        .digest()
+                        .map(str::to_owned)
+                        .context("verified filesystem must have a manifest digest")
+                })
+                .transpose()?;
             let mut tracking = cache
                 .tracking
                 .lock()
@@ -185,7 +205,14 @@ impl BlobCache {
                 tracking.epoch() == epoch && epoch != u64::MAX,
                 "readiness proof was cancelled or invalidated"
             );
-            tracking.observed(key.clone(), CacheState::Ready, None, Some(verified_at), Some(watch));
+            tracking.observed(
+                key.clone(),
+                CacheState::Ready,
+                None,
+                Some(verified_at),
+                Some(watch),
+                root,
+            );
             tracking.snapshot(&key)
         })
         .await?

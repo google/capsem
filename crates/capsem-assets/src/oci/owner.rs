@@ -22,6 +22,13 @@ impl ImageCache {
         self.inner.snapshot(key)
     }
 
+    /// A catalog application also requires its exact published filesystem.
+    /// Compare the reconciled binding in memory; polling never reads receipts
+    /// or hashes bytes, and this observation still grants no execution authority.
+    pub fn snapshot_for_root(&self, key: &CacheKey, root: &super::Digest) -> Result<CacheSnapshot> {
+        self.inner.snapshot_for_root(key, root)
+    }
+
     /// Physical inventory is an explicit owner operation, not polling.
     pub async fn usage(&self) -> Result<CacheUsage> {
         self.inner.prepare().await?;
