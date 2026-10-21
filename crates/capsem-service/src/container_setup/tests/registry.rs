@@ -16,7 +16,7 @@ async fn catalog_observation_schedules_one_owned_worker_and_refuses_rebinding() 
     )
     .unwrap()
     .key();
-    assert_eq!(source.cache_state(&key).unwrap(), None);
+    assert_eq!(source.cache_state(&key, None).unwrap(), None);
     source.observe_cache(std::slice::from_ref(&key), &parent).unwrap();
     let cache = source.cache().unwrap();
     poll_until(
@@ -27,7 +27,7 @@ async fn catalog_observation_schedules_one_owned_worker_and_refuses_rebinding() 
     .unwrap();
     let observed = cache.snapshot(&key).unwrap();
     assert_eq!(
-        source.cache_state(&key).unwrap(),
+        source.cache_state(&key, None).unwrap(),
         Some(capsem_assets::oci::CacheState::Missing)
     );
     let clone = source.clone();
@@ -79,7 +79,7 @@ async fn request_pullers_retain_the_service_owned_cache_observation() {
     let changed = third.cache_snapshot(&key).unwrap();
     assert!(changed.verification_pending);
     assert_eq!(
-        source.cache_state(&key).unwrap(),
+        source.cache_state(&key, None).unwrap(),
         Some(capsem_assets::oci::CacheState::Unknown)
     );
     assert!(changed.epoch > observed.epoch);

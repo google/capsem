@@ -25,7 +25,7 @@ use capsem_api::{
 use capsem_assets::oci::{is_catalog_name, Catalog, Digest, ImageReference, ResolvedImage, RUNTIME_CONTRACT};
 use capsem_cache::{CacheMetrics, LoadStatus};
 use capsem_core::container::admission::{CatalogSource, ImagePolicy};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use tokio::time::{Duration, Instant};
 
 /// How long a catalog read is reused before the next request reads it again.
@@ -42,6 +42,45 @@ pub(crate) struct LoadedCatalog {
     source: CatalogSource,
     digest: Digest,
     catalog: Arc<Catalog>,
+}
+
+impl LoadedCatalog {
+    fn rootfs_bindings(&self, architecture: capsem_assets::asset_manager::PackageArchitecture) -> RootBindings<'_> {
+        let mut bindings = HashMap::new();
+        for version in self.catalog.entries().values().flat_map(|entry| entry.versions()) {
+            if version.contract() <= RUNTIME_CONTRACT && version.platforms().contains(&architecture) {
+                if let Some(root) = version.erofs(architecture) {
+                    bindings
+                        .entry(version.image().digest())
+                        .or_insert_with(HashSet::new)
+                        .insert(root);
+                }
+            }
+        }
+        bindings
+    }
+
+    fn rootfs_for(
+        &self,
+        image: &Digest,
+        architecture: capsem_assets::asset_manager::PackageArchitecture,
+    ) -> Result<Option<&Digest>, ImageError> {
+        root_binding(&self.rootfs_bindings(architecture), image)
+    }
+}
+
+type RootBindings<'a> = HashMap<&'a Digest, HashSet<&'a Digest>>;
+
+fn root_binding<'a>(bindings: &RootBindings<'a>, image: &Digest) -> Result<Option<&'a Digest>, ImageError> {
+    let Some(roots) = bindings.get(image) else {
+        return Ok(None);
+    };
+    if roots.len() > 1 {
+        return Err(ImageError::Failed(
+            "catalog binds the image to conflicting published filesystems".into(),
+        ));
+    }
+    Ok(roots.iter().next().copied())
 }
 
 #[derive(Default)]
@@ -315,24 +354,7 @@ impl<'a> Decision<'a> {
             return Ok(None);
         };
         let architecture = stage::catalog_architecture().map_err(|e| ImageError::Failed(format!("{e:#}")))?;
-        let roots: BTreeSet<_> = loaded
-            .catalog
-            .entries()
-            .values()
-            .flat_map(|entry| entry.versions())
-            .filter(|version| {
-                version.image().digest() == resolved.digest()
-                    && version.contract() <= RUNTIME_CONTRACT
-                    && version.platforms().contains(&architecture)
-            })
-            .filter_map(|version| version.erofs(architecture).map(ToString::to_string))
-            .collect();
-        if roots.len() > 1 {
-            return Err(ImageError::Failed(
-                "catalog binds the image to conflicting published filesystems".into(),
-            ));
-        }
-        let Some(digest) = roots.first() else {
+        let Some(digest) = loaded.rootfs_for(resolved.digest(), architecture)? else {
             return Ok(None);
         };
         let reference = format!("{}@{digest}", requested.identity.repository());
@@ -435,13 +457,19 @@ pub(crate) async fn handle_list_images(
         })
         .collect::<anyhow::Result<Vec<_>>>()
         .map_err(|error| ImageError::Failed(format!("cache identity: {error:#}")))?;
+    let filesystems = loaded.rootfs_bindings(architecture);
     for (image, key) in images.iter_mut().filter(|image| image.image.is_some()).zip(&keys) {
         image.progress = image
             .image
             .as_deref()
             .and_then(|image| decision.setups.downloads.snapshot(image));
         use capsem_assets::oci::CacheState;
-        image.cached = match decision.setups.source.cache_state(key) {
+        let resolved = loaded
+            .catalog
+            .resolve(&image.name, architecture, RUNTIME_CONTRACT)
+            .map_err(|error| ImageError::Failed(format!("catalog image identity: {error:#}")))?;
+        let required_root = root_binding(&filesystems, resolved.digest())?;
+        image.cached = match decision.setups.source.cache_state(key, required_root) {
             Ok(Some(CacheState::Missing)) => ImageCacheState::Missing,
             Ok(Some(CacheState::Partial)) => ImageCacheState::Partial,
             Ok(Some(CacheState::Ready)) => ImageCacheState::Ready,

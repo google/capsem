@@ -4,6 +4,19 @@ use capsem_assets::asset_manager::PackageArchitecture;
 use capsem_core::net::policy_config::{CatalogSetting, ImagePolicyConfig, SettingsFile};
 use serde_json::{json, Value};
 
+#[tokio::test]
+async fn cache_observation_requires_the_same_filesystem_as_launch() {
+    let fx = Fixture::default_policy();
+    fx.catalog.lock().unwrap().as_mut().unwrap()["entries"]["codex-cli"]["versions"][1]["erofs"] =
+        json!({host(): digest('8')});
+    let (status, _) = fx.list().await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        *fx.required_roots.lock().unwrap(),
+        vec![Some(Digest::parse(&digest('8')).unwrap()), None]
+    );
+}
+
 fn hex(c: char) -> String {
     std::iter::repeat_n(c, 64).collect()
 }
@@ -116,6 +129,7 @@ fn catalog_document() -> Value {
 type RootCall = (String, String, RegistryAccess, Option<capsem_assets::oci::CacheKey>);
 
 struct CatalogImages {
+    required_roots: Arc<Mutex<Vec<Option<Digest>>>>,
     pull_delay: Arc<Mutex<std::time::Duration>>,
     pull_release: Arc<Mutex<Option<Arc<tokio::sync::Notify>>>>,
     pull_started: Arc<tokio::sync::Notify>,
@@ -133,7 +147,9 @@ impl ImageSource for CatalogImages {
     fn cache_state(
         &self,
         key: &capsem_assets::oci::CacheKey,
+        root: Option<&Digest>,
     ) -> anyhow::Result<Option<capsem_assets::oci::CacheState>> {
+        self.required_roots.lock().unwrap().push(root.cloned());
         Ok(self.disk_states.lock().unwrap().get(key).copied())
     }
     fn observe_cache(&self, keys: &[capsem_assets::oci::CacheKey], _parent: &StdPath) -> anyhow::Result<()> {
@@ -224,6 +240,7 @@ impl ImageSource for CatalogImages {
 }
 
 struct Fixture {
+    required_roots: Arc<Mutex<Vec<Option<Digest>>>>,
     pull_delay: Arc<Mutex<std::time::Duration>>,
     pull_release: Arc<Mutex<Option<Arc<tokio::sync::Notify>>>>,
     pull_started: Arc<tokio::sync::Notify>,
@@ -239,6 +256,7 @@ struct Fixture {
 
 impl Fixture {
     fn new(images: ImagePolicyConfig) -> Self {
+        let required_roots = Arc::new(Mutex::new(Vec::new()));
         let pull_delay = Arc::new(Mutex::new(std::time::Duration::ZERO));
         let pull_release = Arc::new(Mutex::new(None));
         let pull_started = Arc::new(tokio::sync::Notify::new());
@@ -251,6 +269,7 @@ impl Fixture {
         let roots = Arc::new(Mutex::new(Vec::new()));
         let mut state = crate::tests::make_test_state_owned();
         state.containers = ContainerSetups::with_source(Box::new(CatalogImages {
+            required_roots: required_roots.clone(),
             pull_delay: pull_delay.clone(),
             pull_release: pull_release.clone(),
             pull_started: pull_started.clone(),
@@ -267,6 +286,7 @@ impl Fixture {
             roots: Arc::clone(&roots),
         }));
         Self {
+            required_roots,
             pull_delay,
             pull_release,
             pull_started,

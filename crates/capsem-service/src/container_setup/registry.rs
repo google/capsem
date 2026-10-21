@@ -39,10 +39,17 @@ impl ImageSource for RegistryImages {
     fn cache_state(
         &self,
         key: &capsem_assets::oci::CacheKey,
+        root: Option<&capsem_assets::oci::Digest>,
     ) -> anyhow::Result<Option<capsem_assets::oci::CacheState>> {
         self.cache
             .get()
-            .map(|cache| cache.snapshot(key).map(|snapshot| snapshot.state))
+            .map(|cache| {
+                match root {
+                    Some(root) => cache.snapshot_for_root(key, root),
+                    None => cache.snapshot(key),
+                }
+                .map(|snapshot| snapshot.state)
+            })
             .transpose()
     }
 

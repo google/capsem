@@ -78,6 +78,7 @@ pub(crate) trait ImageSource: Send + Sync {
     fn cache_state(
         &self,
         _key: &capsem_assets::oci::CacheKey,
+        _root: Option<&capsem_assets::oci::Digest>,
     ) -> anyhow::Result<Option<capsem_assets::oci::CacheState>> {
         Ok(None)
     }

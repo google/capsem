@@ -61,6 +61,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep incomplete catalog apps downloadable until their exact published
+  filesystem is verified, including after a failed filesystem transfer.
+
 - App rows show observed download bytes, known percentages and verification in a compact progress bar.
 
 - App downloads expose observed progress through catalog reads and remove it when requests end.
