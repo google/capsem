@@ -248,6 +248,7 @@ use crate::AppState;
 
 fn test_vm(id: &str, name: Option<&str>, status: VmLifecycleState, persistent: bool) -> VmSummary {
     VmSummary {
+        terminal: None,
         id: id.into(),
         name: name.map(|s| s.into()),
         status,
@@ -735,4 +736,35 @@ async fn fetch_status_passes_through_telemetry() {
     assert_eq!(vm.model_call_count, Some(5));
     assert_eq!(vm.total_file_events, None);
     h.abort();
+}
+
+#[tokio::test]
+async fn overview_keeps_session_terminal_title_bell_and_notification() {
+    let mock = axum::Router::new().route(
+        "/internal/gateway/status",
+        axum::routing::get(|| async {
+            axum::Json(serde_json::json!({"sandboxes": [{
+                "id": "box", "status": "Running", "persistent": true, "available_actions": [],
+                "terminal": { "revision": 9, "title": "Agent ready", "bell_count": 2,
+                    "last_notification": {"id": "notice-1", "title": "Review", "body": "Ready"} }
+            }]}))
+        }),
+    );
+    let (path, handle, _dir) = mock_uds(mock).await;
+    let info = fetch_status(&test_app_state(&path)).await;
+    assert_eq!(info.service, ServiceAvailability::Running);
+    let summary = info.vms[0].terminal.as_ref().unwrap();
+    assert_eq!(summary.title, "Agent ready");
+    assert_eq!(summary.bell_count, 2);
+    assert_eq!(summary.revision, 9);
+    let notification = summary.last_notification.as_ref().unwrap();
+    assert_eq!(
+        (
+            notification.id.as_str(),
+            notification.title.as_str(),
+            notification.body.as_str()
+        ),
+        ("notice-1", "Review", "Ready")
+    );
+    handle.abort();
 }

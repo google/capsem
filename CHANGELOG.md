@@ -73,6 +73,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Include terminal title, bell count, and latest notification in gateway
+  status so shell and future tray consumers share session metadata.
+
 - Expose terminal metadata and typed focus/resize controls in the Rust SDK;
   output-only consumers can skip state updates without losing command output.
 

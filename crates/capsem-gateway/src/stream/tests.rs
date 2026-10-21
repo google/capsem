@@ -25,7 +25,7 @@ async fn fake_service(
                 async move {
                     headers_tx.send(headers).unwrap();
                     upgrade
-                        .protocols(["capsem.stream.v1"])
+                        .protocols(["capsem.stream.v2"])
                         .on_upgrade(move |mut socket| async move {
                             while let Some(Ok(ServerMessage::Binary(bytes))) = socket.recv().await {
                                 let mut reply = id.as_bytes().to_vec();
@@ -71,7 +71,7 @@ fn request(address: std::net::SocketAddr, query: &str, vm: &str) -> http::Reques
         .unwrap();
     request
         .headers_mut()
-        .insert("sec-websocket-protocol", "capsem.stream.v1".parse().unwrap());
+        .insert("sec-websocket-protocol", "capsem.stream.v2".parse().unwrap());
     request
 }
 
@@ -83,14 +83,14 @@ async fn authenticated_stream_is_tunnelled_byte_for_byte_without_credentials() {
     let (mut client, response) = tokio_tungstenite::connect_async(request(address, &format!("?token={TOKEN}"), "box"))
         .await
         .unwrap();
-    assert_eq!(response.headers()["sec-websocket-protocol"], "capsem.stream.v1");
+    assert_eq!(response.headers()["sec-websocket-protocol"], "capsem.stream.v2");
     client.send(Message::Binary(vec![0, 0xff, b'x'].into())).await.unwrap();
     match client.next().await.unwrap().unwrap() {
         Message::Binary(bytes) => assert_eq!(&bytes[..], b"box\x00\xffx"),
         other => panic!("unexpected {other:?}"),
     }
     let headers = forwarded.recv().await.unwrap();
-    assert_eq!(headers["sec-websocket-protocol"], "capsem.stream.v1");
+    assert_eq!(headers["sec-websocket-protocol"], "capsem.stream.v2");
     assert_eq!(headers[http::header::HOST], "localhost");
     assert!(headers.get(http::header::AUTHORIZATION).is_none());
     assert!(

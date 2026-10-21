@@ -21,7 +21,7 @@ from websockets.typing import Subprotocol
 pytestmark = pytest.mark.gateway
 
 
-STREAM_SUBPROTOCOL = Subprotocol("capsem.stream.v1")
+STREAM_SUBPROTOCOL = Subprotocol("capsem.stream.v2")
 
 
 class MockWsProcess:

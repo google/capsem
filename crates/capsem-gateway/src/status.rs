@@ -103,6 +103,8 @@ struct ListResponse {
 
 #[derive(Deserialize)]
 struct SessionInfo {
+    #[serde(default)]
+    terminal: Option<capsem_api::TerminalSummary>,
     id: String,
     #[serde(default)]
     name: Option<String>,
@@ -184,6 +186,7 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
         }
 
         vms.push(VmSummary {
+            terminal: sess.terminal.clone(),
             id: sess.id.clone(),
             name: sess.name.clone(),
             status: sess.status,
