@@ -39,6 +39,7 @@ pub mod proxy_trace_hints;
 pub mod repeated;
 pub mod router;
 mod sparse;
+pub mod terminal;
 pub mod upstream_grant;
 mod wire_bytes;
 
@@ -91,7 +92,8 @@ pub const MAX_BOOT_FILES: usize = 64;
 /// guest freeze, so no destination path crosses into the VM owner.
 /// Version 13 fixes suspend to the owner's confined checkpoint location.
 /// Version 14 adds host-only credential injection; version 15 carries active-policy bytes.
-pub const PROTOCOL_VERSION: u16 = 15;
+/// Version 16 adds session-owned terminal state and explicit view focus.
+pub const PROTOCOL_VERSION: u16 = 16;
 
 /// Guest loopback port of the agent's DNS proxy (port 53 is redirected here).
 pub const GUEST_DNS_PROXY_PORT: u16 = 1053;

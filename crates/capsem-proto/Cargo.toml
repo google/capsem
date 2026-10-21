@@ -10,7 +10,11 @@ repository.workspace = true
 authors.workspace = true
 build = "build.rs"
 
+[features]
+schema = ["dep:utoipa"]
+
 [dependencies]
+utoipa = { version = "5.4", optional = true }
 capsem-crypto = { path = "../capsem-crypto", version = "0.7.1", default-features = false }
 serde = { workspace = true }
 serde_bytes = { workspace = true }

@@ -15,6 +15,7 @@ cannot keep the old digest.
 REQUIRED_INPUTS = {
     "lib.rs",
     "ipc.rs",
+    "terminal.rs",
     "handshake.rs",
     "router.rs",
     "exec_stream.rs",

@@ -57,6 +57,11 @@ pub enum ServiceToProcess {
         cols: u16,
         rows: u16,
     },
+    /// Explicitly give this terminal connection input/resize authority.
+    TerminalFocus {
+        cols: u16,
+        rows: u16,
+    },
     /// Request the process to gracefully shut down the VM.
     Shutdown,
     /// Execute a command and wait for completion (structured). `command` is
@@ -280,6 +285,10 @@ pub enum ProcessToService {
         #[serde(with = "serde_bytes")]
         data: Vec<u8>,
     },
+    /// Session-owned state, followed by its normalized render projection.
+    TerminalState { state: Box<crate::terminal::TerminalState> },
+    /// Low-volume terminal state for inventory and tray consumers.
+    TerminalSummary { summary: crate::terminal::TerminalSummary },
     /// State change notification (e.g. Booting -> Running).
     StateChanged { id: String, state: String, trigger: String },
     /// Result of an Exec command.
