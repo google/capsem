@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Update the Vitest test-tool cohort to 4.1.12, fixing unauthenticated mock
+  code injection and Windows redirect path traversal in `@vitest/mocker`
+  (CVE-2026-112949 and CVE-2026-112950).
+
 - Strip embedded graphical-session credentials from WebSocket protocol offers
   before forwarding requests to the workload.
 
