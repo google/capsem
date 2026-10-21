@@ -31,7 +31,10 @@ fn serial_log_is_opened_during_config_preparation() {
     let mut terminal = console.clone();
     console.write_all(b"console\n").unwrap();
     terminal.write_all(b"terminal\n").unwrap();
-    assert_eq!(std::fs::read(path).unwrap(), b"console\nterminal\n");
+    assert_eq!(
+        capsem_foundation::telemetry::read_log_tail_bytes(&path, usize::MAX).unwrap(),
+        b"console\nterminal\n"
+    );
 }
 
 #[test]
