@@ -166,7 +166,7 @@ Key gateway endpoints:
 |----------|---------|
 | `GET /` | Health check (no auth) |
 | `GET /status` | Aggregated VM status (1s cache TTL) |
-| `GET /vms/{id}/stream` | `capsem.stream.v1` WebSocket (terminal, streaming exec, container attach), tunneled to the service |
+| `GET /vms/{id}/stream` | `capsem.stream.v3` WebSocket (terminal, streaming exec, container attach), tunneled to the service |
 | Explicit allowlist | Settings, session, stats, enforcement, detection, plugin, MCP, credential, and debug routes used by the UI/TUI |
 
 The gateway forwards only routes that are deliberately registered in its route table.

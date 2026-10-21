@@ -225,7 +225,7 @@ connection.
 | POST | `/images/pull` | Resolve a catalog name or reference, check its source, pull it into the host image cache, admit it; 403 when the policy refuses |
 | GET/POST | `/vms/{id}/exposures` | List or open loopback port exposures held by the VM owner |
 | DELETE | `/vms/{id}/exposures/{exposure_id}` | Close an exposure for good |
-| GET | `/vms/{id}/stream` | `capsem.stream.v1` WebSocket: terminal, streaming exec, or attached container |
+| GET | `/vms/{id}/stream` | `capsem.stream.v3` WebSocket: terminal, streaming exec, or attached container |
 | GET | `/vms/list` | List VMs and their lifecycle/status metadata |
 | GET | `/vms/{id}/info` | VM identity, resources, resume eligibility, and non-hot metadata |
 | GET | `/vms/{id}/status` | Runtime state for one VM |

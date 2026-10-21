@@ -33,11 +33,11 @@
 - `crates/capsem-gateway/src/proxy.rs` -- UDS reverse proxy (method/header/body forwarding, 10MB limit, 30s timeout)
 - `crates/capsem-gateway/src/status.rs` -- Aggregated status with 2s thundering-herd-safe cache
 - `crates/capsem-gateway/src/stream.rs` -- authenticates `/vms/{id}/stream` and tunnels the WebSocket upgrade to the service without parsing frames
-- `crates/capsem-service/src/router_runtime/streams.rs` -- `capsem.stream.v1` sessions translated to stream-role VM-owner IPC
+- `crates/capsem-service/src/router_runtime/streams.rs` -- `capsem.stream.v3` sessions translated to stream-role VM-owner IPC
 
 ## App (thin Tauri webview shell)
 
-- `crates/capsem-app/src/main.rs` -- Tauri setup, gateway URL, 2 IPC commands (open_url, check_for_app_update)
+- `crates/capsem-app/src/lib.rs` -- Tauri setup, gateway URL and registered shell commands (frontend logging, log-path diagnostics, external URL opening)
 - `crates/capsem-app/tauri.conf.json` -- Tauri config (bundle targets, updater endpoint, entitlements)
 
 ## Config
