@@ -4,7 +4,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::model::{AppState, ServiceStatus, SessionLifecycle};
 
 mod create;
-pub use create::{CreateDraft, CreateField, ImageCatalog};
+pub use create::{CreateDraft, CreateField, ImageCatalog, ImageCatalogRequest};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AppAction {
@@ -137,7 +137,7 @@ pub struct App {
     create_draft: Option<CreateDraft>,
     pending_create: Option<CreateDraft>,
     catalog_generation: u64,
-    catalog_request: Option<u64>,
+    catalog_request: Option<ImageCatalogRequest>,
     fork_draft: Option<ForkDraft>,
 }
 
@@ -213,6 +213,7 @@ impl App {
         self.state = state;
         self.ensure_active_tab_visible();
         self.sync_empty_state_prompt();
+        self.poll_pending_image_catalog();
     }
 
     pub fn set_control_message(&mut self, message: impl Into<String>) {

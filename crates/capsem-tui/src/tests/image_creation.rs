@@ -1,6 +1,114 @@
 use super::*;
 
 #[test]
+fn periodic_state_refresh_follows_pending_image_verification() {
+    let mut app = App::new(fixture_state());
+    app.handle_key(key(KeyCode::Char('n'), KeyModifiers::ALT));
+    let generation = app.take_catalog_request().unwrap();
+    assert!(generation.refresh);
+    app.apply_image_catalog(generation, Ok(catalog()));
+    app.handle_key(key(KeyCode::Tab, KeyModifiers::NONE));
+    app.handle_key(key(KeyCode::Down, KeyModifiers::NONE));
+    let name = app.create_draft().unwrap().name.clone();
+    app.replace_state(app.state().clone());
+    let poll = app
+        .take_catalog_request()
+        .expect("follow the cache owner's pending verification");
+    assert_eq!(poll.generation, generation.generation);
+    assert!(
+        !poll.refresh,
+        "observing local cache verification must not refetch the registry catalog"
+    );
+    let mut ready = catalog();
+    ready.images[0].cached = capsem_sdk::models::ImageCacheState::Ready;
+    app.apply_image_catalog(poll, Ok(ready));
+    assert_eq!(app.create_draft().unwrap().name, name);
+    assert_eq!(app.create_draft().unwrap().selected_image().unwrap().name, "code");
+    app.replace_state(app.state().clone());
+    assert!(
+        app.take_catalog_request().is_none(),
+        "incompatible unknown entries must not cause endless polling"
+    );
+    app.handle_key(key(KeyCode::Char('r'), KeyModifiers::CONTROL));
+    let refresh = app.take_catalog_request().unwrap();
+    assert!(refresh.refresh);
+    assert_ne!(refresh.generation, poll.generation);
+    app.handle_key(key(KeyCode::Esc, KeyModifiers::NONE));
+    app.replace_state(app.state().clone());
+    assert!(
+        app.take_catalog_request().is_none(),
+        "closing the chooser stops polling"
+    );
+}
+
+#[test]
+fn active_cache_and_transfer_progress_keep_the_existing_draft_observed() {
+    use capsem_sdk::models::{ImageCacheState, ImageDownloadPhase, ImageDownloadProgress};
+    let mut app = App::new(fixture_state());
+    app.handle_key(key(KeyCode::Char('n'), KeyModifiers::ALT));
+    let generation = app.take_catalog_request().unwrap();
+    let mut response = catalog();
+    response.images[0].cached = ImageCacheState::Missing;
+    app.apply_image_catalog(generation, Ok(response.clone()));
+    app.handle_key(key(KeyCode::Tab, KeyModifiers::NONE));
+    app.handle_key(key(KeyCode::Down, KeyModifiers::NONE));
+    app.replace_state(app.state().clone());
+    assert!(
+        app.take_catalog_request().is_none(),
+        "resolved missing entries do not need a poll"
+    );
+    app.handle_key(key(KeyCode::Char('p'), KeyModifiers::CONTROL));
+    app.replace_state(app.state().clone());
+    let pending = app
+        .take_catalog_request()
+        .expect("observe an active pull before its progress arrives");
+    assert!(!pending.refresh);
+    app.complete_image_cache(false);
+    response.images[0].progress = Some(ImageDownloadProgress {
+        phase: ImageDownloadPhase::Downloading,
+        completed_bytes: 1,
+        total_bytes: Some(2),
+    });
+    app.apply_image_catalog(pending, Ok(response));
+    app.replace_state(app.state().clone());
+    assert!(
+        !app.take_catalog_request()
+            .expect("follow another client's active transfer")
+            .refresh
+    );
+    let mut state = app.state().clone();
+    state.service.status = ServiceStatus::Offline;
+    app.replace_state(state);
+    assert!(
+        app.take_catalog_request().is_none(),
+        "an offline service is handled by its own reconnect flow"
+    );
+}
+
+#[test]
+fn periodic_catalog_observation_preserves_explicit_refresh_and_retry_requests() {
+    let mut app = App::new(fixture_state());
+    app.handle_key(key(KeyCode::Char('n'), KeyModifiers::ALT));
+    let first = app.take_catalog_request().unwrap();
+    app.apply_image_catalog(first, Ok(catalog()));
+    app.handle_key(key(KeyCode::Char('r'), KeyModifiers::CONTROL));
+    app.replace_state(app.state().clone());
+    let manual = app.take_catalog_request().unwrap();
+    assert!(
+        manual.refresh,
+        "periodic observation cannot replace a queued explicit refresh"
+    );
+    app.retry_catalog_request(manual);
+    assert_eq!(app.take_catalog_request(), Some(manual));
+    app.apply_image_catalog(manual, Err("registry unavailable".into()));
+    app.replace_state(app.state().clone());
+    assert!(
+        app.take_catalog_request().is_none(),
+        "failed registry reads retain the explicit retry action"
+    );
+}
+
+#[test]
 fn selected_image_can_be_cached_without_creating_a_session() {
     let mut app = App::new(fixture_state());
     app.handle_key(key(KeyCode::Char('n'), KeyModifiers::ALT));

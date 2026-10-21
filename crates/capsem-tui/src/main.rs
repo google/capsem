@@ -8,7 +8,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use capsem_tui::app::{App, AppAction, ControlAction};
+use capsem_tui::app::{App, AppAction, ControlAction, ImageCatalogRequest};
 use capsem_tui::fixture::{offline_state, FixtureProvider};
 use capsem_tui::gateway_provider::{ActionOutcome, GatewayProvider};
 use capsem_tui::model::{AppState, ServiceStatus, SessionLifecycle};
@@ -172,17 +172,17 @@ fn run_loop(
     let refresh_bridge = live_provider.map(RefreshBridge::spawn);
     loop {
         if let Some(bridge) = &image_bridge {
-            for (generation, result) in bridge.events.try_iter() {
-                app.apply_image_catalog(generation, result);
+            for (request, result) in bridge.events.try_iter() {
+                app.apply_image_catalog(request, result);
                 needs_draw = true;
             }
-            if let Some(generation) = app.take_catalog_request() {
-                if bridge.commands.try_send(generation).is_err() {
-                    app.retry_catalog_request(generation);
+            if let Some(request) = app.take_catalog_request() {
+                if bridge.commands.try_send(request).is_err() {
+                    app.retry_catalog_request(request);
                 }
             }
-        } else if let Some(generation) = app.take_catalog_request() {
-            app.apply_image_catalog(generation, Err("image catalog unavailable in fixture mode".into()));
+        } else if let Some(request) = app.take_catalog_request() {
+            app.apply_image_catalog(request, Err("image catalog unavailable in fixture mode".into()));
             needs_draw = true;
         }
         if let Some(bridge) = &refresh_bridge {
@@ -404,20 +404,23 @@ enum ControlEvent {
 }
 
 struct ImageCatalogBridge {
-    commands: mpsc::SyncSender<u64>,
-    events: mpsc::Receiver<(u64, std::result::Result<capsem_sdk::models::ImageListResponse, String>)>,
+    commands: mpsc::SyncSender<ImageCatalogRequest>,
+    events: mpsc::Receiver<(
+        ImageCatalogRequest,
+        std::result::Result<capsem_sdk::models::ImageListResponse, String>,
+    )>,
 }
 
 impl ImageCatalogBridge {
     fn spawn(provider: GatewayProvider) -> Self {
-        let (commands, requests) = mpsc::sync_channel::<u64>(1);
+        let (commands, requests) = mpsc::sync_channel::<ImageCatalogRequest>(1);
         let (results, events) = mpsc::channel();
         thread::spawn(move || {
-            while let Ok(generation) = requests.recv() {
+            while let Ok(request) = requests.recv() {
                 let result = provider
-                    .list_images(true)
+                    .list_images(request.refresh)
                     .map_err(|error| format!("image catalog unavailable: {error}"));
-                if results.send((generation, result)).is_err() {
+                if results.send((request, result)).is_err() {
                     break;
                 }
             }

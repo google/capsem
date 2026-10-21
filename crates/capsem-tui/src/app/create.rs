@@ -9,6 +9,12 @@ pub enum ImageCatalog {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ImageCatalogRequest {
+    pub generation: u64,
+    pub refresh: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CreateField {
     Name,
     Image,
@@ -47,7 +53,10 @@ impl App {
             .catalog_generation
             .checked_add(1)
             .expect("catalog generation overflow");
-        self.catalog_request = Some(self.catalog_generation);
+        self.catalog_request = Some(ImageCatalogRequest {
+            generation: self.catalog_generation,
+            refresh: true,
+        });
         self.create_draft = Some(CreateDraft {
             name: next_session_name(&self.state),
             field: CreateField::Name,
@@ -59,30 +68,30 @@ impl App {
         self.overlay = AppOverlay::Create;
     }
 
-    pub fn take_catalog_request(&mut self) -> Option<u64> {
-        self.catalog_request.take().filter(|generation| {
+    pub fn take_catalog_request(&mut self) -> Option<ImageCatalogRequest> {
+        self.catalog_request.take().filter(|request| {
             self.create_draft
                 .as_ref()
-                .is_some_and(|draft| draft.generation == *generation)
+                .is_some_and(|draft| draft.generation == request.generation)
         })
     }
 
-    pub fn retry_catalog_request(&mut self, generation: u64) {
+    pub fn retry_catalog_request(&mut self, request: ImageCatalogRequest) {
         if self
             .create_draft
             .as_ref()
-            .is_some_and(|draft| draft.generation == generation)
+            .is_some_and(|draft| draft.generation == request.generation)
         {
-            self.catalog_request = Some(generation);
+            self.catalog_request = Some(request);
         }
     }
 
-    pub fn apply_image_catalog(&mut self, generation: u64, result: Result<ImageListResponse, String>) {
+    pub fn apply_image_catalog(&mut self, request: ImageCatalogRequest, result: Result<ImageListResponse, String>) {
         if let Some(draft) = self
             .create_draft
             .as_mut()
             .or(self.pending_create.as_mut())
-            .filter(|draft| draft.generation == generation)
+            .filter(|draft| draft.generation == request.generation)
         {
             draft.catalog = match result {
                 Ok(response) => ImageCatalog::Loaded(response.images),
@@ -99,7 +108,29 @@ impl App {
             .expect("catalog generation overflow");
         draft.generation = self.catalog_generation;
         draft.catalog = ImageCatalog::Loading;
-        self.catalog_request = Some(self.catalog_generation);
+        self.catalog_request = Some(ImageCatalogRequest {
+            generation: self.catalog_generation,
+            refresh: true,
+        });
+    }
+
+    pub(super) fn poll_pending_image_catalog(&mut self) {
+        if self.overlay != AppOverlay::Create
+            || self.state.service.status != ServiceStatus::Online
+            || self.catalog_request.is_some()
+        {
+            return;
+        }
+        let Some(draft) = &self.create_draft else { return };
+        let pending = matches!(&draft.catalog, ImageCatalog::Loaded(images) if images.iter().any(|image| {
+            image.image.is_some() && (image.cached == capsem_sdk::models::ImageCacheState::Unknown || image.progress.is_some())
+        }));
+        if draft.caching || pending {
+            self.catalog_request = Some(ImageCatalogRequest {
+                generation: draft.generation,
+                refresh: false,
+            });
+        }
     }
 
     pub fn complete_image_cache(&mut self, success: bool) {

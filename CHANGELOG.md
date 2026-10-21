@@ -61,6 +61,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Refresh pending app downloads in the TUI until cache verification settles,
+  preserving the selected app and session name.
+
 - Time out stalled runtime downloads, remove their partial files, and allow setup to retry.
 
 - Connect embedded terminals to the same gateway as their dashboard, so debug
