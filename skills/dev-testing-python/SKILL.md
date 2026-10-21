@@ -8,14 +8,16 @@ description: Python test infrastructure for capsem-builder. Use when running Pyt
 ## Quick reference
 
 ```bash
-PYTHONPATH=src:tests uv run --project build_system pytest \
-  build_system/tests/image/                                      # Image-builder tests
-PYTHONPATH=src:tests uv run --project build_system pytest build_system/tests/image/ \
-  --cov=capsem_builder.image --cov-fail-under=85                 # With coverage
-PYTHONPATH=src:tests uv run --project build_system pytest \
-  build_system/tests/image/test_validate.py -k "test_E001"      # Single test
-just test                                                  # Full suite
-just _generate-settings                                          # Regenerate settings outputs
+python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 120 -- \
+  uv run --project build_system --frozen python -m pytest \
+  -c build_system/pyproject.toml --rootdir . build_system/tests/image/ --no-cov
+
+python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 60 -- \
+  uv run --project build_system --frozen python -m pytest \
+  -c build_system/pyproject.toml --rootdir . \
+  build_system/tests/image/test_validate.py -k E001 --no-cov
+
+just test <source-commit>  # Complete qualification, governed by AGENTS.md
 ```
 
 ## Package config
@@ -23,13 +25,15 @@ just _generate-settings                                          # Regenerate se
 `build_system/pyproject.toml`:
 - Distribution: `capsem-builder`
 - Import: direct `build_system/builder/` mapping to `capsem_builder`
-- Entry point: `capsem-builder = capsem_builder.image.cli:main`
+- Entry point: `capsem-builder = capsem_builder.gatelaunch:builder_main`, which
+  selects the project interpreter before dispatching to the image CLI
 - Build: setuptools, with no nested `src/` or compatibility package tree
 - Tests: `build_system/tests/`, using the locked `build_system/uv.lock`
 
-During the staged migration, `PYTHONPATH=src:tests` supplies the not-yet-moved
-gate package and retained cross-system test helpers. Remove that temporary test
-environment edge when `builder/gate/` lands; do not add a compatibility package.
+The gate already lives in `build_system/builder/gate/`. The installed package
+mapping and pytest's configured search paths own imports; do not add an obsolete
+source root to `PYTHONPATH`. Explicit `-c` and `--rootdir` keep mixed image,
+gate and cross-system tests under the same configuration and import namespace.
 
 ## Test directory: `build_system/tests/image/`
 
@@ -48,20 +52,19 @@ environment edge when `builder/gate/` lands; do not add a compatibility package.
 
 ## Coverage
 
-- Floor: 85% enforced by `--cov-fail-under=85` in `just test`
-- Report: `cache/target/coverage/python/codecov.xml` (XML for CI upload)
+- Floors, combined coverage and report locations belong to `config/gate.toml`
+  and the owning gate steps. A focused `--no-cov` run is diagnostic feedback.
 - `codecov.yml`: builder component includes `build_system/builder/**`
-- Current image package: 91.12% (551 tests, measured during the repository move)
 
 ## Golden fixtures and cross-language conformance
 
 Golden fixture at `tests/settings_spec/golden.json` with expected output at `tests/settings_spec/expected.json`. Three language parsers must produce identical results:
 
-| Language | Test file | Tests |
-|----------|-----------|-------|
-| Python | `tests/test_settings_spec.py` | 73 |
-| Rust | `crates/capsem-core/tests/settings_spec.rs` | 12 |
-| TypeScript | `web/app/src/lib/__tests__/settings_spec.test.ts` | 14 |
+| Language | Test file |
+|----------|-----------|
+| Python | `tests/test_settings_spec.py` |
+| Rust | `crates/capsem-core/tests/settings_spec.rs` |
+| TypeScript | `web/app/src/lib/__tests__/settings_spec.test.ts` |
 
 If you change the settings schema (node types, metadata fields), all three must be updated together.
 
@@ -72,7 +75,8 @@ config/settings/settings.toml -> Pydantic models -> config/settings/schema.gener
                                                    -> config/settings/ui-metadata.generated.json (UI metadata)
 ```
 
-- `just schema` runs `generate_schema.py` which calls `export_json_schema()` and `generate_defaults_json()`
+- `just _generate-settings` runs the settings-generation owner. Wrap this direct
+  development command with the bounded runner specified in AGENTS.md.
 - Rust reads `config/settings/ui-metadata.generated.json` via `include_str!()` in `registry.rs`
 - TypeScript validates against `config/settings/schema.generated.json` in conformance tests
 
