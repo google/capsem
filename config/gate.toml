@@ -1577,6 +1577,7 @@ markers = "integration"
 
 [service]
 # The development daemon, on the same assets rail an installed package uses.
+isolated_gateway_port = 0 # OS-assigned, so proofs coexist with the installed app.
 binary = "cache/target/cargo/debug/capsem-service"
 process_binary = "cache/target/cargo/debug/capsem-process"
 sync_assets_script = "build_system/scripts/build/sync-dev-assets.sh"

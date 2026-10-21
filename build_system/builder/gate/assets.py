@@ -116,7 +116,7 @@ class AssetGate:
             # exit while leaving a hidden child behind. Launch it through the
             # gate primitive instead: the PID is persisted before the shell
             # proof begins and the finally block owns its complete lifetime.
-            launch_service(self._config, home=home, run_dir=run_dir, assets=assets).perform(context)
+            launch_service(self._config, home=home, run_dir=run_dir, assets=assets, isolated=True).perform(context)
             WaitForSocket(run_dir).perform(context)
             self._runner.script(
                 self._assets.shell_proof_script,

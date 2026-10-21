@@ -99,6 +99,9 @@ def test_acquiring_the_service_starts_it_and_waits_for_its_socket(tmp_path, monk
     assert str(workspace.home) in launched[0], (
         "the daemon was started somewhere other than its workspace"
     )
+    assert "--gateway-port 0" in launched[0], (
+        "an isolated gate service must coexist with the installed gateway"
+    )
 
 
 def test_the_service_is_stopped_by_its_own_pidfile(monkeypatch) -> None:

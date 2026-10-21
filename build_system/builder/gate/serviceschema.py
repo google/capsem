@@ -19,6 +19,7 @@ class ServiceConfig(Strict):
     ready_attempts: int
     ready_interval_seconds: float
     log_level: str
+    isolated_gateway_port: int
 
 
 class SmokeGroup(Strict):

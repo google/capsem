@@ -83,7 +83,7 @@ class Service(Resource, name="service"):
 
         context = Context(self._runner, self._config, env=self.environment())
         self._stage(context)
-        launch(self._config, home=self.home, run_dir=self.run_dir).perform(context)
+        launch(self._config, home=self.home, run_dir=self.run_dir, isolated=True).perform(context)
         WaitForSocket(self.run_dir).perform(context)
         self.started = True
 
@@ -103,6 +103,7 @@ def launch(
     home: Path,
     run_dir: Path,
     assets: Path | None = None,
+    isolated: bool = False,
 ) -> Launch:
     """Start the daemon, detached, with its pid where `pidfiles` will find it.
 
@@ -121,10 +122,11 @@ def launch(
             "--process-binary",
             str(config.path(settings.process_binary)),
             "--foreground",
+            *(["--gateway-port", str(settings.isolated_gateway_port)] if isolated else []),
         ],
         pidfile=run_dir / settings.pidfile,
         env={
-            names.home: str(home),
+            **names.capsem(home=home, run_dir=run_dir),
             **names.content(assets=selected_assets),
             "RUST_LOG": settings.log_level,
         },
