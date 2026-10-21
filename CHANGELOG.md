@@ -61,6 +61,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Connect embedded terminals to the same gateway as their dashboard, so debug
+  sessions do not accidentally use the installed service.
+
 - Remove the graphical client's missing desktop wallpaper request when opening an app.
 
 - Keep completed download verification visible until Launch replaces it,

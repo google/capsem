@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { initTauriLog } from '../../tauri-log';
+  import { gatewayBaseUrl } from '../../gateway-url';
   import { Terminal } from '@xterm/xterm';
   import { FitAddon } from '@xterm/addon-fit';
   import { WebglAddon } from '@xterm/addon-webgl';
@@ -14,10 +15,8 @@
 
   initTauriLog();
 
-  // Gateway base URLs. Default to the standard gateway port; override with
-  // ?gw=... URL param for dev/test if ever needed.
-  const GATEWAY_HTTP = 'http://127.0.0.1:19222';
-  const GATEWAY_WS = 'ws://127.0.0.1:19222';
+  const GATEWAY_HTTP = gatewayBaseUrl();
+  const GATEWAY_WS = GATEWAY_HTTP.replace(/^http/, 'ws');
 
   const MAX_RECONNECT = 10;
 

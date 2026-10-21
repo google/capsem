@@ -6,6 +6,7 @@ import type { AuthorizeGoogleRequest, CreateSessionGrantRequest } from '@capsem/
 import type { StopResponse, VmActionResponse, LogsResponse, VmStatsDetailResponse, EventBodiesResponse } from '@capsem/sdk';
 import type { ContainerStatusResponse, ImageListResponse, ImagePullResponse, CredentialInjectProvider, CredentialInjectResponse, CredentialStorage } from '@capsem/sdk';
 import { surfaceLauncherUrl } from './models/surface';
+import { gatewayBaseUrl } from './gateway-url';
 import type { AssetStatus, UpdateApplyRequest } from '@capsem/sdk';
 export type { LogsResponse as RawLogsResponse, VmStatsDetailResponse } from '@capsem/sdk';
 import { ApiError, GatewaySdk, isAuthRefreshStatus } from './gateway-sdk';
@@ -43,25 +44,7 @@ import type {
 let _token: string | null = null;
 let _connected = false;
 
-// Derive gateway base URL:
-// - When served by the gateway, window.location.origin IS the gateway.
-// - In dev mode (Astro dev server on :5173), use the default gateway port.
-// - In Tauri (tauri://), use the default gateway port.
-const _GATEWAY_DEFAULT = 'http://127.0.0.1:19222';
-
-function _detectBaseUrl(): string {
-  if (typeof window === 'undefined') return _GATEWAY_DEFAULT;
-  const { origin, port } = window.location;
-  // Astro dev server -- API requests must go to the gateway, not the dev server
-  if (port === '5173') return _GATEWAY_DEFAULT;
-  // Same-origin localhost: we are served by the gateway
-  if (origin.startsWith('http://127.0.0.1') || origin.startsWith('http://localhost')) {
-    return origin;
-  }
-  return _GATEWAY_DEFAULT;
-}
-
-let _baseUrl = _detectBaseUrl();
+let _baseUrl = gatewayBaseUrl();
 const _sdk = new GatewaySdk({ url: () => _baseUrl, token: () => _token, refreshToken: _refreshToken });
 
 // -- Public getters --
