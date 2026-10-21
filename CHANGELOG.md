@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Validate terminal screen dimensions, cursor positions, metadata, and events
+  before owner-provided state can allocate client screens.
+
 - Anchor terminal transcript rotation to its opened directory and prepare
   private session-log storage without overwriting retained generations.
 

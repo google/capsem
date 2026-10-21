@@ -75,6 +75,7 @@ max_cols = 512
 max_rows = 256
 max_cells = 65536
 metadata_bytes = 1024
+control_string_bytes = 8192
 events_per_update = 32
 subscriber_updates = 64
 render_chunk_bytes = 65536
