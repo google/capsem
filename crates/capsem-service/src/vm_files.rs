@@ -191,8 +191,12 @@ pub(super) fn is_boot_fatal_log_tail(tail: &str) -> bool {
 /// is written through `CappedLogWriter` and rotates, so the bare name holds
 /// only the newest slice.
 pub(super) fn read_session_log_lines(session_dir: &std::path::Path, file_name: &str, n: usize) -> Option<String> {
-    let content =
-        capsem_foundation::telemetry::read_log_tail(&session_dir.join(file_name), SESSION_LOG_TAIL_MAX_BYTES)?;
+    let content = if file_name == "serial.log" {
+        let bytes = capsem_core::session::read_session_serial_tail(session_dir, SESSION_LOG_TAIL_MAX_BYTES).ok()??;
+        String::from_utf8_lossy(&bytes).into_owned()
+    } else {
+        capsem_foundation::telemetry::read_log_tail(&session_dir.join(file_name), SESSION_LOG_TAIL_MAX_BYTES)?
+    };
     let lines: Vec<&str> = content.lines().collect();
     let start = lines.len().saturating_sub(n);
     Some(lines[start..].join("\n"))

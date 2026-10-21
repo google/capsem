@@ -1,6 +1,44 @@
 use super::*;
 
 #[tokio::test]
+async fn vm_logs_read_retained_owner_generations_after_migration() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let session = state.run_dir.join("sessions/vm-failed-1");
+    std::fs::create_dir_all(&session).unwrap();
+    std::fs::write(session.join("serial.1.log"), "old console\n").unwrap();
+    std::fs::write(session.join("serial.log"), "new console\n").unwrap();
+    capsem_core::session::prepare_session_logs(&session).unwrap();
+    let (status, body) = route_request(
+        build_service_router(state),
+        axum::http::Method::GET,
+        "/vms/vm/logs",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["serial_logs"], "old console\nnew console\n");
+}
+
+#[tokio::test]
+async fn vm_logs_fail_closed_for_a_redirected_owner_directory() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let session = state.run_dir.join("sessions/vm-failed-1");
+    std::fs::create_dir_all(&session).unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(outside.path().join("serial.log"), "host-only fixture").unwrap();
+    std::os::unix::fs::symlink(outside.path(), session.join("owner")).unwrap();
+    let (status, body) = route_request(
+        build_service_router(state),
+        axum::http::Method::GET,
+        "/vms/vm/logs",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(!body.to_string().contains("host-only fixture"));
+}
+
+#[tokio::test]
 async fn host_logs_offer_typed_json_and_preserve_plain_text() {
     let (state, _dir) = make_test_state_with_tempdir();
     std::fs::write(

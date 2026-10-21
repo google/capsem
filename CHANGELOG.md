@@ -61,6 +61,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Recover console and transcript history from retained session-log generations,
+  including sessions reopened with private owner storage.
+
 - App startup mounts the verified image file without reopening it, avoiding
   intermittent launch failures on read-only image shares.
 

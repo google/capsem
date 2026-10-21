@@ -33,7 +33,6 @@ pub(crate) async fn handle_logs(
         }
     };
 
-    let serial_log_path = session_dir.join("serial.log");
     let process_log_path = session_dir.join("process.log");
 
     // Bounded and rotation-aware. `serial.log` is guest-controlled console
@@ -42,12 +41,14 @@ pub(crate) async fn handle_logs(
     // and let the guest choose the allocation.
     let max_bytes = log_read_limit(&params, SESSION_LOG_TAIL_MAX_BYTES);
     let (serial_logs, process_logs) = tokio::task::spawn_blocking(move || {
-        let serial = capsem_foundation::telemetry::read_log_tail(&serial_log_path, max_bytes);
+        let serial = capsem_core::session::read_session_serial_tail(&session_dir, max_bytes)?
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
         let process = capsem_foundation::telemetry::read_log_tail(&process_log_path, max_bytes);
-        (serial, process)
+        Ok::<_, std::io::Error>((serial, process))
     })
     .await
-    .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, format!("log read failed: {e}")))?;
+    .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, format!("log read failed: {e}")))?
+    .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, format!("session log refused: {e}")))?;
 
     let serial_logs = serial_logs.map(|text| filter_log(text, &params));
     let process_logs = process_logs.map(|text| filter_log(text, &params));

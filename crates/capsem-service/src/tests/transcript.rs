@@ -48,6 +48,36 @@ async fn transcript(state: &Arc<ServiceState>, id: &str, query: &str) -> (usize,
 }
 
 #[tokio::test]
+async fn migrated_transcript_includes_rotated_output_and_excludes_input() {
+    let (state, _dir, id) = transcript_state(2);
+    let session = state.run_dir.join("sessions").join(&id);
+    let archive = PtyLog::open(&session.join("pty.log.1")).unwrap();
+    archive.record_input(b"archived secret\n");
+    archive.record_output(b"archived output\n");
+    drop(archive);
+    capsem_core::session::prepare_session_logs(&session).unwrap();
+    let (bytes, content) = transcript(&state, &id, "").await;
+    assert_eq!(content, "archived output\nline-0\r\nline-1\r\n");
+    assert_eq!(bytes, content.len());
+}
+
+#[tokio::test]
+async fn transcript_refuses_a_redirected_owner_directory() {
+    let (state, _dir, id) = transcript_state(1);
+    let session = state.run_dir.join("sessions").join(&id);
+    let outside = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(outside.path(), session.join("owner")).unwrap();
+    let (status, body) = route_request(
+        build_service_router(state),
+        axum::http::Method::GET,
+        &format!("/vms/{id}/history/transcript"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+}
+
+#[tokio::test]
 async fn tail_lines_returns_only_the_last_lines() {
     let (state, _dir, id) = transcript_state(10);
     let (bytes, content) = transcript(&state, &id, "?tail_lines=3").await;

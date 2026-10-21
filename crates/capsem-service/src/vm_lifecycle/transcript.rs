@@ -15,18 +15,10 @@ pub(crate) async fn handle_history_transcript(
 ) -> Result<Json<api::TranscriptResponse>, AppError> {
     use base64::Engine;
     let session_dir = resolve_session_dir(&state, &id)?;
-    let pty_log_path = session_dir.join("pty.log");
-
-    if !pty_log_path.exists() {
-        return Ok(Json(api::TranscriptResponse {
-            content: String::new(),
-            bytes: 0,
-        }));
-    }
-
     let lines = params.tail_lines;
     let output = tokio::task::spawn_blocking(move || {
-        capsem_core::pty_log::read_output_bytes(&pty_log_path).map(|shown| tail_lines(&shown, lines).to_vec())
+        capsem_core::session::read_session_transcript(&session_dir)
+            .map(|shown| tail_lines(shown.as_deref().unwrap_or_default(), lines).to_vec())
     })
     .await
     .map_err(|e| {
