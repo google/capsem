@@ -217,6 +217,19 @@ from .slow_op_event import SlowOpEvent as SlowOpEvent
 from .stop_proxy_response import StopProxyResponse as StopProxyResponse
 from .stop_response import StopResponse as StopResponse
 from .storage_diagnostics import StorageDiagnostics as StorageDiagnostics
+from .stream_control import StreamControl as StreamControl
+from .stream_control_close_stdin import (
+    StreamControlCloseStdin as StreamControlCloseStdin,
+)
+from .stream_control_focus import StreamControlFocus as StreamControlFocus
+from .stream_control_resize import StreamControlResize as StreamControlResize
+from .stream_control_start import StreamControlStart as StreamControlStart
+from .stream_kind import StreamKind as StreamKind
+from .stream_status import StreamStatus as StreamStatus
+from .stream_status_error import StreamStatusError as StreamStatusError
+from .stream_status_exit import StreamStatusExit as StreamStatusExit
+from .stream_status_started import StreamStatusStarted as StreamStatusStarted
+from .stream_status_terminal import StreamStatusTerminal as StreamStatusTerminal
 from .supply_chain_channel_evidence import (
     SupplyChainChannelEvidence as SupplyChainChannelEvidence,
 )

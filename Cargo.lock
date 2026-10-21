@@ -787,6 +787,7 @@ dependencies = [
  "base64 0.22.1",
  "capsem-crypto",
  "capsem-proto",
+ "rmp-serde",
  "serde",
  "serde_json",
  "utoipa",

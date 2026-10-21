@@ -1,80 +1,33 @@
-//! `capsem.stream.v2`: one WebSocket protocol for terminal I/O, streaming exec
+//! `capsem.stream.v3`: one WebSocket protocol for terminal I/O, streaming exec
 //! and container attach.
 //!
-//! Every message is a binary WebSocket frame whose first byte names a channel.
-//! Data channels carry raw bytes; the control and status channels carry one
-//! typed JSON object. Each side decodes only the channels it may receive.
+//! Each binary WebSocket message is one shared, named MessagePack record.
+//! Data uses binary fields; metadata uses the capsem-proto types. WebSocket
+//! supplies the record boundary, so it needs no extra length prefix.
 
 pub use capsem_proto::terminal::TerminalState;
 pub use capsem_proto::TERMINAL_SUBSCRIBER_UPDATES as MAX_TERMINAL_VIEW_UPDATES;
 pub use capsem_proto::{
     TERMINAL_DEFAULT_COLS as DEFAULT_TERMINAL_COLS, TERMINAL_DEFAULT_ROWS as DEFAULT_TERMINAL_ROWS,
 };
-use serde::{Deserialize, Serialize};
 
 /// WebSocket subprotocol a client must request.
-pub const STREAM_SUBPROTOCOL: &str = "capsem.stream.v2";
+pub const STREAM_SUBPROTOCOL: &str = "capsem.stream.v3";
 
-/// Largest frame either side accepts, channel byte included.
-pub const MAX_STREAM_FRAME_BYTES: usize = 256 * 1024;
+/// Shared frame and binary-payload budgets, including envelope headroom.
+pub use capsem_proto::stream::{MAX_DATA_BYTES as MAX_STREAM_DATA_BYTES, MAX_FRAME_BYTES as MAX_STREAM_FRAME_BYTES};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
 pub enum StreamChannel {
     /// Client to server: bytes for the stream's stdin or terminal.
-    Stdin = 0,
+    Stdin,
     /// Server to client: standard output.
-    Stdout = 1,
+    Stdout,
     /// Server to client: standard error.
-    Stderr = 2,
-    /// Client to server: [`StreamControl`].
-    Control = 3,
-    /// Server to client: [`StreamStatus`].
-    Status = 4,
+    Stderr,
 }
 
-/// What a stream attaches to.
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum StreamKind {
-    /// The VM's interactive terminal, with its reconstructed current display.
-    Terminal,
-    /// One command, streaming its output until it exits.
-    Exec,
-    /// The VM's container workload, attached until it exits.
-    Container,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum StreamControl {
-    /// First control message of every stream. `command` is required for
-    /// `exec` and refused for the others.
-    Start {
-        kind: StreamKind,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        command: Option<String>,
-    },
-    /// Terminal window size; both dimensions must be non-zero.
-    Resize { cols: u16, rows: u16 },
-    /// This view explicitly takes input and resize authority.
-    Focus { cols: u16, rows: u16 },
-    /// No more stdin will follow.
-    CloseStdin,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum StreamStatus {
-    /// The stream is attached; data may follow.
-    Started,
-    /// Authoritative terminal metadata, followed by normalized display bytes.
-    Terminal { state: Box<TerminalState> },
-    /// The command or workload ended. `truncated` means output was dropped.
-    Exit { code: i32, truncated: bool },
-    /// The stream ended without an exit status.
-    Error { message: String },
-}
+pub use capsem_proto::stream::{StreamControl, StreamKind, StreamStatus};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClientFrame<'a> {
@@ -89,115 +42,47 @@ pub enum ServerFrame<'a> {
     Status(StreamStatus),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum StreamFrameError {
-    Empty,
-    TooLarge(usize),
-    UnknownChannel(u8),
-    /// A channel the receiving side never accepts.
-    WrongDirection(u8),
-    /// A control or status payload that is not valid for the protocol.
-    Control(String),
-}
-
-impl std::fmt::Display for StreamFrameError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Empty => write!(f, "empty stream frame"),
-            Self::TooLarge(size) => write!(f, "stream frame of {size} bytes exceeds {MAX_STREAM_FRAME_BYTES}"),
-            Self::UnknownChannel(channel) => write!(f, "unknown stream channel {channel}"),
-            Self::WrongDirection(channel) => write!(f, "stream channel {channel} is not accepted here"),
-            Self::Control(reason) => write!(f, "invalid stream control: {reason}"),
-        }
-    }
-}
-
-impl std::error::Error for StreamFrameError {}
-
-fn split(frame: &[u8]) -> Result<(u8, &[u8]), StreamFrameError> {
-    if frame.len() > MAX_STREAM_FRAME_BYTES {
-        return Err(StreamFrameError::TooLarge(frame.len()));
-    }
-    let (&channel, payload) = frame.split_first().ok_or(StreamFrameError::Empty)?;
-    if channel > StreamChannel::Status as u8 {
-        return Err(StreamFrameError::UnknownChannel(channel));
-    }
-    Ok((channel, payload))
-}
+pub use capsem_proto::stream::FrameError as StreamFrameError;
+use capsem_proto::stream::{self as wire, Message};
+use std::borrow::Cow;
 
 pub fn decode_client_frame(frame: &[u8]) -> Result<ClientFrame<'_>, StreamFrameError> {
-    let (channel, payload) = split(frame)?;
-    match channel {
-        c if c == StreamChannel::Stdin as u8 => Ok(ClientFrame::Stdin(payload)),
-        c if c == StreamChannel::Control as u8 => {
-            let control: StreamControl =
-                serde_json::from_slice(payload).map_err(|e| StreamFrameError::Control(e.to_string()))?;
-            validate_control(&control)?;
-            Ok(ClientFrame::Control(control))
-        }
-        other => Err(StreamFrameError::WrongDirection(other)),
+    match wire::decode_client(frame)? {
+        Message::Stdin(data) => Ok(ClientFrame::Stdin(data)),
+        Message::Control(control) => Ok(ClientFrame::Control(control.into_owned())),
+        _ => Err(StreamFrameError::WrongDirection),
     }
 }
 
 pub fn decode_server_frame(frame: &[u8]) -> Result<ServerFrame<'_>, StreamFrameError> {
-    let (channel, payload) = split(frame)?;
-    match channel {
-        c if c == StreamChannel::Stdout as u8 => Ok(ServerFrame::Stdout(payload)),
-        c if c == StreamChannel::Stderr as u8 => Ok(ServerFrame::Stderr(payload)),
-        c if c == StreamChannel::Status as u8 => {
-            let status: StreamStatus =
-                serde_json::from_slice(payload).map_err(|e| StreamFrameError::Control(e.to_string()))?;
-            if let StreamStatus::Terminal { state } = &status {
-                state.validate().map_err(|e| StreamFrameError::Control(e.into()))?;
-            }
-            Ok(ServerFrame::Status(status))
-        }
-        other => Err(StreamFrameError::WrongDirection(other)),
+    match wire::decode_server(frame)? {
+        Message::Stdout(data) => Ok(ServerFrame::Stdout(data)),
+        Message::Stderr(data) => Ok(ServerFrame::Stderr(data)),
+        Message::Status(status) => Ok(ServerFrame::Status(status.into_owned())),
+        _ => Err(StreamFrameError::WrongDirection),
     }
 }
 
-fn validate_control(control: &StreamControl) -> Result<(), StreamFrameError> {
-    let invalid = |reason: &str| Err(StreamFrameError::Control(reason.to_owned()));
-    match control {
-        StreamControl::Resize { cols, rows } | StreamControl::Focus { cols, rows } => {
-            capsem_proto::terminal::validate_size(*cols, *rows).map_err(|e| StreamFrameError::Control(e.into()))
-        }
-        StreamControl::Start {
-            kind: StreamKind::Exec,
-            command,
-        } if command.as_deref().is_none_or(str::is_empty) => invalid("exec needs a command"),
-        StreamControl::Start {
-            kind: StreamKind::Terminal | StreamKind::Container,
-            command: Some(_),
-        } => invalid("only exec takes a command"),
-        _ => Ok(()),
-    }
+/// Callers split data at MAX_STREAM_DATA_BYTES before encoding.
+pub fn encode_data(channel: StreamChannel, data: &[u8]) -> Result<Vec<u8>, StreamFrameError> {
+    let message = match channel {
+        StreamChannel::Stdin => Message::Stdin(data),
+        StreamChannel::Stdout => Message::Stdout(data),
+        StreamChannel::Stderr => Message::Stderr(data),
+    };
+    wire::encode(&message)
 }
 
-/// A data frame on `channel`.
-pub fn encode_data(channel: StreamChannel, data: &[u8]) -> Vec<u8> {
-    let mut frame = Vec::with_capacity(data.len() + 1);
-    frame.push(channel as u8);
-    frame.extend_from_slice(data);
-    frame
+pub fn encode_control(control: &StreamControl) -> Result<Vec<u8>, StreamFrameError> {
+    wire::encode(&Message::Control(Cow::Borrowed(control)))
 }
 
-fn encode_json(channel: StreamChannel, value: &impl Serialize) -> Vec<u8> {
-    let mut frame = vec![channel as u8];
-    serde_json::to_writer(&mut frame, value).expect("stream control types serialize");
-    frame
-}
-
-pub fn encode_control(control: &StreamControl) -> Vec<u8> {
-    encode_json(StreamChannel::Control, control)
-}
-
-pub fn encode_status(status: &StreamStatus) -> Vec<u8> {
-    encode_json(StreamChannel::Status, status)
+pub fn encode_status(status: &StreamStatus) -> Result<Vec<u8>, StreamFrameError> {
+    wire::encode(&Message::Status(Cow::Borrowed(status)))
 }
 
 /// The frames every other implementation of this protocol is held to,
-/// exported as `sdk/specification/stream-v2.json`. Client frames are what this
+/// exported as `sdk/specification/stream-v3.json`. Client frames are what this
 /// module encodes; each server frame's expectation is this module's own
 /// decoding of it, refusals included, so the fixture cannot disagree with Rust.
 pub fn golden_frames() -> serde_json::Value {
@@ -221,10 +106,10 @@ pub fn golden_frames() -> serde_json::Value {
     ];
     let mut client: Vec<_> = controls
         .iter()
-        .map(|control| json!({ "control": control, "frame": encode_control(control) }))
+        .map(|control| json!({ "control": control, "frame": encode_control(control).expect("fixture control") }))
         .collect();
     let stdin = [b'l', b's', 0, 255, b'\n'];
-    client.push(json!({ "stdin": stdin, "frame": encode_data(StreamChannel::Stdin, &stdin) }));
+    client.push(json!({ "stdin": stdin, "frame": encode_data(StreamChannel::Stdin, &stdin).expect("fixture stdin") }));
 
     let statuses = [
         StreamStatus::Terminal {
@@ -264,16 +149,20 @@ pub fn golden_frames() -> serde_json::Value {
         },
     ];
     let mut frames = vec![
-        encode_data(StreamChannel::Stdout, b"hello\n"),
-        encode_data(StreamChannel::Stderr, &[0, 255, 10]),
+        encode_data(StreamChannel::Stdout, b"hello\n").expect("fixture stdout"),
+        encode_data(StreamChannel::Stderr, &[0, 255, 10]).expect("fixture stderr"),
     ];
-    frames.extend(statuses.iter().map(encode_status));
+    frames.extend(
+        statuses
+            .iter()
+            .map(|status| encode_status(status).expect("fixture status")),
+    );
     frames.extend([
         Vec::new(),
-        vec![StreamChannel::Status as u8 + 1],
-        encode_data(StreamChannel::Stdin, b"ls"),
-        encode_control(&StreamControl::CloseStdin),
-        encode_json(StreamChannel::Status, &json!({ "type": "unknown" })),
+        vec![0xc1], // Reserved MessagePack marker.
+        encode_data(StreamChannel::Stdin, b"ls").expect("fixture stdin"),
+        encode_control(&StreamControl::CloseStdin).expect("fixture close"),
+        vec![0x81, 0xa6, b's', b't', b'a', b't', b'u', b's', 0xc0],
     ]);
     let server: Vec<_> = frames
         .iter()
@@ -291,6 +180,7 @@ pub fn golden_frames() -> serde_json::Value {
     json!({
         "subprotocol": STREAM_SUBPROTOCOL,
         "max_frame_bytes": MAX_STREAM_FRAME_BYTES,
+        "max_data_bytes": MAX_STREAM_DATA_BYTES,
         "client": client,
         "server": server,
         "oversized_frame_bytes": MAX_STREAM_FRAME_BYTES + 1,

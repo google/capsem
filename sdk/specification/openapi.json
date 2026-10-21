@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Capsem Gateway",
-    "version": "3.4.0"
+    "version": "3.5.0"
   },
   "paths": {
     "/assets/status": {
@@ -8014,6 +8014,194 @@
             "minimum": 0
           }
         }
+      },
+      "StreamControl": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "First control message of every stream. `command` is required for\n`exec` and refused for the others.",
+            "required": [
+              "kind",
+              "type"
+            ],
+            "properties": {
+              "command": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "kind": {
+                "$ref": "#/components/schemas/StreamKind"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "start"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Terminal window size; both dimensions must be non-zero.",
+            "required": [
+              "cols",
+              "rows",
+              "type"
+            ],
+            "properties": {
+              "cols": {
+                "type": "integer",
+                "maximum": 512,
+                "minimum": 1
+              },
+              "rows": {
+                "type": "integer",
+                "maximum": 256,
+                "minimum": 1
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "resize"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "This view explicitly takes input and resize authority.",
+            "required": [
+              "cols",
+              "rows",
+              "type"
+            ],
+            "properties": {
+              "cols": {
+                "type": "integer",
+                "maximum": 512,
+                "minimum": 1
+              },
+              "rows": {
+                "type": "integer",
+                "maximum": 256,
+                "minimum": 1
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "focus"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "No more stdin will follow.",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "close_stdin"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "StreamKind": {
+        "type": "string",
+        "description": "What a stream attaches to.",
+        "enum": [
+          "terminal",
+          "exec",
+          "container"
+        ]
+      },
+      "StreamStatus": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "The stream is attached; data may follow.",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "started"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Authoritative terminal metadata, followed by normalized display bytes.",
+            "required": [
+              "state",
+              "type"
+            ],
+            "properties": {
+              "state": {
+                "$ref": "#/components/schemas/TerminalState"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "terminal"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The command or workload ended. `truncated` means output was dropped.",
+            "required": [
+              "code",
+              "truncated",
+              "type"
+            ],
+            "properties": {
+              "code": {
+                "type": "integer",
+                "format": "int32"
+              },
+              "truncated": {
+                "type": "boolean"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "exit"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The stream ended without an exit status.",
+            "required": [
+              "message",
+              "type"
+            ],
+            "properties": {
+              "message": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "error"
+                ]
+              }
+            }
+          }
+        ]
       },
       "SupplyChainChannelEvidence": {
         "type": "object",

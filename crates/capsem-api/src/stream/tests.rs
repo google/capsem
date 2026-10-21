@@ -1,101 +1,62 @@
 use super::*;
 
 #[test]
-fn client_frames_decode_stdin_and_typed_control_only() {
-    assert_eq!(
-        decode_client_frame(&[0, b'l', b's']).unwrap(),
-        ClientFrame::Stdin(b"ls")
-    );
-    let start = encode_control(&StreamControl::Start {
-        kind: StreamKind::Exec,
-        command: Some("echo hi".into()),
-    });
-    assert_eq!(start[0], StreamChannel::Control as u8);
-    assert_eq!(
-        decode_client_frame(&start).unwrap(),
-        ClientFrame::Control(StreamControl::Start {
+fn terminal_data_uses_the_shared_named_messagepack_binary_contract() {
+    let bytes = [0, 255, 0x1b];
+    let mut expected = b"\x81\xa5stdin\xc4\x03".to_vec();
+    expected.extend_from_slice(&bytes);
+    let encoded = encode_data(StreamChannel::Stdin, &bytes).unwrap();
+    assert_eq!(encoded, expected);
+    assert_eq!(decode_client_frame(&encoded).unwrap(), ClientFrame::Stdin(&bytes));
+}
+
+#[test]
+fn typed_controls_and_statuses_round_trip_without_parallel_api_types() {
+    for control in [
+        StreamControl::Start {
+            kind: StreamKind::Terminal,
+            command: None,
+        },
+        StreamControl::Start {
             kind: StreamKind::Exec,
-            command: Some("echo hi".into())
-        })
-    );
-    let resize = encode_control(&StreamControl::Resize { cols: 120, rows: 40 });
-    assert_eq!(
-        decode_client_frame(&resize).unwrap(),
-        ClientFrame::Control(StreamControl::Resize { cols: 120, rows: 40 })
-    );
-    assert_eq!(
-        decode_client_frame(&encode_control(&StreamControl::CloseStdin)).unwrap(),
-        ClientFrame::Control(StreamControl::CloseStdin)
-    );
-}
-
-#[test]
-fn server_frames_decode_output_and_status_only() {
-    assert_eq!(
-        decode_server_frame(&encode_data(StreamChannel::Stdout, b"out")).unwrap(),
-        ServerFrame::Stdout(b"out")
-    );
-    assert_eq!(
-        decode_server_frame(&encode_data(StreamChannel::Stderr, b"err")).unwrap(),
-        ServerFrame::Stderr(b"err")
-    );
-    let exit = encode_status(&StreamStatus::Exit {
-        code: 3,
-        truncated: false,
-    });
-    assert_eq!(
-        decode_server_frame(&exit).unwrap(),
-        ServerFrame::Status(StreamStatus::Exit {
-            code: 3,
-            truncated: false
-        })
-    );
-}
-
-#[test]
-fn each_side_refuses_the_other_sides_channels() {
-    for frame in [
-        encode_data(StreamChannel::Stdout, b"x"),
-        encode_status(&StreamStatus::Started),
+            command: Some("echo hi".into()),
+        },
+        StreamControl::Resize { cols: 120, rows: 40 },
+        StreamControl::Focus { cols: 120, rows: 40 },
+        StreamControl::CloseStdin,
     ] {
-        assert_eq!(
-            decode_client_frame(&frame),
-            Err(StreamFrameError::WrongDirection(frame[0]))
-        );
+        let encoded = encode_control(&control).unwrap();
+        assert_eq!(decode_client_frame(&encoded).unwrap(), ClientFrame::Control(control));
+        assert!(decode_server_frame(&encoded).is_err());
     }
-    for frame in [vec![0, b'x'], encode_control(&StreamControl::CloseStdin)] {
-        assert_eq!(
-            decode_server_frame(&frame),
-            Err(StreamFrameError::WrongDirection(frame[0]))
-        );
+    for status in [
+        StreamStatus::Started,
+        StreamStatus::Exit {
+            code: 7,
+            truncated: false,
+        },
+        StreamStatus::Error {
+            message: "closed".into(),
+        },
+    ] {
+        let encoded = encode_status(&status).unwrap();
+        assert_eq!(decode_server_frame(&encoded).unwrap(), ServerFrame::Status(status));
+        assert!(decode_client_frame(&encoded).is_err());
     }
+    for (channel, expected) in [
+        (StreamChannel::Stdout, ServerFrame::Stdout(&b"out"[..])),
+        (StreamChannel::Stderr, ServerFrame::Stderr(&b"out"[..])),
+    ] {
+        let encoded = encode_data(channel, b"out").unwrap();
+        assert_eq!(decode_server_frame(&encoded).unwrap(), expected);
+        assert!(decode_client_frame(&encoded).is_err());
+    }
+    assert!(decode_server_frame(&encode_data(StreamChannel::Stdin, b"input").unwrap()).is_err());
 }
 
 #[test]
-fn malformed_frames_are_refused_not_guessed() {
-    assert_eq!(decode_client_frame(&[]), Err(StreamFrameError::Empty));
-    assert_eq!(
-        decode_client_frame(&[9, 1, 2]),
-        Err(StreamFrameError::UnknownChannel(9))
-    );
-    assert!(matches!(
-        decode_client_frame(&[3, b'{']),
-        Err(StreamFrameError::Control(_))
-    ));
-    assert!(matches!(
-        decode_client_frame(&[3, b'{', b'"', b't', b'y', b'p', b'e', b'"', b':', b'"', b'x', b'"', b'}']),
-        Err(StreamFrameError::Control(_))
-    ));
-    let oversized = vec![0u8; MAX_STREAM_FRAME_BYTES + 1];
-    assert_eq!(
-        decode_client_frame(&oversized),
-        Err(StreamFrameError::TooLarge(oversized.len()))
-    );
-}
-
-#[test]
-fn control_messages_that_cannot_be_honoured_are_refused() {
-    for invalid in [
+fn invalid_messages_and_legacy_protocols_are_refused() {
+    for control in [
         StreamControl::Resize { cols: 0, rows: 40 },
         StreamControl::Resize { cols: 80, rows: 0 },
         StreamControl::Start {
@@ -115,65 +76,48 @@ fn control_messages_that_cannot_be_honoured_are_refused() {
             command: Some("ls".into()),
         },
     ] {
-        let frame = encode_control(&invalid);
-        assert!(
-            matches!(decode_client_frame(&frame), Err(StreamFrameError::Control(_))),
-            "accepted {invalid:?}"
-        );
+        assert!(encode_control(&control).is_err());
+        let invalid = rmp_serde::to_vec_named(&Message::Control(Cow::Owned(control))).unwrap();
+        assert!(decode_client_frame(&invalid).is_err());
     }
+    for bytes in [&b""[..], b"\x00ls", b"\x03{\"type\":\"close_stdin\"}"] {
+        assert!(decode_client_frame(bytes).is_err());
+    }
+    assert!(decode_client_frame(&vec![0; MAX_STREAM_FRAME_BYTES + 1]).is_err());
+    assert!(encode_data(StreamChannel::Stdin, &vec![0; MAX_STREAM_DATA_BYTES + 1]).is_err());
+    let largest = vec![0; MAX_STREAM_DATA_BYTES];
+    let encoded = encode_data(StreamChannel::Stdout, &largest).unwrap();
+    assert_eq!(decode_server_frame(&encoded).unwrap(), ServerFrame::Stdout(&largest));
+    assert_eq!(STREAM_SUBPROTOCOL, "capsem.stream.v3");
 }
 
-#[test]
-fn control_wire_shape_is_tagged_snake_case_json() {
-    let frame = encode_control(&StreamControl::Start {
-        kind: StreamKind::Container,
-        command: None,
-    });
-    assert_eq!(&frame[1..], br#"{"type":"start","kind":"container"}"#);
-    let frame = encode_status(&StreamStatus::Error {
-        message: "no VM".into(),
-    });
-    assert_eq!(&frame[1..], br#"{"type":"error","message":"no VM"}"#);
-    assert_eq!(STREAM_SUBPROTOCOL, "capsem.stream.v2");
-}
-
-/// Finding 32: the web app carries its own copy of this codec. The checked-in
-/// fixture is what the web test holds that copy to, byte for byte, so it must
-/// be exactly what this module encodes and decodes.
 #[test]
 fn checked_in_golden_frames_match_the_rust_codec() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../sdk/specification/stream-v2.json");
-    let checked_in: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&path).unwrap_or_default()).unwrap_or(serde_json::Value::Null);
-    assert_eq!(
-        checked_in,
-        golden_frames(),
-        "Regenerate sdk/specification/stream-v2.json with the capsem-api export_stream_fixture example"
-    );
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../sdk/specification/stream-v3.json");
+    let actual: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    assert_eq!(actual, golden_frames());
 }
 
-/// Every server-bound expectation in the fixture is the Rust decoder's own
-/// answer, including the frames a client must refuse.
 #[test]
-fn golden_frames_cover_every_channel_and_each_refusal() {
+fn golden_frames_cover_outputs_metadata_and_refusals() {
     let golden = golden_frames();
-    let kinds: Vec<&str> = golden["server"]
+    let kinds: Vec<_> = golden["server"]
         .as_array()
         .unwrap()
         .iter()
         .map(|case| case["expect"]["kind"].as_str().unwrap())
         .collect();
     for kind in ["output", "status", "invalid"] {
-        assert!(kinds.contains(&kind), "no {kind} case: {kinds:?}");
+        assert!(kinds.contains(&kind));
     }
-    let controls: Vec<&str> = golden["client"]
+    let controls: Vec<_> = golden["client"]
         .as_array()
         .unwrap()
         .iter()
         .filter_map(|case| case["control"]["type"].as_str())
         .collect();
-    for control in ["start", "resize", "close_stdin"] {
-        assert!(controls.contains(&control), "no {control} control: {controls:?}");
+    for control in ["start", "resize", "focus", "close_stdin"] {
+        assert!(controls.contains(&control));
     }
 }
 
@@ -196,16 +140,15 @@ fn terminal_state_is_validated_before_renderer_allocation() {
         (
             "events",
             serde_json::json!(vec![
-                serde_json::json!({"kind":"bell","visual":false,"notification":null});
+                serde_json::json!({"kind":"bell","visual":false});
                 capsem_proto::TERMINAL_EVENTS_PER_UPDATE + 1
             ]),
         ),
     ] {
-        let previous = state[key].clone();
+        let old = state[key].clone();
         state[key] = value;
-        let mut frame = vec![StreamChannel::Status as u8];
-        frame.extend(serde_json::to_vec(&serde_json::json!({"type":"terminal","state":state})).unwrap());
-        assert!(decode_server_frame(&frame).is_err(), "invalid {key} must be refused");
-        state[key] = previous;
+        let bytes = rmp_serde::to_vec_named(&serde_json::json!({"status":{"type":"terminal","state":state}})).unwrap();
+        assert!(decode_server_frame(&bytes).is_err(), "invalid {key}");
+        state[key] = old;
     }
 }

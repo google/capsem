@@ -60,6 +60,8 @@ def sample(schema: dict[str, Any]) -> object:
         return "2026-10-14T12:34:56.123456789+01:30"
     if schema.get("pattern") == "^[0-9a-f]{64}$":
         return "af" * 32
+    if kind in ("integer", "number") and "minimum" in schema:
+        return schema["minimum"]
     return {"string": "value", "integer": 0, "number": 0.5, "boolean": True}[kind]
 
 

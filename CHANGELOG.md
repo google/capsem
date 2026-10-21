@@ -360,8 +360,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Publish the Capsem 0.7 documentation: getting started, task guides, security architecture, and SDK/API references.
 ### Changed
 
-- Version terminal streams explicitly as `capsem.stream.v2`, carrying typed
-  session state alongside reconstructed display updates.
+- Unify terminal, exec, and workload streams on the shared named MessagePack
+  contract (`capsem.stream.v3`), with binary payloads, generated client types,
+  and bounded records matching Capsem's other internal transports.
 
 - Local and hosted qualification now reuse exact, validated private GHCR
   generations for network-open build helpers before the deterministic local

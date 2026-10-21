@@ -19,3 +19,6 @@ utoipa = "5.4"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+rmp-serde.workspace = true
