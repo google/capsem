@@ -1626,7 +1626,7 @@ def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
             assert "bash build_system/scripts/web/smoke-docs-site.sh" in workflow
             assert 'curl --max-time 20 -fsSL "$SITE_URL/$1"' in workflow
             for route, marker in (
-                ("", "How Capsem works"),
+                ("", "Install Capsem"),
                 ("sdk/", "Getting started with the SDK"),
                 ("architecture/security/", "Security architecture"),
                 ("getting-started/installation/", "Installation"),
