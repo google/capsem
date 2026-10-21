@@ -574,14 +574,22 @@ def test_published_root_uses_read_only_descriptor_and_umoci_then_releases_mounts
         finally:
             events.append("share-close")
 
+    @contextlib.contextmanager
+    def configured_loop(fd):
+        inherited.append(fd)
+        assert os.read(fd, len(data)) == data
+        os.lseek(fd, 0, os.SEEK_SET)
+        try:
+            yield "/dev/loop7"
+        finally:
+            assert os.fstat(fd)
+
+    monkeypatch.setattr(launcher, "loop_device", configured_loop)
+
     def command(*argv, **kwargs):
         events.append(argv)
         if argv[0] == "mount":
-            (fd,) = kwargs["pass_fds"]
-            inherited.append(fd)
-            assert argv[5] == f"/proc/self/fd/{fd}"
-            assert os.read(fd, len(data)) == data
-            os.lseek(fd, 0, os.SEEK_SET)
+            assert argv[5] == "/dev/loop7" and not kwargs
         elif argv[:3] == ("umoci", "raw", "runtime-config"):
             assert argv[argv.index("--rootfs") + 1] == str(launcher.RUNTIME / "bundle/rootfs")
             assert argv[argv.index("--uid-map") + 1] == "0:100000:65536"
@@ -600,7 +608,7 @@ def test_published_root_uses_read_only_descriptor_and_umoci_then_releases_mounts
             assert bundle == launcher.RUNTIME / "bundle"
             assert metadata == image() and runtime == unpacked()
             assert events[0] == "share-open" and "share-close" not in events
-            assert events[1][:5] == ("mount", "-t", "erofs", "-o", "loop,ro,nosuid,nodev")
+            assert events[1][:5] == ("mount", "-t", "erofs", "-o", "ro,nosuid,nodev")
             assert not (launcher.RUNTIME / "image").exists()
             assert not any(path.name.endswith(".erofs") for path in launcher.RUNTIME.rglob("*"))
 

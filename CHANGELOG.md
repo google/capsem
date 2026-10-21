@@ -43,6 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- App startup mounts the verified image file without reopening it, avoiding
+  intermittent launch failures on read-only image shares.
+
 - TUI, browser and SDK app downloads wait for image verification instead of
   using short status-request timeouts, while explicit request deadlines and
   cancellation remain available.

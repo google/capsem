@@ -27,6 +27,15 @@ manifest, and re-verify that digest before every use. Artifact cache identity
 is channel-independent; the manifest decides which digest set belongs to a
 channel at that moment.
 
+For published application EROFS roots, keep the verified file descriptor through
+kernel loop setup. `mount -o loop /proc/self/fd/N` canonicalizes the name and
+reopens it; a read-only VirtioFS share can deny that second open even while the
+verified descriptor remains readable. The guest launcher uses `LOOP_CONFIGURE`
+with that descriptor, read-only and auto-clear flags, and a read-only loop handle
+held through unmount. A writable loop handle conflicts with exclusive mounting.
+`tests/fixtures/oci/test_launch_loop.py` guards descriptor identity and cleanup;
+the saved-session Ironbank test proves create, reopen, preserved state and resize.
+
 ## Versioning
 
 Binary and asset versions are **independent**:

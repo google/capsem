@@ -143,6 +143,46 @@ class MountAttr(ctypes.Structure):
     _fields_ = [(name, ctypes.c_uint64) for name in ("attr_set", "attr_clr", "propagation", "userns_fd")]
 
 
+class LoopInfo64(ctypes.Structure):
+    _fields_ = (
+        [(name, ctypes.c_uint64) for name in ("device", "inode", "rdevice", "offset", "sizelimit")]
+        + [(name, ctypes.c_uint32) for name in ("number", "encrypt_type", "encrypt_key_size", "flags")]
+        + [("file_name", ctypes.c_uint8 * 64), ("crypt_name", ctypes.c_uint8 * 64),
+           ("encrypt_key", ctypes.c_uint8 * 32), ("init", ctypes.c_uint64 * 2)]
+    )
+
+
+class LoopConfig(ctypes.Structure):
+    _fields_ = [("fd", ctypes.c_uint32), ("block_size", ctypes.c_uint32),
+               ("info", LoopInfo64), ("reserved", ctypes.c_uint64 * 8)]
+
+
+@contextlib.contextmanager
+def loop_device(fd):
+    """Bind a read-only, auto-clearing loop to the exact verified descriptor.
+
+    mount -o loop canonicalizes /proc/self/fd and reopens the backing path.
+    A read-only VirtioFS share can refuse that second open after verification.
+    LOOP_CONFIGURE instead takes the held descriptor (Linux uapi/linux/loop.h).
+    Keep a read-only loop handle until unmount; a writer prevents exclusive mount.
+    """
+    control = os.open("/dev/loop-control", os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW)
+    try:
+        number = fcntl.ioctl(control, 0x4C82)  # LOOP_CTL_GET_FREE
+    finally:
+        os.close(control)
+    device = f"/dev/loop{number}"
+    loop = os.open(device, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+    try:
+        config = LoopConfig()
+        config.fd = fd
+        config.info.flags = 1 | 4  # LO_FLAGS_READ_ONLY | LO_FLAGS_AUTOCLEAR
+        fcntl.ioctl(loop, 0x4C0A, bytes(config))  # LOOP_CONFIGURE
+        yield device
+    finally:
+        os.close(loop)
+
+
 def _safe_mount_point(value):
     """An absolute, normalized path the container may mount something at."""
     path = PurePosixPath(value)
@@ -833,9 +873,13 @@ def published_root(options, id_map, share=None, run=None):
             ).read_bytes()
         )
         startup_mark("erofs_verify_start")
-        with verified_blob(
-            blobs, descriptor["digest"], size=descriptor["size"], limit=ROOTFS_LIMIT, integrity=descriptor["integrity"]
-        ) as (blob, _):
+        with (
+            verified_blob(
+                blobs, descriptor["digest"], size=descriptor["size"], limit=ROOTFS_LIMIT,
+                integrity=descriptor["integrity"],
+            ) as (blob, _),
+            loop_device(blob.fileno()) as device,
+        ):
             startup_mark("erofs_verified")
             try:
                 run(
@@ -843,10 +887,9 @@ def published_root(options, id_map, share=None, run=None):
                     "-t",
                     "erofs",
                     "-o",
-                    "loop,ro,nosuid,nodev",
-                    f"/proc/self/fd/{blob.fileno()}",
+                    "ro,nosuid,nodev",
+                    device,
                     str(lower),
-                    pass_fds=(blob.fileno(),),
                 )
                 startup_mark("erofs_mounted")
                 mapping = f"{id_map['containerID']}:{id_map['hostID']}:{id_map['size']}"
