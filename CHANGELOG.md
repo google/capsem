@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Bound terminal UI event delivery with backpressure and finite drains, keeping
+  output bursts from building an unlimited client backlog.
+
 - Discard oversized terminal control strings before the VT parser can buffer
   them, and recover cleanly at the next sequence terminator.
 
@@ -69,6 +72,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and one connected stream descriptor before service adoption or switch grants.
 
 ### Fixed
+
+- Render the terminal UI from session-owned snapshots and ordered display
+  updates, preserving alternate screens and authoritative dimensions.
 
 - Give the focused terminal view exclusive input and resize authority, keeping
   stale views from changing another view's terminal dimensions.

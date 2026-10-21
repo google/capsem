@@ -245,11 +245,7 @@ fn run_loop(
                 surface.apply(event);
             }
             let size = terminal.size()?;
-            let active_id = app.state().active_session_id.clone();
             let surface_rows = terminal_rows(size.height);
-            if !active_id.is_empty() {
-                surface.resize(&active_id, size.width.max(1), surface_rows);
-            }
             needs_draw |=
                 sync_terminal_connection(app, bridge, &mut connected_terminal, size.width.max(1), surface_rows);
         }

@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::sync::mpsc;
+use std::sync::Mutex;
 use std::thread;
 
 use capsem_sdk::models::stream::{
@@ -11,19 +11,18 @@ use tokio::sync::mpsc as tokio_mpsc;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::{client::IntoClientRequest, Message};
 
-const MAX_SCROLLBACK_LINES: usize = 2_000;
 const MAX_TERMINAL_INPUTS_PER_SEND: usize = 128;
 
 #[derive(Debug)]
 pub struct TerminalBridge {
     commands: tokio_mpsc::UnboundedSender<TerminalCommand>,
-    events: mpsc::Receiver<TerminalEvent>,
+    events: Mutex<tokio_mpsc::Receiver<TerminalEvent>>,
 }
 
 impl TerminalBridge {
     pub fn spawn(base_url: String) -> Self {
         let (command_tx, command_rx) = tokio_mpsc::unbounded_channel();
-        let (event_tx, event_rx) = mpsc::channel();
+        let (event_tx, event_rx) = event_channel();
         thread::spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -33,7 +32,7 @@ impl TerminalBridge {
         });
         Self {
             commands: command_tx,
-            events: event_rx,
+            events: Mutex::new(event_rx),
         }
     }
 
@@ -59,9 +58,12 @@ impl TerminalBridge {
 
     pub fn drain_events(&self) -> Vec<TerminalEvent> {
         let mut events = Vec::new();
-        while let Ok(event) = self.events.try_recv() {
+        let mut receiver = self.events.lock().unwrap();
+        for _ in 0..protocol::MAX_TERMINAL_VIEW_UPDATES {
+            let Ok(event) = receiver.try_recv() else { break };
             push_coalesced_event(&mut events, event);
         }
+        drop(receiver);
         events
     }
 }
@@ -83,8 +85,18 @@ enum TerminalCommand {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TerminalEvent {
-    Output { session_id: String, bytes: Vec<u8> },
-    Status { session_id: String, status: String },
+    State {
+        session_id: String,
+        state: Box<protocol::TerminalState>,
+    },
+    Output {
+        session_id: String,
+        bytes: Vec<u8>,
+    },
+    Status {
+        session_id: String,
+        status: String,
+    },
 }
 
 fn push_coalesced_event(events: &mut Vec<TerminalEvent>, event: TerminalEvent) {
@@ -105,7 +117,7 @@ fn push_coalesced_event(events: &mut Vec<TerminalEvent>, event: TerminalEvent) {
 async fn run_terminal_manager(
     base_url: String,
     mut commands: tokio_mpsc::UnboundedReceiver<TerminalCommand>,
-    events: mpsc::Sender<TerminalEvent>,
+    events: tokio_mpsc::Sender<TerminalEvent>,
 ) {
     let mut active_session_id = String::new();
     let mut active_input: Option<tokio_mpsc::UnboundedSender<TerminalInput>> = None;
@@ -196,20 +208,20 @@ async fn run_terminal_connection(
     cols: u16,
     rows: u16,
     mut input_rx: tokio_mpsc::UnboundedReceiver<TerminalInput>,
-    events: mpsc::Sender<TerminalEvent>,
+    events: tokio_mpsc::Sender<TerminalEvent>,
 ) {
     let client = reqwest::Client::new();
     let token = match fetch_token(&client, &base_url).await {
         Ok(token) => token,
         Err(error) => {
-            send_status(&events, &session_id, format!("token failed: {error:#}"));
+            send_status(&events, &session_id, format!("token failed: {error:#}")).await;
             return;
         }
     };
     let mut request = match stream_ws_url(&base_url, &session_id, &token).into_client_request() {
         Ok(request) => request,
         Err(error) => {
-            send_status(&events, &session_id, format!("connect failed: {error:#}"));
+            send_status(&events, &session_id, format!("connect failed: {error:#}")).await;
             return;
         }
     };
@@ -219,14 +231,14 @@ async fn run_terminal_connection(
     let (socket, _) = match connect_async(request).await {
         Ok(socket) => socket,
         Err(error) => {
-            send_status(&events, &session_id, format!("connect failed: {error:#}"));
+            send_status(&events, &session_id, format!("connect failed: {error:#}")).await;
             return;
         }
     };
     let (mut write, mut read) = socket.split();
     for frame in stream_start_frames(cols, rows) {
         if let Err(error) = write.send(Message::Binary(frame.into())).await {
-            send_status(&events, &session_id, format!("send failed: {error:#}"));
+            send_status(&events, &session_id, format!("send failed: {error:#}")).await;
             return;
         }
     }
@@ -242,7 +254,7 @@ async fn run_terminal_connection(
                         continue;
                     };
                     if let Err(error) = write.send(Message::Binary(frame.into())).await {
-                        send_status(&events, &session_id, format!("send failed: {error:#}"));
+                        send_status(&events, &session_id, format!("send failed: {error:#}")).await;
                         return;
                     }
                 }
@@ -254,18 +266,21 @@ async fn run_terminal_connection(
                             let _ = events.send(TerminalEvent::Output {
                                 session_id: session_id.clone(),
                                 bytes,
-                            });
+                            }).await;
                         }
-                        Some(StreamEvent::Status(status)) => send_status(&events, &session_id, status),
+                        Some(StreamEvent::State(state)) => {
+                            let _ = events.send(TerminalEvent::State { session_id: session_id.clone(), state }).await;
+                        }
+                        Some(StreamEvent::Status(status)) => send_status(&events, &session_id, status).await,
                         None => {}
                     },
                     Some(Ok(Message::Close(_))) | None => {
-                        send_status(&events, &session_id, "disconnected");
+                        send_status(&events, &session_id, "disconnected").await;
                         break;
                     }
                     Some(Ok(Message::Text(_) | Message::Ping(_) | Message::Pong(_) | Message::Frame(_))) => {}
                     Some(Err(error)) => {
-                        send_status(&events, &session_id, format!("read failed: {error:#}"));
+                        send_status(&events, &session_id, format!("read failed: {error:#}")).await;
                         break;
                     }
                 }
@@ -284,7 +299,9 @@ fn stream_start_frames(cols: u16, rows: u16) -> Vec<Vec<u8>> {
         kind: StreamKind::Terminal,
         command: None,
     })];
-    frames.extend(stream_input_frame(TerminalInput::Resize { cols, rows }));
+    if cols > 0 && rows > 0 {
+        frames.push(protocol::encode_control(&StreamControl::Focus { cols, rows }));
+    }
     frames
 }
 
@@ -301,6 +318,7 @@ fn stream_input_frame(input: TerminalInput) -> Option<Vec<u8>> {
 
 #[derive(Debug, PartialEq, Eq)]
 enum StreamEvent {
+    State(Box<protocol::TerminalState>),
     Output(Vec<u8>),
     Status(String),
 }
@@ -308,6 +326,7 @@ enum StreamEvent {
 fn stream_server_event(frame: &[u8]) -> Option<StreamEvent> {
     match protocol::decode_server_frame(frame) {
         Ok(ServerFrame::Stdout(bytes) | ServerFrame::Stderr(bytes)) => Some(StreamEvent::Output(bytes.to_vec())),
+        Ok(ServerFrame::Status(StreamStatus::Terminal { state })) => Some(StreamEvent::State(state)),
         Ok(ServerFrame::Status(StreamStatus::Started)) => Some(StreamEvent::Status("connected".into())),
         Ok(ServerFrame::Status(StreamStatus::Error { message })) => Some(StreamEvent::Status(message)),
         Ok(ServerFrame::Status(StreamStatus::Exit { code, .. })) => Some(StreamEvent::Status(format!("exited {code}"))),
@@ -380,11 +399,13 @@ fn url_encode_component(value: &str) -> String {
         .collect()
 }
 
-fn send_status(events: &mpsc::Sender<TerminalEvent>, session_id: &str, status: impl Into<String>) {
-    let _ = events.send(TerminalEvent::Status {
-        session_id: session_id.to_string(),
-        status: status.into(),
-    });
+async fn send_status(events: &tokio_mpsc::Sender<TerminalEvent>, session_id: &str, status: impl Into<String>) {
+    let _ = events
+        .send(TerminalEvent::Status {
+            session_id: session_id.to_string(),
+            status: status.into(),
+        })
+        .await;
 }
 
 pub struct TerminalSurface {
@@ -400,6 +421,15 @@ impl TerminalSurface {
 
     pub fn apply(&mut self, event: TerminalEvent) {
         match event {
+            TerminalEvent::State { session_id, state } => {
+                let buffer = self.buffer_mut(&session_id);
+                if state.reset {
+                    buffer.parser = vt100::Parser::new(state.rows, state.cols, 0);
+                } else {
+                    buffer.parser.screen_mut().set_size(state.rows, state.cols);
+                }
+                buffer.state = Some(state);
+            }
             TerminalEvent::Output { session_id, bytes } => {
                 self.buffer_mut(&session_id).append(&bytes);
             }
@@ -423,10 +453,6 @@ impl TerminalSurface {
             .unwrap_or_default()
     }
 
-    pub fn resize(&mut self, session_id: &str, cols: u16, rows: u16) {
-        self.buffer_mut(session_id).resize(cols, rows);
-    }
-
     pub fn status_for(&self, session_id: &str) -> Option<&str> {
         self.buffers.get(session_id).and_then(|buffer| buffer.status.as_deref())
     }
@@ -444,13 +470,13 @@ impl Default for TerminalSurface {
 
 struct TerminalBuffer {
     parser: vt100::Parser,
+    state: Option<Box<protocol::TerminalState>>,
     status: Option<String>,
 }
 
 impl TerminalBuffer {
     fn append(&mut self, bytes: &[u8]) {
-        let filtered = strip_alternate_screen_switches(bytes);
-        self.parser.process(&filtered);
+        self.parser.process(bytes);
     }
 
     fn visible_lines(&self, height: usize) -> Vec<TerminalLine> {
@@ -461,56 +487,15 @@ impl TerminalBuffer {
             .map(|row| line_from_screen_row(screen, row as u16, cols))
             .collect()
     }
-
-    fn resize(&mut self, cols: u16, rows: u16) {
-        self.parser.screen_mut().set_size(rows.max(1), cols.max(1));
-    }
 }
 
 impl Default for TerminalBuffer {
     fn default() -> Self {
         Self {
-            parser: vt100::Parser::new(24, 80, MAX_SCROLLBACK_LINES),
+            parser: vt100::Parser::new(24, 80, 0),
+            state: None,
             status: None,
         }
-    }
-}
-
-fn strip_alternate_screen_switches(bytes: &[u8]) -> Vec<u8> {
-    let mut filtered = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        if let Some(consumed) = alternate_screen_sequence_len(&bytes[index..]) {
-            index += consumed;
-            continue;
-        }
-        filtered.push(bytes[index]);
-        index += 1;
-    }
-    filtered
-}
-
-fn alternate_screen_sequence_len(bytes: &[u8]) -> Option<usize> {
-    const PREFIX: &[u8] = b"\x1b[?";
-    if !bytes.starts_with(PREFIX) {
-        return None;
-    }
-    let mut index = PREFIX.len();
-    let start = index;
-    while index < bytes.len() && bytes[index].is_ascii_digit() {
-        index += 1;
-    }
-    if start == index || index >= bytes.len() {
-        return None;
-    }
-    let mode = std::str::from_utf8(&bytes[start..index]).ok()?;
-    if !matches!(mode, "47" | "1047" | "1049") {
-        return None;
-    }
-    if matches!(bytes[index], b'h' | b'l') {
-        Some(index + 1)
-    } else {
-        None
     }
 }
 
@@ -671,3 +656,7 @@ fn control_key_bytes(code: KeyCode) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests;
+
+fn event_channel() -> (tokio_mpsc::Sender<TerminalEvent>, tokio_mpsc::Receiver<TerminalEvent>) {
+    tokio_mpsc::channel(protocol::MAX_TERMINAL_VIEW_UPDATES)
+}
