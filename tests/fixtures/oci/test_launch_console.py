@@ -11,6 +11,7 @@ workload has exited, and the stage says so with its code.
 import contextlib
 import fcntl
 import os
+import select
 import socket
 import struct
 import tempfile
@@ -25,6 +26,21 @@ import pytest
 from tests.fixtures.oci.test_launch_config import launcher
 
 __all__ = ["launcher"]
+
+
+def test_the_runtime_terminal_delivers_escape_keys_without_newline_or_echo(launcher):
+    master, terminal = launcher.console_terminal()
+    try:
+        keys = b"\x1b[A\x1b[3;1R"
+        os.write(master, keys)
+        assert select.select([terminal], [], [], 1)[0], "runc input must not wait for a newline"
+        assert os.read(terminal, 64) == keys
+        assert not select.select([master], [], [], 0.05)[0], "terminal replies must not echo back"
+        rows, cols = _winsize(terminal)
+        assert rows > 0 and cols > 0, "an app must be able to draw before a client attaches"
+    finally:
+        os.close(master)
+        os.close(terminal)
 
 
 def test_input_and_resize_frames_survive_any_read_boundary(launcher):

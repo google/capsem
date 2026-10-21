@@ -988,7 +988,7 @@ def run(stage, detached=False):
             listener.bind(str(CONSOLE))
             CONSOLE.chmod(0o600)
             listener.listen()
-            master, terminal = os.openpty()
+            master, terminal = console_terminal()
             try:
                 process = subprocess.Popen([*argv, CONTAINER], stdin=terminal, stdout=terminal)
             finally:
@@ -1219,6 +1219,16 @@ class Console:
                 with contextlib.suppress(OSError, KeyError):
                     self._drop(selector, client)
             selector.close()
+
+
+def console_terminal():
+    """The terminal runc forwards to its workload, ready before it starts."""
+    master, terminal = os.openpty()
+    # runc relays this outer PTY to the workload's own PTY. Canonical input
+    # here buffers escape replies until newline and echoes them to the screen.
+    tty.setraw(terminal)
+    fcntl.ioctl(terminal, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+    return master, terminal
 
 
 def window_size(fd):
