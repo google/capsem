@@ -6,7 +6,9 @@ import type { ITerminalOptions } from '@xterm/xterm';
 export const TERMINAL_OPTIONS: ITerminalOptions = {
   cursorBlink: true,
   cursorStyle: 'block',
-  convertEol: true,
+  // The PTY owns line endings. Bare LF must preserve the cursor column for
+  // applications that redraw with relative cursor movements.
+  convertEol: false,
   fontFamily:
     'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
   fontSize: 14,

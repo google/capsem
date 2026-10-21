@@ -61,6 +61,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve terminal cursor columns across bare line feeds during application
+  redraws instead of inserting an extra carriage return in the UI.
+
 - Restrict private CI helper publication to the 20 approved GHCR package names;
   reject unexpected names before publishing any image in the batch.
 
