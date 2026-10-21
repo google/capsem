@@ -988,11 +988,7 @@ def run(stage, detached=False):
             listener.bind(str(CONSOLE))
             CONSOLE.chmod(0o600)
             listener.listen()
-            master, terminal = console_terminal()
-            try:
-                process = subprocess.Popen([*argv, CONTAINER], stdin=terminal, stdout=terminal)
-            finally:
-                os.close(terminal)
+            master, process = start_console([*argv, CONTAINER])
             try:
                 Console(master, listener, resized=lambda: process.send_signal(signal.SIGWINCH)).serve()
             finally:
@@ -1229,6 +1225,19 @@ def console_terminal():
     tty.setraw(terminal)
     fcntl.ioctl(terminal, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
     return master, terminal
+
+
+def start_console(argv):
+    master, terminal = console_terminal()
+    try:
+        # runc selects stderr first as its host console for raw mode and
+        # resize. Leaving it on the VM serial console gives the app size 0x0.
+        return master, subprocess.Popen(argv, stdin=terminal, stdout=terminal, stderr=terminal)
+    except BaseException:
+        os.close(master)
+        raise
+    finally:
+        os.close(terminal)
 
 
 def window_size(fd):

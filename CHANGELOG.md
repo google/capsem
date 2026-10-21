@@ -51,6 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Detached app terminals deliver keystrokes immediately without echoing
   terminal replies, and start with usable dimensions so agent interfaces draw.
+  The runtime uses the same terminal for input, output and error streams,
+  keeping app dimensions synchronized with the visible terminal.
 
 - Local macOS installation repairs valid ad-hoc signatures with the required
   VM entitlement, so installed sessions can boot, while confined workers keep

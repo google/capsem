@@ -14,6 +14,7 @@ import os
 import select
 import socket
 import struct
+import sys
 import tempfile
 import termios
 import threading
@@ -26,6 +27,25 @@ import pytest
 from tests.fixtures.oci.test_launch_config import launcher
 
 __all__ = ["launcher"]
+
+
+def test_runtime_stderr_uses_the_same_sized_terminal_as_input_and_output(launcher):
+    script = (
+        "import fcntl, os, termios; "
+        "assert all(os.isatty(fd) for fd in (0, 1, 2)); "
+        "assert fcntl.ioctl(0, termios.TIOCGWINSZ, b'0'*8) == fcntl.ioctl(2, termios.TIOCGWINSZ, b'0'*8); "
+        "os.write(2, b'all terminal streams connected'); os.read(0, 1)"
+    )
+    master, process = launcher.start_console([sys.executable, "-c", script])
+    try:
+        assert os.read(master, 128) == b'all terminal streams connected'
+        os.write(master, b'x')
+        assert process.wait(timeout=5) == 0
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+        os.close(master)
 
 
 def test_the_runtime_terminal_delivers_escape_keys_without_newline_or_echo(launcher):
