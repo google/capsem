@@ -132,6 +132,9 @@ pub enum PublicationAccess {
 /// The cookie a browser preview carries, named once for the gateway that sets
 /// it and the confined router that strips it before the workload sees it.
 pub const PREVIEW_COOKIE: &str = "capsem_preview";
+/// Browser WebSocket credential for embedded surfaces, removed by the
+/// confined router before the request reaches the workload.
+pub const PREVIEW_WS_PROTOCOL_PREFIX: &str = "capsem-preview.";
 /// How long a single-use browser bootstrap token may be exchanged.
 pub const PREVIEW_BOOTSTRAP_LIFETIME_SECS: u16 = 30;
 /// How long an exchanged preview session admits connections.
