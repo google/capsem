@@ -2,6 +2,18 @@ use super::*;
 use serde_json::json;
 
 #[test]
+fn image_download_progress_survives_the_wire_without_inventing_an_unknown_total() {
+    let mut row = json!({"name":"app","description":"App","architectures":["arm64"],"cached":"missing", "progress":{"phase":"downloading","completed_bytes":128}});
+    let parsed: ImageInfo = serde_json::from_value(row.clone()).unwrap();
+    assert_eq!(serde_json::to_value(parsed).unwrap()["progress"], row["progress"]);
+    row["progress"]["total_bytes"] = json!(1024);
+    let parsed: ImageInfo = serde_json::from_value(row.clone()).unwrap();
+    assert_eq!(serde_json::to_value(parsed).unwrap()["progress"], row["progress"]);
+    row["progress"]["phase"] = json!("pretend-complete");
+    assert!(serde_json::from_value::<ImageInfo>(row).is_err());
+}
+
+#[test]
 fn image_interfaces_survive_the_gateway_contract() {
     let mut row = json!({"name":"app","description":"App","architectures":["arm64"],"cached":"missing"});
     for surface in ["terminal", "xpra"] {
@@ -44,6 +56,7 @@ fn an_image_entry_carries_its_pin_and_an_unanswered_cache_state() {
         image: Some(format!("ghcr.io/google/capsem/codex-cli@sha256:{}", "a".repeat(64))),
         cached: ImageCacheState::Unknown,
         surface: None,
+        progress: None,
     };
     let wire = serde_json::to_value(&entry).unwrap();
     assert_eq!(wire["cached"], "unknown");

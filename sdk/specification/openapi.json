@@ -5555,6 +5555,41 @@
           "ready"
         ]
       },
+      "ImageDownloadPhase": {
+        "type": "string",
+        "enum": [
+          "preparing",
+          "downloading",
+          "verifying"
+        ]
+      },
+      "ImageDownloadProgress": {
+        "type": "object",
+        "description": "Bytes made available by an app download, including verified cache reuse.",
+        "required": [
+          "phase",
+          "completed_bytes"
+        ],
+        "properties": {
+          "completed_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "phase": {
+            "$ref": "#/components/schemas/ImageDownloadPhase"
+          },
+          "total_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Absent until every required transfer size is known.",
+            "minimum": 0
+          }
+        }
+      },
       "ImageInfo": {
         "type": "object",
         "description": "One catalog entry.",
@@ -5588,6 +5623,17 @@
           "name": {
             "type": "string",
             "description": "The catalog name, as `capsem create --image` and `POST /images/pull` take it."
+          },
+          "progress": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImageDownloadProgress",
+                "description": "Active request-owned preparation progress; absent once the request ends."
+              }
+            ]
           },
           "surface": {
             "oneOf": [

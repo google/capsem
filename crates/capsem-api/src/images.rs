@@ -53,6 +53,27 @@ pub struct ImageInfo {
     /// The image's declared interface. Older catalogs may omit it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surface: Option<ImageSurface>,
+    /// Active request-owned preparation progress; absent once the request ends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<ImageDownloadProgress>,
+}
+
+/// Bytes made available by an app download, including verified cache reuse.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, ToSchema)]
+pub struct ImageDownloadProgress {
+    pub phase: ImageDownloadPhase,
+    pub completed_bytes: u64,
+    /// Absent until every required transfer size is known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_bytes: Option<u64>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageDownloadPhase {
+    Preparing,
+    Downloading,
+    Verifying,
 }
 
 /// How a catalog application presents itself to the user.
