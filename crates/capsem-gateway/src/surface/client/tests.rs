@@ -39,7 +39,7 @@ fn the_page_split_refuses_a_page_it_cannot_split_exactly() {
     assert_eq!(page.main, "go()");
     assert_eq!(
         page.index,
-        "<html><head><script src=\"a.js\"></script><script src=\"capsem-surface.js\"></script>\n  </head><body><script src=\"xpra-main.js\"></script></body></html>"
+        "<html><head><script src=\"a.js\"></script><link rel=\"stylesheet\" href=\"capsem-surface.css\" />\n  <script src=\"capsem-surface.js\"></script>\n  </head><body><script src=\"xpra-main.js\"></script></body></html>"
     );
     for bad in [
         "<html><head></head><body></body></html>",
@@ -97,6 +97,27 @@ fn capsem_serves_its_own_settings_and_disconnect_page() {
     assert!(disconnected.contains("Capsem") && !disconnected.contains("<script"));
     let (_, surface) = get(&format!("{CLIENT_ROOT}capsem-surface.js"));
     assert!(String::from_utf8(surface).unwrap().contains("system_tray = false"));
+}
+
+#[test]
+fn the_single_app_page_disables_the_unbundled_desktop_background() {
+    let (_, page) = get(CLIENT_ROOT);
+    let page = String::from_utf8(page).unwrap();
+    let vendor = page.find("href=\"css/client.css\"").unwrap();
+    let owned = page.find("href=\"capsem-surface.css\"").expect("single-app stylesheet");
+    assert!(
+        vendor < owned,
+        "the single-app policy overrides the vendor desktop theme"
+    );
+    let (head, css) = get(&format!("{CLIENT_ROOT}capsem-surface.css"));
+    assert!(head.starts_with("HTTP/1.1 200 OK\r\n"), "{head}");
+    assert!(head.contains("Content-Type: text/css; charset=utf-8\r\n"), "{head}");
+    let css = String::from_utf8(css).unwrap();
+    assert!(
+        css.contains("background-image: none"),
+        "no unbundled desktop wallpaper request"
+    );
+    assert!(!css.contains("url("), "the override needs no external assets");
 }
 
 #[test]

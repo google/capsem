@@ -1,8 +1,9 @@
 //! The pinned xpra-html5 client, served on an Xpra surface's preview origin.
 //!
-//! The vendored files are served byte for byte, with two Capsem additions
+//! The vendored files are served byte for byte, with three Capsem additions
 //! loaded around them: `default-settings.txt` (the client's own settings
-//! hook) and `capsem-surface.js` (one application, fitted to the viewport).
+//! hook), `capsem-surface.css` (no desktop wallpaper), and `capsem-surface.js`
+//! (one application, fitted to the viewport).
 //! The client page's one inline script is served as `xpra-main.js`, so the
 //! page runs under a policy that allows no inline script at all: anything a
 //! workload manages to inject into the page's DOM cannot execute.
@@ -18,6 +19,7 @@ pub(crate) const CLIENT_ROOT: &str = "/_capsem/surface/";
 static VENDORED: &[(&str, &[u8])] = include!(concat!(env!("OUT_DIR"), "/xpra_html5.rs"));
 
 const CAPSEM_SURFACE: &str = include_str!("static/capsem-surface.js");
+const SURFACE_STYLE: &str = include_str!("static/capsem-surface.css");
 const SETTINGS: &str = include_str!("static/default-settings.txt");
 const DISCONNECTED: &str = include_str!("static/connect.html");
 const EXPIRED: &str = "This app session has expired. Open the app again from Capsem.";
@@ -59,7 +61,7 @@ fn split_index(index: &str) -> Result<Page, String> {
     let end = body + index[body..].find(CLOSE).ok_or("unterminated inline script")?;
     Ok(Page {
         index: format!(
-            "{}<script src=\"capsem-surface.js\"></script>\n  {}<script src=\"xpra-main.js\"></script>{}",
+            "{}<link rel=\"stylesheet\" href=\"capsem-surface.css\" />\n  <script src=\"capsem-surface.js\"></script>\n  {}<script src=\"xpra-main.js\"></script>{}",
             &index[..head_end],
             &index[head_end..start],
             &index[end + CLOSE.len()..],
@@ -91,6 +93,7 @@ fn asset(relative: &str) -> Option<(&'static [u8], &'static str)> {
         "" | "index.html" => page?.index.as_bytes(),
         "xpra-main.js" => page?.main.as_bytes(),
         "capsem-surface.js" => CAPSEM_SURFACE.as_bytes(),
+        "capsem-surface.css" => SURFACE_STYLE.as_bytes(),
         "default-settings.txt" => SETTINGS.as_bytes(),
         "connect.html" => DISCONNECTED.as_bytes(),
         other => vendored(other)?,

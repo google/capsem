@@ -1,0 +1,5 @@
+/* A single app has no desktop wallpaper; the vendor image is not bundled. */
+html,
+body {
+  background-image: none;
+}

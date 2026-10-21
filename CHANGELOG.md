@@ -61,6 +61,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Remove the graphical client's missing desktop wallpaper request when opening an app.
+
 - Keep completed download verification visible until Launch replaces it,
   avoiding a brief reset to preparation.
 
