@@ -94,13 +94,19 @@ async fn inventory_observer_receives_retained_metadata_without_a_terminal_view()
     let (dispatcher, _) = Dispatcher::new(temp.path());
     dispatcher.session_terminal.publish(b"\x1b]2;Agent ready\x07\x07");
     let (_tx, rx) = connect_as(&dispatcher, "capsem-terminal-observer").await;
-    let ProcessToService::TerminalSummary { summary } = rx.recv().await.unwrap() else { panic!("expected retained metadata"); };
+    let ProcessToService::TerminalSummary { summary } = rx.recv().await.unwrap() else {
+        panic!("expected retained metadata");
+    };
     assert_eq!(summary.title, "Agent ready");
     assert_eq!(summary.bell_count, 1);
     dispatcher.session_terminal.publish(b"ordinary output");
-    assert!(tokio::time::timeout(Duration::from_millis(20), rx.recv()).await.is_err());
+    assert!(tokio::time::timeout(Duration::from_millis(20), rx.recv())
+        .await
+        .is_err());
     dispatcher.session_terminal.publish(b"\x1b]9;Review needed\x07");
-    let ProcessToService::TerminalSummary { summary } = rx.recv().await.unwrap() else { panic!("expected notification metadata"); };
+    let ProcessToService::TerminalSummary { summary } = rx.recv().await.unwrap() else {
+        panic!("expected notification metadata");
+    };
     assert_eq!(summary.last_notification.unwrap().body, "Review needed");
 }
 
@@ -110,15 +116,39 @@ async fn a_stale_view_cannot_resize_or_type_into_the_active_terminal() {
     let (dispatcher, mut controls) = Dispatcher::new(temp.path());
     let (a, _a_rx) = connect_as(&dispatcher, capsem_proto::handshake::STREAM_PEER_ID).await;
     a.send(ServiceToProcess::StartTerminalStream).await.unwrap();
-    a.send(ServiceToProcess::TerminalFocus { cols: 101, rows: 33 }).await.unwrap();
-    assert!(matches!(controls.recv().await.unwrap(), ServiceToProcess::TerminalResize { cols: 101, rows: 33 }));
+    a.send(ServiceToProcess::TerminalFocus { cols: 101, rows: 33 })
+        .await
+        .unwrap();
+    assert!(matches!(
+        controls.recv().await.unwrap(),
+        ServiceToProcess::TerminalResize { cols: 101, rows: 33 }
+    ));
     let (b, _b_rx) = connect_as(&dispatcher, capsem_proto::handshake::STREAM_PEER_ID).await;
     b.send(ServiceToProcess::StartTerminalStream).await.unwrap();
-    b.send(ServiceToProcess::TerminalFocus { cols: 60, rows: 20 }).await.unwrap();
-    assert!(matches!(controls.recv().await.unwrap(), ServiceToProcess::TerminalResize { cols: 60, rows: 20 }));
-    a.send(ServiceToProcess::TerminalResize { cols: 150, rows: 45 }).await.unwrap();
-    a.send(ServiceToProcess::TerminalInput { data: b"wrong view".to_vec() }).await.unwrap();
-    assert!(tokio::time::timeout(Duration::from_millis(20), controls.recv()).await.is_err());
-    b.send(ServiceToProcess::TerminalInput { data: b"active view".to_vec() }).await.unwrap();
-    assert!(matches!(controls.recv().await.unwrap(), ServiceToProcess::TerminalInput { data } if data == b"active view"));
+    b.send(ServiceToProcess::TerminalFocus { cols: 60, rows: 20 })
+        .await
+        .unwrap();
+    assert!(matches!(
+        controls.recv().await.unwrap(),
+        ServiceToProcess::TerminalResize { cols: 60, rows: 20 }
+    ));
+    a.send(ServiceToProcess::TerminalResize { cols: 150, rows: 45 })
+        .await
+        .unwrap();
+    a.send(ServiceToProcess::TerminalInput {
+        data: b"wrong view".to_vec(),
+    })
+    .await
+    .unwrap();
+    assert!(tokio::time::timeout(Duration::from_millis(20), controls.recv())
+        .await
+        .is_err());
+    b.send(ServiceToProcess::TerminalInput {
+        data: b"active view".to_vec(),
+    })
+    .await
+    .unwrap();
+    assert!(
+        matches!(controls.recv().await.unwrap(), ServiceToProcess::TerminalInput { data } if data == b"active view")
+    );
 }
