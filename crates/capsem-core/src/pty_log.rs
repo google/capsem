@@ -12,13 +12,15 @@
 //! [{length} bytes: raw terminal data]
 //! ```
 
+use std::ffi::{OsStr, OsString};
 use std::fs::File;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Mutex;
 use std::time::SystemTime;
 
-use capsem_foundation::unix::fs::{open_single_link_append_no_follow as open_append, open_single_link_file_no_follow};
+use capsem_foundation::unix::contained::{ContainedDir, ContainedOpenOptions};
+use capsem_foundation::unix::fs::open_single_link_file_no_follow;
 
 /// Direction tag for PTY log entries.
 pub const DIR_INPUT: u8 = 0x00;
@@ -37,7 +39,8 @@ pub struct PtyLog {
 
 struct PtyLogInner {
     file: File,
-    path: PathBuf,
+    directory: ContainedDir,
+    name: OsString,
     bytes_written: u64,
     max_bytes: u64,
 }
@@ -50,12 +53,29 @@ impl PtyLog {
 
     /// Open with a custom max size before rotation.
     pub fn open_with_max(path: &Path, max_bytes: u64) -> std::io::Result<Self> {
-        let file = open_append(path)?;
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        let name = path
+            .file_name()
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "transcript needs a file name"))?;
+        Self::open_with_max_in(ContainedDir::open_root(parent)?, name, max_bytes)
+    }
+
+    /// Keep the session-log directory open throughout recording and rotation.
+    pub fn open_in(directory: ContainedDir, name: &OsStr) -> std::io::Result<Self> {
+        Self::open_with_max_in(directory, name, DEFAULT_MAX_BYTES)
+    }
+
+    pub fn open_with_max_in(directory: ContainedDir, name: &OsStr, max_bytes: u64) -> std::io::Result<Self> {
+        let file = directory.open_single_link_file(name, ContainedOpenOptions::append_create(0o600))?;
         let existing_size = file.metadata()?.len();
         Ok(Self {
             inner: Mutex::new(PtyLogInner {
                 file,
-                path: path.to_path_buf(),
+                directory,
+                name: name.to_owned(),
                 bytes_written: existing_size,
                 max_bytes,
             }),
@@ -104,10 +124,17 @@ impl PtyLog {
     }
 
     fn rotate_locked(&self, inner: &mut PtyLogInner) {
-        let rotated = inner.path.with_extension("log.1");
+        let rotated = Path::new(&inner.name).with_extension("log.1").into_os_string();
         // Best-effort: rename current -> .1, open fresh
-        if std::fs::rename(&inner.path, &rotated).is_ok() {
-            if let Ok(new_file) = open_append(&inner.path) {
+        if inner
+            .directory
+            .rename_to(&inner.name, &inner.directory, &rotated)
+            .is_ok()
+        {
+            if let Ok(new_file) = inner
+                .directory
+                .open_single_link_file(&inner.name, ContainedOpenOptions::append_create(0o600))
+            {
                 inner.file = new_file;
                 inner.bytes_written = 0;
             }
@@ -124,8 +151,12 @@ impl PtyLog {
 /// Read and iterate over PTY log entries from a file.
 /// Returns entries as (direction, timestamp_us, data).
 pub fn read_pty_log(path: &Path) -> std::io::Result<Vec<(u8, u64, Vec<u8>)>> {
+    read_pty_log_file(open_single_link_file_no_follow(path)?)
+}
+
+/// Decode an already opened transcript without resolving its pathname again.
+pub fn read_pty_log_file(file: File) -> std::io::Result<Vec<(u8, u64, Vec<u8>)>> {
     use std::io::Read;
-    let file = open_single_link_file_no_follow(path)?;
     if file.metadata()?.len() > MAX_READ_BYTES {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -165,7 +196,11 @@ pub fn parse_pty_log(data: &[u8]) -> std::io::Result<Vec<(u8, u64, Vec<u8>)>> {
 /// showed, without the keystrokes that produced it. This is what the
 /// service's transcript route returns.
 pub fn read_output_bytes(path: &Path) -> std::io::Result<Vec<u8>> {
-    let entries = read_pty_log(path)?;
+    read_output_file(open_single_link_file_no_follow(path)?)
+}
+
+pub fn read_output_file(file: File) -> std::io::Result<Vec<u8>> {
+    let entries = read_pty_log_file(file)?;
     let mut output = Vec::new();
     for (dir, _, data) in entries {
         if dir == DIR_OUTPUT {

@@ -1,6 +1,31 @@
 use super::*;
 
 #[test]
+fn transcript_rotation_keeps_its_opened_directory() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().join("logs");
+    let moved = root.path().join("moved");
+    let outside = root.path().join("outside");
+    std::fs::create_dir(&directory).unwrap();
+    std::fs::create_dir(&outside).unwrap();
+    let fixture = record_bytes(DIR_OUTPUT, 1, b"host-only fixture");
+    std::fs::write(outside.join("pty.log"), &fixture).unwrap();
+    let log = PtyLog::open_with_max(&directory.join("pty.log"), 100).unwrap();
+    log.record_output(&[b'a'; 80]);
+    std::fs::rename(&directory, &moved).unwrap();
+    std::os::unix::fs::symlink(&outside, &directory).unwrap();
+    log.record_output(&[b'b'; 80]);
+    log.record_output(b"after rotation");
+    assert_eq!(std::fs::read(outside.join("pty.log")).unwrap(), fixture);
+    assert!(!outside.join("pty.log.1").exists());
+    assert_eq!(
+        read_output_bytes(&moved.join("pty.log.1")).unwrap(),
+        [vec![b'a'; 80], vec![b'b'; 80]].concat()
+    );
+    assert_eq!(read_output_bytes(&moved.join("pty.log")).unwrap(), b"after rotation");
+}
+
+#[test]
 fn transcript_links_are_refused_before_reading_or_appending() {
     let directory = tempfile::tempdir().unwrap();
     let outside = directory.path().join("host-file");

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Anchor terminal transcript rotation to its opened directory and prepare
+  private session-log storage without overwriting retained generations.
+
 - Keep rotating diagnostic logs anchored to their opened directory, preventing
   a replaced directory name from redirecting subsequent writes.
 
