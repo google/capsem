@@ -1,5 +1,5 @@
-import {execFileSync} from 'node:child_process';
-import {copyFileSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync} from 'node:fs';
+import {execFileSync, spawnSync} from 'node:child_process';
+import {copyFileSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync} from 'node:fs';
 import {sha256} from '../../../sdk/typescript/tools/crypto.mjs';
 import {createServer as createHttpServer} from 'node:http';
 import type {AddressInfo} from 'node:net';
@@ -29,6 +29,56 @@ describe('packed-package', () => {
   });
 
   const digest = (path: string): string => sha256(readFileSync(path));
+
+  it('prewarms the exact selected SDK archive instead of repacking equivalent payloads', () => {
+    const project = fileURLToPath(new URL('..', import.meta.url));
+    const fixture = mkdtempSync(join(tmpdir(), 'capsem-mcp-selected-sdk-'));
+    fixtures.push(fixture);
+    const input = join(fixture, 'selected'), output = join(fixture, 'acceptance');
+    mkdirSync(input);
+    execFileSync('pnpm', ['pack', '--config.ignore-scripts=true', '--pack-destination', input], {
+      cwd: join(project, '../../sdk/typescript'), stdio: 'pipe', timeout: 15_000,
+    });
+    const name = readdirSync(input).find(name => name.endsWith('.tgz'));
+    expect(name).toBeDefined();
+    const selected = join(input, name!);
+    const bytes = readFileSync(selected);
+    expect([...bytes.subarray(0, 4)]).toEqual([0x1f, 0x8b, 8, 0]);
+    // Gzip's OS tag changes archive identity without changing its valid payload.
+    bytes[9] = bytes[9] === 0xff ? 0x13 : 0xff;
+    writeFileSync(selected, bytes);
+    const before = digest(selected);
+    const result = spawnSync(process.execPath, [join(project, 'tools/prewarm-package.mjs')], {
+      cwd: project, encoding: 'utf8', timeout: 90_000,
+      env: {...process.env, CAPSEM_SDK_PACKAGE_ARCHIVES: input,
+        CAPSEM_MCP_PACKAGE_ARCHIVES: output, NPM_CONFIG_OFFLINE: 'true'},
+    });
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(digest(join(output, name!))).toBe(before);
+    expect(digest(selected)).toBe(before);
+  }, 100_000);
+
+  it.each(['missing', 'symlink', 'directory'])('refuses a %s selected SDK archive without repacking', shape => {
+    const project = fileURLToPath(new URL('..', import.meta.url));
+    const fixture = mkdtempSync(join(tmpdir(), 'capsem-mcp-invalid-sdk-'));
+    fixtures.push(fixture);
+    const input = join(fixture, 'selected'), output = join(fixture, 'acceptance');
+    mkdirSync(input);
+    const version = (JSON.parse(readFileSync(join(project, '../../sdk/typescript/package.json'), 'utf8')) as {version: string}).version;
+    const selected = join(input, `capsem-sdk-${version}.tgz`);
+    if (shape === 'directory') mkdirSync(selected);
+    if (shape === 'symlink') {
+      const target = join(fixture, 'elsewhere.tgz');
+      writeFileSync(target, 'not selected');
+      symlinkSync(target, selected);
+    }
+    const result = spawnSync(process.execPath, [join(project, 'tools/prewarm-package.mjs')], {
+      cwd: project, encoding: 'utf8', timeout: 10_000,
+      env: {...process.env, CAPSEM_SDK_PACKAGE_ARCHIVES: input, CAPSEM_MCP_PACKAGE_ARCHIVES: output},
+    });
+    expect(result.status).not.toBe(0);
+    expect(readdirSync(output)).toEqual([]);
+  });
 
   function pack(): {cli: string; dependencies: string; manifest: Record<string, unknown>} {
     const packageRoot = fileURLToPath(new URL('..', import.meta.url));

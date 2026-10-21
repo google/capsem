@@ -153,6 +153,18 @@ def test_the_packages_the_suites_drive_are_among_the_installed_workspaces() -> N
         assert project in config.functional.node_workspaces, project
 
 
+def test_sdk_and_mcp_acceptance_select_the_published_sdk_archive_directory() -> None:
+    config = gate_config.load(PROJECT_ROOT)
+    variable = config.environment.model_dump().get("sdk_package_archives")
+    assert variable, "one config-owned archive selection must reach both SDK consumers"
+    plan = gate_plan("test-fast")
+    for label in ("fast.sdk.typescript.tests", "fast.mcp.typescript.package-prewarm"):
+        command = plan.step_named(label).actions[0].render()
+        assert f"{variable}={config.path(config.sdk_typescript.build_output)}" in command, (
+            "acceptance must consume the publication SDK bytes, not independently repack them"
+        )
+
+
 def test_sdk_preparation_stays_offline_inside_the_sandbox() -> None:
     plan = gate_plan("test-functional")
     for label in ("sdk.python.sync", "integrations.inspect-ai.sync"):

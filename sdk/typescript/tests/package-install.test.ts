@@ -57,13 +57,22 @@ function inventory(directory: string, base = directory): Record<string, string> 
 it('installs and exercises the actual SDK tarball without checkout or development dependencies', () => {
   const manifest = JSON.parse(readFileSync(join(source, 'package.json'), 'utf8')) as Manifest;
   const consumerNode = process.env.CAPSEM_SDK_PACKAGE_NODE ?? process.execPath;
-  const selectedArchive = process.env.CAPSEM_SDK_PACKAGE_ARCHIVE;
+  const selectedDirectory = process.env.CAPSEM_SDK_PACKAGE_ARCHIVES;
+  expect(!selectedDirectory || !process.env.CAPSEM_SDK_PACKAGE_ARCHIVE,
+    'select one SDK archive source').toBe(true);
+  const selectedArchive = selectedDirectory
+    ? join(selectedDirectory, `${manifest.name.replace(/^@/, '').replace('/', '-')}-${manifest.version}.tgz`)
+    : process.env.CAPSEM_SDK_PACKAGE_ARCHIVE;
   const fixture = mkdtempSync(join(tmpdir(), 'capsem-sdk-package-'));
   expect(relative(root, fixture).startsWith(`..${sep}`)).toBe(true);
   const archiveDirectory = join(fixture, 'archive');
   mkdirSync(archiveDirectory);
   try {
-    if (selectedArchive) copyFileSync(selectedArchive, join(archiveDirectory, 'selected-sdk.tgz'));
+    if (selectedArchive) {
+      expect(lstatSync(selectedArchive).isSymbolicLink()).toBe(false);
+      expect(lstatSync(selectedArchive).isFile()).toBe(true);
+      copyFileSync(selectedArchive, join(archiveDirectory, 'selected-sdk.tgz'));
+    }
     else execFileSync('pnpm', ['pack', '--config.ignore-scripts=true', '--pack-destination', archiveDirectory], {
       cwd: source, stdio: 'pipe', timeout: 15_000, env: {...process.env, HOME: usableHome()},
     });

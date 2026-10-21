@@ -223,8 +223,9 @@ def typescript_fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ..
     warmed = phase.shared(typescript_prewarm(config), after=(built,))
     for shared in (built, warmed):
         plan.record_stage(shared.label, "fast.sdk.typescript")
+    sdk_archives = {config.environment.sdk_package_archives: str(config.path(settings.build_output))}
     tested = phase.add(step(
-        "tests", Run(["pnpm", "run", "test:sdk"], cwd=root),
+        "tests", Run(["pnpm", "run", "test:sdk"], cwd=root, env=sdk_archives),
         kind=Kind.UNIT_TEST, speed=Speed.FAST,
     ), after=(built, warmed))
     generated = phase.add(step(
@@ -252,7 +253,8 @@ def typescript_fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ..
     mcp_warmed = mcp_phase.add(
         step(
             "package-prewarm",
-            Run(["pnpm", "run", "prewarm:packed"], cwd=mcp_root, env=archives, outside_sandbox=True),
+            Run(["pnpm", "run", "prewarm:packed"], cwd=mcp_root,
+                env={**archives, **sdk_archives}, outside_sandbox=True),
             kind=Kind.COMPILE,
             needs=frozenset({Needs.DISK, Needs.NETWORK}),
             speed=Speed.FAST,
