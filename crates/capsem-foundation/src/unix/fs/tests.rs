@@ -8,6 +8,27 @@ use super::{
 };
 
 #[test]
+fn unshared_file_opens_refuse_links_without_touching_the_target() {
+    let root = tempfile::tempdir().unwrap();
+    let outside = root.path().join("outside");
+    std::fs::write(&outside, b"host-only fixture").unwrap();
+    for name in ["symbolic", "hard"] {
+        let link = root.path().join(name);
+        if name == "symbolic" {
+            symlink(&outside, &link).unwrap();
+        } else {
+            std::fs::hard_link(&outside, &link).unwrap();
+        }
+        assert!(super::open_single_link_file_no_follow(&link).is_err());
+        assert!(super::open_single_link_append_no_follow(&link).is_err());
+    }
+    assert_eq!(std::fs::read(&outside).unwrap(), b"host-only fixture");
+    let ordinary = root.path().join("ordinary");
+    drop(super::open_single_link_append_no_follow(&ordinary).unwrap());
+    assert!(super::open_single_link_file_no_follow(&ordinary).is_ok());
+}
+
+#[test]
 fn filesystem_capacity_is_internally_consistent() {
     let root = tempfile::tempdir().unwrap();
     let space = filesystem_space(root.path()).unwrap();

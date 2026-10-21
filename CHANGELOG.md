@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Reject redirected serial log files when opening writers and diagnostics,
+  keeping worker-controlled links from exposing or modifying unrelated files.
+
 - Remove the unused LayerChart dependency and its vulnerable braces dependency
   tree from the desktop frontend.
 

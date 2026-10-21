@@ -3,6 +3,42 @@
 use super::*;
 
 #[test]
+fn capped_log_writer_refuses_redirected_files() {
+    let directory = tempfile::tempdir().unwrap();
+    let outside = directory.path().join("outside");
+    std::fs::write(&outside, b"host-only fixture\n").unwrap();
+    for name in ["symbolic.log", "hard.log"] {
+        let path = directory.path().join(name);
+        if name == "symbolic.log" {
+            std::os::unix::fs::symlink(&outside, &path).unwrap();
+        } else {
+            std::fs::hard_link(&outside, &path).unwrap();
+        }
+        assert!(CappedLogWriter::open(&path, 64).is_err());
+    }
+    assert_eq!(std::fs::read(&outside).unwrap(), b"host-only fixture\n");
+}
+
+#[test]
+fn log_tail_refuses_a_hard_link_to_an_unrelated_file() {
+    let directory = tempfile::tempdir().unwrap();
+    let outside = directory.path().join("outside");
+    std::fs::write(&outside, b"host-only fixture\n").unwrap();
+    let path = directory.path().join("serial.log");
+    std::fs::hard_link(&outside, &path).unwrap();
+    assert!(read_log_tail(&path, 1024).is_none());
+}
+
+#[test]
+fn log_byte_tail_preserves_non_utf8_data() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("serial.log");
+    std::fs::write(&path, b"bad-utf8:\xff\nordinary\n").unwrap();
+    assert_eq!(read_log_tail_bytes(&path, 1024).unwrap(), b"bad-utf8:\xff\nordinary\n");
+    assert_eq!(read_log_tail_bytes(&path, 12).unwrap(), b"ordinary\n");
+}
+
+#[test]
 fn ambient_trace_id_from_capsem_env_takes_precedence() {
     let id = resolve_ambient_capsem_trace_id(
         None,

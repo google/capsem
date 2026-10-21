@@ -60,6 +60,31 @@ pub fn open_regular_file_no_follow(path: &Path) -> io::Result<File> {
     Ok(file)
 }
 
+/// Read a regular file whose inode belongs only to this path. Worker-owned
+/// diagnostics must not alias an unrelated file through a hard link either.
+pub fn open_single_link_file_no_follow(path: &Path) -> io::Result<File> {
+    let file = open_regular_file_no_follow(path)?;
+    require_single_link(&file, path)?;
+    Ok(file)
+}
+
+/// Create or append to an unshared regular file without following links.
+pub fn open_single_link_append_no_follow(path: &Path) -> io::Result<File> {
+    let file = open_private_append_no_follow(path)?;
+    require_single_link(&file, path)?;
+    Ok(file)
+}
+
+fn require_single_link(file: &File, path: &Path) -> io::Result<()> {
+    if file.metadata()?.nlink() == 1 {
+        return Ok(());
+    }
+    Err(io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        format!("refusing shared file inode at {}", path.display()),
+    ))
+}
+
 /// Open an owner-only regular file for appending, creating it if absent,
 /// without following a link.
 ///

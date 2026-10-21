@@ -241,7 +241,7 @@ impl CappedLogWriter {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let file = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
+        let file = crate::unix::fs::open_single_link_append_no_follow(path)?;
         let written = file.metadata().map(|m| m.len()).unwrap_or(0);
         Ok(Self {
             path: path.to_path_buf(),
@@ -269,7 +269,7 @@ impl CappedLogWriter {
         let rotated = self.rotated_path();
         let _ = std::fs::remove_file(&rotated);
         std::fs::rename(&self.path, &rotated)?;
-        self.file = std::fs::OpenOptions::new().create(true).append(true).open(&self.path)?;
+        self.file = crate::unix::fs::open_single_link_append_no_follow(&self.path)?;
         self.written = 0;
         Ok(())
     }
@@ -302,6 +302,11 @@ impl std::io::Write for CappedLogWriter {
 /// `None` when the stream has no files at all, which is a different answer
 /// from an empty log and should be reported differently.
 pub fn read_log_tail(path: &std::path::Path, max_bytes: usize) -> Option<String> {
+    read_log_tail_bytes(path, max_bytes).map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// The same bounded, rotation-aware tail with exact bytes for support exports.
+pub fn read_log_tail_bytes(path: &std::path::Path, max_bytes: usize) -> Option<Vec<u8>> {
     use std::io::{Read, Seek, SeekFrom};
 
     let files = log_stream_files(path);
@@ -319,7 +324,7 @@ pub fn read_log_tail(path: &std::path::Path, max_bytes: usize) -> Option<String>
         if budget == 0 {
             break;
         }
-        let Ok(mut handle) = std::fs::File::open(&file) else {
+        let Ok(mut handle) = crate::unix::fs::open_single_link_file_no_follow(&file) else {
             continue;
         };
         let Ok(meta) = handle.metadata() else {
@@ -346,15 +351,14 @@ pub fn read_log_tail(path: &std::path::Path, max_bytes: usize) -> Option<String>
     newest_first.reverse();
     let joined = newest_first.concat();
 
-    // Lossy once, at the boundary: a seek can land mid-character, and a
-    // partial first line is noise rather than data.
-    let mut text = String::from_utf8_lossy(&joined).into_owned();
+    // A partial first line is noise. Decode only at the text caller boundary;
+    // support exports retain exact non-UTF8 bytes for redaction per line.
     if joined.len() >= max_bytes {
-        if let Some(newline) = text.find('\n') {
-            text = text[newline + 1..].to_string();
+        if let Some(newline) = joined.iter().position(|byte| *byte == b'\n') {
+            return Some(joined[newline + 1..].to_vec());
         }
     }
-    Some(text)
+    Some(joined)
 }
 
 /// Route panics into the tracing sink instead of stderr.
