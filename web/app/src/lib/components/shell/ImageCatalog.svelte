@@ -3,28 +3,51 @@
   import { ImageCacheState, type ImageInfo } from '@capsem/sdk';
   import { getImages, pullImage } from '../../api';
   import { vmStore } from '../../stores/vms.svelte';
+  import { tabStore } from '../../stores/tabs.svelte';
   import { sessionActionError } from '../../models/session-action-error';
+  import { imageNeedsDownload, imageLaunchRequest } from '../../models/image-launch';
+  import CircleNotch from 'phosphor-svelte/lib/CircleNotch';
+  import DownloadSimple from 'phosphor-svelte/lib/DownloadSimple';
+  import Play from 'phosphor-svelte/lib/Play';
 
-  let { ready }: { ready: boolean } = $props();
+  let { ready, prepareRuntime }: { ready: boolean; prepareRuntime: () => Promise<void> } = $props();
   let images = $state<ImageInfo[]>([]);
   let loading = $state(true);
   let error = $state<string | null>(null);
   let controller: AbortController | null = null;
   let caching = $state<string | null>(null);
   let cacheError = $state<string | null>(null);
-  let cachedImage = $state<string | null>(null);
+  let launching = $state<string | null>(null);
+  let failedImage = $state<string | null>(null);
+  let availableImages = $derived(images.filter(image => image.image));
   let observationTimer: ReturnType<typeof setTimeout> | null = null;
 
-  async function cache(image: ImageInfo) {
-    if (!image.image || caching) return;
+  async function activate(image: ImageInfo) {
+    if (!image.image || caching || launching || vmStore.acting) return;
+    if (!imageNeedsDownload(image, ready)) {
+      launching = image.name;
+      cacheError = null;
+      failedImage = null;
+      try {
+        const { id, name } = await vmStore.provision(imageLaunchRequest(image));
+        tabStore.openVM(id, name);
+      } catch (e) {
+        failedImage = image.name;
+        cacheError = sessionActionError(e);
+      } finally {
+        launching = null;
+      }
+      return;
+    }
     caching = image.name;
     cacheError = null;
-    cachedImage = null;
+    failedImage = null;
     try {
-      await pullImage(image.image);
-      cachedImage = image.name;
-      await load();
+      if (!ready) await prepareRuntime();
+      if (image.cached !== ImageCacheState.READY) await pullImage(image.image);
+      await load(false, true);
     } catch (e) {
+      failedImage = image.name;
       cacheError = sessionActionError(e);
     } finally {
       caching = null;
@@ -66,50 +89,49 @@
 
 <section class="mb-6" aria-labelledby="image-catalog-title" aria-busy={loading}>
   <div class="flex items-center justify-between mb-3 gap-3">
-    <h3 id="image-catalog-title" class="text-lg font-medium text-foreground">Images</h3>
+    <h3 id="image-catalog-title" class="text-lg font-medium text-foreground">Apps</h3>
     <button type="button" class="text-xs text-primary hover:underline disabled:opacity-50"
       disabled={loading} onclick={() => load(true)}>
-      {error ? 'Retry image catalog' : 'Refresh images'}
+      {error ? 'Retry' : 'Refresh'}
     </button>
   </div>
-  {#if caching}
-    <p class="mb-3 text-sm text-muted-foreground-1" role="status">Caching {caching}... The first download can take several minutes.</p>
-  {:else if cacheError}
-    <p class="mb-3 text-sm text-destructive break-words" role="alert">{cacheError}</p>
-  {:else if cachedImage}
-    <p class="mb-3 text-sm text-muted-foreground-1" role="status">{cachedImage} is cached and ready.</p>
-  {/if}
   {#if loading}
     <p class="text-sm text-muted-foreground-1" role="status">Loading image catalog...</p>
   {:else if error}
     <p class="text-sm text-destructive break-words" role="alert">{error}</p>
-  {:else if images.length === 0}
-    <p class="text-sm text-muted-foreground-1">No images are available in the catalog. Refresh after images have been published.</p>
+  {:else if availableImages.length === 0}
+    <p class="text-sm text-muted-foreground-1">No apps are available for this computer. Try refreshing.</p>
   {:else}
-    <div class="grid gap-3 sm:grid-cols-2">
-      {#each images as image (image.name)}
-        <article class="bg-card border border-card-line rounded-xl p-4 flex flex-col gap-2">
-          <h4 class="text-sm font-semibold text-foreground">{image.name}</h4>
-          <p class="text-xs text-muted-foreground-1 flex-1">{image.description}</p>
-          <p class="text-xs text-muted-foreground-1">Architectures: {image.architectures.join(', ')}</p>
-          <p class="text-xs text-muted-foreground-1">
-            {image.image ? `Cache: ${image.cached === ImageCacheState.UNKNOWN ? 'unknown' : image.cached}` : 'Incompatible with this host architecture or runtime'}
-          </p>
-          {#if !ready && image.image}
-            <p class="text-xs text-muted-foreground-1">VM assets must be ready before creating a session.</p>
-          {/if}
-          <div class="flex flex-wrap gap-2">
-          <button type="button" class="text-xs rounded-lg px-3 py-1.5 bg-primary text-primary-foreground hover:bg-primary-hover disabled:opacity-50"
-            aria-label={`New session from ${image.name}`} disabled={!ready || !image.image || vmStore.acting}
-            onclick={() => vmStore.openCreateModal(image.name)}>
-            New session
-          </button>
-          <button type="button" class="text-xs rounded-lg px-3 py-1.5 border border-line-2 text-foreground hover:bg-muted-hover disabled:opacity-50"
-            aria-label={`Cache ${image.name}`} disabled={!image.image || caching !== null || image.cached === ImageCacheState.READY}
-            onclick={() => cache(image)}>
-            {caching === image.name ? 'Caching...' : image.cached === ImageCacheState.READY ? 'Cached' : 'Cache image'}
-          </button>
+    <div class="border border-card-line rounded-xl divide-y divide-card-line overflow-hidden">
+      {#each availableImages as image (image.name)}
+        <article class="px-4 py-3">
+          <div class="flex items-center gap-3">
+            <div class="min-w-0 flex-1">
+              <h4 class="text-sm font-semibold text-foreground">{image.name}</h4>
+              <p class="text-xs text-muted-foreground-1 truncate" title={image.description}>{image.description}</p>
+            </div>
+            <button type="button" class="shrink-0 inline-flex items-center justify-center gap-1.5 min-w-24 text-xs rounded-lg px-3 py-2 bg-primary text-primary-foreground hover:bg-primary-hover disabled:opacity-50"
+              aria-label={`${imageNeedsDownload(image, ready) ? 'Download' : 'Launch'} ${image.name}`}
+              disabled={caching !== null || launching !== null || vmStore.acting}
+              onclick={() => activate(image)}>
+              {#if caching === image.name || launching === image.name}
+                <CircleNotch size={14} class="animate-spin" />
+                {caching === image.name ? 'Downloading...' : 'Launching...'}
+              {:else if imageNeedsDownload(image, ready)}
+                <DownloadSimple size={14} /> Download
+              {:else}
+                <Play size={14} weight="fill" /> Launch
+              {/if}
+            </button>
           </div>
+          {#if caching === image.name}
+            <p class="mt-2 text-xs text-muted-foreground-1" role="status">Downloading. You can leave this page open; the first download may take a few minutes.</p>
+          {:else if failedImage === image.name && cacheError}
+            <div class="mt-2 text-xs text-destructive break-words" role="alert">
+              <p>Couldn't prepare this app. Try again.</p>
+              <details class="mt-1"><summary class="cursor-pointer">Details</summary>{cacheError}</details>
+            </div>
+          {/if}
         </article>
       {/each}
     </div>

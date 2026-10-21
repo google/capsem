@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { AssetFileState, VmAction, type AssetStatus } from "@capsem/sdk";
+  import { VmAction, type AssetStatus } from "@capsem/sdk";
   import { onMount } from 'svelte';
   import { vmStore } from '../../stores/vms.svelte.ts';
   import { tabStore } from '../../stores/tabs.svelte.ts';
@@ -162,15 +162,10 @@
   let actionError = $state<string | null>(null);
 
   function assetText(status: AssetStatus | null): string {
-    if (!status) return 'Checking VM assets.';
+    if (!status) return 'Checking Capsem setup.';
     if (status.downloading) return assetProgressText(status);
-    if (status.reconcile_error) return status.reconcile_error;
-    if (status.errors.length > 0) return status.errors.join(' ');
-    const missing = status.assets
-      .filter(asset => asset.status !== AssetFileState.PRESENT)
-      .map(asset => asset.name);
-    if (missing.length > 0) return `Missing: ${missing.join(', ')}.`;
-    return status.ready ? 'Ready.' : 'VM assets are not ready.';
+    if (status.reconcile_error) return 'Setup download failed. Try again to continue.';
+    return status.ready ? 'Start a terminal or customize a session.' : 'Download Capsem setup once to launch any app.';
   }
 
   function assetPercent(status: AssetStatus | null): number {
@@ -179,8 +174,7 @@
   }
 
   function assetProgressText(status: AssetStatus): string {
-    const name = status.current_asset ? ` ${status.current_asset}` : '';
-    return status.bytes_total ? `Downloading${name}: ${assetPercent(status)}%` : `Downloading${name}.`;
+    return status.bytes_total ? `Setting up Capsem: ${assetPercent(status)}%` : 'Setting up Capsem...';
   }
 
   let assetsRefreshInFlight = false;
@@ -249,16 +243,29 @@
     }
   }
 
-  async function downloadAssets() {
+  async function prepareRuntime() {
+    if (ready) return;
     actionError = null;
     assetsError = null;
     ensuring = true;
     try {
       assets = await api.ensureAssets();
-    } catch (err) {
-      assetsError = parseApiError(err);
+      const deadline = Date.now() + 900_000;
+      while (assets.downloading && Date.now() < deadline) {
+        await new Promise(resolve => window.setTimeout(resolve, 1000));
+        assets = await api.getAssetsStatus();
+      }
+      if (!assets.ready) throw new Error(assets.reconcile_error ?? 'Capsem setup has not finished. Try again.');
     } finally {
       ensuring = false;
+    }
+  }
+
+  async function downloadAssets() {
+    try {
+      await prepareRuntime();
+    } catch (err) {
+      assetsError = parseApiError(err);
     }
   }
 
@@ -378,7 +385,7 @@
     </button>
   </div>
 
-  <ImageCatalog {ready} />
+  <ImageCatalog {ready} {prepareRuntime} />
 
   <!-- New session launcher -->
   <div class="bg-card border border-card-line rounded-xl p-4 mb-6">
@@ -388,9 +395,9 @@
       </span>
       <div class="min-w-0 flex-1">
         <p class="text-sm font-semibold text-foreground">New session</p>
-        <p class="text-xs text-muted-foreground-1 mt-1">{assetsLoading ? 'Checking VM assets.' : assetText(assets)}</p>
-        {#if assetsError}
-          <p class="text-[11px] text-destructive mt-2 break-words">{assetsError}</p>
+        <p class="text-xs text-muted-foreground-1 mt-1">{assetsLoading ? 'Checking Capsem setup.' : assetText(assets)}</p>
+        {#if assetsError || assets?.reconcile_error}
+          <details class="text-xs text-destructive mt-2 break-words"><summary class="cursor-pointer">Download details</summary>{assetsError ?? assets?.reconcile_error}</details>
         {/if}
         <div class="mt-3 flex flex-wrap items-center gap-2">
           <button

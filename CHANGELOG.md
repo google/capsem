@@ -43,6 +43,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The app catalog uses compact rows with one Download or Launch action,
+  prepares shared runtime files automatically, and keeps failure details out
+  of the main launch instructions.
+
 - Purge broken deletes the incompatible and defunct sessions shown in the
   dashboard, preserving healthy sessions and reporting refused deletions.
 
