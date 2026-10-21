@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use tracing::info;
 
 mod hydrate;
-pub use hydrate::{copy_missing_local_assets, download_missing_assets, DownloadProgress};
+pub use hydrate::{copy_missing_local_assets, download_missing_assets, local_manifest_asset_source, DownloadProgress};
 
 // ---------------------------------------------------------------------------
 // Validation helpers

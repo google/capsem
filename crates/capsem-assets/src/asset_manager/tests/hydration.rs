@@ -408,6 +408,66 @@ const DECLARED_ASSETS: [(&str, &[u8]); 3] = [
     ("vmlinuz", b"kernel"),
 ];
 
+#[tokio::test]
+async fn service_hydration_uses_the_packaged_local_manifest_source() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("source with spaces");
+    let installed = dir.path().join("installed");
+    std::fs::create_dir_all(source.join("arm64")).unwrap();
+    std::fs::create_dir_all(&installed).unwrap();
+    let mut manifest = declared_manifest(String::new());
+    manifest.asset_base = None;
+    let payload = serde_json::to_vec(&manifest).unwrap();
+    std::fs::write(source.join("manifest.json"), &payload).unwrap();
+    std::fs::write(installed.join("manifest.json"), &payload).unwrap();
+    std::fs::write(
+        installed.join("manifest-metadata.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "manifest_url": reqwest::Url::from_file_path(source.join("manifest.json")).unwrap().as_str()
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    for (name, bytes) in DECLARED_ASSETS {
+        std::fs::write(source.join("arm64").join(name), bytes).unwrap();
+    }
+    let hydrate = || download_missing_assets(&manifest, "9.9.9", "arm64", &installed, |_| {});
+    let paths = tokio::time::timeout(std::time::Duration::from_secs(2), hydrate())
+        .await
+        .expect("local hydration must not contact the public release server")
+        .expect("the service must honor the package's file:// source");
+    assert_eq!(paths.len(), 3);
+    for (name, bytes) in DECLARED_ASSETS {
+        let hash = capsem_crypto::blake3::hash(bytes).to_hex().to_string();
+        assert_eq!(
+            std::fs::read(installed.join("arm64").join(hash_filename(name, &hash))).unwrap(),
+            bytes
+        );
+    }
+    assert!(hydrate().await.unwrap().is_empty(), "verified bytes are reused");
+    // An interrupted local install remains repairable from that same source.
+    std::fs::remove_file(&paths[0]).unwrap();
+    assert_eq!(hydrate().await.unwrap().len(), 1);
+}
+
+#[test]
+fn local_manifest_metadata_never_falls_back_on_invalid_or_missing_sources() {
+    let dir = tempfile::tempdir().unwrap();
+    for source in [
+        "file:///definitely-missing-capsem-runtime/manifest.json",
+        "file:relative/manifest.json",
+        "/tmp/manifest.json",
+        "ftp://example.invalid/manifest.json",
+    ] {
+        std::fs::write(
+            dir.path().join("manifest-metadata.json"),
+            serde_json::json!({"manifest_url":source}).to_string(),
+        )
+        .unwrap();
+        assert!(local_manifest_asset_source(dir.path()).is_err(), "{source}");
+    }
+}
+
 fn declared_manifest(asset_base: String) -> ManifestV2 {
     let mut assets = std::collections::HashMap::new();
     for (name, bytes) in DECLARED_ASSETS {

@@ -20,6 +20,38 @@ pub struct DownloadProgress {
     pub done: bool,
 }
 
+/// The local runtime source selected by installed package/corporate metadata.
+/// A recorded local source never falls back to the public release server.
+pub fn local_manifest_asset_source(base_dir: &Path) -> Result<Option<PathBuf>> {
+    let metadata = base_dir.join("manifest-metadata.json");
+    let bytes = match std::fs::read(&metadata) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).with_context(|| format!("read {}", metadata.display())),
+    };
+    let metadata: serde_json::Value = serde_json::from_slice(&bytes).context("parse manifest metadata")?;
+    let Some(source) = metadata.get("manifest_url").and_then(|value| value.as_str()) else {
+        return Ok(None);
+    };
+    let url = reqwest::Url::parse(source).context("asset manifest metadata source must be a URL")?;
+    if matches!(url.scheme(), "http" | "https") {
+        return Ok(None);
+    }
+    if url.scheme() != "file" {
+        bail!("unsupported asset manifest metadata URL scheme: use https://, http://, or file://");
+    }
+    if !source.to_ascii_lowercase().starts_with("file://") {
+        bail!("asset manifest metadata file URL must start with file://: {source}");
+    }
+    let path = url
+        .to_file_path()
+        .map_err(|_| anyhow::anyhow!("local asset manifest URL must be absolute"))?;
+    if !path.is_file() {
+        bail!("local asset manifest source is missing: {}", path.display());
+    }
+    Ok(path.parent().map(Path::to_path_buf))
+}
+
 /// Resolve the compatible asset release for `binary_version`, then download
 /// any missing or hash-mismatched files from the asset channel into
 /// `base_dir/{arch}/{hash_filename}`.
@@ -38,10 +70,29 @@ pub async fn download_missing_assets<F>(
     on_progress: F,
 ) -> Result<Vec<PathBuf>>
 where
-    F: Fn(DownloadProgress) + Send + Sync,
+    F: Fn(DownloadProgress) + Send + Sync + 'static,
 {
     use futures::StreamExt;
     use tokio::io::AsyncWriteExt;
+
+    // Package preactivation installs the exact manifest before the service
+    // hydrates it. Use the same recorded local source as CLI repair; otherwise
+    // an unpublished dev runtime is silently requested from the public server.
+    if manifest.asset_base.is_none() {
+        let installed = base_dir.to_path_buf();
+        let source = tokio::task::spawn_blocking(move || local_manifest_asset_source(&installed)).await??;
+        if let Some(source) = source {
+            let manifest = manifest.clone();
+            let binary_version = binary_version.to_owned();
+            let arch = arch.to_owned();
+            let installed = base_dir.to_path_buf();
+            return tokio::task::spawn_blocking(move || {
+                copy_missing_local_assets(&manifest, &binary_version, &arch, &source, &installed, on_progress)
+            })
+            .await
+            .context("local runtime hydration worker failed")?;
+        }
+    }
 
     // Validate that the release the service resolver will boot is complete,
     // rejecting a channel manifest missing kernel/initrd/rootfs before it can
