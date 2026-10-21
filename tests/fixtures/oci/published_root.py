@@ -152,14 +152,15 @@ def prepare(layout: Path, repository: str, *, context=None) -> None:
     try:
         response = client.open(f"{base}/referrers/{digest}", token)
     except urllib.error.HTTPError as error:
-        if error.code != 404:
-            raise
-        # OCI's fallback index is required by registries without the referrers API.
-        response = client.open(
-            f"{base}/manifests/{digest.replace(':', '-', 1)}",
-            token,
-            "application/vnd.oci.image.index.v1+json",
-        )
+        with error:
+            if error.code != 404:
+                raise
+            # OCI's fallback index is required by registries without the referrers API.
+            response = client.open(
+                f"{base}/manifests/{digest.replace(':', '-', 1)}",
+                token,
+                "application/vnd.oci.image.index.v1+json",
+            )
     with response:
         data = response.read(4 * 1024 * 1024 + 1)
         if len(data) > 4 * 1024 * 1024:

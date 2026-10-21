@@ -138,9 +138,10 @@ def _token(client: _Registry, registry: str, name: str) -> str | None:
         client.open(f"https://{registry}/v2/").close()
         return None
     except urllib.error.HTTPError as error:
-        if error.code != 401:
-            raise
-        challenge = error.headers.get("WWW-Authenticate", "")
+        with error:
+            if error.code != 401:
+                raise
+            challenge = error.headers.get("WWW-Authenticate", "")
     fields = dict(re.findall(r'(\w+)="([^"]*)"', challenge))
     query = urllib.parse.urlencode(
         {"service": fields.get("service", registry), "scope": f"repository:{name}:pull"}
@@ -149,17 +150,18 @@ def _token(client: _Registry, registry: str, name: str) -> str | None:
     try:
         response = client.open(token_url)
     except urllib.error.HTTPError as error:
-        realm = urllib.parse.urlsplit(fields.get("realm", ""))
-        if (
-            error.code not in (401, 403)
-            or registry != "ghcr.io"
-            or realm != urllib.parse.urlsplit("https://ghcr.io/token")
-        ):
-            raise
-        credential = github_token()
-        if credential is None:
-            raise
-        response = client.open(token_url, basic=("x-access-token", credential))
+        with error:
+            realm = urllib.parse.urlsplit(fields.get("realm", ""))
+            if (
+                error.code not in (401, 403)
+                or registry != "ghcr.io"
+                or realm != urllib.parse.urlsplit("https://ghcr.io/token")
+            ):
+                raise
+            credential = github_token()
+            if credential is None:
+                raise
+            response = client.open(token_url, basic=("x-access-token", credential))
     with response:
         body = json.load(response)
     return body.get("token") or body["access_token"]
