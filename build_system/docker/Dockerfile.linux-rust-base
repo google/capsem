@@ -57,8 +57,10 @@ RUN cargo fetch --locked
 # instead of copying a complete root-owned artifact layer during chown.
 # A few upstream crate archives carry private source modes; dependencies
 # remain root-owned, with only missing read/traverse permissions repaired.
-RUN mkdir -p /cargo-target /home/lane /usr/local/cargo/git \
+# tauri-build also writes schemas under capsem-app/gen while Cargo prewarms.
+RUN mkdir -p /cargo-target /home/lane /usr/local/cargo/git /src/crates/capsem-app/gen \
     && chown 1000:1000 /cargo-target /home/lane \
+    && chown -R 1000:1000 /src/crates/capsem-app/gen \
     && find /usr/local/cargo/registry /usr/local/cargo/git \
         \( -type d ! -perm -005 -o -type f ! -perm -004 \) -exec chmod a+rX {} +
 # Incremental intermediates are compiler-session state, not dependencies.

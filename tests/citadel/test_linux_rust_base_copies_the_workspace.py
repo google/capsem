@@ -11,9 +11,8 @@ invalidated it failed the complete gate at `warm-base` with "failed to read
 from __future__ import annotations
 
 import re
-from pathlib import Path
-
 import tomllib
+from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DOCKERFILE = PROJECT_ROOT / "build_system" / "docker" / "Dockerfile.linux-rust-base"
@@ -128,6 +127,7 @@ def test_the_lane_does_not_recursively_rewrite_immutable_dependency_ownership() 
 
 
 MUTABLE_OUTPUTS = {
+    "/src/crates/capsem-app/gen",
     "/src/sdk/typescript/dist",
     "/src/web/app/dist",
     "/src/web/app/.astro",
@@ -156,6 +156,19 @@ def test_nonroot_lane_owns_inherited_generated_outputs() -> None:
         "prewarm. COPY --chown does not fix excluded dist/node_modules entries; "
         f"give only these generated trees recursive ownership: {sorted(missing)}"
     )
+
+
+TAURI_SCHEMA_RATIONALE = (
+    "tauri-build writes ACL and capability schemas under capsem-app/gen. "
+    "Give this generated tree to the build user before prewarming Cargo, "
+    "not only after the non-root build has already failed."
+)
+
+
+def test_tauri_schema_output_is_writable_before_nonroot_prewarm() -> None:
+    source = DOCKERFILE.read_text(encoding="utf-8")
+    before_prewarm = source.split("USER 1000:1000", 1)[0]
+    assert "/src/crates/capsem-app/gen" in _recursively_owned_paths(before_prewarm), TAURI_SCHEMA_RATIONALE
 
 
 def test_cargo_prewarm_is_owned_by_the_lane_and_does_not_ship_incremental_state() -> None:
