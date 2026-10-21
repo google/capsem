@@ -21,6 +21,8 @@ def type_name(schema: Schema) -> str:
         kind = next(kind for kind in schema.type if kind != "null")
         return f"{type_name(schema.model_copy(update={'type': kind}))} | null"
     if schema.enum is not None:
+        if len(schema.enum) == 1:
+            return json.dumps(schema.enum[0])
         raise ValueError("inline enums must become named OpenAPI schemas")
     if schema.type == "object":
         if not isinstance(schema.additional_properties, Schema) or schema.properties:

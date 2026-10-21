@@ -153,7 +153,7 @@ def test_connection_datetime_and_revision_validation_preserve_wire_values(models
 
 
 @pytest.mark.parametrize("value", [
-    {"type": "string", "enum": ["inline"]},
+    {"type": "string", "enum": ["first", "second"]},
     {"type": "object", "properties": {"field": {"type": "string"}}},
 ])
 def test_inline_complex_types_require_named_contracts(value: object) -> None:

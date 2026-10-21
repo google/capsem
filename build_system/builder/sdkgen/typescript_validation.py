@@ -19,6 +19,8 @@ def expression(schema: Schema) -> str:
         kind = next(kind for kind in schema.type if kind != "null")
         return expression(schema.model_copy(update={"type": kind})) + ".nullable()"
     if schema.enum is not None:
+        if len(schema.enum) == 1:
+            return f"z.literal({json.dumps(schema.enum[0])})"
         raise ValueError("inline enums must become named OpenAPI schemas")
     if schema.type == "object":
         if isinstance(schema.additional_properties, Schema):

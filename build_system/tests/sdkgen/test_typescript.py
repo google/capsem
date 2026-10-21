@@ -57,7 +57,7 @@ def test_nested_and_binary_types(value: object, expected: str) -> None:
 
 
 @pytest.mark.parametrize("value", [
-    {"type": "string", "enum": ["inline"]},
+    {"type": "string", "enum": ["first", "second"]},
     {"type": "object", "properties": {"x": {"type": "string"}}},
 ])
 def test_inline_complex_types_require_named_schemas(value: object) -> None:

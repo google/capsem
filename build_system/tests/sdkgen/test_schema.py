@@ -16,9 +16,20 @@ def test_actual_export_preserves_every_schema() -> None:
     path = ROOT / "sdk/specification/openapi.json"
     original = json.loads(path.read_text())["components"]["schemas"]
     schemas = read_schemas(path)
-    assert set(schema_order(schemas)) == set(original)
-    for name, schema in schemas.items():
-        assert schema.model_dump(by_alias=True, exclude_unset=True) == original[name]
+    assert set(original) <= set(schema_order(schemas))
+    lifted = set()
+    for name, value in original.items():
+        rendered = schemas[name].model_dump(by_alias=True, exclude_unset=True)
+        if "oneOf" in value:
+            # Normalization names inline tagged objects; expanding only those
+            # new references must recover the exact Rust-exported schema.
+            for index, member in enumerate(value["oneOf"]):
+                if member.get("type") == "object" and member.get("properties"):
+                    ref = rendered["oneOf"][index]["$ref"].rsplit("/", 1)[1]
+                    lifted.add(ref)
+                    rendered["oneOf"][index] = schemas[ref].model_dump(by_alias=True, exclude_unset=True)
+        assert rendered == value
+    assert set(schemas) == set(original) | lifted
 
 
 @pytest.mark.parametrize("value", [

@@ -140,5 +140,35 @@ def read_schemas(path: Path) -> dict[str, Schema]:
     }
     if not schemas:
         raise ValueError("OpenAPI document contains no schemas")
+    name_tagged_variants(schemas)
     schema_order(schemas)
     return schemas
+
+
+def name_tagged_variants(schemas: dict[str, Schema]) -> None:
+    """Give inline tagged Rust variants stable model names for every SDK.
+
+    The discriminator supplies identity; source order cannot rename a model.
+    Other inline objects remain unsupported rather than becoming untyped data.
+    """
+    for name, schema in list(schemas.items()):
+        if schema.one_of is None:
+            continue
+        members = []
+        seen = set()
+        for member in schema.one_of:
+            if member.type != "object" or not member.properties:
+                members.append(member)
+                continue
+            tags = [field.enum[0] for key, field in member.properties.items()
+                    if key in {"type", "kind"} and key in member.required
+                    and field.type == "string" and field.enum and len(field.enum) == 1]
+            if len(tags) != 1 or not re.fullmatch(r"[a-z][a-z0-9_]*", tags[0]):
+                raise ValueError(f"inline union {name} needs one required literal discriminator")
+            variant = name + "".join(word.capitalize() for word in tags[0].split("_"))
+            if variant in seen or (variant in schemas and schemas[variant] != member):
+                raise ValueError(f"tagged union model collision: {variant}")
+            seen.add(variant)
+            schemas[variant] = member
+            members.append(Schema(ref=f"#/components/schemas/{variant}"))
+        schemas[name] = schema.model_copy(update={"one_of": members})

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import keyword
 import re
 
@@ -114,6 +115,8 @@ def type_name(schema: Schema) -> str:
         kind = next(kind for kind in schema.type if kind != "null")
         return f"{type_name(schema.model_copy(update={'type': kind}))} | None"
     if schema.enum is not None:
+        if len(schema.enum) == 1:
+            return f"Literal[{json.dumps(schema.enum[0])}]"
         raise ValueError("inline enums must become named OpenAPI schemas")
     if schema.type == "object":
         if not isinstance(schema.additional_properties, Schema) or schema.properties:
@@ -214,7 +217,7 @@ def render_models(schemas: dict[str, Schema]) -> dict[str, str]:
             imports.append("from enum import StrEnum")
         if "IPv4Address" in body:
             imports.append("from ipaddress import IPv4Address")
-        typing = [symbol for symbol in ("Annotated", "TypeAlias") if symbol in body]
+        typing = [symbol for symbol in ("Annotated", "Literal", "TypeAlias") if symbol in body]
         if typing:
             imports.append(f"from typing import {', '.join(typing)}")
         pydantic = [symbol for symbol in (
