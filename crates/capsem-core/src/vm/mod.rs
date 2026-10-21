@@ -2,7 +2,6 @@ pub mod boot;
 pub mod config;
 pub mod control;
 pub mod registry;
-pub mod terminal;
 pub mod vsock;
 
 /// Unified VM lifecycle state.

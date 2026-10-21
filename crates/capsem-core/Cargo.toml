@@ -49,6 +49,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 flate2 = "1"
 regex = { workspace = true }
 scraper = "0.25"
+vt100 = "0.16.2"
 
 hickory-proto = { workspace = true }
 ego-tree = "0.10"

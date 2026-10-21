@@ -13,6 +13,7 @@ pub mod pty_log;
 pub mod security_engine;
 pub mod service_uds;
 pub mod session;
+pub mod terminal;
 #[cfg(test)]
 pub(crate) mod test_support;
 pub mod vm;
@@ -26,7 +27,6 @@ pub use vm::boot::{
 };
 pub use vm::config::{GuestMetadataAuthority, VirtioFsShare, VmConfig};
 pub use vm::registry::{SandboxInstance, SandboxNetworkState};
-pub use vm::terminal::TerminalOutputQueue;
 pub use vm::vsock::{self, CoalesceBuffer};
 pub use vm::VmState;
 

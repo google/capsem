@@ -61,6 +61,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep terminal screen, cursor, modes, colors and notifications in the session
+  instead of reconstructing views from a truncated output history.
+
 - Start workload terminals with cooked shell output while allowing interactive
   applications to switch to raw output without a second newline conversion.
 

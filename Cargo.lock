@@ -946,6 +946,7 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "vm-fdt",
+ "vt100",
  "webpki-roots",
 ]
 
