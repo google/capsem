@@ -30,6 +30,11 @@ on:
         options:
           - nightly
           - stable
+      catalog_only:
+        description: Refresh catalog metadata while preserving existing image versions.
+        required: false
+        type: boolean
+        default: false
 
 # Publication is serialized with itself and with nothing else: a trunk run
 # never waits on an image build, and two image runs never race one catalog.
@@ -53,6 +58,7 @@ env:
 
 jobs:
   base-arch:
+    if: ${{ !inputs.catalog_only }}
     name: Base (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
     permissions:
@@ -317,6 +323,7 @@ jobs:
   catalog:
     name: Catalog
     needs: image
+    if: ${{ always() && (inputs.catalog_only || needs.image.result == 'success') }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -334,23 +341,31 @@ jobs:
           TOKEN: ${{ github.token }}
         run: printf '%s' "$TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        if: ${{ !inputs.catalog_only }}
         with:
           pattern: record-*
           path: records
           merge-multiple: true
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        if: ${{ !inputs.catalog_only }}
         with:
           pattern: index-*
           path: records
           merge-multiple: true
       - name: Append this run to the previous catalog
         id: merge
+        env:
+          CATALOG_ONLY: ${{ inputs.catalog_only || false }}
         run: |
+          mkdir -p records
           previous=()
           exists="$(sh images/ci/published.sh "$REGISTRY/catalog:$CHANNEL")"
           if [ "$exists" = true ]; then
             oras pull --output previous "$REGISTRY/catalog:$CHANNEL"
             previous=(--previous previous/catalog.json)
+          elif [ "$CATALOG_ONLY" = true ]; then
+            echo "metadata refresh requires an existing catalog" >&2
+            exit 1
           fi
           changed="$(uv run --project build_system --frozen python images/ci/catalog.py --channel "$CHANNEL" \
             --registry "$REGISTRY" --records records "${previous[@]}" --out catalog/catalog.json)"
