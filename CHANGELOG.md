@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Discard oversized terminal control strings before the VT parser can buffer
+  them, and recover cleanly at the next sequence terminator.
+
 - Reject invalid terminal stream state in Rust clients and publish matching
   screen, text, and event limits in generated SDK validators.
 

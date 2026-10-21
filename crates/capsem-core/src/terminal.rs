@@ -3,13 +3,12 @@
 //! an arbitrary byte tail whose interpretation depends on their window size.
 use std::sync::{Arc, Mutex};
 
-use capsem_proto::terminal::{TerminalCursor, TerminalModes, TerminalState, TerminalSummary};
-use capsem_proto::{
-    TERMINAL_DEFAULT_COLS, TERMINAL_DEFAULT_ROWS, TERMINAL_MAX_CELLS, TERMINAL_MAX_COLS, TERMINAL_MAX_ROWS,
-};
+use capsem_proto::terminal::{validate_size, TerminalCursor, TerminalModes, TerminalState, TerminalSummary};
+use capsem_proto::{TERMINAL_DEFAULT_COLS, TERMINAL_DEFAULT_ROWS};
 use tokio::sync::{broadcast, watch};
 
 mod callbacks;
+mod osc_budget;
 use callbacks::Callbacks;
 
 #[derive(Clone, Debug)]
@@ -24,6 +23,7 @@ pub struct SessionTerminal {
 
 struct Inner {
     parser: vt100::Parser<Callbacks>,
+    osc_budget: osc_budget::OscBudget,
     revision: u64,
     next_view: u64,
     controller: Option<u64>,
@@ -43,6 +43,7 @@ impl SessionTerminal {
                     0,
                     Callbacks::default(),
                 ),
+                osc_budget: Default::default(),
                 revision: 0,
                 next_view: 0,
                 controller: None,
@@ -57,7 +58,8 @@ impl SessionTerminal {
     pub fn publish(&self, data: impl AsRef<[u8]>) -> Vec<u8> {
         let mut inner = self.inner.lock().unwrap();
         let previous = inner.parser.screen().clone();
-        inner.parser.process(data.as_ref());
+        let Inner { parser, osc_budget, .. } = &mut *inner;
+        osc_budget.process(data.as_ref(), |bytes| parser.process(bytes));
         inner.revision += 1;
         let reset = previous.alternate_screen() != inner.parser.screen().alternate_screen();
         let mut update = inner.update(reset, Some(&previous));
@@ -113,18 +115,6 @@ impl SessionTerminal {
             inner.controller = None;
         }
     }
-}
-
-fn validate_size(cols: u16, rows: u16) -> Result<(), &'static str> {
-    if cols == 0
-        || rows == 0
-        || usize::from(cols) > TERMINAL_MAX_COLS
-        || usize::from(rows) > TERMINAL_MAX_ROWS
-        || usize::from(cols) * usize::from(rows) > TERMINAL_MAX_CELLS
-    {
-        return Err("terminal dimensions exceed the supported grid");
-    }
-    Ok(())
 }
 
 impl Inner {

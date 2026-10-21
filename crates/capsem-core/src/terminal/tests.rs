@@ -154,3 +154,20 @@ fn reconstructed_display_preserves_ansi_256_and_true_color() {
         vt100::Color::Rgb(40, 50, 60)
     );
 }
+
+#[test]
+fn oversized_control_strings_are_discarded_and_the_terminal_recovers() {
+    let terminal = SessionTerminal::new(8);
+    terminal.publish(b"\x1b]2;Retained\x07\x1b]2;");
+    for _ in 0..256 {
+        terminal.publish(vec![b'x'; 4096]);
+    }
+    terminal.publish(b"\x07visible\x1b]9;Ready\x1b\\");
+    let (_, snapshot, _) = terminal.subscribe();
+    assert_eq!(
+        snapshot.state.title, "Retained",
+        "oversized OSC must not reach the parser"
+    );
+    assert_eq!(snapshot.state.last_notification.as_ref().unwrap().body, "Ready");
+    assert_eq!(display(&snapshot).screen().contents(), "visible");
+}
