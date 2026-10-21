@@ -43,6 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Saved sessions retain audit sequence reservations across restarts, preventing
+  duplicate ledger entries from disabling commands after reopening an app.
+
 - Reopening an existing app session refreshes its terminal launcher after an
   upgrade, so terminal resize fixes reach saved sessions on macOS too.
 

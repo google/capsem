@@ -82,10 +82,13 @@ async fn write_committed(
             })
             .await
             .unwrap();
-        assert!(matches!(
-            receiver.recv().await.unwrap(),
-            LedgerServerMessage::Response { .. }
-        ));
+        let LedgerServerMessage::Response { response } = receiver.recv().await.unwrap() else {
+            panic!("ledger omitted write response");
+        };
+        assert!(
+            matches!(response.outcome(), capsem_proto::ledger::LedgerOutcome::Success { .. }),
+            "ledger rejected write or flush: {response:?}"
+        );
     }
     drop(sender);
     drop(receiver);
@@ -274,8 +277,126 @@ async fn multiple_producers_share_global_order_and_unanchored_tail_is_not_a_chec
             .reserve(second, 1, "dns_event".into(), [2; 32], ZERO_COMMITMENT_HASH)
             .await
             .unwrap(),
-        first_global + 1
+        second_global + 1,
+        "a durable but uncheckpointed event must never lose its reserved sequence on restart"
     );
+}
+
+#[tokio::test]
+async fn unanchored_reservations_survive_restart_without_becoming_trusted_events() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("session.db");
+    let server = Arc::new(capsem_logger::ledger_server::LedgerServer::open(&path).unwrap());
+    let authority = CommitmentAuthority::open(root.path(), "unanchored").await.unwrap();
+    let producer = grant(1, 7);
+    let first_event = event("before.example");
+    let sequence = authority
+        .reserve(
+            producer,
+            1,
+            first_event.kind().into(),
+            capsem_logger::commitment_event_hash(&first_event).unwrap(),
+            ZERO_COMMITMENT_HASH,
+        )
+        .await
+        .unwrap();
+    let first = LedgerCommitment::new(
+        producer,
+        1,
+        sequence,
+        first_event.kind(),
+        capsem_logger::commitment_event_hash(&first_event).unwrap(),
+        ZERO_COMMITMENT_HASH,
+    )
+    .unwrap();
+    write_committed(Arc::clone(&server), producer, first_event, first).await;
+    drop(authority);
+
+    let restarted = CommitmentAuthority::open(root.path(), "unanchored").await.unwrap();
+    assert!(restarted.anchored().await.is_empty());
+    let producer = grant(2, 7);
+    let second_event = event("after.example");
+    let next = restarted
+        .reserve(
+            producer,
+            1,
+            second_event.kind().into(),
+            capsem_logger::commitment_event_hash(&second_event).unwrap(),
+            ZERO_COMMITMENT_HASH,
+        )
+        .await
+        .unwrap();
+    assert_eq!(next, sequence + 1);
+    let second = LedgerCommitment::new(
+        producer,
+        1,
+        next,
+        second_event.kind(),
+        capsem_logger::commitment_event_hash(&second_event).unwrap(),
+        ZERO_COMMITMENT_HASH,
+    )
+    .unwrap();
+    write_committed(server, producer, second_event, second).await;
+}
+
+#[test]
+fn canceled_reservations_and_anchors_keep_the_disk_and_memory_fenced() {
+    use std::future::Future;
+    use std::task::{Context, Poll, Waker};
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .max_blocking_threads(1)
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        for anchor in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let authority = CommitmentAuthority::open(root.path(), "cancel").await.unwrap();
+            let producer = grant(1, 7);
+            let commitment = if anchor {
+                let sequence = authority
+                    .reserve(producer, 1, "net_event".into(), [1; 32], ZERO_COMMITMENT_HASH)
+                    .await
+                    .unwrap();
+                Some(LedgerCommitment::new(producer, 1, sequence, "net_event", [1; 32], ZERO_COMMITMENT_HASH).unwrap())
+            } else {
+                None
+            };
+            let (release, blocked) = std::sync::mpsc::channel();
+            let blocker =
+                tokio::task::spawn_blocking(move || blocked.recv_timeout(std::time::Duration::from_secs(5)).unwrap());
+            let authority_ref = Arc::clone(&authority);
+            let mut operation = Box::pin(async move {
+                if let Some(commitment) = commitment {
+                    authority_ref.anchor(producer, vec![commitment]).await
+                } else {
+                    authority_ref
+                        .reserve(producer, 1, "net_event".into(), [1; 32], ZERO_COMMITMENT_HASH)
+                        .await
+                }
+            });
+            assert!(matches!(
+                operation.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+                Poll::Pending
+            ));
+            drop(operation);
+            let fenced = authority.state.try_lock().is_err();
+            release.send(()).unwrap();
+            blocker.await.unwrap();
+            tokio::task::spawn_blocking(|| {}).await.unwrap();
+            assert!(
+                fenced,
+                "a canceled caller must not release the queued disk mutation's fence"
+            );
+            let state = authority.state.lock().await;
+            let loaded = load(&authority.path).unwrap();
+            assert_eq!(state.next_checkpoint_sequence, if anchor { 2 } else { 1 });
+            assert_eq!(loaded.next_checkpoint_sequence, state.next_checkpoint_sequence);
+            assert_eq!(loaded.next_global_sequence, state.next_global_sequence);
+            drop(state);
+        }
+    });
 }
 
 #[tokio::test]
@@ -486,13 +607,13 @@ async fn reservation_and_checkpoint_sequence_exhaustion_fail_closed() {
     {
         let mut state = authority.state.lock().await;
         state.anchored.remove(&key);
-        state.next_checkpoint_sequence = u64::MAX;
     }
     let global = authority
         .reserve(producer, 1, "net_event".into(), [4; 32], ZERO_COMMITMENT_HASH)
         .await
         .unwrap();
     let reserved = LedgerCommitment::new(producer, 1, global, "net_event", [4; 32], ZERO_COMMITMENT_HASH).unwrap();
+    authority.state.lock().await.next_checkpoint_sequence = u64::MAX;
     assert!(authority
         .anchor(producer, vec![reserved])
         .await
@@ -732,7 +853,7 @@ async fn commitment_channel_enforces_handshake_ids_and_executes_all_commands() {
         responses.recv().await.unwrap(),
         CommitmentServerMessage::Response {
             request_id: 3,
-            reply: CommitmentReply::Anchored { checkpoint_sequence: 1 },
+            reply: CommitmentReply::Anchored { checkpoint_sequence: 2 },
         }
     ));
 
