@@ -1242,3 +1242,20 @@ def test_a_session_without_its_layer_refuses_to_launch(launcher, tmp_path, monke
     with pytest.raises(RuntimeError, match="not mounted"):
         launcher.mount_layer(lower, run=lambda *argv: calls.append(argv))
     assert calls == []
+
+
+def test_staged_launcher_does_not_write_helper_bytecode(tmp_path):
+    import os
+    import shutil
+    import sys
+
+    for name in ("launch.py", "runtime_console.py"):
+        shutil.copyfile(SOURCE.with_name(name), tmp_path / name)
+    before = {path.name for path in tmp_path.iterdir()}
+    env = {key: value for key, value in os.environ.items()
+           if key not in {"PYTHONDONTWRITEBYTECODE", "PYTHONPYCACHEPREFIX"}}
+    result = subprocess.run([sys.executable, str(tmp_path / "launch.py"), "--help"],
+                            capture_output=True, text=True, timeout=5, env=env)
+    # Argument refusal still imports the helper; no workload is launched.
+    assert result.returncode != 0
+    assert {path.name for path in tmp_path.iterdir()} == before

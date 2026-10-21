@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import re
+import runpy
 import selectors
 import shlex
 import shutil
@@ -27,7 +28,8 @@ import time
 import tty
 from pathlib import Path, PurePosixPath
 
-from runtime_console import RuntimeConsole
+# Load the helper source without growing an import cache in the guest stage.
+RuntimeConsole = runpy.run_path(str(Path(__file__).with_name("runtime_console.py")))["RuntimeConsole"]
 
 RUNTIME = Path("/var/tmp/capsem-container")
 HOSTNAME = "container"
