@@ -60,6 +60,11 @@ CONFIG_OWNED_NAMES = {
 
 REQUIRED_WIRING = {
     "crates/capsem-proto/build.rs": (
+        '#[path = "build/runtime_limits.rs"]',
+        "mod runtime_limits;",
+        "runtime_limits::write_runtime_limits();",
+    ),
+    "crates/capsem-proto/build/runtime_limits.rs": (
         f'PathBuf::from("{CONFIG.name}")',
         'get("max_concurrent_clients")',
         "pub const NETWORK_CLIENT_CAPACITY: usize = {capacity}",
@@ -387,15 +392,31 @@ def test_runtime_limit_config_is_valid_and_wired_to_every_consumer() -> None:
     assert type(catalog_refresh) is int and 60 <= catalog_refresh <= 86_400, RUNTIME_LIMIT_RATIONALE
     assert type(catalog_retry) is int and 1 <= catalog_retry <= catalog_refresh, RUNTIME_LIMIT_RATIONALE
 
-    missing = []
-    for relative_path, required_fragments in REQUIRED_WIRING.items():
-        source = (ROOT / relative_path).read_text()
-        missing.extend(
-            f"{relative_path}: missing {fragment!r}"
-            for fragment in required_fragments
-            if fragment not in source
-        )
+    missing = _missing_wiring({path: (ROOT / path).read_text() for path in REQUIRED_WIRING})
     assert not missing, RUNTIME_LIMIT_RATIONALE + "\n" + "\n".join(missing)
+
+
+def _missing_wiring(sources: dict[str, str]) -> list[str]:
+    return [
+        f"{path}: missing {fragment!r}"
+        for path, required in REQUIRED_WIRING.items()
+        for fragment in required
+        if fragment not in sources.get(path, "")
+    ]
+
+
+@pytest.mark.parametrize(
+    "path,fragment",
+    [
+        ("crates/capsem-proto/build.rs", "runtime_limits::write_runtime_limits();"),
+        ("crates/capsem-proto/build/runtime_limits.rs", 'get("max_concurrent_clients")'),
+    ],
+)
+def test_runtime_limit_wiring_rejects_a_disconnected_generator(path, fragment) -> None:
+    sources = {name: (ROOT / name).read_text() for name in REQUIRED_WIRING}
+    assert not _missing_wiring(sources), RUNTIME_LIMIT_RATIONALE
+    sources[path] = sources[path].replace(fragment, "", 1)
+    assert f"{path}: missing {fragment!r}" in _missing_wiring(sources), RUNTIME_LIMIT_RATIONALE
 
 
 def test_runtime_limit_names_have_no_numeric_rust_authority() -> None:
