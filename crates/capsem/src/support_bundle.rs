@@ -300,14 +300,19 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
                 let path = dir.path().join(fname);
                 let entry_path = format!("{bundle_root}/sessions/{id}/{fname}");
                 let is_log = fname.ends_with(".log");
-                let contents = if is_log {
+                let contents = if fname == "serial.log" {
+                    capsem_core::session::read_session_serial_log(&dir.path(), MAX_LOG_TAIL_BYTES as usize)
+                        .and_then(|tail| tail.ok_or_else(|| std::io::Error::other("log stream unavailable")))
+                        .map(|tail| (tail.bytes, tail.truncated))
+                } else if is_log {
                     read_tail(&path, MAX_LOG_TAIL_BYTES)
                         .ok_or_else(|| std::io::Error::other("log stream unavailable or refused"))
+                        .map(|bytes| (bytes, path.metadata().is_ok_and(|meta| meta.len() > MAX_LOG_TAIL_BYTES)))
                 } else {
-                    fs::read(&path)
+                    fs::read(&path).map(|bytes| (bytes, false))
                 };
                 match contents {
-                    Ok(bytes) => {
+                    Ok((bytes, truncated)) => {
                         // session.db is binary; don't redact. Logs get redacted unless --no-redact.
                         let bytes = if !no_redact && (fname.ends_with(".log") || fname.ends_with(".json")) {
                             redact_log_bytes(&bytes)
@@ -322,9 +327,7 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
                             bytes: Some(len),
                             missing: false,
                             reason: None,
-                            truncated_to_last_bytes: (is_log
-                                && path.metadata().is_ok_and(|meta| meta.len() > MAX_LOG_TAIL_BYTES))
-                            .then_some(MAX_LOG_TAIL_BYTES),
+                            truncated_to_last_bytes: truncated.then_some(MAX_LOG_TAIL_BYTES),
                         });
                     }
                     Err(_) => {

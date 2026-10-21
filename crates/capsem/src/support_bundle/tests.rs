@@ -77,6 +77,65 @@ fn bundle_happy_path_writes_tar_gz_with_manifest() {
 }
 
 #[test]
+fn bundle_collects_rotated_serial_output_from_owner_storage() {
+    use std::io::Write;
+    let _guard = crate::lock_test_env();
+    let home = fake_capsem_home();
+    let session = home.path().join("sessions/vm-owner-logs");
+    fs::create_dir_all(&session).unwrap();
+    write(&session.join("serial.1.log"), b"earlier console\n");
+    write(&session.join("serial.log"), b"current console\n");
+    let logs = capsem_core::session::prepare_session_logs(&session).unwrap();
+    logs.open_serial().unwrap().write_all(b"more console\n").unwrap();
+    let bundle = crate::support_bundle::run(None, 3, false, false).unwrap();
+    let entries = read_tar_entries(&bundle);
+    let (_, bytes) = entries
+        .iter()
+        .find(|(name, _)| name.ends_with("/vm-owner-logs/serial.log"))
+        .expect("migrated console output is included");
+    assert_eq!(bytes, b"earlier console\ncurrent console\nmore console\n");
+}
+
+#[test]
+fn migrated_serial_export_reports_truncation_across_both_generations() {
+    let _guard = crate::lock_test_env();
+    let home = fake_capsem_home();
+    let session = home.path().join("sessions/vm-owner-capped");
+    let generation = vec![b'x'; 3 * 1024 * 1024];
+    write(&session.join("serial.1.log"), &generation);
+    write(&session.join("serial.log"), &generation);
+    capsem_core::session::prepare_session_logs(&session).unwrap();
+    let bundle = crate::support_bundle::run(None, 3, false, true).unwrap();
+    let entries = read_tar_entries(&bundle);
+    let (_, bytes) = entries
+        .iter()
+        .find(|(name, _)| name.ends_with("/vm-owner-capped/serial.log"))
+        .unwrap();
+    assert_eq!(bytes.len(), 5 * 1024 * 1024);
+    assert!(bytes.iter().all(|byte| *byte == b'x'));
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &entries
+            .iter()
+            .find(|(name, _)| name.ends_with("manifest.json"))
+            .unwrap()
+            .1,
+    )
+    .unwrap();
+    let section = manifest["sections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|section| {
+            section["path"]
+                .as_str()
+                .unwrap()
+                .ends_with("/vm-owner-capped/serial.log")
+        })
+        .unwrap();
+    assert_eq!(section["truncated_to_last_bytes"], 5 * 1024 * 1024);
+}
+
+#[test]
 fn bundle_does_not_export_unrelated_files_through_session_log_links() {
     let _guard = crate::lock_test_env();
     let home = fake_capsem_home();

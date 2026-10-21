@@ -61,6 +61,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Support bundles include bounded console output from private session storage
+  and report truncation across both retained log generations.
+
 - Recover console and transcript history from retained session-log generations,
   including sessions reopened with private owner storage.
 
