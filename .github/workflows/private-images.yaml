@@ -70,8 +70,8 @@ jobs:
           jq -er '.images[].package' "$manifest" | sort -u | while IFS= read -r package; do
             package="${package#${OWNER}/}"
             encoded="$(jq -rn --arg value "$package" '$value|@uri')"
-            gh api --paginate --slurp "/orgs/$OWNER/packages/container/$encoded/versions?per_page=100" \
-              --jq "add | map(select(.metadata.container.tags | length > 0)) | sort_by(.created_at) | reverse | .[$keep:][] | .id" | \
+            gh api --paginate --slurp "/orgs/$OWNER/packages/container/$encoded/versions?per_page=100" | \
+              jq -r "add | map(select(.metadata.container.tags | length > 0)) | sort_by(.created_at) | reverse | .[$keep:][] | .id" | \
               while IFS= read -r version; do
                 gh api --method DELETE "/orgs/$OWNER/packages/container/$encoded/versions/$version"
               done
