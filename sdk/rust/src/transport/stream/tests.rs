@@ -61,6 +61,29 @@ async fn authenticated_stream_preserves_binary_input_output_and_exit() {
             .send(Message::Binary(encode_status(&StreamStatus::Started).into()))
             .await
             .unwrap();
+        let Some(Ok(Message::Binary(focus))) = socket.next().await else {
+            panic!("focus")
+        };
+        assert_eq!(
+            decode_client_frame(&focus).unwrap(),
+            ClientFrame::Control(StreamControl::Focus { cols: 80, rows: 24 })
+        );
+        socket
+            .send(Message::Binary(
+                encode_status(&StreamStatus::Terminal {
+                    state: Box::new(terminal_state()),
+                })
+                .into(),
+            ))
+            .await
+            .unwrap();
+        let Some(Ok(Message::Binary(resize))) = socket.next().await else {
+            panic!("resize")
+        };
+        assert_eq!(
+            decode_client_frame(&resize).unwrap(),
+            ClientFrame::Control(StreamControl::Resize { cols: 101, rows: 33 })
+        );
         let Some(Ok(Message::Binary(bytes))) = socket.next().await else {
             panic!("stdin")
         };
@@ -72,6 +95,15 @@ async fn authenticated_stream_preserves_binary_input_output_and_exit() {
             decode_client_frame(&bytes).unwrap(),
             ClientFrame::Control(StreamControl::CloseStdin)
         );
+        socket
+            .send(Message::Binary(
+                encode_status(&StreamStatus::Terminal {
+                    state: Box::new(terminal_state()),
+                })
+                .into(),
+            ))
+            .await
+            .unwrap();
         socket
             .send(Message::Binary(
                 encode_data(StreamChannel::Stderr, b"reason\xff").into(),
@@ -98,10 +130,18 @@ async fn authenticated_stream_preserves_binary_input_output_and_exit() {
         .open_stream("vm é", start(), CallOptions::default())
         .await
         .unwrap();
+    attached
+        .control(&StreamControl::Resize { cols: 101, rows: 33 })
+        .await
+        .unwrap();
+    let StreamEvent::Terminal { state } = attached.next().await.unwrap() else {
+        panic!("expected terminal metadata");
+    };
+    assert_eq!(state.title, "Agent");
     attached.send_stdin(b"\0\xff\n").await.unwrap();
     attached.close_stdin().await.unwrap();
     assert_eq!(
-        attached.next().await.unwrap(),
+        attached.next_output().await.unwrap(),
         StreamEvent::ErrorOutput(b"reason\xff".to_vec())
     );
     assert_eq!(attached.next().await.unwrap(), StreamEvent::Output(b"\0\xfe".to_vec()));
@@ -201,4 +241,13 @@ async fn frames_over_the_public_limit_are_refused() {
         .unwrap();
     assert!(matches!(attached.next().await, Err(Error::Stream(_))));
     task.await.unwrap();
+}
+
+fn terminal_state() -> capsem_api::stream::TerminalState {
+    serde_json::from_value(serde_json::json!({
+        "revision": 1, "reset": true, "cols": 80, "rows": 24,
+        "cursor": {"row": 0, "col": 0, "hidden": false},
+        "modes": {"alternate_screen": false, "application_cursor": false, "application_keypad": false, "bracketed_paste": false, "mouse_protocol": "None", "mouse_encoding": "Default"},
+        "title": "Agent", "icon_name": "", "bell_count": 0, "last_notification": null, "events": []
+    })).unwrap()
 }

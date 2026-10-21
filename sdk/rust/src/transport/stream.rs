@@ -1,4 +1,4 @@
-//! Authenticated `capsem.stream.v1`; dropping the socket cancels the stream.
+//! Authenticated `capsem.stream.v2`; dropping the socket cancels the stream.
 
 use super::{CallOptions, Transport};
 use crate::{Error, Result};
@@ -12,7 +12,13 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 pub enum StreamEvent {
     Output(Vec<u8>),
     ErrorOutput(Vec<u8>),
-    Exit { code: i32, truncated: bool },
+    Terminal {
+        state: Box<capsem_api::stream::TerminalState>,
+    },
+    Exit {
+        code: i32,
+        truncated: bool,
+    },
 }
 
 pub struct GatewayStream {
@@ -51,12 +57,28 @@ impl Transport {
                 .map(HeaderValue::as_bytes)
                 != Some(stream::STREAM_SUBPROTOCOL.as_bytes())
             {
-                return Err(Error::InvalidResponse("gateway did not negotiate capsem.stream.v1"));
+                return Err(Error::InvalidResponse("gateway did not negotiate capsem.stream.v2"));
             }
             let mut attached = GatewayStream { socket };
             attached.send_frame(stream::encode_control(&start)).await?;
             match attached.next_frame().await? {
-                Frame::Status(StreamStatus::Started) => Ok(attached),
+                Frame::Status(StreamStatus::Started) => {
+                    if matches!(
+                        start,
+                        StreamControl::Start {
+                            kind: stream::StreamKind::Terminal,
+                            ..
+                        }
+                    ) {
+                        attached
+                            .send_frame(stream::encode_control(&StreamControl::Focus {
+                                cols: capsem_api::stream::DEFAULT_TERMINAL_COLS as u16,
+                                rows: capsem_api::stream::DEFAULT_TERMINAL_ROWS as u16,
+                            }))
+                            .await?;
+                    }
+                    Ok(attached)
+                }
                 Frame::Status(StreamStatus::Error { message }) => Err(Error::Stream(message)),
                 _ => Err(Error::InvalidResponse("gateway stream did not start")),
             }
@@ -94,6 +116,11 @@ impl GatewayStream {
         self.send_frame(stream::encode_data(StreamChannel::Stdin, bytes)).await
     }
 
+    /// Send a typed control, including focus or resize, on this stream.
+    pub async fn control(&mut self, control: &StreamControl) -> Result<()> {
+        self.send_frame(stream::encode_control(control)).await
+    }
+
     pub async fn close_stdin(&mut self) -> Result<()> {
         self.send_frame(stream::encode_control(&StreamControl::CloseStdin))
             .await
@@ -119,6 +146,17 @@ impl GatewayStream {
         }
     }
 
+    /// The next display/exit event for byte-oriented consumers. Structured
+    /// clients use `next` to receive terminal metadata as well.
+    pub async fn next_output(&mut self) -> Result<StreamEvent> {
+        loop {
+            let event = self.next().await?;
+            if !matches!(event, StreamEvent::Terminal { .. }) {
+                return Ok(event);
+            }
+        }
+    }
+
     pub async fn next(&mut self) -> Result<StreamEvent> {
         loop {
             match self.next_frame().await? {
@@ -129,6 +167,7 @@ impl GatewayStream {
                 }
                 Frame::Status(StreamStatus::Error { message }) => return Err(Error::Stream(message)),
                 Frame::Status(StreamStatus::Started) => continue,
+                Frame::Status(StreamStatus::Terminal { state }) => return Ok(StreamEvent::Terminal { state }),
             }
         }
     }

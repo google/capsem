@@ -73,6 +73,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Expose terminal metadata and typed focus/resize controls in the Rust SDK;
+  output-only consumers can skip state updates without losing command output.
+
 - Project session-owned terminal state in the browser in order, with confirmed
   dimensions and snapshot recovery instead of dropping display bytes.
 
