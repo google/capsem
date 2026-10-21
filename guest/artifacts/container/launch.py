@@ -28,8 +28,11 @@ import time
 import tty
 from pathlib import Path, PurePosixPath
 
-# Load the helper source without growing an import cache in the guest stage.
-RuntimeConsole = runpy.run_path(str(Path(__file__).with_name("runtime_console.py")))["RuntimeConsole"]
+# The guest-writable stage must not grow an import cache or load stale pyc.
+_console = runpy.run_path(str(Path(__file__).with_name("runtime_console.py")))
+FrameReader, RuntimeConsole, encode_input, encode_output, encode_resize = (
+    _console[name] for name in ("FrameReader", "RuntimeConsole", "encode_input", "encode_output", "encode_resize")
+)
 
 RUNTIME = Path("/var/tmp/capsem-container")
 HOSTNAME = "container"
@@ -100,14 +103,6 @@ CONSOLE = RUNTIME / "console.sock"
 # What a terminal that attaches late is shown first: the newest output, enough
 # for a TUI's last screen.
 REPLAY_LIMIT = 256 * 1024
-# Terminal-to-console frames: a kind byte and a big-endian length, then the
-# payload. Input carries keystrokes; resize carries rows and columns.
-FRAME_HEADER = struct.Struct(">cI")
-INPUT_FRAME = b"d"
-RESIZE_FRAME = b"w"
-RESIZE = struct.Struct(">HH")
-FRAME_LIMIT = 1024 * 1024
-
 # The VM trusts the Capsem CA through this bundle; the container gets the same
 # file read-only, so TLS it opens terminates at the host MITM like VM traffic.
 CA_BUNDLE = "/etc/ssl/certs/ca-certificates.crt"
@@ -1136,37 +1131,6 @@ def process_spec(bundle, argv, tty):
     return spec
 
 
-def encode_input(data):
-    return FRAME_HEADER.pack(INPUT_FRAME, len(data)) + data
-
-
-def encode_resize(rows, cols):
-    return FRAME_HEADER.pack(RESIZE_FRAME, RESIZE.size) + RESIZE.pack(rows, cols)
-
-
-class FrameReader:
-    """Terminal-to-console frames, from a byte stream cut anywhere."""
-
-    def __init__(self):
-        self._buffer = b""
-
-    def feed(self, data):
-        self._buffer += data
-        events = []
-        while len(self._buffer) >= FRAME_HEADER.size:
-            kind, length = FRAME_HEADER.unpack_from(self._buffer)
-            if kind not in (INPUT_FRAME, RESIZE_FRAME) or length > FRAME_LIMIT:
-                raise ValueError(f"not a console frame: {kind!r} of {length} bytes")
-            if kind == RESIZE_FRAME and length != RESIZE.size:
-                raise ValueError(f"a resize frame carries {RESIZE.size} bytes, not {length}")
-            end = FRAME_HEADER.size + length
-            if len(self._buffer) < end:
-                break
-            payload, self._buffer = self._buffer[FRAME_HEADER.size : end], self._buffer[end:]
-            events.append(("input", payload) if kind == INPUT_FRAME else ("resize", RESIZE.unpack(payload)))
-        return events
-
-
 class Console:
     """A detached workload's terminal: its actual PTY master, input and output.
 
@@ -1227,13 +1191,13 @@ class Console:
                         self._remember(data)
                         for client in list(self._clients):
                             try:
-                                client.sendall(data)
+                                client.sendall(encode_output(data))
                             except OSError:
                                 self._drop(selector, client)
                     elif key.data == "listener":
                         client, _ = self._listener.accept()
                         try:
-                            client.sendall(self.replayed())
+                            client.sendall(encode_output(self.replayed()))
                         except OSError:
                             client.close()
                             continue
@@ -1275,6 +1239,7 @@ def relay(console, keys, screen):
     """Copy a terminal to a held console until the console closes: keystrokes
     on `keys` go out as input frames, output comes back to `screen` verbatim."""
     selector = selectors.DefaultSelector()
+    reader = FrameReader("server")
     selector.register(console, selectors.EVENT_READ, "console")
     selector.register(keys, selectors.EVENT_READ, "keys")
     try:
@@ -1283,8 +1248,10 @@ def relay(console, keys, screen):
                 if key.data == "console":
                     data = console.recv(65536)
                     if not data:
+                        reader.finish()
                         return
-                    os.write(screen, data)
+                    for _, output in reader.feed(data):
+                        os.write(screen, output)
                 else:
                     data = os.read(keys, 65536)
                     if not data:

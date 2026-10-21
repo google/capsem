@@ -1,16 +1,14 @@
 """Session terminal metadata remains observable without any terminal viewer."""
 
-import json
 import shlex
 import time
 
+import msgpack
 import pytest
 from helpers.image_session import image_session, workload_exec
 
 from tests.ironbank.kingslanding.test_run import service
 from tests.ironbank.kingslanding.test_workload_terminal import (
-    CONTROL,
-    STDIN,
     probe,
     terminal,
 )
@@ -55,8 +53,8 @@ def next_state(socket, predicate):
     end = time.monotonic() + 10
     while time.monotonic() < end:
         frame = socket.recv(timeout=max(0.01, end - time.monotonic()))
-        if isinstance(frame, bytes) and frame[:1] == b"\x04":
-            status = json.loads(frame[1:])
+        if isinstance(frame, bytes) and "status" in (message := msgpack.unpackb(frame)):
+            status = message["status"]
             assert status["type"] != "error", status
             if status["type"] == "terminal" and predicate(status["state"]):
                 return status["state"]
@@ -80,16 +78,16 @@ def test_terminal_snapshot_keeps_colors_and_focus_controls_the_actual_pty(servic
             end = time.monotonic() + 5
             while b"RGB" not in seen and time.monotonic() < end:
                 frame = first.recv(timeout=5)
-                if isinstance(frame, bytes) and frame[:1] == b"\x01":
-                    seen += frame[1:]
+                if isinstance(frame, bytes):
+                    seen += msgpack.unpackb(frame).get("stdout", b"")
             assert b"RGB" in seen and b"38;2;10;20;30" in seen, seen[-2000:]
-            first.send(bytes([CONTROL]) + json.dumps({"type": "focus", "cols": 101, "rows": 33}).encode())
+            first.send(msgpack.packb({"control": {"type": "focus", "cols": 101, "rows": 33}}, use_bin_type=True))
             next_state(first, lambda state: (state["cols"], state["rows"]) == (101, 33))
             with terminal(service, vm_id) as second:
-                second.send(bytes([CONTROL]) + json.dumps({"type": "focus", "cols": 60, "rows": 20}).encode())
+                second.send(msgpack.packb({"control": {"type": "focus", "cols": 60, "rows": 20}}, use_bin_type=True))
                 next_state(second, lambda state: (state["cols"], state["rows"]) == (60, 20))
                 # A background view cannot overwrite the focused view's dimensions.
-                first.send(bytes([CONTROL]) + json.dumps({"type": "resize", "cols": 150, "rows": 45}).encode())
+                first.send(msgpack.packb({"control": {"type": "resize", "cols": 150, "rows": 45}}, use_bin_type=True))
                 end = time.monotonic() + 5
                 size = None
                 while time.monotonic() < end:
@@ -147,17 +145,17 @@ finally:
     termios.tcsetattr(0, termios.TCSANOW, before)
 """
         command = "python3 -c " + shlex.quote(script) + "\n"
-        socket.send(bytes([STDIN]) + command.encode())
+        socket.send(msgpack.packb({"stdin": command.encode()}, use_bin_type=True))
         state = next_state(socket, lambda state: state["title"] == "Raw checkpoint")
         assert (state["cursor"]["row"], state["cursor"]["col"]) == (2, 7), state
-        socket.send(bytes([STDIN]) + b"\x1b[A")
+        socket.send(msgpack.packb({"stdin": b"\x1b[A"}, use_bin_type=True))
         state = next_state(socket, lambda state: state["title"] == "Raw key received")
         assert (state["cursor"]["row"], state["cursor"]["col"]) == (2, 7), state
         for rows, cols in ((33, 101), (20, 60), (45, 150)):
-            socket.send(bytes([CONTROL]) + json.dumps({"type": "resize", "cols": cols, "rows": rows}).encode())
+            socket.send(msgpack.packb({"control": {"type": "resize", "cols": cols, "rows": rows}}, use_bin_type=True))
             state = next_state(socket, lambda state, title=f"Raw size {rows} {cols}": state["title"] == title)
             assert (state["rows"], state["cols"]) == (rows, cols), state
-        socket.send(bytes([STDIN]) + b"q")
+        socket.send(msgpack.packb({"stdin": b"q"}, use_bin_type=True))
 
 
 def test_unterminated_control_string_burst_recovers_without_replacing_title(service, tmp_path):

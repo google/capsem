@@ -29,6 +29,7 @@ runtime_apt_packages = [
     "runc",
     "umoci",
     "python3",
+    "python3-msgpack",
     "iptables",
     "iproute2",
     "ca-certificates",

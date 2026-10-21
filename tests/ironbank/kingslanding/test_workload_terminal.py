@@ -11,10 +11,10 @@ again shows where it was. When the command exits, the workload has exited.
 """
 
 import contextlib
-import json
 import re
 import time
 
+import msgpack
 import pytest
 from helpers.image_session import image_session
 from websockets.sync.client import connect
@@ -26,7 +26,6 @@ __all__ = ["service"]
 
 pytestmark = pytest.mark.integration
 
-STDIN, STDOUT, STDERR, CONTROL = 0, 1, 2, 3
 # Typed into the terminal. The echoed line holds `$(id -u)` unexpanded, so only
 # the shell's own output matches PROBE.
 TYPED = 'read _ lower _ < /proc/self/uid_map; echo "PROBE-$(id -u)-$lower-$([ -d /var/tmp/capsem-container ] && echo vm || echo workload)"\n'
@@ -39,15 +38,14 @@ def terminal(service, vm_id):
     token = (service.tmp_dir / "gateway.token").read_text().strip()
     with connect(
         f"ws://127.0.0.1:{port}/vms/{vm_id}/stream",
-        subprotocols=[Subprotocol("capsem.stream.v2")],
+        subprotocols=[Subprotocol("capsem.stream.v3")],
         additional_headers={"Authorization": f"Bearer {token}"},
         open_timeout=10,
     ) as socket:
         socket.send(
-            bytes([CONTROL])
-            + json.dumps({"type": "start", "kind": "terminal"}).encode()
+            msgpack.packb({"control": {"type": "start", "kind": "terminal"}}, use_bin_type=True)
         )
-        socket.send(bytes([CONTROL]) + json.dumps({"type": "focus", "cols": 80, "rows": 24}).encode())
+        socket.send(msgpack.packb({"control": {"type": "focus", "cols": 80, "rows": 24}}, use_bin_type=True))
         yield socket
 
 
@@ -59,14 +57,15 @@ def probe(socket, after=b"", deadline=90):
     next_send = 0.0
     while time.monotonic() < end:
         if time.monotonic() >= next_send:
-            socket.send(bytes([STDIN]) + TYPED.encode())
+            socket.send(msgpack.packb({"stdin": TYPED.encode()}, use_bin_type=True))
             next_send = time.monotonic() + 5
         try:
             frame = socket.recv(timeout=1)
         except TimeoutError:
             continue
-        if isinstance(frame, bytes) and frame[:1] in (bytes([STDOUT]), bytes([STDERR])):
-            seen += frame[1:]
+        if isinstance(frame, bytes):
+            message = msgpack.unpackb(frame)
+            seen += message.get("stdout", message.get("stderr", b""))
             start = seen.find(after)
             found = start >= 0 and PROBE.search(
                 seen[start + len(after) :].decode(errors="replace")
@@ -84,8 +83,9 @@ def expect_output(socket, expected, timeout=10):
             frame = socket.recv(timeout=max(0.01, end - time.monotonic()))
         except TimeoutError:
             break
-        if isinstance(frame, bytes) and frame[:1] in (bytes([STDOUT]), bytes([STDERR])):
-            seen += frame[1:]
+        if isinstance(frame, bytes):
+            message = msgpack.unpackb(frame)
+            seen += message.get("stdout", message.get("stderr", b""))
             if expected in seen:
                 return
     raise AssertionError(f"terminal did not emit {expected!r}: {seen[-2000:]!r}")
@@ -95,13 +95,13 @@ def resize_workload(socket):
     # The application's trap, not a host-side size query, proves both the
     # dimensions and SIGWINCH crossed every terminal boundary.
     socket.send(
-        bytes([STDIN]) + b"trap 'printf \"RESIZE-%s\\n\" \"$(stty size)\"' WINCH; printf 'RESIZE-%s\\n' ready\n"
+        msgpack.packb({"stdin": b"trap 'printf \"RESIZE-%s\\n\" \"$(stty size)\"' WINCH; printf 'RESIZE-%s\\n' ready\n"}, use_bin_type=True)
     )
     expect_output(socket, b"RESIZE-ready\r\n")
     for rows, cols in ((33, 101), (20, 60), (45, 150)):
-        socket.send(bytes([CONTROL]) + json.dumps({"type": "resize", "cols": cols, "rows": rows}).encode())
+        socket.send(msgpack.packb({"control": {"type": "resize", "cols": cols, "rows": rows}}, use_bin_type=True))
         expect_output(socket, f"RESIZE-{rows} {cols}\r\n".encode())
-    socket.send(bytes([STDIN]) + b"trap - WINCH\n")
+    socket.send(msgpack.packb({"stdin": b"trap - WINCH\n"}, use_bin_type=True))
 
 
 def test_an_image_session_terminal_is_its_workloads_command(service, tmp_path):
@@ -110,7 +110,7 @@ def test_an_image_session_terminal_is_its_workloads_command(service, tmp_path):
         with terminal(service, vm_id) as socket:
             assert probe(socket) == ("1000", "100000", "workload")
             resize_workload(socket)
-            socket.send(bytes([STDIN]) + b"echo MARK-BEFORE-DETACH\n")
+            socket.send(msgpack.packb({"stdin": b"echo MARK-BEFORE-DETACH\n"}, use_bin_type=True))
         # Leaving the terminal leaves the workload running; attaching again
         # replays its screen and types into the same shell.
         assert client.get(f"/vms/{vm_id}/container")["state"] == "running"
@@ -121,7 +121,7 @@ def test_an_image_session_terminal_is_its_workloads_command(service, tmp_path):
                 "workload",
             )
             # The command is the workload: when it exits, the workload has.
-            socket.send(bytes([STDIN]) + b"exit 7\n")
+            socket.send(msgpack.packb({"stdin": b"exit 7\n"}, use_bin_type=True))
             deadline = time.monotonic() + 60
             status = client.get(f"/vms/{vm_id}/container")
             while status["state"] != "exited" and time.monotonic() < deadline:

@@ -121,4 +121,5 @@ dev = [
     "warcio>=1.7.5",
     "watchdog>=6.0.0",
     "websockets>=16.0",
+    "msgpack>=1.2.3",
 ]

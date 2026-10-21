@@ -54,12 +54,13 @@ frame writes; protocol version and schema hash are checked during Hello.
 Guest control and framed exec lanes use the same encoding convention in
 `capsem-proto`. Operating-system PTYs themselves still carry terminal bytes.
 
-The current browser `capsem.stream.v2` adapter is an exception: its WebSocket
-binary messages carry a channel byte, raw data, and JSON control/status.
-The guest Python console bridge also has a custom input/resize framing format.
-These are current implementations, not the convention to copy when extending
-terminal messages. Keep shared Rust contracts authoritative and verify every
-client when changing an encoding; WebSocket already supplies message framing.
+The browser/SDK `capsem.stream.v3` and held-console bridge use the shared
+`capsem-proto::stream` named MessagePack contract. Byte payloads use binary
+fields; control/status types are exported through the Rust OpenAPI contract
+and generated SDK models/validators. WebSocket supplies record boundaries;
+the console socket adds the standard bounded u32-BE length prefix. Shared
+fixtures verify the Rust, TypeScript and Python adapters. The retired v2
+channel-byte/JSON codec and console d/w payloads are not accepted.
 
 The CLI discovers the local gateway from `gateway.port` and `gateway.token`
 beside its administration socket. `CAPSEM_GATEWAY_URL` and

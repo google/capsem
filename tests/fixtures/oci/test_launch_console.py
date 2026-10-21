@@ -53,6 +53,8 @@ def _winsize(fd):
 
 
 def _read_until(sock, wanted, timeout=5.0):
+    from runtime_console import FrameReader
+    reader = FrameReader("server")
     sock.settimeout(timeout)
     received = b""
     deadline = time.monotonic() + timeout
@@ -60,7 +62,7 @@ def _read_until(sock, wanted, timeout=5.0):
         chunk = sock.recv(4096)
         if not chunk:
             break
-        received += chunk
+        received += b"".join(output for _, output in reader.feed(chunk))
     return received
 
 
@@ -239,7 +241,7 @@ def test_the_terminal_relays_keys_out_and_output_in_until_the_workload_ends(laun
     far.settimeout(5)
     while ("input", b"q") not in frames:
         frames += reader.feed(far.recv(64))
-    far.sendall(b"screen")
+    far.sendall(launcher.encode_output(b"screen"))
     assert os.read(out_read, 64) == b"screen"
     far.close()
     relay.join(timeout=5)
