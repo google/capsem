@@ -27,10 +27,10 @@ where
         let callback = |request: &Request, mut response: Response| {
             assert_eq!(request.uri().path(), "/vms/vm-1/stream");
             assert_eq!(request.headers()["authorization"], "Bearer stream-test-token");
-            assert_eq!(request.headers()["sec-websocket-protocol"], "capsem.stream.v2");
+            assert_eq!(request.headers()["sec-websocket-protocol"], "capsem.stream.v3");
             response
                 .headers_mut()
-                .insert("sec-websocket-protocol", HeaderValue::from_static("capsem.stream.v2"));
+                .insert("sec-websocket-protocol", HeaderValue::from_static("capsem.stream.v3"));
             Ok(response)
         };
         let socket = tokio_tungstenite::accept_hdr_async(socket, callback).await.unwrap();
@@ -61,9 +61,16 @@ async fn a_stream_starts_then_delivers_output_and_exit() {
             }
         );
         socket
-            .send(Message::Binary(encode_status(&StreamStatus::Started).into()))
+            .send(Message::Binary(encode_status(&StreamStatus::Started).unwrap().into()))
             .await
             .unwrap();
+        let Message::Binary(focus) = socket.next().await.unwrap().unwrap() else {
+            panic!("terminal focus");
+        };
+        assert_eq!(
+            decode_client_frame(&focus).unwrap(),
+            ClientFrame::Control(StreamControl::Focus { cols: 80, rows: 24 })
+        );
         let Some(Ok(Message::Binary(bytes))) = socket.next().await else {
             panic!("expected stdin")
         };
@@ -80,13 +87,13 @@ async fn a_stream_starts_then_delivers_output_and_exit() {
         );
         socket
             .send(Message::Binary(
-                encode_data(StreamChannel::Stderr, b"diagnostic").into(),
+                encode_data(StreamChannel::Stderr, b"diagnostic").unwrap().into(),
             ))
             .await
             .unwrap();
         socket
             .send(Message::Binary(
-                encode_data(StreamChannel::Stdout, b"RESULT: PASS\xff").into(),
+                encode_data(StreamChannel::Stdout, b"RESULT: PASS\xff").unwrap().into(),
             ))
             .await
             .unwrap();
@@ -96,6 +103,7 @@ async fn a_stream_starts_then_delivers_output_and_exit() {
                     code: 0,
                     truncated: false,
                 })
+                .unwrap()
                 .into(),
             ))
             .await
@@ -143,6 +151,7 @@ async fn a_refused_or_ended_stream_is_an_error_with_the_services_reason() {
                 encode_status(&StreamStatus::Error {
                     message: "not staged for attach".into(),
                 })
+                .unwrap()
                 .into(),
             ))
             .await
