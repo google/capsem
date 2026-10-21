@@ -53,6 +53,67 @@
     queryKeyboardMap.call(this);
   };
 
+  // A running container may still be starting Xpra's listener. Keep the
+  // initial same-origin socket attempt here, with one finite deadline; the
+  // vendor retains ownership after the first successful WebSocket open.
+  const startup = new WeakMap();
+  const connect = XpraClient.prototype.connect;
+  XpraClient.prototype.connect = function () {
+    const previous = startup.get(this);
+    if (previous && !previous.opened && (previous.ended || Date.now() >= previous.deadline)) {
+      previous.ended = true;
+      // A vendor reconnect timer may already be firing. End it before it
+      // can create another socket beyond our initial startup deadline.
+      this.reconnect_in_progress = false;
+      this.close();
+      return;
+    }
+    if (!startup.has(this)) {
+      startup.set(this, { deadline: Date.now() + 60_000, opened: false });
+      const parentOrigin = session?.dataset?.parentOrigin;
+      if (parentOrigin) {
+        this.callback_close = () => {
+          const main = document.createElement("main");
+          main.className = "capsem-surface-disconnected";
+          const title = document.createElement("h1");
+          title.textContent = "App disconnected";
+          const retry = document.createElement("button");
+          retry.type = "button";
+          retry.textContent = "Reconnect";
+          retry.onclick = () => parent.postMessage({ type: "capsem:surface-reconnect" }, parentOrigin);
+          main.append(title, retry);
+          document.body.replaceChildren(main);
+        };
+      }
+    }
+    return connect.apply(this, arguments);
+  };
+  const processOpen = XpraClient.prototype._process_open;
+  XpraClient.prototype._process_open = function () {
+    const state = startup.get(this);
+    if (state) state.opened = true;
+    return processOpen.apply(this, arguments);
+  };
+  const processError = XpraClient.prototype._process_error;
+  XpraClient.prototype._process_error = function (packet) {
+    const state = startup.get(this);
+    if (state && !state.opened && Date.now() < state.deadline && [0, 1006].includes(Number(packet[2]))) {
+      if (!this.reconnect_in_progress) this.do_reconnect();
+      return;
+    }
+    if (state && !state.opened) state.ended = true;
+    return processError.call(this, packet);
+  };
+  const processClose = XpraClient.prototype._process_close;
+  XpraClient.prototype._process_close = function (packet) {
+    const state = startup.get(this);
+    if (state && !state.opened && (state.ended || Date.now() >= state.deadline)) {
+      this.close();
+      return;
+    }
+    return processClose.call(this, packet);
+  };
+
   /** The geometry a window gets inside a viewport of `width` x `height`. */
   function fitGeometry(win, width, height, main) {
     const left = win.leftoffset || 0;

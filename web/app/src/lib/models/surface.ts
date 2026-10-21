@@ -43,3 +43,11 @@ export function surfaceEmbedUrl(gatewayUrl: string, vmId: string, parentOrigin: 
 export function defaultSessionView(status: ContainerStatusResponse | null | undefined): 'ui' | 'terminal' {
   return status?.surface?.kind === ContainerSurfaceKind.XPRA ? 'ui' : 'terminal';
 }
+
+/** A child requests a new bootstrap; unrelated windows have no authority. */
+export function isSurfaceReconnectMessage(
+  event: Pick<MessageEvent, 'source' | 'data'>,
+  frame: Window | null | undefined,
+): boolean {
+  return frame != null && event.source === frame && event.data?.type === 'capsem:surface-reconnect';
+}

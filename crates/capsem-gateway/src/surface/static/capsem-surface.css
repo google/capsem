@@ -3,3 +3,20 @@ html,
 body {
   background-image: none;
 }
+
+.capsem-surface-disconnected {
+  display: flex;
+  height: 100vh;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 1rem;
+  font: 15px system-ui, sans-serif;
+}
+.capsem-surface-disconnected h1 {
+  font-size: 1.25rem;
+  font-weight: 500;
+}
+.capsem-surface-disconnected button {
+  padding: 0.5rem 1rem;
+}

@@ -76,6 +76,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Wait for a graphical app's initial connection during startup, and keep its
+  reconnect control inside the Capsem UI tab after a disconnect.
+
 - Preserve the graphical launcher's origin during embedded bootstrap so the
   browser's form submission passes trusted-parent authentication, and provide
   its scoped credential before the transport script runs.

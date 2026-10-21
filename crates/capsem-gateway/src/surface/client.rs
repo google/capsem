@@ -178,7 +178,7 @@ pub(crate) fn embedded_response(token: &str, origin: &str, parent: &str) -> anyh
     );
     let page = PAGE.as_ref().map_err(|error| anyhow::anyhow!("{error}"))?;
     let marker = format!(
-        "<meta name=\"capsem-surface-protocol\" content=\"{}{token}\" />",
+        "<meta name=\"capsem-surface-protocol\" data-parent-origin=\"{parent}\" content=\"{}{token}\" />",
         capsem_proto::PREVIEW_WS_PROTOCOL_PREFIX
     );
     // The synchronous transport hook runs in the head while HTML is parsed.

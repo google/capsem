@@ -22,6 +22,12 @@ class XpraClient {
   _make_hello() { this.capabilities.system_tray = true; this.capabilities.windows = true; }
   query_keyboard_map() { this.queried = true; }
   do_init_keyboard() { this.initialized = true; }
+  connect() { this.connects = (this.connects || 0) + 1; }
+  _process_open() { this.opened = true; }
+  _process_error() { this.errors = (this.errors || 0) + 1; }
+  _process_close() { this.closes = (this.closes || 0) + 1; }
+  do_reconnect() { this.retries = (this.retries || 0) + 1; this.reconnect_in_progress = true; }
+  close() { this.closed = true; this.callback_close?.(); }
 }
 class XpraWindow {
   constructor(client, geometry, extra = {}) {
@@ -50,6 +56,46 @@ function load(globals: Record<string, unknown> = {}) {
 }
 
 describe('capsem-surface.js', () => {
+  it('requests a fresh parent bootstrap from the embedded recovery control without redirecting', () => {
+    const created: Array<{textContent?: string; onclick?: () => void; append: (...nodes: unknown[]) => void}> = [];
+    const messages: unknown[] = [];
+    const run = load({
+      Worker: class {}, WebSocket: class {}, URL,
+      location: {href: 'http://preview.localhost:19444/_capsem/surface/index.html', origin: 'http://preview.localhost:19444'},
+      parent: {postMessage: (...args: unknown[]) => messages.push(args)},
+      document: {
+        querySelector: () => ({content: 'capsem-preview.secret', dataset: {parentOrigin: 'http://127.0.0.1:5173'}, remove: () => {}}),
+        createElement: () => {const node = {append: () => {}}; created.push(node); return node;},
+        body: {replaceChildren: () => {}},
+      },
+    });
+    run('const client = new XpraClient(800, 600); client.callback_close = () => { throw new Error("vendor redirect"); }; client.connect(); client.close();');
+    expect(created.map(node => node.textContent)).toEqual([undefined, 'App disconnected', 'Reconnect']);
+    created[2].onclick!();
+    expect(messages).toEqual([[{type: 'capsem:surface-reconnect'}, 'http://127.0.0.1:5173']]);
+  });
+  it('waits boundedly for initial transport startup and delegates after a successful open', () => {
+    let now = 0;
+    const run = load({Date: {now: () => now}});
+    run('const client = new XpraClient(800, 600); client.connect(); client._process_error(["error", "not listening", 0]);');
+    expect(run('client.retries')).toBe(1);
+    run('client._process_close(["close", "closed"]);');
+    expect(run('client.retries')).toBe(1);
+    now = 60_001;
+    run('client.reconnect_in_progress = false; client._process_error(["error", "not listening", 0]); client._process_close(["close", "closed"]);');
+    expect(run('client.errors')).toBe(1);
+    expect(run('client.closed')).toBe(true);
+    run('client.connect();');
+    expect(run('client.connects')).toBe(1);
+    run('const opened = new XpraClient(800, 600); opened.connect(); opened._process_open(); opened._process_error(["error", "closed", 0]);');
+    expect(run('opened.errors')).toBe(1);
+    expect(run('opened.retries')).toBeUndefined();
+    run('const denied = new XpraClient(800, 600); denied.connect(); denied._process_error(["error", "policy", 1008]);');
+    expect(run('denied.errors')).toBe(1);
+    expect(run('denied.retries')).toBeUndefined();
+    run('denied._process_close(["close", "policy"]);');
+    expect(run('denied.closed')).toBe(true);
+  });
   it('uses normal key events when the embed cannot query the host keyboard layout', () => {
     const run = load({document: {querySelector: () => null, featurePolicy: {allowsFeature: () => false}}});
     expect(run('const client = new XpraClient(800, 600); client.query_keyboard_map(); ({map: client.keyboard_map, initialized: client.initialized, queried: client.queried})'))
