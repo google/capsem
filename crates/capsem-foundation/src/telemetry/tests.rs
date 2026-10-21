@@ -302,7 +302,7 @@ fn shared_producers_use_one_rotation_counter() {
     console.write_all(b"aaaa").unwrap();
     terminal.write_all(b"bbbb").unwrap();
     console.write_all(b"cccc").unwrap();
-    assert_eq!(std::fs::read(&path).unwrap(), b"cccc");
+    assert_eq!(read_log_tail_bytes(&path, usize::MAX).unwrap(), b"aaaabbbbcccc");
     assert_eq!(std::fs::read(root.path().join("serial.1.log")).unwrap(), b"aaaabbbb");
 }
 
@@ -313,7 +313,7 @@ fn reopening_a_capped_log_appends_to_the_existing_generation() {
     let path = root.path().join("serial.log");
     std::fs::write(&path, b"before\n").unwrap();
     CappedLogWriter::open(&path, 64).unwrap().write_all(b"after\n").unwrap();
-    assert_eq!(std::fs::read(&path).unwrap(), b"before\nafter\n");
+    assert_eq!(read_log_tail_bytes(&path, usize::MAX).unwrap(), b"before\nafter\n");
 }
 
 #[test]
