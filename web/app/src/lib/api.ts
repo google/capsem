@@ -5,7 +5,6 @@ import { Connections, CredentialGrants, HostLogSource, NetworkError, ServiceAvai
 import type { AuthorizeGoogleRequest, CreateSessionGrantRequest } from '@capsem/sdk';
 import type { StopResponse, VmActionResponse, LogsResponse, VmStatsDetailResponse, EventBodiesResponse } from '@capsem/sdk';
 import type { ContainerStatusResponse, ImageListResponse, ImagePullResponse, CredentialInjectProvider, CredentialInjectResponse, CredentialStorage } from '@capsem/sdk';
-import { surfaceLauncherUrl } from './models/surface';
 import { gatewayBaseUrl } from './gateway-url';
 import type { AssetStatus, UpdateApplyRequest } from '@capsem/sdk';
 export type { LogsResponse as RawLogsResponse, VmStatsDetailResponse } from '@capsem/sdk';
@@ -552,11 +551,6 @@ export async function getContainerStatus(id: string): Promise<ContainerStatusRes
     }
     throw err;
   }
-}
-
-/** Open a session's app surface in the browser, through the gateway. */
-export async function openSurface(id: string): Promise<void> {
-  await openUrl(surfaceLauncherUrl(_baseUrl, id));
 }
 
 export async function getVmStatsDetail(id: string): Promise<VmStatsDetailResponse> {

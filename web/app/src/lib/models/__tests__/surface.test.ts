@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { ContainerState, ContainerSurfaceKind, type ContainerStatusResponse } from '@capsem/sdk';
-import { hasOpenableSurface, surfaceLauncherUrl, surfaceMayAppear, waitForSurface } from '../surface';
+import { defaultSessionView, hasOpenableSurface, surfaceEmbedUrl, surfaceLauncherUrl, surfaceMayAppear } from '../surface';
 
 const EXPOSURE = '0199df26-d0f2-74f2-a304-ef67b79d1217';
 
@@ -14,30 +14,20 @@ function status(
 const granted = { kind: ContainerSurfaceKind.XPRA, port: 14500, exposure_id: EXPOSURE };
 const declared = { kind: ContainerSurfaceKind.XPRA, port: 14500 };
 
-afterEach(() => vi.useRealTimers());
-
-it('waits for the declared graphical surface before opening it', async () => {
-  vi.useFakeTimers();
-  const read = vi.fn().mockResolvedValueOnce(status(ContainerState.STARTING, declared))
-    .mockResolvedValueOnce(status(ContainerState.RUNNING, declared))
-    .mockResolvedValue(status(ContainerState.RUNNING, granted));
-  const pending = waitForSurface(read);
-  await vi.runAllTimersAsync();
-  await expect(pending).resolves.toBeUndefined();
-  expect(read).toHaveBeenCalledTimes(3);
-});
-
-it('reports failed graphical startup and bounds a surface that never appears', async () => {
-  await expect(waitForSurface(async () => ({ ...status(ContainerState.FAILED), error: 'App exited' })))
-    .rejects.toThrow('App exited');
-  vi.useFakeTimers();
-  const pending = waitForSurface(async () => status(ContainerState.RUNNING, declared), 1000);
-  const failure = expect(pending).rejects.toThrow('still starting');
-  await vi.runAllTimersAsync();
-  await failure;
-});
-
 describe('app surface', () => {
+  it('defaults declared graphical sessions to UI even before their exposure is ready', () => {
+    expect(defaultSessionView(status(ContainerState.STARTING, declared))).toBe('ui');
+    expect(defaultSessionView(status(ContainerState.RUNNING, granted))).toBe('ui');
+    expect(defaultSessionView(status(ContainerState.RUNNING))).toBe('terminal');
+    expect(defaultSessionView(null)).toBe('terminal');
+  });
+
+  it('embeds through the authenticated launcher with only the public parent origin in its URL', () => {
+    const url=new URL(surfaceEmbedUrl('http://127.0.0.1:19222','vm-1','http://localhost:5173'));
+    expect(url.pathname).toBe('/vms/vm-1/surface/');
+    expect([...url.searchParams]).toEqual([['parent_origin','http://localhost:5173']]);
+  });
+
   it('is openable only once the workload runs and its surface is exposed', () => {
     expect(hasOpenableSurface(status(ContainerState.RUNNING, granted))).toBe(true);
     expect(hasOpenableSurface(status(ContainerState.RUNNING, declared))).toBe(false);

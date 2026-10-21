@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 vi.mock('../api', () => ({
   getStatus: vi.fn(async () => ({ service: 'running', gateway_version: '0.1', vm_count: 0, vms: [], resource_summary: null })),
   provisionVm: vi.fn(),
+  getContainerStatus: vi.fn(async () => null),
 }));
 
 const { tabStore } = await import('../stores/tabs.svelte');

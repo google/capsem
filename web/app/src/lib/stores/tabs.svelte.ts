@@ -1,4 +1,7 @@
-export type TabView = 'new-tab' | 'overview' | 'terminal' | 'stats' | 'files' | 'logs' | 'settings' | 'about';
+import { getContainerStatus } from '../api';
+import { defaultSessionView } from '../models/surface';
+
+export type TabView = 'new-tab' | 'overview' | 'terminal' | 'ui' | 'stats' | 'files' | 'logs' | 'settings' | 'about';
 
 export interface Tab {
   id: string;
@@ -6,6 +9,10 @@ export interface Tab {
   subtitle?: string;
   view: TabView;
   vmId?: string;
+  surface?: boolean;
+  presentationPending?: boolean;
+  terminalOpened?: boolean;
+  surfaceRevision?: number;
 }
 
 let nextId = 0;
@@ -105,7 +112,17 @@ class TabStore {
 
   updateView(id: string, view: TabView) {
     const tab = this.tabs.find(t => t.id === id);
-    if (tab) tab.view = view;
+    if (tab) {
+      if (tab.view === 'terminal' && !tab.presentationPending) tab.terminalOpened = true;
+      tab.view = view;
+      tab.presentationPending = false;
+      if (view === 'terminal') tab.terminalOpened = true;
+    }
+  }
+
+  reloadSurface(id: string) {
+    const tab = this.tabs.find(tab => tab.id === id);
+    if (tab) tab.surfaceRevision = (tab.surfaceRevision ?? 0) + 1;
   }
 
   openSingleton(view: TabView, title: string) {
@@ -117,14 +134,32 @@ class TabStore {
     }
   }
 
-  openVM(vmId: string, vmName: string) {
-    const existing = this.tabs.find(t => t.vmId === vmId && t.view === 'terminal');
+  openVM(vmId: string, vmName: string, preferred?: 'ui' | 'terminal') {
+    const existing = this.tabs.find(t => t.vmId === vmId);
     if (existing) {
       console.log('[tabs] openVM reuse existing tab=%s vmId=%s', existing.id, vmId);
       this.activeId = existing.id;
     } else {
       console.log('[tabs] openVM new tab vmId=%s name=%s', vmId, vmName);
-      this.add('terminal', vmName, vmId);
+      this.add(preferred ?? 'terminal', vmName, vmId);
+      const tab = this.active!;
+      tab.surface = preferred === 'ui';
+      tab.terminalOpened = preferred === 'terminal';
+      tab.presentationPending = preferred === undefined;
+      if (preferred === undefined) {
+        void getContainerStatus(vmId).then(status => {
+          if (!this.tabs.some(current => current.id === tab.id)) return;
+          const view = defaultSessionView(status);
+          tab.surface = view === 'ui';
+          if (tab.presentationPending) {
+            tab.view = view;
+            tab.terminalOpened = view === 'terminal';
+          }
+        }).catch(error => {
+          console.error('[tabs] session presentation unavailable:', error);
+          if (tab.presentationPending) tab.terminalOpened = true;
+        }).finally(() => { tab.presentationPending = false; });
+      }
     }
   }
 }

@@ -5,6 +5,7 @@
   import Toolbar from './Toolbar.svelte';
   import NewTabPage from './NewTabPage.svelte';
   import VMFrame from './VMFrame.svelte';
+  import SurfaceFrame from './SurfaceFrame.svelte';
 
   // Heavy views split into separate chunks; loaded on first use.
   const loadSettings = () => import('./SettingsPage.svelte').then(m => m.default);
@@ -19,7 +20,7 @@
   import { vmStore } from '../../stores/vms.svelte.ts';
   import { openUrl } from '../../api';
 
-  const vmViews = ['terminal', 'stats', 'logs', 'files'] as const;
+  const vmViews = ['terminal', 'ui', 'stats', 'logs', 'files'] as const;
 
   function handleExternalLinkClick(e: MouseEvent) {
     const a = (e.target as Element | null)?.closest('a');
@@ -139,9 +140,19 @@
             {/await}
           {:else if isVM && tab.vmId}
             <div class="h-full relative">
-              <div class="absolute inset-0" class:hidden={tab.view !== 'terminal'}>
-                <VMFrame vmId={tab.vmId} tabId={tab.id} />
-              </div>
+              {#if tab.presentationPending}
+                <div class="absolute inset-0 flex items-center justify-center"><progress aria-label="Opening session"></progress></div>
+              {/if}
+              {#if tab.terminalOpened ?? (!tab.presentationPending && tab.view === 'terminal')}
+                <div class="absolute inset-0" class:hidden={tab.view !== 'terminal'}>
+                  <VMFrame vmId={tab.vmId} tabId={tab.id} />
+                </div>
+              {/if}
+              {#if tab.surface}
+                <div class="absolute inset-0" class:hidden={tab.view !== 'ui'}>
+                  <SurfaceFrame vmId={tab.vmId} revision={tab.surfaceRevision ?? 0} />
+                </div>
+              {/if}
               {#if tab.view === 'stats'}
                 <div class="absolute inset-0">
                   {#await loadStats() then Component}<Component vmId={tab.vmId} />{/await}

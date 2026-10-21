@@ -2,7 +2,7 @@
   import { vmStore } from '../../stores/vms.svelte.ts';
   import { tabStore } from '../../stores/tabs.svelte.ts';
   import Modal from './Modal.svelte';
-  import type { ImageInfo } from '@capsem/sdk';
+  import { ImageSurface, type ImageInfo } from '@capsem/sdk';
   import { getImages } from '../../api';
   import { selectedSessionImage, sessionCreateRequest } from '../../models/session-create';
   import { sessionActionError } from '../../models/session-action-error';
@@ -70,7 +70,7 @@
       if (imageName && imagesError) throw new Error('Refresh the image catalog before creating this session.');
       const image = selectedSessionImage(images, imageName);
       const { id, name: finalName } = await vmStore.provision(sessionCreateRequest(trimmedName, ramMb, cpus, image));
-      tabStore.openVM(id, finalName);
+      tabStore.openVM(id, finalName, image ? (image.surface === ImageSurface.XPRA ? 'ui' : 'terminal') : undefined);
       creating = false;
       close();
     } catch (e: unknown) {

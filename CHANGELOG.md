@@ -76,6 +76,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Open graphical image sessions in Capsem's UI view by default, keep Terminal
+  available alongside it, and reuse the session tab across view switches.
+
 - Support authenticated graphical-session embedding with a trusted parent and
   scoped WebSocket credentials when browsers block third-party cookies.
 

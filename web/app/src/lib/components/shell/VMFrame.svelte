@@ -52,7 +52,7 @@
 
   // Focus the terminal whenever this tab becomes active.
   $effect(() => {
-    if (tabStore.activeId === tabId) {
+    if (tabStore.activeId === tabId && tabStore.active?.view === 'terminal') {
       requestAnimationFrame(() => sendToIframe({ type: 'focus' }));
     }
   });

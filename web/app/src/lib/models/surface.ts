@@ -1,9 +1,4 @@
-// An image's app surface (an Xpra GUI), as the container status reports it.
-//
-// The surface opens in the user's browser through the gateway's launcher,
-// which authenticates itself and hands the browser to the surface's own
-// origin; the UI only decides whether there is one to open and where the
-// launcher is.
+// Graphical session presentation and its gateway-owned authenticated launcher.
 
 import { ContainerState, ContainerSurfaceKind, type ContainerStatusResponse } from '@capsem/sdk';
 
@@ -34,24 +29,17 @@ export function surfaceMayAppear(status: ContainerStatusResponse | null | undefi
   }
 }
 
-/** A graphical launch waits for its exposure instead of opening an error page. */
-export async function waitForSurface(
-  read: () => Promise<ContainerStatusResponse | null>,
-  timeoutMs = 120_000,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const status = await read();
-    if (hasOpenableSurface(status)) return;
-    if (!surfaceMayAppear(status)) {
-      throw new Error(status?.error ?? 'The graphical app stopped before it could open.');
-    }
-    await new Promise(resolve => setTimeout(resolve, 500));
-  }
-  throw new Error('The app is still starting. Open its session and choose Open app to try again.');
-}
-
 /** The gateway page that opens VM `vmId`'s surface. It carries no token. */
 export function surfaceLauncherUrl(gatewayUrl: string, vmId: string): string {
   return `${gatewayUrl.replace(/\/+$/, '')}/vms/${encodeURIComponent(vmId)}/surface/`;
+}
+
+export function surfaceEmbedUrl(gatewayUrl: string, vmId: string, parentOrigin: string): string {
+  const url = new URL(surfaceLauncherUrl(gatewayUrl, vmId));
+  url.searchParams.set('parent_origin', parentOrigin);
+  return url.href;
+}
+
+export function defaultSessionView(status: ContainerStatusResponse | null | undefined): 'ui' | 'terminal' {
+  return status?.surface?.kind === ContainerSurfaceKind.XPRA ? 'ui' : 'terminal';
 }
