@@ -43,6 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- App downloads keep their gateway connection through the complete download
+  and verification window instead of failing after two minutes.
+
 - Saved sessions retain audit sequence reservations across restarts, preventing
   duplicate ledger entries from disabling commands after reopening an app.
 

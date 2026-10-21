@@ -42,6 +42,7 @@ capsem-crypto = { path = "../capsem-crypto" }
 workspace = true
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 tracing-subscriber.workspace = true
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
