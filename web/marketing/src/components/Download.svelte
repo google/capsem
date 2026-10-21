@@ -29,7 +29,7 @@
   });
 </script>
 
-<div class="flex flex-wrap items-center gap-x-6 gap-y-3">
+<div class="flex flex-wrap items-center justify-center gap-x-6 gap-y-3">
   {#if selected !== null}
     <a class="button gap-3" href={packages[selected].url}>
       {#if selected === 0}<svg class="size-6" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d={apple}/></svg>{:else}<span class="font-mono" aria-hidden="true">&gt;_</span>{/if}

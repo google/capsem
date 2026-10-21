@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Refresh the marketing hero with a continuous desktop walkthrough and a larger, centered Capsem wordmark.
+
 ### Security
 
 - Refresh the Rust and Python trust stores after the emSign intermediate-key

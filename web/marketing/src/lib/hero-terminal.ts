@@ -8,9 +8,22 @@ export interface TerminalStep {
   title?: string;
   preview?: boolean;
   chapter?: number;
-  insert?: "build" | "work" | null;
+  insert?: "install" | "build" | "work" | "scale" | null;
   codex?: boolean;
   input?: boolean;
+  scale?: number;
+  surface?: "gui" | "tui" | "api" | "mcp";
+  window?: boolean;
+  cursor?: "start" | "terminal" | "app" | "body" | "link" | "preview" | "session";
+  guiTerminal?: boolean;
+  dock?: "terminal" | "app" | null;
+  click?: boolean;
+  tui?: boolean;
+  overlay?: "sessions" | "create" | null;
+  workflow?: "website" | "email";
+  email?: boolean;
+  profile?: "code" | "co-work";
+  key?: string | null;
 }
 
 export const stepDuration = (step: TerminalStep) =>
