@@ -10,21 +10,21 @@ async fn start_exec(client: &mut Client, command: &str) {
                 kind: StreamKind::Exec,
                 command: Some(command.into()),
             })
+            .unwrap()
             .into(),
         ))
         .await
         .unwrap();
-    assert_eq!(
-        status(&next_server_frame(client).await.unwrap().1),
-        StreamStatus::Started
-    );
+    assert_eq!(status(&next_server_frame(client).await.unwrap()), StreamStatus::Started);
 }
 
 async fn send_stdin(client: &mut Client, frames: usize) {
     for index in 0..frames {
         client
             .send(ClientMessage::Binary(
-                encode_data(StreamChannel::Stdin, format!("{index}\n").as_bytes()).into(),
+                encode_data(StreamChannel::Stdin, format!("{index}\n").as_bytes())
+                    .unwrap()
+                    .into(),
             ))
             .await
             .unwrap();
@@ -78,7 +78,7 @@ async fn exec_stdin_is_forwarded_only_within_the_owner_credit() {
     let mut client = connect(fx.address, Some(stream::STREAM_SUBPROTOCOL)).await.unwrap();
     start_exec(&mut client, "slow-reader").await;
     send_stdin(&mut client, EXEC_STDIN_WINDOW + 3).await;
-    let exit = status(&next_server_frame(&mut client).await.unwrap().1);
+    let exit = status(&next_server_frame(&mut client).await.unwrap());
     assert_eq!(
         exit,
         StreamStatus::Exit {
@@ -147,7 +147,7 @@ async fn replaced_generation_output_is_rejected_and_the_old_exec_is_cancelled() 
     });
     let mut client = connect(fx.address, Some(stream::STREAM_SUBPROTOCOL)).await.unwrap();
     start_exec(&mut client, "sleep 600").await;
-    let result = status(&next_server_frame(&mut client).await.unwrap().1);
+    let result = status(&next_server_frame(&mut client).await.unwrap());
     assert!(matches!(result, StreamStatus::Error { message } if message.contains("VM owner changed")));
     owner.await.unwrap();
 }

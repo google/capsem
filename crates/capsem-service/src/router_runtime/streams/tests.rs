@@ -83,13 +83,13 @@ async fn connect(
         .map(|(client, _)| client)
 }
 
-async fn next_server_frame(client: &mut Client) -> Option<(u8, Vec<u8>)> {
+async fn next_server_frame(client: &mut Client) -> Option<Vec<u8>> {
     loop {
         match tokio::time::timeout(std::time::Duration::from_secs(5), client.next())
             .await
             .expect("stream stalled")?
         {
-            Ok(ClientMessage::Binary(bytes)) => return Some((bytes[0], bytes.to_vec())),
+            Ok(ClientMessage::Binary(bytes)) => return Some(bytes.to_vec()),
             Ok(ClientMessage::Close(_)) | Err(_) => return None,
             Ok(_) => continue,
         }
@@ -150,22 +150,23 @@ async fn exec_stream_relays_output_and_ends_with_the_exit_status() {
                 kind: StreamKind::Exec,
                 command: Some("echo hi".into()),
             })
+            .unwrap()
             .into(),
         ))
         .await
         .unwrap();
     assert_eq!(
-        status(&next_server_frame(&mut client).await.unwrap().1),
+        status(&next_server_frame(&mut client).await.unwrap()),
         StreamStatus::Started
     );
-    let (channel, output) = next_server_frame(&mut client).await.unwrap();
+    let output = next_server_frame(&mut client).await.unwrap();
     assert_eq!(
-        (channel, &output[1..]),
-        (StreamChannel::Stdout as u8, &b"hi\n\xff"[..]),
+        decode_server_frame(&output).unwrap(),
+        ServerFrame::Stdout(b"hi\n\xff"),
         "raw bytes, not lossy text"
     );
     assert_eq!(
-        status(&next_server_frame(&mut client).await.unwrap().1),
+        status(&next_server_frame(&mut client).await.unwrap()),
         StreamStatus::Exit {
             code: 7,
             truncated: false
@@ -207,22 +208,30 @@ async fn terminal_stream_relays_output_input_and_resize() {
                 kind: StreamKind::Terminal,
                 command: None,
             })
+            .unwrap()
             .into(),
         ))
         .await
         .unwrap();
     assert_eq!(
-        status(&next_server_frame(&mut client).await.unwrap().1),
+        status(&next_server_frame(&mut client).await.unwrap()),
         StreamStatus::Started
     );
-    assert_eq!(next_server_frame(&mut client).await.unwrap().1[1..], *b"$ ");
+    assert_eq!(
+        decode_server_frame(&next_server_frame(&mut client).await.unwrap()).unwrap(),
+        ServerFrame::Stdout(b"$ ")
+    );
     client
-        .send(ClientMessage::Binary(encode_data(StreamChannel::Stdin, b"ls\n").into()))
+        .send(ClientMessage::Binary(
+            encode_data(StreamChannel::Stdin, b"ls\n").unwrap().into(),
+        ))
         .await
         .unwrap();
     client
         .send(ClientMessage::Binary(
-            encode_control(&StreamControl::Resize { cols: 100, rows: 30 }).into(),
+            encode_control(&StreamControl::Resize { cols: 100, rows: 30 })
+                .unwrap()
+                .into(),
         ))
         .await
         .unwrap();
@@ -232,7 +241,7 @@ async fn terminal_stream_relays_output_input_and_resize() {
         ServiceToProcess::TerminalResize { cols: 100, rows: 30 }
     ));
     assert_eq!(
-        status(&next_server_frame(&mut client).await.unwrap().1),
+        status(&next_server_frame(&mut client).await.unwrap()),
         StreamStatus::Error {
             message: "terminal closed".into()
         }
@@ -284,31 +293,31 @@ async fn exec_stream_relays_stdin_eof_separate_stderr_and_disconnect_cancellatio
                 kind: StreamKind::Exec,
                 command: Some("cat; echo problem >&2".into()),
             })
+            .unwrap()
             .into(),
         ))
         .await
         .unwrap();
     assert_eq!(
-        status(&next_server_frame(&mut client).await.unwrap().1),
+        status(&next_server_frame(&mut client).await.unwrap()),
         StreamStatus::Started
     );
     client
         .send(ClientMessage::Binary(
-            encode_data(StreamChannel::Stdin, b"hello\n").into(),
+            encode_data(StreamChannel::Stdin, b"hello\n").unwrap().into(),
         ))
         .await
         .unwrap();
     client
-        .send(ClientMessage::Binary(encode_control(&StreamControl::CloseStdin).into()))
+        .send(ClientMessage::Binary(
+            encode_control(&StreamControl::CloseStdin).unwrap().into(),
+        ))
         .await
         .unwrap();
-    let (channel, stdout) = next_server_frame(&mut client).await.unwrap();
-    assert_eq!((channel, &stdout[1..]), (StreamChannel::Stdout as u8, &b"hello\n"[..]));
-    let (channel, stderr) = next_server_frame(&mut client).await.unwrap();
-    assert_eq!(
-        (channel, &stderr[1..]),
-        (StreamChannel::Stderr as u8, &b"problem\n"[..])
-    );
+    let stdout = next_server_frame(&mut client).await.unwrap();
+    assert_eq!(decode_server_frame(&stdout).unwrap(), ServerFrame::Stdout(b"hello\n"));
+    let stderr = next_server_frame(&mut client).await.unwrap();
+    assert_eq!(decode_server_frame(&stderr).unwrap(), ServerFrame::Stderr(b"problem\n"));
     client.close(None).await.unwrap();
     owner.await.unwrap();
 }
@@ -326,11 +335,13 @@ async fn a_stream_must_start_before_anything_else() {
     let fx = fixture().await;
     let mut client = connect(fx.address, Some(stream::STREAM_SUBPROTOCOL)).await.unwrap();
     client
-        .send(ClientMessage::Binary(encode_data(StreamChannel::Stdin, b"ls\n").into()))
+        .send(ClientMessage::Binary(
+            encode_data(StreamChannel::Stdin, b"ls\n").unwrap().into(),
+        ))
         .await
         .unwrap();
     assert!(matches!(
-        status(&next_server_frame(&mut client).await.unwrap().1),
+        status(&next_server_frame(&mut client).await.unwrap()),
         StreamStatus::Error { .. }
     ));
 }
@@ -358,15 +369,16 @@ async fn container_stream_starts_a_staged_workload_once_and_records_its_exit() {
     let start = encode_control(&StreamControl::Start {
         kind: StreamKind::Container,
         command: None,
-    });
+    })
+    .unwrap();
     let mut client = connect(fx.address, Some(stream::STREAM_SUBPROTOCOL)).await.unwrap();
     client.send(ClientMessage::Binary(start.clone().into())).await.unwrap();
     assert_eq!(
-        status(&next_server_frame(&mut client).await.unwrap().1),
+        status(&next_server_frame(&mut client).await.unwrap()),
         StreamStatus::Started
     );
     assert_eq!(
-        status(&next_server_frame(&mut client).await.unwrap().1),
+        status(&next_server_frame(&mut client).await.unwrap()),
         StreamStatus::Exit {
             code: 3,
             truncated: false
@@ -382,7 +394,7 @@ async fn container_stream_starts_a_staged_workload_once_and_records_its_exit() {
 
     let mut second = connect(fx.address, Some(stream::STREAM_SUBPROTOCOL)).await.unwrap();
     second.send(ClientMessage::Binary(start.into())).await.unwrap();
-    match status(&next_server_frame(&mut second).await.unwrap().1) {
+    match status(&next_server_frame(&mut second).await.unwrap()) {
         StreamStatus::Error { message } => assert!(message.contains("not staged"), "{message}"),
         other => panic!("a finished workload must not start again: {other:?}"),
     }

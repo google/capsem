@@ -1,4 +1,4 @@
-//! `GET /vms/{id}/stream`: one `capsem.stream.v2` WebSocket per terminal,
+//! `GET /vms/{id}/stream`: one `capsem.stream.v3` WebSocket per terminal,
 //! streaming exec or attached container, relayed to a stream-role VM-owner
 //! connection. Frames are translated, never buffered past one message, so the
 //! client's reading speed is the guest's writing speed.
@@ -116,11 +116,12 @@ async fn session(
     }
     .await;
     if let Err(message) = outcome {
-        let _ = client_tx
-            .send(Message::Binary(
-                stream::encode_status(&StreamStatus::Error { message }).into(),
-            ))
-            .await;
+        match stream::encode_status(&StreamStatus::Error { message }) {
+            Ok(frame) => {
+                let _ = client_tx.send(Message::Binary(frame.into())).await;
+            }
+            Err(error) => warn!(%error, "stream error could not be encoded"),
+        }
     }
     let _ = client_tx
         .send(Message::Close(Some(CloseFrame {
@@ -171,7 +172,9 @@ async fn send_data(
     data: &[u8],
 ) -> Result<(), String> {
     client_tx
-        .send(Message::Binary(stream::encode_data(channel, data).into()))
+        .send(Message::Binary(
+            stream::encode_data(channel, data).map_err(|e| e.to_string())?.into(),
+        ))
         .await
         .map_err(|e| format!("client left: {e}"))
 }
@@ -181,7 +184,9 @@ async fn send_status(
     status: &StreamStatus,
 ) -> Result<(), String> {
     client_tx
-        .send(Message::Binary(stream::encode_status(status).into()))
+        .send(Message::Binary(
+            stream::encode_status(status).map_err(|e| e.to_string())?.into(),
+        ))
         .await
         .map_err(|e| format!("client left: {e}"))
 }
