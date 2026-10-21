@@ -221,6 +221,7 @@ pub(super) async fn attach(client: &GatewayClient, id: &str) -> Result<i32> {
                     stderr.write_all(&data).await?;
                     stderr.flush().await?;
                 }
+                StreamEvent::Terminal { .. } => anyhow::bail!("command stream received terminal state"),
                 StreamEvent::Exit { code, truncated } => {
                     ensure!(!truncated && code >= 0, "container exec transport failed");
                     return Ok(code);

@@ -27,10 +27,10 @@ where
         let callback = |request: &Request, mut response: Response| {
             assert_eq!(request.uri().path(), "/vms/vm-1/stream");
             assert_eq!(request.headers()["authorization"], "Bearer stream-test-token");
-            assert_eq!(request.headers()["sec-websocket-protocol"], "capsem.stream.v1");
+            assert_eq!(request.headers()["sec-websocket-protocol"], "capsem.stream.v2");
             response
                 .headers_mut()
-                .insert("sec-websocket-protocol", HeaderValue::from_static("capsem.stream.v1"));
+                .insert("sec-websocket-protocol", HeaderValue::from_static("capsem.stream.v2"));
             Ok(response)
         };
         let socket = tokio_tungstenite::accept_hdr_async(socket, callback).await.unwrap();

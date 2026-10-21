@@ -1797,14 +1797,14 @@ async fn main() -> Result<()> {
                         cleanup_doctor_vm(&client, &vm_id, DoctorSessionCleanup::Interrupted).await;
                         std::process::exit(130);
                     }
-                    result = tokio::time::timeout_at(boot_deadline, attached.next()) => match result {
+                    result = tokio::time::timeout_at(boot_deadline, attached.next_output()) => match result {
                         Ok(Ok(StreamEvent::Output(data) | StreamEvent::ErrorOutput(data))) => {
                             let text = String::from_utf8_lossy(&data);
                             if text.contains("# ") || text.contains("$ ") {
                                 break;
                             }
                         }
-                        Ok(Ok(StreamEvent::Exit { .. })) | Ok(Err(_)) | Err(_) => {
+                        Ok(Ok(_)) | Ok(Err(_)) | Err(_) => {
                             eprintln!("Shell did not become ready within 30s");
                             cleanup_doctor_vm(&client, &vm_id, DoctorSessionCleanup::Failed).await;
                             std::process::exit(1);
@@ -1842,7 +1842,7 @@ async fn main() -> Result<()> {
                     }
                     result = tokio::time::timeout(
                         std::time::Duration::from_secs(300),
-                        attached.next(),
+                        attached.next_output(),
                     ) => {
                         match result {
                             Ok(Ok(StreamEvent::Output(data) | StreamEvent::ErrorOutput(data))) => {
@@ -1858,7 +1858,7 @@ async fn main() -> Result<()> {
                                     break (1, DoctorSessionCleanup::Failed);
                                 }
                             }
-                            Ok(Ok(StreamEvent::Exit { .. })) => {
+                            Ok(Ok(_)) => {
                                 eprintln!("Session terminal ended before the doctor finished");
                                 break (1, DoctorSessionCleanup::Failed);
                             }
