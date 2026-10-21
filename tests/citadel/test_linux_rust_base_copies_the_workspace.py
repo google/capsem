@@ -158,6 +158,17 @@ def test_nonroot_lane_owns_inherited_generated_outputs() -> None:
     )
 
 
+def test_cargo_prewarm_is_owned_by_the_lane_and_does_not_ship_incremental_state() -> None:
+    source = DOCKERFILE.read_text(encoding="utf-8")
+    assert "ENV CARGO_INCREMENTAL=0" in source, "incremental intermediates consume 7 GiB per generation"
+    user = "root"
+    for line in source.replace("\\\n", " ").splitlines():
+        if line.startswith("USER "):
+            user = line.removeprefix("USER ").strip()
+        if line.startswith("RUN ") and "cargo build --locked --workspace --all-targets" in line:
+            assert user == "1000:1000", "Cargo outputs must be born writable, without duplicating a root-owned artifact layer"
+
+
 def test_removing_each_generated_tree_from_ownership_is_caught() -> None:
     source = DOCKERFILE.read_text(encoding="utf-8")
     for path in MUTABLE_OUTPUTS:

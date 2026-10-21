@@ -53,6 +53,21 @@ RUN cd /src/web/app \
 # inside a lane that has none.
 RUN cargo fetch --locked
 
+# The sealed lane compiles as uid 1000. Create its output with that owner
+# instead of copying a complete root-owned artifact layer during chown.
+# A few upstream crate archives carry private source modes; dependencies
+# remain root-owned, with only missing read/traverse permissions repaired.
+RUN mkdir -p /cargo-target /home/lane /usr/local/cargo/git \
+    && chown 1000:1000 /cargo-target /home/lane \
+    && find /usr/local/cargo/registry /usr/local/cargo/git \
+        \( -type d ! -perm -005 -o -type f ! -perm -004 \) -exec chmod a+rX {} +
+# Incremental intermediates are compiler-session state, not dependencies.
+# The old prewarm carried 7 GiB of them, measured twice on its sealed image.
+ENV CARGO_INCREMENTAL=0
+ENV CARGO_NET_OFFLINE=true
+ENV HOME=/home/lane
+USER 1000:1000
+
 # The dependency graph, compiled. `cargo fetch` gets the sources; this gets
 # the artifacts, which is the part that made a cold run 135s instead of 58s.
 RUN cargo build --locked --workspace --all-targets
@@ -70,8 +85,11 @@ RUN cargo build --locked --workspace --all-targets
 # with "not found *.profraw files" and a fallback swallowed the failure, so
 # nothing was compiled at all and three subsequent "fixes" were built on a
 # step that had silently done nothing. A failed prewarm is a failed image.
-RUN bash -lc 'eval "$(cargo llvm-cov show-env --export-prefix)" \
+RUN bash -c 'eval "$(cargo llvm-cov show-env --export-prefix)" \
     && cargo build --locked --workspace --all-targets'
+
+USER root
+ENV HOME=/root
 
 # The build-system Python environment, for the Rust tests that hand an export
 # to a reference reader (`warcio`) through `uv run --project build_system`.
@@ -91,7 +109,6 @@ RUN cd /src && uv sync --project build_system --frozen
 # the project manifest a new mtime, which uv keys the editable rebuild on,
 # so the rebuild happened on every run whose base image was freshly built.
 ENV UV_OFFLINE=1
-ENV CARGO_NET_OFFLINE=true
 
 # The lane rebuilds generated SDK/frontend output and writes the two Python
 # environment trees retained through `.dockerignore`. Source arrives through
