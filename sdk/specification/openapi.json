@@ -5587,6 +5587,17 @@
           "name": {
             "type": "string",
             "description": "The catalog name, as `capsem create --image` and `POST /images/pull` take it."
+          },
+          "surface": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImageSurface",
+                "description": "The image's declared interface. Older catalogs may omit it."
+              }
+            ]
           }
         }
       },
@@ -5663,6 +5674,14 @@
             "description": "What the request resolved to, as `repository@digest`: the pin a\nsession records, never a tag."
           }
         }
+      },
+      "ImageSurface": {
+        "type": "string",
+        "description": "How a catalog application presents itself to the user.",
+        "enum": [
+          "terminal",
+          "xpra"
+        ]
       },
       "Interaction": {
         "type": "object",

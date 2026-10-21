@@ -43,6 +43,17 @@ pub struct ImageInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<String>,
     pub cached: ImageCacheState,
+    /// The image's declared interface. Older catalogs may omit it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surface: Option<ImageSurface>,
+}
+
+/// How a catalog application presents itself to the user.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageSurface {
+    Terminal,
+    Xpra,
 }
 
 /// The service cache owner's current observation of the selected image's

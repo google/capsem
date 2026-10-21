@@ -2,6 +2,18 @@ use super::*;
 use serde_json::json;
 
 #[test]
+fn image_interfaces_survive_the_gateway_contract() {
+    let mut row = json!({"name":"app","description":"App","architectures":["arm64"],"cached":"missing"});
+    for surface in ["terminal", "xpra"] {
+        row["surface"] = json!(surface);
+        let parsed: ImageInfo = serde_json::from_value(row.clone()).unwrap();
+        assert_eq!(serde_json::to_value(parsed).unwrap()["surface"], surface);
+    }
+    row["surface"] = json!("unknown-interface");
+    assert!(serde_json::from_value::<ImageInfo>(row).is_err());
+}
+
+#[test]
 fn image_disk_states_round_trip_and_unrecognized_states_are_refused() {
     for state in ["unknown", "missing", "partial", "ready"] {
         let parsed: ImageCacheState = serde_json::from_value(json!(state)).unwrap();
@@ -31,6 +43,7 @@ fn an_image_entry_carries_its_pin_and_an_unanswered_cache_state() {
         architectures: vec!["amd64".into(), "arm64".into()],
         image: Some(format!("ghcr.io/google/capsem/codex-cli@sha256:{}", "a".repeat(64))),
         cached: ImageCacheState::Unknown,
+        surface: None,
     };
     let wire = serde_json::to_value(&entry).unwrap();
     assert_eq!(wire["cached"], "unknown");
