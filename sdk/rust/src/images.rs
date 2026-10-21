@@ -28,7 +28,7 @@ impl Images<'_> {
                     registry: registry.map(Into::into),
                 },
             },
-            self.0.options,
+            self.0.command_options(Some(capsem_api::IMAGE_PULL_TIMEOUT_SECS)),
         )
         .await
     }

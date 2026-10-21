@@ -54,7 +54,11 @@ def render_operations(routes: list[Route]) -> dict[str, str]:
         if binary:
             member = "GZIP" if response.media_type == "application/gzip" else "BINARY"
             lines.append(f"        accept=MediaType.{member},")
-        lines.append("        timeout=request_timeout,")
+        deadline = "request_timeout"
+        if operation.request_timeout_ms is not None:
+            seconds = operation.request_timeout_ms / 1000
+            deadline += f" if request_timeout is not None else max(transport.timeout, {seconds!r})"
+        lines.append(f"        timeout={deadline},")
         lines.append("    )")
         if not binary:
             lines.append(f"    return TypeAdapter({type_name(response.schema)}).validate_json(payload)")

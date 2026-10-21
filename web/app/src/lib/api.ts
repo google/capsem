@@ -614,7 +614,7 @@ export async function getImages(signal?: AbortSignal, refresh = false): Promise<
 }
 
 export async function pullImage(image: string): Promise<ImagePullResponse> {
-  return _sdk.call(transport => gateway.pullImage(transport, { body: { image } }, { timeoutMs: 900_000 }));
+  return _sdk.call(transport => gateway.pullImage(transport, { body: { image } }));
 }
 
 // -- Stats --

@@ -71,6 +71,8 @@ def render_operations(routes: list[Route]) -> dict[str, str]:
         attributes = {key: parameter_name(key) for key in properties}
         params = op.operation_id[0].upper() + op.operation_id[1:] + "Params"
         lines = ["use crate::transport::{CallOptions, Request, Transport};", ""]
+        if op.request_timeout_ms is not None:
+            lines = ["use std::time::Duration;", "", *lines]
         if properties:
             lines += ["#[derive(Debug, Clone, serde::Deserialize)]", f"pub struct {params} {{"]
             for key, schema in properties.items():
@@ -85,6 +87,11 @@ def render_operations(routes: list[Route]) -> dict[str, str]:
         signature = f"pub async fn {name}({', '.join(arguments)}) -> crate::Result<{result}> {{"
         lines += ([signature] if len(signature) <= 120 else [f"pub async fn {name}(",
                   *(f"    {arg}," for arg in arguments), f") -> crate::Result<{result}> {{"])
+        if op.request_timeout_ms is not None:
+            lines += ["    let options = CallOptions {", "        timeout: Some(",
+                      "            options", "                .timeout",
+                      f"                .unwrap_or_else(|| transport.timeout().max(Duration::from_millis({op.request_timeout_ms}))),",
+                      "        ),", "    };"]
         query = [p for p in op.parameters if p.location == "query"]
         if query:
             pairs = ", ".join(f"({json.dumps(p.name)}, {wire_value(p.schema_, '&input.' + attributes[p.name])})"

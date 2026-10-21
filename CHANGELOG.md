@@ -43,6 +43,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- TUI, browser and SDK app downloads wait for image verification instead of
+  using short status-request timeouts, while explicit request deadlines and
+  cancellation remain available.
+
 - Stalled app downloads return a bounded timeout and stop advancing through
   image preparation when the complete download budget expires.
 

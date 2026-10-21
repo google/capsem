@@ -210,6 +210,14 @@ Right pattern: capture a service log of the failing run (set `RUST_LOG=capsem=tr
 
 ## Step 2.5: Fix the pattern, not the instance
 
+For long HTTP operations, trace the complete deadline chain: service work,
+gateway response headers, generated operation, SDK facade and UI caller. Image
+pulls use the API-owned whole-operation budget and OpenAPI's
+`x-capsem-request-timeout-ms` default across all SDKs. An operation default
+extends a short transport default; an explicit per-call timeout still wins.
+Test ordinary calls, explicit deadlines, cancellation and absence of replay.
+Do not fix a gateway timeout by adding a longer timeout to one UI caller.
+
 When diagnosis reveals a **systemic pattern** (the same mistake repeated across the codebase), the fix must cover every instance -- not just the one that was reported.
 
 - **Audit the entire codebase for the same pattern.** If blocking I/O in async context caused one hang, grep for every other site that does the same thing. A bug is a symptom -- the pattern is the disease.

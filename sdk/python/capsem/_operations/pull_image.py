@@ -19,6 +19,6 @@ async def pull_image(
         Method.POST, '/images/pull',
         body=body,
         json_body=True,
-        timeout=request_timeout,
+        timeout=request_timeout if request_timeout is not None else max(transport.timeout, 1020.0),
     )
     return TypeAdapter(ImagePullResponse).validate_json(payload)

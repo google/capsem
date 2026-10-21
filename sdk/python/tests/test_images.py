@@ -182,3 +182,24 @@ def test_pull_preserves_refusal_without_retry():
             assert len(received) == 1
 
     asyncio.run(run())
+
+
+def test_pull_outlives_default_deadline_but_explicit_timeout_and_cancellation_work():
+    async def run():
+        async with (
+            gateway(response_delay=0.15) as (url, received),
+            Hypervisor(url, "gateway-token", timeout=0.03) as hv,
+        ):
+            assert (await hv.images.pull("code")).resolved == PIN
+            with pytest.raises(TimeoutError):
+                await hv.images.list()
+            with pytest.raises(TimeoutError):
+                await hv.images.pull("code", request_timeout=0.03)
+            with pytest.raises(TimeoutError):
+                async with asyncio.timeout(0.03):
+                    await hv.images.pull("code")
+            assert [path for _, path, _ in received] == [
+                "/images/pull", "/images?refresh=false", "/images/pull", "/images/pull"
+            ]
+
+    asyncio.run(run())

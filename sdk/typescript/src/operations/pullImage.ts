@@ -18,7 +18,7 @@ export async function pullImage(
   "body": z.lazy(() => ImagePullRequestSchema),
 }).parse(parameters);
   const payload = await transport.request(Method.POST, "/images/pull", {
-    signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.JSON,
+    signal: options.signal, timeoutMs: options.timeoutMs ?? Math.max(transport.timeoutMs, 1020000), accept: MediaType.JSON,
     body: JSON.stringify(input.body), contentType: MediaType.JSON,
   });
   return z.lazy(() => ImagePullResponseSchema).parse(JSON.parse(new TextDecoder().decode(payload)));

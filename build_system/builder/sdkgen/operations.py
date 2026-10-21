@@ -72,6 +72,7 @@ class Parameter(Strict):
 class Operation(Strict):
     operation_id: str = Field(alias="operationId", pattern=r"^[a-z][A-Za-z0-9]+$")
     description: str | None = None
+    request_timeout_ms: int | None = Field(default=None, alias="x-capsem-request-timeout-ms", gt=0)
     parameters: list[Parameter] = Field(default_factory=list)
     request_body: RequestBody | None = Field(default=None, alias="requestBody")
     responses: dict[Literal["200", "201", "202", "default"], Response]

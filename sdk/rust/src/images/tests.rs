@@ -122,3 +122,38 @@ async fn image_requests_respect_the_parent_deadline_and_dropped_future() {
             .is_err()
     );
 }
+
+#[tokio::test]
+async fn image_pull_outlives_the_transport_default_without_weakening_explicit_deadlines() {
+    let mut server = Server::respond(|_| {
+        let stream = futures::stream::once(async {
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            Ok::<_, std::io::Error>(r#"{"image":"code","resolved":"verified-pin","digest":"sha256:a"}"#)
+        });
+        Response::new(Body::from_stream(stream))
+    })
+    .await;
+    let hv = Hypervisor::new(&server.url, "private-token")
+        .unwrap()
+        .with_timeout(Duration::from_millis(30))
+        .unwrap();
+    assert_eq!(hv.images().pull("code", None).await.unwrap().resolved, "verified-pin");
+    assert!(matches!(hv.images().list(false).await, Err(Error::Transport(error)) if error.is_timeout()));
+    let transport = crate::transport::Transport::new(&server.url, "private-token", Duration::from_secs(30)).unwrap();
+    let params = crate::operations::PullImageParams {
+        body: crate::models::ImagePullRequest {
+            image: "code".into(),
+            registry: None,
+        },
+    };
+    let options = crate::transport::CallOptions {
+        timeout: Some(Duration::from_millis(30)),
+    };
+    assert!(
+        matches!(crate::operations::pull_image(&transport, &params, options).await, Err(Error::Transport(error)) if error.is_timeout())
+    );
+    for path in ["/images/pull", "/images", "/images/pull"] {
+        assert_eq!(server.received.recv().await.unwrap().0.uri.path(), path);
+    }
+    assert!(server.received.try_recv().is_err());
+}

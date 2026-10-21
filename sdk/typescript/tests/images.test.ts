@@ -83,6 +83,27 @@ it('preserves HTTP refusal without replaying prefetch', async () => {
   });
 });
 
+it('allows download beyond the default while respecting explicit deadlines and cancellation', async () => {
+  await gateway((request, response) => {
+    setTimeout(() => response.end(JSON.stringify(request.url === '/images?refresh=false' ? catalog : pull)), 150);
+  }, async (url, received) => {
+    const hv = new Hypervisor(url, 'token', {timeoutMs: 30});
+    try {
+      expect((await hv.images.pull('code')).resolved).toBe(pin);
+      await expect(hv.images.list()).rejects.toMatchObject({name: 'TimeoutError'});
+      await expect(hv.images.pull('code', {timeoutMs: 30})).rejects.toMatchObject({name: 'TimeoutError'});
+      const controller = new AbortController();
+      const request = hv.images.pull('code', {signal: controller.signal});
+      const rejected = expect(request).rejects.toMatchObject({name: 'AbortError'});
+      setTimeout(() => controller.abort(), 30);
+      await rejected;
+      expect(received.map(request => request.url)).toEqual([
+        '/images/pull', '/images?refresh=false', '/images/pull', '/images/pull',
+      ]);
+    } finally { hv.close(); }
+  });
+});
+
 it('forwards cancellation without dispatching a cancelled pull', async () => {
   await gateway((_request, response) => response.end(JSON.stringify(pull)), async (url, received) => {
     const hv = new Hypervisor(url, 'token');

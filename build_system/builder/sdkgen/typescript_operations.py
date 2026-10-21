@@ -48,8 +48,11 @@ def render_operations(routes: list[Route]) -> dict[str, str]:
             validator = expression(Schema(type="object", properties=properties, required=required))
             lines.append(f"  const input = {validator}.parse(parameters);")
         response_media = "GZIP" if response.media_type == "application/gzip" else "BINARY" if binary else "JSON"
+        deadline = "options.timeoutMs"
+        if operation.request_timeout_ms is not None:
+            deadline += f" ?? Math.max(transport.timeoutMs, {operation.request_timeout_ms})"
         lines += [f"  {'return' if binary else 'const payload ='} await transport.request(Method.{route.method.name}, {json.dumps(route.path)}, {{",
-                  f"    signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.{response_media},"]
+                  f"    signal: options.signal, timeoutMs: {deadline}, accept: MediaType.{response_media},"]
         for location, keyword in (("path", "parameters"), ("query", "query")):
             fields = [f"{json.dumps(p.name)}: input[{json.dumps(p.name)}]"
                       for p in operation.parameters if p.location == location]
