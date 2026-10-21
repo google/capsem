@@ -129,6 +129,27 @@ def _merge(previous: dict | None, new: dict) -> tuple[dict, bool]:
     )
 
 
+def test_surface_metadata_is_published_even_without_an_image_rebuild() -> None:
+    previous, _ = _merge(None, catalog.versions(_records(), REGISTRY))
+    document, changed = catalog.merge(
+        previous, channel="nightly", generated_at="t", described={"dev": "A dev image."},
+        new={}, surfaces={"dev": "terminal"},
+    )
+    assert changed
+    assert document["entries"]["dev"]["surface"] == "terminal"
+    assert document["entries"]["dev"]["versions"] == previous["entries"]["dev"]["versions"]
+    assert not catalog.merge(document, channel="nightly", generated_at="t", described={}, new={}, surfaces={"dev": "terminal"})[1]
+
+
+def test_catalog_surfaces_match_the_images_actual_declarations() -> None:
+    surfaces = catalog.surfaces()
+    assert set(surfaces) == set(catalog.descriptions())
+    for name, surface in surfaces.items():
+        dockerfile = (ROOT / "images" / name / "Dockerfile").read_text()
+        assert surface in {"terminal", "xpra"}
+        assert (surface == "xpra") == ('org.capsem.surface="xpra"' in dockerfile), name
+
+
 def test_a_rebuilt_image_becomes_one_version() -> None:
     assert catalog.versions(_records(), REGISTRY) == {
         "dev": {

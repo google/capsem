@@ -20,10 +20,11 @@ import copy
 import datetime
 import json
 import re
-import tomllib
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
+
+import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
 DESCRIPTIONS = ROOT / "images" / "catalog.toml"
@@ -41,6 +42,14 @@ class CatalogError(ValueError):
 def descriptions(path: Path = DESCRIPTIONS) -> dict[str, str]:
     images = tomllib.loads(path.read_text(encoding="utf-8"))["images"]
     return {name: entry["description"] for name, entry in images.items()}
+
+
+def surfaces(path: Path = DESCRIPTIONS) -> dict[str, str]:
+    images = tomllib.loads(path.read_text(encoding="utf-8"))["images"]
+    result = {name: entry["surface"] for name, entry in images.items()}
+    if any(surface not in {"terminal", "xpra"} for surface in result.values()):
+        raise CatalogError("image surface must be terminal or xpra")
+    return result
 
 
 def _digest(record: Mapping[str, Any], field: str) -> str:
@@ -95,6 +104,7 @@ def merge(
     generated_at: str,
     described: Mapping[str, str],
     new: Mapping[str, Mapping[str, Any]],
+    surfaces: Mapping[str, str] | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """The previous catalog with `new` appended; never drops or rewrites a version."""
     entries: dict[str, Any] = {}
@@ -115,7 +125,15 @@ def merge(
             entry["versions"].append(dict(version))
             changed = True
     for name, entry in entries.items():
-        entry["description"] = described.get(name, entry["description"])
+        description = described.get(name, entry["description"])
+        changed |= entry["description"] != description
+        entry["description"] = description
+        if surfaces is not None and name in surfaces:
+            surface = surfaces[name]
+            if surface not in {"terminal", "xpra"}:
+                raise CatalogError(f"{name}: surface must be terminal or xpra")
+            changed |= entry.get("surface") != surface
+            entry["surface"] = surface
     catalog = {
         "schema_version": SCHEMA_VERSION,
         "channel": channel,
@@ -144,6 +162,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         generated_at=generated_at,
         described=descriptions(),
         new=versions(records, args.registry),
+        surfaces=surfaces(),
     )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(catalog, indent=2, sort_keys=True) + "\n")
