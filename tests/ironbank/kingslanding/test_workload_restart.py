@@ -21,9 +21,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 def test_saved_workload_refreshes_its_controller_and_terminal_after_restarts(service, tmp_path):
     client = service.client()
     current = (PROJECT_ROOT / "guest/artifacts/container/launch.py").read_bytes()
-    # The previous controller left runc's stderr outside the workload PTY.
-    # Stage that real old behavior while stopped, then use ordinary resume.
-    legacy = current.replace(b", stderr=terminal", b"")
+    # The previous controller inherited the VM serial console as runc stderr,
+    # so runc sized the app from that console instead of the input PTY.
+    # Stage that same old behavior while stopped, then use ordinary resume.
+    legacy = current.replace(b", stderr=subprocess.STDOUT", b"")
     assert legacy != current
     with image_session(service, tmp_path, "restart-terminal") as vm_id:
         stage = vm_session_dir(service.tmp_dir, client, vm_id) / "guest/workspace/.capsem-image"

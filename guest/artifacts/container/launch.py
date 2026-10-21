@@ -1268,6 +1268,11 @@ def console_terminal():
     # runc relays this outer PTY to the workload's own PTY. Canonical input
     # here buffers escape replies until newline and echoes them to the screen.
     tty.setraw(terminal)
+    # runc copies this mode to the workload: shells need cooked output until
+    # an application explicitly switches its own terminal to raw mode.
+    attrs = termios.tcgetattr(terminal)
+    attrs[1] |= termios.OPOST | termios.ONLCR
+    termios.tcsetattr(terminal, termios.TCSANOW, attrs)
     fcntl.ioctl(terminal, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
     return master, terminal
 

@@ -61,6 +61,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Start workload terminals with cooked shell output while allowing interactive
+  applications to switch to raw output without a second newline conversion.
+
 - Preserve workload terminal control bytes through the runtime relay, keeping
   incremental redraws intact after resizing.
 
