@@ -89,6 +89,11 @@ fn content_type(path: &str) -> &'static str {
 
 /// The bytes and media type at `relative`, below [`CLIENT_ROOT`].
 fn asset(relative: &str) -> Option<(&'static [u8], &'static str)> {
+    // Vendor CSS can request its wallpaper before our no-wallpaper stylesheet
+    // loads. Keep the pinned CSS unchanged and answer with an empty image.
+    if relative == "background.jpg" {
+        return Some((include_bytes!("static/empty-background.svg"), "image/svg+xml"));
+    }
     let page = PAGE.as_ref().ok();
     let bytes: &'static [u8] = match relative {
         "" | "index.html" => page?.index.as_bytes(),
@@ -176,7 +181,9 @@ pub(crate) fn embedded_response(token: &str, origin: &str, parent: &str) -> anyh
         "<meta name=\"capsem-surface-protocol\" content=\"{}{token}\" />",
         capsem_proto::PREVIEW_WS_PROTOCOL_PREFIX
     );
-    let body = page.index.replacen("</head>", &format!("{marker}</head>"), 1);
+    // The synchronous transport hook runs in the head while HTML is parsed.
+    // Its credential must precede every script, not arrive at the head's end.
+    let body = page.index.replacen("<head>", &format!("<head>{marker}"), 1);
     let policy =
         content_security_policy(origin).replace("frame-ancestors 'none'", &format!("frame-ancestors {parent}"));
     let mut response = format!(

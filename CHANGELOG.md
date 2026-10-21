@@ -76,6 +76,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve the graphical launcher's origin during embedded bootstrap so the
+  browser's form submission passes trusted-parent authentication, and provide
+  its scoped credential before the transport script runs.
+
 - Open graphical image sessions in Capsem's UI view by default, keep Terminal
   available alongside it, and reuse the session tab across view switches.
 

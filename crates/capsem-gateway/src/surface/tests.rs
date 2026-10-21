@@ -189,6 +189,11 @@ async fn an_embedded_launcher_binds_its_parent_without_bypassing_top_level_click
         .unwrap()
         .contains("frame-ancestors http://localhost:5173;"));
     assert!(!headers.contains_key(http::header::X_FRAME_OPTIONS));
+    assert_eq!(
+        headers[http::header::REFERRER_POLICY],
+        "origin",
+        "no-referrer makes the cross-origin form POST Origin null, defeating trusted-parent admission"
+    );
     assert!(page.contains("data-auto=\"true\"") && page.contains("data-parent=\"http://localhost:5173\""));
     let (_, _, page) = call(
         &app,

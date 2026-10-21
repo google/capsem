@@ -40,6 +40,19 @@
     };
   }
 
+  // Embedded contexts may not query the host's keyboard layout. Use Xpra's
+  // existing key-event path without requesting additional browser authority.
+  const queryKeyboardMap = XpraClient.prototype.query_keyboard_map;
+  XpraClient.prototype.query_keyboard_map = function () {
+    const policy = document.permissionsPolicy || document.featurePolicy;
+    if (policy && !policy.allowsFeature("keyboard-map")) {
+      this.keyboard_map = {};
+      this.do_init_keyboard();
+      return;
+    }
+    queryKeyboardMap.call(this);
+  };
+
   /** The geometry a window gets inside a viewport of `width` x `height`. */
   function fitGeometry(win, width, height, main) {
     const left = win.leftoffset || 0;

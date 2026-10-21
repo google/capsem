@@ -3,8 +3,8 @@
 // The page is the gateway's own origin, so it reads the gateway token the way
 // the Capsem UI does, asks for a single-use preview bootstrap for the
 // session's surface, and POSTs it to the surface's preview origin. That origin
-// answers with its HttpOnly session cookie and the app's client. No token
-// enters a URL.
+// answers with the scoped client for an embed, or a session cookie for a
+// standalone preview. No token enters a URL.
 "use strict";
 
 (function () {

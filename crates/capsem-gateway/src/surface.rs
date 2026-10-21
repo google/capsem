@@ -1,15 +1,15 @@
-//! Xpra surfaces: the GUI an image declares, opened in the user's browser.
+//! Xpra surfaces: the GUI an image declares, embedded in a Capsem UI tab.
 //!
 //! The service grants the image's declared port as an `http_preview`
 //! exposure and reports it in the VM's container status. The client must run
-//! on that exposure's preview origin: its websocket is authenticated by the
-//! origin's host-only, SameSite=Lax session cookie, which a page on any other
-//! site cannot send. So the gateway serves the pinned xpra-html5 client there
-//! (see `client` and `preview`), and its own origin serves only a launcher:
+//! on that exposure's preview origin. A scoped WebSocket credential supports
+//! embedding without third-party cookies; standalone previews use a host-only
+//! SameSite=Lax cookie. The pinned xpra-html5 client runs there (see `client`
+//! and `preview`), and the gateway's own origin serves only a launcher:
 //! `GET /vms/{id}/surface/` reads the gateway token like the Capsem UI does,
 //! mints a single-use bootstrap with `POST /vms/{id}/surface/session`, and
-//! POSTs it to the surface's origin, which sets the cookie and opens the
-//! client. No token appears in any URL.
+//! POSTs it to the surface's origin, which authenticates and opens the client.
+//! No token appears in any URL.
 
 mod client;
 
@@ -137,6 +137,12 @@ pub async fn launcher(
     let mut response = hardened(page, "text/html; charset=utf-8", policy);
     if !parent.is_empty() {
         response.headers_mut().remove(http::header::X_FRAME_OPTIONS);
+        // The preview authenticates the form's initiator. `no-referrer`
+        // serializes its cross-origin POST Origin as null; disclose only
+        // this public origin, never the VM path or parent query.
+        response
+            .headers_mut()
+            .insert(http::header::REFERRER_POLICY, http::HeaderValue::from_static("origin"));
     }
     response
 }

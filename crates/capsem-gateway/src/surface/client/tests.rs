@@ -170,6 +170,17 @@ fn client_documents_require_a_session_while_static_code_needs_no_cookie() {
 }
 
 #[test]
+fn the_unused_vendor_wallpaper_is_a_public_empty_image() {
+    let (head, body) = split(&response("GET", &format!("{CLIENT_ROOT}background.jpg"), false, ORIGIN));
+    assert!(head.starts_with("HTTP/1.1 200 OK\r\n"), "{head}");
+    assert!(head.contains("Content-Type: image/svg+xml"));
+    assert_eq!(
+        body,
+        b"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1\" height=\"1\"/>\n"
+    );
+}
+
+#[test]
 fn embedded_page_binds_one_trusted_parent_without_inline_script_or_url_credentials() {
     let token = "b".repeat(64);
     let parent = "http://127.0.0.1:5173";
@@ -181,6 +192,11 @@ fn embedded_page_binds_one_trusted_parent_without_inline_script_or_url_credentia
     assert!(head.contains("Cache-Control: no-store") && head.contains("Referrer-Policy: no-referrer"));
     assert!(!head.contains(&token));
     let body = String::from_utf8(body).unwrap();
+    assert!(
+        body.find("<meta name=\"capsem-surface-protocol\"").unwrap()
+            < body.find("<script src=\"capsem-surface.js\"").unwrap(),
+        "the credential must exist when the transport hook runs during HTML parsing"
+    );
     assert!(body.contains(&format!(
         "content=\"{}{token}\"",
         capsem_proto::PREVIEW_WS_PROTOCOL_PREFIX

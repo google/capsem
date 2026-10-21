@@ -20,6 +20,8 @@ class XpraClient {
   constructor(width, height) { this.desktop_width = width; this.desktop_height = height; this.capabilities = {}; }
   _get_desktop_size() { return [this.desktop_width, this.desktop_height]; }
   _make_hello() { this.capabilities.system_tray = true; this.capabilities.windows = true; }
+  query_keyboard_map() { this.queried = true; }
+  do_init_keyboard() { this.initialized = true; }
 }
 class XpraWindow {
   constructor(client, geometry, extra = {}) {
@@ -48,6 +50,13 @@ function load(globals: Record<string, unknown> = {}) {
 }
 
 describe('capsem-surface.js', () => {
+  it('uses normal key events when the embed cannot query the host keyboard layout', () => {
+    const run = load({document: {querySelector: () => null, featurePolicy: {allowsFeature: () => false}}});
+    expect(run('const client = new XpraClient(800, 600); client.query_keyboard_map(); ({map: client.keyboard_map, initialized: client.initialized, queried: client.queried})'))
+      .toEqual({map: {}, initialized: true, queried: undefined});
+    const allowed = load({document: {querySelector: () => null, featurePolicy: {allowsFeature: () => true}}});
+    expect(allowed('const client = new XpraClient(800, 600); client.query_keyboard_map(); client.queried')).toBe(true);
+  });
   it('gives only the pinned transport worker a scoped credential and confines WebSockets', () => {
     const credential = `capsem-preview.${'a'.repeat(64)}`;
     let removed = false;
