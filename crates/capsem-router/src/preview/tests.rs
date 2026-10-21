@@ -18,6 +18,36 @@ fn control_credentials_are_removed_before_guest_http() {
 }
 
 #[test]
+fn embedded_surface_credentials_never_reach_guest_websocket_protocols() {
+    use hyper::header::SEC_WEBSOCKET_PROTOCOL;
+    let credential = format!("{}owner-secret", capsem_proto::PREVIEW_WS_PROTOCOL_PREFIX);
+    for offers in [
+        vec![format!("binary, {credential}")],
+        vec![credential.clone(), "binary".into()],
+        vec![format!(" {credential} , binary, {credential} "), "chat".into()],
+        vec![credential],
+    ] {
+        let mut headers = hyper::HeaderMap::new();
+        for offer in &offers {
+            headers.append(SEC_WEBSOCKET_PROTOCOL, offer.parse().unwrap());
+        }
+        strip_control_headers(&mut headers);
+        let actual = headers
+            .get(SEC_WEBSOCKET_PROTOCOL)
+            .and_then(|value| value.to_str().ok());
+        let expected = if offers.iter().any(|offer| offer.contains("chat")) {
+            Some("binary, chat")
+        } else if offers.iter().any(|offer| offer.contains("binary")) {
+            Some("binary")
+        } else {
+            None
+        };
+        assert_eq!(actual, expected);
+        assert!(!format!("{headers:?}").contains("owner-secret"));
+    }
+}
+
+#[test]
 fn an_only_control_cookie_leaves_no_cookie_header() {
     let mut headers = hyper::HeaderMap::new();
     headers.insert(COOKIE, "capsem_preview=owner-secret".parse().unwrap());

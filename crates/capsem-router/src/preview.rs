@@ -209,6 +209,7 @@ fn empty_body() -> BoxBody<bytes::Bytes, hyper::Error> {
 fn strip_control_headers(headers: &mut hyper::HeaderMap) {
     headers.remove(AUTHORIZATION);
     headers.remove(PROXY_AUTHORIZATION);
+    strip_control_protocol(headers);
     let reserved = format!("{PREVIEW_COOKIE}=").into_bytes();
     let mut retained: Vec<u8> = Vec::new();
     for pair in headers
@@ -228,6 +229,25 @@ fn strip_control_headers(headers: &mut hyper::HeaderMap) {
     if !retained.is_empty() {
         if let Ok(value) = hyper::header::HeaderValue::from_bytes(&retained) {
             headers.insert(COOKIE, value);
+        }
+    }
+}
+
+fn strip_control_protocol(headers: &mut hyper::HeaderMap) {
+    use hyper::header::SEC_WEBSOCKET_PROTOCOL;
+    let retained = headers
+        .get_all(SEC_WEBSOCKET_PROTOCOL)
+        .iter()
+        .flat_map(|value| value.as_bytes().split(|byte| *byte == b','))
+        .map(trim_ascii)
+        .filter(|protocol| !protocol.is_empty())
+        .filter(|protocol| !protocol.starts_with(capsem_proto::PREVIEW_WS_PROTOCOL_PREFIX.as_bytes()))
+        .collect::<Vec<_>>()
+        .join(b", ".as_slice());
+    headers.remove(SEC_WEBSOCKET_PROTOCOL);
+    if !retained.is_empty() {
+        if let Ok(value) = hyper::header::HeaderValue::from_bytes(&retained) {
+            headers.insert(SEC_WEBSOCKET_PROTOCOL, value);
         }
     }
 }

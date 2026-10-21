@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Strip embedded graphical-session credentials from WebSocket protocol offers
+  before forwarding requests to the workload.
+
 - Bound terminal UI event delivery with backpressure and finite drains, keeping
   output bursts from building an unlimited client backlog.
 
