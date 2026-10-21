@@ -1,6 +1,7 @@
 import { it, expect } from 'vitest';
 import type { TerminalState } from '@capsem/sdk';
 import { SessionProjection } from '../terminal/session-projection';
+import { MAX_STREAM_FRAME_BYTES } from '../terminal/stream-protocol';
 
 const state = (revision: number, cols = 80, rows = 24, reset = false): TerminalState => ({
   revision, cols, rows, reset, title: '', icon_name: '', bell_count: 0, events: [],
@@ -34,6 +35,8 @@ it('resyncs instead of rendering out-of-order state or dropping display bytes', 
   projection.reconnect();
   projection.state(state(0, 80, 24, true));
   projection.output(new Uint8Array(1)); // deliberately held renderer
-  projection.output(new Uint8Array(256 * 1024 * 32 + 1));
+  projection.output(new Uint8Array(MAX_STREAM_FRAME_BYTES * 32));
+  expect(resyncs).toBe(1);
+  projection.output(new Uint8Array(1));
   expect(resyncs).toBe(2);
 });
