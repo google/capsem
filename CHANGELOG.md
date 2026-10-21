@@ -73,6 +73,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep session terminal titles, bell counts, and notifications available in
+  VM inventory even when no terminal view is attached.
+
 - Render the terminal UI from session-owned snapshots and ordered display
   updates, preserving alternate screens and authoritative dimensions.
 

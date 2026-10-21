@@ -757,3 +757,5 @@ async fn main() -> Result<()> {
 mod performance_contract_tests;
 #[cfg(test)]
 mod tests;
+
+mod terminal_observer;

@@ -31,6 +31,11 @@ pub(crate) fn list_response_fingerprint(state: &ServiceState) -> String {
         let instances = state.instances.lock().unwrap();
         let _ = write!(fingerprint, "running={};", instances.len());
         for i in instances.values() {
+            let _ = write!(
+                fingerprint,
+                "terminal={:?};",
+                i.terminal.as_ref().map(|terminal| terminal.revision)
+            );
             append_fingerprint_field(&mut fingerprint, &i.id);
             append_fingerprint_field(&mut fingerprint, &i.name);
             let _ = write!(

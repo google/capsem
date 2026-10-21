@@ -13,6 +13,7 @@ fn running_fork_source(state: &Arc<ServiceState>, dir: &tempfile::TempDir, refus
     state.instances.lock().unwrap().insert(
         "fork-src".into(),
         InstanceInfo {
+            terminal: None,
             id: "fork-src".into(),
             name: "fork-src".into(),
             uds_path: uds_path.clone(),
@@ -125,6 +126,7 @@ async fn handle_fork_duplicate_returns_conflict() {
     state.instances.lock().unwrap().insert(
         "dup-src".into(),
         InstanceInfo {
+            terminal: None,
             id: "dup-src".into(),
             name: "dup-src".into(),
             uds_path: dir.path().join("dup-src.sock"),

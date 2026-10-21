@@ -297,6 +297,7 @@ impl ServiceState {
         instances.insert(
             vm_id.clone(),
             InstanceInfo {
+                terminal: None,
                 generation,
                 authority,
                 upstream_policy,
@@ -333,6 +334,7 @@ impl ServiceState {
             upstream_broker.start(upstream_grant),
             proxy_upstream_broker.start(proxy_upstream_grant),
         ]);
+        crate::terminal_observer::start(Arc::clone(self), vm_id.clone(), generation);
         let _reaper = instance_reaper::spawn_exit_reaper(
             child,
             vm_id.clone(),

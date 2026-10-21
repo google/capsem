@@ -1,4 +1,4 @@
-//! `GET /vms/{id}/stream`: one `capsem.stream.v1` WebSocket per terminal,
+//! `GET /vms/{id}/stream`: one `capsem.stream.v2` WebSocket per terminal,
 //! streaming exec or attached container, relayed to a stream-role VM-owner
 //! connection. Frames are translated, never buffered past one message, so the
 //! client's reading speed is the guest's writing speed.
@@ -210,6 +210,9 @@ async fn terminal(
                 Some(ClientControl::Stdin(data)) => {
                     owner_tx.send(ServiceToProcess::TerminalInput { data }).await.map_err(owner_closed)?;
                 }
+                Some(ClientControl::Control(StreamControl::Focus { cols, rows })) => {
+                    owner_tx.send(ServiceToProcess::TerminalFocus { cols, rows }).await.map_err(owner_closed)?;
+                }
                 Some(ClientControl::Control(StreamControl::Resize { cols, rows })) => {
                     owner_tx.send(ServiceToProcess::TerminalResize { cols, rows }).await.map_err(owner_closed)?;
                 }
@@ -220,6 +223,10 @@ async fn terminal(
             message = owner_rx.recv() => {
                 grant.validate(state, false)?;
                 match message.map_err(owner_closed)? {
+                ProcessToService::TerminalState { state } => {
+                    state.validate().map_err(str::to_owned)?;
+                    send_status(client_tx, &StreamStatus::Terminal { state }).await?;
+                },
                 ProcessToService::TerminalOutput { data } => send_data(client_tx, StreamChannel::Stdout, &data).await?,
                 ProcessToService::TerminalStreamEnded { reason } => break Err(reason),
                 _ => {}
@@ -282,7 +289,7 @@ async fn exec(
                 }
                 Some(ClientControl::Control(StreamControl::CloseStdin)) => {}
                 Some(ClientControl::Control(StreamControl::Start { .. })) => break Err("stream already started".into()),
-                Some(ClientControl::Control(StreamControl::Resize { .. })) => {}
+                Some(ClientControl::Control(StreamControl::Resize { .. } | StreamControl::Focus { .. })) => {}
                 }
             },
             _ = ping.tick(), if credit == 0 => {

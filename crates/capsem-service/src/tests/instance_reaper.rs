@@ -606,6 +606,7 @@ async fn failed_restore_teardown_clears_running_instance_before_cold_fallback() 
     state.instances.lock().unwrap().insert(
         vm_id.clone(),
         InstanceInfo {
+            terminal: None,
             id: vm_id.clone(),
             name: "resume-vm".into(),
             uds_path: uds_path.clone(),

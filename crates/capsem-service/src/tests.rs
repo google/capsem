@@ -201,6 +201,7 @@ pub(super) fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
 /// The fields every fake instance shares; a test names only what it varies.
 pub(crate) fn test_instance() -> InstanceInfo {
     InstanceInfo {
+        terminal: None,
         generation: capsem_crypto::uuid_v4(),
         authority: Default::default(),
         upstream_policy: upstream_broker::test_policy_publisher(),
@@ -378,6 +379,7 @@ pub(crate) fn insert_fake_instance_with_session_dir(state: &ServiceState, id: &s
     state.instances.lock().unwrap().insert(
         id.to_string(),
         InstanceInfo {
+            terminal: None,
             id: id.to_string(),
             name: id.to_string(),
             pid,
@@ -559,3 +561,36 @@ pub(crate) use assets_registry::make_state_in;
 use settings_files::make_test_state_with_tempdir_at;
 pub(crate) use settings_files::{install_empty_settings_env, EnvVarGuard};
 use update_routes::decode_response_json;
+
+#[test]
+fn terminal_metadata_is_in_inventory_and_invalidates_its_runtime_snapshot() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let mut instance = test_instance();
+    instance.terminal = Some(capsem_api::TerminalSummary {
+        revision: 1,
+        title: "Agent".into(),
+        bell_count: 1,
+        last_notification: Some(capsem_api::TerminalNotification {
+            id: "notice-1".into(),
+            title: "Review".into(),
+            body: "Ready".into(),
+        }),
+    });
+    let id = instance.id.clone();
+    let expected = instance.terminal.clone();
+    state.instances.lock().unwrap().insert(id.clone(), instance);
+    let before = list_response_fingerprint(&state);
+    let (response, _) = sandbox_info::build_list_response(&state);
+    assert_eq!(response.sandboxes[0].terminal, expected);
+    state
+        .instances
+        .lock()
+        .unwrap()
+        .get_mut(&id)
+        .unwrap()
+        .terminal
+        .as_mut()
+        .unwrap()
+        .revision += 1;
+    assert_ne!(list_response_fingerprint(&state), before);
+}

@@ -164,6 +164,7 @@ fn resolve_rejects_symlink_escape() {
     state.instances.lock().unwrap().insert(
         "test-vm".into(),
         InstanceInfo {
+            terminal: None,
             generation: capsem_crypto::uuid_v4(),
             authority: Default::default(),
             upstream_policy: upstream_broker::test_policy_publisher(),
@@ -200,6 +201,7 @@ fn resolve_valid_path_inside_workspace() {
     state.instances.lock().unwrap().insert(
         "test-vm".into(),
         InstanceInfo {
+            terminal: None,
             generation: capsem_crypto::uuid_v4(),
             authority: Default::default(),
             upstream_policy: upstream_broker::test_policy_publisher(),

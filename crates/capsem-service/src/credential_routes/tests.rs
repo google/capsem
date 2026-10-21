@@ -72,6 +72,7 @@ async fn memory_handoff_uses_correlated_real_host_ipc_and_acknowledgement() {
     state.instances.lock().unwrap().insert(
         "vm".into(),
         InstanceInfo {
+            terminal: None,
             id: "vm".into(),
             name: "vm".into(),
             uds_path: socket.clone(),
