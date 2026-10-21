@@ -1,8 +1,7 @@
 """The packaged Codex configuration follows Capsem's image update lifecycle."""
 
-from pathlib import Path
-
 import tomllib
+from pathlib import Path
 
 
 def test_codex_uses_image_updates_and_keeps_the_capsem_mcp_server():
