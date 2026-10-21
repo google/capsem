@@ -477,7 +477,20 @@ pub(crate) async fn handle_pull_image(
     State(state): State<Arc<ServiceState>>,
     Json(request): Json<ImagePullRequest>,
 ) -> Result<Json<ImagePullResponse>, AppError> {
-    let mut decision = Decision::new(&state).await?;
+    let budget = capsem_api::IMAGE_PULL_TIMEOUT_SECS;
+    tokio::time::timeout(Duration::from_secs(budget), pull_image(&state, request))
+        .await
+        .map_err(|_| {
+            AppError::new(
+                StatusCode::GATEWAY_TIMEOUT,
+                format!("image pull exceeded {budget} seconds"),
+            )
+            .with_timeout_secs(budget)
+        })?
+}
+
+async fn pull_image(state: &ServiceState, request: ImagePullRequest) -> Result<Json<ImagePullResponse>, AppError> {
+    let mut decision = Decision::new(state).await?;
     let requested = decision.resolve(&request.image).await?;
     decision.check_source(&requested).await?;
     let access = request.registry.unwrap_or_default();

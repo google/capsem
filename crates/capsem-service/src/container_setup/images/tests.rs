@@ -54,6 +54,8 @@ fn catalog_document() -> Value {
 type RootCall = (String, String, RegistryAccess, Option<capsem_assets::oci::CacheKey>);
 
 struct CatalogImages {
+    pull_delay: Arc<Mutex<std::time::Duration>>,
+    pull_started: Arc<tokio::sync::Notify>,
     disk_states: Arc<Mutex<std::collections::HashMap<capsem_assets::oci::CacheKey, capsem_assets::oci::CacheState>>>,
     observations: Arc<Mutex<Vec<Vec<capsem_assets::oci::CacheKey>>>>,
     fetches: Arc<Mutex<Vec<ImageFetch>>>,
@@ -113,7 +115,12 @@ impl ImageSource for CatalogImages {
     fn pull(&self, image: String, _access: RegistryAccess, _parent: PathBuf, mode: ImageFetch) -> PullFuture {
         self.fetches.lock().unwrap().push(mode);
         self.pulls.lock().unwrap().push(image.clone());
+        let delay = *self.pull_delay.lock().unwrap();
+        self.pull_started.notify_one();
         Box::pin(async move {
+            if !delay.is_zero() {
+                tokio::time::sleep(delay).await;
+            }
             let image_digest = image
                 .rsplit_once('@')
                 .map_or_else(|| digest('f'), |(_, pin)| pin.to_owned());
@@ -134,6 +141,8 @@ impl ImageSource for CatalogImages {
 }
 
 struct Fixture {
+    pull_delay: Arc<Mutex<std::time::Duration>>,
+    pull_started: Arc<tokio::sync::Notify>,
     disk_states: Arc<Mutex<std::collections::HashMap<capsem_assets::oci::CacheKey, capsem_assets::oci::CacheState>>>,
     observations: Arc<Mutex<Vec<Vec<capsem_assets::oci::CacheKey>>>>,
     fetches: Arc<Mutex<Vec<ImageFetch>>>,
@@ -146,6 +155,8 @@ struct Fixture {
 
 impl Fixture {
     fn new(images: ImagePolicyConfig) -> Self {
+        let pull_delay = Arc::new(Mutex::new(std::time::Duration::ZERO));
+        let pull_started = Arc::new(tokio::sync::Notify::new());
         let disk_states = Arc::new(Mutex::new(std::collections::HashMap::new()));
         let observations = Arc::new(Mutex::new(Vec::new()));
         let fetches = Arc::new(Mutex::new(Vec::new()));
@@ -155,6 +166,8 @@ impl Fixture {
         let roots = Arc::new(Mutex::new(Vec::new()));
         let mut state = crate::tests::make_test_state_owned();
         state.containers = ContainerSetups::with_source(Box::new(CatalogImages {
+            pull_delay: pull_delay.clone(),
+            pull_started: pull_started.clone(),
             disk_states: Arc::clone(&disk_states),
             observations: Arc::clone(&observations),
             fetches: Arc::clone(&fetches),
@@ -168,6 +181,8 @@ impl Fixture {
             roots: Arc::clone(&roots),
         }));
         Self {
+            pull_delay,
+            pull_started,
             disk_states,
             observations,
             fetches,
@@ -204,6 +219,32 @@ impl Fixture {
     fn pulls(&self) -> Vec<String> {
         self.pulls.lock().unwrap().clone()
     }
+}
+
+#[tokio::test]
+async fn stalled_image_pull_is_cancelled_at_the_service_operation_deadline() {
+    let fixture = Fixture::default_policy();
+    *fixture.pull_delay.lock().unwrap() = std::time::Duration::from_secs(901);
+    let started = fixture.pull_started.clone();
+    let roots = fixture.roots.clone();
+    let pulls = fixture.pulls.clone();
+    let request = tokio::spawn(async move { fixture.pull("codex-cli").await });
+    started.notified().await;
+    tokio::time::pause();
+    // Stop at the operation deadline, before the source's 901s sleep is ready.
+    tokio::time::advance(std::time::Duration::from_secs(900)).await;
+    tokio::time::resume();
+    let (status, body) = request.await.unwrap();
+    assert_eq!(status, StatusCode::GATEWAY_TIMEOUT, "{body}");
+    assert_eq!(
+        body,
+        json!({"error":"image pull exceeded 900 seconds", "timeout_secs":900})
+    );
+    assert_eq!(pulls.lock().unwrap().len(), 1);
+    assert!(
+        roots.lock().unwrap().is_empty(),
+        "cancelled pull continued into rootfs fetch"
+    );
 }
 
 #[tokio::test]

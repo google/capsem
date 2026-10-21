@@ -43,6 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Stalled app downloads return a bounded timeout and stop advancing through
+  image preparation when the complete download budget expires.
+
 - App downloads keep their gateway connection through the complete download
   and verification window instead of failing after two minutes.
 
