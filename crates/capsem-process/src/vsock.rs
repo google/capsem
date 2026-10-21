@@ -79,6 +79,7 @@ pub(crate) struct VsockOptions {
     pub(crate) ready: std::fs::File,
     pub(crate) db: Arc<capsem_logger::DbWriter>,
     pub(crate) pty_log: Option<Arc<capsem_core::pty_log::PtyLog>>,
+    pub(crate) serial_log: capsem_foundation::telemetry::SharedLogWriter,
     pub(crate) shutdown: Arc<tokio::sync::Mutex<crate::Shutdown>>,
 }
 
@@ -104,6 +105,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
         mut ready,
         db,
         pty_log,
+        serial_log,
         shutdown,
         ..
     } = options;
@@ -185,14 +187,8 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
 
     // 1. Stable Terminal Bridge (Read + Write)
     let term_out = Arc::clone(&terminal_output);
-    let serial_log_path = session_dir.join("serial.log");
     let pty_log_out = pty_log.clone();
-    let (serial_log_tx, serial_log_handle) = spawn_serial_log_writer(move || {
-        std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(serial_log_path)
-    });
+    let (serial_log_tx, serial_log_handle) = spawn_serial_log_writer(move || Ok(serial_log));
 
     tokio::spawn(async move {
         let mut current_conn = terminal_rekey_rx.recv().await;

@@ -58,6 +58,7 @@ struct PreparedOwnerResources {
     launched: std::fs::File,
     ready: std::fs::File,
     pty_log: Option<Arc<capsem_core::pty_log::PtyLog>>,
+    serial_log: capsem_foundation::telemetry::SharedLogWriter,
     aggregator: capsem_proto::mcp_aggregator::AggregatorClient,
     mcp_servers: Vec<capsem_proto::mcp_contracts::McpServerDef>,
     builtin_bin: Option<PathBuf>,
@@ -359,11 +360,9 @@ fn main() -> Result<()> {
         std::fs::rename(&legacy_machine_identifier, &machine_identifier_path)
             .context("move machine identifier into owner state")?;
     }
-    let serial_log_path = session_dir.join("serial.log");
-    drop(capsem_foundation::unix::fs::open_private_append_no_follow(
-        &serial_log_path,
-    )?);
-    let pty_log = match capsem_core::pty_log::PtyLog::open(&session_dir.join("pty.log")) {
+    let logs = capsem_core::session::prepare_session_logs(&session_dir).context("prepare private session logs")?;
+    let serial_log = logs.open_serial().context("prepare shared console log")?;
+    let pty_log = match logs.open_pty() {
         Ok(log) => Some(Arc::new(log)),
         Err(error) => {
             warn!(%error, "failed to prepare pty.log");
@@ -394,13 +393,14 @@ fn main() -> Result<()> {
             .clone()
             .map(|p| if p.is_absolute() { p } else { session_dir.join(p) }),
         machine_identifier_path: Some(&machine_identifier_path),
-        serial_log_path: Some(&serial_log_path),
+        serial_log_path: None,
         expected_asset_hashes: Some(capsem_assets::asset_manager::ExpectedAssetHashes {
             kernel: args.expected_kernel_hash.clone(),
             initrd: args.expected_initrd_hash.clone(),
             rootfs: args.expected_rootfs_hash.clone(),
         }),
-    })?;
+    })?
+    .with_serial_log(serial_log.clone());
 
     let prepared_seats = private_seats::prepare(private_seats::Seats {
         id: &args.id,
@@ -473,6 +473,7 @@ fn main() -> Result<()> {
         launched,
         ready,
         pty_log,
+        serial_log,
         aggregator,
         mcp_servers,
         builtin_bin,
@@ -601,6 +602,7 @@ async fn run_async_main_loop(
         mut launched,
         ready,
         pty_log,
+        serial_log,
         aggregator: aggregator_client,
         mcp_servers,
         builtin_bin,
@@ -820,6 +822,7 @@ async fn run_async_main_loop(
             ready,
             db: db_for_vsock,
             pty_log,
+            serial_log,
             shutdown: shutdown_for_vsock,
         })
         .await

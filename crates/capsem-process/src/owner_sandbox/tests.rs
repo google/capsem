@@ -16,11 +16,9 @@ fn touch(path: impl AsRef<Path>) -> PathBuf {
 
 fn session_layout(root: &Path) {
     std::fs::create_dir_all(capsem_core::guest_share_dir(root).join("workspace")).unwrap();
-    std::fs::create_dir_all(root.join(capsem_core::session::OWNER_STATE_DIR)).unwrap();
+    capsem_core::session::prepare_session_logs(root).unwrap();
     std::fs::create_dir_all(capsem_core::session::image_share_path(root)).unwrap();
     touch(capsem_core::session::system_overlay_image_path(root));
-    touch(root.join("serial.log"));
-    touch(root.join("pty.log"));
 }
 
 #[test]
@@ -47,9 +45,25 @@ fn owner_policy_grants_only_the_null_device_needed_for_router_stdio() {
 
 #[cfg(target_os = "macos")]
 #[test]
+fn owner_log_rotation_survives_real_confinement() {
+    let (_directory, root) = run_log_sandbox_probe("rotation");
+    assert_eq!(
+        capsem_core::session::read_session_serial_tail(&root, 1024)
+            .unwrap()
+            .unwrap(),
+        b"ccccddddeeee"
+    );
+    assert_eq!(
+        capsem_core::session::read_session_transcript(&root).unwrap().unwrap(),
+        [vec![b'c'; 80], vec![b'd'; 80], b"current marker".to_vec()].concat()
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
 fn owner_cannot_redirect_the_privileged_transcript_reader() {
     let (_directory, root) = run_log_sandbox_probe("redirect");
-    assert!(capsem_core::pty_log::read_output_bytes(&root.join("pty.log")).is_err());
+    assert!(capsem_core::session::read_session_transcript(&root).is_err());
 }
 
 #[cfg(target_os = "macos")]
@@ -58,6 +72,7 @@ fn run_log_sandbox_probe(mode: &str) -> (tempfile::TempDir, PathBuf) {
     let root = directory.path().join("session");
     session_layout(&root);
     touch(root.join("session.db"));
+    touch(root.join("metadata.json"));
     let unrelated = directory.path().join("host-only");
     let fixture = capsem_core::pty_log::PtyLog::open(&unrelated).unwrap();
     fixture.record_output(b"unrelated host fixture");
@@ -97,27 +112,47 @@ fn owner_log_sandbox_child() {
     let root = PathBuf::from(root).canonicalize().unwrap();
     let unrelated = PathBuf::from(std::env::var_os("CAPSEM_OWNER_LOG_UNRELATED").unwrap());
     let mode = std::env::var("CAPSEM_OWNER_LOG_MODE").unwrap();
-    let log = capsem_core::pty_log::PtyLog::open_with_max(&root.join("pty.log"), 100).unwrap();
+    let log_dir = root.join(capsem_core::session::OWNER_STATE_DIR).join("logs");
+    let log = capsem_core::pty_log::PtyLog::open_with_max(&log_dir.join("pty.log"), 100).unwrap();
+    let mut serial = capsem_foundation::telemetry::CappedLogWriter::open(&log_dir.join("serial.log"), 8)
+        .unwrap()
+        .shared();
+    let mut terminal = serial.clone();
     let policy = grant_owner_session_paths(Policy::new(Role::VmOwner), &root).unwrap();
     capsem_foundation::unix::worker_sandbox::confine(&policy).unwrap();
-    for denied in [&unrelated, &root.join("session.db")] {
+    for denied in [&unrelated, &root.join("session.db"), &root.join("metadata.json")] {
         assert_eq!(
             std::fs::read(denied).unwrap_err().kind(),
             std::io::ErrorKind::PermissionDenied
         );
     }
+    assert_eq!(
+        std::fs::write(root.join("ungranted"), b"denied").unwrap_err().kind(),
+        std::io::ErrorKind::PermissionDenied
+    );
     if mode == "redirect" {
         drop(log);
-        std::fs::remove_file(root.join("pty.log")).unwrap();
-        std::os::unix::fs::symlink(unrelated, root.join("pty.log")).unwrap();
+        std::fs::remove_file(log_dir.join("pty.log")).unwrap();
+        std::os::unix::fs::symlink(unrelated, log_dir.join("pty.log")).unwrap();
     } else {
         log.record_output(&[b'a'; 80]);
         log.record_output(&[b'b'; 80]);
         assert!(
-            root.join("pty.log.1").exists(),
+            log_dir.join("pty.log.1").exists(),
             "rotation was denied under owner confinement"
         );
-        assert_eq!(std::fs::metadata(root.join("pty.log")).unwrap().len(), 0);
+        assert_eq!(std::fs::metadata(log_dir.join("pty.log")).unwrap().len(), 0);
+        log.record_output(&[b'c'; 80]);
+        log.record_output(&[b'd'; 80]);
+        log.record_output(b"current marker");
+        use std::io::Write;
+        serial.write_all(b"aaaa").unwrap();
+        terminal.write_all(b"bbbb").unwrap();
+        serial.write_all(b"cccc").unwrap();
+        terminal.write_all(b"dddd").unwrap();
+        serial.write_all(b"eeee").unwrap();
+        assert_eq!(std::fs::read(log_dir.join("serial.1.log")).unwrap(), b"ccccdddd");
+        assert_eq!(std::fs::read(log_dir.join("serial.log")).unwrap(), b"eeee");
     }
 }
 

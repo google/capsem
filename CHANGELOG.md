@@ -61,6 +61,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Rotate console and terminal logs inside the confined session owner's storage,
+  using one capped console writer for hypervisor and terminal output.
+
 - Support bundles include bounded console output from private session storage
   and report truncation across both retained log generations.
 

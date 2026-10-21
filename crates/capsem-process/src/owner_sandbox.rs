@@ -33,8 +33,6 @@ fn grant_owner_session_paths(
             session_dir.join(capsem_core::session::OWNER_STATE_DIR),
             Access::ReadWrite,
         ),
-        (session_dir.join("serial.log"), Access::ReadWrite),
-        (session_dir.join("pty.log"), Access::ReadWrite),
     ] {
         policy = grant_owner_path(policy, &path, access)?;
     }
