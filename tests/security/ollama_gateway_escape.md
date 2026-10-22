@@ -64,3 +64,21 @@ credential redemption for Ollama endpoints. The installed 0.7.1 reproduction
 above predates those fixes. The isolated patched gateway regression covers the
 browser chain; the final combined branch still needs installed-package
 qualification, including the separate Linux KVM cross-VM vsock probe.
+
+## Development WebView origin collision
+
+While qualifying Tauri's replacement for `/token`, another local worktree was
+already listening on `127.0.0.1:5173`. Before the final fix, Astro bound
+`[::1]:5173`; when asked to bind IPv4 explicitly, it silently moved to
+`127.0.0.1:5174`. Tauri still targeted `http://localhost:5173`, so the
+configured development origin could point at a different local server. The
+Tauri main window has the `get_gateway_token` IPC command. This establishes a
+wrong-page loading risk in development mode; we did not execute a token read
+through the other worktree's page.
+
+The patched Tauri URL and Astro bind both use `127.0.0.1:5173`, and Vite has
+`strictPort: true`. With that port occupied, the same Astro command now exits
+with `Port 5173 is already in use` instead of moving to 5174. With a free
+test port, Astro started at the requested address and stayed in the foreground
+until the bounded test ended. The Citadel dev-origin guard checks the config
+relationship and rejects address, port, and strict-port mutations.

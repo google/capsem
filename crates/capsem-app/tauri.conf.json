@@ -5,7 +5,7 @@
   "identifier": "com.capsem.capsem",
   "build": {
     "beforeDevCommand": "pnpm --dir ../../web/app dev --ignore-lock",
-    "devUrl": "http://localhost:5173",
+    "devUrl": "http://127.0.0.1:5173",
     "beforeBuildCommand": "",
     "frontendDist": "../../web/app/dist"
   },

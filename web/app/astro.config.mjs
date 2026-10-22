@@ -5,9 +5,10 @@ import releaseNotes from './plugins/vite-plugin-release-notes';
 
 export default defineConfig({
   output: 'static',
-  server: { port: 5173 },
+  server: { host: '127.0.0.1', port: 5173 },
   integrations: [svelte()],
   vite: {
+    server: { strictPort: true },
     envPrefix: ['VITE_', 'TAURI_'],
     define: {
       __BUILD_TS__: JSON.stringify(new Date().toISOString().replace('T', ' ').slice(0, 19)),

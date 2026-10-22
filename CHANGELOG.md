@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Bind the Tauri development UI to one exact loopback address and fail if its
+  port is occupied, so a different local page cannot become the token-capable
+  WebView when Astro would otherwise choose another port.
+
 - Run Debian maintainer-script changes to `~/.capsem` as the selected user,
   including logs, manifests, binary links, and stale-file cleanup. Reject
   unattended installs without an explicit user instead of choosing UID 1000;
