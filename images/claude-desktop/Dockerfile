@@ -4,24 +4,18 @@
 # install-gui.sh refuses any other architecture, and the publication workflow
 # does not build this image for amd64.
 ARG BASE
-# This is a required local BuildKit context, not a registry image/tag.
-# hadolint ignore=DL3006
-FROM gui AS gui-files
 FROM ${BASE}
 ARG TARGETARCH
 USER root
-COPY --from=gui-files install-xpra.sh /tmp/install-xpra.sh
-RUN sh /tmp/install-xpra.sh "$TARGETARCH" && rm /tmp/install-xpra.sh
 COPY install-gui.sh /tmp/install-gui.sh
 RUN sh /tmp/install-gui.sh "$TARGETARCH" && rm /tmp/install-gui.sh
-COPY --from=gui-files --chmod=0555 entrypoint.sh /usr/local/bin/capsem-claude-desktop
 USER capsem
 ENV CAPSEM_GUI_APP=claude-desktop
 
 # The GUI surface. Xpra binds 127.0.0.1:14500 inside the container -- 14500 is
 # Xpra's own default port and the one the v0.7 spike proved -- and the runtime
 # reaches it only through the gateway's authenticated preview route.
-# Claude Desktop is Electron: its main, GPU and renderer processes plus Xvfb
+# Claude Desktop is Electron: its main, GPU and renderer processes plus Xdummy
 # and Xpra take ~700 MiB at the sign-in screen, and 2 GiB leaves room for a
 # working session.
 #
@@ -38,4 +32,4 @@ LABEL org.capsem.contract="1" \
 # Claude's application state, its login keyring and the keyring's unlock
 # secret live in the home directory; a named session keeps them.
 VOLUME /home/capsem
-CMD ["/usr/local/bin/capsem-claude-desktop"]
+CMD ["/usr/local/bin/capsem-gui"]

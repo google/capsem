@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Share Xpra, Xdummy and graphical session setup through the existing Capsem
+  base image; graphical app images inherit one runtime and launcher.
+
 - Keep graphical cursor size and click hotspots correct on high-DPI displays.
 
 - Keep concurrent gateway requests in their own tracing contexts across async waits.

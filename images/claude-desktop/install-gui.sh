@@ -1,5 +1,5 @@
 #!/bin/sh
-# Claude Desktop, after the shared images/gui/install-xpra.sh surface.
+# Claude Desktop; Xpra and the graphical session are inherited from images/base.
 #
 # The pins are the ones the v0.7 GUI spike proved in an Apple VZ guest: Claude
 # Desktop 1.22209.0. Every vendor .deb

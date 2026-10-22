@@ -1,5 +1,5 @@
 #!/bin/sh
-# Shared server-only Xpra surface. Vendor packages are immutable SHA-256 pins;
+# Base-owned server-only Xpra surface. Vendor packages are immutable SHA-256 pins;
 # Debian dependencies resolve through the base image's dated snapshot.
 set -eu
 export DEBIAN_FRONTEND=noninteractive

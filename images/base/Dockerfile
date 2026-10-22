@@ -1,8 +1,7 @@
-# The Capsem base image. Every official image (dev, codex-cli, claude-code,
-# agy) builds FROM this one by digest, so its layers are stored and pulled
-# once. It carries what every agent session needs and nothing agent-specific:
-# Debian, CA trust, git, Python with uv, Node, Ollama on CPU, and the
-# unprivileged user agents run as.
+# The Capsem base image. Every official terminal and graphical app builds
+# FROM this one by digest, so its layers are stored and pulled once. Common
+# tools, Xpra/Xdummy, keyring and graphical launch policy live here; descendants
+# install and select their application, without another graphical base.
 FROM debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
 
 ARG TARGETARCH
@@ -26,6 +25,10 @@ RUN set -eux; \
 
 COPY install-tools.sh /tmp/install-tools.sh
 RUN sh /tmp/install-tools.sh "$TARGETARCH" && rm /tmp/install-tools.sh
+
+COPY install-xpra.sh /tmp/install-xpra.sh
+RUN sh /tmp/install-xpra.sh "$TARGETARCH" && rm /tmp/install-xpra.sh
+COPY --chmod=0555 gui-entrypoint.sh /usr/local/bin/capsem-gui
 
 # Agents refuse to skip their permission prompts as root, and nothing in a
 # session needs it. Container root still owns the workspace, which is mounted

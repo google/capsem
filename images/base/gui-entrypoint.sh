@@ -1,21 +1,20 @@
 #!/bin/sh
-# Run the image's Electron application in an Xpra session, and exit when
-# it exits.
+# Base-owned launcher for the image's selected Electron application.
 #
-# Order matters, because Claude reads each prerequisite once at startup:
-#   1. a private D-Bus session bus, shared by the keyring and Claude;
-#   2. the login keyring, unlocked before Claude asks the Secret Service for
-#      its stored login (otherwise Claude warns that logins will not persist);
+# Order matters, because the application reads each prerequisite at startup:
+#   1. a private D-Bus session bus, shared by the keyring and application;
+#   2. the login keyring, unlocked before the app asks the Secret Service for
+#      its stored login;
 #   3. the runtime's CA bundle, imported into the user's NSS database, which
 #      Chromium trusts instead of the system bundle;
-#   4. Xpra, which starts its own X display and then Claude in it.
-# The container exits with Claude's exit status.
+#   4. Xpra, which starts its own X display and then the application in it.
+# The container exits with the application's exit status.
 #
 # Chromium keeps its sandbox. The image runs with no_new_privs, so the setuid
 # chrome-sandbox helper is inert and Chromium uses its user-namespace sandbox
 # instead. That needs clone() with CLONE_NEWUSER|CLONE_NEWPID|CLONE_NEWNET and
 # unshare(), which the runtime's default syscall filter refuses; the Xpra
-# surface's filter must allow both, or Claude aborts at startup.
+# surface's filter must allow both, or Chromium aborts at startup.
 # Never add --no-sandbox here.
 set -eu
 
@@ -28,15 +27,15 @@ install -d -m 0700 "$XDG_RUNTIME_DIR"
 status="$XDG_RUNTIME_DIR/application.status"
 application="${CAPSEM_GUI_APP:?the image must select its graphical application}"
 
-# Xpra's child: run Claude and record how it ended, because Xpra exits 0 when
+# Xpra's child: run the app and record how it ended, because Xpra exits 0 when
 # its last child exits, whatever that child's status was. The bus started
-# before the display existed, so the services it activates for Claude (the
+# before the display existed, so the services it activates for the app (the
 # GTK file-chooser portal) learn the display here, or they cannot open it.
 if [ "${1:-}" = --child ]; then
     dbus-update-activation-environment DISPLAY XAUTHORITY
     rc=0
     # Chromium picks its secret store from the desktop name, and Xpra's is
-    # unknown to it, so it would fall back to a plaintext store and Claude's
+    # unknown to it, so it would fall back to a plaintext store and the app's
     # login would not persist. Name the Secret Service explicitly.
     "$application" --password-store=gnome-libsecret || rc=$?
     echo "$rc" >"$status"
@@ -105,7 +104,7 @@ fi
 # forwarded but the window, input and clipboard. Xpra uses the D-Bus session
 # above rather than launching its own, and it does not pass the session's
 # address on to its children by itself, so it is handed over explicitly:
-# without it Claude cannot reach the unlocked keyring.
+# without it the application cannot reach the unlocked keyring.
 rm -f "$status"
 xpra start :100 \
     --xvfb=Xdummy \
@@ -134,5 +133,5 @@ xpra start :100 \
     --exit-with-children=yes \
     --terminate-children=yes
 
-# Claude's status, or failure when Xpra ended without Claude having exited.
+# Application status, or failure when Xpra ended without the app having exited.
 exit "$(cat "$status" 2>/dev/null || echo 1)"

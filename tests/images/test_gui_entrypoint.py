@@ -22,7 +22,7 @@ def test_graphical_child_reports_the_application_result(tmp_path, exit_status):
     app.chmod(0o755)
     runtime = tmp_path / "runtime"
     result = subprocess.run(
-        ["sh", str(ROOT / "images/gui/entrypoint.sh"), "--child"],
+        ["sh", str(ROOT / "images/base/gui-entrypoint.sh"), "--child"],
         env={**os.environ, "PATH": f"{binary}:/usr/bin:/bin", "XDG_RUNTIME_DIR": str(runtime),
              "CAPSEM_GUI_APP": str(app)},
         capture_output=True,
