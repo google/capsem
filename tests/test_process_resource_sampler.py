@@ -9,6 +9,26 @@ def snapshot(*rows: ProcessUsage) -> TreeSnapshot:
     return TreeSnapshot({(row.pid, row.started_at): row for row in rows})
 
 
+def test_gateway_and_tray_are_attributed_separately_from_the_total() -> None:
+    sampler = ProcessTreeSampler(None)
+    sampler.observe(
+        snapshot(
+            usage(1, "capsem-gateway", cpu="1", rss=100, pss=80, uss=60, fds=5),
+            usage(2, "capsem-tray", cpu="2", rss=200, pss=150, uss=120, fds=6),
+        )
+    )
+    sampler.observe(
+        snapshot(
+            usage(1, "capsem-gateway", cpu="1.4", rss=120, pss=90, uss=70, fds=5),
+            usage(2, "capsem-tray", cpu="2.1", rss=200, pss=150, uss=120, fds=6),
+        )
+    )
+    metrics = sampler.metrics()
+    assert metrics["resources.capsem_gateway.cpu_s"]["samples"] == [0.4]
+    assert metrics["resources.capsem_tray.cpu_s"]["samples"] == [0.1]
+    assert metrics["resources.capsem_gateway.peak_rss_bytes"]["samples"] == [120]
+
+
 def usage(
     pid: int,
     name: str,
@@ -139,12 +159,8 @@ def test_sampler_reports_tree_and_named_process_pressure() -> None:
 
 def test_process_that_exits_keeps_its_last_cpu_sample() -> None:
     sampler = ProcessTreeSampler(None)
-    sampler.observe(
-        snapshot(usage(7, "capsem-proxy", cpu="3", rss=20, pss=15, uss=10, fds=2))
-    )
-    sampler.observe(
-        snapshot(usage(7, "capsem-proxy", cpu="4", rss=30, pss=25, uss=20, fds=3))
-    )
+    sampler.observe(snapshot(usage(7, "capsem-proxy", cpu="3", rss=20, pss=15, uss=10, fds=2)))
+    sampler.observe(snapshot(usage(7, "capsem-proxy", cpu="4", rss=30, pss=25, uss=20, fds=3)))
     sampler.observe(snapshot())
 
     assert sampler.metrics()["resources.capsem_proxy.cpu_s"]["samples"] == [1.0]
@@ -152,12 +168,8 @@ def test_process_that_exits_keeps_its_last_cpu_sample() -> None:
 
 def test_sampler_attributes_dedicated_ledger_pressure() -> None:
     sampler = ProcessTreeSampler(None)
-    sampler.observe(
-        snapshot(usage(8, "capsem-ledger", cpu="2", rss=100, pss=80, uss=70, fds=5))
-    )
-    sampler.observe(
-        snapshot(usage(8, "capsem-ledger", cpu="3", rss=250, pss=220, uss=200, fds=7))
-    )
+    sampler.observe(snapshot(usage(8, "capsem-ledger", cpu="2", rss=100, pss=80, uss=70, fds=5)))
+    sampler.observe(snapshot(usage(8, "capsem-ledger", cpu="3", rss=250, pss=220, uss=200, fds=7)))
 
     metrics = sampler.metrics()
     assert metrics["resources.capsem_ledger.cpu_s"]["samples"] == [1.0]

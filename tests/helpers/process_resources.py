@@ -18,11 +18,13 @@ SAMPLE_INTERVAL_SECONDS = 0.05
 TRACKED_PROCESS_NAMES = frozenset(
     {
         "capsem_network",
+        "capsem_gateway",
         "capsem_ledger",
         "capsem_process",
         "capsem_proxy",
         "capsem_router",
         "capsem_service",
+        "capsem_tray",
     }
 )
 
@@ -50,9 +52,7 @@ class TreeSnapshot:
 def _linux_rss_breakdown(pid: int) -> tuple[int, int, int] | None:
     """Return Linux RSS categories without walking every memory mapping."""
     try:
-        status = (Path(psutil.PROCFS_PATH) / str(pid) / "status").read_text(
-            encoding="utf-8"
-        )
+        status = (Path(psutil.PROCFS_PATH) / str(pid) / "status").read_text(encoding="utf-8")
     except (AttributeError, OSError):
         return None
     values = {}
