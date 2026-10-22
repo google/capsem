@@ -585,8 +585,7 @@ fn credential_provider_for_request(domain: &str, ai_provider: Option<ProviderKin
         Some(ProviderKind::Anthropic) => Some(CredentialProvider::Anthropic),
         Some(ProviderKind::Google) => Some(CredentialProvider::Google),
         Some(ProviderKind::OpenAi) => Some(CredentialProvider::OpenAi),
-        Some(ProviderKind::Ollama) => Some(CredentialProvider::OpenAi),
-        Some(ProviderKind::Unknown) => None,
+        Some(ProviderKind::Ollama | ProviderKind::Unknown) => None,
         None if host_is_or_under(domain, "anthropic.com") || host_is_or_under(domain, "claude.com") => {
             Some(CredentialProvider::Anthropic)
         }

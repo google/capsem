@@ -379,6 +379,41 @@ fn brokered_reference_does_not_leak_secret_to_unbound_domain() {
 }
 
 #[test]
+fn ollama_destination_cannot_redeem_openai_reference() {
+    let dir = tempfile::tempdir().unwrap();
+    let capsem_home = dir.path().join("capsem-home");
+    let test_store = dir.path().join("credential-store.json");
+    let _guard = EnvGuard::install(TEST_ENV_LOCK.blocking_lock(), &capsem_home, dir.path(), &test_store);
+
+    let obs = CredentialObservation {
+        provider: CredentialProvider::OpenAi,
+        raw_value: "sk-openai-secret-do-not-leak".to_string(),
+        source: "http.header.authorization".to_string(),
+        event_type: Some("http.request".to_string()),
+        trace_id: None,
+        context_json: None,
+    };
+    let reference = broker_observed_credential(&obs).unwrap().credential_ref;
+    let mut headers = http::HeaderMap::new();
+    headers.insert(
+        http::header::AUTHORIZATION,
+        http::HeaderValue::from_str(&format!("Bearer {reference}")).unwrap(),
+    );
+
+    let result = substitute_brokered_upstream_credentials("127.0.0.1", Some(ProviderKind::Ollama), &mut headers, None);
+    assert!(
+        result.is_err(),
+        "an Ollama endpoint must not redeem an OpenAI reference"
+    );
+    let auth = headers.get(http::header::AUTHORIZATION).unwrap().to_str().unwrap();
+    assert!(!auth.contains("sk-openai-secret-do-not-leak"));
+
+    substitute_brokered_upstream_credentials("api.openai.com", Some(ProviderKind::OpenAi), &mut headers, None).unwrap();
+    let auth = headers.get(http::header::AUTHORIZATION).unwrap().to_str().unwrap();
+    assert_eq!(auth, "Bearer sk-openai-secret-do-not-leak");
+}
+
+#[test]
 fn brokered_reference_substitutes_for_matching_provider_domain() {
     let dir = tempfile::tempdir().unwrap();
     let capsem_home = dir.path().join("capsem-home");

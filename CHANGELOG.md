@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Refuse to redeem stored OpenAI credentials for Ollama endpoints, including
+  guest-supplied broker references in proxy requests.
+
 - Refresh the Rust and Python trust stores after the emSign intermediate-key
   compromise, and update WebSocket TLS dependencies to the patched root cohort.
 
