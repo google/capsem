@@ -44,6 +44,7 @@ class XpraWindow {
   screen_resized() {}
   move_resize(x, y, w, h) { Object.assign(this, { x, y, w, h }); }
   updateCSSGeometry() { this.css += 1; }
+  _set_decorated(decorated) { this.decorated = decorated; }
   geometry_cb(win) { this.sent.push({ x: win.x, y: win.y, w: win.w, h: win.h }); }
 }
 `;
@@ -56,6 +57,18 @@ function load(globals: Record<string, unknown> = {}) {
 }
 
 describe('capsem-surface.js', () => {
+  it('uses Xpra undecorated windows for embedded apps while preserving desktop mode', () => {
+    const run = load();
+    run(`const client = new XpraClient(800, 600);
+      const win = new XpraWindow(client, {x:0,y:0,w:800,h:600});
+      win._set_decorated(true);`);
+    expect(run('win.decorated')).toBe(false);
+    // Later metadata changes must not restore redundant window controls.
+    run('win._set_decorated(true);');
+    expect(run('win.decorated')).toBe(false);
+    run(`client.server_is_desktop = true; win._set_decorated(true);`);
+    expect(run('win.decorated')).toBe(true);
+  });
   it('requests a fresh parent bootstrap from the embedded recovery control without redirecting', () => {
     const created: Array<{textContent?: string; onclick?: () => void; append: (...nodes: unknown[]) => void}> = [];
     const messages: unknown[] = [];

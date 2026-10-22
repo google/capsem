@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Remove redundant graphical window title bars and controls using Xpra's
+  undecorated-window geometry, preserving high-DPI pointer alignment.
+
 - Open fresh browser requests from the active desktop session in the local
   system browser automatically, without a second toolbar click or replaying old sign-in links.
 

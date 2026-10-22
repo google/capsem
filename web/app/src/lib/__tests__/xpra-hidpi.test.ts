@@ -55,6 +55,30 @@ function load(ratio: number) {
 }
 
 describe('graphical HiDPI integration', () => {
+  it('removes decorations through the real Xpra offset lifecycle and keeps pointer coordinates aligned', () => {
+    const {run,context} = load(2);
+    const header = {style: {display: 'block'}};
+    context.document.getElementById = () => header;
+    context.jQuery = () => ({
+      css: (name: string) => name === 'height' ? '24' : '0',
+      removeClass() { return this; }, addClass() { return this; },
+      scrollLeft: () => 0, scrollTop: () => 0,
+    });
+    run(`client._make_hello(); client.debug_categories = [];
+      const win = Object.create(XpraWindow.prototype);
+      Object.assign(win, {client, wid:1, x:0, y:24, w:800, h:600, decorated:true,
+        metadata:{}, override_redirect:false, tray:false, div:{},
+        ensure_visible(){}, geometry_cb(){}, updateCSSGeometry(){}});
+      win._set_decorated(true);
+      CapsemSurface.fit(win);
+      client._keyb_get_modifiers = ()=>[];
+      client.on_mousemove({clientX:90,clientY:60,preventDefault(){}}, win);`);
+    expect(header.style.display).toBe('none');
+    expect(run('win.topoffset')).toBe(0);
+    expect(run('win.get_internal_geometry()')).toMatchObject({x:0,y:0,w:1600,h:1200});
+    expect(run('client.sent.at(-1)')).toEqual(['pointer-position',1,[180,120,180,120],[],[]]);
+  });
+
   it('uses physical backing pixels, negotiated DPI and the real upstream pointer transform', () => {
     const {run,viewport} = load(2);
     expect(run('client.container.clientWidth')).toBe(1600);

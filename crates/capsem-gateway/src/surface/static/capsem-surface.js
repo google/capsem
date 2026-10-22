@@ -227,6 +227,13 @@
     return !win.override_redirect && !win.tray && !win.client.server_is_desktop && !win.client.server_is_shadow;
   }
 
+  // Capsem owns the app's tab and lifecycle controls. Use Xpra's undecorated
+  // window path so it also recalculates the header offsets and pointer geometry.
+  const setDecorated = XpraWindow.prototype._set_decorated;
+  XpraWindow.prototype._set_decorated = function (decorated) {
+    return setDecorated.call(this, isApplicationWindow(this) ? false : decorated);
+  };
+
   /** The application's own top-level window, as opposed to its dialogs. */
   function isMainWindow(win) {
     const metadata = win.metadata || {};
