@@ -52,25 +52,6 @@ fn grant_owner_null(
     }
 }
 
-fn grant_owner_binaries(
-    mut policy: capsem_foundation::unix::worker_sandbox::Policy,
-) -> Result<capsem_foundation::unix::worker_sandbox::Policy> {
-    use capsem_foundation::unix::worker_sandbox::Access;
-
-    let executable = std::env::current_exe().context("locate VM-owner executable")?;
-    // Security.framework opens the immutable executable to validate its code
-    // identity. Reading that one image grants neither its directory nor exec.
-    #[cfg(target_os = "macos")]
-    {
-        policy = grant_owner_path(policy, &executable, Access::ReadOnly)?;
-    }
-    let router = executable.with_file_name("capsem-router");
-    if router.exists() {
-        policy = grant_owner_path(policy, &router, Access::Executable)?;
-    }
-    Ok(policy)
-}
-
 #[cfg(target_os = "linux")]
 pub(super) fn confine_owner(args: &Args, session_dir: &Path) -> Result<()> {
     use capsem_foundation::unix::worker_sandbox::{Access, Policy, Role};
@@ -89,7 +70,11 @@ pub(super) fn confine_owner(args: &Args, session_dir: &Path) -> Result<()> {
         }
     }
     policy = grant_owner_null(policy)?;
-    policy = grant_owner_binaries(policy)?;
+    let executable = std::env::current_exe().context("locate VM-owner executable")?;
+    let router = executable.with_file_name("capsem-router");
+    if router.exists() {
+        policy = grant_owner_path(policy, &router, Access::Executable)?;
+    }
     for path in ["/lib", "/lib64", "/usr/lib", "/usr/lib64"] {
         let path = Path::new(path);
         if path.exists() {
@@ -121,7 +106,12 @@ pub(super) fn confine_owner(args: &Args, session_dir: &Path) -> Result<()> {
     for path in args.kernel.iter().chain(args.initrd.iter()) {
         policy = grant_owner_path(policy, path, Access::ReadOnly)?;
     }
-    policy = grant_owner_binaries(policy)?;
+    let router = std::env::current_exe()
+        .context("locate VM-owner executable")?
+        .with_file_name("capsem-router");
+    if router.exists() {
+        policy = grant_owner_path(policy, &router, Access::Executable)?;
+    }
     for path in [
         "/System/Library",
         "/usr/lib",

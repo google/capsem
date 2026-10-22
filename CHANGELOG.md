@@ -17,9 +17,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Allow macOS VM owners to validate their own signed executable while keeping
-  sibling files outside the sandbox grant.
-
 - Preserve both terminal screens, saved cursors, modes, pending control input,
   title and notification identity across suspend and resume.
 
