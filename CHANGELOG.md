@@ -172,6 +172,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Concurrent asset downloads now use separate private temporary files, so one
+  hydrator cannot delete another's partially downloaded image.
+
 - Reattaching a running VM to its existing private network now keeps the live
   cable and ready membership instead of attempting a second owner handshake.
 
