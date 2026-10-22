@@ -51,6 +51,20 @@ These test the full boot path: config validation, device setup, serial output, v
 - Tests capsem-core, capsem-logger, capsem-proto (KVM backend compiles + tests)
 - Verifies /dev/kvm is available (fails CI if KVM tests were silently skipped)
 
+## Apple VZ restore errors on a locked host
+
+VZErrorDomain12 / permission denied does not establish a missing owner
+filesystem grant. Inspect the Apple virtualization worker's logs as well as
+the Capsem owner's log. On a locked console, the worker has returned
+SecKeyCreateDecryptedDataWithParameters / OSStatus-25308
+(`errSecInteractionNotAllowed`) while restoring saved memory. Ask for a normal
+Mac unlock and repeat the native proof before changing confinement. Incidental
+owner denials during VZ error localization are consequences, not the cause.
+
+A failed restore must preserve the checkpoint and report failure. Verify the
+original foreground process with key-driven interaction after resume: a 200
+response or a reused guest PID can conceal a cold boot.
+
 ## KVM warm-checkpoint device state
 
 A warm checkpoint must preserve host device-model state as well as guest RAM,

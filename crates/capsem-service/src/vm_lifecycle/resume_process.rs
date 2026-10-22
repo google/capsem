@@ -7,36 +7,29 @@ pub(crate) fn configure_resume_storage(command: &mut tokio::process::Command, en
     Ok(())
 }
 
-pub(crate) fn configure_resume_checkpoint(
+pub(crate) fn configure_resume_workload(
     command: &mut tokio::process::Command,
     entry: &PersistentVmEntry,
-    stage_refreshed: bool,
-) -> bool {
-    if stage_refreshed {
-        info!(
-            name = entry.name,
-            "workload controller changed, cold booting instead of restoring its checkpoint"
-        );
-        return false;
+) -> Result<()> {
+    if !entry.suspended {
+        // Only a cold boot may upgrade the staged controller and clear the
+        // previous workload markers. Warm memory still owns those bytes.
+        crate::container_setup::forget_previous_run(&entry.session_dir).map_err(|error| anyhow!(error))?;
+        return Ok(());
     }
-    if entry.suspended {
-        if let Some(ref checkpoint) = entry.checkpoint_path {
-            let full_checkpoint = entry.session_dir.join(checkpoint);
-            let complete = checkpoint_complete_path(&full_checkpoint);
-            if full_checkpoint.exists() && complete.exists() {
-                command.arg("--checkpoint-path").arg(&full_checkpoint);
-                info!(name = entry.name, checkpoint = %full_checkpoint.display(), "warm restore from checkpoint");
-                return true;
-            }
-            tracing::warn!(
-                name = entry.name,
-                checkpoint = %full_checkpoint.display(),
-                complete = %complete.display(),
-                "checkpoint incomplete, cold booting"
-            );
-        }
-    }
-    false
+    let checkpoint = entry
+        .checkpoint_path
+        .as_ref()
+        .context("suspended session has no checkpoint; saved state was preserved")?;
+    let full_checkpoint = entry.session_dir.join(checkpoint);
+    let complete = checkpoint_complete_path(&full_checkpoint);
+    anyhow::ensure!(
+        full_checkpoint.exists() && complete.exists(),
+        "suspended session checkpoint is incomplete; saved state was preserved"
+    );
+    command.arg("--checkpoint-path").arg(&full_checkpoint);
+    info!(name = entry.name, checkpoint = %full_checkpoint.display(), "warm restore from checkpoint");
+    Ok(())
 }
 
 impl ServiceState {
@@ -149,18 +142,7 @@ impl ServiceState {
             }
         }
 
-        // Refresh a legacy staged controller before deciding whether its old
-        // VM memory is safe to restore. A changed ownership map needs one cold
-        // boot; current stages keep the warm path.
-        let stage_refreshed = crate::container_setup::refresh_staged_workspace_owner(&entry.session_dir)
-            .map_err(|error| anyhow!(error))?;
-        let warm = configure_resume_checkpoint(&mut child_cmd, &entry, stage_refreshed);
-        // A cold boot relaunches the workload; the last boot's markers would
-        // report it running (or exited) before this boot's launcher starts. A
-        // warm restore resumes that same workload, so its markers stay true.
-        if !warm {
-            crate::container_setup::forget_previous_run(&entry.session_dir).map_err(|e| anyhow!(e))?;
-        }
+        configure_resume_workload(&mut child_cmd, &entry)?;
 
         // Clear inherited env to prevent API key/token leakage, then
         // re-add only the minimal set needed for the process to function.

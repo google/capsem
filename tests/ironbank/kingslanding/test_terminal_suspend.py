@@ -1,11 +1,13 @@
 """A suspended image terminal resumes its actual foreground application."""
 
+import hashlib
 import shlex
 import time
 
 import msgpack
 import pytest
 from helpers.image_session import image_session, workload_exec
+from helpers.service import vm_session_dir
 
 from tests.ironbank.kingslanding.test_run import service
 from tests.ironbank.kingslanding.test_terminal_state import next_state, terminal_summary
@@ -29,6 +31,42 @@ def display(socket, marker):
 
 def send(socket, data):
     socket.send(msgpack.packb({"stdin": data}, use_bin_type=True))
+
+
+def test_failed_restore_preserves_suspended_state_without_cold_boot(service, tmp_path):
+    client = service.client()
+    with image_session(service, tmp_path, "restore-failure") as vm_id:
+        assert client.post(f"/vms/{vm_id}/pause", {}, timeout=60) == {"success": True}
+        assert client.get(f"/vms/{vm_id}/status")["status"] == "Suspended"
+        session = vm_session_dir(service.tmp_dir, client, vm_id)
+        checkpoint = session / "owner/checkpoint.vzsave"
+        complete = checkpoint.with_suffix(".vzsave.complete")
+        terminal_checkpoint = session / "owner/terminal/checkpoint.msgpack"
+        completed = complete.read_bytes()
+        terminal_state = terminal_checkpoint.read_bytes()
+        original_size = checkpoint.stat().st_size
+        # A real native restore must reject this damaged header. A cold boot
+        # would hide the error and replace the suspended foreground process.
+        damaged_header = b"CAPSEM: intentionally damaged VM checkpoint\n"
+        with checkpoint.open("r+b") as stream:
+            stream.write(damaged_header)
+        with checkpoint.open("rb") as stream:
+            damaged_digest = hashlib.file_digest(stream, "sha256").digest()
+
+        status, error = client.call_json("POST", f"/vms/{vm_id}/resume", {}, timeout=90)
+        assert status == 500, (status, error)
+        assert "resume failed" in error["error"], error
+        assert client.get(f"/vms/{vm_id}/status")["status"] == "Suspended"
+        listed = next(row for row in client.get("/vms/list")["sandboxes"] if row["id"] == vm_id)
+        assert listed["status"] == "Suspended", listed
+        assert checkpoint.stat().st_size == original_size
+        with checkpoint.open("rb") as stream:
+            assert stream.read(len(damaged_header)) == damaged_header
+        with checkpoint.open("rb") as stream:
+            assert hashlib.file_digest(stream, "sha256").digest() == damaged_digest
+        assert complete.read_bytes() == completed
+        assert terminal_checkpoint.read_bytes() == terminal_state
+        assert not list(checkpoint.parent.glob("*.failed-restore-*"))
 
 
 def test_suspend_restores_both_screens_parser_modes_and_effect_identity(service, tmp_path):

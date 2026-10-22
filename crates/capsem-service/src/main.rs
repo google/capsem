@@ -587,67 +587,6 @@ impl ServiceState {
         }
     }
 
-    fn has_existing_resume_checkpoint(&self, id: &str) -> bool {
-        find_persistent_entry_by_route_id(self, id).is_some_and(|entry| {
-            entry.suspended
-                && entry.checkpoint_path.as_ref().is_some_and(|cp| {
-                    let checkpoint = entry.session_dir.join(cp);
-                    checkpoint.exists() && checkpoint_complete_path(&checkpoint).exists()
-                })
-        })
-    }
-
-    fn archive_failed_restore_checkpoint(&self, id: &str) -> Option<PathBuf> {
-        let entry = find_persistent_entry_by_route_id(self, id)?;
-        let name = entry.name;
-        let checkpoint_name = entry.checkpoint_path?;
-        let session_dir = entry.session_dir;
-
-        let checkpoint_path = session_dir.join(&checkpoint_name);
-        if !checkpoint_path.exists() {
-            return None;
-        }
-        let complete_path = checkpoint_complete_path(&checkpoint_path);
-
-        let epoch_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis();
-        let archived_path = session_dir.join(format!("{checkpoint_name}.failed-restore-{epoch_ms}"));
-
-        match std::fs::rename(&checkpoint_path, &archived_path) {
-            Ok(()) => {
-                if complete_path.exists() {
-                    let archived_complete_path = checkpoint_complete_path(&archived_path);
-                    if let Err(e) = std::fs::rename(&complete_path, &archived_complete_path) {
-                        warn!(
-                            name,
-                            complete = %complete_path.display(),
-                            archived = %archived_complete_path.display(),
-                            "failed to archive restore checkpoint completion marker: {e}"
-                        );
-                    }
-                }
-                warn!(
-                    name,
-                    checkpoint = %checkpoint_path.display(),
-                    archived = %archived_path.display(),
-                    "archived failed restore checkpoint before cold fallback"
-                );
-                Some(archived_path)
-            }
-            Err(e) => {
-                error!(
-                    name,
-                    checkpoint = %checkpoint_path.display(),
-                    archived = %archived_path.display(),
-                    "failed to archive restore checkpoint: {e}"
-                );
-                None
-            }
-        }
-    }
-
     fn clear_resume_checkpoint(&self, id: &str) {
         let mut registry = self.persistent_registry.lock().unwrap();
         let key = registry

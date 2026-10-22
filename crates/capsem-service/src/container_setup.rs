@@ -25,9 +25,7 @@ pub(crate) mod images;
 mod relaunch;
 #[cfg(test)]
 pub(crate) use relaunch::restore;
-pub(crate) use relaunch::{
-    carry_launch_record, drop_carried_image, forget_previous_run, refresh_staged_workspace_owner, restore_ready,
-};
+pub(crate) use relaunch::{carry_launch_record, drop_carried_image, forget_previous_run, restore_ready};
 
 const CREATE_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(110);
 

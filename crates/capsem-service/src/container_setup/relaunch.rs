@@ -64,8 +64,8 @@ pub(crate) fn forget_previous_run(session_dir: &std::path::Path) -> Result<(), S
     Ok(())
 }
 
-/// Upgrade a staged workload before a new VM owner starts it. A changed
-/// launcher contract also tells resume to reject the previous VM checkpoint.
+/// Upgrade a staged workload before a cold boot. A warm restore retains its
+/// controller bytes because the suspended workload is still using them.
 pub(crate) fn refresh_staged_workspace_owner(session_dir: &std::path::Path) -> Result<bool, String> {
     capsem_core::container::workspace_owner::refresh(session_dir)
         .map_err(|error| format!("refresh the workload stage of {}: {error:#}", session_dir.display()))

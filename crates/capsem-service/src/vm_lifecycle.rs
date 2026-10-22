@@ -10,7 +10,7 @@ pub(crate) use run::handle_run;
 mod session_dirs;
 pub(crate) use resume::handle_resume;
 #[cfg(test)]
-pub(crate) use resume::stop_failed_restore_process_under_lock;
+pub(crate) use resume::stop_failed_resume_process_under_lock;
 mod transcript;
 pub(crate) use session_dirs::settle_persistent_session_dir;
 use session_dirs::{claim_persistent_name, remove_purged_session_dir};

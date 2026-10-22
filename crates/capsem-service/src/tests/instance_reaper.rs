@@ -587,7 +587,7 @@ async fn stale_reaper_cannot_remove_replacement_with_the_same_pid() {
 }
 
 #[tokio::test]
-async fn failed_restore_teardown_clears_running_instance_before_cold_fallback() {
+async fn failed_resume_teardown_clears_running_instance() {
     let (state, _dir) = make_test_state_with_tempdir();
     let vm_id = new_persistent_vm_id();
     let session_dir = state.run_dir.join("persistent").join(&vm_id);
@@ -629,14 +629,14 @@ async fn failed_restore_teardown_clears_running_instance_before_cold_fallback() 
         session_dir,
         retirement,
     );
-    stop_failed_restore_process_under_lock(&state, &vm_id).await.unwrap();
+    stop_failed_resume_process_under_lock(&state, &vm_id).await.unwrap();
     assert!(state.retirements.wait_exit(&vm_id, generation).await.unwrap());
     drop(guard);
     reaper.await.unwrap();
 
     assert!(
         !state.instances.lock().unwrap().contains_key(&vm_id),
-        "failed warm restore must not remain registered before cold fallback"
+        "failed resume must not remain registered as running"
     );
     assert!(!uds_path.exists(), "stale UDS socket should be removed");
     assert!(

@@ -56,7 +56,6 @@ const BLOCKING_HELPERS: &[&str] = &[
     "claim_persistent_name(",
     "forget_persistent_entry(",
     "delete_session_dir(",
-    "archive_failed_restore_checkpoint(",
     "clear_resume_checkpoint(",
     "preserve_failed_session_dir(",
     "persist_spawn_identity(",

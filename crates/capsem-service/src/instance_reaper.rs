@@ -98,9 +98,8 @@ pub(super) fn spawn_exit_reaper(
                 .get(&id)
                 .is_some_and(|instance| Some(instance.pid) != pid || instance.generation != generation)
             {
-                // A cold fallback can replace a failed restore while holding
-                // the exclusive guard. Its registry, DB and sockets are not
-                // owned by this delayed reaper.
+                // A later launch may already own this session. Its registry,
+                // DB and sockets are not owned by this delayed reaper.
                 tracing::debug!(
                     id,
                     ?pid,

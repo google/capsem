@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve suspended sessions and report restore failures instead of silently
+  replacing the running application with a cold boot.
+
 - Preserve both terminal screens, saved cursors, modes, pending control input,
   title and notification identity across suspend and resume.
 
