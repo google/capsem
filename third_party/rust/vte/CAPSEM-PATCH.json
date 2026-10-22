@@ -1,14 +1,14 @@
 {
   "upstream_package_sha256": "a5924018406ce0063cd67f8e008104968b74b563ee1b85dde3ed1f7cb87d3dbd",
-  "reason": "Maintainer-approved optional complete parser/processor checkpoints with validation; one redundant debug borrow removed for pinned compiler; standalone test dependencies pinned independently.",
+  "reason": "Maintainer-approved complete parser/processor checkpoints; fragmented UTF-8 scalar consumption fix; redundant debug borrow removed for pinned compiler; standalone test dependencies pinned independently.",
   "files": {
     "Cargo.lock": "e6fc0f3186cf0ade4b0bfb7607a88ca6663c0e413385876e39412b732dc7be81",
     "Cargo.toml": "b585d314f1e670ffb87191d919fac6c4924f24ab0e29d7c2fb0b17462d825233",
     "src/ansi/checkpoint.rs": "03063bad1e03bfc4605765c2ec34de8e4ebb5a9edd0420c352f96cf323139547",
     "src/ansi.rs": "e8e8904defec274e9eaf4c746dbd08e3dfa42752f703d8e37a936c9da2cbe6b8",
     "src/checkpoint.rs": "41c6ddcd40d131873cc44859f7652cfe1229e233824acf174bb4d0e8b6924e33",
-    "src/lib.rs": "44c7cf0f0532fb9782813fa4b0cf9a0c489b57c5dd0016a3c20c89641b5ff3c8",
+    "src/lib.rs": "d33fbac56da5cb9d9b437b0182cb1e54c2b04e15a547f07c49f98c376b686b9c",
     "src/params.rs": "42a0beb6ed7a8516d1f08f62e3f4e7196a409596912a4da07643e356a5341ae8",
-    "tests/checkpoint.rs": "a1d1fadd13be69a583f3633b676de52bce96ee80fc08744f1716a570e597d600"
+    "tests/checkpoint.rs": "9fbc0d3eebd174717141a94c881777365afc9865b0870e11ec8539f08bfe9eb4"
   }
 }

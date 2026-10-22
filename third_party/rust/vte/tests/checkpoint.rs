@@ -43,6 +43,35 @@ impl Handler for Recorder {
 }
 
 #[test]
+fn fragmented_utf8_retains_ascii_before_the_next_partial_or_invalid_scalar() {
+    let cases: &[(&[u8], &str)] = &[
+        ("e\u{301}x🙂after".as_bytes(), "e\u{301}x🙂after"),
+        ("éx界🙂z".as_bytes(), "éx界🙂z"),
+        (b"\xc3\xa9x\xffz", "éx�z"),
+        (b"\xf0\x9f\x99\x82x\xc3z", "🙂x�z"),
+    ];
+    for &(input, text) in cases {
+        let mut whole = Recorder::default();
+        let mut whole_parser: Processor = Processor::new();
+        whole_parser.advance(&mut whole, input);
+        assert_eq!(whole.text, text);
+        for split in 0..=input.len() {
+            let mut parser = Processor::new();
+            let mut actual = Recorder::default();
+            parser.advance(&mut actual, &input[..split]);
+            let bytes = serde_json::to_vec(&parser.checkpoint(8192).unwrap()).unwrap();
+            let mut restored = Processor::from_checkpoint(serde_json::from_slice(&bytes).unwrap(), 8192).unwrap();
+            let prefix = actual.text.clone();
+            parser.advance(&mut actual, &input[split..]);
+            assert_eq!(actual.text, text, "direct split {split}: {input:?}");
+            let mut continuation = Recorder::default();
+            restored.advance(&mut continuation, &input[split..]);
+            assert_eq!(prefix + &continuation.text, text, "checkpoint split {split}: {input:?}");
+        }
+    }
+}
+
+#[test]
 fn continuation_matches_at_every_byte_split_without_replaying_effects() {
     let input = "before\x07\x1b]2;title\x07\x1b[38:2::1:2:3m界e\u{301}🙂\x1b[3bafter".as_bytes();
     for split in 0..=input.len() {

@@ -26,10 +26,13 @@ caller bounds serialized input before decoding and owns the pending-byte
 budget. The format is versioned implementation state, not a stable external
 wire format. Ordinary builds without the feature keep the upstream API.
 
-The patch also removes one redundant debug-format borrow flagged by the pinned
-Rust compiler. No upstream parsing behavior is changed. The standalone lockfile
-pins the test-only dependency cohort; the application workspace owns production
-dependency resolution independently.
+The patch also fixes a fragmented UTF-8 consumption bug: after dispatching one
+completed scalar, the parser consumed an entire valid prefix and silently lost
+ASCII before the next partial or invalid scalar. It now consumes only the
+dispatched scalar; every-split tests cover direct and checkpointed continuation.
+One redundant debug-format borrow is removed for the pinned Rust compiler.
+The standalone lockfile pins the test-only dependency cohort; the application
+workspace owns production dependency resolution independently.
 
 Run `cargo test --manifest-path third_party/rust/vte/Cargo.toml --features
 checkpoint --locked --offline` through the repository bounded-command wrapper.

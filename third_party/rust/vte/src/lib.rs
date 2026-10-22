@@ -689,9 +689,9 @@ impl<const OSC_RAW_BUF_SIZE: usize> Parser<OSC_RAW_BUF_SIZE> {
             },
             Err(err) => {
                 let valid_bytes = err.valid_up_to();
-                // If we have any valid bytes, that means we partially copied another
-                // utf8 character into `partial_utf8`. Since we only care about the
-                // first character, we just ignore the rest.
+                // Only consume the first scalar we dispatch. The valid prefix
+                // can also contain ASCII before the next partial/invalid scalar;
+                // leave those bytes for the normal ground-state path.
                 if valid_bytes > 0 {
                     let c = unsafe {
                         let parsed = str::from_utf8_unchecked(&self.partial_utf8[..valid_bytes]);
@@ -701,7 +701,7 @@ impl<const OSC_RAW_BUF_SIZE: usize> Parser<OSC_RAW_BUF_SIZE> {
                     performer.print(c);
 
                     self.partial_utf8_len = 0;
-                    return valid_bytes - old_bytes;
+                    return c.len_utf8() - old_bytes;
                 }
 
                 match err.error_len() {
