@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Restore graphical app DPI updates with a rootless Xorg display and a pinned
+  fix for Xpra's X11 settings dispatch.
+
 - Raise graphical app encoding's minimum quality while retaining adaptive
   codec selection, and disable automatic resolution downscaling.
 

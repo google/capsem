@@ -3,6 +3,7 @@
 import ctypes
 import json
 import os
+import stat
 from pathlib import Path
 
 
@@ -41,6 +42,55 @@ def application_processes():
         except (FileNotFoundError, ProcessLookupError, PermissionError):
             continue
     return rows, display
+
+
+def display_processes():
+    """The display runs in the same unprivileged, confined workload."""
+    rows = []
+    for process in Path("/proc").glob("[0-9]*"):
+        try:
+            argv = process.joinpath("cmdline").read_bytes().split(b"\0")
+            binary = Path(os.readlink(process / "exe"))
+            # Xpra deliberately renames argv[0] (for example Xvfb-for-Xpra).
+            # The executable inode identifies the actual display server.
+            if not argv or binary.name not in {"Xorg", "Xvfb"}:
+                continue
+            status = dict(line.split(":", 1) for line in process.joinpath("status").read_text().splitlines())
+            rows.append({"binary": str(binary), "uid": int(status["Uid"].split()[0]),
+                         "setuid": bool(binary.stat().st_mode & stat.S_ISUID),
+                         "seccomp": status["Seccomp"].strip(), "no_new_privs": status["NoNewPrivs"].strip()})
+        except (FileNotFoundError, ProcessLookupError, PermissionError):
+            continue
+    return rows
+
+
+def display_dimensions(environment):
+    """Physical X11 dimensions, independently of Xpra's requested DPI."""
+    if "DISPLAY" not in environment:
+        return None
+    os.environ.update(environment)
+    x11 = ctypes.CDLL("libX11.so.6")
+    pointer = ctypes.c_void_p
+    x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+    x11.XOpenDisplay.restype = pointer
+    x11.XDefaultScreen.argtypes = [pointer]
+    x11.XDefaultScreen.restype = ctypes.c_int
+    x11.XCloseDisplay.argtypes = [pointer]
+    for name in ("XDisplayWidth", "XDisplayHeight", "XDisplayWidthMM", "XDisplayHeightMM", "XDefaultDepth"):
+        getattr(x11, name).argtypes = [pointer, ctypes.c_int]
+        getattr(x11, name).restype = ctypes.c_int
+    display = x11.XOpenDisplay(os.fsencode(environment["DISPLAY"]))
+    if not display:
+        return None
+    try:
+        screen = x11.XDefaultScreen(display)
+        pixels = [x11.XDisplayWidth(display, screen), x11.XDisplayHeight(display, screen)]
+        millimeters = [x11.XDisplayWidthMM(display, screen), x11.XDisplayHeightMM(display, screen)]
+        return {"pixels": pixels, "millimeters": millimeters, "depth": x11.XDefaultDepth(display, screen),
+                "dpi": [round(px * 25.4 / mm, 2) if mm > 0 else None
+                        for px, mm in zip(pixels, millimeters, strict=True)]}
+    finally:
+        x11.XCloseDisplay(display)
 
 
 def window_titles(environment):
@@ -125,4 +175,6 @@ def window_titles(environment):
 
 if __name__ == "__main__":
     processes, environment = application_processes()
-    print(json.dumps({"processes": processes, "window_titles": window_titles(environment)}))
+    print(json.dumps({"processes": processes, "display_processes": display_processes(),
+                      "display_dimensions": display_dimensions(environment),
+                      "window_titles": window_titles(environment)}))

@@ -108,6 +108,7 @@ fi
 # without it Claude cannot reach the unlocked keyring.
 rm -f "$status"
 xpra start :100 \
+    --xvfb=Xdummy \
     --daemon=no \
     --bind=none \
     --bind-ws="127.0.0.1:$port,auth=none" \

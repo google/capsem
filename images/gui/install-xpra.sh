@@ -34,10 +34,31 @@ fetch xpra-x11 "$x11"
 fetch xpra-codecs "$codecs"
 apt-get -o Acquire::Check-Valid-Until=false update
 apt-get install -y --no-install-recommends "$work"/*.deb \
-    dbus-x11 xauth fontconfig fonts-dejavu-core libnss3-tools gnome-keyring libsecret-tools
+    dbus-x11 xauth fontconfig fonts-dejavu-core libnss3-tools gnome-keyring libsecret-tools \
+    xserver-xorg-core xserver-xorg-video-dummy
 for package in xpra-common xpra-server xpra-x11 xpra-codecs; do
     test "$(dpkg-query -W -f='${Version}' "$package")" = "$XPRA_VERSION"
 done
+# Xpra 6.5.1's ServerBase no-op shadows XSettingsServer's implementation.
+# Remove that obsolete override so initial attachment and resize update DPI
+# through the existing X11 settings owner. Fail closed when the pinned source
+# changes; re-evaluate this patch when upgrading Xpra.
+python3 - <<'PY'
+import hashlib
+from pathlib import Path
+
+path = Path('/usr/lib/python3/dist-packages/xpra/server/base.py')
+source = path.read_bytes()
+assert hashlib.sha256(source).hexdigest() == '0c31a16622d13030b3d4feea335e611986843f4aa9db4c411794ff63e1be8546'
+obsolete = b'    def update_all_server_settings(self, reset: bool = False) -> None:\n        pass  # may be overridden in subclasses (ie: x11 server)\n\n'
+assert source.count(obsolete) == 1
+path.write_bytes(source.replace(obsolete, b''))
+PY
+# Xvfb cannot update hardware DPI. Use Xpra's rootless Xdummy backend and
+# require the direct, non-setuid Xorg binary (never the legacy Xorg wrapper).
+test -x /usr/lib/xorg/Xorg
+test ! -u /usr/lib/xorg/Xorg
+dpkg --compare-versions "$(dpkg-query -W -f='${Version}' xserver-xorg-video-dummy)" ge 0.4.0
 # Never bake xpra-common's post-install-generated private TLS key into an image.
 rm -f /etc/xpra/ssl/*.pem
 install -d -m 1777 /tmp/.X11-unix

@@ -11,6 +11,7 @@ from tests.ironbank.kingslanding.test_run import wait_for
 
 pytestmark = [pytest.mark.integration, pytest.mark.capability("surface")]
 PROBE = Path(__file__).with_name("surface_probe.py").read_text()
+DPI_PROBE = Path(__file__).with_name("surface_dpi_probe.py").read_text()
 
 
 def test_graphical_application_has_a_window_and_namespace_sandbox(
@@ -40,3 +41,10 @@ def test_graphical_application_has_a_window_and_namespace_sandbox(
     # a real application window, with seccomp/no_new_privs on every observed process.
     assert any(row["kind"] == "zygote" and len(row["nspid"]) > 1 for row in processes), evidence
     assert all(row["seccomp"] == "2" and row["no_new_privs"] == "1" for row in processes), evidence
+    displays = evidence["display_processes"]
+    assert displays and all(Path(row["binary"]).name == "Xorg" for row in displays), evidence
+    assert all(row["uid"] != 0 and not row["setuid"] and row["seccomp"] == "2"
+               and row["no_new_privs"] == "1" for row in displays), evidence
+    assert evidence["display_dimensions"]["depth"] == 24, evidence
+    dpi = workload_exec(client, session, f"python3 -c {shlex.quote(DPI_PROBE)}")
+    assert dpi.get("exit_code") == 0, dpi
