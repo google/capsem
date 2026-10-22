@@ -167,6 +167,68 @@ fn args_parses_all_required() {
     assert_eq!(args.session_dir, PathBuf::from("/tmp/session"));
     assert_eq!(args.active_policy, PathBuf::from("/tmp/session/vm/active_policy.toml"));
     assert_eq!(args.uds_path, PathBuf::from("/tmp/vm.sock"));
+    assert_eq!(args.retention_days, None);
+}
+
+#[test]
+fn args_accept_retention_days_from_service() {
+    let args = Args::try_parse_from([
+        "capsem-process",
+        "--id",
+        "test-vm",
+        "--assets-dir",
+        "/tmp/assets",
+        "--rootfs",
+        "/tmp/rootfs.img",
+        "--session-dir",
+        "/tmp/session",
+        "--active-policy",
+        "/tmp/active_policy.toml",
+        "--expected-kernel-hash",
+        "aa",
+        "--expected-initrd-hash",
+        "bb",
+        "--expected-rootfs-hash",
+        "cc",
+        "--uds-path",
+        "/tmp/vm.sock",
+        "--retention-days",
+        "7",
+    ])
+    .unwrap();
+    assert_eq!(args.retention_days, Some(7));
+}
+
+#[tokio::test]
+async fn shutdown_trims_archived_bodies_before_closing_ledger() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("session.db");
+    let db = Arc::new(DbWriter::open(&db_path, 16).unwrap());
+    db.write_checked(capsem_logger::WriteOp::SecurityRuleEvent(
+        capsem_logger::SecurityRuleEvent::new(
+            1_789_000_223_456,
+            "abcdef123450",
+            "model.call",
+            "profiles.rules.example",
+            r#"{"name":"example"}"#,
+            r#"{"from":"an old session"}"#,
+        ),
+    ))
+    .await
+    .unwrap();
+    db.flush_checked().await.unwrap();
+    let shutdown = Arc::new(Mutex::new(Shutdown {
+        db: Some(db),
+        retention_days: Some(0),
+        ..Shutdown::default()
+    }));
+    drain_background_owners(&shutdown).await;
+    let reader = capsem_logger::DbReader::open(&db_path).unwrap();
+    let raw = reader
+        .query_raw_with_params("SELECT COUNT(*) FROM body_blocks", &[])
+        .unwrap();
+    let rows: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(rows["rows"][0][0].as_u64(), Some(0));
 }
 
 /// The metric broker is granted by the service at launch; without the flag

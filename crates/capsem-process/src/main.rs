@@ -10,6 +10,7 @@ mod owner;
 mod owner_sandbox;
 mod private_seats;
 mod proxy_mcp;
+mod retention;
 mod runtime_config;
 mod terminal;
 mod trace_hints;
@@ -46,6 +47,7 @@ use vsock::VsockOptions;
 pub(crate) struct Shutdown {
     publisher: Option<Arc<capsem_core::container::publish::Publisher>>,
     db: Option<Arc<DbWriter>>,
+    retention_days: Option<u64>,
     fs_monitor: Option<FsMonitor>,
     proxy_mcp: Option<tokio::task::JoinHandle<()>>,
     proxy_trace_hints: Option<tokio::task::JoinHandle<()>>,
@@ -118,6 +120,14 @@ pub(crate) async fn drain_background_owners(shutdown: &Arc<Mutex<Shutdown>>) {
     if let Some(publisher) = owned.publisher.take() {
         publisher.shutdown().await;
     }
+    if let Some(fs_monitor) = owned.fs_monitor.take() {
+        if let Err(error) = tokio::task::spawn_blocking(move || fs_monitor.shutdown_and_join()).await {
+            error!(%error, "filesystem monitor drain failed");
+        }
+    }
+    if let (Some(db), Some(days)) = (&owned.db, owned.retention_days) {
+        retention::retain_session_bodies(db, days).await;
+    }
     if let Err(error) = tokio::task::spawn_blocking(move || owned.drain_blocking()).await {
         error!(%error, "background owner drain failed");
     }
@@ -162,6 +172,9 @@ struct Args {
     session_dir: PathBuf,
     #[arg(long)]
     active_policy: PathBuf,
+    /// Archive retention resolved by the service for this VM launch.
+    #[arg(long)]
+    retention_days: Option<u64>,
     #[arg(long, default_value_t = 2)]
     cpus: u32,
     #[arg(long, default_value_t = 2048)]
@@ -490,7 +503,10 @@ fn main() -> Result<()> {
         );
     }
 
-    let shutdown: Arc<Mutex<Shutdown>> = Arc::new(Mutex::new(Shutdown::default()));
+    let shutdown: Arc<Mutex<Shutdown>> = Arc::new(Mutex::new(Shutdown {
+        retention_days: args.retention_days,
+        ..Shutdown::default()
+    }));
 
     let session_dir_for_loop = session_dir;
     let shutdown_for_loop = Arc::clone(&shutdown);
