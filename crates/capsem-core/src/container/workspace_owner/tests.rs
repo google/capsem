@@ -38,7 +38,7 @@ fn legacy_stage_is_upgraded_once_without_losing_options() {
     assert_eq!(options["workspace_owner"], "image_user");
     assert_eq!(options["env"]["KEEP"], "yes");
     assert_eq!(std::fs::read(stage.join("launch.py")).unwrap(), super::super::LAUNCHER);
-    for name in ["options.json", "runtime_console.py", "launch.py"] {
+    for name in std::iter::once("options.json").chain(super::super::LAUNCHER_FILES.iter().map(|(name, _)| *name)) {
         let mode = std::fs::metadata(stage.join(name)).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600, "migration must not widen {name}");
     }
@@ -118,12 +118,17 @@ fn a_current_launcher_still_refreshes_its_missing_console_module() {
 
 #[test]
 fn control_file_links_are_refused_without_touching_their_targets() {
-    for name in ["options.json", "runtime_console.py", "launch.py"] {
+    for name in std::iter::once("options.json").chain(super::super::LAUNCHER_FILES.iter().map(|(name, _)| *name)) {
         let root = tempfile::tempdir().unwrap();
         let session = root.path().join("session");
         let stage = legacy_stage(&session);
         let outside = root.path().join("outside");
         std::fs::write(&outside, b"keep").unwrap();
+        // The legacy fixture predates new modules. An old ordinary helper
+        // can become a link just as an existing control file can.
+        if !stage.join(name).exists() {
+            std::fs::write(stage.join(name), b"old helper").unwrap();
+        }
         std::fs::remove_file(stage.join(name)).unwrap();
         symlink(&outside, stage.join(name)).unwrap();
 

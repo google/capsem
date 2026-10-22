@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve complete terminal input and keep display updates and resizes moving
+  when the guest console encounters blocked or partial writes.
+
 - Keep terminal sockets and queued input intact when suspend rolls back, and
   confirm guest filesystem thaw before returning control to the session.
 

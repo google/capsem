@@ -4,7 +4,6 @@ The image's blobs come from the host's read-only image share, never from the
 workspace: the guest can write the workspace, and cannot write the share.
 """
 
-import collections
 import contextlib
 import ctypes
 import fcntl
@@ -13,7 +12,6 @@ import json
 import os
 import re
 import runpy
-import selectors
 import shlex
 import shutil
 import signal
@@ -23,16 +21,19 @@ import struct
 import subprocess
 import sys
 import termios
-import threading
 import time
 import tty
 from pathlib import Path, PurePosixPath
 
 # The guest-writable stage must not grow an import cache or load stale pyc.
 _console = runpy.run_path(str(Path(__file__).with_name("runtime_console.py")))
-FrameReader, RuntimeConsole, encode_input, encode_output, encode_resize = (
-    _console[name] for name in ("FrameReader", "RuntimeConsole", "encode_input", "encode_output", "encode_resize")
+FrameReader, encode_input, encode_output, encode_resize = (
+    _console[name] for name in ("FrameReader", "encode_input", "encode_output", "encode_resize")
 )
+_pty = runpy.run_path(str(Path(__file__).with_name("runtime_pty.py")))
+RuntimeConsole, Console = (_pty[name] for name in ("RuntimeConsole", "Console"))
+_terminal = runpy.run_path(str(Path(__file__).with_name("runtime_terminal.py")))
+Relay, relay = (_terminal[name] for name in ("Relay", "relay"))
 
 RUNTIME = Path("/var/tmp/capsem-container")
 HOSTNAME = "container"
@@ -1033,7 +1034,7 @@ def run(stage, detached=False):
             listener.listen()
             process = RuntimeConsole()
             master = process.start(argv, CONTAINER, RUNTIME / "runc-console.sock", pid_file, COMMAND_TIMEOUT)
-            Console(master, listener).serve()
+            Console(master, listener, replay_limit=REPLAY_LIMIT).serve()
         code = process.wait()
         return code
     finally:
@@ -1131,101 +1132,6 @@ def process_spec(bundle, argv, tty):
     return spec
 
 
-class Console:
-    """A detached workload's terminal: its actual PTY master, input and output.
-
-    Its output is always drained -- into a bounded replay of the newest bytes,
-    and to every attached terminal -- so the workload never blocks on a full
-    terminal. A terminal that attaches is shown the replay, then the live
-    output; its keystrokes and window size reach the workload. A terminal that
-    leaves leaves the workload running. When the workload exits (the output
-    reads end-of-file) every terminal is closed and `serve` returns.
-    """
-
-    def __init__(self, master, listener, *, replay_limit=REPLAY_LIMIT):
-        self._master = master
-        self._listener = listener
-        self._replay = collections.deque()
-        self._replay_size = 0
-        self._limit = replay_limit
-        self._clients = {}
-        self._lock = threading.Lock()
-
-    def replayed(self):
-        with self._lock:
-            return b"".join(self._replay)
-
-    def _remember(self, data):
-        with self._lock:
-            self._replay.append(data)
-            self._replay_size += len(data)
-            while self._replay_size > self._limit:
-                excess = self._replay_size - self._limit
-                head = self._replay[0]
-                if len(head) <= excess:
-                    self._replay.popleft()
-                    self._replay_size -= len(head)
-                else:
-                    self._replay[0] = head[excess:]
-                    self._replay_size -= excess
-
-    def _drop(self, selector, client):
-        selector.unregister(client)
-        self._clients.pop(client, None)
-        client.close()
-
-    def serve(self):
-        selector = selectors.DefaultSelector()
-        selector.register(self._master, selectors.EVENT_READ, "output")
-        selector.register(self._listener, selectors.EVENT_READ, "listener")
-        try:
-            while True:
-                for key, _ in selector.select():
-                    if key.data == "output":
-                        try:
-                            data = os.read(self._master, 65536)
-                        except OSError:
-                            data = b""
-                        if not data:
-                            return
-                        self._remember(data)
-                        for client in list(self._clients):
-                            try:
-                                client.sendall(encode_output(data))
-                            except OSError:
-                                self._drop(selector, client)
-                    elif key.data == "listener":
-                        client, _ = self._listener.accept()
-                        try:
-                            client.sendall(encode_output(self.replayed()))
-                        except OSError:
-                            client.close()
-                            continue
-                        self._clients[client] = FrameReader()
-                        selector.register(client, selectors.EVENT_READ, client)
-                    else:
-                        client = key.data
-                        try:
-                            data = client.recv(65536)
-                            events = self._clients[client].feed(data) if data else None
-                        except (OSError, ValueError):
-                            events = None
-                        if events is None:
-                            self._drop(selector, client)
-                            continue
-                        for kind, value in events:
-                            if kind == "input":
-                                os.write(self._master, value)
-                            else:
-                                rows, cols = value
-                                fcntl.ioctl(self._master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
-        finally:
-            for client in list(self._clients):
-                with contextlib.suppress(OSError, KeyError):
-                    self._drop(selector, client)
-            selector.close()
-
-
 def window_size(fd):
     """(rows, cols) of the terminal on `fd`, or None when it is not one."""
     try:
@@ -1233,33 +1139,6 @@ def window_size(fd):
     except OSError:
         return None
     return rows, cols
-
-
-def relay(console, keys, screen):
-    """Copy a terminal to a held console until the console closes: keystrokes
-    on `keys` go out as input frames, output comes back to `screen` verbatim."""
-    selector = selectors.DefaultSelector()
-    reader = FrameReader("server")
-    selector.register(console, selectors.EVENT_READ, "console")
-    selector.register(keys, selectors.EVENT_READ, "keys")
-    try:
-        while True:
-            for key, _ in selector.select():
-                if key.data == "console":
-                    data = console.recv(65536)
-                    if not data:
-                        reader.finish()
-                        return
-                    for _, output in reader.feed(data):
-                        os.write(screen, output)
-                else:
-                    data = os.read(keys, 65536)
-                    if not data:
-                        selector.unregister(keys)
-                        continue
-                    console.sendall(encode_input(data))
-    finally:
-        selector.close()
 
 
 def attach_console():
@@ -1270,20 +1149,22 @@ def attach_console():
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as console:
         console.connect(str(CONSOLE))
 
+        transport = Relay(console, keys, screen)
+
         def resized(*_):
             size = window_size(keys)
             if size is not None:
-                with contextlib.suppress(OSError):
-                    console.sendall(encode_resize(*size))
+                transport.resize(*size)
 
         previous = signal.signal(signal.SIGWINCH, resized)
         try:
             if saved is not None:
                 tty.setraw(keys)
             resized()
-            relay(console, keys, screen)
+            transport.run()
         finally:
             signal.signal(signal.SIGWINCH, previous)
+            transport.close()
             if saved is not None:
                 termios.tcsetattr(keys, termios.TCSADRAIN, saved)
 

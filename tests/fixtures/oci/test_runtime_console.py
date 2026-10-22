@@ -19,7 +19,7 @@ from tests.fixtures.oci.test_launch_config import SOURCE
 
 @pytest.fixture
 def runtime():
-    spec = importlib.util.spec_from_file_location("runtime_console", SOURCE.with_name("runtime_console.py"))
+    spec = importlib.util.spec_from_file_location("runtime_pty", SOURCE.with_name("runtime_pty.py"))
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -109,7 +109,7 @@ def test_wait_preserves_exit_status_and_reaps_children_including_signal_death():
     # it must never reap a test runner's unrelated children.
     script = f"""
 import importlib.util, subprocess, sys
-spec = importlib.util.spec_from_file_location('runtime_console', {str(SOURCE.with_name('runtime_console.py'))!r})
+spec = importlib.util.spec_from_file_location('runtime_pty', {str(SOURCE.with_name('runtime_pty.py'))!r})
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 for command, expected in [('raise SystemExit(7)', 7), ('import os, signal; os.kill(os.getpid(), signal.SIGTERM)', 143)]:

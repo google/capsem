@@ -95,6 +95,14 @@ pub const LAUNCHER_FILES: &[(&str, &[u8])] = &[
         "runtime_console.py",
         include_bytes!("../../../guest/artifacts/container/runtime_console.py"),
     ),
+    (
+        "runtime_pty.py",
+        include_bytes!("../../../guest/artifacts/container/runtime_pty.py"),
+    ),
+    (
+        "runtime_terminal.py",
+        include_bytes!("../../../guest/artifacts/container/runtime_terminal.py"),
+    ),
     ("launch.py", LAUNCHER),
 ];
 /// The launcher's stage in the VM workspace: its options, the launcher itself

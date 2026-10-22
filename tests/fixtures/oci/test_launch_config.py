@@ -1249,13 +1249,15 @@ def test_staged_launcher_does_not_write_helper_bytecode(tmp_path):
     import shutil
     import sys
 
-    for name in ("launch.py", "runtime_console.py"):
-        shutil.copyfile(SOURCE.with_name(name), tmp_path / name)
+    for source in [SOURCE, *SOURCE.parent.glob("runtime_*.py")]:
+        shutil.copyfile(source, tmp_path / source.name)
     before = {path.name for path in tmp_path.iterdir()}
     env = {key: value for key, value in os.environ.items()
            if key not in {"PYTHONDONTWRITEBYTECODE", "PYTHONPYCACHEPREFIX"}}
-    result = subprocess.run([sys.executable, str(tmp_path / "launch.py"), "--help"],
+    result = subprocess.run([sys.executable, "-c", "import runpy,sys; runpy.run_path(sys.argv[1]); print('loaded')", str(tmp_path / "launch.py")],
                             capture_output=True, text=True, timeout=5, env=env)
-    # Argument refusal still imports the helper; no workload is launched.
-    assert result.returncode != 0
+    # Import every staged dependency without launching a workload. A failed
+    # import must not masquerade as an expected command-line refusal.
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "loaded\n"
     assert {path.name for path in tmp_path.iterdir()} == before

@@ -18,7 +18,13 @@ fn published_root_stage_metadata_is_typed_and_keeps_the_single_stage_path() {
     let plan = stage_plan(image, &[], &BTreeMap::new(), resources, DeclaredSurface::Terminal).unwrap();
     assert_eq!(
         plan.iter().map(|file| file.name.as_str()).collect::<Vec<_>>(),
-        ["options.json", "runtime_console.py", "launch.py"]
+        [
+            "options.json",
+            "runtime_console.py",
+            "runtime_pty.py",
+            "runtime_terminal.py",
+            "launch.py"
+        ]
     );
     let options: serde_json::Value = serde_json::from_slice(&plan[0].bytes).unwrap();
     assert_eq!(options["manifest"], MANIFEST);
@@ -76,7 +82,16 @@ fn stage_plan_writes_only_options_and_launcher_modules() {
     );
     let plan = stage_plan(MANIFEST, &["serve".to_string()], &env, resources, surface).unwrap();
     let names: Vec<&str> = plan.iter().map(|file| file.name.as_str()).collect();
-    assert_eq!(names, ["options.json", "runtime_console.py", "launch.py"]);
+    assert_eq!(
+        names,
+        [
+            "options.json",
+            "runtime_console.py",
+            "runtime_pty.py",
+            "runtime_terminal.py",
+            "launch.py"
+        ]
+    );
     let mut expected =
         // The launcher mounts the VM workspace where the service says the
         // container sees it: one owner for that path, not two.
@@ -101,10 +116,18 @@ fn stage_plan_writes_only_options_and_launcher_modules() {
         expected
     );
     assert_eq!(super::super::CONTAINER_WORKSPACE, "/workspace");
-    assert_eq!(plan[2].bytes, LAUNCHER);
+    assert_eq!(plan.last().unwrap().bytes, LAUNCHER);
     assert_eq!(
         plan[1].bytes,
         include_bytes!("../../../../../guest/artifacts/container/runtime_console.py")
+    );
+    assert_eq!(
+        plan[2].bytes,
+        include_bytes!("../../../../../guest/artifacts/container/runtime_pty.py")
+    );
+    assert_eq!(
+        plan[3].bytes,
+        include_bytes!("../../../../../guest/artifacts/container/runtime_terminal.py")
     );
     let resources = super::super::workload_resources(2048, 2).unwrap();
     assert!(
