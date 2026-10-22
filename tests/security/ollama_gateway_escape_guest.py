@@ -82,12 +82,17 @@ def mcp_call(args):
         text=True,
     )
     try:
+        stdin = process.stdin
+        stdout = process.stdout
+        if stdin is None or stdout is None:
+            raise RuntimeError("guest MCP relay has no standard streams")
+
         def exchange(message, expect_response=True):
-            process.stdin.write(json.dumps(message) + "\n")
-            process.stdin.flush()
+            stdin.write(json.dumps(message) + "\n")
+            stdin.flush()
             if not expect_response:
                 return None
-            line = process.stdout.readline()
+            line = stdout.readline()
             if not line:
                 raise RuntimeError("guest MCP relay closed before responding")
             return json.loads(line)
