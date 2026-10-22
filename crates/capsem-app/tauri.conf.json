@@ -28,6 +28,7 @@
     "active": true,
     "targets": ["app", "deb"],
     "macOS": {
+      "infoPlist": "Info.plist",
       "entitlements": "../../build_system/packaging/macos/entitlements.plist",
       "minimumSystemVersion": "14.0"
     },
