@@ -2,17 +2,14 @@
 
 from __future__ import annotations
 
-import contextlib
 import re
 import threading
-from dataclasses import dataclass
 from decimal import Decimal
-from pathlib import Path
 from typing import cast
 
 import psutil
 
-from .process_cpu import process_cpu_seconds
+from .process_snapshot import TreeSnapshot, process_tree_snapshot
 
 SAMPLE_INTERVAL_SECONDS = 0.05
 TRACKED_PROCESS_NAMES = frozenset(
@@ -27,73 +24,6 @@ TRACKED_PROCESS_NAMES = frozenset(
         "capsem_tray",
     }
 )
-
-
-@dataclass(frozen=True)
-class ProcessUsage:
-    pid: int
-    started_at: float
-    name: str
-    cpu_seconds: Decimal
-    rss_bytes: int
-    pss_bytes: int | None
-    uss_bytes: int | None
-    fds: int
-    rss_anon_bytes: int | None = None
-    rss_file_bytes: int | None = None
-    rss_shmem_bytes: int | None = None
-
-
-@dataclass(frozen=True)
-class TreeSnapshot:
-    processes: dict[tuple[int, float], ProcessUsage]
-
-
-def _linux_rss_breakdown(pid: int) -> tuple[int, int, int] | None:
-    """Return Linux RSS categories without walking every memory mapping."""
-    try:
-        status = (Path(psutil.PROCFS_PATH) / str(pid) / "status").read_text(encoding="utf-8")
-    except (AttributeError, OSError):
-        return None
-    values = {}
-    for line in status.splitlines():
-        name, separator, raw = line.partition(":")
-        if separator and name in {"RssAnon", "RssFile", "RssShmem"}:
-            fields = raw.split()
-            if not fields:
-                return None
-            values[name] = int(fields[0]) * 1024
-    if values.keys() != {"RssAnon", "RssFile", "RssShmem"}:
-        return None
-    return values["RssAnon"], values["RssFile"], values["RssShmem"]
-
-
-def process_tree_snapshot(root: psutil.Process) -> TreeSnapshot:
-    """Read one race-tolerant snapshot of a process and its descendants."""
-    with contextlib.suppress(psutil.Error):
-        processes = [root, *root.children(recursive=True)]
-        found = {}
-        for process in processes:
-            with contextlib.suppress(psutil.Error, OSError):
-                with process.oneshot():
-                    memory = process.memory_full_info()
-                    rss_breakdown = _linux_rss_breakdown(process.pid)
-                    usage = ProcessUsage(
-                        pid=process.pid,
-                        started_at=process.create_time(),
-                        name=process.name(),
-                        cpu_seconds=process_cpu_seconds(process),
-                        rss_bytes=memory.rss,
-                        pss_bytes=getattr(memory, "pss", None),
-                        uss_bytes=getattr(memory, "uss", None),
-                        fds=process.num_fds(),
-                        rss_anon_bytes=None if rss_breakdown is None else rss_breakdown[0],
-                        rss_file_bytes=None if rss_breakdown is None else rss_breakdown[1],
-                        rss_shmem_bytes=None if rss_breakdown is None else rss_breakdown[2],
-                    )
-                found[(usage.pid, usage.started_at)] = usage
-        return TreeSnapshot(found)
-    return TreeSnapshot({})
 
 
 def _metric_name(name: str) -> str:
@@ -124,6 +54,7 @@ class ProcessTreeSampler:
         self._first_cpu: dict[tuple[int, float], Decimal] = {}
         self._last_cpu: dict[tuple[int, float], Decimal] = {}
         self._names: dict[tuple[int, float], str] = {}
+        self._error: Exception | None = None
 
     def observe(self, snapshot: TreeSnapshot) -> None:
         """Fold one snapshot into the benchmark interval."""
@@ -202,24 +133,34 @@ class ProcessTreeSampler:
         if self._root is None or self._thread is not None:
             raise RuntimeError("process resource sampler needs one live root and one start")
         self.observe(process_tree_snapshot(self._root))
+        if not self._peak_processes:
+            raise RuntimeError("process resource sampler found no live processes")
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
     def _run(self) -> None:
         while not self._stop.wait(self._interval_seconds):
             if self._root is not None:
-                self.observe(process_tree_snapshot(self._root))
+                try:
+                    self.observe(process_tree_snapshot(self._root))
+                except (psutil.Error, OSError) as error:
+                    self._error = error
+                    return
 
     def stop(self) -> dict[str, dict]:
         if self._root is None or self._thread is None:
             raise RuntimeError("process resource sampler was not started")
         self._stop.set()
         self._thread.join()
-        self.observe(process_tree_snapshot(self._root))
         self._thread = None
+        if self._error is not None:
+            raise RuntimeError("process resource observation failed") from self._error
+        self.observe(process_tree_snapshot(self._root))
         return self.metrics()
 
     def metrics(self) -> dict[str, dict]:
+        if not self._peak_processes:
+            raise RuntimeError("process resource sampler recorded no processes")
         cpu: dict[str, Decimal] = {}
         for identity, last in self._last_cpu.items():
             name = self._names[identity]

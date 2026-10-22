@@ -2,7 +2,8 @@
 
 from decimal import Decimal
 
-from helpers.process_resources import ProcessTreeSampler, ProcessUsage, TreeSnapshot
+from helpers.process_resources import ProcessTreeSampler
+from helpers.process_snapshot import ProcessUsage, TreeSnapshot
 
 
 def snapshot(*rows: ProcessUsage) -> TreeSnapshot:
