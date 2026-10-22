@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Apply `vm.resources.retention_days` to archived session bodies when a VM
   stops, including persistent VMs resumed from an earlier session.
 
+- Add agent-assisted setup with local app links, copyable prompts, and actionable agent logos on the marketing site.
+
+- Correct the hero walkthrough to show independently launched, isolated environments and source-matched GUI creation flows.
+
 - Group hero copy and downloads into a left-aligned stack centered beside the walkthrough.
 
 - Refresh the marketing hero with a continuous desktop walkthrough and a larger, centered Capsem wordmark.

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import AgentSetup from "./AgentSetup.svelte";
   import Modal from "./Modal.svelte";
   import { onMount } from "svelte";
   import { downloadIndex } from "$lib/download";
@@ -29,16 +30,19 @@
   });
 </script>
 
-<div class="flex flex-wrap items-center gap-x-6 gap-y-3">
+<div class="flex flex-wrap items-center gap-3">
+  <div class="inline-flex shrink-0 items-stretch rounded-full bg-linear-to-r from-accent to-secondary text-white">
   {#if selected !== null}
-    <a class="button gap-3" href={packages[selected].url}>
+    <a class="inline-flex items-center justify-center gap-2 rounded-l-full px-5 py-3 text-sm font-semibold hover:bg-white/10" href={packages[selected].url}>
       {#if selected === 0}<svg class="size-6" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d={apple}/></svg>{:else}<span class="font-mono" aria-hidden="true">&gt;_</span>{/if}
       {UI.download}
     </a>
   {:else}
-    <button class="button" onclick={() => open = true}>{UI.download}<span aria-hidden="true">↓</span></button>
+    <button class="inline-flex items-center justify-center gap-2 rounded-l-full px-5 py-3 text-sm font-semibold hover:bg-white/10" onclick={() => open = true}>{UI.download}<span aria-hidden="true">↓</span></button>
   {/if}
-  <button class="text-sm text-accent-text underline underline-offset-4" onclick={() => open = true}>{D.other}</button>
+  <button type="button" class="grid w-9 place-items-center rounded-r-full border-l border-white/25 hover:bg-white/10" aria-label={D.other} title={D.other} onclick={() => open = true}><svg class="size-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg></button>
+  </div>
+  <AgentSetup />
 </div>
 <Modal bind:open title={D.title} closeLabel={D.close}>
   <p class="mb-4 text-sm text-body">{D.choose}</p>
