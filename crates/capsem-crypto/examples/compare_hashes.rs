@@ -63,9 +63,9 @@ impl Hash {
 }
 
 fn sample(metrics: &mut BTreeMap<String, Vec<f64>>, key: String, started: Instant) {
-    let seconds = started.elapsed().as_secs_f64();
-    eprintln!("{key}: {seconds:.9}s");
-    metrics.entry(key).or_default().push(seconds);
+    let nanos = started.elapsed().as_secs_f64() * 1_000_000_000.0;
+    eprintln!("{key}: {nanos:.0}ns");
+    metrics.entry(key).or_default().push(nanos);
 }
 
 fn fingerprint(algorithm: &str, bytes: &[u8]) -> [u8; 32] {
@@ -101,7 +101,7 @@ fn fingerprint_samples(metrics: &mut BTreeMap<String, Vec<f64>>, bytes: &[u8]) {
                 }
                 sample(
                     metrics,
-                    format!("oneshot.{size}.iterations-{iterations}.{algorithm}.wall_s"),
+                    format!("oneshot.{size}.iterations-{iterations}.{algorithm}.wall_ns"),
                     started,
                 );
             }
@@ -143,7 +143,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 sample(
                     &mut metrics,
-                    format!("memory.{size}.iterations-{iterations}.{algorithm}.wall_s"),
+                    format!("memory.{size}.iterations-{iterations}.{algorithm}.wall_ns"),
                     started,
                 );
             }
@@ -167,7 +167,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 let digest = state.map(Hash::finish);
-                sample(&mut metrics, format!("erofs-{index}.{algorithm}.wall_s"), started);
+                sample(&mut metrics, format!("erofs-{index}.{algorithm}.wall_ns"), started);
                 let key = format!("erofs-{index}.{algorithm}");
                 if let Some(previous) = identities.insert(key, digest) {
                     assert_eq!(digest, previous);
@@ -186,13 +186,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "neon":cfg!(target_feature="neon"), "avx2":cfg!(target_feature="avx2"),
         "cpu_flags": std::fs::read_to_string("/proc/cpuinfo").ok()
             .and_then(|text| text.lines().find(|line| line.starts_with("flags")).map(str::to_owned))});
-    let metrics: BTreeMap<_, _> = metrics
-        .into_iter()
-        .map(|(key, samples)| (key, serde_json::json!({"unit":"seconds", "samples":samples})))
-        .collect();
+    let metrics = collector_metrics(metrics);
     println!(
         "{}",
         serde_json::json!({"metrics":metrics, "sidecar":sidecar.to_string()})
     );
     Ok(())
 }
+
+fn collector_metrics(metrics: BTreeMap<String, Vec<f64>>) -> BTreeMap<String, serde_json::Value> {
+    // The benchmark owner rounds to hundredths of the declared unit. Seconds
+    // silently erased sub-5-ms samples; nanoseconds retain microbenchmark data.
+    metrics
+        .into_iter()
+        .map(|(key, samples)| (key, serde_json::json!({"unit":"nanoseconds", "samples":samples})))
+        .collect()
+}
+
+#[cfg(test)]
+#[path = "compare_hashes/tests.rs"]
+mod tests;
