@@ -210,6 +210,8 @@ impl ServiceState {
                 .arg(&entry.session_dir)
                 .arg("--active-policy")
                 .arg(&active_policy_path)
+                .arg("--retention-days")
+                .arg(crate::session_housekeeping::retention_days().to_string())
                 .arg("--cpus")
                 .arg(cpus.to_string())
                 .arg("--ram-mb")

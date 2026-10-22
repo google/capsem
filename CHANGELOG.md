@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Apply `vm.resources.retention_days` to archived session bodies when a VM
+  stops, including persistent VMs resumed from an earlier session.
+
 - Group hero copy and downloads into a left-aligned stack centered beside the walkthrough.
 
 - Refresh the marketing hero with a continuous desktop walkthrough and a larger, centered Capsem wordmark.
