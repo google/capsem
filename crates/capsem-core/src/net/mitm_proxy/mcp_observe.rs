@@ -1,6 +1,6 @@
 //! Observation of MCP JSON-RPC requests carried over plain HTTP through the proxy.
 
-use crate::security_engine::{McpSecurityEvent, RuntimeSecurityEventType, SecurityEvent};
+use crate::security_engine::{McpRequestSecurityEvent, McpSecurityEvent, RuntimeSecurityEventType, SecurityEvent};
 
 use super::{mcp_frame, MCP_BODY_CAPTURE_LIMIT};
 
@@ -11,6 +11,7 @@ pub(super) struct ObservedMcpHttpRequest {
     pub(super) tool_name: Option<String>,
     pub(super) request_id: Option<String>,
     pub(super) request_preview: Option<String>,
+    pub(super) request_arguments: Option<serde_json::Value>,
     pub(super) bytes_sent: u64,
 }
 
@@ -26,9 +27,13 @@ impl ObservedMcpHttpRequest {
                 server_name: Some(self.server_name.clone()),
                 tool_call_name: self.tool_name.clone(),
                 tool_list,
+                request: Some(McpRequestSecurityEvent {
+                    id: self.request_id.clone(),
+                    method: Some(self.method.clone()),
+                    arguments: self.request_arguments.clone(),
+                }),
                 ..Default::default()
             }
-            .with_request_preview(self.request_preview.as_deref())
             .with_response_preview(response_preview),
         );
         match capsem_foundation::telemetry::ambient_capsem_trace_id() {
@@ -70,9 +75,8 @@ pub(super) fn observed_mcp_http_request_for_body(
         return None;
     }
     // Targeted deserialization instead of a full serde_json::Value tree: the
-    // body can carry a multi-megabyte `params.arguments` blob that we never
-    // read here. Keeping `params` as a borrowed RawValue means serde never
-    // allocates that subtree; only tools/call re-parses it for `name`.
+    // Keep params borrowed until the request shape is known; policy evaluation
+    // then parses arguments in full while the ledger retains a capped preview.
     #[derive(serde::Deserialize)]
     struct McpRequestSniff<'a> {
         #[serde(default)]
@@ -85,8 +89,9 @@ pub(super) fn observed_mcp_http_request_for_body(
         params: Option<&'a serde_json::value::RawValue>,
     }
     #[derive(serde::Deserialize)]
-    struct ToolNameSniff {
+    struct ParamsSniff {
         name: Option<String>,
+        arguments: Option<serde_json::Value>,
     }
 
     let sniff: McpRequestSniff = serde_json::from_slice(body).ok()?;
@@ -98,19 +103,21 @@ pub(super) fn observed_mcp_http_request_for_body(
         return None;
     }
     let request_id = sniff.id.as_ref().and_then(json_rpc_id_to_log_string);
+    let params = sniff
+        .params
+        .and_then(|params| serde_json::from_str::<ParamsSniff>(params.get()).ok());
     let tool_name = if method == "tools/call" {
-        sniff
-            .params
-            .and_then(|params| serde_json::from_str::<ToolNameSniff>(params.get()).ok())
-            .and_then(|params| params.name)
+        params.as_ref().and_then(|params| params.name.clone())
     } else {
         None
     };
+    let request_arguments = params.and_then(|params| params.arguments);
     Some(ObservedMcpHttpRequest {
         server_name: observed_mcp_server_name(domain, upstream_port, path),
         method,
         tool_name,
         request_id,
+        request_arguments,
         // Cap the stored preview like the framed MCP path: the body can be up
         // to MCP_BODY_CAPTURE_LIMIT (10 MB) of guest-controlled JSON, which must
         // not be pushed wholesale into the ledger row.

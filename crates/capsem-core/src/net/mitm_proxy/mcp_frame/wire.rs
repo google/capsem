@@ -192,6 +192,7 @@ pub(super) fn interpret_mcp_method(req: &JsonRpcRequest) -> McpMethodSummary {
         server_name,
         tool_name,
         request_preview,
+        request_arguments: req.params.as_ref().and_then(|params| params.get("arguments")).cloned(),
     }
 }
 

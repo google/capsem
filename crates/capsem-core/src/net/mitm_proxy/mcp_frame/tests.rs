@@ -28,6 +28,29 @@ fn log_attribution_reads_tool_namespace() {
 }
 
 #[test]
+fn framed_mcp_request_arguments_survive_preview_truncation() {
+    let arguments = json!({"padding": "x".repeat(5000), "marker": "deny-me"});
+    let req = request("tools/call", json!({"name": "local__echo", "arguments": arguments}));
+    let summary = interpret_mcp_method(&req);
+    assert!(summary.request_preview.as_ref().unwrap().len() <= MCP_REQUEST_PREVIEW_BYTES);
+    let event = mcp_security_event_from_summary(RuntimeSecurityEventType::McpToolCall, &summary, "agent", None);
+    let profile = crate::net::policy_config::SecurityRuleProfile::parse_toml(
+        r#"[profiles.rules.block_marker]
+name = "block_marker"
+action = "block"
+match = 'mcp.request.arguments.contains("deny-me")'"#,
+    )
+    .unwrap();
+    let rules =
+        SecurityRuleSet::compile_profile(&profile, crate::net::policy_config::SecurityRuleSource::User).unwrap();
+    assert_eq!(
+        rules.evaluate(&event).unwrap().enforcement_rules()[0].rule_id,
+        "profiles.rules.block_marker"
+    );
+    assert_eq!(event.mcp.unwrap().request.unwrap().arguments, Some(arguments));
+}
+
+#[test]
 fn log_attribution_reads_resource_namespace() {
     let req = request("resources/read", json!({"uri": "capsem://slowlist/doc://slow"}));
 

@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Evaluate MCP argument rules against the full parsed request on framed and
+  HTTP transports while keeping stored request previews bounded.
+
 - Transfer guest environment values through a private one-use session file,
   keeping API keys out of the VM owner process command line on start and resume.
 
