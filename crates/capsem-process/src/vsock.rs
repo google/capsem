@@ -10,7 +10,7 @@ use tokio::sync::{broadcast, mpsc};
 use tracing::{error, info, trace, warn};
 
 use crate::helpers::clone_fd;
-use crate::job_store::{with_quiescence, ActiveFileOp, JobResult, JobStore};
+use crate::job_store::{ActiveFileOp, JobResult, JobStore};
 
 mod audit;
 mod clone_state;
@@ -19,8 +19,10 @@ use audit::handle_audit_frame;
 use audit::serve_audit_records;
 mod handshake;
 mod streams;
+mod suspend;
 mod terminal;
 use handshake::{collect_terminal_control_pair, is_retryable_handshake_error, perform_handshake};
+pub(crate) use suspend::Files as SuspendFiles;
 pub(crate) use terminal::TerminalBridge;
 mod guest_report;
 use guest_report::{ackable_id, ackable_response_id, is_guest_liveness_message};
@@ -57,7 +59,6 @@ const HANDSHAKE_RETRY_MAX: usize = 3;
 /// especially just after resume. Keep a generous transport-loss bound without
 /// imposing any delay on already-deposited or genuinely empty commands.
 const EXEC_OUTPUT_DEPOSIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-use capsem_foundation::paths::checkpoint_complete_path;
 
 pub(crate) struct VsockOptions {
     pub(crate) vm_id: String,
@@ -68,7 +69,6 @@ pub(crate) struct VsockOptions {
     pub(crate) ctrl_rx: mpsc::Receiver<ServiceToProcess>,
     pub(crate) terminal_output: Arc<capsem_core::terminal::SessionTerminal>,
     pub(crate) job_store: Arc<JobStore>,
-    pub(crate) session_dir: PathBuf,
     pub(crate) cli_env: Vec<(String, String)>,
     pub(crate) guest_config: capsem_core::net::policy_config::GuestConfig,
     pub(crate) upstream_grants: Arc<capsem_core::net::upstream_grant::UpstreamGrantClient>,
@@ -81,6 +81,7 @@ pub(crate) struct VsockOptions {
     pub(crate) db: Arc<capsem_logger::DbWriter>,
     pub(crate) pty_log: Option<capsem_core::pty_log::PtyRecorder>,
     pub(crate) serial_log: capsem_foundation::telemetry::SharedLogWriter,
+    pub(crate) checkpoint: Arc<SuspendFiles>,
     pub(crate) shutdown: Arc<tokio::sync::Mutex<crate::Shutdown>>,
 }
 
@@ -95,7 +96,6 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
         ctrl_rx,
         terminal_output,
         job_store,
-        session_dir,
         cli_env,
         guest_config,
         upstream_grants,
@@ -107,6 +107,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
         db,
         pty_log,
         serial_log,
+        checkpoint,
         shutdown,
         ..
     } = options;
@@ -479,132 +480,18 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     clone_state::spawn(&hub_tx, &js_for_cmd, &ipc_tx_for_cmd, id);
                 }
                 ServiceToProcess::Suspend => {
-                    let full_path = crate::owner_checkpoint_path(&session_dir);
-                    let complete_path = checkpoint_complete_path(&full_path);
-                    let _ = std::fs::remove_file(&complete_path);
-                    let checkpoint_path_for_save = full_path.clone();
-                    let rootfs_img = capsem_core::session::system_overlay_image_path(&session_dir);
-                    let h_tx = hub_tx.clone();
-                    let j_s = Arc::clone(&js_for_cmd);
-                    let v_m = Arc::clone(&vm_handle_for_cmd);
-                    let i_tx = ipc_tx_for_cmd.clone();
-                    let v_id = vm_id_for_cmd.clone();
-                    let shutdown = Arc::clone(&shutdown_for_cmd);
-                    tokio::spawn(async move {
-                        // W4: explicit timing spans on every step of suspend so a
-                        // future hang lands in process.log with `duration_ms` per
-                        // stage. Pre-W4: only "suspend took 8s" total, no per-step
-                        // attribution.
-                        let suspend_start = std::time::Instant::now();
-                        let mut suspend_result = with_quiescence(&h_tx, &j_s, std::time::Duration::from_secs(10), || async {
-                            let pause_save_start = std::time::Instant::now();
-                            let r = tokio::task::spawn_blocking(move || {
-                                #[cfg(target_os = "macos")]
-                                capsem_core::hypervisor::apple_vz::run_on_main_thread(move || {
-                                    let v = v_m.blocking_lock();
-                                    let t0 = std::time::Instant::now();
-                                    v.pause()?;
-                                    info!(target: "suspend", op = "apple_vz_pause", duration_ms = t0.elapsed().as_millis() as u64, "stage complete");
-                                    let t1 = std::time::Instant::now();
-                                    v.save_state(&checkpoint_path_for_save)?;
-                                    drop(v);
-                                    info!(target: "suspend", op = "apple_vz_save_state", duration_ms = t1.elapsed().as_millis() as u64, "stage complete");
-                                    Ok(())
-                                })?;
-                                #[cfg(not(target_os = "macos"))]
-                                {
-                                    let v = v_m.blocking_lock();
-                                    let t0 = std::time::Instant::now();
-                                    v.pause()?;
-                                    info!(target: "suspend", op = "pause", duration_ms = t0.elapsed().as_millis() as u64, "stage complete");
-                                    let t1 = std::time::Instant::now();
-                                    v.save_state(&checkpoint_path_for_save)?;
-                                    drop(v);
-                                    info!(target: "suspend", op = "save_state", duration_ms = t1.elapsed().as_millis() as u64, "stage complete");
-                                }
-                                Ok(())
-                            }).await?;
-                            info!(target: "suspend", op = "pause_save_block", duration_ms = pause_save_start.elapsed().as_millis() as u64, "block complete");
-                            r
-                        }).await;
-                        info!(target: "suspend", op = "with_quiescence", duration_ms = suspend_start.elapsed().as_millis() as u64, "phase complete");
-
-                        // After save_state, Apple VZ has stopped writing to rootfs.img
-                        // (the virtio-blk-attached system overlay), but APFS may still
-                        // be holding dirty pages for it in the host page cache. If
-                        // capsem-process exits before APFS flushes them, the next boot
-                        // mounts a stale rootfs.img and EXT4 fails with `iget: checksum
-                        // invalid` -> overlayfs mount fails -> kernel panic. Force the
-                        // flush before we declare success and exit.
-                        if suspend_result.is_ok() {
-                            let fsync_start = std::time::Instant::now();
-                            let checkpoint_path = full_path.clone();
-                            let complete_marker_path = complete_path.clone();
-                            if let Err(e) = tokio::task::spawn_blocking(move || -> std::io::Result<()> {
-                                let checkpoint_file = std::fs::OpenOptions::new().read(true).open(&checkpoint_path)?;
-                                checkpoint_file.sync_all()?;
-
-                                let f = std::fs::OpenOptions::new().read(true).write(true).open(&rootfs_img)?;
-                                f.sync_all()?;
-                                std::fs::write(&complete_marker_path, b"ok\n")?;
-                                let complete_file =
-                                    std::fs::OpenOptions::new().read(true).open(&complete_marker_path)?;
-                                complete_file.sync_all()?;
-                                Ok(())
-                            })
-                            .await
-                            .unwrap_or_else(|e| Err(std::io::Error::other(format!("join: {e}"))))
-                            {
-                                error!(target: "fs", op = "fsync", path = "checkpoint.vzsave+rootfs.img", duration_ms = fsync_start.elapsed().as_millis() as u64, error = %e, "host_fsync_checkpoint_and_rootfs failed");
-                                suspend_result = Err(anyhow::anyhow!(
-                                    "failed to fsync checkpoint/rootfs after save_state: {e}"
-                                ));
-                            } else {
-                                info!(target: "fs", op = "fsync", path = "checkpoint.vzsave+rootfs.img", marker = %complete_path.display(), duration_ms = fsync_start.elapsed().as_millis() as u64, "host_fsync_checkpoint_and_rootfs ok");
-                            }
-                        } else if let Err(ref e) = suspend_result {
-                            error!(target: "suspend", error = %e, "suspend failed");
-                        }
-
-                        // Only report Suspended when save_state actually succeeded.
-                        // Previously we sent it unconditionally, which made the service
-                        // mark a failed-suspend VM as "Suspended" and corrupt the registry.
-                        if suspend_result.is_ok() {
-                            capsem_core::try_send!(
-                                "ipc_state_change",
-                                i_tx.send(ProcessToService::StateChanged {
-                                    id: v_id,
-                                    state: "Suspended".into(),
-                                    trigger: "suspend_requested".into()
-                                })
-                            );
-                            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                            crate::drain_background_owners(&shutdown).await;
-                            std::process::exit(0);
-                        }
-                        // On suspend failure the VM is still running (we did pause but
-                        // failed before save_state, or save_state failed). Exit so the
-                        // service notices and can re-spawn cleanly; but DO NOT claim
-                        // Suspended -- service treats process death without "Suspended"
-                        // as crash and will not write a checkpoint marker.
-                        let _ = std::fs::remove_file(&complete_path);
-                        let _ = std::fs::remove_file(&full_path);
-                        let suspend_error = match suspend_result {
-                            Ok(()) => unreachable!("successful suspend exits above"),
-                            Err(error) => format!("{error:#}"),
-                        };
-                        capsem_core::try_send!(
-                            "ipc_suspend_failed",
-                            i_tx.send(ProcessToService::SuspendFailed {
-                                id: v_id,
-                                error: suspend_error
-                            })
-                        );
-                        warn!("suspend did not complete; exiting without Suspended marker");
-                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                        crate::drain_background_owners(&shutdown).await;
-                        std::process::exit(1);
-                    });
+                    suspend::Suspend {
+                        vm: Arc::clone(&vm_handle_for_cmd),
+                        hub: hub_tx.clone(),
+                        jobs: Arc::clone(&js_for_cmd),
+                        ipc: ipc_tx_for_cmd.clone(),
+                        id: vm_id_for_cmd.clone(),
+                        shutdown: Arc::clone(&shutdown_for_cmd),
+                        terminal: Arc::clone(&terminal_output),
+                        files: Arc::clone(&checkpoint),
+                    }
+                    .run()
+                    .await;
                 }
                 ServiceToProcess::Shutdown => {
                     capsem_core::try_send!("hub_shutdown", hub_tx.send(HostToGuest::Shutdown).await);

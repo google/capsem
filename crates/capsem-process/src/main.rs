@@ -60,6 +60,8 @@ struct PreparedOwnerResources {
     ready: std::fs::File,
     pty_log: Option<capsem_core::pty_log::PtyLog>,
     serial_log: capsem_foundation::telemetry::SharedLogWriter,
+    checkpoint: Arc<vsock::SuspendFiles>,
+    terminal_output: Arc<capsem_core::terminal::SessionTerminal>,
     aggregator: capsem_proto::mcp_aggregator::AggregatorClient,
     mcp_servers: Vec<capsem_proto::mcp_contracts::McpServerDef>,
     builtin_bin: Option<PathBuf>,
@@ -341,6 +343,17 @@ fn main() -> Result<()> {
 
     info!(id = %args.id, "capsem-sandbox-process starting");
     let guest_dir = prepare_session_layout(&session_dir, args.scratch_disk_size_gb)?;
+    if let Some(path) = &args.checkpoint_path {
+        let path = if path.is_absolute() {
+            path.clone()
+        } else {
+            session_dir.join(path)
+        };
+        anyhow::ensure!(
+            path == owner_checkpoint_path(&session_dir),
+            "checkpoint must belong to this session owner"
+        );
+    }
     capsem_core::container::publish::Publisher::prepare_session(&session_dir)?;
     // The image share is attached to every session, read-only at the device:
     // a device cannot be added after boot, and an image is pulled only once
@@ -455,6 +468,7 @@ fn main() -> Result<()> {
     // guest-writable workspace before confinement, then carry only its
     // no-follow directory descriptor into the VM owner.
     let workspace = capsem_core::session::open_workspace(&session_dir).context("open workspace before confinement")?;
+    let checkpoint = Arc::new(vsock::SuspendFiles::prepare(&session_dir).context("prepare checkpoint handles")?);
     let attestation = prepare_owner_sandbox_attestation(&session_dir)?;
 
     confine_owner(&args, &session_dir).context("install VM-owner confinement")?;
@@ -468,16 +482,18 @@ fn main() -> Result<()> {
     // the installed Landlock/Seatbelt and seccomp policy.
     capsem_guard::watch_parent_or_exit(Some(controller.pid.get()))?;
 
+    let terminal_output = if args.checkpoint_path.is_some() {
+        checkpoint.load_terminal().context("restore terminal before VM boot")?
+    } else {
+        capsem_core::terminal::SessionTerminal::new(capsem_proto::TERMINAL_SUBSCRIBER_UPDATES)
+    };
     let (vm, vsock_rx, sm) = prepared_vm.boot()?;
 
     // Delete checkpoint file if we just restored from it, so we don't accidentally suspend on normal shutdown
-    if let Some(cp) = &args.checkpoint_path {
-        let full_path = if std::path::Path::new(cp).is_absolute() {
-            std::path::PathBuf::from(cp)
-        } else {
-            session_dir.join(cp)
-        };
-        let _ = std::fs::remove_file(full_path);
+    if args.checkpoint_path.is_some() {
+        checkpoint
+            .consume_restored()
+            .context("consume restored checkpoint pair")?;
     }
 
     let vm_arc = Arc::new(tokio::sync::Mutex::new(vm));
@@ -491,6 +507,8 @@ fn main() -> Result<()> {
         ready,
         pty_log,
         serial_log,
+        checkpoint,
+        terminal_output,
         aggregator,
         mcp_servers,
         builtin_bin,
@@ -620,13 +638,14 @@ async fn run_async_main_loop(
         ready,
         pty_log,
         serial_log,
+        checkpoint,
+        terminal_output,
         aggregator: aggregator_client,
         mcp_servers,
         builtin_bin,
         builtin_env,
         ledger,
     } = prepared;
-    let terminal_output = capsem_core::terminal::SessionTerminal::new(capsem_proto::TERMINAL_SUBSCRIBER_UPDATES);
     // This runs after owner confinement. The storage worker must inherit
     // that policy rather than being started while preparing file handles.
     let pty_log = pty_log.and_then(|log| match capsem_core::pty_log::PtyRecorder::new(log) {
@@ -837,7 +856,6 @@ async fn run_async_main_loop(
             ctrl_rx,
             terminal_output: terminal_output_clone,
             job_store: job_store_clone,
-            session_dir: session_dir.clone(),
             cli_env,
             guest_config,
             upstream_grants: upstream_grants_for_vsock,
@@ -850,6 +868,7 @@ async fn run_async_main_loop(
             db: db_for_vsock,
             pty_log,
             serial_log,
+            checkpoint,
             shutdown: shutdown_for_vsock,
         })
         .await

@@ -3,6 +3,7 @@ use std::os::fd::{AsFd, AsRawFd};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+mod checkpoint;
 mod drain;
 
 fn connection() -> (Arc<VsockConnection>, tokio::net::UnixStream) {

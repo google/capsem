@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve both terminal screens, saved cursors, modes, pending control input,
+  title and notification identity across suspend and resume.
+
 - Report serial-log storage errors and stop failed recording without
   interrupting the terminal.
 

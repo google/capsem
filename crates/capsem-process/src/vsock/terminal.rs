@@ -40,14 +40,30 @@ async fn deadline(at: Option<tokio::time::Instant>) {
 }
 
 pub(crate) struct TerminalBridge {
-    stop: tokio::sync::oneshot::Sender<()>,
-    task: tokio::task::JoinHandle<()>,
+    stop: tokio::sync::oneshot::Sender<Finish>,
+    task: tokio::task::JoinHandle<std::io::Result<()>>,
+}
+
+enum Finish {
+    Shutdown,
+    Checkpoint,
 }
 
 impl TerminalBridge {
-    pub(crate) async fn shutdown(self) -> Result<(), tokio::task::JoinError> {
-        let _ = self.stop.send(());
-        self.task.await
+    pub(crate) async fn shutdown(self) -> Result<()> {
+        self.finish(Finish::Shutdown).await
+    }
+
+    /// Call after the VM pauses and its viewers are sealed. Settle every
+    /// accepted byte before snapshotting; blocked writes fail the checkpoint.
+    pub(crate) async fn checkpoint(self) -> Result<()> {
+        self.finish(Finish::Checkpoint).await
+    }
+
+    async fn finish(self, mode: Finish) -> Result<()> {
+        let _ = self.stop.send(mode);
+        self.task.await.context("join terminal transport")??;
+        Ok(())
     }
 }
 
@@ -67,6 +83,11 @@ pub(super) fn spawn(
         let mut pending_log = None;
         let mut logging = true;
         let mut input_open = true;
+        let mut stop_open = true;
+        let mut checkpointing = false;
+        let mut read_drained = false;
+        let mut checkpoint_error = None;
+        let mut checkpoint_socket = None;
         let mut outgoing = VecDeque::<Vec<u8>>::new();
         let mut written = 0;
         // One input frame may be pending. Once replies appear, stop reading
@@ -79,18 +100,31 @@ pub(super) fn spawn(
             let mut replace = None;
             let mut finish = false;
             let connected = active.is_some();
-            let sync_at = terminal.sync_deadline().map(tokio::time::Instant::from_std);
+            let sync_at = (!checkpointing)
+                .then(|| terminal.sync_deadline())
+                .flatten()
+                .map(tokio::time::Instant::from_std);
             let (reader, writer) = active.as_mut().map(|c| (&mut c.reader, &mut c.writer)).unzip();
             let remaining = outgoing.front().map_or(&[][..], |bytes| &bytes[written..]);
+            let checkpoint_io: Option<&std::fs::File> = checkpoint_socket.as_ref();
             // read/write are cancellation safe. In particular, never restart a
             // write_all after a timer or reconnect: retain its exact cursor.
             tokio::select! {
-                _ = &mut stopped => {
-                    finish = true;
-                    replace = Some(None);
-                    flush = true;
+                request = &mut stopped, if stop_open => {
+                    stop_open = false;
+                    if matches!(request, Ok(Finish::Checkpoint)) {
+                        checkpointing = true;
+                        match active.as_ref().map(|socket| socket.anchor.try_clone_file()).transpose() {
+                            Ok(socket) => checkpoint_socket = socket,
+                            Err(error) => { checkpoint_error = Some(error); finish = true; replace = Some(None); flush = true; }
+                        }
+                    } else {
+                        finish = true;
+                        replace = Some(None);
+                        flush = true;
+                    }
                 }
-                connection = rekey.recv() => {
+                connection = rekey.recv(), if !checkpointing => {
                     finish = connection.is_none();
                     replace = Some(connection);
                     flush = true;
@@ -116,6 +150,14 @@ pub(super) fn spawn(
                     }
                 }
                 result = async {
+                    if checkpointing {
+                        // Bypass Tokio's cached readiness: a checkpoint needs
+                        // the kernel's current queue state, not its last wake.
+                        return match checkpoint_io {
+                            Some(mut socket) => std::io::Write::write(&mut socket, remaining),
+                            None => Err(std::io::ErrorKind::NotConnected.into()),
+                        };
+                    }
                     match writer {
                         Some(writer) => writer.write(remaining).await,
                         None => std::future::pending().await,
@@ -123,7 +165,13 @@ pub(super) fn spawn(
                 }, if !outgoing.is_empty() => {
                     match result {
                         Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
-                        Ok(0) | Err(_) => { replace = Some(None); flush = true; }
+                        result @ (Ok(0) | Err(_)) => {
+                            if checkpointing {
+                                checkpoint_error = Some(result.err().unwrap_or_else(|| std::io::ErrorKind::WriteZero.into()));
+                                finish = true;
+                            }
+                            replace = Some(None); flush = true;
+                        }
                         Ok(count) => {
                             written += count;
                             if written == outgoing.front().unwrap().len() {
@@ -135,13 +183,27 @@ pub(super) fn spawn(
                     }
                 }
                 result = async {
+                    if checkpointing {
+                        return match checkpoint_io {
+                            Some(mut socket) => std::io::Read::read(&mut socket, &mut buffer),
+                            None => Err(std::io::ErrorKind::WouldBlock.into()),
+                        };
+                    }
                     match reader {
                         Some(reader) => reader.read(&mut buffer).await,
                         None => std::future::pending().await,
                     }
-                }, if pending_log.is_none() && !replies_pending => {
+                }, if pending_log.is_none() && !replies_pending && !read_drained &&
+                    (!checkpointing || (!input_open && outgoing.is_empty())) => {
                     match result {
                         Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                        Err(error) if checkpointing && error.kind() == std::io::ErrorKind::WouldBlock => {
+                            read_drained = true; flush = true;
+                        }
+                        Ok(0) if checkpointing => { read_drained = true; flush = true; }
+                        Err(error) if checkpointing => {
+                            checkpoint_error = Some(error); finish = true; replace = Some(None); flush = true;
+                        }
                         Ok(0) | Err(_) => { replace = Some(None); flush = true; }
                         Ok(count) => {
                             if coalesce.is_empty() {
@@ -152,7 +214,9 @@ pub(super) fn spawn(
                         }
                     }
                 }
-                data = input.recv(), if input_open && connected && outgoing.is_empty() => {
+                data = async {
+                    if checkpointing { input.try_recv().ok() } else { input.recv().await }
+                }, if input_open && (connected || checkpointing) && outgoing.is_empty() => {
                     match data {
                         Some(data) if !data.is_empty() => outgoing.push_back(data),
                         Some(_) => {}
@@ -163,7 +227,7 @@ pub(super) fn spawn(
             if flush && !coalesce.is_empty() {
                 let batch = coalesce.flush_to(<[u8]>::to_vec);
                 let replies = terminal.publish(&batch);
-                if !replies.is_empty() && active.is_some() {
+                if !replies.is_empty() && (active.is_some() || checkpointing) {
                     replies_pending = true;
                     outgoing.push_back(replies);
                 }
@@ -175,6 +239,15 @@ pub(super) fn spawn(
                     pending_log = Some(batch);
                 }
                 coalesce_at = None;
+            }
+            if checkpointing
+                && read_drained
+                && !input_open
+                && outgoing.is_empty()
+                && coalesce.is_empty()
+                && pending_log.is_none()
+            {
+                break;
             }
             if let Some(connection) = replace {
                 // A connection is a byte stream with its own partial writes.
@@ -203,6 +276,7 @@ pub(super) fn spawn(
         }
         drop(log);
         let _ = tokio::task::spawn_blocking(move || log_handle.join()).await;
+        checkpoint_error.map_or(Ok(()), Err)
     });
     TerminalBridge { stop, task }
 }
