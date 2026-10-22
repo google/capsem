@@ -67,6 +67,22 @@ fn owner_cannot_redirect_the_privileged_transcript_reader() {
 }
 
 #[cfg(target_os = "macos")]
+#[test]
+fn owner_can_read_its_immutable_code_without_granting_the_binary_directory() {
+    let executable = std::env::current_exe().unwrap().canonicalize().unwrap();
+    let policy = grant_owner_binaries(Policy::new(Role::VmOwner)).unwrap();
+    assert!(policy
+        .paths()
+        .iter()
+        .any(|rule| rule.path() == executable && rule.access() == Access::ReadOnly));
+    assert!(!policy
+        .paths()
+        .iter()
+        .any(|rule| rule.path() == executable.parent().unwrap()));
+    run_log_sandbox_probe("identity");
+}
+
+#[cfg(target_os = "macos")]
 fn run_log_sandbox_probe(mode: &str) -> (tempfile::TempDir, PathBuf) {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("session");
@@ -118,7 +134,12 @@ fn owner_log_sandbox_child() {
         .unwrap()
         .shared();
     let mut terminal = serial.clone();
+    let executable = std::env::current_exe().unwrap();
+    use std::io::Read as _;
+    let mut expected = [0; 4];
+    File::open(&executable).unwrap().read_exact(&mut expected).unwrap();
     let policy = grant_owner_session_paths(Policy::new(Role::VmOwner), &root).unwrap();
+    let policy = grant_owner_binaries(policy).unwrap();
     capsem_foundation::unix::worker_sandbox::confine(&policy).unwrap();
     for denied in [&unrelated, &root.join("session.db"), &root.join("metadata.json")] {
         assert_eq!(
@@ -130,7 +151,11 @@ fn owner_log_sandbox_child() {
         std::fs::write(root.join("ungranted"), b"denied").unwrap_err().kind(),
         std::io::ErrorKind::PermissionDenied
     );
-    if mode == "redirect" {
+    if mode == "identity" {
+        let mut prefix = [0; 4];
+        File::open(&executable).unwrap().read_exact(&mut prefix).unwrap();
+        assert_eq!(prefix, expected);
+    } else if mode == "redirect" {
         drop(log);
         std::fs::remove_file(log_dir.join("pty.log")).unwrap();
         std::os::unix::fs::symlink(unrelated, log_dir.join("pty.log")).unwrap();
