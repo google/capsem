@@ -8,6 +8,7 @@
 pub mod ipc_channel;
 #[cfg(feature = "runtime")]
 pub mod ipc_handshake;
+pub mod limited_writer;
 #[cfg(feature = "runtime")]
 pub mod log_layer;
 #[cfg(feature = "runtime")]

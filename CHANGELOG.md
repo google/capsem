@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Encode internal IPC directly into a bounded final frame, avoiding a second
+  payload allocation and copy and rejecting oversized output during encoding.
+
 - Render graphical notification messages and action labels as text so guest
   content cannot inject viewer markup or controls.
 

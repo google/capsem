@@ -122,18 +122,21 @@ where
 {
     /// Serialize and send one complete bounded frame.
     pub async fn send(&self, message: T) -> io::Result<()> {
-        let payload = rmp_serde::to_vec_named(&message).map_err(|error| invalid_data("encode IPC frame", error))?;
-        let len = u32::try_from(payload.len()).map_err(|error| invalid_data("measure IPC frame", error))?;
-        if len > MAX_IPC_FRAME_SIZE {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("IPC frame too large: {len} bytes (max {MAX_IPC_FRAME_SIZE})"),
-            ));
-        }
-
-        let mut frame = Vec::with_capacity(4 + payload.len());
-        frame.extend_from_slice(&len.to_be_bytes());
-        frame.extend_from_slice(&payload);
+        // Encode once into the final frame. Reject excess bytes during encode,
+        // before socket I/O; neither preflight serialization nor a payload copy.
+        let mut frame = vec![0; 4];
+        let mut writer = crate::limited_writer::LimitedWriter::new(&mut frame, MAX_IPC_FRAME_SIZE as usize);
+        let encoded = rmp_serde::encode::write_named(&mut writer, &message);
+        let exceeded = writer.exceeded();
+        encoded.map_err(|error| {
+            if exceeded {
+                invalid_data("IPC frame too large", MAX_IPC_FRAME_SIZE)
+            } else {
+                invalid_data("encode IPC frame", error)
+            }
+        })?;
+        let len = (frame.len() - 4) as u32;
+        frame[..4].copy_from_slice(&len.to_be_bytes());
         self.inner.lock().await.write_all(&frame).await
     }
 }
