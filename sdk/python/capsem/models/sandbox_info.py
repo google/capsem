@@ -6,6 +6,7 @@ from typing import Annotated
 
 from pydantic import Field, StrictBool, StrictFloat, StrictInt, StrictStr
 
+from .browser_request import BrowserRequest
 from .model_base import Model
 from .session_db_status import SessionDbStatus
 from .storage_diagnostics import StorageDiagnostics
@@ -22,6 +23,7 @@ class SandboxInfo(Model):
     ai: VmAiInfo | None = None
     allowed_requests: Annotated[StrictInt, Field(ge=0)] | None = None
     available_actions: list[VmAction]
+    browser_request: BrowserRequest | None = None
     can_resume: StrictBool | None = None
     cpus: Annotated[StrictInt, Field(ge=0)] | None = None
     created_at: StrictStr | None = None

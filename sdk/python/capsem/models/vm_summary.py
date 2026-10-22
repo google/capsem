@@ -6,6 +6,7 @@ from typing import Annotated
 
 from pydantic import Field, StrictBool, StrictFloat, StrictInt, StrictStr
 
+from .browser_request import BrowserRequest
 from .model_base import Model
 from .terminal_summary import TerminalSummary
 from .vm_action import VmAction
@@ -16,6 +17,7 @@ class VmSummary(Model):
     nonnullable_optional = frozenset(['can_resume'])
     allowed_requests: Annotated[StrictInt, Field(ge=0)] | None = None
     available_actions: list[VmAction]
+    browser_request: BrowserRequest | None = None
     can_resume: StrictBool | None = None
     denied_requests: Annotated[StrictInt, Field(ge=0)] | None = None
     id: StrictStr

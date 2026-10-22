@@ -2,6 +2,7 @@
 
 import {z} from "zod";
 import type {VmSummary} from "../models/VmSummary.js";
+import {BrowserRequestSchema} from "./BrowserRequest.js";
 import {TerminalSummarySchema} from "./TerminalSummary.js";
 import {VmActionSchema} from "./VmAction.js";
 import {VmLifecycleStateSchema} from "./VmLifecycleState.js";
@@ -9,6 +10,7 @@ import {VmLifecycleStateSchema} from "./VmLifecycleState.js";
 export const VmSummarySchema: z.ZodType<VmSummary> = z.object({
   "allowed_requests": z.int().min(0).nullable().exactOptional(),
   "available_actions": z.array(z.lazy(() => VmActionSchema)),
+  "browser_request": z.union([z.null(), z.lazy(() => BrowserRequestSchema)]).exactOptional(),
   "can_resume": z.boolean().exactOptional(),
   "denied_requests": z.int().min(0).nullable().exactOptional(),
   "id": z.string(),

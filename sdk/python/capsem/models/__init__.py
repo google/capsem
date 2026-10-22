@@ -15,6 +15,7 @@ from .authorize_google_response import (
     AuthorizeGoogleResponse as AuthorizeGoogleResponse,
 )
 from .body_encoding import BodyEncoding as BodyEncoding
+from .browser_request import BrowserRequest as BrowserRequest
 from .capability_summary import CapabilitySummary as CapabilitySummary
 from .capture_status import CaptureStatus as CaptureStatus
 from .captured_content import CapturedContent as CapturedContent

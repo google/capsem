@@ -11,6 +11,7 @@ export type { AuthorizationTransaction } from "./AuthorizationTransaction.js";
 export type { AuthorizeGoogleRequest } from "./AuthorizeGoogleRequest.js";
 export type { AuthorizeGoogleResponse } from "./AuthorizeGoogleResponse.js";
 export { BodyEncoding } from "./BodyEncoding.js";
+export type { BrowserRequest } from "./BrowserRequest.js";
 export type { CapabilitySummary } from "./CapabilitySummary.js";
 export { CaptureStatus } from "./CaptureStatus.js";
 export type { CapturedContent } from "./CapturedContent.js";

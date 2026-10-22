@@ -26,6 +26,9 @@ pub struct HypervisorInfo {
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct VmSummary {
+    /// Latest ephemeral guest request for the client's browser.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub browser_request: Option<crate::BrowserRequest>,
     /// Session terminal metadata, including while no terminal view is open.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal: Option<crate::TerminalSummary>,

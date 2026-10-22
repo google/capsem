@@ -199,6 +199,10 @@ pub struct SessionDbStatus {
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct SandboxInfo {
+    /// Latest browser navigation requested by the live guest. Ephemeral and
+    /// opened only by an explicit action on the attached client.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub browser_request: Option<crate::BrowserRequest>,
     /// Session terminal metadata, including while no terminal view is open.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal: Option<crate::TerminalSummary>,
@@ -289,6 +293,7 @@ impl SandboxInfo {
         let available_actions = status.available_actions(false);
         Self {
             terminal: None,
+            browser_request: None,
             id,
             name: None,
             pid,

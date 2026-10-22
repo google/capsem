@@ -3852,6 +3852,24 @@
           "base64"
         ]
       },
+      "BrowserRequest": {
+        "type": "object",
+        "required": [
+          "id",
+          "url"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "url": {
+            "type": "string",
+            "maxLength": 8192
+          }
+        }
+      },
       "CapabilitySummary": {
         "type": "object",
         "required": [
@@ -7511,6 +7529,17 @@
               "$ref": "#/components/schemas/VmAction"
             }
           },
+          "browser_request": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BrowserRequest",
+                "description": "Latest browser navigation requested by the live guest. Ephemeral and\nopened only by an explicit action on the attached client."
+              }
+            ]
+          },
           "can_resume": {
             "type": "boolean",
             "description": "True only when an inactive persistent VM can be started/resumed: its\npinned boot assets are installed and its shape is current."
@@ -9456,6 +9485,17 @@
             "items": {
               "$ref": "#/components/schemas/VmAction"
             }
+          },
+          "browser_request": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BrowserRequest",
+                "description": "Latest ephemeral guest request for the client's browser."
+              }
+            ]
           },
           "can_resume": {
             "type": "boolean"

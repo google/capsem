@@ -58,4 +58,5 @@ pub use mcp::*;
 #[cfg(test)]
 mod tests;
 
+pub use capsem_proto::browser::BrowserRequest;
 pub use capsem_proto::terminal::{TerminalNotification, TerminalSummary};

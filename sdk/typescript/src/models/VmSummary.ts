@@ -1,5 +1,6 @@
 // Generated from Capsem OpenAPI. Do not edit.
 
+import type { BrowserRequest } from "./BrowserRequest.js";
 import type { TerminalSummary } from "./TerminalSummary.js";
 import type { VmAction } from "./VmAction.js";
 import type { VmLifecycleState } from "./VmLifecycleState.js";
@@ -7,6 +8,7 @@ import type { VmLifecycleState } from "./VmLifecycleState.js";
 export interface VmSummary {
   "allowed_requests"?: number | null;
   "available_actions": Array<VmAction>;
+  "browser_request"?: null | BrowserRequest;
   "can_resume"?: boolean;
   "denied_requests"?: number | null;
   "id": string;
