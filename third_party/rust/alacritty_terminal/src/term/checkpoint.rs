@@ -44,9 +44,11 @@ impl CheckpointLimits {
             && cell
                 .zerowidth()
                 .is_none_or(|chars| chars.len() <= self.max_combining_chars && chars.iter().all(|c| !c.is_control()))
-            && cell
-                .hyperlink()
-                .is_none_or(|link| self.valid_text(link.id()) && self.valid_text(link.uri()))
+            && cell.hyperlink().is_none_or(|link| {
+                [link.id(), link.uri()]
+                    .into_iter()
+                    .all(|text| self.valid_text(text) && !text.chars().any(char::is_control))
+            })
     }
 }
 

@@ -39,6 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Reject control characters in restored terminal checkpoint hyperlinks.
+
 - Bound combining-character retention in the session terminal engine, keeping
   repeated zero-width input from growing one cell without limit.
 

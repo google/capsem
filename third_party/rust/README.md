@@ -68,6 +68,8 @@ a saved state cannot enable clipboard access. Explicit caller budgets bound
 dimensions, history, combined cell count and text/combining data. Model
 validation checks row shapes, cursor/selection bounds, mode bits, stack depths,
 wide-cell pairing and semantic state before exposing a usable terminal.
+Restored hyperlink IDs and URIs reject control characters so a saved link
+cannot introduce terminal control syntax into a display projection.
 Callers must also bound serialized bytes before decoding. Pair this model with
 the pinned vte processor checkpoint to retain unfinished escape/UTF-8 input.
 The versioned format is internal implementation state, not an external API.

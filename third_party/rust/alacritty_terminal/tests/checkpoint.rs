@@ -158,6 +158,37 @@ fn malformed_grid_cursor_tabs_palette_and_policy_are_refused() {
 }
 
 #[test]
+fn checkpoint_hyperlinks_cannot_restore_terminal_control_characters() {
+    use alacritty_terminal::term::cell::Hyperlink;
+    let mut term = Term::new(config(), &Size(20, 6), Events::default());
+    let link_id = "checkpoint-safe-id";
+    let uri = "https://example.invalid/checkpoint-safe-uri";
+    term.grid_mut()[Point::new(Line(0), Column(0))].set_hyperlink(Some(Hyperlink::new(Some(link_id), uri.to_owned())));
+    let original = serde_json::to_string(&term.checkpoint(&limits()).unwrap()).unwrap();
+    for (field, value) in [("id", link_id), ("uri", uri)] {
+        let needle = serde_json::to_string(value).unwrap();
+        assert!(original.contains(&needle));
+        for control in ['\x1b', '\x07', '\n', '\r', '\u{9b}'] {
+            let replacement = serde_json::to_string(&format!("{value}{control}injected")).unwrap();
+            let corrupt = original.replace(&needle, &replacement);
+            let checkpoint: TermCheckpoint = serde_json::from_str(&corrupt).unwrap();
+            assert!(
+                Term::from_checkpoint(checkpoint, config(), Events::default(), &limits()).is_err(),
+                "control character {control:?} accepted in hyperlink {field}"
+            );
+        }
+    }
+    // The trusted semantic character set contains a literal tab; validation
+    // must target links rather than reject all control-bearing configuration.
+    assert!(config().semantic_escape_chars.contains('\t'));
+    let checkpoint: TermCheckpoint = serde_json::from_str(&original).unwrap();
+    assert!(Term::from_checkpoint(checkpoint, config(), Events::default(), &limits()).is_ok());
+    term.grid_mut()[Point::new(Line(0), Column(0))]
+        .set_hyperlink(Some(Hyperlink::new(Some(link_id), format!("{uri}\x1b"))));
+    assert!(term.checkpoint(&limits()).is_err());
+}
+
+#[test]
 fn cell_and_text_budgets_apply_before_checkpoint_copy_and_restore() {
     let mut term = Term::new(config(), &Size(20, 6), Events::default());
     let mut parser: Processor = Processor::new();
