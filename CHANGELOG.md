@@ -83,6 +83,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Use Alacritty for session-owned terminals, preserving explicit links and
+  dynamic colors while reflowing soft-wrapped lines when the window grows.
+  Viewers receive reconstructed snapshots and incremental display updates.
+
 - Split large TUI pastes into bounded binary stream records without losing
   bytes or disconnecting the terminal.
 

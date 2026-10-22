@@ -1,5 +1,6 @@
 [workspace]
 resolver = "2"
+exclude = ["third_party/rust/alacritty_terminal", "third_party/rust/vte"]
 members = [
     "crates/capsem-cache",
     "crates/capsem-crypto",
@@ -263,3 +264,6 @@ rmcp = { version = "2.1", features = ["client", "server"] }
 # responses for blocked domains, and forward allowed queries upstream.
 # The agent crate uses raw bytes only; hickory is host-side only.
 hickory-proto = { version = "0.26", default-features = false, features = ["std"] }
+
+[patch.crates-io]
+vte = { path = "third_party/rust/vte" }

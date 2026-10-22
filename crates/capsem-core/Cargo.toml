@@ -49,7 +49,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 flate2 = "1"
 regex = { workspace = true }
 scraper = "0.25"
-vt100 = "0.16.2"
+alacritty_terminal = { path = "../../third_party/rust/alacritty_terminal", features = ["checkpoint"] }
 
 hickory-proto = { workspace = true }
 ego-tree = "0.10"
@@ -75,6 +75,7 @@ core-foundation-sys = "0.8"
 workspace = true
 
 [dev-dependencies]
+vt100 = "0.16.2"
 sse-stream = { workspace = true }
 rusqlite = { workspace = true }
 nix = { version = "0.29", features = ["fs"] }

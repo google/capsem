@@ -214,3 +214,131 @@ fn oversized_control_strings_are_discarded_and_the_terminal_recovers() {
     assert_eq!(snapshot.state.last_notification.as_ref().unwrap().body, "Ready");
     assert_eq!(display(&snapshot).screen().contents(), "visible");
 }
+
+#[test]
+fn owner_reflows_soft_wrapped_text_when_the_view_grows() {
+    let terminal = SessionTerminal::new(8);
+    let (view, _, _) = terminal.subscribe();
+    terminal.focus(view, 8, 4).unwrap();
+    terminal.publish(b"abcdefghijk");
+    terminal.resize(view, 12, 4).unwrap();
+    let (_, snapshot, _) = terminal.subscribe();
+    assert_eq!(display(&snapshot).screen().contents(), "abcdefghijk");
+}
+
+#[test]
+fn owner_projects_explicit_links_and_dynamic_palette_colors() {
+    let terminal = SessionTerminal::new(8);
+    let url = b"https://example.invalid/owned-link";
+    terminal.publish(
+        b"\x1b]4;1;rgb:12/34/56\x07\x1b[31m\x1b]8;id=owned;https://example.invalid/owned-link\x1b\\click\x1b]8;;\x1b\\",
+    );
+    let (_, snapshot, _) = terminal.subscribe();
+    assert!(snapshot.render.windows(url.len()).any(|bytes| bytes == url));
+    let link_start = b"\x1b]8;id=owned;";
+    assert!(snapshot
+        .render
+        .windows(link_start.len())
+        .any(|bytes| bytes == link_start));
+    assert_eq!(
+        display(&snapshot).screen().cell(0, 0).unwrap().fgcolor(),
+        vt100::Color::Rgb(0x12, 0x34, 0x56)
+    );
+}
+
+#[test]
+fn unfinished_synchronized_output_flushes_once_when_the_owner_expires_it() {
+    let terminal = SessionTerminal::new(8);
+    terminal.publish(b"before\x1b[?2026hheld\x07\x1b]2;held-title\x07\x1b[6n");
+    let deadline = terminal.sync_deadline().expect("missing sync deadline");
+    let (_, before, _) = terminal.subscribe();
+    assert_eq!(display(&before).screen().contents(), "before");
+    assert_eq!(before.state.bell_count, 0);
+    assert!(terminal
+        .expire_sync_at(deadline.checked_sub(std::time::Duration::from_nanos(1)).unwrap())
+        .is_empty());
+    assert_eq!(terminal.expire_sync_at(deadline), b"\x1b[1;11R");
+    let (_, after, _) = terminal.subscribe();
+    assert_eq!(display(&after).screen().contents(), "beforeheld");
+    assert_eq!(after.state.title, "held-title");
+    assert_eq!(after.state.bell_count, 1);
+    assert!(terminal.sync_deadline().is_none());
+    assert!(terminal.expire_sync_at(deadline).is_empty());
+    assert_eq!(terminal.subscribe().1.state.bell_count, 1);
+}
+
+#[test]
+fn incremental_projection_matches_a_fresh_view_after_edits_and_combining_input() {
+    let terminal = SessionTerminal::new(8);
+    let (_, snapshot, mut updates) = terminal.subscribe();
+    let mut client = display(&snapshot);
+    for input in [
+        "hello",
+        "\r\x1b[31mred",
+        "\r\x1b[0mdefault",
+        "\x1b[2;1H界",
+        "\u{301}",
+        "\x1b[1;5H\x1b[2X",
+        "\x1b[1;5H\x1b[K",
+        "\x1b[?1049h\x1b[38;2;1;2;3malt",
+        "\x1b[?1049l",
+        "\x1b]4;1;rgb:12/34/56\x07",
+        "\x1b[H\x1b[2K",
+    ] {
+        terminal.publish(input.as_bytes());
+        client.process(&updates.try_recv().unwrap().render);
+        let (_, snapshot, _) = terminal.subscribe();
+        let expected = display(&snapshot);
+        assert_eq!(client.screen().contents(), expected.screen().contents(), "{input:?}");
+        for row in 0..snapshot.state.rows {
+            for col in 0..snapshot.state.cols {
+                let actual = client.screen().cell(row, col).unwrap();
+                let expected = expected.screen().cell(row, col).unwrap();
+                assert_eq!(
+                    (actual.fgcolor(), actual.bgcolor(), actual.bold(), actual.italic()),
+                    (
+                        expected.fgcolor(),
+                        expected.bgcolor(),
+                        expected.bold(),
+                        expected.italic()
+                    ),
+                    "{input:?} at {row}:{col}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn owner_retention_and_host_capabilities_remain_bounded() {
+    let terminal = SessionTerminal::new(8);
+    let (view, _, mut updates) = terminal.subscribe();
+    assert!(terminal.focus(view, 1, 24).is_err());
+    terminal.publish(b"e");
+    terminal.publish("\u{301}".repeat(capsem_proto::TERMINAL_COMBINING_CHARS * 4));
+    let (_, snapshot, _) = terminal.subscribe();
+    // The independent vt100 display fixture itself caps cell bytes at 22.
+    // Verify the actual wire projection rather than that fixture's capacity.
+    assert_eq!(
+        snapshot
+            .render
+            .windows(2)
+            .filter(|bytes| *bytes == [0xcc, 0x81])
+            .count(),
+        capsem_proto::TERMINAL_COMBINING_CHARS
+    );
+    let reply = terminal.publish(b"\x1b]52;c;aGVsbG8=\x07\x1b]52;c;?\x07");
+    assert!(reply.is_empty());
+    assert!(terminal.subscribe().1.state.events.is_empty());
+    while let Ok(update) = updates.try_recv() {
+        assert!(update.state.events.is_empty());
+    }
+    let lines = capsem_proto::TERMINAL_HISTORY_CELLS / snapshot.state.cols as usize + snapshot.state.rows as usize + 10;
+    terminal.publish("line\r\n".repeat(lines));
+    let inner = terminal.inner.lock().unwrap();
+    assert_eq!(
+        inner.term.history_size(),
+        capsem_proto::TERMINAL_HISTORY_CELLS / inner.term.columns()
+    );
+    drop(inner);
+}

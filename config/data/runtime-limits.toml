@@ -68,12 +68,14 @@ image_catalog_retry_seconds = 60
 image_verification_batch_keys = 1024
 
 [terminal]
-# One current screen per session. History/scrolling is a separate contract.
+# Canonical owner grid and retained logical history. Viewers own no byte replay.
 default_cols = 80
 default_rows = 24
 max_cols = 512
 max_rows = 256
 max_cells = 65536
+history_cells = 65536
+combining_chars = 64
 metadata_bytes = 1024
 control_string_bytes = 8192
 events_per_update = 32

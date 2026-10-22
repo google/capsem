@@ -1,16 +1,19 @@
-//! The session's terminal, independent of any attached UI. All PTY bytes are
-//! interpreted here. Subscribers receive a coherent display projection, never
-//! an arbitrary byte tail whose interpretation depends on their window size.
+//! One Rust session owns emulation, dimensions and effects. Thin viewers receive
+//! coherent display projections, never a suffix of workload control history.
 use std::sync::{Arc, Mutex};
 
+use alacritty_terminal::grid::Dimensions;
+use alacritty_terminal::term::{Config, LineDamageBounds, Osc52, TermDamage, TermMode};
+use alacritty_terminal::vte::ansi::Processor;
+use alacritty_terminal::Term;
 use capsem_proto::terminal::{validate_size, TerminalCursor, TerminalModes, TerminalState, TerminalSummary};
-use capsem_proto::{TERMINAL_DEFAULT_COLS, TERMINAL_DEFAULT_ROWS};
+use capsem_proto::{TERMINAL_COMBINING_CHARS, TERMINAL_DEFAULT_COLS, TERMINAL_DEFAULT_ROWS, TERMINAL_HISTORY_CELLS};
 use tokio::sync::{broadcast, watch};
 
 mod callbacks;
 mod osc_budget;
-mod utf8_boundary;
-use callbacks::Callbacks;
+mod projection;
+use callbacks::Proxy;
 
 #[derive(Clone, Debug)]
 pub struct TerminalUpdate {
@@ -23,9 +26,10 @@ pub struct SessionTerminal {
 }
 
 struct Inner {
-    parser: vt100::Parser<Callbacks>,
+    term: Term<Proxy>,
+    parser: Processor,
+    effects: Proxy,
     osc_budget: osc_budget::OscBudget,
-    input_boundary: utf8_boundary::Utf8Boundary,
     revision: u64,
     next_view: u64,
     controller: Option<u64>,
@@ -33,20 +37,48 @@ struct Inner {
     summary: watch::Sender<TerminalSummary>,
 }
 
+fn options(cols: usize) -> Config {
+    Config {
+        scrolling_history: TERMINAL_HISTORY_CELLS / cols,
+        max_combining_chars: Some(TERMINAL_COMBINING_CHARS),
+        osc52: Osc52::Disabled,
+        ..Config::default()
+    }
+}
+
+fn size(cols: u16, rows: u16) -> Result<(), &'static str> {
+    validate_size(cols, rows)?;
+    if usize::from(cols) < alacritty_terminal::term::MIN_COLUMNS {
+        return Err("terminal needs at least two columns");
+    }
+    Ok(())
+}
+
+struct GridSize(usize, usize);
+impl Dimensions for GridSize {
+    fn total_lines(&self) -> usize {
+        self.1
+    }
+    fn screen_lines(&self) -> usize {
+        self.1
+    }
+    fn columns(&self) -> usize {
+        self.0
+    }
+}
+
 impl SessionTerminal {
     pub fn new(capacity: usize) -> Arc<Self> {
         let (updates, _) = broadcast::channel(capacity);
         let (summary, _) = watch::channel(TerminalSummary::default());
+        let effects = Proxy::default();
+        let dimensions = GridSize(TERMINAL_DEFAULT_COLS, TERMINAL_DEFAULT_ROWS);
         Arc::new(Self {
             inner: Mutex::new(Inner {
-                parser: vt100::Parser::new_with_callbacks(
-                    TERMINAL_DEFAULT_ROWS as u16,
-                    TERMINAL_DEFAULT_COLS as u16,
-                    0,
-                    Callbacks::default(),
-                ),
+                term: Term::new(options(TERMINAL_DEFAULT_COLS), &dimensions, effects.clone()),
+                parser: Processor::new(),
+                effects,
                 osc_budget: Default::default(),
-                input_boundary: Default::default(),
                 revision: 0,
                 next_view: 0,
                 controller: None,
@@ -56,41 +88,60 @@ impl SessionTerminal {
         })
     }
 
-    /// Interpret once, even with no viewers. Replies to terminal queries go
-    /// back to the PTY once; renderers never see those requests.
+    /// Interpret once without viewers. Only owner-generated replies return to
+    /// the PTY; queries and other effects never reach a renderer for replay.
     pub fn publish(&self, data: impl AsRef<[u8]>) -> Vec<u8> {
         let mut inner = self.inner.lock().unwrap();
-        let previous = inner.parser.screen().clone();
+        let alternate = inner.term.mode().contains(TermMode::ALT_SCREEN);
         let Inner {
+            term,
             parser,
             osc_budget,
-            input_boundary,
             ..
         } = &mut *inner;
-        osc_budget.process(data.as_ref(), |bytes| {
-            input_boundary.process(bytes, |bytes| parser.process(bytes))
-        });
-        inner.revision += 1;
-        let reset = previous.alternate_screen() != inner.parser.screen().alternate_screen();
-        let mut update = inner.update(reset, Some(&previous));
-        update.state.events = std::mem::take(&mut inner.parser.callbacks_mut().events);
-        let replies = std::mem::take(&mut inner.parser.callbacks_mut().replies);
-        inner.publish_summary();
-        // No viewer is normal: the parsed screen remains authoritative.
-        let _ = inner.updates.send(Arc::new(update)); // channel-closed-ok: session-terminal-retains-state
-        replies
+        osc_budget.process(data.as_ref(), |bytes| parser.advance(term, bytes));
+        inner.finish_update(alternate)
     }
 
-    /// Snapshot and live subscription share publication's lock. Neither a gap
-    /// nor duplicated output/events can occur at the attach boundary.
+    /// The transport drives this deadline even when the PTY becomes quiet.
+    pub fn sync_deadline(&self) -> Option<std::time::Instant> {
+        self.inner.lock().unwrap().parser.sync_timeout().sync_timeout()
+    }
+
+    pub fn expire_sync(&self) -> Vec<u8> {
+        self.expire_sync_at(std::time::Instant::now())
+    }
+
+    fn expire_sync_at(&self, now: std::time::Instant) -> Vec<u8> {
+        let mut inner = self.inner.lock().unwrap();
+        if !inner
+            .parser
+            .sync_timeout()
+            .sync_timeout()
+            .is_some_and(|deadline| deadline <= now)
+        {
+            return Vec::new();
+        }
+        let alternate = inner.term.mode().contains(TermMode::ALT_SCREEN);
+        let Inner { parser, term, .. } = &mut *inner;
+        parser.stop_sync(term);
+        inner.finish_update(alternate)
+    }
+
+    /// Snapshot and subscription share publication's lock: no missing bytes or
+    /// duplicated effects at attachment, regardless of the previous viewer.
     pub fn subscribe(&self) -> (u64, TerminalUpdate, broadcast::Receiver<Arc<TerminalUpdate>>) {
         let mut inner = self.inner.lock().unwrap();
         inner.next_view += 1;
-        (inner.next_view, inner.update(true, None), inner.updates.subscribe())
+        (
+            inner.next_view,
+            inner.update(true, &inner.full_damage()),
+            inner.updates.subscribe(),
+        )
     }
 
     pub fn focus(&self, view: u64, cols: u16, rows: u16) -> Result<bool, &'static str> {
-        validate_size(cols, rows)?;
+        size(cols, rows)?;
         let mut inner = self.inner.lock().unwrap();
         if view == 0 || view > inner.next_view {
             return Err("unknown terminal view");
@@ -103,7 +154,7 @@ impl SessionTerminal {
     }
 
     pub fn resize(&self, view: u64, cols: u16, rows: u16) -> Result<bool, &'static str> {
-        validate_size(cols, rows)?;
+        size(cols, rows)?;
         let mut inner = self.inner.lock().unwrap();
         if inner.controller != Some(view) {
             return Ok(false);
@@ -114,11 +165,9 @@ impl SessionTerminal {
     pub fn subscribe_summary(&self) -> watch::Receiver<TerminalSummary> {
         self.inner.lock().unwrap().summary.subscribe()
     }
-
     pub fn controls(&self, view: u64) -> bool {
         self.inner.lock().unwrap().controller == Some(view)
     }
-
     pub fn release(&self, view: u64) {
         let mut inner = self.inner.lock().unwrap();
         if inner.controller == Some(view) {
@@ -128,14 +177,43 @@ impl SessionTerminal {
 }
 
 impl Inner {
+    fn finish_update(&mut self, alternate: bool) -> Vec<u8> {
+        self.revision += 1;
+        let reset = alternate != self.term.mode().contains(TermMode::ALT_SCREEN);
+        let damage = match self.term.damage() {
+            TermDamage::Full => self.full_damage(),
+            TermDamage::Partial(lines) => lines.collect(),
+        };
+        let (events, replies) = {
+            let mut effects = self.effects.0.lock().unwrap();
+            (
+                std::mem::take(&mut effects.events),
+                std::mem::take(&mut effects.replies),
+            )
+        };
+        let mut update = self.update(reset, &damage);
+        update.state.events = events;
+        self.term.reset_damage();
+        self.publish_summary();
+        let _ = self.updates.send(Arc::new(update)); // channel-closed-ok: session-terminal-retains-state
+        replies
+    }
+
+    fn full_damage(&self) -> Vec<LineDamageBounds> {
+        (0..self.term.screen_lines())
+            .map(|line| LineDamageBounds::new(line, 0, self.term.columns() - 1))
+            .collect()
+    }
+
     fn publish_summary(&self) {
-        let callbacks = self.parser.callbacks();
+        let effects = self.effects.0.lock().unwrap();
         let summary = TerminalSummary {
             revision: self.revision,
-            title: callbacks.title.clone(),
-            bell_count: callbacks.bell_count,
-            last_notification: callbacks.last_notification.clone(),
+            title: effects.title.clone(),
+            bell_count: effects.bell_count,
+            last_notification: effects.last_notification.clone(),
         };
+        drop(effects);
         self.summary.send_if_modified(|current| {
             if (current.title.as_str(), current.bell_count, &current.last_notification)
                 == (summary.title.as_str(), summary.bell_count, &summary.last_notification)
@@ -148,56 +226,70 @@ impl Inner {
     }
 
     fn resize(&mut self, cols: u16, rows: u16) -> bool {
-        if self.parser.screen().size() == (rows, cols) {
+        if (self.term.columns(), self.term.screen_lines()) == (usize::from(cols), usize::from(rows)) {
             return false;
         }
-        self.parser.screen_mut().set_size(rows, cols);
+        self.term.set_options(options(usize::from(cols)));
+        self.term.resize(GridSize(usize::from(cols), usize::from(rows)));
+        {
+            let mut effects = self.effects.0.lock().unwrap();
+            effects.cols = cols;
+            effects.rows = rows;
+        }
         self.revision += 1;
-        let _ = self.updates.send(Arc::new(self.update(true, None))); // channel-closed-ok: session-terminal-retains-state
+        let _ = self.updates.send(Arc::new(self.update(true, &self.full_damage()))); // channel-closed-ok: session-terminal-retains-state
+        self.term.reset_damage();
         true
     }
 
-    fn update(&self, reset: bool, previous: Option<&vt100::Screen>) -> TerminalUpdate {
-        let screen = self.parser.screen();
-        let callbacks = self.parser.callbacks();
-        let (rows, cols) = screen.size();
-        let (row, col) = screen.cursor_position();
-        let render = if let Some(previous) = previous.filter(|_| !reset) {
-            screen.state_diff(previous)
+    fn update(&self, reset: bool, damage: &[LineDamageBounds]) -> TerminalUpdate {
+        let effects = self.effects.0.lock().unwrap();
+        let mode = self.term.mode();
+        let cursor = &self.term.grid().cursor;
+        let mouse = if mode.contains(TermMode::MOUSE_MOTION) {
+            "AnyMotion"
+        } else if mode.contains(TermMode::MOUSE_DRAG) {
+            "ButtonMotion"
+        } else if mode.contains(TermMode::MOUSE_REPORT_CLICK) {
+            "PressRelease"
         } else {
-            let mut render = b"\x1bc".to_vec();
-            if screen.alternate_screen() {
-                render.extend_from_slice(b"\x1b[?1049h");
-            }
-            render.extend(screen.state_formatted());
-            render
+            "None"
         };
-        TerminalUpdate {
-            state: TerminalState {
-                revision: self.revision,
-                reset,
-                cols,
-                rows,
-                cursor: TerminalCursor {
-                    row,
-                    col,
-                    hidden: screen.hide_cursor(),
-                },
-                modes: TerminalModes {
-                    alternate_screen: screen.alternate_screen(),
-                    application_cursor: screen.application_cursor(),
-                    application_keypad: screen.application_keypad(),
-                    bracketed_paste: screen.bracketed_paste(),
-                    mouse_protocol: format!("{:?}", screen.mouse_protocol_mode()),
-                    mouse_encoding: format!("{:?}", screen.mouse_protocol_encoding()),
-                },
-                title: callbacks.title.clone(),
-                icon_name: callbacks.icon_name.clone(),
-                bell_count: callbacks.bell_count,
-                last_notification: callbacks.last_notification.clone(),
-                events: Vec::new(),
+        let encoding = if mode.contains(TermMode::SGR_MOUSE) {
+            "Sgr"
+        } else if mode.contains(TermMode::UTF8_MOUSE) {
+            "Utf8"
+        } else {
+            "Default"
+        };
+        let state = TerminalState {
+            revision: self.revision,
+            reset,
+            cols: self.term.columns() as u16,
+            rows: self.term.screen_lines() as u16,
+            cursor: TerminalCursor {
+                row: cursor.point.line.0 as u16,
+                col: (cursor.point.column.0 + usize::from(cursor.input_needs_wrap)) as u16,
+                hidden: !mode.contains(TermMode::SHOW_CURSOR),
             },
-            render,
+            modes: TerminalModes {
+                alternate_screen: mode.contains(TermMode::ALT_SCREEN),
+                application_cursor: mode.contains(TermMode::APP_CURSOR),
+                application_keypad: mode.contains(TermMode::APP_KEYPAD),
+                bracketed_paste: mode.contains(TermMode::BRACKETED_PASTE),
+                mouse_protocol: mouse.into(),
+                mouse_encoding: encoding.into(),
+            },
+            title: effects.title.clone(),
+            icon_name: effects.icon_name.clone(),
+            bell_count: effects.bell_count,
+            last_notification: effects.last_notification.clone(),
+            events: Vec::new(),
+        };
+        drop(effects);
+        TerminalUpdate {
+            state,
+            render: projection::render(&self.term, reset, damage),
         }
     }
 }
