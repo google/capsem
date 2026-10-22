@@ -39,7 +39,7 @@ fn the_page_split_refuses_a_page_it_cannot_split_exactly() {
     assert_eq!(page.main, "go()");
     assert_eq!(
         page.index,
-        "<html><head><script src=\"a.js\"></script><link rel=\"stylesheet\" href=\"capsem-surface.css\" />\n  <script src=\"capsem-surface-metrics.js\"></script>\n  <script src=\"capsem-surface-profile.js\"></script>\n  <script src=\"capsem-surface.js\"></script>\n  </head><body><script src=\"xpra-main.js\"></script></body></html>"
+        "<html><head><script src=\"a.js\"></script><link rel=\"stylesheet\" href=\"capsem-surface.css\" />\n  <script src=\"capsem-surface-metrics.js\"></script>\n  <script src=\"capsem-surface-profile.js\"></script>\n  <script src=\"capsem-surface-cursor.js\"></script>\n  <script src=\"capsem-surface.js\"></script>\n  </head><body><script src=\"xpra-main.js\"></script></body></html>"
     );
     for bad in [
         "<html><head></head><body></body></html>",
@@ -269,6 +269,9 @@ fn embedded_profile_precedes_policy_and_preserves_remote_override() {
     let (head, script) = get(&format!("{CLIENT_ROOT}capsem-surface-profile.js"));
     assert!(head.starts_with("HTTP/1.1 200 OK\r\n"));
     assert_eq!(script, SURFACE_PROFILE.as_bytes());
+    let (head, script) = get(&format!("{CLIENT_ROOT}capsem-surface-cursor.js"));
+    assert!(head.starts_with("HTTP/1.1 200 OK\r\n"));
+    assert_eq!(script, SURFACE_CURSOR.as_bytes());
 }
 
 #[test]

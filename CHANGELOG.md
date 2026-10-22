@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep graphical cursor size and click hotspots correct on high-DPI displays.
+
 - Keep concurrent gateway requests in their own tracing contexts across async waits.
 
 - Use explicit XXH3-128 diagnostic fingerprints in support bundles.

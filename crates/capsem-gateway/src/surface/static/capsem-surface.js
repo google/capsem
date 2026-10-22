@@ -43,7 +43,10 @@
       width: `${100 * scale}%`, height: `${100 * scale}%`,
       transform: `scale(${1 / scale})`, transformOrigin: "top left",
     });
-    for (const win of Object.values(client.id_to_window || {})) win.scale = scale;
+    for (const win of Object.values(client.id_to_window || {})) {
+      win.scale = scale;
+      win.update_cursor_density?.();
+    }
     return true;
   }
   const init = XpraClient.prototype.init;
