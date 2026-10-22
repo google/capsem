@@ -38,7 +38,7 @@ use axum::body::{to_bytes, Body};
 use capsem_assets::asset_manager::{
     hash_filename, host_manifest_arch, AssetEntry, AssetRelease, AssetsSection, BinariesSection, ManifestV2,
 };
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, AtomicUsize};
 use tower::ServiceExt;
 
 mod asset_status;
@@ -232,11 +232,12 @@ pub(crate) type FakeProcessReply =
 
 const FAKE_PROCESS_ACCEPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
-/// A stand-in capsem-process listening on `uds_path`: accepts `expected`
-/// service connections one at a time, answers each message through
-/// `handler` (no reply closes the connection), and returns everything it
-/// received. The one fixture for every test that needs the process side
-/// of the IPC; a fake instance's `uds_path` is where to bind it.
+type FakeProcessHandler = dyn Fn(&ServiceToProcess) -> FakeProcessReply + Send + Sync;
+
+/// A stand-in capsem-process: independent connections, like the real owner.
+/// Return exactly `expected` commands in receive order after replying. Idle
+/// observer channels and credential admission do not consume that budget;
+/// every outstanding connection is closed before the fixture returns.
 pub(crate) fn spawn_fake_process(
     uds_path: &StdPath,
     expected: usize,
@@ -245,60 +246,87 @@ pub(crate) fn spawn_fake_process(
     let _ = std::fs::remove_file(uds_path);
     let listener = tokio::net::UnixListener::bind(uds_path).unwrap();
     std::fs::write(uds_path.with_extension("ready"), b"ready").unwrap();
+    let handler: Arc<FakeProcessHandler> = Arc::new(handler);
     tokio::spawn(async move {
         let mut messages = Vec::new();
+        let sequence = Arc::new(AtomicUsize::new(0));
+        let mut peers = tokio::task::JoinSet::new();
+        let mut deadline = tokio::time::Instant::now() + FAKE_PROCESS_ACCEPT_TIMEOUT;
         while messages.len() < expected {
-            let received = messages.len();
-            // A route that stops talking to its VM used to hang the whole
-            // binary here: tests serialized on SETTINGS_ENV_LOCK stalled
-            // behind the one waiting forever. Fail with what was missing.
-            let (stream, _) = tokio::time::timeout(FAKE_PROCESS_ACCEPT_TIMEOUT, listener.accept())
-                .await
-                .unwrap_or_else(|_| panic!("fake capsem-process got {received} of {expected} expected IPC connections"))
-                .unwrap();
-            let std_stream = stream.into_std().unwrap();
-            let negotiated = tokio::task::spawn_blocking(move || {
-                let mut std_stream = std_stream;
-                capsem_foundation::ipc_handshake::negotiate_responder(&mut std_stream, "capsem-process-test", "")?;
-                Ok::<_, capsem_proto::handshake::HandshakeError>(std_stream)
-            })
-            .await
-            .unwrap();
-            let std_stream = match negotiated {
-                Ok(stream) => stream,
-                Err(error) => {
-                    // Like the real owner, reject a failed connection while
-                    // retaining the listener. macOS can report EINVAL when
-                    // the peer closes before its accepted socket is set up.
-                    eprintln!("fake owner rejected handshake: {error}");
-                    continue;
+            tokio::select! {
+                _ = tokio::time::sleep_until(deadline) => {
+                    panic!("fake capsem-process got {} of {expected} expected commands", messages.len());
                 }
-            };
-            let (tx, rx): (
-                capsem_foundation::ipc_channel::Sender<ProcessToService>,
-                capsem_foundation::ipc_channel::Receiver<ServiceToProcess>,
-            ) = capsem_foundation::ipc_channel::channel_from_std(std_stream).unwrap();
-            let message = match rx.recv().await {
-                Ok(message) => message,
-                // Readiness/authority probes and cancelled requests can
-                // complete Hello without ever sending a command. They must
-                // not kill the owner fixture or consume its command budget.
-                Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => continue,
-                Err(error) => panic!("fake owner request failed: {error}"),
-            };
-            if let ServiceToProcess::InjectCredentials { id, .. } = &message {
-                tx.send(ProcessToService::CredentialsInjected { id: *id, error: None })
-                    .await
-                    .unwrap();
-                continue;
+                accepted = listener.accept() => {
+                    let (stream, _) = accepted.unwrap();
+                    peers.spawn(answer_fake_process_connection(stream, Arc::clone(&handler), Arc::clone(&sequence)));
+                }
+                completed = peers.join_next(), if !peers.is_empty() => {
+                    if let Some(message) = completed.unwrap().unwrap() {
+                        messages.push(message);
+                        deadline = tokio::time::Instant::now() + FAKE_PROCESS_ACCEPT_TIMEOUT;
+                    }
+                }
             }
-            if let Some(reply) = handler(&message).await {
-                tx.send(reply).await.unwrap();
-            }
-            messages.push(message);
         }
-        messages
+        drop(listener);
+        peers.abort_all();
+        while let Some(completed) = peers.join_next().await {
+            if let Err(error) = completed {
+                assert!(error.is_cancelled(), "fake owner connection panicked: {error}");
+            }
+        }
+        assert_eq!(
+            sequence.load(std::sync::atomic::Ordering::Relaxed),
+            expected,
+            "extra owner commands"
+        );
+        messages.sort_by_key(|(sequence, _)| *sequence);
+        messages.into_iter().map(|(_, message)| message).collect()
     })
+}
+
+async fn answer_fake_process_connection(
+    stream: tokio::net::UnixStream,
+    handler: Arc<FakeProcessHandler>,
+    sequence: Arc<AtomicUsize>,
+) -> Option<(usize, ServiceToProcess)> {
+    let mut stream = stream.into_std().unwrap();
+    let negotiated = tokio::task::spawn_blocking(move || {
+        capsem_foundation::ipc_handshake::negotiate_responder(&mut stream, "capsem-process-test", "")?;
+        Ok::<_, capsem_proto::handshake::HandshakeError>(stream)
+    })
+    .await
+    .unwrap();
+    let stream = match negotiated {
+        Ok(stream) => stream,
+        Err(error) => {
+            eprintln!("fake owner rejected handshake: {error}");
+            return None;
+        }
+    };
+    let (tx, rx): (Sender<ProcessToService>, Receiver<ServiceToProcess>) = channel_from_std(stream).unwrap();
+    let message = match rx.recv().await {
+        Ok(message) => message,
+        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => return None,
+        Err(error) => panic!("fake owner request failed: {error}"),
+    };
+    if let ServiceToProcess::InjectCredentials { id, .. } = &message {
+        if let Err(error) = tx
+            .send(ProcessToService::CredentialsInjected { id: *id, error: None })
+            .await
+        {
+            eprintln!("fake owner credential peer closed: {error}");
+        }
+        return None;
+    }
+    let sequence = sequence.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if let Some(reply) = handler(&message).await {
+        if let Err(error) = tx.send(reply).await {
+            eprintln!("fake owner reply peer closed: {error}");
+        }
+    }
+    Some((sequence, message))
 }
 
 /// True when a fake process received exactly `count` reload requests.

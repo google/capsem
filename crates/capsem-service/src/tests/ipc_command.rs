@@ -1,6 +1,44 @@
 use super::*;
 
 #[tokio::test]
+async fn fixture_owner_serves_commands_while_an_observer_channel_stays_idle() {
+    use tokio::io::AsyncReadExt;
+    async fn hello(socket: &StdPath, role: &str) -> std::os::unix::net::UnixStream {
+        let stream = tokio::net::UnixStream::connect(socket)
+            .await
+            .unwrap()
+            .into_std()
+            .unwrap();
+        capsem_foundation::ipc_handshake::negotiate_initiator_off_worker(stream, role, "")
+            .await
+            .unwrap()
+            .0
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let socket = directory.path().join("owner.sock");
+    let owner = spawn_fake_process(&socket, 1, |message| {
+        assert!(matches!(message, ServiceToProcess::Ping));
+        Box::pin(async { Some(ProcessToService::Pong) })
+    });
+    // The service's real metadata observer sends no command after Hello.
+    let idle = hello(&socket, "capsem-terminal-observer").await;
+    let command = hello(&socket, "capsem-service-test").await;
+    let (tx, rx): (Sender<ServiceToProcess>, Receiver<ProcessToService>) = channel_from_std(command).unwrap();
+    tx.send(ServiceToProcess::Ping).await.unwrap();
+    assert!(matches!(rx.recv().await.unwrap(), ProcessToService::Pong));
+    assert_eq!(owner.await.unwrap().len(), 1);
+    let mut idle = tokio::net::UnixStream::from_std(idle).unwrap();
+    let mut byte = [0];
+    assert_eq!(
+        tokio::time::timeout(std::time::Duration::from_secs(2), idle.read(&mut byte))
+            .await
+            .expect("fixture must close its outstanding idle channels")
+            .unwrap(),
+        0
+    );
+}
+
+#[tokio::test]
 async fn fixture_owner_survives_a_peer_closing_after_hello() {
     let directory = tempfile::tempdir().unwrap();
     let socket = directory.path().join("owner.sock");
