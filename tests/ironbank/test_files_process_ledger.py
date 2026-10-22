@@ -279,6 +279,29 @@ def test_file_process_routes_pay_full_ledger_debt_blackbox():
             assert retired_status == 404, retired
         assert not (vm_session_dir(service.tmp_dir, client, session_id) / "auto_snapshots").exists()
 
+        # auditd closes the old file and opens a new one on SIGUSR1. The
+        # guest tailer must follow that new inode before the next exec.
+        rotate = client.post(
+            f"/vms/{session_id}/exec",
+            {
+                "command": "before=$(stat -c %i /var/log/audit/audit.log); "
+                "kill -USR1 $(pidof auditd); sleep 1; "
+                "test -s /var/log/audit/audit.log.1; "
+                'test "$before" != "$(stat -c %i /var/log/audit/audit.log)"',
+                "timeout_secs": 30,
+            },
+            timeout=45,
+        )
+        assert rotate is not None and rotate["exit_code"] == 0, rotate
+        rotated_marker = f"audit-rotated-{uuid.uuid4().hex}"
+        after_rotate = client.post(
+            f"/vms/{session_id}/exec",
+            {"command": f"/bin/echo {rotated_marker}", "timeout_secs": 30},
+            timeout=45,
+        )
+        assert after_rotate is not None and after_rotate["exit_code"] == 0, after_rotate
+        assert rotated_marker in exec_output_text(after_rotate)
+
         db_path = vm_session_db_path(service.tmp_dir, client, session_id)
         stop_session_for_ledger_read(client, session_id, db_path)
         conn = open_session_ledger(db_path)
@@ -346,6 +369,15 @@ def test_file_process_routes_pay_full_ledger_debt_blackbox():
                 assert row["uid"] == 0
                 assert row["argv"]
                 assert row["credential_ref"] is None
+            rotated_audit = conn.execute(
+                "SELECT * FROM audit_events WHERE argv LIKE ? AND exe LIKE ? ORDER BY id",
+                (f"%{rotated_marker}%", "%/echo"),
+            ).fetchall()
+            assert rotated_audit, "an exec after auditd rotation must reach the host"
+            for row in rotated_audit:
+                _assert_ledger_id(row["event_id"])
+                assert row["uid"] == 0
+                assert rotated_marker in row["argv"]
 
             security_rows = _eventually(
                 lambda: conn.execute(
