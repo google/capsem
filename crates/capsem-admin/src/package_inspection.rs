@@ -94,7 +94,7 @@ fn pkg_executable_inventory(path: &Path, bytes: &[u8]) -> Result<Vec<BinaryExecu
     let temp = std::env::temp_dir().join(format!(
         "capsem-admin-pkg-expand-{}-{}",
         std::process::id(),
-        capsem_crypto::blake3::hash(path.to_string_lossy().as_bytes()).to_hex()
+        format_args!("{:032x}", capsem_crypto::xxh3::hash(path.to_string_lossy().as_bytes()))
     ));
     if temp.exists() {
         fs::remove_dir_all(&temp).with_context(|| format!("remove {}", temp.display()))?;
