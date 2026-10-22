@@ -3,10 +3,8 @@ use std::os::unix::net::UnixStream;
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
-use capsem_foundation::ipc_channel;
 use capsem_foundation::unix::router_channel::{DescriptorReceiver, DescriptorSender};
-use capsem_proto::ledger::{LedgerChannelGrant, LedgerClientRole, LedgerGeneration, LedgerWelcome};
-use capsem_proto::ledger_commitment::{CommitmentClientMessage, CommitmentServerMessage};
+use capsem_proto::ledger::{LedgerChannelGrant, LedgerClientRole, LedgerGeneration};
 use capsem_proto::proxy_control::{
     decode_proxy_control_event, encode_proxy_control_request, ProxyCapability, ProxyChannelGrant, ProxyControlEvent,
     ProxyControlRejection, ProxyControlRequest, ProxyGeneration, PROXY_CONTROL_FRAME_SIZE, PROXY_CONTROL_MAX_FDS,
@@ -84,7 +82,6 @@ async fn worker_rejects_http_traffic_until_runtime_is_ready() {
         )
         .await
         .unwrap();
-    drop(granted);
     assert_eq!(
         event(&events).await,
         ProxyControlEvent::Rejected {
@@ -93,6 +90,7 @@ async fn worker_rejects_http_traffic_until_runtime_is_ready() {
             reason: ProxyControlRejection::NotReady,
         }
     );
+    drop(granted);
     peer.set_nonblocking(true).unwrap();
     let mut peer = tokio::net::UnixStream::from_std(peer).unwrap();
     let mut byte = [0; 1];
@@ -178,7 +176,8 @@ async fn worker_confines_before_ready_and_adopts_scoped_descriptors() {
             )
             .await
             .unwrap();
-        drop(granted);
+        // sendmsg is not adoption: Darwin can flush a socket referenced only
+        // by a queued SCM_RIGHTS message. Retain the original through receipt.
         assert_eq!(
             event(&events).await,
             ProxyControlEvent::Adopted {
@@ -186,6 +185,7 @@ async fn worker_confines_before_ready_and_adopts_scoped_descriptors() {
                 grant_id,
             }
         );
+        drop(granted);
     }
 
     let (duplicate_peer, duplicate) = UnixStream::pair().unwrap();
@@ -197,7 +197,6 @@ async fn worker_confines_before_ready_and_adopts_scoped_descriptors() {
         )
         .await
         .unwrap();
-    drop(duplicate);
     assert_eq!(
         event(&events).await,
         ProxyControlEvent::Rejected {
@@ -206,6 +205,7 @@ async fn worker_confines_before_ready_and_adopts_scoped_descriptors() {
             reason: ProxyControlRejection::DuplicateCapability,
         }
     );
+    drop(duplicate);
     drop(duplicate_peer);
 
     requests
@@ -251,34 +251,15 @@ async fn ledger_grant_is_authenticated_before_adoption() {
         }
     });
     let (server_stream, granted) = UnixStream::pair().unwrap();
-    let (commitment_server, commitment_granted) = UnixStream::pair().unwrap();
     let ledger_grant = LedgerChannelGrant::new(LedgerGeneration::new([4; 16]), 17, LedgerClientRole::Proxy).unwrap();
-    let commitment_serving = tokio::spawn(async move {
-        let (sender, receiver) =
-            ipc_channel::channel_from_std::<CommitmentServerMessage, CommitmentClientMessage>(commitment_server)
-                .unwrap();
-        let CommitmentClientMessage::Hello { hello } = receiver.recv().await.unwrap() else {
-            panic!("commitment client omitted hello")
-        };
-        ledger_grant.validate_hello(&hello).unwrap();
-        sender
-            .send(CommitmentServerMessage::Welcome {
-                welcome: LedgerWelcome::for_grant(&ledger_grant),
-            })
-            .await
-            .unwrap();
-        while receiver.recv().await.is_ok() {}
-    });
     let grant = ProxyChannelGrant::with_ledger(GENERATION, 1, ledger_grant).unwrap();
     requests
         .send(
             &encode_proxy_control_request(ProxyControlRequest::Attach(grant)),
-            &[granted.as_raw_fd(), commitment_granted.as_raw_fd()],
+            &[granted.as_raw_fd()],
         )
         .await
         .unwrap();
-    drop(granted);
-    drop(commitment_granted);
 
     assert!(tokio::time::timeout(Duration::from_millis(100), event_rx.recv())
         .await
@@ -309,6 +290,7 @@ async fn ledger_grant_is_authenticated_before_adoption() {
             grant_id: 1,
         }
     );
+    drop(granted);
 
     requests
         .send(
@@ -326,7 +308,6 @@ async fn ledger_grant_is_authenticated_before_adoption() {
     );
     event_pump.await.unwrap();
     assert!(serving.await.unwrap().is_ok());
-    commitment_serving.await.unwrap();
     let child = child.take();
     let output = tokio::task::spawn_blocking(move || child.wait_with_output())
         .await
@@ -356,7 +337,6 @@ async fn stale_generation_terminates_worker_and_releases_grants() {
         )
         .await
         .unwrap();
-    drop(granted);
 
     let child = child.take();
     let output = tokio::time::timeout(
@@ -369,6 +349,7 @@ async fn stale_generation_terminates_worker_and_releases_grants() {
     .unwrap();
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("stale generation"));
+    drop(granted);
     drop(peer);
 }
 
@@ -388,7 +369,6 @@ async fn policy_capability_compiles_exact_bytes_and_rejects_bad_revisions() {
         )
         .await
         .unwrap();
-    drop(granted);
     assert_eq!(
         event(&events).await,
         ProxyControlEvent::Adopted {
@@ -396,6 +376,7 @@ async fn policy_capability_compiles_exact_bytes_and_rejects_bad_revisions() {
             grant_id: 1,
         }
     );
+    drop(granted);
 
     let (policy_tx, policy_rx) =
         capsem_foundation::ipc_channel::channel_from_std::<ProxyPolicyRequest, ProxyPolicyResponse>(peer).unwrap();

@@ -215,16 +215,12 @@ async fn run_control(
                                 });
                             } else if capability == ProxyCapability::Ledger {
                                 let stream = UnixStream::from(descriptor);
-                                let commitment = UnixStream::from(
-                                    descriptors.next().expect("ledger commitment descriptor was checked"),
-                                );
                                 let ledger_grant = grant
                                     .ledger_grant()
                                     .expect("ledger capability was decoded with exact authority");
                                 let writer = tokio::task::spawn_blocking(move || {
                                     capsem_logger::DbWriter::from_ledger_channel(
                                         stream,
-                                        commitment,
                                         ledger_grant,
                                         Path::new("capability:session-ledger"),
                                         capsem_proto::LEDGER_PRODUCER_QUEUE_CAPACITY,
