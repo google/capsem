@@ -30,6 +30,7 @@ workspace = true
 
 [dev-dependencies]
 tempfile = "3"
+toml = { workspace = true }
 
 [build-dependencies]
 quote = "1"

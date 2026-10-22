@@ -1,6 +1,26 @@
 use super::*;
 
 #[test]
+fn terminal_checkpoint_limits_share_the_canonical_configuration() {
+    let config: toml::Value = toml::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/runtime-limits.toml"
+    )))
+    .unwrap();
+    for (key, compiled) in [
+        ("checkpoint_kib", crate::TERMINAL_CHECKPOINT_KIB),
+        ("checkpoint_pending_kib", crate::TERMINAL_CHECKPOINT_PENDING_KIB),
+        ("checkpoint_depth", crate::TERMINAL_CHECKPOINT_DEPTH),
+    ] {
+        assert_eq!(
+            config["terminal"][key].as_integer().unwrap() as usize,
+            compiled,
+            "{key}"
+        );
+    }
+}
+
+#[test]
 fn terminal_state_roundtrips_without_losing_side_effect_types() {
     let state = TerminalState {
         revision: 42,

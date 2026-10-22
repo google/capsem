@@ -81,3 +81,8 @@ control_string_bytes = 8192
 events_per_update = 32
 subscriber_updates = 64
 render_chunk_bytes = 65536
+# Complete structured model/parser state. Refuse oversized checkpoints;
+# never truncate a screen or replay a raw transcript to fit the budget.
+checkpoint_kib = 65536
+checkpoint_pending_kib = 2048
+checkpoint_depth = 32
