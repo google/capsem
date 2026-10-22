@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import json
 import runpy
+import sys
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 from capsem_builder.gate import config as gate_config
 
@@ -98,3 +101,53 @@ def test_route_load_settings_cover_real_concurrency() -> None:
     assert settings["concurrency"] > 1
     assert settings["requests"] >= settings["concurrency"]
     assert settings["quick_requests"] >= settings["concurrency"]
+
+
+def test_routes_reuse_owned_gateway_and_default_product_fixture(monkeypatch, tmp_path, capsys):
+    module = _collector()
+    globals_ = module["main"].__globals__
+    (tmp_path / "gateway.port").write_text("12345")
+    (tmp_path / "gateway.token").write_text("private-token")
+    (tmp_path / "gateway.pid").write_text("4242")
+    calls = []
+    service = SimpleNamespace(
+        home_dir=tmp_path, tmp_dir=tmp_path, uds_path=tmp_path / "service.sock",
+        proc=SimpleNamespace(pid=123), start=lambda: calls.append("start"),
+        stop=lambda: calls.append("stop"),
+    )
+
+    def extra_gateway(*_):
+        raise AssertionError("a second gateway must not be built or spawned")
+
+    @contextmanager
+    def image_session(owner, directory, name):
+        assert owner is service and directory == tmp_path / "route-registry"
+        assert name == "route-live-owner"
+        calls.append("product image")
+        yield "live-id"
+
+    def warm(target, path, samples):
+        assert path == "/vms/live-id/exposures"
+        if target.label == "gateway":
+            assert target.headers == {"Authorization": "Bearer private-token"}
+            assert target.cpu_processes == {"gateway": 4242, "downstream_service": 123}
+        calls.append(target.label)
+        return [1.0], {}
+
+    monkeypatch.setattr(sys, "argv", [str(COLLECTOR), "--samples", "1"])
+    for key, value in {
+        "ServiceInstance": lambda: service,
+        "GatewayInstance": extra_gateway,
+        "image_session": image_session,
+        "psutil": SimpleNamespace(Process=lambda pid: pid),
+        "seed_stopped_workspace": lambda *_: None,
+        "clone_benchmark_assets": lambda *args: tmp_path,
+        "measured_routes": lambda: ["/vms/{id}/exposures"],
+        "sample_warm_route": warm,
+        "sample_cold_route": lambda *_: [1.0],
+        "sample_concurrent_route": lambda *_: ([1.0], {}, 1.0),
+    }.items():
+        monkeypatch.setitem(globals_, key, value)
+    assert module["main"]() == 0
+    assert calls == ["start", "product image", "service", "gateway", "stop"]
+    assert json.loads(capsys.readouterr().out)["metrics"]

@@ -11,6 +11,7 @@ import msgpack
 import psutil
 import pytest
 
+from benchmarks.helpers import stream_measurements
 from benchmarks.helpers.stream_measurements import measure, service_gateway
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -143,8 +144,23 @@ def test_readiness_uses_foreground_output_instead_of_prompt_format():
 def test_endpoint_reuses_the_service_owned_companion(tmp_path):
     (tmp_path / "gateway.port").write_text("12345")
     (tmp_path / "gateway.token").write_text("private-token")
+    (tmp_path / "gateway.pid").write_text("4242")
     endpoint = service_gateway(SimpleNamespace(tmp_dir=tmp_path))
     assert endpoint.port == 12345 and endpoint.token == "private-token"
+    assert endpoint.pid == 4242
+
+
+def test_endpoint_waits_for_prepared_empty_files_to_be_published(tmp_path, monkeypatch):
+    for name in ("port", "token", "pid"):
+        (tmp_path / f"gateway.{name}").write_text("")
+
+    def publish(_):
+        for name, value in (("port", "12345"), ("token", "private-token"), ("pid", "4242")):
+            (tmp_path / f"gateway.{name}").write_text(value)
+
+    monkeypatch.setattr(stream_measurements, "time", SimpleNamespace(monotonic=lambda: 0, sleep=publish))
+    endpoint = service_gateway(SimpleNamespace(tmp_dir=tmp_path))
+    assert (endpoint.port, endpoint.token, endpoint.pid) == (12345, "private-token", 4242)
 
 
 def test_phase_resources_are_sampled_through_the_existing_tree_owner():

@@ -19,12 +19,11 @@ import json
 import sys
 import threading
 import time
+import tomllib
 from collections.abc import Callable
 from contextlib import ExitStack, redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
-
-import tomllib
 
 # Match pytest's roots for helpers that import `helpers.*` and `scripts.*`.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
@@ -33,9 +32,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import psutil
 from helpers.benchmark_assets import clone_benchmark_assets
 from helpers.constants import ASSETS_DIR
-from helpers.debug_session import debug_session
-from helpers.gateway import GatewayInstance
 from helpers.http_transport import Transport
+from helpers.image_session import image_session
 from helpers.process_cpu import process_cpu_seconds
 from helpers.service import ServiceInstance
 from helpers.stopped_workspace import (
@@ -47,6 +45,7 @@ from helpers.stopped_workspace import (
 )
 
 from benchmarks.helpers.route_measurements import route_metrics
+from benchmarks.helpers.stream_measurements import service_gateway
 
 ROOT = Path(__file__).resolve().parents[2]
 WARMUP = 2
@@ -223,16 +222,15 @@ def main() -> int:
     service.assets_dir = clone_benchmark_assets(
         ASSETS_DIR, service.home_dir / "benchmark-assets"
     )
-    gateway = GatewayInstance(service.uds_path)
 
     metrics: dict[str, dict] = {}
     try:
         seed_stopped_workspace(service.tmp_dir, service.assets_dir)
         with redirect_stdout(sys.stderr):
             service.start()
-            gateway.start()
+        gateway = service_gateway(service)
         service_proc = psutil.Process(service.proc.pid)
-        gateway_proc = psutil.Process(gateway.proc.pid)
+        gateway_proc = psutil.Process(gateway.pid)
         targets = (
             Target(
                 label="service",
@@ -256,7 +254,7 @@ def main() -> int:
             live_id = None
             if LIVE_ROUTES.intersection(routes):
                 live_id = fixtures.enter_context(
-                    debug_session(service, service.home_dir / "route-registry", "route-live-owner")
+                    image_session(service, service.home_dir / "route-registry", "route-live-owner")
                 )
             for path in routes:
                 concrete_path = request_path(path, live_id)
@@ -270,7 +268,6 @@ def main() -> int:
                     )
                     metrics.update(route_metrics(target.label, path, concurrent_latencies, None, concurrent_cpu, rps))
     finally:
-        gateway.stop()
         service.stop()
 
     json.dump({"metrics": metrics}, sys.stdout)

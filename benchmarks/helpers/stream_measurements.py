@@ -11,16 +11,22 @@ from helpers.process_resources import ProcessTreeSampler
 class Gateway(NamedTuple):
     port: int
     token: str
+    pid: int
 
 
 def service_gateway(service) -> Gateway:
     """Reuse the real service companion, never spawn a second gateway."""
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
-        port = service.tmp_dir / "gateway.port"
-        token = service.tmp_dir / "gateway.token"
-        if port.exists() and token.exists():
-            return Gateway(int(port.read_text()), token.read_text().strip())
+        try:
+            token = (service.tmp_dir / "gateway.token").read_text().strip()
+            port = (service.tmp_dir / "gateway.port").read_text().strip()
+            pid = (service.tmp_dir / "gateway.pid").read_text().strip()
+        except FileNotFoundError:
+            token = port = pid = ""
+        # Files are prepared empty before publish; nonempty token is last.
+        if token and port and pid:
+            return Gateway(int(port), token, int(pid))
         time.sleep(0.05)
     raise RuntimeError("service gateway did not publish its endpoint")
 
