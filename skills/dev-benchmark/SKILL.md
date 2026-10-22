@@ -87,7 +87,15 @@ The eight guest collectors are one file, `_guest`, symlinked per mode: they
 read their mode from `argv[0]` and drive the modules in
 `guest/artifacts/capsem_bench/`. `criterion` derives its targets from the Cargo
 manifests and reads raw per-iteration nanoseconds out of Criterion's
-`sample.json`, so a new `[[bench]]` target is measured without editing it.
+`sample.json`. A target is measured only when it produces fresh raw samples;
+running a `[[bench]]` target alone does not establish coverage.
+
+Two current targets, `ipc_framing_micro` and `db_read_write_micro`, only print
+manual summary tables. They produce no Criterion samples and are diagnostic-only;
+do not count them as stored measurements. Their migration and per-target sample
+freshness checks are tracked in [#373](https://github.com/google/capsem/issues/373).
+The separate `db_external_reader_poll`, `db_writer_pressure`, and
+`session_stats_poll` targets do produce Criterion samples.
 
 Load generation is part of the measurement system. Do not use one blocking
 thread per client: scheduler starvation can make a high-concurrency run issue
