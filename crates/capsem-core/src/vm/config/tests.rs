@@ -547,21 +547,50 @@ fn a_non_blake3_algorithm_is_refused_rather_than_never_matching() {
 fn hash_verification_cache_is_metadata_and_hash_bound() {
     let dir = tempfile::tempdir().unwrap();
     let kernel = dir.path().join("vmlinuz");
+    let run = dir.path().join("run");
     std::fs::write(&kernel, b"test kernel data").unwrap();
     let hash = capsem_crypto::blake3::hash(b"test kernel data").to_hex().to_string();
 
-    VmConfig::verify_hash(&kernel, &hash).unwrap();
-    let cache = VmConfig::hash_cache_path(&kernel);
+    VmConfig::verify_hash_in_cache_root(&kernel, &hash, &run).unwrap();
+    let cache = VmConfig::hash_cache_path_in(&kernel, &run);
     assert!(cache.exists());
     assert_ne!(cache.parent(), kernel.parent());
-    VmConfig::verify_hash(&kernel, &hash).unwrap();
+    VmConfig::verify_hash_in_cache_root(&kernel, &hash, &run).unwrap();
 
     std::fs::write(&kernel, b"corrupted kernel data").unwrap();
-    let result = VmConfig::verify_hash(&kernel, &hash);
+    let result = VmConfig::verify_hash_in_cache_root(&kernel, &hash, &run);
     assert!(
         matches!(result, Err(ConfigError::HashMismatch(..))),
         "stale cache must not hide asset corruption: {result:?}"
     );
+}
+
+#[test]
+fn hash_cache_rejects_a_forged_symlink_and_never_writes_its_target() {
+    use std::os::unix::fs::{symlink, PermissionsExt};
+
+    let dir = tempfile::tempdir().unwrap();
+    let kernel = dir.path().join("vmlinuz");
+    let run = dir.path().join("run");
+    let target = dir.path().join("outside");
+    std::fs::write(&kernel, b"corrupted kernel data").unwrap();
+    std::fs::create_dir(&run).unwrap();
+    std::fs::set_permissions(&run, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let expected = capsem_crypto::blake3::hash(b"correct kernel data").to_hex().to_string();
+    let forged = VmConfigBuilder::hash_cache_fingerprint(&kernel, &expected).unwrap();
+    std::fs::write(&target, &forged).unwrap();
+
+    let cache = VmConfig::hash_cache_path_in(&kernel, &run);
+    std::fs::create_dir(cache.parent().unwrap()).unwrap();
+    std::fs::set_permissions(cache.parent().unwrap(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    symlink(&target, &cache).unwrap();
+
+    assert!(matches!(
+        VmConfig::verify_hash_in_cache_root(&kernel, &expected, &run),
+        Err(ConfigError::HashMismatch(..))
+    ));
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), forged);
+    assert_eq!(std::fs::metadata(&run).unwrap().permissions().mode() & 0o777, 0o700);
 }
 
 #[test]

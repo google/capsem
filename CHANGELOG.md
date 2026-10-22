@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Keep verified VM asset hash cache entries under the owner-only runtime
+  directory and read or replace them through no-follow directory descriptors.
+
 - Restrict the service runtime directory to the installing user before creating
   sockets, logs, or credential-bearing runtime files, including existing installs.
 

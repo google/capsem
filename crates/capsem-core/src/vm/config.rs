@@ -1,4 +1,4 @@
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
@@ -143,8 +143,14 @@ impl VmConfig {
     }
 
     #[cfg(test)]
-    fn hash_cache_path(path: &Path) -> PathBuf {
-        VmConfigBuilder::hash_cache_path(path)
+    fn hash_cache_path_in(path: &Path, root: &Path) -> PathBuf {
+        root.join("asset-hash-cache")
+            .join(VmConfigBuilder::hash_cache_name(path))
+    }
+
+    #[cfg(test)]
+    fn verify_hash_in_cache_root(path: &Path, expected_hash: &str, root: &Path) -> Result<(), ConfigError> {
+        VmConfigBuilder::verify_hash_in_cache_root(path, expected_hash, root)
     }
 }
 
@@ -310,16 +316,24 @@ impl VmConfigBuilder {
         Ok(())
     }
 
-    fn hash_cache_path(path: &Path) -> PathBuf {
+    fn hash_cache_name(path: &Path) -> String {
         let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("asset");
-        let root = std::env::var_os("CAPSEM_ASSET_HASH_CACHE_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| std::env::temp_dir().join("capsem-asset-hash-cache"));
         let cache_key_path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
         let digest = capsem_crypto::blake3::hash(cache_key_path.to_string_lossy().as_bytes())
             .to_hex()
             .to_string();
-        root.join(format!("{}-{name}.capsem-hash-ok", &digest[..16]))
+        format!("{}-{name}.capsem-hash-ok", &digest[..16])
+    }
+
+    fn hash_cache_dir(root: &Path) -> std::io::Result<capsem_foundation::unix::contained::ContainedDir> {
+        use capsem_foundation::unix::contained::ContainedDir;
+
+        capsem_foundation::unix::fs::ensure_private_dir_restrict_existing(root)?;
+        let run = ContainedDir::open_root(root)?;
+        run.validate_private()?;
+        let cache = run.descend_or_create(std::ffi::OsStr::new("asset-hash-cache"), 0o700)?;
+        cache.validate_private()?;
+        Ok(cache)
     }
 
     fn hash_cache_fingerprint(path: &Path, expected_hash: &str) -> Result<String, ConfigError> {
@@ -335,13 +349,41 @@ impl VmConfigBuilder {
         ))
     }
 
-    fn verify_hash_cache(path: &Path, expected_hash: &str) -> Result<bool, ConfigError> {
-        let fingerprint = Self::hash_cache_fingerprint(path, expected_hash)?;
-        match std::fs::read_to_string(Self::hash_cache_path(path)) {
-            Ok(cached) => Ok(cached == fingerprint),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-            Err(e) => Err(ConfigError::Io(e)),
+    fn verify_hash_cache(path: &Path, expected_hash: &str, root: &Path) -> bool {
+        use capsem_foundation::unix::contained::ContainedOpenOptions;
+
+        let Ok(fingerprint) = Self::hash_cache_fingerprint(path, expected_hash) else {
+            return false;
+        };
+        let Ok(cache) = Self::hash_cache_dir(root) else {
+            return false;
+        };
+        let name = Self::hash_cache_name(path);
+        let Ok(file) = cache.open_file(std::ffi::OsStr::new(&name), ContainedOpenOptions::read_only()) else {
+            return false;
+        };
+        let mut cached = String::new();
+        file.take(512).read_to_string(&mut cached).is_ok() && cached == fingerprint
+    }
+
+    fn write_hash_cache(path: &Path, expected_hash: &str, root: &Path) -> std::io::Result<()> {
+        let fingerprint = Self::hash_cache_fingerprint(path, expected_hash).map_err(|error| match error {
+            ConfigError::Io(error) => error,
+            other => std::io::Error::other(other),
+        })?;
+        let cache = Self::hash_cache_dir(root)?;
+        let name = Self::hash_cache_name(path);
+        let temporary = format!(".hash-{}.tmp", uuid::Uuid::new_v4());
+        let mut file = cache.create_new_private_file(std::ffi::OsStr::new(&temporary))?;
+        let result = (|| {
+            file.write_all(fingerprint.as_bytes())?;
+            file.sync_all()?;
+            cache.rename_to(std::ffi::OsStr::new(&temporary), &cache, std::ffi::OsStr::new(&name))
+        })();
+        if result.is_err() {
+            let _ = cache.remove_non_directory(std::ffi::OsStr::new(&temporary));
         }
+        result
     }
 
     /// The blake3 hex digest an expected-hash value denotes.
@@ -368,9 +410,13 @@ impl VmConfigBuilder {
     }
 
     pub fn verify_hash(path: &Path, expected_hash: &str) -> Result<(), ConfigError> {
+        Self::verify_hash_in_cache_root(path, expected_hash, &capsem_foundation::paths::capsem_run_dir())
+    }
+
+    fn verify_hash_in_cache_root(path: &Path, expected_hash: &str, root: &Path) -> Result<(), ConfigError> {
         let _span = debug_span!("verify_hash", path = %path.display()).entered();
         let expected_hash = Self::expected_blake3_hex(path, expected_hash)?;
-        if Self::verify_hash_cache(path, expected_hash)? {
+        if Self::verify_hash_cache(path, expected_hash, root) {
             return Ok(());
         }
 
@@ -392,12 +438,7 @@ impl VmConfigBuilder {
                 hash,
             ));
         }
-        let fingerprint = Self::hash_cache_fingerprint(path, expected_hash)?;
-        let cache_path = Self::hash_cache_path(path);
-        if let Some(parent) = cache_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let _ = std::fs::write(cache_path, fingerprint);
+        let _ = Self::write_hash_cache(path, expected_hash, root);
         Ok(())
     }
 
