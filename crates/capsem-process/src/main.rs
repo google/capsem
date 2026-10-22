@@ -71,23 +71,12 @@ struct PreparedOwnerResources {
 
 struct PreparedLedger {
     stream: std::os::unix::net::UnixStream,
-    commitment: std::os::unix::net::UnixStream,
     grant: capsem_proto::ledger::LedgerChannelGrant,
 }
 
 impl PreparedLedger {
-    fn from_grant(
-        (stream, commitment, grant): (
-            std::os::unix::net::UnixStream,
-            std::os::unix::net::UnixStream,
-            capsem_proto::ledger::LedgerChannelGrant,
-        ),
-    ) -> Self {
-        Self {
-            stream,
-            commitment,
-            grant,
-        }
+    fn from_grant((stream, grant): (std::os::unix::net::UnixStream, capsem_proto::ledger::LedgerChannelGrant)) -> Self {
+        Self { stream, grant }
     }
 }
 
@@ -667,7 +656,6 @@ async fn run_async_main_loop(
         tokio::task::spawn_blocking(move || {
             capsem_logger::DbWriter::from_ledger_channel(
                 ledger.stream,
-                ledger.commitment,
                 ledger.grant,
                 &ledger_path,
                 capsem_proto::LEDGER_PRODUCER_QUEUE_CAPACITY,

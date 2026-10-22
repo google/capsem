@@ -29,15 +29,12 @@ fn production_vm_owner_never_opens_the_session_database() {
 #[test]
 fn prepared_ledger_retains_the_connected_channels_and_exact_grant() {
     let (stream, _stream_peer) = std::os::unix::net::UnixStream::pair().unwrap();
-    let (commitment, _commitment_peer) = std::os::unix::net::UnixStream::pair().unwrap();
     let stream_fd = stream.as_raw_fd();
-    let commitment_fd = commitment.as_raw_fd();
     let grant = LedgerChannelGrant::new(LedgerGeneration::new([7; 16]), 41, LedgerClientRole::VmOwner).unwrap();
 
-    let prepared = PreparedLedger::from_grant((stream, commitment, grant));
+    let prepared = PreparedLedger::from_grant((stream, grant));
 
     assert_eq!(prepared.stream.as_raw_fd(), stream_fd);
-    assert_eq!(prepared.commitment.as_raw_fd(), commitment_fd);
     assert_eq!(prepared.grant, grant);
 }
 

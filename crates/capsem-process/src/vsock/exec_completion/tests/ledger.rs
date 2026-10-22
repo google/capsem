@@ -116,7 +116,7 @@ fn assert_archived(body: &capsem_logger::StoredBody, expected: &[u8], original: 
     assert!(body.bytes == expected, "stored bytes differ from what the guest wrote");
     // `read_body` checks the bytes against this hash and fails the read on a
     // mismatch, so a read that returned is a hash that held.
-    assert!(body.body_hash.starts_with("blake3:"), "{}", body.body_hash);
+    assert!(body.body_hash.starts_with("xxh3-128:"), "{}", body.body_hash);
     assert_eq!(body.original_bytes, original);
     assert_eq!(body.truncated, original > expected.len() as u64);
 }
