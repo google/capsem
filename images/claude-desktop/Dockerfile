@@ -4,13 +4,19 @@
 # install-gui.sh refuses any other architecture, and the publication workflow
 # does not build this image for amd64.
 ARG BASE
+# This is a required local BuildKit context, not a registry image/tag.
+# hadolint ignore=DL3006
+FROM gui AS gui-files
 FROM ${BASE}
 ARG TARGETARCH
 USER root
+COPY --from=gui-files install-xpra.sh /tmp/install-xpra.sh
+RUN sh /tmp/install-xpra.sh "$TARGETARCH" && rm /tmp/install-xpra.sh
 COPY install-gui.sh /tmp/install-gui.sh
 RUN sh /tmp/install-gui.sh "$TARGETARCH" && rm /tmp/install-gui.sh
-COPY --chmod=0555 entrypoint.sh /usr/local/bin/capsem-claude-desktop
+COPY --from=gui-files --chmod=0555 entrypoint.sh /usr/local/bin/capsem-claude-desktop
 USER capsem
+ENV CAPSEM_GUI_APP=claude-desktop
 
 # The GUI surface. Xpra binds 127.0.0.1:14500 inside the container -- 14500 is
 # Xpra's own default port and the one the v0.7 spike proved -- and the runtime

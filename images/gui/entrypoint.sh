@@ -1,5 +1,5 @@
 #!/bin/sh
-# Run Claude Desktop as the one application of an Xpra session, and exit when
+# Run the image's Electron application in an Xpra session, and exit when
 # it exits.
 #
 # Order matters, because Claude reads each prerequisite once at startup:
@@ -25,7 +25,8 @@ port=14500
 export HOME="${HOME:-/home/capsem}"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/runtime-$(id -u)}"
 install -d -m 0700 "$XDG_RUNTIME_DIR"
-status="$XDG_RUNTIME_DIR/claude-desktop.status"
+status="$XDG_RUNTIME_DIR/application.status"
+application="${CAPSEM_GUI_APP:?the image must select its graphical application}"
 
 # Xpra's child: run Claude and record how it ended, because Xpra exits 0 when
 # its last child exits, whatever that child's status was. The bus started
@@ -37,7 +38,7 @@ if [ "${1:-}" = --child ]; then
     # Chromium picks its secret store from the desktop name, and Xpra's is
     # unknown to it, so it would fall back to a plaintext store and Claude's
     # login would not persist. Name the Secret Service explicitly.
-    claude-desktop --password-store=gnome-libsecret || rc=$?
+    "$application" --password-store=gnome-libsecret || rc=$?
     echo "$rc" >"$status"
     exit "$rc"
 fi

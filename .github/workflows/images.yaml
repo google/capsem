@@ -153,7 +153,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        image: [dev, codex-cli, claude-code, agy, claude-desktop]
+        image: [dev, codex-cli, claude-code, agy, claude-desktop, antigravity-desktop]
         arch: [arm64, amd64]
         # Claude Desktop's pinned debs are arm64 only; its catalog entry lists
         # linux/arm64 alone, and install-gui.sh refuses any other architecture.
@@ -175,6 +175,8 @@ jobs:
             agent_version: agy-real --version
           - image: claude-desktop
             agent_version: dpkg-query -W claude-desktop xpra-server
+          - image: antigravity-desktop
+            agent_version: antigravity-ide --version
     env:
       IMAGE: ${{ matrix.image }}
       ARCH: ${{ matrix.arch }}
@@ -199,7 +201,7 @@ jobs:
           # Evidence is part of a published generation. Shared scanner or
           # recipe changes must not reuse the prior generation's OBOM/rootfs.
           key="$(uv run --project build_system --frozen python images/ci/inputkey.py \
-            "images/$IMAGE" images/ci/*.py .github/workflows/images.yaml \
+            "images/$IMAGE" images/gui images/ci/*.py .github/workflows/images.yaml \
             build_system/builder/*.py build_system/builder/image/*.py \
             build_system/builder/gate/*.py build_system/builder/release/obom.py \
             build_system/docker/Dockerfile.asset-tools config/docker/image/build.toml \
@@ -213,6 +215,7 @@ jobs:
         if: steps.published.outputs.build == 'true'
         run: |
           docker build --platform "linux/$ARCH" --provenance=false --sbom=false \
+            --build-context gui=images/gui \
             --build-arg "BASE=$REGISTRY/base@$BASE_DIGEST" --tag capsem-image:local "images/$IMAGE"
       - name: Smoke the image and its agent
         if: steps.published.outputs.build == 'true'
@@ -285,7 +288,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        image: [dev, codex-cli, claude-code, agy, claude-desktop]
+        image: [dev, codex-cli, claude-code, agy, claude-desktop, antigravity-desktop]
     env:
       IMAGE: ${{ matrix.image }}
     steps:

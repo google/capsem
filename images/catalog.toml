@@ -22,3 +22,7 @@ description = "Antigravity CLI (agy) on the Capsem base."
 [images.claude-desktop]
 surface = "xpra"
 description = "Claude Desktop on the Capsem base, streamed as a single-application GUI over Xpra (arm64 only)."
+
+[images.antigravity-desktop]
+surface = "xpra"
+description = "Antigravity IDE, the standalone graphical coding editor."

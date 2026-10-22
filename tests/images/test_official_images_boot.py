@@ -40,6 +40,10 @@ AGENTS = {
     "claude-code": (["claude", "--version"], "2.1.229"),
     "agy": (["agy-real", "--version"], "1.1.3"),
     "claude-desktop": (["dpkg-query", "-W", "claude-desktop"], "1.22209.0"),
+    "antigravity-desktop": (["python3", "-c", (
+        "import json,pathlib; "
+        "print(json.loads(pathlib.Path('/opt/antigravity-ide/resources/app/product.json').read_text())['ideVersion'])"
+    )], "2.5.5"),
 }
 
 

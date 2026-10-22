@@ -1,0 +1,4 @@
+capabilities = ["surface", "ollama"]
+
+[expect]
+window_title = "Antigravity"

@@ -9,6 +9,7 @@ the qualification (a skip never qualifies an image).
 from __future__ import annotations
 
 import pytest
+from helpers.constants import DEFAULT_RAM_MB
 from helpers.image_session import session_of
 
 from tests.ironbank.kingslanding.test_run import service as runtime_service
@@ -58,6 +59,9 @@ def session(service, candidate, tmp_path):
         "qualify",
         layout=candidate.layout,
         image_name=candidate.name,
+        # Match the existing official GUI sandbox proof's 4 GiB VM. The
+        # image's 2 GiB minimum applies to its workload, after runtime reserve.
+        ram_mb=4096 if "surface" in candidate.capabilities else DEFAULT_RAM_MB,
         env={candidate.expect["credential_env"]: "capsem-qualification-test-key"}
         if "agent" in candidate.capabilities
         else None,
