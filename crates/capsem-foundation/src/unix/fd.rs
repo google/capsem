@@ -138,7 +138,14 @@ pub fn set_receive_timeout(fd: BorrowedFd<'_>, timeout: Option<Duration>) -> io:
         Some(duration) => {
             let seconds = i64::try_from(duration.as_secs())
                 .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "receive timeout too large"))?;
-            let micros = duration.subsec_micros().max(1) as _;
+            #[cfg(target_vendor = "apple")]
+            let micros = duration
+                .subsec_micros()
+                .max(1)
+                .try_into()
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "receive timeout too large"))?;
+            #[cfg(not(target_vendor = "apple"))]
+            let micros = i64::from(duration.subsec_micros().max(1));
             nix::sys::time::TimeVal::new(seconds, micros)
         }
         None => nix::sys::time::TimeVal::new(0, 0),
