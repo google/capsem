@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Preserve the selected Docker endpoint for inspect-ai host builds while
+  keeping registry authentication out of the temporary Docker CLI config.
+
 - Stream release runtime images into size-bounded temporary files with
   incremental BLAKE3 and SHA-256 checks, so slow downloads no longer hit a
   two-minute total timeout or buffer whole images in memory.
