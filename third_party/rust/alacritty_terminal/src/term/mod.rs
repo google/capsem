@@ -338,6 +338,9 @@ pub struct Config {
     /// The maximum amount of scrolling history.
     pub scrolling_history: usize,
 
+    /// Optional trusted bound on zero-width characters retained per cell.
+    pub max_combining_chars: Option<usize>,
+
     /// Default cursor style to reset the cursor to.
     pub default_cursor_style: CursorStyle,
 
@@ -360,6 +363,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             scrolling_history: 10000,
+            max_combining_chars: None,
             semantic_escape_chars: SEMANTIC_ESCAPE_CHARS.to_owned(),
             default_cursor_style: Default::default(),
             vi_mode_cursor_style: Default::default(),
@@ -1083,7 +1087,14 @@ impl<T: EventListener> Handler for Term<T> {
                 column.0 = column.saturating_sub(1);
             }
 
+            if self.config.max_combining_chars.is_some_and(|limit| {
+                self.grid[line][column].zerowidth().is_some_and(|chars| chars.len() >= limit)
+                    || limit == 0
+            }) {
+                return;
+            }
             self.grid[line][column].push_zerowidth(c);
+            self.damage.damage_point(Point::new(line.0 as usize, column));
             return;
         }
 

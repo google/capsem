@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Bound combining-character retention in the session terminal engine, keeping
+  repeated zero-width input from growing one cell without limit.
+
 - Update the Vitest test-tool cohort to 4.1.12, fixing unauthenticated mock
   code injection and Windows redirect path traversal in `@vitest/mocker`
   (CVE-2026-112949 and CVE-2026-112950).

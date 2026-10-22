@@ -12,8 +12,8 @@
     "src/selection.rs": "05b6d884c446d8f5564c48c0ba9b6bf9c0adafdf7cb73da0fcccf562e01ad195",
     "src/term/cell.rs": "213c4cb6c0674fc96a1497ce568b7eefed56a0a850123aff4498ead5d516791f",
     "src/term/checkpoint.rs": "dbd55bac980ec71243f79af2a7b42a913092746fee5dbb85de5d68764c81a1ef",
-    "src/term/mod.rs": "cf2e5e4803be4a9e03d470ec3f8c58aeb6017cb3e11b2efe85052bd7d2ec0345",
+    "src/term/mod.rs": "d94d7b32c1d6b7c110e8c4e4b58b4eff940396dca538ceadf06bdc7a62f1ff02",
     "src/tty/unix.rs": "b88507502b5f62eb85f77d08145fe4a00dd59d566ce5a155d5e4da096dc3aa3e",
-    "tests/checkpoint.rs": "8a654637cee82b562be872ba1c8f5e66b07c806dc7285d9d9268e7e42c03284d"
+    "tests/checkpoint.rs": "c9cefff857722a195a1c11e95c301bd2b20cd294282197d50fdaf0353545d020"
   }
 }

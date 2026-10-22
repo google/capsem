@@ -83,6 +83,12 @@ Color-query formatter events capture any active model palette override at the
 query point. Later input in the same chunk cannot change that earlier reply;
 the event proxy supplies only the trusted fallback for an unmodified color.
 
+An optional `Config::max_combining_chars` bounds live zero-width retention
+before appending to a cell. Its upstream-compatible default is unrestricted;
+Capsem supplies its trusted runtime bound. Accepted combining input damages
+the base cell, so incremental projection does not lose a later mark. Sustained
+input tests exercise the bound, continued text, damage and checkpoint restore.
+
 Three upstream passwd fallback matches are consolidated to satisfy the pinned
 compiler's warning-denied Clippy checks. The standalone test lockfile resolves
 the sibling vte patch and pins its test-only MessagePack dependency cohort.

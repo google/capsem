@@ -381,3 +381,28 @@ fn color_query_captures_the_override_before_later_palette_changes() {
         ["\x1b]4;1;rgb:1212/3434/5656\x07", "\x1b]4;2;rgb:0101/0202/0303\x07"]
     );
 }
+
+#[test]
+fn configured_combining_retention_is_bounded_during_live_input() {
+    let mut policy = config();
+    policy.max_combining_chars = Some(4);
+    let mut term = Term::new(policy.clone(), &Size(20, 6), Events::default());
+    let mut parser: Processor = Processor::new();
+    parser.advance(&mut term, b"e");
+    let _ = term.damage();
+    term.reset_damage();
+    for _ in 0..1000 {
+        parser.advance(&mut term, "\u{301}".as_bytes());
+    }
+    let first = Point::new(Line(0), Column(0));
+    assert_eq!(term.grid()[first].zerowidth().unwrap(), &['\u{301}'; 4]);
+    let alacritty_terminal::term::TermDamage::Partial(damage) = term.damage() else {
+        panic!("combining input must retain incremental damage");
+    };
+    assert!(damage.into_iter().any(|line| line.line == 0 && line.left == 0));
+    parser.advance(&mut term, b"x");
+    assert_eq!(term.grid()[Point::new(Line(0), Column(1))].c, 'x');
+    let checkpoint = term.checkpoint(&limits()).unwrap();
+    let restored = Term::from_checkpoint(checkpoint, policy, Events::default(), &limits()).unwrap();
+    assert_eq!(restored.grid()[first].zerowidth().unwrap().len(), 4);
+}
