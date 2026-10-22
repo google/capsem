@@ -30,6 +30,8 @@ tracing-appender = { workspace = true }
 # (no VM logic in capsem-app) is preserved. capsem-proto is a leaf crate
 # with serde/rmp deps only.
 capsem-proto = { path = "../capsem-proto" }
+capsem-sdk = { path = "../../sdk/rust" }
+serde.workspace = true
 
 [lints]
 workspace = true

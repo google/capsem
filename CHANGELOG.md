@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Prepare native guest sign-in callbacks before opening the local browser,
+  keeping the return path alive without a separate debug helper.
+
 - Request Xpra fullscreen state for the primary graphical app so its own
   window controls can yield to Capsem's session controls.
 

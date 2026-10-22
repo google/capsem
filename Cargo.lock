@@ -821,7 +821,9 @@ name = "capsem-app"
 version = "0.7.1"
 dependencies = [
  "capsem-proto",
+ "capsem-sdk",
  "filetime",
+ "serde",
  "serde_json",
  "tauri",
  "tauri-build",
