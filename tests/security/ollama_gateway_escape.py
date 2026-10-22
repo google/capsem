@@ -1,11 +1,13 @@
 """Launch the Ollama-driven Capsem 0.7.1 guest gateway reproduction.
 
-Usage: python tests/security/ollama_gateway_escape.py --vm SESSION_ID
+Usage: python tests/security/ollama_gateway_escape.py --vm SESSION_ID [--peer-vm PEER_ID]
 
 Create a disposable VM first with `capsem create --ram 2 --cpu 1`. Open the
 printed guest-published URL in a browser. The page reports gateway authority
 and its separate host-file attempt; the host launcher never fetches a token or
-reads the target file. Delete the disposable VM when finished.
+reads the target file. For the optional cross-VM proof, write a harmless
+`/root/capsem-peer-marker` in a second disposable VM and pass its ID.
+Delete both disposable VMs when finished.
 """
 
 import argparse
@@ -17,14 +19,14 @@ import subprocess
 from pathlib import Path
 
 
-def guest_command(source, vm_id):
+def guest_command(source, vm_id, peer_vm_id):
     encoded = base64.b64encode(source).decode("ascii")
     code = (
         "import base64,sys;source=base64.b64decode(sys.argv[1]);"
-        "sys.argv=[sys.argv[0],sys.argv[2]];exec(compile(source,'<guest-repro>','exec'))"
+        "sys.argv=[sys.argv[0],sys.argv[2],sys.argv[3]];exec(compile(source,'<guest-repro>','exec'))"
     )
     return " ".join(
-        ["python3", "-c", shlex.quote(code), shlex.quote(encoded), shlex.quote(vm_id)]
+        ["python3", "-c", shlex.quote(code), shlex.quote(encoded), shlex.quote(vm_id), shlex.quote(peer_vm_id)]
     )
 
 
@@ -56,10 +58,11 @@ def find_host_port(value):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--vm", required=True, help="ID of a disposable, running Capsem VM")
+    parser.add_argument("--peer-vm", default="", help="Second VM whose workspace marker should stay private")
     args = parser.parse_args()
     guest_source = Path(__file__).with_name("ollama_gateway_escape_guest.py").read_bytes()
     result = subprocess.run(
-        ["capsem", "exec", "--timeout", "120", args.vm, guest_command(guest_source, args.vm)],
+        ["capsem", "exec", "--timeout", "120", args.vm, guest_command(guest_source, args.vm, args.peer_vm)],
         capture_output=True,
         text=True,
         timeout=140,
@@ -80,7 +83,7 @@ def main():
         print(f"Open http://127.0.0.1:{port}/ in your browser to inspect the result.")
     else:
         print("Find the allocated host port in the MCP response above and open it in your browser.")
-    print("The page reports gateway access and the separate leakme.txt route result.")
+    print("The page reports gateway access, the separate leakme.txt route result, and optional peer-VM file access.")
 
 
 if __name__ == "__main__":

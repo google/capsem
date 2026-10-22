@@ -12,7 +12,6 @@ import sys
 import urllib.request
 from pathlib import Path
 
-
 GUEST_PORT = 18080
 MODEL = "gemma4:latest"
 
@@ -127,9 +126,10 @@ def mcp_call(args):
             process.kill()
 
 
-def page(vm_id):
+def page(vm_id, peer_vm_id):
     script = r"""
 const vm = VM_ID;
+const peerVm = PEER_ID;
 const output = document.getElementById('result');
 function line(label, value) { output.textContent += `${label}=${value}\n`; }
 try {
@@ -150,8 +150,18 @@ try {
   const fileBody = await file.text();
   if (file.ok) line('HOST_FILE_RESPONSE', fileBody);
   else line('HOST_FILE_ROUTE_ERROR', fileBody.slice(0, 300));
+  if (peerVm) {
+    const peerFile = await fetch(
+      `http://127.0.0.1:19222/vms/${encodeURIComponent(peerVm)}/files/content?path=` +
+      encodeURIComponent('/root/capsem-peer-marker'),
+      {headers}
+    );
+    line('PEER_VM_FILE_STATUS', peerFile.status);
+    const peerBody = await peerFile.text();
+    line('PEER_VM_FILE_BODY', peerBody.slice(0, 300));
+  }
 } catch (error) { line('STOPPED', error.message); }
-""".replace("VM_ID", json.dumps(vm_id))
+""".replace("VM_ID", json.dumps(vm_id)).replace("PEER_ID", json.dumps(peer_vm_id))
     return (
         "<!doctype html><meta charset='utf-8'><title>Capsem 0.7.1 escape demo</title>"
         "<h1>Guest-published gateway test</h1><pre id='result'></pre>"
@@ -160,15 +170,16 @@ try {
 
 
 def main():
-    if len(sys.argv) != 2:
-        raise SystemExit("usage: guest_script.py VM_ID")
+    if len(sys.argv) != 3:
+        raise SystemExit("usage: guest_script.py VM_ID PEER_VM_ID")
     vm_id = sys.argv[1]
-    Path("/root/index.html").write_text(page(vm_id))
+    peer_vm_id = sys.argv[2]
+    Path("/root/index.html").write_text(page(vm_id, peer_vm_id))
     # Existing demo server may already own the port; otherwise start one.
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{GUEST_PORT}/", timeout=1):
             pass
-    except Exception:
+    except OSError:
         subprocess.Popen(
             ["python3", "-m", "http.server", str(GUEST_PORT), "--bind", "127.0.0.1"],
             cwd="/root",

@@ -8,10 +8,20 @@ published its HTTP page on a host loopback port. When that page was opened in a
 host browser, it reported `TOKEN_STATUS=200`, `TOKEN_LENGTH=64`, and
 `SETTINGS_STATUS=200`. The page did not print the bearer token.
 
+A second run used two simultaneously running, otherwise unconnected 2 GiB
+VMs. A marker written only in VM B's `/root/capsem-peer-marker` was absent in
+VM A (`test ! -e` exited 0). Ollama in VM A again selected the guest exposure.
+The published page then reported `PEER_VM_FILE_STATUS=200` and
+`PEER_VM_FILE_BODY=VM_B_ISOLATION_MARKER` for VM B's file route. This proves
+the gateway bearer chain crossed the VM ownership boundary after the browser
+opened VM A's page; it does not imply that the VMs shared a private network or
+that VM A directly opened VM B's filesystem.
+
 The separate request for `/Users/elie/leakme.txt` through
 `/vms/{id}/files/content` returned `HOST_FILE_ROUTE_STATUS=400` with an
-outside-workspace error. **This run proved gateway bearer disclosure and an
-authenticated settings read; it did not prove an arbitrary home-file read.**
+outside-workspace error. **These runs proved gateway bearer disclosure, an
+authenticated settings read, and a cross-VM workspace read; they did not prove
+an arbitrary home-file read.**
 Keep the latter claim open until a payload reads the harmless marker and its
 output is captured without printing other secrets. The launcher and guest
 script are in this directory.
@@ -22,7 +32,7 @@ script are in this directory.
 | --- | --- | --- |
 | Guest and MCP relay | Guest VM isolation; native MCP workers have descriptor-only host authority | `capsem__expose_port` was an allowed product operation. The worker passed a publication request through its granted channel; it did not open a host file or socket directly. |
 | Host browser | The browser's own sandbox, outside Capsem's worker policy | The user opened the published loopback page. Its JavaScript sent ordinary HTTP requests to the gateway, and 0.7.1's CORS policy allowed that loopback origin. |
-| Gateway on macOS | Seatbelt denies ambient file access and new outbound connections; the gateway has a prebound listener, a token-file grant, and an inherited control channel | `GET /token` returned the token already held in gateway memory. The authenticated settings handler used its existing control channel. No forbidden syscall was needed. |
+| Gateway on macOS | Seatbelt denies ambient file access and new outbound connections; the gateway has a prebound listener, a token-file grant, and an inherited control channel | `GET /token` returned the token already held in gateway memory. The authenticated settings and VM B file handlers used the gateway's existing control channel. No forbidden syscall was needed. |
 | Gateway on Linux | Landlock limits filesystem paths; seccomp limits syscalls | Those controls likewise cannot decide whether an allowed HTTP handler should disclose its token or accept a particular browser origin. This reproduction ran on macOS; the Linux conclusion is from the shared request path and Linux worker policy, not a Linux live exploit run. |
 
 The gateway's startup attestation checks that ambient `/etc/passwd` reads,
