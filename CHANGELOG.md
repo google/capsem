@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Cancel graphical reconnects after final close and keep mouse handlers and
+  bell audio resources from accumulating across reconnects.
+
 - Preserve foreign cache directories when case-insensitive filesystems expose
   an uppercase name through a forged lowercase namespace alias.
 

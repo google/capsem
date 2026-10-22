@@ -261,6 +261,9 @@ fn unknown_paths_methods_and_traversal_are_refused() {
         "sw.js",
         "mitm.html",
         "default-settings.txt.gz",
+        "SOURCE.toml",
+        "LICENSE",
+        "patches/client-lifecycle.patch",
     ] {
         let (head, _) = get(&format!("{CLIENT_ROOT}{path}"));
         assert!(head.starts_with("HTTP/1.1 404 Not Found\r\n"), "{path}: {head}");

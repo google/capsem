@@ -1,6 +1,6 @@
 //! The pinned xpra-html5 client, served on an Xpra surface's preview origin.
 //!
-//! The vendored files are served byte for byte, with three Capsem additions
+//! The verified, reproducibly patched vendor files are served byte for byte, with Capsem additions
 //! loaded around them: `default-settings.txt` (the client's own settings
 //! hook), `capsem-surface.css` (no desktop wallpaper), and `capsem-surface.js`
 //! (one application, fitted to the viewport).

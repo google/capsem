@@ -102,6 +102,32 @@ def test_a_package_that_does_not_match_the_pin_is_refused(tmp_path, monkeypatch)
     assert not (vendor / "www").exists(), "nothing is written from an unpinned package"
 
 
+def test_owned_patch_is_reproducible_and_both_inputs_and_outputs_are_hashed(tmp_path: Path) -> None:
+    module = _module()
+    vendor = tmp_path / "vendor"
+    (vendor / "patches").mkdir(parents=True)
+    patch = "patches/fix.patch"
+    (vendor / patch).write_text("--- a/js/Client.js\n+++ b/js/Client.js\n@@ -1 +1 @@\n-old\n+new\n")
+    (vendor / "SOURCE.toml").write_text('patches = ["patches/fix.patch"]\n')
+    original = {"index.html": b"<html></html>", "js/Client.js": b"old\n", "js/SHA256SUMS": b"nested data"}
+
+    patched = module.patch_client(vendor, original, [patch])
+    assert original["js/Client.js"] == b"old\n", "the upstream extraction stays immutable"
+    assert patched == {**original, "js/Client.js": b"new\n"}
+    module.write_vendor(vendor, patched)
+    listed = {line.split("  ", 1)[1] for line in (vendor / "SHA256SUMS").read_text().splitlines()}
+    assert listed == {"SOURCE.toml", patch, "www/index.html", "www/js/Client.js", "www/js/SHA256SUMS"}
+    assert (vendor / "www/js/Client.js").read_bytes() == b"new\n"
+    with pytest.raises(ValueError, match="patch"):
+        module.patch_client(vendor, patched, [patch])
+
+
+@pytest.mark.parametrize("patch", ["../escape.patch", "/tmp/escape.patch", "patches/../../escape.patch"])
+def test_patch_declarations_cannot_escape_the_owned_vendor_tree(tmp_path: Path, patch: str) -> None:
+    with pytest.raises(ValueError, match="patch"):
+        _module().patch_client(tmp_path, {"index.html": b"x"}, [patch])
+
+
 def test_the_checked_in_client_is_exactly_what_its_checksums_name() -> None:
     source = tomllib.loads((VENDOR / "SOURCE.toml").read_text(encoding="utf-8"))
     assert source["url"].startswith("https://xpra.org/")
@@ -111,9 +137,9 @@ def test_the_checked_in_client_is_exactly_what_its_checksums_name() -> None:
         digest, path = line.split("  ", 1)
         listed[path] = digest
     present = {
-        str(path.relative_to(VENDOR / "www")): path
-        for path in (VENDOR / "www").rglob("*")
-        if path.is_file()
+        str(path.relative_to(VENDOR)): path
+        for path in VENDOR.rglob("*")
+        if path.is_file() and path != VENDOR / "SHA256SUMS"
     }
     assert set(present) == set(listed)
     for path, file in present.items():

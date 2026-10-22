@@ -90,7 +90,9 @@ class XpraClient {
     this.protocol = null;
 
     this.init_settings();
+    this.audio_context = new AudioContext();
     this.init_state();
+    this.init_input();
   }
 
   init_settings() {
@@ -131,6 +133,8 @@ class XpraClient {
     this.reconnect = true;
     this.reconnect_count = 5;
     this.reconnect_in_progress = false;
+    this.reconnect_timer = null;
+    this.closed = false;
     this.reconnect_delay = 1000; //wait 1 second before retrying
     this.reconnect_attempt = 0;
     this.swap_keys = Utilities.isMacOS();
@@ -262,7 +266,6 @@ var video_max_size = [1024, 768];
     this.audio_framework = null;
     this.audio_aurora_ctx = null;
     this.audio_codec = null;
-    this.audio_context = new AudioContext();
     this.audio_state = "";
     this.aurora_codecs = {};
     this.mediasource_codecs = {};
@@ -344,7 +347,9 @@ var video_max_size = [1024, 768];
     this.draw_pending = 0;
     // basic window management
     this.focused_wid = 0;
+  }
 
+  init_input() {
 var me = this;
 var screen_element = jQuery("#screen");
     screen_element.mousedown((e) => this.on_mousedown(e));
@@ -2449,9 +2454,10 @@ var index = 2;
   }
 
   do_reconnect() {
-    //try again:
+    if (this.closed || this.reconnect_in_progress) return;
     this.reconnect_in_progress = true;
-    setTimeout(() => {
+    this.reconnect_timer = setTimeout(() => {
+      this.reconnect_timer = null;
       try {
         this.remove_windows();
         this.close_audio();
@@ -2490,9 +2496,11 @@ var index = 2;
   }
 
   close() {
-    if (this.reconnect_in_progress) {
-      return;
-    }
+    if (this.closed) return;
+    this.closed = true;
+    clearTimeout(this.reconnect_timer);
+    this.reconnect_timer = null;
+    this.reconnect_in_progress = false;
     this.clog("client closed");
     this.cancel_open_timer();
     this.cancel_hello_timer();
@@ -2502,6 +2510,10 @@ var index = 2;
     this.close_audio();
     this.clear_timers();
     this.close_protocol();
+    if (this.audio_context) {
+      this.audio_context.close().catch((error) => this.warn("cannot close bell audio context", error));
+      this.audio_context = null;
+    }
     // call the client's close callback
     this.callback_close(this.disconnect_reason);
   }
@@ -2514,8 +2526,6 @@ var index = 2;
     // save the disconnect reason
     this.packet_disconnect_reason(packet);
     this.close();
-    // call the client's close callback
-    this.callback_close(this.disconnect_reason);
   }
 
   _process_startup_complete(packet) {

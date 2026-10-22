@@ -51,21 +51,24 @@ fn main() {
                     .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_' | b'/')),
             "unsafe vendored path {path:?}"
         );
-        let bytes = std::fs::read(vendor.join("www").join(path))
-            .unwrap_or_else(|e| panic!("vendored {path} is missing ({e}); {REFRESH}"));
+        let bytes =
+            std::fs::read(vendor.join(path)).unwrap_or_else(|e| panic!("vendored {path} is missing ({e}); {REFRESH}"));
         let actual = format!("{:x}", Sha256::digest(&bytes));
         assert_eq!(actual, expected, "vendored {path} does not match SHA256SUMS; {REFRESH}");
         assert!(listed.insert(path.to_owned()), "{path} is listed twice in SHA256SUMS");
-        writeln!(
-            table,
-            "    ({path:?}, include_bytes!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/{VENDOR}/www/{path}\"))),"
-        )
-        .expect("write to a String");
+        if let Some(relative) = path.strip_prefix("www/") {
+            writeln!(
+                table,
+                "    ({relative:?}, include_bytes!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/{VENDOR}/{path}\"))),"
+            )
+            .expect("write to a String");
+        }
     }
     table.push(']');
 
     let mut present = BTreeSet::new();
-    files_under(&vendor.join("www"), "", &mut present);
+    files_under(&vendor, "", &mut present);
+    present.remove("SHA256SUMS");
     let unlisted: Vec<_> = present.difference(&listed).collect();
     assert!(
         unlisted.is_empty(),

@@ -85,7 +85,7 @@ def _digest(records: tuple[str, ...]) -> str:
     return hashlib.sha256("\0".join(sorted(records)).encode()).hexdigest()
 
 
-#: Third-party trees vendored byte for byte, each with the SHA256SUMS its
+#: Verified generated third-party trees, each with the SHA256SUMS its
 #: crate's build verifies. Their upstream comments are not Capsem path
 #: callers -- an MDN link reads as `docs/` -- and can never be edited to stop
 #: matching, so a file is skipped only while its bytes match its pin; an
@@ -100,7 +100,8 @@ def _pinned_vendor_files(root: Path = ROOT) -> dict[str, str]:
         sums = (root / tree / "SHA256SUMS").read_text(encoding="utf-8")
         for line in sums.splitlines():
             digest, path = line.split("  ", 1)
-            pinned[f"{tree}/www/{path}"] = digest
+            if path.startswith("www/"):
+                pinned[f"{tree}/{path}"] = digest
     return pinned
 
 

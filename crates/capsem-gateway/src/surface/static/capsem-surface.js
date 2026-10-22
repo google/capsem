@@ -3,7 +3,7 @@
 //
 // The gateway loads this after the client's own scripts and before the client
 // starts, so it adjusts the client's classes and the vendored files stay
-// byte-identical to the pinned package.
+// byte-identical to the verified, reproducibly patched vendor tree.
 //
 // Xpra keeps a window's previous X11 position, and the v0.7 spike saw Claude
 // Desktop's 1200x800 window open beyond a narrower browser viewport. So the
