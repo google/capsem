@@ -235,6 +235,10 @@ def typescript_fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ..
     mcp = config.mcp_typescript
     mcp_root = config.path(mcp.project)
     archives = {config.environment.mcp_package_archives: str(config.path(mcp.build_output))}
+    prewarm_archives = {
+        **archives,
+        config.environment.sdk_package_archives: str(config.path(config.sdk_typescript.build_output)),
+    }
     mcp_phase = plan.phase("fast.mcp.typescript")
     mcp_built = mcp_phase.add(
         step(
@@ -252,7 +256,7 @@ def typescript_fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ..
     mcp_warmed = mcp_phase.add(
         step(
             "package-prewarm",
-            Run(["pnpm", "run", "prewarm:packed"], cwd=mcp_root, env=archives, outside_sandbox=True),
+            Run(["pnpm", "run", "prewarm:packed"], cwd=mcp_root, env=prewarm_archives, outside_sandbox=True),
             kind=Kind.COMPILE,
             needs=frozenset({Needs.DISK, Needs.NETWORK}),
             speed=Speed.FAST,

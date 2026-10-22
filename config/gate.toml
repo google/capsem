@@ -435,6 +435,7 @@ run_dir = "CAPSEM_RUN_DIR"
 assets_dir = "CAPSEM_ASSETS_DIR"
 benchmark_root = "CAPSEM_BENCHMARK_OUTPUT_ROOT"
 mcp_package_archives = "CAPSEM_MCP_PACKAGE_ARCHIVES"
+sdk_package_archives = "CAPSEM_SDK_PACKAGE_ARCHIVES"
 coverage_file = "COVERAGE_FILE"
 # Set by the parent that built a private checkout, and read by the child that
 # runs inside it. This is what stops the re-exec recursing: a process that
