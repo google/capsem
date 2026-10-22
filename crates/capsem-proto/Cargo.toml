@@ -33,6 +33,7 @@ tempfile = "3"
 toml = { workspace = true }
 
 [build-dependencies]
+capsem-crypto = { path = "../capsem-crypto", version = "0.7.1", default-features = false }
 quote = "1"
 syn = { version = "2", features = ["full", "visit-mut"] }
 toml = { workspace = true }

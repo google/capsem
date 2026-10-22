@@ -41,7 +41,9 @@ fn main() {
 }
 
 fn write_hash(output: &str, files: &[&str]) {
-    let mut hash = 0xcbf29ce484222325_u64;
+    // A non-security cohort fingerprint. The existing handshake field is u64,
+    // so the crypto-owned XXH3-128 result is truncated only at that wire boundary.
+    let mut hash = capsem_crypto::xxh3::Hasher::new();
 
     for f in files {
         let path = format!("src/{f}");
@@ -58,15 +60,13 @@ fn write_hash(output: &str, files: &[&str]) {
                     | syn::Item::Type(_)
                     | syn::Item::Union(_)
             ) {
-                for byte in item.into_token_stream().to_string().bytes() {
-                    hash ^= u64::from(byte);
-                    hash = hash.wrapping_mul(0x100000001b3);
-                }
+                hash.update(item.into_token_stream().to_string().as_bytes());
             }
         }
         println!("cargo:rerun-if-changed={path}");
     }
 
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
-    std::fs::write(format!("{out_dir}/{output}"), format!("{hash}u64")).expect("schema hash: write generated constant");
+    std::fs::write(format!("{out_dir}/{output}"), format!("{}u64", hash.finalize() as u64))
+        .expect("schema hash: write generated constant");
 }
