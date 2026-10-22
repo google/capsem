@@ -139,6 +139,9 @@ impl GatewayProvider {
     }
 
     pub async fn invoke_async(&self, action: &ControlAction) -> Result<ActionOutcome> {
+        if let ControlAction::OpenBrowser { request } = action {
+            return crate::browser::open(request).await;
+        }
         if matches!(action, ControlAction::StartService) {
             return start_service().await;
         }
@@ -307,6 +310,7 @@ fn vm_response_to_summary(vm: VmSummary) -> SessionSummary {
         .unwrap_or_default()
         .saturating_add(vm.total_output_tokens.unwrap_or_default());
     SessionSummary {
+        browser_request: vm.browser_request,
         id,
         title,
         repo_path: None,

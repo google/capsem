@@ -20,6 +20,32 @@ use crate::model::{Attention, ServiceStatus, SessionLifecycle, UpdateNoticeKind,
 use crate::ui::{render_app_snapshot, render_app_test_buffer, render_snapshot, render_test_buffer};
 
 #[test]
+fn browser_request_uses_explicit_local_action_without_stealing_guest_keys() {
+    let mut state = fixture_state();
+    let request = capsem_sdk::models::BrowserRequest {
+        id: 1,
+        url: "https://example.org/login?state=opaque".into(),
+    };
+    let active = state
+        .sessions
+        .iter_mut()
+        .find(|session| session.id == state.active_session_id)
+        .unwrap();
+    active.browser_request = Some(request.clone());
+    let mut app = App::new(state);
+    assert!(render_app_snapshot(&app, 140, 36).unwrap().contains("Alt+b browser"));
+    assert_eq!(
+        app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE)),
+        AppAction::Forward
+    );
+    assert_eq!(
+        app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::ALT)),
+        AppAction::Invoke(ControlAction::OpenBrowser { request })
+    );
+    assert_eq!(app.overlay(), AppOverlay::None);
+}
+
+#[test]
 fn fixture_models_global_service_state_and_session_indicators() {
     let state = fixture_state();
 

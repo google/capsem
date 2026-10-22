@@ -1,4 +1,5 @@
 pub mod app;
+mod browser;
 pub mod fixture;
 pub mod gateway_provider;
 pub mod model;

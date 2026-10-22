@@ -27,6 +27,7 @@ pub fn fixture_state() -> AppState {
         update_notice: None,
         sessions: vec![
             SessionSummary {
+                browser_request: None,
                 id: "vm-2".to_string(),
                 title: "Session V2".to_string(),
                 repo_path: Some("github.com/google/capsem".to_string()),
@@ -51,6 +52,7 @@ pub fn fixture_state() -> AppState {
                 },
             },
             SessionSummary {
+                browser_request: None,
                 id: "linux-os".to_string(),
                 title: "Linux OS".to_string(),
                 repo_path: Some("github.com/google/capsem-linux".to_string()),

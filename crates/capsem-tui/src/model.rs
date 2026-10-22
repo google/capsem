@@ -86,6 +86,7 @@ impl ServiceStatus {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SessionSummary {
+    pub browser_request: Option<capsem_sdk::models::BrowserRequest>,
     pub id: String,
     pub title: String,
     pub repo_path: Option<String>,

@@ -179,6 +179,13 @@ fn render_status_bar(frame: &mut Frame<'_>, state: &AppState, area: Rect) {
     if let Some(attempt) = service.reconnect_attempt {
         left.push(Span::styled(format!(" reconnect {attempt}"), muted_style()));
     }
+    if state
+        .active_session()
+        .and_then(|session| session.browser_request.as_ref())
+        .is_some()
+    {
+        left.push(Span::styled(" Alt+b browser", base));
+    }
     if let Some(message) = &service.control_message {
         left.push(Span::styled(format!(" {}", truncate(message, 28)), muted_style()));
     }
@@ -529,6 +536,7 @@ fn help_lines() -> Vec<Line<'static>> {
         help_row("Alt+i", "session info", "session", "active session details"),
         help_row("Alt+n", "new", "global", "create a session"),
         help_row("Alt+f", "fork", "session", "fork active session"),
+        help_row("Alt+b", "browser", "session", "open guest link on this device"),
         help_row("Alt+s", "suspend", "session", "warm stop active session"),
         help_row("Alt+c", "checkpoint", "session", "save/checkpoint session"),
         help_row("Alt+r", "resume", "session", "resume inactive session"),

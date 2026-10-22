@@ -28,6 +28,9 @@ pub enum AppOverlay {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ControlAction {
+    OpenBrowser {
+        request: capsem_sdk::models::BrowserRequest,
+    },
     StartService,
     Update,
     CreateSession {
@@ -74,6 +77,7 @@ pub enum ControlAction {
 impl ControlAction {
     pub const fn label(&self) -> &'static str {
         match self {
+            Self::OpenBrowser { .. } => "open browser",
             Self::StartService => "start service",
             Self::Update => "update",
             Self::CreateSession { .. } => "create",
@@ -91,6 +95,7 @@ impl ControlAction {
 
     pub const fn progress_label(&self) -> &'static str {
         match self {
+            Self::OpenBrowser { .. } => "opening browser",
             Self::StartService => "starting service",
             Self::Update => "updating",
             Self::CreateSession { .. } => "creating",
@@ -108,6 +113,7 @@ impl ControlAction {
 
     pub fn target(&self) -> &str {
         match self {
+            Self::OpenBrowser { .. } => "browser on this device",
             Self::StartService => "Capsem service",
             Self::Update => "complete verified release",
             Self::CreateSession { name: Some(name), .. } => name,
@@ -260,6 +266,20 @@ impl App {
         }
         if is_new_key(key) {
             self.open_create();
+            return AppAction::Consumed;
+        }
+        if is_alt_key(key.modifiers) && matches!(key.code, KeyCode::Char('b' | 'B')) {
+            if let Some(request) = self
+                .state
+                .active_session()
+                .and_then(|session| session.browser_request.as_ref())
+            {
+                if request.validated_url().is_ok() {
+                    return AppAction::Invoke(ControlAction::OpenBrowser {
+                        request: request.clone(),
+                    });
+                }
+            }
             return AppAction::Consumed;
         }
         if is_fork_key(key) && self.open_fork() {
