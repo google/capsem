@@ -451,6 +451,18 @@ pub(crate) async fn plug(state: &Arc<ServiceState>, network: Uuid, vm_id: &str) 
         let Some(address) = registry.address_of(network, vm_id) else {
             return Ok(());
         };
+        // An idempotent PUT must not replace a live cable. The owner cannot
+        // hand out a second stream while the first one's lease is held.
+        let already_plugged = state
+            .switches
+            .networks
+            .lock()
+            .await
+            .get(&network)
+            .is_some_and(|switch| !switch.host.is_closed() && switch.ports.values().any(|port| port.vm_id == vm_id));
+        if already_plugged {
+            return Ok(());
+        }
         registry
             .set_state(network, vm_id, MembershipState::Attaching, vm_lifecycle::unix_time_ms())
             .await

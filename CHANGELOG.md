@@ -166,6 +166,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reattaching a running VM to its existing private network now keeps the live
+  cable and ready membership instead of attempting a second owner handshake.
+
 - Use an executable that exists on macOS and Linux for the gateway's sandbox
   startup check, restoring gateway startup on hosts without `/bin/true`.
 
