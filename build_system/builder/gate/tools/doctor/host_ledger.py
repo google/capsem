@@ -1,22 +1,17 @@
 """Read the host ledger: what the service did to every session.
 
-The service records each session's creation and stop, and its own start and
-stop, as hash-chained rows in `sessions/host.db`. These helpers read it
-read-only and recompute the chain exactly as `capsem_logger::chain_hash`
-does, so a doctor run can say whether the record was edited.
+The service records session and service lifecycle events in database insertion
+order. These helpers read the records read-only and validate their shape;
+same-owner checksums are not independent proof of tamper resistance.
 """
 
 from __future__ import annotations
 
 import sqlite3
-import struct
 from contextlib import closing
 from pathlib import Path
 from typing import Any
 
-from .... import crypto as blake3
-
-GENESIS_HASH = bytes(32)
 SESSION_CREATED = "session_created"
 SESSION_STOPPED = "session_stopped"
 
@@ -26,50 +21,21 @@ def host_ledger_path(capsem_home: Path) -> Path:
 
 
 def read_host_events(path: Path) -> list[dict[str, Any]]:
-    """Every host event in ledger order, with its stored chain link."""
+    """Every host event in database insertion order."""
     with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as connection:
         connection.row_factory = sqlite3.Row
         rows = connection.execute(
-            "SELECT timestamp_unix_ms, kind, session_id, actor, detail, trace_id, prev_hash, hash"
+            "SELECT timestamp_unix_ms, kind, session_id, actor, detail, trace_id"
             " FROM host_events ORDER BY id"
         ).fetchall()
     return [dict(row) for row in rows]
 
 
-def _binary(event: dict[str, Any], field: str) -> bytes:
-    value = event[field]
-    if not isinstance(value, (bytes, bytearray, memoryview)):
-        raise ValueError(f"host event {field} must be binary data")
-    return bytes(value)
-
-
-def chain_hash(previous: bytes, event: dict[str, Any]) -> bytes:
-    """The Rust `chain_hash`: every field, length-prefixed in a fixed order."""
-    hasher = blake3.blake3(previous)
-    hasher.update(struct.pack("<q", event["timestamp_unix_ms"]))
-    for value in (
-        event["kind"].encode(),
-        None if event["session_id"] is None else event["session_id"].encode(),
-        event["actor"].encode(),
-        _binary(event, "detail"),
-        None if event["trace_id"] is None else event["trace_id"].encode(),
-    ):
-        if value is None:
-            hasher.update(b"\x00")
-        else:
-            hasher.update(b"\x01" + struct.pack("<Q", len(value)) + value)
-    return hasher.digest()
-
-
-def verify_chain(events: list[dict[str, Any]]) -> int:
-    """How many events the chain covers; `ValueError` naming the first break."""
-    previous = GENESIS_HASH
-    for index, event in enumerate(events):
-        if _binary(event, "prev_hash") != previous or _binary(event, "hash") != chain_hash(
-            previous, event
-        ):
-            raise ValueError(f"host event chain is broken at event {index}")
-        previous = _binary(event, "hash")
+def validate_events(events: list[dict[str, Any]]) -> int:
+    """Validate binary event details without pretending to authenticate history."""
+    for event in events:
+        if not isinstance(event["detail"], (bytes, bytearray, memoryview)):
+            raise ValueError("host event detail must be binary data")
     return len(events)
 
 

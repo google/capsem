@@ -84,7 +84,7 @@ fn net_event_stores_bounded_body_blobs_and_small_previews() {
     // The hash covers what the archive stores, which for this oversized body
     // is its first MAX_BODY_BLOB_BYTES and not the whole thing: a hash of
     // bytes nobody kept could never be checked against anything.
-    let response_hash = blake3_bytes_ref(&response_body.as_bytes()[..MAX_BODY_BLOB_BYTES]);
+    let response_hash = content_digest(&response_body.as_bytes()[..MAX_BODY_BLOB_BYTES]);
 
     {
         let writer = DbWriter::open(&db_path, 64).unwrap();
@@ -191,7 +191,11 @@ fn net_event_stores_bounded_body_blobs_and_small_previews() {
     assert_eq!(request.original_bytes, request_body.len() as i64);
     assert_eq!(request.stored_bytes, request_body.len() as i64);
     assert_eq!(request.truncated, 0);
-    assert_eq!(request.body_hash, blake3_bytes_ref(request_body.as_bytes()));
+    assert!(
+        request.body_hash.starts_with("xxh3-128:"),
+        "body identity uses the current fast format"
+    );
+    assert_eq!(request.body_hash, content_digest(request_body.as_bytes()));
     assert_eq!(request.body, request_body.as_bytes());
     assert_eq!(request.trace_id, trace_id);
 
@@ -204,7 +208,7 @@ fn net_event_stores_bounded_body_blobs_and_small_previews() {
     assert_eq!(response.body_hash, response_hash);
     assert_ne!(
         response.body_hash,
-        blake3_bytes_ref(response_body.as_bytes()),
+        content_digest(response_body.as_bytes()),
         "the row must not carry a hash of bytes the archive did not keep"
     );
     assert_eq!(response.body.len(), MAX_BODY_BLOB_BYTES);
@@ -920,7 +924,7 @@ fn publication_crash_boundaries_recover_and_append_to_the_elected_generation() {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(hash, blake3_bytes_ref(b"survivor bytes"), "{case} exact retained hash");
+        assert_eq!(hash, content_digest(b"survivor bytes"), "{case} exact retained hash");
     }
 }
 

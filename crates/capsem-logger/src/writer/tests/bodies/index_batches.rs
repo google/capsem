@@ -71,7 +71,7 @@ fn archive_index_flush_batches_actual_sql_and_preserves_order_and_metadata() {
                 (actual.4, actual.5, actual.6),
                 (body.len() as i64 + 10, body.len() as i64, 1)
             );
-            assert_eq!(actual.7, blake3_bytes_ref(body.as_bytes()));
+            assert_eq!(actual.7, content_digest(body.as_bytes()));
             assert_eq!(actual.8.as_deref(), (index % 2 == 0).then_some("fixture-trace"));
             assert_eq!(actual.9.as_deref(), (index % 3 == 0).then_some("fixture-turn"));
             assert_eq!(actual.10, format_timestamp(clock()));

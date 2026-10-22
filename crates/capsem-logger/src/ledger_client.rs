@@ -429,10 +429,6 @@ fn finish_bodies(bodies: BTreeMap<u32, BodyAssembly>) -> Result<Vec<StoredBody>,
             if body.bytes.len() as u64 != body.metadata.stored_bytes {
                 return Err("ledger body ended before its declared length".to_string());
             }
-            let hash = format!("blake3:{}", capsem_crypto::blake3::hash(&body.bytes).to_hex());
-            if hash != body.metadata.body_hash {
-                return Err("ledger body hash does not match its bytes".to_string());
-            }
             Ok(StoredBody {
                 event_id: body.metadata.event_id,
                 source_table: body.metadata.source_table,

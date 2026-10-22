@@ -3,7 +3,6 @@ use std::time::SystemTime;
 
 use capsem_foundation::ipc_channel;
 use capsem_proto::ledger::{LedgerChannelGrant, LedgerClientRole, LedgerGeneration, LedgerRequest};
-use capsem_proto::ledger_commitment::{LedgerCommitment, ZERO_COMMITMENT_HASH};
 
 use super::*;
 use crate::{ExecEventComplete, FileAction, FileEvent, FileKind, WriteOp};
@@ -23,22 +22,7 @@ fn file_write() -> LedgerCommand {
         trace_id: None,
         credential_ref: None,
     });
-    LedgerCommand::Admit {
-        commitment: commitment(&event),
-        event: Box::new(event),
-    }
-}
-
-fn commitment(event: &WriteOp) -> LedgerCommitment {
-    LedgerCommitment::new(
-        grant(LedgerClientRole::VmOwner),
-        1,
-        1,
-        event.kind(),
-        crate::writer::commitment_event_hash(event).unwrap(),
-        ZERO_COMMITMENT_HASH,
-    )
-    .unwrap()
+    LedgerCommand::Admit { event: Box::new(event) }
 }
 
 #[tokio::test]
@@ -61,17 +45,16 @@ async fn request_round_trips_over_the_landed_bounded_channel() {
 
 #[test]
 fn admission_batch_is_bounded_and_correlated_as_one_reply() {
-    let LedgerCommand::Admit { event, commitment } = file_write() else {
+    let LedgerCommand::Admit { event } = file_write() else {
         unreachable!()
     };
-    let admission = LedgerAdmission::new(*event, commitment);
     LedgerCommand::AdmitBatch {
-        admissions: vec![admission.clone(), admission],
+        events: vec![*event.clone(), *event],
     }
     .validate()
     .unwrap();
     assert_eq!(
-        LedgerCommand::AdmitBatch { admissions: vec![] }.validate(),
+        LedgerCommand::AdmitBatch { events: vec![] }.validate(),
         Err(LedgerProtocolError::InvalidOperation)
     );
     LedgerReply::AcceptedBatch {
@@ -125,58 +108,6 @@ fn snapshot_ids_must_be_nonzero_fixed_width_values() {
 }
 
 #[test]
-fn oversized_event_and_malformed_query_are_rejected_before_dispatch() {
-    let huge_event = WriteOp::ExecEventComplete(ExecEventComplete {
-        exec_id: 1,
-        exit_code: 0,
-        duration_ms: 1,
-        stdout: vec![b'x'; MAX_LEDGER_OPERATION_BYTES],
-        stderr: Vec::new(),
-        stdout_bytes: MAX_LEDGER_OPERATION_BYTES as u64,
-        stderr_bytes: 0,
-        pid: None,
-    });
-    let huge = LedgerCommand::Admit {
-        commitment: commitment(&huge_event),
-        event: Box::new(huge_event),
-    };
-    assert_eq!(
-        LedgerRequest::new(1, huge)
-            .unwrap()
-            .authorize(&grant(LedgerClientRole::VmOwner))
-            .unwrap_err(),
-        capsem_proto::ledger::LedgerProtocolError::OperationTooLarge
-    );
-    let empty_timeline = LedgerCommand::Query {
-        query: LedgerQuery::Timeline {
-            layers: Vec::new(),
-            cutoff: String::new(),
-            trace_id: None,
-            limit: 10,
-        },
-    };
-    assert_eq!(
-        LedgerRequest::new(2, empty_timeline)
-            .unwrap()
-            .authorize(&grant(LedgerClientRole::Reader))
-            .unwrap_err(),
-        capsem_proto::ledger::LedgerProtocolError::InvalidOperation
-    );
-}
-
-#[test]
-fn admission_metadata_stays_within_its_reserved_frame_allowance() {
-    let command = file_write();
-    let LedgerCommand::Admit { event, .. } = &command else {
-        unreachable!("file_write always returns an admission")
-    };
-    let event_bytes = serde_json::to_vec(event).unwrap().len();
-    let operation_bytes = serde_json::to_vec(&command).unwrap().len();
-
-    assert!(operation_bytes - event_bytes < MAX_ADMIT_METADATA_BYTES);
-}
-
-#[test]
 fn event_bytes_use_messagepack_binary_inside_the_request() {
     let event = WriteOp::ExecEventComplete(ExecEventComplete {
         exec_id: 1,
@@ -188,16 +119,37 @@ fn event_bytes_use_messagepack_binary_inside_the_request() {
         stderr_bytes: 0,
         pid: None,
     });
-    let command = LedgerCommand::Admit {
-        commitment: commitment(&event),
-        event: Box::new(event),
-    };
+    let command = LedgerCommand::Admit { event: Box::new(event) };
     let encoded = rmp_serde::to_vec_named(&LedgerRequest::new(1, command).unwrap()).unwrap();
     assert!(
         encoded.len() < 1024 * 1024 + 1024,
         "binary payload expanded to {}",
         encoded.len()
     );
+}
+
+#[tokio::test]
+async fn oversized_binary_frame_is_refused_without_poisoning_the_next_request() {
+    let (left, right) = UnixStream::pair().unwrap();
+    let (sender, _) = ipc_channel::channel_from_std::<LedgerClientMessage, LedgerServerMessage>(left).unwrap();
+    let (_, receiver) = ipc_channel::channel_from_std::<LedgerServerMessage, LedgerClientMessage>(right).unwrap();
+    let event = WriteOp::ExecEventComplete(ExecEventComplete {
+        exec_id: 1,
+        exit_code: 0,
+        duration_ms: 1,
+        stdout: vec![0; ipc_channel::MAX_IPC_FRAME_SIZE as usize],
+        stderr: Vec::new(),
+        stdout_bytes: u64::from(ipc_channel::MAX_IPC_FRAME_SIZE),
+        stderr_bytes: 0,
+        pid: None,
+    });
+    let request = LedgerRequest::new(1, LedgerCommand::Admit { event: Box::new(event) }).unwrap();
+    let error = sender.send(LedgerClientMessage::Request { request }).await.unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    let request = LedgerRequest::new(2, file_write()).unwrap();
+    let (sent, received) = tokio::join!(sender.send(LedgerClientMessage::Request { request }), receiver.recv(),);
+    sent.unwrap();
+    assert!(matches!(received.unwrap(), LedgerClientMessage::Request { request } if request.request_id() == 2));
 }
 
 #[test]

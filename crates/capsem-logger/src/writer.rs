@@ -10,6 +10,7 @@ use rusqlite::{params, Connection, ErrorCode, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use tracing::{error, warn};
 
+use crate::content_digest;
 use crate::counters::{self, LedgerCounters, LedgerTally};
 use crate::events::{
     AuditEvent, DnsEvent, ExecEvent, ExecEventComplete, FileEvent, HostEvent, McpCall, ModelCall, NetEvent,
@@ -203,14 +204,6 @@ pub fn output_preview(bytes: &[u8]) -> String {
     cap_bytes(&Some(String::from_utf8_lossy(head).into_owned()), PREVIEW_BYTES).unwrap_or_default()
 }
 
-fn blake3_ref(value: &str) -> String {
-    format!("blake3:{}", capsem_crypto::blake3::hash(value.as_bytes()).to_hex())
-}
-
-fn blake3_bytes_ref(value: &[u8]) -> String {
-    format!("blake3:{}", capsem_crypto::blake3::hash(value).to_hex())
-}
-
 /// Typed write operations sent to the writer thread.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WriteOp {
@@ -277,26 +270,11 @@ enum WriterMessage {
 
 impl WriterMessage {
     fn write(op: WriteOp) -> Self {
-        Self::Write(WriteEnvelope { op, commitment: None })
+        Self::Write(WriteEnvelope { op })
     }
 
-    fn committed(op: WriteOp, commitment: capsem_proto::ledger_commitment::LedgerCommitment) -> Self {
-        Self::Write(WriteEnvelope {
-            op,
-            commitment: Some(commitment),
-        })
-    }
-
-    fn committed_batch(writes: Vec<(WriteOp, capsem_proto::ledger_commitment::LedgerCommitment)>) -> Self {
-        Self::WriteBatch(
-            writes
-                .into_iter()
-                .map(|(op, commitment)| WriteEnvelope {
-                    op,
-                    commitment: Some(commitment),
-                })
-                .collect(),
-        )
+    fn batch(writes: Vec<WriteOp>) -> Self {
+        Self::WriteBatch(writes.into_iter().map(|op| WriteEnvelope { op }).collect())
     }
 
     fn flush(reply: tokio::sync::oneshot::Sender<FlushOutcome>) -> Self {
@@ -315,13 +293,12 @@ impl WriterMessage {
 #[derive(Debug)]
 struct WriteEnvelope {
     op: WriteOp,
-    commitment: Option<capsem_proto::ledger_commitment::LedgerCommitment>,
 }
 
 impl WriteEnvelope {
     #[cfg(test)]
     fn plain(op: WriteOp) -> Self {
-        Self { op, commitment: None }
+        Self { op }
     }
 }
 
@@ -451,12 +428,8 @@ fn writer_channel(capacity: usize) -> (WriterSender, WriterReceiver) {
 mod barriers;
 mod batch;
 mod operation;
-pub(crate) use operation::commitment_event_fingerprint;
-pub use operation::commitment_event_hash;
 mod recording;
 mod remote;
-#[cfg(test)]
-pub(crate) use remote::test_commitment_channel;
 mod retention;
 mod retention_faults;
 mod worker;
@@ -710,7 +683,6 @@ impl DbWriter {
     /// dedicated ledger worker owns both.
     pub fn from_ledger_channel(
         stream: std::os::unix::net::UnixStream,
-        commitment_stream: std::os::unix::net::UnixStream,
         grant: capsem_proto::ledger::LedgerChannelGrant,
         logical_path: &Path,
         capacity: usize,
@@ -720,7 +692,7 @@ impl DbWriter {
             join_handle: std::sync::Mutex::new(None),
             db_path: logical_path.to_path_buf(),
             pending_body_bytes: Arc::new(AtomicU64::new(0)),
-            remote: Some(remote::RemoteWriter::start(stream, commitment_stream, grant, capacity)?),
+            remote: Some(remote::RemoteWriter::start(stream, grant, capacity)?),
         })
     }
 

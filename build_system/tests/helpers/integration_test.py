@@ -40,7 +40,7 @@ from capsem_builder.cache.config import load_paths
 from capsem_builder.gate.tools.doctor.host_ledger import (
     host_ledger_path,
     read_host_events,
-    verify_chain,
+    validate_events,
 )
 
 from .mock_server import local_fixture_env, start_mock_server, stop_process
@@ -845,7 +845,7 @@ def verify_session(session_id: str, session_dir: Path) -> bool:
     if HOST_LEDGER.exists():
         events = read_host_events(HOST_LEDGER)
         try:
-            r.ok(f"host ledger chain intact over {verify_chain(events)} events")
+            r.ok(f"host ledger contains {validate_events(events)} well-formed events")
         except ValueError as error:
             r.fail(str(error))
         kinds = [event["kind"] for event in events if event["session_id"] == session_id]

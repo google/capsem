@@ -29,7 +29,10 @@ pub use reader::{
     SecurityRuleDetectionLevelCount, SecurityRuleEventTypeCount, SecurityRuleStats, SecurityRuleStatsByRule,
 };
 pub use session_types::{epoch_to_iso, generate_session_id, is_valid_session_id, now_iso};
-pub use writer::{
-    commitment_event_hash, format_ledger_timestamp, output_preview, DbWriter, RetainOutcome, WriteOp,
-    MAX_BODY_BLOB_BYTES,
-};
+pub use writer::{format_ledger_timestamp, output_preview, DbWriter, RetainOutcome, WriteOp, MAX_BODY_BLOB_BYTES};
+
+/// Non-security stored-content fingerprint. The current schema accepts only
+/// this explicit algorithm identity; producers never compute admission hashes.
+pub(crate) fn content_digest(bytes: &[u8]) -> String {
+    format!("xxh3-128:{:032x}", capsem_crypto::xxh3::hash(bytes))
+}

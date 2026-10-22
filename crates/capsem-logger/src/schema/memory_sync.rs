@@ -41,7 +41,6 @@ pub(super) const COPY_SECURITY_DECISION_OCCURRENCES: &str = "INSERT OR REPLACE I
 const DISK_ONLY_TABLES: &[&str] = &[
     "archive_state",
     "ledger_counters",
-    "ledger_commitments",
     "event_body_blobs",
     "body_blocks",
     "transport_schema",

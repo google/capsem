@@ -56,26 +56,10 @@ pub type DbQueryParams = [serde_json::Value];
 /// execution and schema failures remain DB-owned.
 pub type DbQueryJson = String;
 type DbQueryOwned = (String, Vec<serde_json::Value>);
-type DbQueryCacheKey = Vec<u8>;
-
-fn query_cache_key(queries: &[DbQueryOwned]) -> DbQueryCacheKey {
-    serde_json::to_vec(queries).expect("query batches contain only JSON values")
-}
-
-/// Recently answered `query_many` batches, keyed by their canonical JSON.
-///
-/// One slot was enough while a single route used the batch rail. It stopped
-/// being enough the moment two polled routes shared a session handle -- and
-/// they do share one, exactly one per session -- because each poll evicted the
-/// other's answer and neither ever hit: the handle paid the bookkeeping of a
-/// cache and got the behaviour of none.
-///
-/// `serde_json::Value` is neither `Hash` nor `Ord`, so the shared bounded cache
-/// uses the complete canonical serialization as its collision-free key. The
-/// read epoch remains the freshness identity owned by this DB handle.
-/// The generated product capacity leaves room for the route batches fetched
-/// side by side while keeping every row-bounded result under one authority.
-type DbQueryManyCache = KeyedIdentityCache<DbQueryCacheKey, u64, Vec<DbQueryJson>>;
+// serde_json::Value implements Eq + Hash. Borrow the caller's typed query
+// slice for lookups; move its existing owned values into the bounded cache.
+// No JSON serialization or temporary key allocation is needed.
+type DbQueryManyCache = KeyedIdentityCache<Vec<DbQueryOwned>, u64, Vec<DbQueryJson>>;
 
 /// Typed invalidation domains for DB-owned data consumed by cached readers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -96,11 +80,6 @@ fn elapsed_ms(started: Instant) -> u128 {
 
 fn elapsed_ms_f64(started: Instant) -> f64 {
     started.elapsed().as_secs_f64() * 1000.0
-}
-
-fn sql_fingerprint(sql: &str) -> String {
-    let hash = capsem_crypto::blake3::hash(sql.as_bytes()).to_hex();
-    hash[..12].to_string()
 }
 
 fn query_result_rows(raw: &str) -> Option<usize> {
@@ -423,7 +402,6 @@ impl DbHandle {
     /// are owned by the DB layer. Non-read SQL and broken schema fail loudly.
     pub async fn query(&self, sql: &str, params: &DbQueryParams) -> DbResult<DbQueryJson> {
         let started = Instant::now();
-        let sql_hash = sql_fingerprint(sql);
         let params_count = params.len();
         let (reply, rx) = tokio::sync::oneshot::channel();
         self.send_reader(ReadRequest::Query {
@@ -435,7 +413,6 @@ impl DbHandle {
             tracing::error!(
                 db_path = %self.inner.path.display(),
                 operation = "query",
-                sql_hash,
                 params_count,
                 duration_ms = elapsed_ms(started),
                 error = %error,
@@ -452,7 +429,6 @@ impl DbHandle {
             Ok(_) => tracing::debug!(
                 db_path = %self.inner.path.display(),
                 operation = "query",
-                sql_hash,
                 params_count,
                 duration_ms = elapsed_ms(started),
                 "session db handle operation completed"
@@ -460,7 +436,6 @@ impl DbHandle {
             Err(error) => tracing::error!(
                 db_path = %self.inner.path.display(),
                 operation = "query",
-                sql_hash,
                 params_count,
                 duration_ms = elapsed_ms(started),
                 error = %error,
@@ -663,11 +638,10 @@ impl DbHandle {
     /// by the newer generation.
     fn cached_query_many(&self, queries: &[DbQueryOwned]) -> (u64, Option<Vec<DbQueryJson>>) {
         let epoch = self.read_cache_epoch(ReadCacheDomain::All);
-        let key = query_cache_key(queries);
         let result = self
             .inner
             .query_many_cache
-            .get(key.as_slice(), &epoch)
+            .get(queries, &epoch)
             .map(|value| (*value).clone());
         if self.read_cache_epoch(ReadCacheDomain::All) == epoch {
             (epoch, result)
@@ -687,9 +661,7 @@ impl DbHandle {
             );
             return;
         }
-        self.inner
-            .query_many_cache
-            .publish(query_cache_key(&key), epoch_before, result);
+        self.inner.query_many_cache.publish(key, epoch_before, result);
     }
 
     /// Invalidate DB-owned read caches after external logger lifecycle helpers
@@ -766,35 +738,16 @@ impl DbHandle {
         Ok(())
     }
 
-    pub(crate) async fn write_committed(
-        &self,
-        op: WriteOp,
-        commitment: capsem_proto::ledger_commitment::LedgerCommitment,
-    ) -> DbResult<()> {
-        let affects_session_summary = !matches!(&op, WriteOp::PolicyMutationEvent(_) | WriteOp::HostEvent(_));
-        let writer = self
-            .inner
-            .writer
-            .as_ref()
-            .ok_or_else(|| "db handle is read-only; no writer is available".to_string())?;
-        writer.write_committed(op, commitment).await?;
-        self.invalidate_after_write(affects_session_summary);
-        Ok(())
-    }
-
-    pub(crate) async fn write_committed_batch(
-        &self,
-        writes: Vec<(WriteOp, capsem_proto::ledger_commitment::LedgerCommitment)>,
-    ) -> DbResult<()> {
+    pub(crate) async fn write_batch(&self, writes: Vec<WriteOp>) -> DbResult<()> {
         let affects_session_summary = writes
             .iter()
-            .any(|(op, _)| !matches!(op, WriteOp::PolicyMutationEvent(_) | WriteOp::HostEvent(_)));
+            .any(|op| !matches!(op, WriteOp::PolicyMutationEvent(_) | WriteOp::HostEvent(_)));
         let writer = self
             .inner
             .writer
             .as_ref()
             .ok_or_else(|| "db handle is read-only; no writer is available".to_string())?;
-        writer.write_committed_batch(writes).await?;
+        writer.write_batch(writes).await?;
         self.invalidate_after_write(affects_session_summary);
         Ok(())
     }

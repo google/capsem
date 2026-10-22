@@ -2,23 +2,14 @@
 
 use std::collections::BTreeMap;
 
-use capsem_foundation::ipc_channel::MAX_IPC_FRAME_SIZE;
 use capsem_proto::ledger::{
     LedgerCapability, LedgerHello, LedgerOperation, LedgerProtocolError, LedgerRequest, LedgerWelcome,
 };
-use capsem_proto::ledger_commitment::LedgerCommitment;
 use capsem_proto::ledger_counters::LedgerCounters;
 use serde::{Deserialize, Serialize};
 
 use crate::{BodyDirection, RetainOutcome, WriteOp};
 
-/// Leave room inside the 16 MiB frame for request map keys and ids.
-pub const MAX_LEDGER_OPERATION_BYTES: usize = MAX_IPC_FRAME_SIZE as usize - 4 * 1024;
-// An admission's only bytes outside its event are fixed field names, ids and
-// one bounded LedgerCommitment. Reserving 4 KiB for them lets validation reuse
-// the event encoding that produced its commitment hash instead of encoding the
-// whole operation a second time on every ledger admission.
-const MAX_ADMIT_METADATA_BYTES: usize = 4 * 1024;
 /// Every large result streams in independently bounded pieces.
 pub const MAX_LEDGER_STREAM_CHUNK_BYTES: usize = 256 * 1024;
 pub const MAX_LEDGER_QUERY_ROWS: usize = 2_000;
@@ -30,44 +21,6 @@ const MAX_LEDGER_RESULT_SETS: usize = 16;
 const MAX_EVENT_ID_BYTES: usize = 12;
 const MAX_TIMESTAMP_BYTES: usize = 64;
 const SNAPSHOT_ID_BYTES: usize = 16;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LedgerAdmission {
-    event: Box<WriteOp>,
-    commitment: LedgerCommitment,
-}
-
-impl LedgerAdmission {
-    pub fn new(event: WriteOp, commitment: LedgerCommitment) -> Self {
-        Self {
-            event: Box::new(event),
-            commitment,
-        }
-    }
-
-    pub fn validate(&self) -> Result<(), LedgerProtocolError> {
-        self.commitment
-            .validate()
-            .map_err(|_| LedgerProtocolError::InvalidOperation)?;
-        let (event_hash, event_bytes) = crate::writer::commitment_event_fingerprint(&self.event)
-            .map_err(|_| LedgerProtocolError::InvalidOperation)?;
-        if self.commitment.event_kind() != self.event.kind() || self.commitment.event_hash() != event_hash {
-            return Err(LedgerProtocolError::InvalidOperation);
-        }
-        if event_bytes > MAX_LEDGER_OPERATION_BYTES - MAX_ADMIT_METADATA_BYTES {
-            return Err(LedgerProtocolError::OperationTooLarge);
-        }
-        Ok(())
-    }
-
-    pub fn into_parts(self) -> (WriteOp, LedgerCommitment) {
-        (*self.event, self.commitment)
-    }
-
-    pub fn commitment(&self) -> &LedgerCommitment {
-        &self.commitment
-    }
-}
 
 pub type LedgerResponse = capsem_proto::ledger::LedgerResponse<LedgerReply>;
 
@@ -92,10 +45,9 @@ pub enum LedgerServerMessage {
 pub enum LedgerCommand {
     Admit {
         event: Box<WriteOp>,
-        commitment: LedgerCommitment,
     },
     AdmitBatch {
-        admissions: Vec<LedgerAdmission>,
+        events: Vec<WriteOp>,
     },
     /// Make every accepted event through the returned admission id durable.
     Flush,
@@ -133,26 +85,9 @@ impl LedgerOperation for LedgerCommand {
 
     fn validate(&self) -> Result<(), LedgerProtocolError> {
         match self {
-            Self::Admit { event, commitment } => {
-                commitment
-                    .validate()
-                    .map_err(|_| LedgerProtocolError::InvalidOperation)?;
-                let (event_hash, event_bytes) = crate::writer::commitment_event_fingerprint(event)
-                    .map_err(|_| LedgerProtocolError::InvalidOperation)?;
-                if commitment.event_kind() != event.kind() || commitment.event_hash() != event_hash {
+            Self::AdmitBatch { events } => {
+                if events.is_empty() || events.len() > capsem_proto::LEDGER_ADMISSION_BATCH_CAPACITY {
                     return Err(LedgerProtocolError::InvalidOperation);
-                }
-                if event_bytes > MAX_LEDGER_OPERATION_BYTES - MAX_ADMIT_METADATA_BYTES {
-                    return Err(LedgerProtocolError::OperationTooLarge);
-                }
-                return Ok(());
-            }
-            Self::AdmitBatch { admissions } => {
-                if admissions.is_empty() || admissions.len() > capsem_proto::LEDGER_ADMISSION_BATCH_CAPACITY {
-                    return Err(LedgerProtocolError::InvalidOperation);
-                }
-                for admission in admissions {
-                    admission.validate()?;
                 }
             }
             Self::Query { query } => query.validate()?,
@@ -169,13 +104,8 @@ impl LedgerOperation for LedgerCommand {
             }
             _ => {}
         }
-        // Named JSON is larger than the MessagePack channel frame for these
-        // typed records, so this is a conservative preflight bound without
-        // owning a second transport encoder here.
-        let encoded = serde_json::to_vec(self).map_err(|_| LedgerProtocolError::InvalidOperation)?;
-        if encoded.len() > MAX_LEDGER_OPERATION_BYTES {
-            return Err(LedgerProtocolError::OperationTooLarge);
-        }
+        // The shared IPC encoder bounds the real bytes as it writes the final
+        // frame. Admission does not serialize, hash or copy the event again.
         Ok(())
     }
 }
@@ -212,10 +142,6 @@ pub enum LedgerQuery {
     Triage {
         limit: u16,
     },
-    Commitments {
-        after_global_sequence: u64,
-        limit: u16,
-    },
 }
 
 impl LedgerQuery {
@@ -223,9 +149,7 @@ impl LedgerQuery {
         let valid_limit = |limit: u16| limit > 0 && usize::from(limit) <= MAX_LEDGER_QUERY_ROWS;
         let bounded_text = |value: &str| value.len() <= MAX_QUERY_TEXT_BYTES;
         let valid = match self {
-            Self::SecurityLatest { limit, .. } | Self::Triage { limit } | Self::Commitments { limit, .. } => {
-                valid_limit(*limit)
-            }
+            Self::SecurityLatest { limit, .. } | Self::Triage { limit } => valid_limit(*limit),
             Self::Timeline {
                 layers,
                 cutoff,

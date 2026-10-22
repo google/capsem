@@ -205,42 +205,11 @@ fn insert_batch_ops<'a>(
                 }
             }
         }
-        if let Some(commitment) = &write.commitment {
-            insert_commitment(tx, commitment)?;
-        }
         effects.push((op, effect));
     }
     Ok(())
 }
 
 fn affects_storage(write: &WriteEnvelope) -> bool {
-    write.commitment.is_some() || write_op_affects_storage(&write.op)
-}
-
-fn insert_commitment(
-    tx: &rusqlite::Transaction<'_>,
-    commitment: &capsem_proto::ledger_commitment::LedgerCommitment,
-) -> rusqlite::Result<()> {
-    let role = commitment
-        .role()
-        .producer_name()
-        .ok_or_else(|| rusqlite::Error::InvalidParameterName("non-producer ledger commitment".into()))?;
-    tx.execute(
-        "INSERT INTO main.ledger_commitments (
-             global_sequence, generation, client_id, producer_role, producer_sequence,
-             event_kind, event_hash, previous_hash, commitment_hash
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-        rusqlite::params![
-            commitment.global_sequence(),
-            commitment.generation().as_bytes().as_slice(),
-            commitment.client_id(),
-            role,
-            commitment.producer_sequence(),
-            commitment.event_kind(),
-            commitment.event_hash().as_slice(),
-            commitment.previous_hash().as_slice(),
-            commitment.commitment_hash().as_slice(),
-        ],
-    )?;
-    Ok(())
+    write_op_affects_storage(&write.op)
 }

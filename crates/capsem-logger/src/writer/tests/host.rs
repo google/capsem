@@ -11,10 +11,9 @@ fn host_event(kind: crate::events::HostEventKind, session: &str, at: i64) -> Wri
     })
 }
 
-/// The host ledger answers "what happened to this session" only if a record
-/// cannot be edited, removed or reordered without it showing.
+/// Database order and complete events survive a writer restart.
 #[tokio::test]
-async fn host_events_chain_across_reopen_and_tampering_breaks_it() {
+async fn host_events_remain_ordered_across_reopen() {
     use crate::events::HostEventKind::{SessionCreated, SessionForked, SessionStarted, SessionStopped};
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("host.db");
@@ -25,40 +24,21 @@ async fn host_events_chain_across_reopen_and_tampering_breaks_it() {
         drop(writer);
     }
     {
-        // A reopened writer continues the chain from what reached disk.
+        // A reopened writer continues the durable insertion order.
         let writer = DbWriter::open(&db_path, 64).unwrap();
         writer.write(host_event(SessionForked, "s1", 3)).await;
         writer.write(host_event(SessionStopped, "s1", 4)).await;
         drop(writer);
     }
     let reader = crate::reader::DbReader::open(&db_path).unwrap();
-    assert_eq!(reader.verify_host_chain().unwrap(), 4);
     let kinds: Vec<_> = reader
         .host_events()
         .unwrap()
         .into_iter()
-        .map(|(event, _, _)| event.kind)
+        .map(|event| event.kind)
         .collect();
     assert_eq!(kinds, [SessionCreated, SessionStarted, SessionForked, SessionStopped]);
     drop(reader);
-
-    for tamper in [
-        "UPDATE host_events SET actor = 'someone-else' WHERE id = 2",
-        "DELETE FROM host_events WHERE id = 2",
-        "UPDATE host_events SET timestamp_unix_ms = 99 WHERE id = 3",
-    ] {
-        let copy = dir.path().join("tampered.db");
-        std::fs::copy(&db_path, &copy).unwrap();
-        rusqlite::Connection::open(&copy)
-            .unwrap()
-            .execute_batch(tamper)
-            .unwrap();
-        let reader = crate::reader::DbReader::open(&copy).unwrap();
-        let error = reader.verify_host_chain().expect_err(tamper).to_string();
-        assert!(error.contains("host event chain is broken"), "{tamper}: {error}");
-        drop(reader);
-        std::fs::remove_file(&copy).unwrap();
-    }
 }
 
 #[tokio::test]

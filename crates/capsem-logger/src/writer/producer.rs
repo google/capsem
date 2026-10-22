@@ -42,36 +42,17 @@ impl DbWriter {
         Ok(())
     }
 
-    pub(crate) async fn write_committed(
-        &self,
-        op: WriteOp,
-        commitment: capsem_proto::ledger_commitment::LedgerCommitment,
-    ) -> Result<(), String> {
+    pub(crate) async fn write_batch(&self, writes: Vec<WriteOp>) -> Result<(), String> {
         if self.remote.is_some() {
-            return Err("a remote ledger writer cannot accept a prebuilt commitment".into());
-        }
-        let Some(tx) = self.clone_sender() else {
-            return Err("db writer sender missing".to_string());
-        };
-        send_with_backpressure(&tx, WriterMessage::committed(op, commitment))
-            .await
-            .map_err(|error| format!("db writer channel closed: {error}"))
-    }
-
-    pub(crate) async fn write_committed_batch(
-        &self,
-        writes: Vec<(WriteOp, capsem_proto::ledger_commitment::LedgerCommitment)>,
-    ) -> Result<(), String> {
-        if self.remote.is_some() {
-            return Err("a remote ledger writer cannot accept prebuilt commitments".into());
+            return Err("batch admission must use the local database owner".into());
         }
         if writes.is_empty() || writes.len() > capsem_proto::LEDGER_ADMISSION_BATCH_CAPACITY {
-            return Err("committed write batch is empty or exceeds its bound".into());
+            return Err("write batch is empty or exceeds its bound".into());
         }
         let Some(tx) = self.clone_sender() else {
             return Err("db writer sender missing".to_string());
         };
-        send_with_backpressure(&tx, WriterMessage::committed_batch(writes))
+        send_with_backpressure(&tx, WriterMessage::batch(writes))
             .await
             .map_err(|error| format!("db writer channel closed: {error}"))
     }

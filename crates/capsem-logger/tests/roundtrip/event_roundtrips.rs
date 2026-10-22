@@ -160,7 +160,9 @@ async fn model_items_dedup_by_trace_kind_hash_and_call_id_across_restarts() {
         kinds,
         ["reasoning", "request", "response", "tool_call", "tool_response"]
     );
-    assert!(rows.iter().all(|row| row.5.len() == 71 && row.5.starts_with("blake3:")));
+    assert!(rows
+        .iter()
+        .all(|row| row.5.len() == 41 && row.5.starts_with("xxh3-128:")));
     assert!(rows.iter().any(|row| row.1 == "call_dedup_01"
         && row.2.as_deref() == Some("exec_command")
         && row.3.as_deref() == Some(r#"{"cmd":"printf nonce > /root/dedup.txt"}"#)));

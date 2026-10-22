@@ -472,7 +472,7 @@ async fn a_retention_leaves_no_orphan_index_rows() {
                 block_offset, body_offset, body_len, trace_id, turn_id, created_at
              ) VALUES ('deadbeef0000', 'security.rule', 'security_rule_events', 'payload', NULL,
                        1, 1, 0,
-                       'blake3:0000000000000000000000000000000000000000000000000000000000000000',
+                       'xxh3-128:00000000000000000000000000000000',
                        999999, 0, 1, NULL, NULL, '2026-01-01T00:00:00Z')",
             [],
         )

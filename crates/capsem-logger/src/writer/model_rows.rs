@@ -1,7 +1,7 @@
 use rusqlite::{params, Connection};
 
 use super::bodies::{BodyArchive, EventBodyBlob};
-use super::{blake3_ref, body_preview, cap_field, cap_preview, format_timestamp, new_event_id, WriteTarget};
+use super::{body_preview, cap_field, cap_preview, format_timestamp, new_event_id, WriteTarget};
 use crate::events::ModelCall;
 
 pub(super) fn insert_model_call(
@@ -194,8 +194,28 @@ pub(super) fn insert_model_call(
 /// now agree on it instead of disagreeing by construction. The width matches
 /// `new_event_id`: 12 lowercase hex, as the column's CHECK requires.
 fn model_item_event_id(trace_id: Option<&str>, kind: &str, content_hash: &str, call_id: &str) -> String {
-    let material = format!("{}\0{kind}\0{content_hash}\0{call_id}", trace_id.unwrap_or_default());
-    capsem_crypto::blake3::hash(material.as_bytes()).to_hex()[..12].to_string()
+    // The event-id wire/storage contract is 12 hex characters (48 bits).
+    let hash = fingerprint_fields([
+        Some(trace_id.unwrap_or_default()),
+        Some(kind),
+        Some(content_hash),
+        Some(call_id),
+    ]);
+    format!("{:012x}", hash & 0xffff_ffff_ffff)
+}
+
+/// Feed typed optional UTF-8 fields directly, without a JSON envelope or a
+/// temporary concatenation. Presence and lengths distinguish every partition.
+fn fingerprint_fields<'a>(fields: impl IntoIterator<Item = Option<&'a str>>) -> u128 {
+    let mut state = capsem_crypto::xxh3::Hasher::new();
+    for field in fields {
+        state.update(&[u8::from(field.is_some())]);
+        if let Some(field) = field {
+            state.update(&(field.len() as u64).to_le_bytes());
+            state.update(field.as_bytes());
+        }
+    }
+    state.finalize()
 }
 
 fn insert_model_items(
@@ -220,15 +240,10 @@ fn insert_model_items(
         // and two distinct turns whose bodies only differ after the cap
         // point (e.g. share the same system prompt for the first 2 KB)
         // must not collapse into one row. Only the stored value is capped.
-        let hash_material = serde_json::json!({
-            "kind": kind,
-            "call_id": call_id,
-            "tool_name": tool_name,
-            "arguments": arguments,
-            "content": content,
-        })
-        .to_string();
-        let content_hash = blake3_ref(&hash_material);
+        let content_hash = format!(
+            "xxh3-128:{:032x}",
+            fingerprint_fields([Some(kind), Some(call_id), tool_name, arguments, content.as_deref(),])
+        );
         // Request and response bodies are archived under the parent model
         // event; tool responses are archived under their own event row. These
         // columns are display excerpts, while the original content above

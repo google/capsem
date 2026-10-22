@@ -457,7 +457,7 @@ async fn the_file_describes_itself_with_a_warcinfo_at_each_end() {
     let opening = warcinfo_fields(&all[0]);
     assert!(opening["software"].starts_with("capsem/"), "{:?}", opening["software"]);
     assert_eq!(opening["format"], "WARC File Format 1.1");
-    assert_eq!(opening["capsem-block-digest-algorithm"], "blake3");
+    assert_eq!(opening["capsem-block-digest-algorithm"], "xxh3-128");
     assert!(opening.contains_key("capsem-session"), "{opening:?}");
     assert!(
         opening["capsem-exported-at"].ends_with('Z'),
@@ -587,7 +587,7 @@ async fn a_body_that_fails_its_hash_check_is_skipped_and_the_file_says_so() {
     let db = rewrite_and_reopen(
         db,
         &p,
-        "UPDATE event_body_blobs SET body_hash = 'blake3:' || hex(zeroblob(32))
+        "UPDATE event_body_blobs SET body_hash = 'xxh3-128:' || lower(hex(zeroblob(16)))
          WHERE event_id = '0123456789ac'",
     )
     .await;

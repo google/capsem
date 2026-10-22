@@ -64,12 +64,9 @@
 
 use super::*;
 
-#[path = "fixture_regen/lift.rs"]
-mod lift;
 #[cfg(test)]
 #[path = "fixture_regen/tests.rs"]
 mod tests;
-use lift::lift_v3_source;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, UNIX_EPOCH};
@@ -217,96 +214,8 @@ fn block_on<F: std::future::Future>(future: F) -> F::Output {
         .block_on(future)
 }
 
-/// Every body the source ledger archived, read back through the DB handle.
-///
-/// This is what makes the replay idempotent. The ledger's own columns are
-/// display excerpts capped at `PREVIEW_BYTES`; the bodies live in the archive.
-/// A replay sourcing bodies from the columns is lossless exactly once -- on a
-/// pre-archive fixture, whose excerpts were all the content there was -- and
-/// silently truncates every run after that, which is how a 42 KB request
-/// becomes 2 KB.
-///
-/// A v2 fixture gets a temporary v3 header and shifted block offsets only for
-/// this deliberate regeneration. Production still refuses v2; the fixture
-/// owner can use the current reader because the block and segment layout did
-/// not change between v2 and v3.
-fn archived_v2_bodies(db_path: &std::path::Path, conn: &Connection) -> SourceBodies {
-    use std::io::Write as _;
-
-    let legacy = std::fs::read(db_path.with_extension("bodies")).expect("read the v2 fixture archive");
-    assert!(legacy.len() >= 16, "v2 fixture archive has a complete header");
-    assert_eq!(&legacy[..8], capsem_archive::format::FILE_MAGIC);
-    assert_eq!(u16::from_le_bytes(legacy[8..10].try_into().unwrap()), 2);
-    assert!(legacy[10..16].iter().all(|byte| *byte == 0));
-
-    let staging = tempfile::tempdir().unwrap();
-    let upgraded = staging.path().join("fixture-v3.cbl");
-    let archive_id = capsem_archive::ArchiveId::from_bytes(FIXTURE_ARCHIVE_ID).unwrap();
-    let generation_id = fixture_generation_id();
-    let mut file = std::fs::File::create(&upgraded).unwrap();
-    file.write_all(&capsem_archive::format::encode_file_header(archive_id, generation_id))
-        .unwrap();
-    file.write_all(&legacy[16..]).unwrap();
-    file.sync_all().unwrap();
-    drop(file);
-
-    let reader = capsem_archive::BodyLogReader::open(&upgraded).unwrap();
-    let shift = u64::try_from(capsem_archive::FILE_HEADER_BYTES - 16).unwrap();
-    let mut statement = conn
-        .prepare(
-            "SELECT b.source_table, b.event_id, b.direction, b.body_hash,
-                    b.block_offset, b.body_offset, b.body_len,
-                    blocks.disk_len, blocks.raw_len
-             FROM event_body_blobs AS b
-             JOIN body_blocks AS blocks ON blocks.block_offset = b.block_offset
-             ORDER BY b.block_offset, b.body_offset",
-        )
-        .unwrap();
-    let rows = statement
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, u64>(4)?,
-                row.get::<_, u32>(5)?,
-                row.get::<_, u32>(6)?,
-                row.get::<_, u64>(7)?,
-                row.get::<_, u32>(8)?,
-            ))
-        })
-        .unwrap();
-    let mut bodies = SourceBodies::new();
-    for row in rows {
-        let (source_table, event_id, direction, expected_hash, block_offset, offset, len, disk_len, raw_len) =
-            row.unwrap();
-        let bytes = reader
-            .read_bounded(
-                capsem_archive::BodyRef {
-                    block_offset: block_offset + shift,
-                    offset,
-                    len,
-                },
-                capsem_archive::BlockExtent { disk_len, raw_len },
-            )
-            .unwrap();
-        assert_eq!(
-            format!("blake3:{}", capsem_crypto::blake3::hash(&bytes).to_hex()),
-            expected_hash
-        );
-        bodies.insert((source_table, event_id, direction), bytes);
-    }
-    bodies
-}
-
+/// Read current-format bodies through the database owner for lossless replay.
 fn archived_bodies(db_path: &std::path::Path, conn: &Connection) -> SourceBodies {
-    if !table_exists(conn, "event_body_blobs") {
-        return SourceBodies::new();
-    }
-    if !table_exists(conn, "archive_state") {
-        return archived_v2_bodies(db_path, conn);
-    }
     let mut stmt = conn
         .prepare("SELECT DISTINCT event_id FROM event_body_blobs ORDER BY event_id")
         .expect("read the body index");
@@ -319,15 +228,7 @@ fn archived_bodies(db_path: &std::path::Path, conn: &Connection) -> SourceBodies
         return SourceBodies::new();
     }
 
-    // A v3 source has the same body archive a v4 ledger has; v4 only added
-    // the counter snapshot. Reading its bodies goes through a scratch copy
-    // with the marker lifted, which the product never does: nothing upgrades
-    // a ledger in place, and the replay rebuilds the counters from the rows.
-    let lifted = lift_v3_source(db_path, conn);
-    let db_path = lifted
-        .as_ref()
-        .map_or(db_path.to_path_buf(), |dir| dir.path().join("test.db"));
-    let db = capsem_logger::DbHandle::open_external_reader(&db_path).expect("open the source ledger's archive");
+    let db = capsem_logger::DbHandle::open_external_reader(db_path).expect("open the source ledger's archive");
     let mut bodies = SourceBodies::new();
     for event_id in event_ids {
         // One query per event returns every direction it stored, and the

@@ -7,8 +7,7 @@ const HOST_EVENTS_SQL: &str = "SELECT timestamp_unix_ms, kind, session_id, actor
      FROM host_events ORDER BY id";
 
 impl DbHandle {
-    /// Every host event in ledger order. Chain verification is
-    /// `DbReader::verify_host_chain`; this is the service's replay at startup.
+    /// Every host event in ledger order for the service startup replay.
     pub async fn host_events(&self) -> DbResult<Vec<HostEvent>> {
         let json = self.query(HOST_EVENTS_SQL, &[]).await?;
         let table: serde_json::Value =

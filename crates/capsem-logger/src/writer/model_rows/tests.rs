@@ -2,6 +2,27 @@ use super::*;
 use crate::{events::ToolCallEntry, DbWriter, WriteOp};
 
 #[test]
+fn item_fingerprints_preserve_presence_order_and_field_boundaries() {
+    assert_ne!(fingerprint_fields([None]), fingerprint_fields([Some("")]));
+    assert_ne!(
+        fingerprint_fields([Some("ab"), Some("c")]),
+        fingerprint_fields([Some("a"), Some("bc")])
+    );
+    assert_ne!(
+        fingerprint_fields([Some("a\0b"), Some("c")]),
+        fingerprint_fields([Some("a"), Some("b\0c")])
+    );
+    assert_ne!(
+        fingerprint_fields([Some("a"), Some("b")]),
+        fingerprint_fields([Some("b"), Some("a")])
+    );
+    assert_eq!(
+        fingerprint_fields([Some("same"), None]),
+        fingerprint_fields([Some("same"), None])
+    );
+}
+
+#[test]
 fn model_tool_rows_preserve_websocket_and_existing_http_transports() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("session.db");

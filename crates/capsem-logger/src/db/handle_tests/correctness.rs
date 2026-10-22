@@ -413,7 +413,7 @@ async fn db_correctness_db_query_exact_after_flush_and_restart() {
                     forensic.len(),
                     forensic.len(),
                     0,
-                    format!("blake3:{}", capsem_crypto::blake3::hash(&forensic).to_hex()),
+                    crate::content_digest(&forensic),
                     "trace-correctness-1",
                     "trace-correctness-1"
                 ],
@@ -426,7 +426,7 @@ async fn db_correctness_db_query_exact_after_flush_and_restart() {
                     net_request.len(),
                     net_request.len(),
                     0,
-                    blake3_test_ref(net_request),
+                    content_test_ref(net_request),
                     "trace-correctness-1",
                     "trace-correctness-1"
                 ],
@@ -439,7 +439,7 @@ async fn db_correctness_db_query_exact_after_flush_and_restart() {
                     net_response.len(),
                     net_response.len(),
                     0,
-                    blake3_test_ref(net_response),
+                    content_test_ref(net_response),
                     "trace-correctness-1",
                     "trace-correctness-1"
                 ],
@@ -452,7 +452,7 @@ async fn db_correctness_db_query_exact_after_flush_and_restart() {
                     model_request.len(),
                     model_request.len(),
                     0,
-                    blake3_test_ref(model_request),
+                    content_test_ref(model_request),
                     "trace-correctness-1",
                     "trace-correctness-1"
                 ],
@@ -465,7 +465,7 @@ async fn db_correctness_db_query_exact_after_flush_and_restart() {
                     model_response.len(),
                     model_response.len(),
                     0,
-                    blake3_test_ref(model_response),
+                    content_test_ref(model_response),
                     "trace-correctness-1",
                     "trace-correctness-1"
                 ],
@@ -478,7 +478,7 @@ async fn db_correctness_db_query_exact_after_flush_and_restart() {
                     model_tool_response_request.len(),
                     model_tool_response_request.len(),
                     0,
-                    blake3_test_ref(model_tool_response_request),
+                    content_test_ref(model_tool_response_request),
                     "trace-correctness-1",
                     "trace-correctness-1"
                 ],
@@ -491,7 +491,7 @@ async fn db_correctness_db_query_exact_after_flush_and_restart() {
                     model_tool_response_body.len(),
                     model_tool_response_body.len(),
                     0,
-                    blake3_test_ref(model_tool_response_body),
+                    content_test_ref(model_tool_response_body),
                     "trace-correctness-1",
                     "trace-correctness-1"
                 ]

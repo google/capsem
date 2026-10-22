@@ -55,6 +55,12 @@ pub(crate) fn create_tables_with_archive_header(
     conn.execute_batch("BEGIN IMMEDIATE")?;
     let created = (|| {
         conn.execute_batch(CREATE_SCHEMA)?;
+        let columns = table_column_names(conn, "main", "host_events")?;
+        if columns.iter().any(|name| name == "prev_hash" || name == "hash") {
+            return Err(contract_error(
+                "obsolete host hash-chain schema; a current ledger is required",
+            ));
+        }
         if !has_archive_state {
             let header = prepared.unwrap_or(FileHeader {
                 archive_id: ArchiveId::generate(),
@@ -240,8 +246,9 @@ pub fn memory_uri_for_path(path: &Path) -> String {
 }
 
 pub fn memory_uri_for_name(name: &str) -> String {
-    let hash = capsem_crypto::blake3::hash(name.as_bytes()).to_hex();
-    format!("file:capsem-ledger-mem-{}?mode=memory&cache=shared", &hash[..16])
+    // Non-security in-process memory-database identity, not persisted integrity.
+    let hash = format!("{:032x}", capsem_crypto::xxh3::hash(name.as_bytes()));
+    format!("file:capsem-ledger-mem-{hash}?mode=memory&cache=shared")
 }
 
 pub(crate) fn with_memory_schema_lock<T>(operation: impl FnOnce() -> rusqlite::Result<T>) -> rusqlite::Result<T> {

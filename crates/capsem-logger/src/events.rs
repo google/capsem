@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 mod host;
 mod network;
 mod transport;
-pub use host::{chain_hash, HostEvent, HostEventKind, GENESIS_HASH};
+pub use host::{HostEvent, HostEventKind};
 pub use network::{MembershipState, NetworkDeparture, NetworkMembership, NetworkRecord, NetworkState};
 pub use transport::{TransportEvent, TransportEventKind};
 

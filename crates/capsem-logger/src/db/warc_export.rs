@@ -830,7 +830,7 @@ fn opening_fields(session: &str, exported_at: &str) -> Vec<(String, String)> {
         ("capsem-exported-at".into(), exported_at.to_string()),
         // Named because it is a divergence: the convention is base32 sha1 or
         // sha256, and a tool that verifies block digests will not verify ours.
-        ("capsem-block-digest-algorithm".into(), "blake3".into()),
+        ("capsem-block-digest-algorithm".into(), "xxh3-128".into()),
     ]
 }
 

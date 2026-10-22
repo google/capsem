@@ -90,7 +90,7 @@ pub const CREATE_SCHEMA: &str = "
         archive_id BLOB NOT NULL CHECK (typeof(archive_id) = 'blob' AND length(archive_id) = 16),
         generation_id BLOB NOT NULL CHECK (typeof(generation_id) = 'blob' AND length(generation_id) = 16),
         format_version INTEGER NOT NULL CHECK (typeof(format_version) = 'integer' AND format_version = 4),
-        committed_end INTEGER NOT NULL CHECK (typeof(committed_end) = 'integer' AND committed_end >= 80),
+        committed_end INTEGER NOT NULL CHECK (typeof(committed_end) = 'integer' AND committed_end >= 64),
         revision INTEGER NOT NULL CHECK (typeof(revision) = 'integer' AND revision >= 1)
     );
 
@@ -103,22 +103,8 @@ pub const CREATE_SCHEMA: &str = "
         counters BLOB NOT NULL CHECK (typeof(counters) = 'blob')
     );
 
-    -- Producer-authored identity/content chains. The trusted coordinator
-    -- checkpoints these rows outside the ledger directory only after the
-    -- corresponding event flush is durable.
-    CREATE TABLE IF NOT EXISTS ledger_commitments (
-        global_sequence INTEGER PRIMARY KEY CHECK (global_sequence > 0),
-        generation BLOB NOT NULL CHECK (typeof(generation) = 'blob' AND length(generation) = 16),
-        client_id INTEGER NOT NULL CHECK (client_id > 0),
-        producer_role TEXT NOT NULL CHECK (producer_role IN ('vm_owner', 'proxy', 'coordinator')),
-        producer_sequence INTEGER NOT NULL CHECK (producer_sequence > 0),
-        event_kind TEXT NOT NULL CHECK (length(event_kind) BETWEEN 1 AND 64),
-        event_hash BLOB NOT NULL CHECK (typeof(event_hash) = 'blob' AND length(event_hash) = 32),
-        previous_hash BLOB NOT NULL CHECK (typeof(previous_hash) = 'blob' AND length(previous_hash) = 32),
-        commitment_hash BLOB NOT NULL CHECK (typeof(commitment_hash) = 'blob' AND length(commitment_hash) = 32),
-        UNIQUE(generation, client_id, producer_sequence),
-        UNIQUE(commitment_hash)
-    );
+    -- Retired admission checkpoints never verified event contents.
+    DROP TABLE IF EXISTS ledger_commitments;
 
     -- One block of an archive generation. The bytes live in the archive file;
     -- SQLite records where each block landed so a reader never scans. A block
@@ -146,10 +132,10 @@ pub const CREATE_SCHEMA: &str = "
         original_bytes INTEGER NOT NULL CHECK (original_bytes >= 0),
         stored_bytes INTEGER NOT NULL CHECK (stored_bytes >= 0 AND stored_bytes <= original_bytes),
         truncated INTEGER NOT NULL CHECK (truncated IN (0, 1)),
-        -- blake3 of the ARCHIVED bytes, not of whatever they were cut from:
+        -- XXH3-128 of the ARCHIVED bytes, not of whatever they were cut from:
         -- a read verifies what it got against this, so a corrupted or
         -- edited index row is caught instead of served as a body.
-        body_hash TEXT NOT NULL CHECK (length(CAST(body_hash AS BLOB)) = 71 AND body_hash GLOB 'blake3:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        body_hash TEXT NOT NULL CHECK (length(CAST(body_hash AS BLOB)) = 41 AND body_hash GLOB 'xxh3-128:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         block_offset INTEGER NOT NULL REFERENCES body_blocks(block_offset),
         body_offset INTEGER NOT NULL CHECK (body_offset >= 0),
         body_len INTEGER NOT NULL CHECK (body_len = stored_bytes),
@@ -250,7 +236,7 @@ pub const CREATE_SCHEMA: &str = "
         tool_name TEXT,
         arguments TEXT,
         content TEXT,
-        content_hash TEXT NOT NULL CHECK (length(CAST(content_hash AS BLOB)) = 71 AND content_hash GLOB 'blake3:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
+        content_hash TEXT NOT NULL CHECK (length(CAST(content_hash AS BLOB)) = 41 AND content_hash GLOB 'xxh3-128:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
         credential_ref TEXT CHECK (credential_ref IS NULL OR (length(CAST(credential_ref AS BLOB)) = 82 AND credential_ref GLOB 'credential:blake3:[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]')),
         UNIQUE(trace_id, kind, content_hash, call_id)
     );
@@ -560,8 +546,7 @@ pub const CREATE_SCHEMA: &str = "
     CREATE INDEX IF NOT EXISTS idx_policy_mutation_events_target
         ON policy_mutation_events(category, target_kind, target_key);
 
-    -- What the host did to sessions and itself. Each row chains to the one
-    -- before it: hash = chain_hash(prev_hash, event), genesis all zeros.
+    -- What the host did to sessions and itself, in database insertion order.
     CREATE TABLE IF NOT EXISTS host_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp_unix_ms INTEGER NOT NULL,
@@ -574,9 +559,7 @@ pub const CREATE_SCHEMA: &str = "
         session_id TEXT,
         actor TEXT NOT NULL,
         detail BLOB NOT NULL,
-        trace_id TEXT,
-        prev_hash BLOB NOT NULL CHECK (typeof(prev_hash) = 'blob' AND length(prev_hash) = 32),
-        hash BLOB NOT NULL CHECK (typeof(hash) = 'blob' AND length(hash) = 32)
+        trace_id TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_host_events_session ON host_events(session_id, id);
 

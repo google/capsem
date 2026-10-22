@@ -79,7 +79,6 @@ pub(super) fn reader_loop(
             }
             ReadRequest::Query { sql, params, reply } => {
                 let started = Instant::now();
-                let sql_hash = sql_fingerprint(&sql);
                 let params_count = params.len();
                 // The row data needs no freshness step -- the reader's `main`
                 // is the file. The observation is still made and
@@ -97,7 +96,6 @@ pub(super) fn reader_loop(
                     Ok(_) => tracing::debug!(
                         db_path = %path.display(),
                         operation = "query_execute",
-                        sql_hash,
                         params_count,
                         duration_ms = elapsed_ms(started),
                         "session db query completed"
@@ -105,7 +103,6 @@ pub(super) fn reader_loop(
                     Err(error) => tracing::error!(
                         db_path = %path.display(),
                         operation = "query_execute",
-                        sql_hash,
                         params_count,
                         duration_ms = elapsed_ms(started),
                         error = %error,

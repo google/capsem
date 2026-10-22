@@ -3,14 +3,10 @@
 //!
 //! A session ledger records what happened inside one VM. The host ledger
 //! records what happened to it -- created from which image, started, forked,
-//! stopped and why -- and what the service itself did. Each event carries the
-//! hash of the one before it, so a removed, edited or reordered record breaks
-//! the chain that `chain_hash` rebuilds.
+//! stopped and why -- and what the service itself did. SQLite owns durable
+//! ordering; a same-owner content hash chain supplies no independent authority.
 
 use serde::{Deserialize, Serialize};
-
-/// The hash the first event in a ledger chains from.
-pub const GENESIS_HASH: [u8; 32] = [0; 32];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -91,30 +87,6 @@ pub struct HostEvent {
     pub detail: Vec<u8>,
     #[serde(default)]
     pub trace_id: Option<String>,
-}
-
-/// The hash of `event` chained from `previous`: every field, length-prefixed
-/// in a fixed order, so no serializer's choices can change it.
-pub fn chain_hash(previous: &[u8; 32], event: &HostEvent) -> [u8; 32] {
-    let mut hasher = capsem_crypto::blake3::Hasher::new();
-    hasher.update(previous);
-    hasher.update(&event.timestamp_unix_ms.to_le_bytes());
-    let mut field = |bytes: Option<&[u8]>| match bytes {
-        Some(bytes) => {
-            hasher.update(&[1]);
-            hasher.update(&(bytes.len() as u64).to_le_bytes());
-            hasher.update(bytes);
-        }
-        None => {
-            hasher.update(&[0]);
-        }
-    };
-    field(Some(event.kind.as_str().as_bytes()));
-    field(event.session_id.as_deref().map(str::as_bytes));
-    field(Some(event.actor.as_bytes()));
-    field(Some(&event.detail));
-    field(event.trace_id.as_deref().map(str::as_bytes));
-    *hasher.finalize().as_bytes()
 }
 
 #[cfg(test)]

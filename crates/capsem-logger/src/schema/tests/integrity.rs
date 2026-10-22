@@ -108,8 +108,8 @@ fn seed_integrity_rows(conn: &Connection) {
              VALUES(0,'000000000001','000000000001','http.request','fixture','fixture','pending','{}');
          INSERT INTO transport_events(event_id,timestamp_unix_ms,event_type,event_json)
              VALUES('000000000001',0,'network.connect','{}');
-         INSERT INTO host_events(timestamp_unix_ms,kind,actor,detail,prev_hash,hash)
-             VALUES(0,'service_started','fixture',x'80',zeroblob(32),zeroblob(32));
+         INSERT INTO host_events(timestamp_unix_ms,kind,actor,detail)
+             VALUES(0,'service_started','fixture',x'80');
          INSERT INTO body_blocks(block_offset,raw_len,disk_len,sealed_at) VALUES(80,1,1,'t');",
     )
     .unwrap();
@@ -123,7 +123,13 @@ fn seed_integrity_rows(conn: &Connection) {
              affected_path,target_kind,target_key,operation,old_hash,old_size,new_hash,new_size,status)
          VALUES(0,'000000000001','fixture','rules','fixture','/fixture','rule','fixture','update',?1,0,?1,0,'applied')",
     ] {
-        conn.execute(sql, [&hash]).unwrap();
+        let fingerprint = crate::content_digest(b"fixture content");
+        let expected = if sql.contains("body_hash") || sql.contains("content_hash") {
+            &fingerprint
+        } else {
+            &hash
+        };
+        conn.execute(sql, [expected]).unwrap();
     }
     conn.execute(
         "INSERT INTO substitution_events(timestamp,material_class,source,algorithm,substitution_ref,outcome)
@@ -158,19 +164,36 @@ fn ledger_ids_reject_nul_suffixes_in_every_actual_column() {
 }
 
 #[test]
-fn host_chain_hashes_require_binary_storage() {
+fn host_events_do_not_require_hash_columns_or_a_content_hash_chain() {
     let conn = Connection::open_in_memory().unwrap();
     create_tables(&conn).unwrap();
-    seed_integrity_rows(&conn);
-    for column in ["prev_hash", "hash"] {
-        let update = format!("UPDATE host_events SET {column}=?1");
-        assert_eq!(conn.execute(&update, [&[1u8; 32]]).unwrap(), 1);
-        let error = match conn.execute(&update, ["a".repeat(32)]) {
-            Err(error) => error,
-            Ok(_) => panic!("host_events.{column} accepted text in place of a binary hash"),
-        };
-        assert!(error.to_string().contains("CHECK"), "{column}: {error}");
-    }
+    let columns = super::super::table_column_names(&conn, "main", "host_events").unwrap();
+    assert!(!columns.iter().any(|name| name == "hash" || name == "prev_hash"));
+    conn.execute(
+        "INSERT INTO host_events(timestamp_unix_ms,kind,actor,detail) VALUES(1,'service_started','fixture',x'80')",
+        [],
+    )
+    .unwrap();
+    create_tables(&conn).unwrap();
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM host_events", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+}
+
+#[test]
+fn obsolete_host_chain_schema_is_refused_without_migration() {
+    let conn = Connection::open_in_memory().unwrap();
+    create_tables(&conn).unwrap();
+    conn.execute_batch("ALTER TABLE host_events ADD COLUMN hash BLOB")
+        .unwrap();
+    let error = create_tables(&conn).unwrap_err();
+    assert!(error.to_string().contains("obsolete host hash-chain schema"));
+    assert!(super::super::table_column_names(&conn, "main", "host_events")
+        .unwrap()
+        .iter()
+        .any(|name| name == "hash"));
 }
 
 #[test]
@@ -240,13 +263,14 @@ fn digest_columns_reject_nonhex_and_nul_suffixes_in_the_actual_schema() {
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
         for (column, required) in columns {
-            let prefix = match column.as_str() {
-                "credential_ref" | "substitution_ref" => "credential:blake3:",
-                "body_hash" | "content_hash" | "old_hash" | "new_hash" => "blake3:",
+            let (prefix, width) = match column.as_str() {
+                "credential_ref" | "substitution_ref" => ("credential:blake3:", 64),
+                "body_hash" | "content_hash" => ("xxh3-128:", 32),
+                "old_hash" | "new_hash" => ("blake3:", 64),
                 _ => continue,
             };
             checked += 1;
-            let valid = format!("{prefix}{}", "0123456789abcdef".repeat(4));
+            let valid = format!("{prefix}{}", "0123456789abcdef".repeat(width / 16));
             let update = format!("UPDATE {table} SET {column}=?1");
             assert_eq!(conn.execute(&update, [&valid]).unwrap(), 1, "{table}.{column}");
             if !required {
@@ -254,14 +278,14 @@ fn digest_columns_reject_nonhex_and_nul_suffixes_in_the_actual_schema() {
                 conn.execute(&update, [&valid]).unwrap();
             }
             for invalid in [
-                format!("{prefix}0{}g", "0".repeat(62)),
-                format!("{prefix}0{}A", "0".repeat(62)),
-                format!("{prefix}0{}é", "0".repeat(62)),
-                format!("{prefix}0{}\n", "0".repeat(62)),
+                format!("{prefix}0{}g", "0".repeat(width - 2)),
+                format!("{prefix}0{}A", "0".repeat(width - 2)),
+                format!("{prefix}0{}é", "0".repeat(width - 2)),
+                format!("{prefix}0{}\n", "0".repeat(width - 2)),
                 format!("{valid}\0secret"),
-                format!("{prefix}0{}\0", "0".repeat(62)),
-                format!("{prefix}{}", "0".repeat(63)),
-                format!("{prefix}{}", "0".repeat(65)),
+                format!("{prefix}0{}\0", "0".repeat(width - 2)),
+                format!("{prefix}{}", "0".repeat(width - 1)),
+                format!("{prefix}{}", "0".repeat(width + 1)),
             ] {
                 let error = match conn.execute(&update, [&invalid]) {
                     Err(error) => error,

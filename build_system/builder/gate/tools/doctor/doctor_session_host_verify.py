@@ -10,7 +10,7 @@ from capsem_builder.gate.tools.doctor.host_ledger import (
     SESSION_CREATED,
     SESSION_STOPPED,
     read_host_events,
-    verify_chain,
+    validate_events,
 )
 
 BOLD = "\033[1m"
@@ -30,7 +30,7 @@ def _verify_host_ledger(results: ResultSink, session_id: str, host_ledger: Path)
         return
     events = read_host_events(host_ledger)
     try:
-        results.ok(f"host ledger chain intact over {verify_chain(events)} events")
+        results.ok(f"host ledger contains {validate_events(events)} well-formed events")
     except ValueError as error:
         results.fail(str(error))
     kinds = [event["kind"] for event in events if event["session_id"] == session_id]

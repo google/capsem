@@ -8,14 +8,9 @@ from pathlib import Path
 
 import pytest
 from capsem_builder.gate.tools.doctor.host_ledger import (
-    GENESIS_HASH,
-    chain_hash,
     recent_sessions,
-    verify_chain,
+    validate_events,
 )
-
-# Pinned by crates/capsem-logger/src/events/host/tests.rs too.
-GOLDEN = "334ad1daa78a4731b89861fb2ad5fc4cee7cc3fa98eb2669542245d40c90a089"
 
 
 def event(kind: str, session: str | None, at: int) -> dict:
@@ -29,42 +24,15 @@ def event(kind: str, session: str | None, at: int) -> dict:
     }
 
 
-def test_the_python_chain_hash_matches_the_rust_golden_vector() -> None:
-    golden = event("session_stopped", "golden", 1_791_000_000_000)
-    golden["detail"] = bytes([0x81, 0xA1, 0x61, 0x05])
-    assert chain_hash(GENESIS_HASH, golden).hex() == GOLDEN
-
-
-@pytest.mark.parametrize("field", ["detail", "prev_hash", "hash"])
-@pytest.mark.parametrize("value", [None, "binary", 32, [1, 2]])
-def test_nonbinary_host_fields_report_corruption(field: str, value: object) -> None:
-    item = event("session_created", "test", 1)
-    item.update(prev_hash=GENESIS_HASH, hash=chain_hash(GENESIS_HASH, item))
-    item[field] = value
-    with pytest.raises(ValueError, match=f"host event {field} must be binary data"):
-        verify_chain([item])
-
-
-@pytest.mark.parametrize("buffer_type", [bytes, bytearray, memoryview])
-def test_binary_buffers_preserve_the_host_chain(buffer_type: type) -> None:
-    item = event("session_stopped", "golden", 1_791_000_000_000)
-    item["detail"] = buffer_type(bytes([0x81, 0xA1, 0x61, 0x05]))
-    item.update(prev_hash=buffer_type(GENESIS_HASH), hash=buffer_type(bytes.fromhex(GOLDEN)))
-    assert verify_chain([item]) == 1
-
-
 def write_ledger(path: Path, events: list[dict]) -> None:
     with closing(sqlite3.connect(path)) as connection:
         connection.execute(
             "CREATE TABLE host_events (id INTEGER PRIMARY KEY, timestamp_unix_ms INTEGER, kind TEXT,"
-            " session_id TEXT, actor TEXT, detail BLOB, trace_id TEXT, prev_hash BLOB, hash BLOB)"
+            " session_id TEXT, actor TEXT, detail BLOB, trace_id TEXT)"
         )
-        previous = GENESIS_HASH
         for item in events:
-            digest = chain_hash(previous, item)
             connection.execute(
-                "INSERT INTO host_events (timestamp_unix_ms, kind, session_id, actor, detail, trace_id,"
-                " prev_hash, hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO host_events (timestamp_unix_ms, kind, session_id, actor, detail, trace_id) VALUES (?, ?, ?, ?, ?, ?)",
                 (
                     *(
                         item[key]
@@ -77,15 +45,12 @@ def write_ledger(path: Path, events: list[dict]) -> None:
                             "trace_id",
                         )
                     ),
-                    previous,
-                    digest,
                 ),
             )
-            previous = digest
         connection.commit()
 
 
-def test_sessions_and_chain_read_back(tmp_path: Path) -> None:
+def test_sessions_read_back_in_ledger_order(tmp_path: Path) -> None:
     from capsem_builder.gate.tools.doctor.host_ledger import read_host_events
 
     path = tmp_path / "host.db"
@@ -98,20 +63,13 @@ def test_sessions_and_chain_read_back(tmp_path: Path) -> None:
             event("session_stopped", "a", 4),
         ],
     )
-    assert verify_chain(read_host_events(path)) == 4
+    assert validate_events(read_host_events(path)) == 4
     sessions = recent_sessions(path, 5)
     assert [session["id"] for session in sessions] == ["b", "a"]
     assert sessions[0]["status"] == "running"
     assert sessions[1]["status"] == "stopped"
 
-    with closing(sqlite3.connect(path)) as connection:
-        connection.execute("UPDATE host_events SET actor = 'someone-else' WHERE id = 2")
-        connection.commit()
-    with pytest.raises(ValueError, match="broken at event 1"):
-        verify_chain(read_host_events(path))
-
-
-@pytest.mark.parametrize("field", ["detail", "prev_hash", "hash"])
+@pytest.mark.parametrize("field", ["detail"])
 def test_sqlite_text_corruption_is_a_doctor_failure(tmp_path: Path, field: str) -> None:
     from capsem_builder.gate.tools.doctor.doctor_session_host_verify import _verify_host_ledger
     from capsem_builder.gate.tools.doctor.doctor_session_verify import Results

@@ -9,8 +9,7 @@ use capsem_proto::ledger::{
 
 use super::*;
 use crate::ledger_protocol::{
-    LedgerAdmission, LedgerClientMessage, LedgerCommand, LedgerQuery, LedgerReply, LedgerServerMessage,
-    LedgerTimelineLayer,
+    LedgerClientMessage, LedgerCommand, LedgerQuery, LedgerReply, LedgerServerMessage, LedgerTimelineLayer,
 };
 use crate::{Decision, NetEvent, WriteOp};
 
@@ -117,30 +116,12 @@ async fn admission_batch_gets_one_contiguous_acceptance_reply() {
     };
     first_event.event_id = Some("0123456789ac".into());
     first_event.domain = "first.test".into();
-    let first_commitment = capsem_proto::ledger_commitment::LedgerCommitment::new(
-        producer_grant,
-        1,
-        1,
-        first.kind(),
-        crate::writer::commitment_event_hash(&first).unwrap(),
-        capsem_proto::ledger_commitment::ZERO_COMMITMENT_HASH,
-    )
-    .unwrap();
     let mut second = body_event(Vec::new());
     let WriteOp::NetEvent(second_event) = &mut second else {
         unreachable!()
     };
     second_event.event_id = Some("0123456789ad".into());
     second_event.domain = "second.test".into();
-    let second_commitment = capsem_proto::ledger_commitment::LedgerCommitment::new(
-        producer_grant,
-        2,
-        2,
-        second.kind(),
-        crate::writer::commitment_event_hash(&second).unwrap(),
-        first_commitment.commitment_hash(),
-    )
-    .unwrap();
 
     assert!(matches!(
         request(
@@ -148,10 +129,7 @@ async fn admission_batch_gets_one_contiguous_acceptance_reply() {
             &replies,
             1,
             LedgerCommand::AdmitBatch {
-                admissions: vec![
-                    LedgerAdmission::new(first, first_commitment),
-                    LedgerAdmission::new(second, second_commitment),
-                ],
+                events: vec![first, second],
             },
         )
         .await,
@@ -180,24 +158,12 @@ async fn accepted_durable_query_body_retention_and_warc_run_through_one_owner() 
     let (producer, producer_replies, producer_task) = connect(Arc::clone(&server), producer_grant).await;
     let body = vec![b'z'; 300_000];
     let event = body_event(body.clone());
-    let event_hash = crate::writer::commitment_event_hash(&event).unwrap();
     assert!(matches!(
         request(
             &producer,
             &producer_replies,
             1,
-            LedgerCommand::Admit {
-                commitment: capsem_proto::ledger_commitment::LedgerCommitment::new(
-                    producer_grant,
-                    1,
-                    1,
-                    event.kind(),
-                    event_hash,
-                    capsem_proto::ledger_commitment::ZERO_COMMITMENT_HASH,
-                )
-                .unwrap(),
-                event: Box::new(event),
-            },
+            LedgerCommand::Admit { event: Box::new(event) },
         )
         .await,
         LedgerReply::Accepted { admission_id: 1 }
@@ -292,19 +258,6 @@ async fn accepted_durable_query_body_retention_and_warc_run_through_one_owner() 
         .await,
         LedgerReply::Retained { .. }
     ));
-    let commitments = request(
-        &reader,
-        &reader_replies,
-        7,
-        LedgerCommand::Query {
-            query: LedgerQuery::Commitments {
-                after_global_sequence: 0,
-                limit: 10,
-            },
-        },
-    )
-    .await;
-    assert!(matches!(commitments, LedgerReply::Query { ref sets } if sets.len() == 1 && sets[0].rows.len() == 1));
 
     drop(producer);
     drop(reader);

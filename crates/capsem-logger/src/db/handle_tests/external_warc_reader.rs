@@ -120,7 +120,7 @@ async fn warcio_reads_every_record_the_export_wrote() {
     let db = rewrite_and_reopen(
         db,
         &p,
-        "UPDATE event_body_blobs SET body_hash = 'blake3:' || hex(zeroblob(32))
+        "UPDATE event_body_blobs SET body_hash = 'xxh3-128:' || lower(hex(zeroblob(16)))
          WHERE event_id = '000000000002'",
     )
     .await;

@@ -196,7 +196,7 @@ fn a_records_id_names_the_session_the_table_the_event_and_the_direction() {
         content_type: None,
         original_bytes: 4,
         truncated: false,
-        body_hash: "blake3:00".into(),
+        body_hash: "xxh3-128:00000000000000000000000000000000".into(),
         reference: capsem_archive::BodyRef {
             block_offset: 16,
             offset: 0,

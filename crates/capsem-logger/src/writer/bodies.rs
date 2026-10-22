@@ -31,7 +31,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
-use super::{blake3_bytes_ref, execute_cached, format_timestamp, LedgerClock, MAX_BODY_BLOB_BYTES};
+use super::{content_digest, execute_cached, format_timestamp, LedgerClock, MAX_BODY_BLOB_BYTES};
 use capsem_archive::{
     ArchiveCodecs, ArchiveError, ArchiveId, BodyLogWriter, BodyRef, FileHeader, GenerationId, SegmentWritten,
 };
@@ -139,7 +139,7 @@ pub(super) struct BodyArchive {
     /// segment carries them; they commit with the next flush.
     reused: Vec<BodyIndexRow>,
     /// Where each distinct body in the open block sits, by the hash of its
-    /// stored bytes -- the same `blake3:` string the index row records, so it
+    /// stored bytes -- the same `xxh3-128:` string the index row records, so it
     /// is computed once. Cleared when the block closes: a span is reusable
     /// while it is in the block being written.
     block_spans: HashMap<String, BodyRef>,
@@ -533,7 +533,7 @@ impl BodyArchive {
         // something the archive does not hold cannot be checked against
         // anything, and a reader that verifies what it read is how a corrupted
         // index row stops being a body. It is also what finds a repeat.
-        let body_hash = blake3_bytes_ref(stored);
+        let body_hash = content_digest(stored);
         let Some((reference, committed)) = self.stage_bytes(conn, stored, &body_hash) else {
             return;
         };
@@ -566,7 +566,7 @@ impl BodyArchive {
     /// Stage bytes into the open block -- or, when the open block already
     /// holds these exact bytes, hand back their span and add nothing.
     ///
-    /// Keyed by the blake3 of the bytes, never by anything weaker: a length or
+    /// Keyed by the full XXH3-128 fingerprint of the stored bytes: a length or
     /// a prefix match would index one body against another's bytes, and the
     /// reader's hash check would then refuse it forever.
     ///
