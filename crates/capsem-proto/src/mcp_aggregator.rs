@@ -24,6 +24,18 @@ use crate::mcp_contracts::{McpPromptDef, McpResourceDef, McpServerDef, McpToolDe
 
 const MAX_FRAME_SIZE: u32 = 16 * 1024 * 1024;
 
+/// A frame refused before any bytes are written, so the stream stays aligned.
+#[derive(Debug)]
+pub struct AggregatorFrameTooLarge(pub usize);
+
+impl std::fmt::Display for AggregatorFrameTooLarge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "frame too large: {} bytes (max {MAX_FRAME_SIZE})", self.0)
+    }
+}
+
+impl std::error::Error for AggregatorFrameTooLarge {}
+
 /// Write a length-prefixed msgpack frame.
 pub async fn write_frame<W, T>(writer: &mut W, msg: &T) -> Result<()>
 where
@@ -31,6 +43,9 @@ where
     T: Serialize,
 {
     let payload = rmp_serde::to_vec_named(msg).context("msgpack serialize")?;
+    if payload.len() > MAX_FRAME_SIZE as usize {
+        return Err(AggregatorFrameTooLarge(payload.len()).into());
+    }
     let len = payload.len() as u32;
     writer
         .write_all(&len.to_be_bytes())
