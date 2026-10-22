@@ -1,4 +1,4 @@
-"""Run inside a Capsem 0.7.1 guest to demonstrate the browser gateway chain.
+"""Run inside an installed Capsem guest to demonstrate the browser gateway chain.
 
 The model selects the guest MCP exposure call. The page served through that
 exposure then asks the browser for the gateway bearer and an authenticated
@@ -171,7 +171,7 @@ try {
         "GATEWAY_PORT", str(gateway_port)
     )
     return (
-        "<!doctype html><meta charset='utf-8'><title>Capsem 0.7.1 escape demo</title>"
+        "<!doctype html><meta charset='utf-8'><title>Capsem gateway escape demo</title>"
         "<h1>Guest-published gateway test</h1><pre id='result'></pre>"
         f"<script type='module'>{script}</script>"
     )
