@@ -13,6 +13,11 @@ authors.workspace = true
 capsem-api = { path = "../../crates/capsem-api", version = "0.7.1" }
 capsem-crypto = { path = "../../crates/capsem-crypto", version = "0.7.1", default-features = false, features = ["random", "secrets"] }
 capsem-foundation = { path = "../../crates/capsem-foundation", version = "0.7.1" }
+http.workspace = true
+bytes.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
 futures.workspace = true
 humantime.workspace = true
 reqwest.workspace = true

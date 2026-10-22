@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add a shared Rust SDK browser callback handler that prepares exact client
+  loopback listeners and returns matching sign-in responses through scoped previews.
+
 - Add an Auto/Local/Remote display selector: uncompressed RGB for local
   graphical viewers and software JPEG/WebP remotely, reconnecting only the viewer.
 

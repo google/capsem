@@ -1,6 +1,7 @@
 #![doc = include_str!("../README.md")]
 
 pub use capsem_api as models;
+pub mod browser;
 mod client;
 mod connections;
 mod credentials;

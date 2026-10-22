@@ -114,6 +114,10 @@ impl Transport {
         self.timeout
     }
 
+    pub(crate) fn is_loopback(&self) -> bool {
+        matches!(self.base.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"))
+    }
+
     pub async fn request(&self, method: Method, path: &str, request: Request<'_>) -> Result<Vec<u8>> {
         Ok(self.request_response(method, path, request).await?.body)
     }

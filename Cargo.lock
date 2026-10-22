@@ -1328,11 +1328,16 @@ name = "capsem-sdk"
 version = "0.7.1"
 dependencies = [
  "axum",
+ "bytes",
  "capsem-api",
  "capsem-crypto",
  "capsem-foundation",
  "futures",
+ "http",
+ "http-body-util",
  "humantime",
+ "hyper",
+ "hyper-util",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

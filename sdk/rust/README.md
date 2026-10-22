@@ -50,5 +50,18 @@ image or your own OCI image when permitted by your administrator.
 The example runs `echo hello`, displays its output, and leaves `sdk-demo`
 stopped with its work preserved.
 
+For a guest browser request, call
+`browser::BrowserCallback::prepare(&vm, &request.url).await` **before** opening
+the URL in the client's browser. Retain the returned handle while the browser
+signs in, then call `close().await` when cancelling or replacing the attempt.
+Ordinary web links return `None`. A callback accepts one matching path/state
+on the client's exact loopback port and returns it through an authenticated
+workload preview; no raw port is published. The listener expires after ten
+minutes. Do not log the URL, state, callback query or preview credentials.
+
+This callback transport currently requires a local gateway. Hosted preview
+origins must become client-reachable before remote loopback callbacks can be
+enabled; the SDK refuses that case instead of listening on the server's host.
+
 For more, use the [SDK guides](https://docs.capsem.org/guides/developers/integrate-the-sdk/) or the
 [Rust SDK reference](https://docs.capsem.org/sdk/rust/).
