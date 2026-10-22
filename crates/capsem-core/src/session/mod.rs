@@ -7,6 +7,7 @@ mod maintenance;
 mod overlay;
 mod spawn_identity;
 pub mod spawn_owner;
+mod terminal_checkpoint;
 mod workspace;
 
 #[cfg(test)]
@@ -28,6 +29,7 @@ pub use overlay::{
 };
 pub(crate) use spawn_identity::publish as publish_contained_private;
 pub use spawn_identity::{read_spawn_identity, write_spawn_identity};
+pub use terminal_checkpoint::TerminalCheckpointStore;
 pub use workspace::{open_workspace, WORKSPACE_DIR};
 
 /// Host-only mutable state retained by the VM owner after confinement.
