@@ -86,7 +86,9 @@ pub(super) async fn collect_terminal_control_pair(
             proto::VSOCK_PORT_TERMINAL => terminal = Some(conn),
             proto::VSOCK_PORT_CONTROL => control = Some(conn),
             proto::VSOCK_PORT_SNI_PROXY | proto::VSOCK_PORT_AUDIT | proto::VSOCK_PORT_DNS_PROXY => {
-                deferred_conns.push(conn);
+                if deferred_conns.len() < super::MAX_DEFERRED_AUX_CONNECTIONS {
+                    deferred_conns.push(conn);
+                }
             }
             _ => {}
         }

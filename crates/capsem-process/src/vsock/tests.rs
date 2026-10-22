@@ -317,6 +317,34 @@ async fn collect_parks_sni_but_ignores_removed_legacy_mcp_port() {
 }
 
 #[tokio::test]
+async fn aux_connection_collection_is_bounded_before_control_handshake() {
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    for _ in 0..MAX_DEFERRED_AUX_CONNECTIONS + 20 {
+        tx.send(make_conn(capsem_proto::VSOCK_PORT_AUDIT)).unwrap();
+    }
+    tx.send(make_conn(capsem_proto::VSOCK_PORT_TERMINAL)).unwrap();
+    tx.send(make_conn(capsem_proto::VSOCK_PORT_CONTROL)).unwrap();
+    let mut deferred = Vec::new();
+    collect_terminal_control_pair(&mut rx, &mut deferred).await.unwrap();
+    assert_eq!(deferred.len(), MAX_DEFERRED_AUX_CONNECTIONS);
+}
+
+#[test]
+fn aux_connection_workers_hold_bounded_service_permits() {
+    let limits = AuxConnectionLimits::default();
+    for (service, maximum) in [
+        (HostVsockService::Exec, aux::MAX_EXEC_CONNECTIONS),
+        (HostVsockService::Audit, aux::MAX_AUDIT_CONNECTIONS),
+        (HostVsockService::Lifecycle, aux::MAX_LIFECYCLE_CONNECTIONS),
+    ] {
+        let permits: Vec<_> = (0..maximum).map(|_| limits.try_acquire(service).unwrap()).collect();
+        assert!(limits.try_acquire(service).is_none());
+        drop(permits);
+        assert!(limits.try_acquire(service).is_some());
+    }
+}
+
+#[tokio::test]
 async fn collect_errors_when_channel_closes_early() {
     let (tx, mut rx) = mpsc::unbounded_channel();
     tx.send(make_conn(capsem_proto::VSOCK_PORT_TERMINAL)).unwrap();

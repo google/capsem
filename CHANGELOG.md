@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Cap guest exec, audit, and lifecycle vsock workers and bound initial exec
+  and lifecycle reads, preventing connection floods from exhausting the VM owner.
+
 - Limit the credential store to 1,024 entries and 4 KiB per secret so repeated
   captures cannot grow its plaintext file or rewrite cost without bound.
 
