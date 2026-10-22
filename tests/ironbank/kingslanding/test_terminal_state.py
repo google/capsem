@@ -178,3 +178,48 @@ def test_unterminated_control_string_burst_recovers_without_replacing_title(serv
             time.sleep(0.05)
         assert summary["title"] == "Retained", summary
         assert summary["last_notification"]["body"] == "Ready", summary
+
+
+def test_quiet_synchronized_output_expires_and_answers_its_query_once(service, tmp_path):
+    client = service.client()
+    with image_session(service, tmp_path, "terminal-quiet-sync") as vm_id, terminal(service, vm_id) as socket:
+        assert probe(socket) == ("1000", "100000", "workload")
+        baseline = next(row for row in client.get("/vms/list")["sandboxes"] if row["id"] == vm_id)["terminal"]
+        # This foreground app emits no sync-end and no later PTY bytes. It
+        # cannot receive the query reply until the host expires the update.
+        script = r"""
+import os, select, termios, tty
+from pathlib import Path
+before = termios.tcgetattr(0)
+try:
+    tty.setraw(0)
+    os.write(1, b'\x1b[2J\x1b[H\x1b[?2026hquiet\x07\x1b]2;Quiet synchronized\x07\x1b]777;notify;Sync;Expired\x07\x1b[6n')
+    reply = b''
+    while not reply.endswith(b'R'):
+        reply += os.read(0, 64)
+    if select.select([0], [], [], 0.5)[0]:
+        reply += os.read(0, 64)
+    Path('/tmp/capsem-sync-query').write_bytes(reply)
+    os.read(0, 1)
+finally:
+    termios.tcsetattr(0, termios.TCSANOW, before)
+"""
+        socket.send(msgpack.packb({"stdin": ("python3 -c " + shlex.quote(script) + "\n").encode()}, use_bin_type=True))
+        state = next_state(socket, lambda state: state["title"] == "Quiet synchronized")
+        summary = terminal_summary(client, vm_id, "Quiet synchronized")
+        assert state["bell_count"] == summary["bell_count"] == baseline["bell_count"] + 1
+        assert summary["last_notification"]["title"] == "Sync", summary
+        assert summary["last_notification"]["body"] == "Expired", summary
+        result = workload_exec(client, vm_id, (
+            "python3 -c " + shlex.quote(
+                "from pathlib import Path; import time; p=Path('/tmp/capsem-sync-query'); "
+                "end=time.monotonic()+5\n"
+                "while not p.exists() and time.monotonic()<end: time.sleep(0.05)\n"
+                "print(p.read_bytes().hex())"
+            )
+        ))
+        assert result["exit_code"] == 0, result
+        assert result["stdout_text"].strip() == b"\x1b[1;6R".hex(), result
+        for _ in range(3):
+            assert terminal_summary(client, vm_id, "Quiet synchronized") == summary
+        socket.send(msgpack.packb({"stdin": b"q"}, use_bin_type=True))
