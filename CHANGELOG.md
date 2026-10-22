@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Retain the current running session after a recoverable suspend rejection.
+
 - Report resume errors for retained sessions without marking them not found.
 
 - Preserve suspended sessions and report restore failures instead of silently

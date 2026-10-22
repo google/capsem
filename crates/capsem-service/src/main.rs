@@ -85,7 +85,9 @@ use service_peer::ServicePeer;
 use service_runtime::*;
 use settings_routes::*;
 use shutdown_policy::*;
-use suspend_confirmation::{observe_suspend_message, suspend_channel_closed, suspend_failure, SuspendConfirmation};
+use suspend_confirmation::{
+    observe_suspend_message, suspend_channel_closed, suspend_failure, SuspendConfirmation, SuspendFailure,
+};
 use update_command::{update_command_plan, UpdateCommandKind};
 use update_status::update_status_response_from_paths;
 use vm_files::*;

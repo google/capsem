@@ -492,8 +492,21 @@ pub(super) async fn handle_suspend(
         .validate(&state, true)
         .map_err(|e| AppError::new(StatusCode::BAD_GATEWAY, e))?;
 
-    if let Some((outcome, error)) = suspend_failure(confirmation) {
-        // The guest never acknowledged suspend. Leaving the process alive
+    let failure = match suspend_failure(confirmation) {
+        Some(SuspendFailure::RolledBack(error)) => {
+            // A recovered acknowledgement must still own a live registry
+            // slot; it cannot use the retiring-owner exception above.
+            owner
+                .validate(&state, false)
+                .map_err(|e| AppError::new(StatusCode::BAD_GATEWAY, e))?;
+            tracing::warn!(id, "suspend rolled back; retaining current running owner");
+            return Err(AppError::new(StatusCode::INTERNAL_SERVER_ERROR, error));
+        }
+        Some(SuspendFailure::Fatal { outcome, error }) => Some((outcome, error)),
+        None => None,
+    };
+    if let Some((outcome, error)) = failure {
+        // The owner confirmed neither suspend nor rollback. Leaving it alive
         // would leak a wedged Apple VZ instance (seen in the wild: 945
         // orphan temp dirs accumulated over one test run). SIGKILL the
         // child, reclaim the instance slot, and surface the error.

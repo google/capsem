@@ -36,23 +36,43 @@ fn checkpoint_failure_stays_distinct_from_timeout() {
     assert_eq!(suspend_failure(SuspendConfirmation::Suspended), None);
     assert_eq!(
         suspend_failure(SuspendConfirmation::Failed("checkpoint cause".into())),
-        Some((
-            "failed",
-            "suspend failed before checkpoint completion: checkpoint cause (process killed)".into()
-        ))
+        Some(SuspendFailure::Fatal {
+            outcome: "failed",
+            error: "suspend failed before checkpoint completion: checkpoint cause (process killed)".into()
+        })
     );
     assert_eq!(
         suspend_failure(SuspendConfirmation::ChannelClosed),
-        Some((
-            "channel-closed",
-            "suspend process exited before checkpoint confirmation (process killed)".into()
-        ))
+        Some(SuspendFailure::Fatal {
+            outcome: "channel-closed",
+            error: "suspend process exited before checkpoint confirmation (process killed)".into()
+        })
     );
     assert_eq!(
         suspend_failure(SuspendConfirmation::TimedOut),
-        Some((
-            "timed-out",
-            "suspend timed out: VM did not confirm suspended state (process killed)".into()
+        Some(SuspendFailure::Fatal {
+            outcome: "timed-out",
+            error: "suspend timed out: VM did not confirm suspended state (process killed)".into()
+        })
+    );
+}
+
+#[test]
+fn rolled_back_suspend_is_an_error_that_retains_the_owner() {
+    let mut suspended = false;
+    let confirmation = observe_suspend_message(
+        ProcessToService::SuspendRolledBack {
+            id: "vm-checkpoint".into(),
+            error: "terminal busy".into(),
+        },
+        &mut suspended,
+    )
+    .unwrap();
+    assert!(!suspended);
+    assert_eq!(
+        suspend_failure(confirmation),
+        Some(SuspendFailure::RolledBack(
+            "suspend failed; session remains running: terminal busy".into()
         ))
     );
 }
