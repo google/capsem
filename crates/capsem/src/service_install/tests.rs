@@ -18,15 +18,34 @@ async fn retiring_installed_helpers_spares_command_line_lookalikes() {
     tokio::time::sleep(std::time::Duration::from_millis(25)).await;
 
     let result = retire_installed_helpers(&bin).await;
-    let owned_exited = tokio::time::timeout(std::time::Duration::from_secs(2), owned.wait()).await;
+    let unsupported = result.as_ref().is_err_and(|error| {
+        error
+            .root_cause()
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|error| error.kind() == std::io::ErrorKind::Unsupported)
+    });
+    let owned_exited = if unsupported {
+        owned.try_wait().unwrap().is_some()
+    } else {
+        tokio::time::timeout(std::time::Duration::from_secs(2), owned.wait())
+            .await
+            .is_ok()
+    };
     let lookalike_alive = lookalike.try_wait().unwrap().is_none();
     let _ = owned.start_kill();
     let _ = lookalike.start_kill();
     let _ = owned.wait().await;
     let _ = lookalike.wait().await;
 
-    result.unwrap();
-    assert!(owned_exited.is_ok(), "the installed helper was not retired");
+    if unsupported {
+        // macOS 14 lacks native PID-version guarded signaling. Refuse the
+        // orphan without falling back to a race-prone raw PID kill.
+        assert!(cfg!(target_os = "macos"));
+        assert!(!owned_exited, "an unsupported host signaled the orphan");
+    } else {
+        result.unwrap();
+        assert!(owned_exited, "the installed helper was not retired");
+    }
     assert!(lookalike_alive, "a command-line lookalike was killed");
 }
 
