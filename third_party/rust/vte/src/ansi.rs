@@ -821,6 +821,7 @@ pub enum KeyboardModesApplyBehavior {
 
 /// Terminal cursor configuration.
 #[derive(Default, Debug, Eq, PartialEq, Copy, Clone, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub struct CursorStyle {
     pub shape: CursorShape,
     pub blinking: bool,
@@ -828,6 +829,7 @@ pub struct CursorStyle {
 
 /// Terminal cursor shape.
 #[derive(Debug, Default, Eq, PartialEq, Copy, Clone, Hash)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum CursorShape {
     /// Cursor is a block like `▒`.
     #[default]
@@ -1191,6 +1193,7 @@ pub enum Attr {
 
 /// Identifiers which can be assigned to a graphic character set.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum CharsetIndex {
     /// Default set, is designated as ASCII at startup.
     #[default]
@@ -1202,6 +1205,7 @@ pub enum CharsetIndex {
 
 /// Standard or common character sets which can be designated as G0-G3.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[cfg_attr(feature = "checkpoint", derive(Serialize, Deserialize))]
 pub enum StandardCharset {
     #[default]
     Ascii,

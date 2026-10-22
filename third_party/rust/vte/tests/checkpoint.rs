@@ -2,6 +2,25 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use vte::ansi::{Handler, Processor};
 
+#[test]
+fn cursor_and_charset_checkpoint_values_are_typed_and_round_trip() {
+    use vte::ansi::{CharsetIndex, CursorShape, CursorStyle, StandardCharset};
+    let style = CursorStyle {
+        shape: CursorShape::Beam,
+        blinking: true,
+    };
+    let bytes =
+        serde_json::to_vec(&(style, CharsetIndex::G2, StandardCharset::SpecialCharacterAndLineDrawing)).unwrap();
+    let restored: (CursorStyle, CharsetIndex, StandardCharset) = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        restored,
+        (style, CharsetIndex::G2, StandardCharset::SpecialCharacterAndLineDrawing)
+    );
+    assert!(serde_json::from_str::<CursorShape>("\"invalid-shape\"").is_err());
+    assert!(serde_json::from_str::<CharsetIndex>("\"G4\"").is_err());
+    assert!(serde_json::from_str::<StandardCharset>("\"invalid-charset\"").is_err());
+}
+
 #[derive(Default)]
 struct Recorder {
     text: String,
