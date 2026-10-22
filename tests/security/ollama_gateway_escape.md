@@ -21,10 +21,10 @@ The separate request for `/Users/elie/leakme.txt` through
 `/vms/{id}/files/content` returned `HOST_FILE_ROUTE_STATUS=400` with an
 outside-workspace error. **These runs proved gateway bearer disclosure, an
 authenticated settings read, and a cross-VM workspace read; they did not prove
-an arbitrary home-file read.**
-Keep the latter claim open until a payload reads the harmless marker and its
-output is captured without printing other secrets. The launcher and guest
-script are in this directory.
+an arbitrary home-file read.** The pasted review supplies no route or payload
+for an arbitrary host-home read, and the user confirmed there is no separate
+red-team transcript. We classify that specific claim as unproven. The launcher
+and guest script are in this directory.
 
 ## Patched gateway regression
 
