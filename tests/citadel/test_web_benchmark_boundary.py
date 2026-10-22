@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from tests.citadel.source_enum_literals import contract_enums, reference_source
+from tests.citadel.vendor_documents import RUST_VENDOR_ROOT, pinned_rust_vendor_documents
 
 ROOT = Path(__file__).resolve().parents[2]
 POLICY = Path(__file__).with_name("web_benchmark_boundary_debt.toml")
@@ -46,7 +47,9 @@ REFERENCE_PATTERNS = {
         r"(?<![\w-])(?<!tests/)benchmarks/|['\"]benchmarks['\"]"
     ),
 }
-OWNED_WEB_PATH = re.compile(r"(?<![\w./-])web/(?:app|docs|marketing)/(?:[\w.-]+/)*[\w.-]+")
+OWNED_SOURCE_PATH = re.compile(
+    r"(?<![\w./-])(?:web/(?:app|docs|marketing)|benchmarks/(?:collectors|helpers))/(?:[\w.-]+/)*[\w.-]+"
+)
 ABSOLUTE_WEB_URL = re.compile(r"(?<![\w./-])https?://[^\s<>\"'`]+", re.IGNORECASE)
 
 
@@ -92,7 +95,6 @@ def _digest(records: tuple[str, ...]) -> str:
 #: matching, so a file is skipped only while its bytes match its pin; an
 #: edited one is scanned like any other source.
 VENDORED_TREES = ("crates/capsem-gateway/vendor/xpra-html5",)
-RUST_VENDOR_ROOT = "third_party/rust"
 BENCHMARK_SOURCE_ROOTS = ("benchmarks/collectors/", "benchmarks/helpers/")
 
 
@@ -106,11 +108,7 @@ def _pinned_vendor_files(root: Path = ROOT) -> dict[str, str]:
                 pinned[f"{tree}/{path}"] = digest
     # Upstream Markdown documents describe their own repository layout. Keep
     # executable source guarded, and rescan any document changed from its pin.
-    for manifest in (root / RUST_VENDOR_ROOT).glob("*/UPSTREAM.json"):
-        files = json.loads(manifest.read_text(encoding="utf-8"))["files"]
-        for path, digest in files.items():
-            if Path(path).suffix == ".md":
-                pinned[(manifest.parent / path).relative_to(root).as_posix()] = digest
+    pinned.update(pinned_rust_vendor_documents(root))
     return pinned
 
 
@@ -139,7 +137,7 @@ def _text_sources(
 
 def _without_owned_paths(line: str) -> str:
     # Canonical docs contain src/content/docs; the second docs is not an old root.
-    return OWNED_WEB_PATH.sub(
+    return OWNED_SOURCE_PATH.sub(
         lambda match: match[0] if ".." in match[0].split("/") else "",
         ABSOLUTE_WEB_URL.sub("", line),
     )
@@ -536,3 +534,29 @@ def test_current_web_benchmark_boundary_is_exact() -> None:
     assert policy.get("version") == 1
     problems = _problems(policy, _observe())
     assert not problems, RATIONALE + "\n" + "\n".join(problems)
+
+
+def test_canonical_benchmark_sources_are_owned_but_misdirected_paths_fail() -> None:
+    for path in ("benchmarks/collectors/stream", "benchmarks/helpers/stream_measurements.py"):
+        assert not _legacy_references({"example.md": path}), RATIONALE
+        assert _legacy_references({"example.md": "archive/" + path}), RATIONALE
+    assert _legacy_references({"example.md": "benchmarks/collectors/../../unowned.json"}), RATIONALE
+    assert _legacy_references({"example.md": "benchmarks/flat-recording.json"}), RATIONALE
+
+
+def test_only_unchanged_upstream_markdown_is_outside_first_party_paths(tmp_path) -> None:
+    tree = tmp_path / "third_party/rust/engine"
+    tree.mkdir(parents=True)
+    readme = tree / "README.md"
+    readme.write_text("upstream ./docs/features.md")
+    digest = hashlib.sha256(readme.read_bytes()).hexdigest()
+    (tree / "UPSTREAM.json").write_text(json.dumps({"files": {
+        "README.md": digest, "src/lib.rs": digest,
+        "../../../AGENTS.md": digest, "/AGENTS.md": digest,
+    }}))
+    relative = readme.relative_to(tmp_path).as_posix()
+    pins = pinned_rust_vendor_documents(tmp_path)
+    assert pins == {relative: digest}
+    assert _text_sources((relative,), tmp_path, pins) == {}
+    readme.write_text("locally changed ./docs/features.md")
+    assert relative in _text_sources((relative,), tmp_path, pins)

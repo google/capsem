@@ -180,6 +180,21 @@ Skills contain hard-won lessons and project-specific patterns. **Before writing 
 - **Warnings are errors.** Fix every compiler/linter warning before considering code done. Never leave warnings. Frontend: `pnpm run check` uses `--fail-on-warnings`. Rust: the root `Cargo.toml` sets `[workspace.lints.rust] warnings = "deny"` and every crate inherits it via `[lints] workspace = true` -- clippy and rustc warnings are build failures. New-stable clippy fallout is absorbed by documented allows in `[workspace.lints.clippy]`, not per-file attributes.
 - **Reuse over reinvention.** Check `capsem-core` first. Extend existing abstractions.
 - **Minimize code.** Delete dead code, inline single-use helpers. Every line must earn its place.
+- **Zero-copy first.** Move or borrow existing buffers; do not clone, stringify,
+  reparse or re-encode payloads for forwarding. Encode directly into one bounded
+  final frame and derive its length there. Enforce limits during encoding and
+  before receive allocation, without a separate sizing pass. This applies to
+  terminal, graphical, gateway, guest and ledger paths. Preserve ownership and
+  safety; document and measure any unavoidable payload copy.
+- **Hashing and JSON require a documented reason.** Internal data transport is
+  typed binary MessagePack. Never expand binary bytes into JSON for admission,
+  sizing, hashing or internal IPC. A hash must name the actual integrity,
+  authentication, deduplication or compatibility contract it proves; a checksum
+  supplied by the same potentially compromised owner is not independent proof.
+  JSON needs an external protocol, documented persisted format or another
+  concrete requirement. Record the reason beside the owning implementation and
+  exercise that contract. Convenience, debugging and speculative tamper detection
+  do not justify adding work to a hot path. See `/dev-rust-patterns`.
 - **`capsem-core` is the shared library.** Service, process, CLI, and agent crates are thin shells. Business logic lives in core.
 - **One way to do things.** Don't introduce a second pattern when one exists.
 - **Rust tests live in a sibling `tests.rs`.** In the parent module declare `#[cfg(test)] mod tests;` and put all `#[test]` functions in `tests.rs` next to it. Never append an inline `mod tests { ... }` block at the bottom of a production file -- it buries prod code under scroll-past test fixtures and doubles the file size for every Read and grep. See `/dev-testing`.

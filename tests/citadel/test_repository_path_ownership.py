@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.citadel.vendor_documents import pinned_rust_vendor_documents
+
 ROOT = Path(__file__).resolve().parents[2]
 DEBT = Path(__file__).with_name("repository_path_debt.toml")
 
@@ -107,6 +109,7 @@ def _tracked_text_sources(root: Path = ROOT) -> dict[str, str]:
         capture_output=True,
     ).stdout
     sources: dict[str, str] = {}
+    upstream_documents = pinned_rust_vendor_documents(root)
     for record in output.split(b"\0"):
         if not record:
             continue
@@ -118,6 +121,8 @@ def _tracked_text_sources(root: Path = ROOT) -> dict[str, str]:
         if mode == b"120000" or path in EXCLUDED_POLICY_FILES:
             continue
         raw = (root / path).read_bytes()
+        if upstream_documents.get(path) == hashlib.sha256(raw).hexdigest():
+            continue
         if b"\0" in raw:
             continue
         try:

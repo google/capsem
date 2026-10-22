@@ -5,6 +5,13 @@ description: Rust patterns and hard-won lessons. Use when writing Rust in capsem
 
 # Rust Patterns
 
+## Data paths: zero-copy first, no speculative hashing or JSON
+
+Read [data-path performance](references/data-path-performance.md) before changing
+transport, admission, serialization, hashing or buffer ownership. Prefer moving
+or borrowing bytes and one bounded encoding into the final frame. Hashing and
+JSON require a concrete, documented contract; neither is a default safety step.
+
 ## Async / non-blocking
 
 Capsem uses tokio for all async I/O. The MITM proxy, vsock manager, and file monitor are all async.

@@ -23,8 +23,13 @@ ENCODER_OWNERS = {
     Path("crates/capsem-proto/src/host_session.rs"),
     Path("crates/capsem-foundation/src/ipc_channel.rs"),
     Path("crates/capsem-foundation/src/ipc_handshake.rs"),
-    # Checksummed, append-only external ledger commitment checkpoint framing.
-    Path("crates/capsem-service/src/ledger_commitment.rs"),
+}
+DURABLE_ENCODER_OWNERS = {
+    Path("crates/capsem-core/src/terminal/checkpoint.rs"): (
+        "The terminal engine owns versioned, bounded Alacritty model/parser suspend "
+        "checkpoints. These are local durable continuation, not gateway or IPC DTOs; "
+        "keeping engine internals out of capsem-proto avoids reversing ownership."
+    ),
 }
 TYPE_START = re.compile(r"\b(?:pub(?:\([^)]*\))?\s+)?(?:struct|enum)\s+\w+[^;]*\{")
 FIELD = re.compile(r"\b(?:pub\s+)?\w+\s*:\s*Option<")
@@ -90,7 +95,7 @@ def default_field_violations(source: str) -> list[str]:
 def encoder_violations(relative: Path, source: str) -> list[str]:
     if "/tests/" in f"/{relative.as_posix()}/" or relative.name == "tests.rs":
         return []
-    if relative not in ENCODER_OWNERS:
+    if relative not in ENCODER_OWNERS and relative not in DURABLE_ENCODER_OWNERS:
         return [f"{relative}: MessagePack codec outside protocol/framing owner"] if "rmp_serde" in source else []
     calls = ENCODER.findall(source)
     return [f"{relative}: positional MessagePack encoder" for call in calls if call in ("rmp_serde::to_vec", "rmp_serde::encode::write")]
@@ -120,6 +125,14 @@ def test_new_protocol_modules_are_scanned(tmp_path: Path) -> None:
     sources = wire_type_sources(tmp_path)
     assert [path.name for path in sources] == ["new_wire.rs"]
     assert default_field_violations(sources[0].read_text()) == ["line 3: pub value: Option<String>,"]
+
+
+def test_durable_engine_checkpoint_has_one_explicit_owner() -> None:
+    path = Path("crates/capsem-core/src/terminal/checkpoint.rs")
+    assert len(DURABLE_ENCODER_OWNERS[path]) > 100
+    assert not encoder_violations(path, "rmp_serde::Serializer::new(&mut bounded).with_struct_map()")
+    assert encoder_violations(path.with_name("other.rs"), "rmp_serde::to_vec_named(&state)")
+    assert encoder_violations(path, "rmp_serde::to_vec(&state)")
 
 
 def test_capsem_messagepack_is_sparse_and_owned() -> None:

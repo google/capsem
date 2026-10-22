@@ -1,0 +1,835 @@
+# Exact reviewed source uses. Additions/growth require a concrete documented contract.
+# Retired event hashes, internal JSON cache keys and duplicate client body hashing are not approved.
+[reasons]
+oci-and-owned-cache = "OCI platform/config documents require external JSON. The same cache owner streams current persisted JSON metadata into bounded XXH3 checks without a temporary document; neither path converts runtime binary envelopes to JSON."
+hash-mixed-oci-cache = "Fetched OCI content retains protocol-required SHA-256 verification. Repository namespace lookup uses full XXH3-128 and never authorizes cached bytes; exact lowercase current name shapes determine ownership."
+http = "The public OpenAPI HTTP API and its generated SDK use JSON request/response documents; conversion belongs at this boundary, never in binary forwarding."
+mcp = "External MCP servers and clients require JSON-RPC payloads, tool input schemas and arbitrary structured tool results; preserve that external contract."
+oci = "OCI Distribution manifests, indexes and image metadata are JSON documents whose exact bytes and content addresses are defined by the external OCI contract."
+release = "Release channel manifests and package metadata are published JSON documents consumed by existing installers and release verification tooling."
+provider = "Intercepted Anthropic, OpenAI and Google provider requests and streaming responses have externally specified JSON payloads; inspect only necessary fields."
+benchmark = "The benchmark collector subprocess contract and persisted benchmark recordings use JSON documents; these are measurement boundaries, not VM data forwarding."
+config = "User and corporate configuration tooling exposes schema, lint, metadata and settings documents as JSON for its public configuration interfaces."
+durable = "Existing persisted management records, receipt files and replay inputs use JSON; changing them requires an explicit current format and regeneration of owned fixtures, not an internal transport shortcut."
+credentials = "OAuth/OIDC endpoint responses and existing durable credential metadata use JSON; token verification/storage compatibility requires preserving their specified shapes."
+container = "OCI runtime configuration and seccomp profile documents consumed by runc are JSON; this is the external container-runtime format."
+forensic = "Security rule definitions and forensic records have existing JSON export/storage contracts; archive transport stays binary and must not hash or size their JSON envelope."
+db-json = "Existing columnar query results, externally exposed forensic records and SQL-query tools use JSON. The DB-to-ledger query adapter still parses that historical result format; this is existing representation debt, not approval for new internal JSON round trips. Query cache keys are typed, and DB freshness stays DB-owned."
+logging = "Structured JSON log and diagnostic export formats are consumed by existing operator tooling; do not serialize or copy binary terminal/graphical payloads into logs."
+stream-fixture = "The checked-in stream specification exports golden JSON fixtures for cross-language interoperability tests; runtime stream frames remain MessagePack."
+hash-asset = "Downloaded VM assets and release artifacts are checked against manifest digests before use; the published digest is the integrity reference, not runtime event data."
+hash-oci = "OCI blob, manifest and configuration identities are SHA-256 content addresses required by the OCI registry contract and verified against fetched bytes."
+hash-archive = "Storage owners use XXH3-128 for current archive corruption checks, body-index span identities, deduplication and WARC block digests. Obsolete formats are refused, owned fixtures are regenerated, and no producer event commitment is justified by this storage contract."
+hash-oauth = "OAuth PKCE S256 challenges and OIDC identity validation require SHA-256 by the external authentication protocol."
+hash-identity = "A stable bounded name or protocol identity is derived from existing path/configuration bytes for reuse across processes and restarts; this is compatibility, not event tamper proof."
+hash-capability = "The managed-session capability digest is compared with a presented secret capability at the service boundary; retaining only its digest avoids storing that secret as authority."
+hash-credential-ref = "A credential correlation identifier must be stable without exposing the raw credential to logs and telemetry; its digest is a redacted identity, not proof of event integrity."
+hash-tool-definition = "Approved MCP tool definitions are pinned with persisted BLAKE3 digests. Discovery compares them to reject changed descriptions/input schemas under the same tool name; this is a trusted security-policy reference, not a non-security cache key."
+hash-policy = "Policy snapshots and provisioned corporate config expose persistent content identities so reload, audit and version decisions refer to exact configured bytes."
+hash-model-item = "Model-item content references identify repeated stored content in the ledger; these are storage references and dedup identities, not admission commitments."
+hash-support = "Support-bundle file fingerprints identify the exact collected evidence for diagnostic comparison; they are computed only during an explicit support export."
+hash-implementation = "The approved crypto owner implements and tests accelerated hashing and external artifact verification; application callers must document their separate purpose."
+hash-removal-journal = "Current cache receipt generations, removal witness tokens and compact journal checksums use streamed XXH3-128 over their actual bounded persisted JSON. These detect changed facts/corruption, not authority. Allocation-probe XXH3 bytes avoid filesystem compression underbilling; old record versions are refused."
+hash-mixed-package = "Release package contents retain published SHA-256/BLAKE3 verification against trusted manifests. Only disposable extraction-directory path fingerprints use XXH3-128; they do not authorize a package or replace content verification."
+hash-mixed-asset-cache = "Actual VM content verification retains BLAKE3 against the trusted asset digest; XXH3-128 only selects a cache filename from its path. Cache-entry metadata and the expected security digest are still checked before reuse."
+
+[sources."crates/capsem/src/client/gateway.rs"]
+json = { count = 5, reason = "http" }
+
+[sources."crates/capsem/src/client.rs"]
+json = { count = 3, reason = "http" }
+
+[sources."crates/capsem/src/container_image.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."crates/capsem/src/image_commands.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."crates/capsem/src/main.rs"]
+json = { count = 47, reason = "http" }
+
+[sources."crates/capsem/src/network_commands.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."crates/capsem/src/support_bundle.rs"]
+json = { count = 29, reason = "logging" }
+hash = { count = 1, reason = "hash-support" }
+
+[sources."crates/capsem/src/update/asset_install.rs"]
+json = { count = 67, reason = "release" }
+hash = { count = 6, reason = "hash-asset" }
+
+[sources."crates/capsem/src/update/candidate_audit.rs"]
+json = { count = 5, reason = "release" }
+
+[sources."crates/capsem/src/update/verified_update.rs"]
+json = { count = 9, reason = "release" }
+
+[sources."crates/capsem/src/update.rs"]
+json = { count = 42, reason = "release" }
+hash = { count = 4, reason = "hash-asset" }
+
+[sources."crates/capsem-admin/src/assets_channel_build.rs"]
+json = { count = 25, reason = "release" }
+hash = { count = 6, reason = "hash-asset" }
+
+[sources."crates/capsem-admin/src/assets_channel_render.rs"]
+json = { count = 66, reason = "release" }
+hash = { count = 4, reason = "hash-asset" }
+
+[sources."crates/capsem-admin/src/assets_channel_validation.rs"]
+json = { count = 32, reason = "release" }
+hash = { count = 3, reason = "hash-asset" }
+
+[sources."crates/capsem-admin/src/channel_bootstrap/mod.rs"]
+json = { count = 1, reason = "release" }
+
+[sources."crates/capsem-admin/src/config_checks.rs"]
+hash = { count = 1, reason = "hash-policy" }
+
+[sources."crates/capsem-admin/src/image_build.rs"]
+json = { count = 4, reason = "release" }
+
+[sources."crates/capsem-admin/src/main.rs"]
+json = { count = 77, reason = "release" }
+hash = { count = 1, reason = "hash-asset" }
+
+[sources."crates/capsem-admin/src/package_inspection.rs"]
+hash = { count = 7, reason = "hash-mixed-package" }
+
+[sources."crates/capsem-admin/src/release_graph.rs"]
+hash = { count = 4, reason = "hash-asset" }
+
+[sources."crates/capsem-agent/src/boot_timing.rs"]
+json = { count = 1, reason = "logging" }
+
+[sources."crates/capsem-agent/src/mcp_server.rs"]
+json = { count = 5, reason = "mcp" }
+
+[sources."crates/capsem-api/src/diagnostics.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."crates/capsem-api/src/document.rs"]
+json = { count = 2, reason = "http" }
+
+[sources."crates/capsem-api/src/interactions.rs"]
+json = { count = 3, reason = "http" }
+
+[sources."crates/capsem-api/src/mcp.rs"]
+json = { count = 2, reason = "http" }
+
+[sources."crates/capsem-api/src/networks.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."crates/capsem-api/src/stream.rs"]
+json = { count = 9, reason = "stream-fixture" }
+
+[sources."crates/capsem-app/src/lib.rs"]
+json = { count = 5, reason = "logging" }
+
+[sources."crates/capsem-archive/src/format.rs"]
+hash = { count = 2, reason = "hash-archive" }
+
+[sources."crates/capsem-archive/src/reader.rs"]
+hash = { count = 1, reason = "hash-archive" }
+
+[sources."crates/capsem-archive/src/warc.rs"]
+hash = { count = 1, reason = "hash-archive" }
+
+[sources."crates/capsem-archive/src/writer.rs"]
+hash = { count = 3, reason = "hash-archive" }
+
+[sources."crates/capsem-assets/src/asset_manager/hydrate.rs"]
+json = { count = 2, reason = "release" }
+hash = { count = 1, reason = "hash-asset" }
+
+[sources."crates/capsem-assets/src/asset_manager.rs"]
+json = { count = 49, reason = "release" }
+hash = { count = 1, reason = "hash-asset" }
+
+[sources."crates/capsem-assets/src/manifest_compat.rs"]
+json = { count = 1, reason = "release" }
+
+[sources."crates/capsem-assets/src/oci/cache/removal/journal.rs"]
+json = { count = 4, reason = "durable" }
+hash = { count = 2, reason = "hash-removal-journal" }
+
+[sources."crates/capsem-assets/src/oci/cache.rs"]
+hash = { count = 2, reason = "hash-mixed-oci-cache" }
+
+[sources."crates/capsem-assets/src/oci/catalog.rs"]
+json = { count = 1, reason = "oci" }
+
+[sources."crates/capsem-assets/src/oci/identity.rs"]
+hash = { count = 1, reason = "hash-identity" }
+
+[sources."crates/capsem-assets/src/oci/pull.rs"]
+json = { count = 8, reason = "oci" }
+hash = { count = 2, reason = "hash-oci" }
+
+[sources."crates/capsem-assets/src/oci/receipts.rs"]
+json = { count = 2, reason = "durable" }
+hash = { count = 1, reason = "hash-removal-journal" }
+
+[sources."crates/capsem-assets/src/oci/removal.rs"]
+hash = { count = 1, reason = "hash-removal-journal" }
+
+[sources."crates/capsem-assets/src/oci.rs"]
+json = { count = 2, reason = "oci-and-owned-cache" }
+hash = { count = 2, reason = "hash-removal-journal" }
+
+[sources."crates/capsem-bench/src/collector.rs"]
+json = { count = 1, reason = "benchmark" }
+
+[sources."crates/capsem-bench/src/commands.rs"]
+json = { count = 1, reason = "benchmark" }
+
+[sources."crates/capsem-bench/src/main.rs"]
+json = { count = 10, reason = "benchmark" }
+
+[sources."crates/capsem-bench/src/ping.rs"]
+json = { count = 8, reason = "benchmark" }
+
+[sources."crates/capsem-bench/src/protocol.rs"]
+json = { count = 8, reason = "benchmark" }
+
+[sources."crates/capsem-bench/src/protocol_collector.rs"]
+json = { count = 2, reason = "benchmark" }
+
+[sources."crates/capsem-bench/src/redis.rs"]
+json = { count = 4, reason = "benchmark" }
+
+[sources."crates/capsem-bench/src/store.rs"]
+json = { count = 2, reason = "benchmark" }
+
+[sources."crates/capsem-bench/src/throughput.rs"]
+json = { count = 9, reason = "benchmark" }
+
+[sources."crates/capsem-bench/src/udp.rs"]
+json = { count = 9, reason = "benchmark" }
+
+[sources."crates/capsem-config/src/lint.rs"]
+json = { count = 2, reason = "config" }
+
+[sources."crates/capsem-config/src/security_rule_profile/sigma.rs"]
+json = { count = 9, reason = "config" }
+
+[sources."crates/capsem-config/src/settings_metadata.rs"]
+json = { count = 6, reason = "config" }
+
+[sources."crates/capsem-config/src/tree.rs"]
+json = { count = 6, reason = "config" }
+
+[sources."crates/capsem-config/src/types.rs"]
+json = { count = 8, reason = "config" }
+
+[sources."crates/capsem-core/src/container/publish/saved.rs"]
+json = { count = 3, reason = "durable" }
+
+[sources."crates/capsem-core/src/container/seccomp.rs"]
+json = { count = 8, reason = "container" }
+
+[sources."crates/capsem-core/src/container/stage.rs"]
+json = { count = 16, reason = "container" }
+
+[sources."crates/capsem-core/src/container/workspace_owner.rs"]
+json = { count = 4, reason = "container" }
+
+[sources."crates/capsem-core/src/container.rs"]
+json = { count = 2, reason = "container" }
+
+[sources."crates/capsem-core/src/credential_broker.rs"]
+json = { count = 5, reason = "mcp" }
+
+[sources."crates/capsem-core/src/hypervisor/kvm/mod.rs"]
+hash = { count = 1, reason = "hash-identity" }
+
+[sources."crates/capsem-core/src/managed_sessions/controller.rs"]
+hash = { count = 1, reason = "hash-capability" }
+
+[sources."crates/capsem-core/src/managed_sessions.rs"]
+json = { count = 2, reason = "durable" }
+hash = { count = 3, reason = "hash-capability" }
+
+[sources."crates/capsem-core/src/mcp/builtin_tools/upstream.rs"]
+json = { count = 1, reason = "mcp" }
+
+[sources."crates/capsem-core/src/mcp/builtin_tools.rs"]
+json = { count = 13, reason = "mcp" }
+
+[sources."crates/capsem-core/src/mcp/mod.rs"]
+json = { count = 4, reason = "mcp" }
+hash = { count = 1, reason = "hash-tool-definition" }
+
+[sources."crates/capsem-core/src/net/ai_traffic/events.rs"]
+json = { count = 16, reason = "provider" }
+
+[sources."crates/capsem-core/src/net/ai_traffic/mod.rs"]
+json = { count = 6, reason = "provider" }
+
+[sources."crates/capsem-core/src/net/ai_traffic/pricing.rs"]
+json = { count = 1, reason = "provider" }
+
+[sources."crates/capsem-core/src/net/ai_traffic/request_parser.rs"]
+json = { count = 12, reason = "provider" }
+
+[sources."crates/capsem-core/src/net/interpreters/anthropic_interpreter.rs"]
+json = { count = 6, reason = "provider" }
+
+[sources."crates/capsem-core/src/net/interpreters/google_interpreter.rs"]
+json = { count = 6, reason = "provider" }
+
+[sources."crates/capsem-core/src/net/interpreters/openai_interpreter.rs"]
+json = { count = 8, reason = "provider" }
+
+[sources."crates/capsem-core/src/net/mitm_proxy/mcp_endpoint.rs"]
+json = { count = 25, reason = "provider" }
+
+[sources."crates/capsem-core/src/net/mitm_proxy/mcp_frame/wire.rs"]
+json = { count = 6, reason = "provider" }
+
+[sources."crates/capsem-core/src/net/mitm_proxy/mcp_frame.rs"]
+json = { count = 13, reason = "provider" }
+
+[sources."crates/capsem-core/src/net/mitm_proxy/mcp_http.rs"]
+json = { count = 1, reason = "provider" }
+
+[sources."crates/capsem-core/src/net/mitm_proxy/mcp_observe.rs"]
+json = { count = 9, reason = "provider" }
+
+[sources."crates/capsem-core/src/net/mitm_proxy/mod.rs"]
+json = { count = 2, reason = "provider" }
+
+[sources."crates/capsem-core/src/net/mitm_proxy/telemetry_hook.rs"]
+json = { count = 1, reason = "provider" }
+
+[sources."crates/capsem-core/src/net/mitm_proxy/util.rs"]
+hash = { count = 1, reason = "hash-credential-ref" }
+
+[sources."crates/capsem-core/src/net/mitm_proxy/websocket/turns.rs"]
+json = { count = 7, reason = "provider" }
+
+[sources."crates/capsem-core/src/net/network_registry/logs.rs"]
+json = { count = 2, reason = "http" }
+
+[sources."crates/capsem-core/src/net/network_registry.rs"]
+json = { count = 7, reason = "http" }
+
+[sources."crates/capsem-core/src/net/policy_config/active_policy.rs"]
+hash = { count = 1, reason = "hash-policy" }
+
+[sources."crates/capsem-core/src/net/policy_config/corp_provision.rs"]
+json = { count = 2, reason = "config" }
+hash = { count = 4, reason = "hash-policy" }
+
+[sources."crates/capsem-core/src/net/policy_config/loader.rs"]
+json = { count = 5, reason = "config" }
+
+[sources."crates/capsem-core/src/net/policy_config/settings_policy.rs"]
+json = { count = 1, reason = "config" }
+hash = { count = 1, reason = "hash-policy" }
+
+[sources."crates/capsem-core/src/security_engine/forensics.rs"]
+json = { count = 14, reason = "forensic" }
+
+[sources."crates/capsem-core/src/security_engine/mod.rs"]
+json = { count = 13, reason = "forensic" }
+
+[sources."crates/capsem-core/src/service_uds.rs"]
+json = { count = 10, reason = "http" }
+
+[sources."crates/capsem-core/src/session/spawn_identity.rs"]
+json = { count = 2, reason = "durable" }
+
+[sources."crates/capsem-core/src/session/spawn_owner/receipts.rs"]
+json = { count = 1, reason = "durable" }
+
+[sources."crates/capsem-core/src/session/spawn_owner.rs"]
+json = { count = 2, reason = "durable" }
+
+[sources."crates/capsem-core/src/vm/boot.rs"]
+json = { count = 6, reason = "release" }
+
+[sources."crates/capsem-core/src/vm/config.rs"]
+hash = { count = 2, reason = "hash-mixed-asset-cache" }
+
+[sources."crates/capsem-credentials/src/broker/policy.rs"]
+json = { count = 1, reason = "credentials" }
+
+[sources."crates/capsem-credentials/src/broker/storage.rs"]
+json = { count = 2, reason = "credentials" }
+
+[sources."crates/capsem-credentials/src/durable.rs"]
+json = { count = 2, reason = "credentials" }
+
+[sources."crates/capsem-credentials/src/oauth/google/connection/storage.rs"]
+json = { count = 2, reason = "credentials" }
+
+[sources."crates/capsem-credentials/src/oauth/google/identity.rs"]
+json = { count = 1, reason = "credentials" }
+hash = { count = 1, reason = "hash-oauth" }
+
+[sources."crates/capsem-credentials/src/oauth/google.rs"]
+json = { count = 2, reason = "credentials" }
+
+[sources."crates/capsem-credentials/src/oauth.rs"]
+hash = { count = 1, reason = "hash-oauth" }
+
+[sources."crates/capsem-crypto/src/lib.rs"]
+hash = { count = 1, reason = "hash-implementation" }
+
+[sources."crates/capsem-crypto/src/verify.rs"]
+hash = { count = 7, reason = "hash-implementation" }
+
+[sources."crates/capsem-crypto/src/xxh3.rs"]
+hash = { count = 2, reason = "hash-implementation" }
+
+[sources."crates/capsem-foundation/src/log_layer.rs"]
+json = { count = 1, reason = "logging" }
+
+[sources."crates/capsem-foundation/src/telemetry.rs"]
+hash = { count = 1, reason = "hash-identity" }
+
+[sources."crates/capsem-foundation/src/uds.rs"]
+hash = { count = 1, reason = "hash-identity" }
+
+[sources."crates/capsem-gateway/build.rs"]
+hash = { count = 1, reason = "hash-asset" }
+
+[sources."crates/capsem-gateway/src/auth.rs"]
+json = { count = 6, reason = "http" }
+
+[sources."crates/capsem-gateway/src/main.rs"]
+json = { count = 6, reason = "http" }
+
+[sources."crates/capsem-gateway/src/preview.rs"]
+json = { count = 7, reason = "http" }
+
+[sources."crates/capsem-gateway/src/proxy.rs"]
+json = { count = 6, reason = "http" }
+
+[sources."crates/capsem-gateway/src/status.rs"]
+json = { count = 3, reason = "http" }
+
+[sources."crates/capsem-gateway/src/stream.rs"]
+json = { count = 2, reason = "http" }
+
+[sources."crates/capsem-gateway/src/surface.rs"]
+json = { count = 2, reason = "http" }
+
+[sources."crates/capsem-logger/src/counters/equivalence.rs"]
+json = { count = 2, reason = "db-json" }
+
+[sources."crates/capsem-logger/src/counters/fixtures.rs"]
+json = { count = 13, reason = "db-json" }
+
+[sources."crates/capsem-logger/src/counters/oracle.rs"]
+json = { count = 3, reason = "db-json" }
+
+[sources."crates/capsem-logger/src/counters.rs"]
+json = { count = 1, reason = "db-json" }
+
+[sources."crates/capsem-logger/src/db/bodies.rs"]
+json = { count = 1, reason = "db-json" }
+hash = { count = 1, reason = "hash-archive" }
+
+[sources."crates/capsem-logger/src/db/host.rs"]
+json = { count = 3, reason = "db-json" }
+
+[sources."crates/capsem-logger/src/db/warc_export.rs"]
+json = { count = 2, reason = "db-json" }
+
+[sources."crates/capsem-logger/src/db.rs"]
+json = { count = 5, reason = "db-json" }
+
+[sources."crates/capsem-logger/src/events/transport.rs"]
+json = { count = 1, reason = "db-json" }
+
+[sources."crates/capsem-logger/src/ledger_server/queries.rs"]
+json = { count = 12, reason = "db-json" }
+
+[sources."crates/capsem-logger/src/lib.rs"]
+hash = { count = 2, reason = "hash-archive" }
+
+[sources."crates/capsem-logger/src/reader/rawquery.rs"]
+json = { count = 6, reason = "db-json" }
+
+[sources."crates/capsem-logger/src/reader/rows.rs"]
+json = { count = 4, reason = "db-json" }
+
+[sources."crates/capsem-logger/src/reader.rs"]
+json = { count = 2, reason = "db-json" }
+
+[sources."crates/capsem-logger/src/schema.rs"]
+hash = { count = 1, reason = "hash-identity" }
+
+[sources."crates/capsem-logger/src/writer/bodies.rs"]
+hash = { count = 1, reason = "hash-archive" }
+
+[sources."crates/capsem-logger/src/writer/model_rows.rs"]
+json = { count = 1, reason = "db-json" }
+hash = { count = 3, reason = "hash-model-item" }
+
+[sources."crates/capsem-mcp-aggregator/src/runtime.rs"]
+json = { count = 3, reason = "mcp" }
+
+[sources."crates/capsem-mcp-aggregator/src/server_manager.rs"]
+json = { count = 18, reason = "mcp" }
+
+[sources."crates/capsem-mcp-builtin/src/main.rs"]
+json = { count = 6, reason = "mcp" }
+
+[sources."crates/capsem-mock-server/src/agent_mcp.rs"]
+json = { count = 18, reason = "benchmark" }
+
+[sources."crates/capsem-mock-server/src/anthropic.rs"]
+json = { count = 9, reason = "benchmark" }
+
+[sources."crates/capsem-mock-server/src/dns.rs"]
+json = { count = 2, reason = "benchmark" }
+
+[sources."crates/capsem-mock-server/src/main.rs"]
+json = { count = 52, reason = "benchmark" }
+
+[sources."crates/capsem-mock-server/src/responses/stream.rs"]
+json = { count = 28, reason = "benchmark" }
+
+[sources."crates/capsem-mock-server/src/responses.rs"]
+json = { count = 5, reason = "benchmark" }
+
+[sources."crates/capsem-mock-server/src/responses_mcp.rs"]
+json = { count = 8, reason = "benchmark" }
+
+[sources."crates/capsem-mock-server/src/targets.rs"]
+json = { count = 2, reason = "benchmark" }
+
+[sources."crates/capsem-mock-server/src/websocket.rs"]
+json = { count = 9, reason = "benchmark" }
+
+[sources."crates/capsem-process/src/ipc.rs"]
+json = { count = 8, reason = "mcp" }
+
+[sources."crates/capsem-process/src/mcp_runtime.rs"]
+json = { count = 9, reason = "mcp" }
+
+[sources."crates/capsem-proto/build.rs"]
+hash = { count = 1, reason = "hash-identity" }
+
+[sources."crates/capsem-proto/src/credential_reference.rs"]
+hash = { count = 1, reason = "hash-credential-ref" }
+
+[sources."crates/capsem-proto/src/forensic.rs"]
+json = { count = 5, reason = "forensic" }
+
+[sources."crates/capsem-proto/src/ipc.rs"]
+json = { count = 2, reason = "mcp" }
+
+[sources."crates/capsem-proto/src/mcp_aggregator.rs"]
+json = { count = 8, reason = "mcp" }
+
+[sources."crates/capsem-proto/src/mcp_contracts/builtin_ledger.rs"]
+json = { count = 4, reason = "mcp" }
+
+[sources."crates/capsem-proto/src/mcp_contracts.rs"]
+json = { count = 14, reason = "mcp" }
+
+[sources."crates/capsem-service/src/api.rs"]
+json = { count = 3, reason = "http" }
+
+[sources."crates/capsem-service/src/asset_routes.rs"]
+json = { count = 4, reason = "http" }
+
+[sources."crates/capsem-service/src/container_setup/relaunch.rs"]
+json = { count = 1, reason = "container" }
+
+[sources."crates/capsem-service/src/container_setup.rs"]
+json = { count = 3, reason = "container" }
+
+[sources."crates/capsem-service/src/credential_routes/startup.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."crates/capsem-service/src/host_ledger.rs"]
+json = { count = 7, reason = "http" }
+
+[sources."crates/capsem-service/src/ledger_routes/activity.rs"]
+json = { count = 2, reason = "http" }
+
+[sources."crates/capsem-service/src/ledger_routes/history.rs"]
+json = { count = 5, reason = "http" }
+
+[sources."crates/capsem-service/src/ledger_routes/rows.rs"]
+json = { count = 11, reason = "http" }
+
+[sources."crates/capsem-service/src/ledger_routes/stats_detail/interactions/mcp.rs"]
+json = { count = 4, reason = "http" }
+
+[sources."crates/capsem-service/src/ledger_routes/stats_detail/interactions/payload.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."crates/capsem-service/src/ledger_routes/stats_detail.rs"]
+json = { count = 6, reason = "http" }
+
+[sources."crates/capsem-service/src/ledger_routes.rs"]
+json = { count = 12, reason = "http" }
+
+[sources."crates/capsem-service/src/main.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."crates/capsem-service/src/mcp_routes.rs"]
+json = { count = 9, reason = "http" }
+
+[sources."crates/capsem-service/src/network_routes.rs"]
+json = { count = 3, reason = "http" }
+
+[sources."crates/capsem-service/src/registry.rs"]
+json = { count = 2, reason = "durable" }
+
+[sources."crates/capsem-service/src/router_runtime.rs"]
+json = { count = 10, reason = "http" }
+
+[sources."crates/capsem-service/src/sandbox_info.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."crates/capsem-service/src/service_peer.rs"]
+json = { count = 2, reason = "http" }
+
+[sources."crates/capsem-service/src/session_cleanup.rs"]
+json = { count = 2, reason = "http" }
+
+[sources."crates/capsem-service/src/settings_routes.rs"]
+json = { count = 17, reason = "http" }
+
+[sources."crates/capsem-service/src/startup.rs"]
+json = { count = 2, reason = "http" }
+
+[sources."crates/capsem-service/src/switches.rs"]
+json = { count = 6, reason = "http" }
+
+[sources."crates/capsem-service/src/triage.rs"]
+json = { count = 6, reason = "http" }
+
+[sources."crates/capsem-service/src/update_status.rs"]
+json = { count = 10, reason = "http" }
+
+[sources."crates/capsem-service/src/upstream_broker/mcp_http.rs"]
+json = { count = 1, reason = "mcp" }
+
+[sources."crates/capsem-service/src/vm_files/diagnostics.rs"]
+json = { count = 22, reason = "http" }
+
+[sources."crates/capsem-service/src/vm_files.rs"]
+json = { count = 7, reason = "http" }
+
+[sources."crates/capsem-service/src/vm_lifecycle.rs"]
+json = { count = 1, reason = "http" }
+hash = { count = 3, reason = "hash-identity" }
+
+[sources."crates/capsem-tray/src/gateway.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."crates/capsem-tui/src/gateway_provider.rs"]
+json = { count = 3, reason = "http" }
+
+[sources."sdk/rust/src/error.rs"]
+json = { count = 2, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/attach_network_member.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/authorize_google_connection.rs"]
+json = { count = 2, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/call_mcp_tool.rs"]
+json = { count = 2, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/cancel_connection_authorization.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/claim_managed_session.rs"]
+json = { count = 2, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/close_managed_session.rs"]
+json = { count = 2, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/create_network.rs"]
+json = { count = 2, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/create_proxy.rs"]
+json = { count = 2, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/create_session_credential_grant.rs"]
+json = { count = 2, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/create_vm.rs"]
+json = { count = 2, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/create_vm_exposure.rs"]
+json = { count = 2, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/create_vm_preview_session.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/delete_network.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/delete_vm.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/delete_vm_exposure.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/detach_network_member.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/disconnect_connection.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/exec_vm.rs"]
+json = { count = 2, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/fork_vm.rs"]
+json = { count = 2, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/get_asset_status.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/get_connection.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/get_connection_authorization.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/get_hypervisor_info.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/get_hypervisor_logs.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/get_mcp_default.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/get_mcp_info.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/get_network.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/get_network_logs.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/get_panics.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/get_triage.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/get_update_status.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/get_vm_container.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/get_vm_event_bodies.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/get_vm_history.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/get_vm_info.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/get_vm_logs.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/get_vm_stats_detail.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/get_vm_stats_summary.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/get_vm_status.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/get_vm_timeline.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/heartbeat_proxy.rs"]
+json = { count = 2, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/inject_credential.rs"]
+json = { count = 2, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/list_connections.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/list_images.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/list_mcp_servers.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/list_mcp_tools.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/list_networks.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/list_session_credential_grants.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/list_vm_exposures.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/list_vm_files.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/list_vms.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/pause_vm.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/persist_vm.rs"]
+json = { count = 2, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/pull_image.rs"]
+json = { count = 2, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/purge_vms.rs"]
+json = { count = 2, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/refresh_mcp_server.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/restart_hypervisor.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/resume_vm.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/revoke_session_credential_grant.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/revoke_vm_preview_sessions.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/run_vm.rs"]
+json = { count = 2, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/start_vm.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/stop_proxy.rs"]
+json = { count = 2, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/stop_vm.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/update_hypervisor.rs"]
+json = { count = 2, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/upload_vm_file.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations.rs"]
+json = { count = 2, reason = "http" }

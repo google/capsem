@@ -136,7 +136,6 @@ REQUIRED_WIRING = {
     "crates/capsem-logger/src/writer/remote.rs": (
         "LEDGER_ADMISSION_BATCH_CAPACITY",
         "LEDGER_ADMISSION_COALESCE_WAIT_MICROSECONDS",
-        "ReserveBatch",
         "AdmitBatch",
     ),
     "crates/capsem-logger/src/db.rs": (

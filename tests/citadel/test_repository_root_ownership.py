@@ -41,6 +41,7 @@ APPROVED_DIRECTORIES = frozenset(
         "skills",
         "target",
         "tests",
+        "third_party",  # Pinned terminal engines; repository_surface_ownership.toml owns the surface.
         "web",
     }
 )

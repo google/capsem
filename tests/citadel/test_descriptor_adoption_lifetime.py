@@ -18,6 +18,9 @@ is not adoption. See skills/dev-rust-patterns/SKILL.md, Host Unix boundary.
 
 # These are the actual owned handoff paths that regressed, not a count of drops.
 HANDOFFS = [
+    ("capsem-proxy/tests/subprocess.rs", "async fn worker_confines_before_ready_and_adopts_scoped_descriptors", "granted", "ProxyControlEvent::Adopted"),
+    ("capsem-proxy/tests/subprocess.rs", "async fn ledger_grant_is_authenticated_before_adoption", "granted", "ProxyControlEvent::Adopted"),
+    ("capsem-proxy/tests/subprocess.rs", "async fn policy_capability_compiles_exact_bytes_and_rejects_bad_revisions", "granted", "ProxyControlEvent::Adopted"),
     ("capsem-process/src/cables.rs", "async fn take_within", "stream", "decode_seat_frame"),
     ("capsem-core/src/net/upstream_grant/mcp.rs", "async fn attach_http", "descriptor", "McpHttpAdopted"),
     ("capsem-service/src/gateway_grant.rs", "async fn send_grant", "descriptor", "GatewayGrantRequest::Adopted"),

@@ -88,7 +88,16 @@ def raw_operations(source: str) -> list[str]:
         )
         and not re.match(r"use\s+(?:crate|super|self|capsem_crypto)\s*::", m.group())
     ]
-    return imports + [m.group() for m in RAW_PATH.finditer(source)]
+    bespoke = re.findall(r"\bDefaultHasher\b|\b0x(?:cbf29ce484222325|100000001b3)\b", source)
+    return imports + [m.group() for m in RAW_PATH.finditer(source)] + bespoke
+
+
+@pytest.mark.parametrize("source", [
+    "let mut hash = std::collections::hash_map::DefaultHasher::new();",
+    "let mut hash = 0xcbf29ce484222325_u64; hash = hash.wrapping_mul(0x100000001b3);",
+])
+def test_content_fingerprints_do_not_reimplement_or_select_a_hash(source: str) -> None:
+    assert raw_operations(source), CRYPTO_BOUNDARY_RATIONALE
 
 
 def provider_dependencies(manifest: dict, workspace: dict | None = None) -> list[str]:
