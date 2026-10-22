@@ -56,8 +56,9 @@ def violations(root: Path) -> list[str]:
     return errors
 
 
-def test_vte_patch_matches_reviewed_source_and_retains_upstream_provenance() -> None:
-    assert not violations(VENDOR / "vte"), PROVENANCE_RATIONALE
+@pytest.mark.parametrize("crate", ["vte", "alacritty_terminal"])
+def test_terminal_patch_matches_reviewed_source_and_retains_upstream_provenance(crate: str) -> None:
+    assert not violations(VENDOR / crate), PROVENANCE_RATIONALE
 
 
 def fixture(root: Path) -> Path:

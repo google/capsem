@@ -37,3 +37,40 @@ Run the corresponding all-target clippy command with warnings denied. Tests
 include all upstream parser regressions, every split of representative input,
 unprocessed synchronized output, malformed state and deterministic hostile
 continuation cases. Session lifecycle persistence requires separate VM proof.
+
+## alacritty_terminal 0.26.0
+
+Source: [alacritty/alacritty](https://github.com/alacritty/alacritty), commit
+`94e7c8874e526b1e67b349d9ba30ddf81669119e`.
+License: Apache-2.0; the original license and all upstream reference fixtures
+are retained. The application uses the terminal model, not Alacritty's PTY or
+process launcher.
+
+The optional `checkpoint` feature captures both logical grids, history,
+current/saved cursors, charsets, tabs, palette, modes, selection, title stack,
+keyboard stacks and automatic hyperlink identifier high-water mark. Event
+proxies, allocation caches and damage caches are not serialized: restore binds
+a fresh event proxy and marks the display fully damaged, without dispatching
+effects. The existing upstream grid serialization remains unchanged.
+
+Restore requires equality with the caller's current trusted configuration, so
+a saved state cannot enable clipboard access. Explicit caller budgets bound
+dimensions, history, combined cell count and text/combining data. Model
+validation checks row shapes, cursor/selection bounds, mode bits, stack depths,
+wide-cell pairing and semantic state before exposing a usable terminal.
+Callers must also bound serialized bytes before decoding. Pair this model with
+the pinned vte processor checkpoint to retain unfinished escape/UTF-8 input.
+The versioned format is internal implementation state, not an external API.
+
+Three upstream passwd fallback matches are consolidated to satisfy the pinned
+compiler's warning-denied Clippy checks. The standalone test lockfile resolves
+the sibling vte patch and pins its test-only MessagePack dependency cohort.
+
+Run `cargo test --manifest-path third_party/rust/alacritty_terminal/Cargo.toml
+--features checkpoint --locked --offline` and corresponding warning-denied
+all-target Clippy through the bounded-command wrapper. Checkpoint tests include
+named MessagePack round trips, side-effect-free restore, malformed/budget
+refusal, tab-cell preservation and continued processing of every upstream
+recording. Upstream unit, reference and documentation tests remain intact.
+These prove the dependency interface; session suspend and UI behavior require
+their separate integration proof.

@@ -1,0 +1,18 @@
+{
+  "upstream_package_sha256": "bda177466b9524d59f1b12f0dd30b68696788e9992a7e959021c4a0ed96fcf59",
+  "reason": "Maintainer-approved optional complete model checkpoints with explicit budgets and trusted configuration; preserved upstream tests and grid serde; consolidated passwd fallback for pinned compiler Clippy; standalone test cohort uses sibling vte checkpoint patch.",
+  "files": {
+    "Cargo.lock": "0180850121d1c15679b4638033e6013abd9682722a122f69c194aafd65fd2fb1",
+    "Cargo.toml": "05b38e8490cad885654fc41d99eb2ecb128ec40436c25ba4c1d2f84bc99dadc4",
+    "src/grid/checkpoint.rs": "5a12ff4020b9a3e0cff3297da096958eeb2597002ccb5c2d515f55bb65092c04",
+    "src/grid/mod.rs": "db8ac9f3effab7bf40b130ded2945227d6a1c81cd97ada4b5e9f25a53965aced",
+    "src/grid/storage.rs": "6fb0c9912eafc5e19bf96bb0dfcceaf7245ecfa19781ac52716ef981f7da8a37",
+    "src/index.rs": "e44714b864df6c4422fa22f5e5ace27d88a4897211c1a91e8efc41c01ef202fd",
+    "src/selection.rs": "05b6d884c446d8f5564c48c0ba9b6bf9c0adafdf7cb73da0fcccf562e01ad195",
+    "src/term/cell.rs": "213c4cb6c0674fc96a1497ce568b7eefed56a0a850123aff4498ead5d516791f",
+    "src/term/checkpoint.rs": "dbd55bac980ec71243f79af2a7b42a913092746fee5dbb85de5d68764c81a1ef",
+    "src/term/mod.rs": "d4645f0a3773208ddccd3b517d8b9df46ffb04b56acb53c515d3a94e1248185e",
+    "src/tty/unix.rs": "b88507502b5f62eb85f77d08145fe4a00dd59d566ce5a155d5e4da096dc3aa3e",
+    "tests/checkpoint.rs": "525eb9605bfeccbceb3a8c8c085d5f97e22d3b22f073e9829ae7a48d33c7bfcf"
+  }
+}
