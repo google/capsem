@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep concurrent gateway requests in their own tracing contexts across async waits.
+
 - Use explicit XXH3-128 diagnostic fingerprints in support bundles.
 
 - Link security request previews to their archived bodies without rehashing each body for every rule.

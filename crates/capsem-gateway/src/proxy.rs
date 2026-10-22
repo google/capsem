@@ -10,6 +10,7 @@ use axum::http::{
 };
 use axum::response::{IntoResponse, Response};
 use http_body_util::BodyExt;
+use tracing::Instrument;
 
 use crate::AppState;
 
@@ -79,54 +80,59 @@ pub async fn handle_proxy(State(state): State<Arc<AppState>>, req: Request) -> R
             error = tracing::field::Empty,
         )
     };
-    let _span_guard = span.enter();
-    tracing::debug!(
-        target: "capsem_gateway",
-        "gateway.proxy.start"
-    );
-
-    if content_length.is_some_and(|len| len > MAX_BODY_SIZE) {
-        span.record("status", StatusCode::PAYLOAD_TOO_LARGE.as_u16());
-        span.record("latency_ms", started.elapsed().as_millis() as u64);
-        tracing::warn!(
+    // Enter per poll: pending requests share workers with unrelated tasks.
+    async move {
+        let span = tracing::Span::current();
+        tracing::debug!(
             target: "capsem_gateway",
-            content_length,
-            max_body_size = MAX_BODY_SIZE,
-            "gateway.proxy.reject_oversized"
+            "gateway.proxy.start"
         );
-        return (
-            StatusCode::PAYLOAD_TOO_LARGE,
-            axum::Json(serde_json::json!({"error": "request body too large"})),
-        )
-            .into_response();
-    }
 
-    match forward(&state, req).await {
-        Ok(resp) => {
-            span.record("status", resp.status().as_u16());
+        if content_length.is_some_and(|len| len > MAX_BODY_SIZE) {
+            span.record("status", StatusCode::PAYLOAD_TOO_LARGE.as_u16());
             span.record("latency_ms", started.elapsed().as_millis() as u64);
-            tracing::debug!(
+            tracing::warn!(
                 target: "capsem_gateway",
-                "gateway.proxy.ok"
+                content_length,
+                max_body_size = MAX_BODY_SIZE,
+                "gateway.proxy.reject_oversized"
             );
-            resp
-        }
-        Err(e) => {
-            span.record("status", StatusCode::BAD_GATEWAY.as_u16());
-            span.record("latency_ms", started.elapsed().as_millis() as u64);
-            span.record("error", tracing::field::display(&e));
-            tracing::error!(
-                target: "capsem_gateway",
-                error = %e,
-                "gateway.proxy.error"
-            );
-            (
-                StatusCode::BAD_GATEWAY,
-                axum::Json(serde_json::json!({"error": "service unavailable"})),
+            return (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                axum::Json(serde_json::json!({"error": "request body too large"})),
             )
-                .into_response()
+                .into_response();
+        }
+
+        match forward(&state, req).await {
+            Ok(resp) => {
+                span.record("status", resp.status().as_u16());
+                span.record("latency_ms", started.elapsed().as_millis() as u64);
+                tracing::debug!(
+                    target: "capsem_gateway",
+                    "gateway.proxy.ok"
+                );
+                resp
+            }
+            Err(e) => {
+                span.record("status", StatusCode::BAD_GATEWAY.as_u16());
+                span.record("latency_ms", started.elapsed().as_millis() as u64);
+                span.record("error", tracing::field::display(&e));
+                tracing::error!(
+                    target: "capsem_gateway",
+                    error = %e,
+                    "gateway.proxy.error"
+                );
+                (
+                    StatusCode::BAD_GATEWAY,
+                    axum::Json(serde_json::json!({"error": "service unavailable"})),
+                )
+                    .into_response()
+            }
         }
     }
+    .instrument(span)
+    .await
 }
 
 struct GatewayRequestId(u64);

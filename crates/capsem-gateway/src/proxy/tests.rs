@@ -83,6 +83,37 @@ async fn status_of(app: Router, method: &str, uri: &str) -> StatusCode {
     .status()
 }
 
+#[tokio::test]
+async fn pending_proxy_poll_does_not_leave_request_span_entered() {
+    use std::future::Future;
+    use std::task::{Context, Waker};
+
+    let upstream = Router::new().route("/ok", any(|| async { std::future::pending::<StatusCode>().await }));
+    let (path, server, _directory) = mock_uds(upstream).await;
+    let app = proxy_app(&path);
+    let dispatch = tracing::Dispatch::new(tracing_subscriber::registry());
+    let mut requests = Vec::new();
+    for _ in 0..2 {
+        let request = axum::http::Request::builder().uri("/ok").body(Body::empty()).unwrap();
+        requests.push(Box::pin(app.clone().oneshot(request)));
+    }
+    for request in &mut requests {
+        let leaked_span = tracing::dispatcher::with_default(&dispatch, || {
+            let mut context = Context::from_waker(Waker::noop());
+            assert!(request.as_mut().poll(&mut context).is_pending());
+            tracing::Span::current()
+                .metadata()
+                .map(|metadata| metadata.name().to_owned())
+        });
+        assert_eq!(
+            leaked_span, None,
+            "a pending request must not become another task's parent"
+        );
+    }
+    drop(requests);
+    server.abort();
+}
+
 // --- 502 when UDS unavailable ---
 
 #[tokio::test]
