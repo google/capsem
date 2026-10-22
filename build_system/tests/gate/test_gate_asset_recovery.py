@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
 import blake3
 import pytest
 from capsem_builder.cache.config import load_policy
-from capsem_builder.gate import assetcondition, assetidentity, assetrecovery, bench, imagebuild
+from capsem_builder.gate import (
+    assetcondition,
+    assetidentity,
+    assetrecovery,
+    bench,
+    guestcommands,
+    imagebuild,
+)
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate.actions import Action
 from capsem_builder.gate.assetcondition import AssetRecovery
@@ -319,6 +327,28 @@ def test_every_gate_command_that_recovers_assets_accepts_slow() -> None:
         args = parser.parse_args([*argv, "--slow"])
         assert RebuildPermission.from_args(args).slow, argv
         assert not RebuildPermission.from_args(parser.parse_args(argv)).slow, argv
+
+
+@pytest.mark.parametrize("command_type", [guestcommands.ShellCommand, guestcommands.ExecCommand])
+def test_guest_command_slow_reaches_asset_recovery(tmp_path: Path, monkeypatch, command_type) -> None:
+    config = _warm_checkout(tmp_path)
+    _change_kernel_defconfig(config)
+    # This case tests the recovery decision; initrd packaging needs unrelated
+    # version files that the small identity fixture deliberately omits.
+    monkeypatch.setattr("capsem_builder.gate.imagebases.required_rust_builder_names", lambda *_args: ())
+    monkeypatch.setattr("capsem_builder.gate.initrd.pack", lambda _plan, _config, *, after: after[-1])
+    command = command_type(
+        RecordingRunner(PROJECT_ROOT),
+        argparse.Namespace(slow=True, guest_command="true", sandbox=None),
+    )
+    command._config = config
+    conditional = next(
+        action
+        for step in command.plan().steps
+        for action in step.actions
+        if action.name == "when-host-assets-stale"
+    )
+    assert conditional._recovery.decision().refusal is None
 
 
 def test_warm_assets_without_an_identity_record_are_rebuilt(tmp_path: Path) -> None:

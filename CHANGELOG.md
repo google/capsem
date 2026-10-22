@@ -182,6 +182,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Guest `shell` and `exec` commands now honor `--slow` when changed inputs
+  require rebuilding VM assets.
+
 - Concurrent asset downloads now use separate private temporary files, so one
   hydrator cannot delete another's partially downloaded image.
 
