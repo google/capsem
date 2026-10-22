@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Report serial-log storage errors and stop failed recording without
+  interrupting the terminal.
+
 - Move terminal transcript storage off input/output handlers, with bounded
   recording, ordered shutdown, and explicit disk or queue failures.
 

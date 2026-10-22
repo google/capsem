@@ -222,9 +222,14 @@ where
             }
         };
         while let Some(batch) = rx.blocking_recv() {
-            let _ = writer.write_all(&batch);
+            if let Err(error) = writer.write_all(&batch) {
+                warn!(%error, "serial log recording stopped after storage failure");
+                return;
+            }
         }
-        let _ = writer.flush();
+        if let Err(error) = writer.flush() {
+            warn!(%error, "serial log flush failed");
+        }
     });
     (tx, handle)
 }

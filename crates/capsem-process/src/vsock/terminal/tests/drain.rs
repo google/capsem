@@ -1,6 +1,62 @@
 use super::*;
 use capsem_core::pty_log::{read_output_bytes, PtyLog, PtyRecorder};
 
+struct FullDisk;
+impl std::io::Write for FullDisk {
+    fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+        Err(std::io::Error::from(std::io::ErrorKind::StorageFull))
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn serial_disk_failure_closes_admission_without_waiting_for_the_terminal() {
+    let (sender, worker) = spawn_serial_log_writer(|| Ok(FullDisk));
+    sender.send(b"disk is full".to_vec()).await.unwrap();
+    let stopped = tokio::time::timeout(Duration::from_secs(1), sender.closed()).await;
+    drop(sender);
+    tokio::task::spawn_blocking(move || worker.join())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        stopped.is_ok(),
+        "serial writer silently consumed output after disk failure"
+    );
+}
+
+#[tokio::test]
+async fn serial_disk_failure_does_not_stop_display_updates_or_input() {
+    let terminal = capsem_core::terminal::SessionTerminal::new(8);
+    let mut summaries = terminal.subscribe_summary();
+    let (owner, mut guest) = connection();
+    let (rekey, rekey_rx) = mpsc::channel(4);
+    let (input, input_rx) = mpsc::channel(8);
+    let bridge = spawn(terminal, rekey_rx, input_rx, None, FullDisk);
+    rekey.send(owner).await.unwrap();
+    for title in ["First", "After storage failure"] {
+        guest.write_all(format!("\x1b]2;{title}\x07").as_bytes()).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(2), summaries.changed())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(summaries.borrow_and_update().title, title);
+    }
+    input.send(b"still interactive".to_vec()).await.unwrap();
+    let mut received = [0; 17];
+    tokio::time::timeout(Duration::from_secs(2), guest.read_exact(&mut received))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(&received, b"still interactive");
+    tokio::time::timeout(Duration::from_secs(2), bridge.shutdown())
+        .await
+        .unwrap()
+        .unwrap();
+}
+
 #[tokio::test]
 async fn process_drain_stops_the_bridge_and_flushes_transcripts_with_live_senders() {
     let terminal = capsem_core::terminal::SessionTerminal::new(8);
