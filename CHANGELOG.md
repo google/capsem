@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep terminal sockets and queued input intact when suspend rolls back, and
+  confirm guest filesystem thaw before returning control to the session.
+
 - Retain the current running session after a recoverable suspend rejection.
 
 - Report resume errors for retained sessions without marking them not found.

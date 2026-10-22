@@ -23,10 +23,12 @@ async fn checkpoint_drains_socket_and_coalescer_with_replies_logs_and_parser_con
     let final_bytes = b"last\x07\x1b[6n\x1b]2;Fragment";
     guest.write_all(final_bytes).await.unwrap();
     terminal.seal_views();
-    tokio::time::timeout(Duration::from_secs(2), bridge.checkpoint())
+    let mut checkpoint = bridge.park().unwrap();
+    tokio::time::timeout(Duration::from_secs(2), checkpoint.settled())
         .await
         .unwrap()
         .unwrap();
+    bridge.shutdown().await.unwrap();
     let mut replies = Vec::new();
     guest.read_to_end(&mut replies).await.unwrap();
     assert_eq!(replies, b"\x1b[1;5R");
@@ -62,10 +64,12 @@ async fn checkpoint_settles_all_queued_input_before_closing_the_stream() {
     input.send(b"first".to_vec()).await.unwrap();
     input.send(b"second".to_vec()).await.unwrap();
     terminal.seal_views();
-    tokio::time::timeout(Duration::from_secs(2), bridge.checkpoint())
+    let mut checkpoint = bridge.park().unwrap();
+    tokio::time::timeout(Duration::from_secs(2), checkpoint.settled())
         .await
         .unwrap()
         .unwrap();
+    bridge.shutdown().await.unwrap();
     let mut received = Vec::new();
     guest.read_to_end(&mut received).await.unwrap();
     assert_eq!(received, b"firstsecond");
@@ -94,7 +98,8 @@ async fn blocked_partial_write_refuses_checkpoint_instead_of_discarding_pending_
         .await
         .unwrap()
         .unwrap();
-    let result = tokio::time::timeout(Duration::from_secs(2), bridge.checkpoint())
+    let mut checkpoint = bridge.park().unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(2), checkpoint.settled())
         .await
         .unwrap();
     assert!(
@@ -105,6 +110,7 @@ async fn blocked_partial_write_refuses_checkpoint_instead_of_discarding_pending_
         result.unwrap_err().downcast_ref::<std::io::Error>().unwrap().kind(),
         std::io::ErrorKind::WouldBlock
     );
+    bridge.shutdown().await.unwrap();
 }
 
 #[tokio::test]
@@ -126,10 +132,12 @@ async fn checkpoint_does_not_expire_synchronized_output_after_the_transport_stop
         .unwrap()
         .unwrap();
     guest.write_all(b"\x1b[?2026hheld\x07").await.unwrap();
-    tokio::time::timeout(Duration::from_secs(2), bridge.checkpoint())
+    let mut checkpoint = bridge.park().unwrap();
+    tokio::time::timeout(Duration::from_secs(2), checkpoint.settled())
         .await
         .unwrap()
         .unwrap();
+    bridge.shutdown().await.unwrap();
     assert!(terminal.sync_deadline().is_some());
     assert_eq!(terminal.subscribe().1.state.bell_count, 0);
     let bytes = terminal.checkpoint().unwrap();

@@ -994,11 +994,7 @@ async fn handle_guest_msg(
                 );
             }
         }
-        GuestToHost::SnapshotReady => {
-            if let Some(tx) = js.snapshot_ready.lock().unwrap().take() {
-                capsem_core::try_send!("snapshot_ready", tx.send(()));
-            }
-        }
+        GuestToHost::SnapshotTransitioned { id, frozen, error } => js.finish_snapshot_transition(id, frozen, error),
         GuestToHost::Error { id, message } => {
             if let Some(tx) = js.jobs.lock().unwrap().remove(&id) {
                 capsem_core::try_send!("job_result_error", tx.send(JobResult::Error { message }));

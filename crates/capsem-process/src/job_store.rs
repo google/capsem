@@ -4,7 +4,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::sync::{oneshot, Notify};
-use tracing::{info, warn};
+mod snapshot;
+pub(crate) use snapshot::{snapshot_transition, with_quiescence};
 
 pub(crate) struct JobStore {
     pub(crate) publisher: Arc<capsem_core::container::publish::Publisher>,
@@ -18,9 +19,8 @@ pub(crate) struct JobStore {
     /// response only carries enough context for reads; writes need the original
     /// path and payload to emit the security-event ledger row after success.
     pub(crate) active_file_ops: Mutex<HashMap<u64, ActiveFileOp>>,
-    /// Channel for snapshot ready signal.
-    pub(crate) snapshot_ready: Mutex<Option<oneshot::Sender<()>>>,
-    /// Held across one quiescence sequence. `snapshot_ready` has room for a
+    pub(crate) snapshot_transition: Mutex<Option<snapshot::Waiter>>,
+    /// Held across one quiescence sequence. The transition has room for a
     /// single waiter, so a fork and a suspend overlapping would each take
     /// the other's freeze acknowledgement.
     pub(crate) quiescence: tokio::sync::Mutex<()>,
@@ -110,7 +110,7 @@ impl JobStore {
             clone_completions: Mutex::new(HashMap::new()),
             active_execs: Mutex::new(HashMap::new()),
             active_file_ops: Mutex::new(HashMap::new()),
-            snapshot_ready: Mutex::new(None),
+            snapshot_transition: Mutex::new(None),
             quiescence: tokio::sync::Mutex::new(()),
             pending_acks: Mutex::new(HashMap::new()),
             next_control_id: std::sync::atomic::AtomicU64::new(1_u64 << 63),
@@ -145,8 +145,9 @@ impl JobStore {
         for (_id, tx) in self.clone_completions.lock().unwrap().drain() {
             capsem_core::try_send!("clone_completion_fail_all", tx.send(Err(message.to_string())));
         }
-        if let Some(tx) = self.snapshot_ready.lock().unwrap().take() {
-            capsem_core::try_send!("snapshot_ready_fail_all", tx.send(()));
+        let snapshot = self.snapshot_transition.lock().unwrap().take();
+        if let Some(snapshot) = snapshot {
+            let _ = snapshot.reply.send(Err(message.to_string()));
         }
         // Wake every ExecDone handler parked on a deposit notifier. Each will
         // then observe its removed slot and complete without hanging.
@@ -200,59 +201,6 @@ pub(crate) enum JobResult {
     Error {
         message: String,
     },
-}
-
-/// Orchestrates a guest quiescence sequence around a provided async operation.
-///
-/// 1. Sends `PrepareSnapshot` to the guest (sync + fsfreeze).
-/// 2. Waits up to `timeout` for `SnapshotReady`.
-/// 3. If successful, executes the provided operation.
-/// 4. Sends `Unfreeze` to the guest regardless of operation success or timeout.
-///
-/// One sequence at a time: the whole sequence holds `JobStore::quiescence`.
-pub(crate) async fn with_quiescence<T, F, Fut>(
-    ctrl_cmd_tx: &tokio::sync::mpsc::Sender<HostToGuest>,
-    job_store: &Arc<JobStore>,
-    timeout: std::time::Duration,
-    op: F,
-) -> Result<T>
-where
-    F: FnOnce() -> Fut,
-    Fut: std::future::Future<Output = Result<T>>,
-{
-    let _sequence = job_store.quiescence.lock().await;
-    // Prepare oneshot channel
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    *job_store.snapshot_ready.lock().unwrap() = Some(tx);
-
-    info!("Sending PrepareSnapshot to guest");
-    ctrl_cmd_tx
-        .send(HostToGuest::PrepareSnapshot)
-        .await
-        .map_err(|e| anyhow::anyhow!("failed to send PrepareSnapshot: {}", e))?;
-
-    // Wait for SnapshotReady with timeout
-    match tokio::time::timeout(timeout, rx).await {
-        Ok(Ok(_)) => {
-            info!("Guest filesystem frozen successfully, running operation");
-            let op_result = op().await;
-
-            info!("Operation complete, sending Unfreeze to guest");
-            capsem_core::try_send!("ctrl_unfreeze_ok", ctrl_cmd_tx.send(HostToGuest::Unfreeze).await);
-            op_result
-        }
-        Ok(Err(_)) => {
-            // Channel closed without receiving
-            warn!("SnapshotReady channel closed prematurely, aborting operation and unfreezing");
-            capsem_core::try_send!("ctrl_unfreeze_premature", ctrl_cmd_tx.send(HostToGuest::Unfreeze).await);
-            anyhow::bail!("SnapshotReady channel closed prematurely");
-        }
-        Err(_) => {
-            warn!("Timeout waiting for SnapshotReady, aborting operation and unfreezing");
-            capsem_core::try_send!("ctrl_unfreeze_timeout", ctrl_cmd_tx.send(HostToGuest::Unfreeze).await);
-            anyhow::bail!("timed out waiting for SnapshotReady");
-        }
-    }
 }
 
 #[cfg(test)]

@@ -5,6 +5,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 mod checkpoint;
 mod drain;
+mod rollback;
 
 fn connection() -> (Arc<VsockConnection>, tokio::net::UnixStream) {
     let (owner, guest) = std::os::unix::net::UnixStream::pair().unwrap();

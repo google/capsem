@@ -40,30 +40,63 @@ async fn deadline(at: Option<tokio::time::Instant>) {
 }
 
 pub(crate) struct TerminalBridge {
-    stop: tokio::sync::oneshot::Sender<Finish>,
+    stop: mpsc::Sender<Finish>,
     task: tokio::task::JoinHandle<std::io::Result<()>>,
 }
 
 enum Finish {
     Shutdown,
-    Checkpoint,
+    Checkpoint(Parked),
+}
+
+/// The owner retains this capability until VM capture completes or rollback
+/// resumes the VM. Cancellation releases the bridge instead of destroying it.
+pub(crate) struct Checkpoint {
+    ready: tokio::sync::oneshot::Receiver<std::io::Result<()>>,
+    release: tokio::sync::oneshot::Sender<tokio::sync::oneshot::Sender<()>>,
+}
+
+struct Parked {
+    ready: Option<tokio::sync::oneshot::Sender<std::io::Result<()>>>,
+    release: tokio::sync::oneshot::Receiver<tokio::sync::oneshot::Sender<()>>,
+}
+
+impl Checkpoint {
+    pub(crate) async fn settled(&mut self) -> Result<()> {
+        (&mut self.ready)
+            .await
+            .context("terminal checkpoint transport closed")??;
+        Ok(())
+    }
+
+    pub(crate) async fn resume(self) -> Result<()> {
+        let (ack, resumed) = tokio::sync::oneshot::channel();
+        self.release
+            .send(ack)
+            .map_err(|_| anyhow::anyhow!("terminal rollback transport closed"))?;
+        resumed.await.context("terminal rollback acknowledgement closed")
+    }
 }
 
 impl TerminalBridge {
     pub(crate) async fn shutdown(self) -> Result<()> {
-        self.finish(Finish::Shutdown).await
+        let _ = self.stop.send(Finish::Shutdown).await;
+        self.task.await.context("join terminal transport")??;
+        Ok(())
     }
 
     /// Call after the VM pauses and its viewers are sealed. Settle every
     /// accepted byte before snapshotting; blocked writes fail the checkpoint.
-    pub(crate) async fn checkpoint(self) -> Result<()> {
-        self.finish(Finish::Checkpoint).await
-    }
-
-    async fn finish(self, mode: Finish) -> Result<()> {
-        let _ = self.stop.send(mode);
-        self.task.await.context("join terminal transport")??;
-        Ok(())
+    pub(crate) fn park(&self) -> Result<Checkpoint> {
+        let (ready, wait) = tokio::sync::oneshot::channel();
+        let (release, resume) = tokio::sync::oneshot::channel();
+        self.stop
+            .try_send(Finish::Checkpoint(Parked {
+                ready: Some(ready),
+                release: resume,
+            }))
+            .map_err(|error| anyhow::anyhow!("terminal checkpoint admission failed: {error}"))?;
+        Ok(Checkpoint { ready: wait, release })
     }
 }
 
@@ -75,7 +108,7 @@ pub(super) fn spawn(
     serial_log: impl std::io::Write + Send + 'static,
 ) -> TerminalBridge {
     let (log, log_handle) = spawn_serial_log_writer(move || Ok(serial_log));
-    let (stop, mut stopped) = tokio::sync::oneshot::channel();
+    let (stop, mut stopped) = mpsc::channel(1);
     let task = tokio::spawn(async move {
         let mut active: Option<TerminalSocket> = None;
         let mut coalesce = capsem_core::vm::vsock::CoalesceBuffer::new();
@@ -83,8 +116,8 @@ pub(super) fn spawn(
         let mut pending_log = None;
         let mut logging = true;
         let mut input_open = true;
-        let mut stop_open = true;
-        let mut checkpointing = false;
+        let mut parked: Option<Parked> = None;
+        let mut input_drained = false;
         let mut read_drained = false;
         let mut checkpoint_error = None;
         let mut checkpoint_socket = None;
@@ -100,6 +133,8 @@ pub(super) fn spawn(
             let mut replace = None;
             let mut finish = false;
             let connected = active.is_some();
+            let checkpointing = parked.is_some();
+            let settling = parked.as_ref().is_some_and(|parked| parked.ready.is_some());
             let sync_at = (!checkpointing)
                 .then(|| terminal.sync_deadline())
                 .flatten()
@@ -110,19 +145,37 @@ pub(super) fn spawn(
             // read/write are cancellation safe. In particular, never restart a
             // write_all after a timer or reconnect: retain its exact cursor.
             tokio::select! {
-                request = &mut stopped, if stop_open => {
-                    stop_open = false;
-                    if matches!(request, Ok(Finish::Checkpoint)) {
-                        checkpointing = true;
-                        match active.as_ref().map(|socket| socket.anchor.try_clone_file()).transpose() {
-                            Ok(socket) => checkpoint_socket = socket,
-                            Err(error) => { checkpoint_error = Some(error); finish = true; replace = Some(None); flush = true; }
+                biased;
+                request = stopped.recv() => {
+                    match request {
+                        Some(Finish::Checkpoint(mut request)) if checkpointing => {
+                            let _ = request.ready.take().unwrap().send(Err(std::io::ErrorKind::WouldBlock.into()));
                         }
-                    } else {
-                        finish = true;
-                        replace = Some(None);
-                        flush = true;
+                        Some(Finish::Checkpoint(request)) => {
+                            parked = Some(request);
+                            input_drained = !input_open;
+                            // VM pause stops new guest connections, but an
+                            // accepted descriptor may still await adoption.
+                            for _ in 0..rekey.len() {
+                                if let Ok(connection) = rekey.try_recv() {
+                                    replace = Some(Some(connection));
+                                    flush = true;
+                                }
+                            }
+                        }
+                        Some(Finish::Shutdown) | None => {
+                            finish = true;
+                            replace = Some(None);
+                            flush = true;
+                        }
                     }
+                }
+                released = async { (&mut parked.as_mut().unwrap().release).await }, if checkpointing => {
+                    parked = None;
+                    checkpoint_socket = None;
+                    read_drained = false;
+                    input_drained = false;
+                    if let Ok(ack) = released { let _ = ack.send(()); }
                 }
                 connection = rekey.recv(), if !checkpointing => {
                     finish = connection.is_none();
@@ -138,8 +191,8 @@ pub(super) fn spawn(
                         outgoing.push_back(replies);
                     }
                 }
-                _ = deadline(coalesce_at), if pending_log.is_none() => flush = true,
-                permit = log.reserve(), if pending_log.is_some() => {
+                _ = deadline(coalesce_at), if pending_log.is_none() && (!checkpointing || settling) => flush = true,
+                permit = log.reserve(), if pending_log.is_some() && (!checkpointing || settling) => {
                     match permit {
                         Ok(permit) => permit.send(pending_log.take().unwrap()),
                         Err(error) => {
@@ -162,15 +215,15 @@ pub(super) fn spawn(
                         Some(writer) => writer.write(remaining).await,
                         None => std::future::pending().await,
                     }
-                }, if !outgoing.is_empty() => {
+                }, if !outgoing.is_empty() && (!checkpointing || settling) => {
                     match result {
                         Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
                         result @ (Ok(0) | Err(_)) => {
                             if checkpointing {
                                 checkpoint_error = Some(result.err().unwrap_or_else(|| std::io::ErrorKind::WriteZero.into()));
-                                finish = true;
+                            } else {
+                                replace = Some(None); flush = true;
                             }
-                            replace = Some(None); flush = true;
                         }
                         Ok(count) => {
                             written += count;
@@ -194,7 +247,7 @@ pub(super) fn spawn(
                         None => std::future::pending().await,
                     }
                 }, if pending_log.is_none() && !replies_pending && !read_drained &&
-                    (!checkpointing || (!input_open && outgoing.is_empty())) => {
+                    (!checkpointing || (settling && input_drained && outgoing.is_empty())) => {
                     match result {
                         Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
                         Err(error) if checkpointing && error.kind() == std::io::ErrorKind::WouldBlock => {
@@ -202,7 +255,7 @@ pub(super) fn spawn(
                         }
                         Ok(0) if checkpointing => { read_drained = true; flush = true; }
                         Err(error) if checkpointing => {
-                            checkpoint_error = Some(error); finish = true; replace = Some(None); flush = true;
+                            checkpoint_error = Some(error); flush = true;
                         }
                         Ok(0) | Err(_) => { replace = Some(None); flush = true; }
                         Ok(count) => {
@@ -215,12 +268,14 @@ pub(super) fn spawn(
                     }
                 }
                 data = async {
-                    if checkpointing { input.try_recv().ok() } else { input.recv().await }
-                }, if input_open && (connected || checkpointing) && outgoing.is_empty() => {
+                    if checkpointing { input.try_recv() } else { input.recv().await.ok_or(mpsc::error::TryRecvError::Disconnected) }
+                }, if input_open && !input_drained && (connected || checkpointing) && outgoing.is_empty() &&
+                    (!checkpointing || settling) => {
                     match data {
-                        Some(data) if !data.is_empty() => outgoing.push_back(data),
-                        Some(_) => {}
-                        None => input_open = false,
+                        Ok(data) if !data.is_empty() => outgoing.push_back(data),
+                        Ok(_) => {}
+                        Err(mpsc::error::TryRecvError::Empty) => input_drained = true,
+                        Err(mpsc::error::TryRecvError::Disconnected) => { input_open = false; input_drained = true; }
                     }
                 }
             }
@@ -240,14 +295,16 @@ pub(super) fn spawn(
                 }
                 coalesce_at = None;
             }
-            if checkpointing
-                && read_drained
-                && !input_open
-                && outgoing.is_empty()
-                && coalesce.is_empty()
-                && pending_log.is_none()
+            if settling
+                && (checkpoint_error.is_some()
+                    || (read_drained
+                        && (input_drained || !input_open)
+                        && outgoing.is_empty()
+                        && coalesce.is_empty()
+                        && pending_log.is_none()))
             {
-                break;
+                let ready = parked.as_mut().unwrap().ready.take().unwrap();
+                let _ = ready.send(checkpoint_error.take().map_or(Ok(()), Err));
             }
             if let Some(connection) = replace {
                 // A connection is a byte stream with its own partial writes.
@@ -270,13 +327,19 @@ pub(super) fn spawn(
                     None => {}
                 }
             }
+            if parked.is_some() && checkpoint_socket.is_none() {
+                match active.as_ref().map(|socket| socket.anchor.try_clone_file()).transpose() {
+                    Ok(socket) => checkpoint_socket = socket,
+                    Err(error) => checkpoint_error = Some(error),
+                }
+            }
         }
         if let Some(batch) = pending_log {
             let _ = log.send(batch).await;
         }
         drop(log);
         let _ = tokio::task::spawn_blocking(move || log_handle.join()).await;
-        checkpoint_error.map_or(Ok(()), Err)
+        Ok(())
     });
     TerminalBridge { stop, task }
 }

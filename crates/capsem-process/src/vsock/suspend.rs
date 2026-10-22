@@ -45,9 +45,14 @@ impl Files {
     }
 
     pub(crate) fn begin(&self) -> Result<()> {
-        self.remove(&self.marker_path())?;
-        self.owner.sync()?;
+        self.invalidate()?;
         self.remove(&self.path())?;
+        self.owner.sync()?;
+        Ok(())
+    }
+
+    fn invalidate(&self) -> Result<()> {
+        self.remove(&self.marker_path())?;
         self.owner.sync()?;
         Ok(())
     }
@@ -120,41 +125,45 @@ async fn on_vm(
 }
 
 impl Suspend {
-    async fn save(&self) -> Result<()> {
+    async fn save(&self, parked: &mut Option<super::terminal::Checkpoint>) -> Result<()> {
         self.terminal.seal_views();
         let files = Arc::clone(&self.files);
         tokio::task::spawn_blocking(move || files.begin()).await??;
         let bound = std::time::Duration::from_secs(10);
-        crate::job_store::with_quiescence(&self.hub, &self.jobs, bound, || async {
-            on_vm(Arc::clone(&self.vm), |vm| vm.pause()).await.context("pause VM")?;
-            let bridge = self
-                .shutdown
+        crate::job_store::snapshot_transition(&self.hub, &self.jobs, bound, true).await?;
+        on_vm(Arc::clone(&self.vm), |vm| vm.pause()).await.context("pause VM")?;
+        *parked = Some(
+            self.shutdown
                 .lock()
                 .await
                 .terminal_bridge
-                .take()
-                .context("terminal transport missing")?;
-            tokio::time::timeout(bound, bridge.checkpoint())
-                .await
-                .context("terminal checkpoint drain timed out")??;
-            let files = Arc::clone(&self.files);
-            let terminal = Arc::clone(&self.terminal);
-            let captured = tokio::task::spawn_blocking(move || files.capture(&terminal)).await??;
-            let path = self.files.path();
-            on_vm(Arc::clone(&self.vm), move |vm| vm.save_state(&path))
-                .await
-                .context("save VM")?;
-            tokio::task::spawn_blocking(move || captured.complete()).await??;
-            Ok(())
-        })
-        .await
+                .as_ref()
+                .context("terminal transport missing")?
+                .park()?,
+        );
+        tokio::time::timeout(bound, parked.as_mut().unwrap().settled())
+            .await
+            .context("terminal checkpoint drain timed out")??;
+        let files = Arc::clone(&self.files);
+        let terminal = Arc::clone(&self.terminal);
+        let captured = tokio::task::spawn_blocking(move || files.capture(&terminal)).await??;
+        let path = self.files.path();
+        on_vm(Arc::clone(&self.vm), move |vm| vm.save_state(&path))
+            .await
+            .context("save VM")?;
+        tokio::task::spawn_blocking(move || captured.complete()).await??;
+        // The saved guest retains its frozen filesystem flag. Its first
+        // restored control connection thaws before admitting guest commands.
+        Ok(())
     }
 
     /// Run inline in the command mux: commands admitted before Suspend are
     /// settled, while later commands cannot mutate the checkpoint's guest.
-    pub(super) async fn run(self) -> ! {
+    pub(super) async fn run(self) {
+        let _sequence = self.jobs.quiescence.lock().await;
         let started = std::time::Instant::now();
-        let result = self.save().await;
+        let mut parked = None;
+        let result = self.save(&mut parked).await;
         let failed = result.is_err();
         let message = match result {
             Ok(()) => ProcessToService::StateChanged {
@@ -164,16 +173,24 @@ impl Suspend {
             },
             Err(error) => {
                 error!(error = %error, elapsed_ms = started.elapsed().as_millis() as u64, "coordinated suspend failed");
-                let files = Arc::clone(&self.files);
-                if let Err(cleanup) = tokio::task::spawn_blocking(move || files.begin())
-                    .await
-                    .unwrap_or_else(|join| Err(join.into()))
-                {
-                    error!(%cleanup, "invalidate failed checkpoint");
-                }
-                ProcessToService::SuspendFailed {
-                    id: self.id,
-                    error: format!("{error:#}"),
+                match self.rollback(parked.take()).await {
+                    Ok(()) => {
+                        capsem_core::try_send!(
+                            "ipc_suspend_rollback",
+                            self.ipc.send(ProcessToService::SuspendRolledBack {
+                                id: self.id,
+                                error: format!("{error:#}"),
+                            })
+                        );
+                        return;
+                    }
+                    Err(rollback) => {
+                        error!(%rollback, "suspend rollback failed; retiring owner");
+                        ProcessToService::SuspendFailed {
+                            id: self.id,
+                            error: format!("{error:#}; rollback failed: {rollback:#}"),
+                        }
+                    }
                 }
             }
         };
@@ -186,6 +203,34 @@ impl Suspend {
         crate::drain_background_owners(&self.shutdown).await;
         std::process::exit(i32::from(failed));
     }
+
+    async fn rollback(&self, parked: Option<super::terminal::Checkpoint>) -> Result<()> {
+        let files = Arc::clone(&self.files);
+        tokio::task::spawn_blocking(move || files.invalidate()).await??;
+        on_vm(Arc::clone(&self.vm), |vm| resume_running_vm(vm)).await?;
+        crate::job_store::snapshot_transition(&self.hub, &self.jobs, std::time::Duration::from_secs(10), false)
+            .await
+            .context("confirm guest thaw after rejected suspend")?;
+        if let Some(parked) = parked {
+            tokio::time::timeout(std::time::Duration::from_secs(10), parked.resume())
+                .await
+                .context("terminal rollback timed out")??;
+        }
+        self.terminal.resume_views();
+        Ok(())
+    }
+}
+
+fn resume_running_vm(vm: &dyn capsem_core::hypervisor::VmHandle) -> Result<()> {
+    use capsem_core::hypervisor::VmState;
+    if vm.state() == VmState::Paused {
+        vm.resume().context("resume VM after rejected suspend")?;
+    }
+    anyhow::ensure!(
+        vm.state() == VmState::Running,
+        "VM did not return to Running after rejected suspend"
+    );
+    Ok(())
 }
 
 #[cfg(test)]

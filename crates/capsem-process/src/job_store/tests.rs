@@ -1,4 +1,5 @@
 use super::*;
+mod snapshot;
 
 // -----------------------------------------------------------------------
 // JobStore
@@ -191,18 +192,22 @@ fn job_result_error() {
 #[tokio::test]
 async fn fail_all_resolves_every_pending_oneshot() {
     let job_store = Arc::new(JobStore::new());
-    // Register three pending jobs + a snapshot_ready waiter.
+    // Register three pending jobs + a filesystem barrier waiter.
     let (tx1, rx1) = oneshot::channel::<JobResult>();
     let (tx2, rx2) = oneshot::channel::<JobResult>();
     let (tx3, rx3) = oneshot::channel::<JobResult>();
-    let (snap_tx, snap_rx) = oneshot::channel::<()>();
+    let (snap_tx, snap_rx) = oneshot::channel::<Result<(), String>>();
     {
         let mut jobs = job_store.jobs.lock().unwrap();
         jobs.insert(1, tx1);
         jobs.insert(2, tx2);
         jobs.insert(3, tx3);
     }
-    *job_store.snapshot_ready.lock().unwrap() = Some(snap_tx);
+    *job_store.snapshot_transition.lock().unwrap() = Some(super::snapshot::Waiter {
+        id: 4,
+        frozen: true,
+        reply: snap_tx,
+    });
     let first_deposited = {
         let mut active = ActiveExec::new();
         active.captured = b"first".to_vec();
@@ -234,7 +239,10 @@ async fn fail_all_resolves_every_pending_oneshot() {
             other => panic!("expected JobResult::Error, got {other:?}"),
         }
     }
-    assert!(snap_rx.await.is_ok(), "snapshot_ready waiter must be resolved");
+    assert!(
+        snap_rx.await.unwrap().is_err(),
+        "control failure must not acknowledge a successful freeze"
+    );
     assert!(job_store.active_execs.lock().unwrap().is_empty());
     assert!(job_store.jobs.lock().unwrap().is_empty());
     tokio::time::timeout(std::time::Duration::from_millis(100), first_waiter)
@@ -306,13 +314,13 @@ async fn quiescence_success_runs_operation() {
     let job_store = Arc::new(JobStore::new());
     let (tx, mut _rx) = tokio::sync::mpsc::channel::<HostToGuest>(16);
 
-    // Simulate the guest sending SnapshotReady
+    // Acknowledge actual freeze and thaw, not only queue admission.
     {
         let js = Arc::clone(&job_store);
+        let mut guest = _rx;
         tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            if let Some(sender) = js.snapshot_ready.lock().unwrap().take() {
-                capsem_core::try_send!("test_snapshot_ready", sender.send(()));
+            while let Some(HostToGuest::SnapshotTransition { id, frozen }) = guest.recv().await {
+                js.finish_snapshot_transition(id, frozen, None);
             }
         });
     }
@@ -343,30 +351,27 @@ async fn quiescence_channel_closed_returns_error() {
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             // Take and drop the sender without sending
-            let _ = js.snapshot_ready.lock().unwrap().take();
+            let _ = js.snapshot_transition.lock().unwrap().take();
         });
     }
 
     let result = with_quiescence(&tx, &job_store, std::time::Duration::from_secs(5), || async { Ok(()) }).await;
 
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("closed prematurely"));
+    assert!(format!("{:#}", result.unwrap_err()).contains("closed prematurely"));
 }
 
 #[tokio::test]
 async fn overlapping_quiescence_sequences_run_one_at_a_time() {
-    // `snapshot_ready` holds one waiter. Two overlapping sequences (a fork's
+    // `snapshot_transition` holds one waiter. Two overlapping sequences (a fork's
     // clone and a suspend) used to overwrite each other's acknowledgement.
     let job_store = Arc::new(JobStore::new());
     let (tx, mut guest) = tokio::sync::mpsc::channel::<HostToGuest>(16);
     let acks = Arc::clone(&job_store);
     tokio::spawn(async move {
         while let Some(message) = guest.recv().await {
-            if matches!(message, HostToGuest::PrepareSnapshot) {
-                let sender = acks.snapshot_ready.lock().unwrap().take();
-                if let Some(sender) = sender {
-                    let _ = sender.send(());
-                }
+            if let HostToGuest::SnapshotTransition { id, frozen } = message {
+                acks.finish_snapshot_transition(id, frozen, None);
             }
         }
     });

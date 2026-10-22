@@ -66,3 +66,66 @@ fn linked_native_state_cannot_publish_a_completion_marker() {
     assert!(files.capture(&SessionTerminal::new(8)).unwrap().complete().is_err());
     assert!(!files.marker_path().exists());
 }
+
+#[test]
+fn rollback_invalidates_completion_even_when_the_native_slot_is_not_removable() {
+    let root = session();
+    let files = Arc::new(Files::prepare(root.path()).unwrap());
+    std::fs::create_dir(files.path()).unwrap();
+    std::fs::write(files.marker_path(), b"old completion").unwrap();
+    assert!(files.begin().is_err());
+    files.invalidate().unwrap();
+    assert!(!files.marker_path().exists());
+    assert!(files.path().is_dir());
+}
+
+struct RecoveringVm {
+    state: std::cell::Cell<capsem_core::hypervisor::VmState>,
+    resumes: std::cell::Cell<usize>,
+    fail: bool,
+    stays_paused: bool,
+}
+
+impl capsem_core::hypervisor::VmHandle for RecoveringVm {
+    fn stop(&self) -> Result<()> {
+        panic!("rollback must not stop the original VM")
+    }
+    fn state(&self) -> capsem_core::hypervisor::VmState {
+        self.state.get()
+    }
+    fn serial(&self) -> &dyn capsem_core::hypervisor::SerialConsole {
+        unreachable!()
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn resume(&self) -> Result<()> {
+        self.resumes.set(self.resumes.get() + 1);
+        anyhow::ensure!(!self.fail, "fixture resume rejected");
+        if !self.stays_paused {
+            self.state.set(capsem_core::hypervisor::VmState::Running);
+        }
+        Ok(())
+    }
+}
+
+#[test]
+fn rollback_resumes_only_paused_vm_and_refuses_failed_or_incomplete_recovery() {
+    use capsem_core::hypervisor::VmState;
+    for (state, fail, stays_paused, success, resumes) in [
+        (VmState::Running, false, false, true, 0),
+        (VmState::Paused, false, false, true, 1),
+        (VmState::Paused, true, false, false, 1),
+        (VmState::Paused, false, true, false, 1),
+        (VmState::Stopped, false, false, false, 0),
+    ] {
+        let vm = RecoveringVm {
+            state: std::cell::Cell::new(state),
+            resumes: std::cell::Cell::new(0),
+            fail,
+            stays_paused,
+        };
+        assert_eq!(resume_running_vm(&vm).is_ok(), success);
+        assert_eq!(vm.resumes.get(), resumes);
+    }
+}
