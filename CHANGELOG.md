@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Mount guest runtime scratch and logs on fresh tmpfs at every boot and keep
+  the injected boot manifest owner-only, so secrets do not persist in the
+  system overlay.
+
 - Bound initial and reconnected guest control handshakes, shut down stalled
   sockets, and keep reconnect work off the central vsock dispatcher.
 

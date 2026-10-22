@@ -48,6 +48,19 @@ def test_existing_restart_restores_a_created_container_and_its_port(redis, servi
     client = service.client()
     ping(redis["port"])
     assert client.get(f"/vms/{vm['id']}/info")["persistent"]
+    marker = client.post(
+        f"/vms/{vm['id']}/exec",
+        {
+            "target": "vm",
+            "command": (
+                "set -eu; printf retained > /root/.capsem-restart-marker; "
+                "for path in /run /tmp /var/log; do "
+                "printf transient > \"$path/.capsem-restart-marker\"; done"
+            ),
+            "timeout_secs": 5,
+        },
+    )
+    assert marker["exit_code"] == 0, marker
     result = subprocess.run(
         [
             str(BIN_DIR / "capsem"),
@@ -71,6 +84,19 @@ def test_existing_restart_restores_a_created_container_and_its_port(redis, servi
             return False
 
     wait_for(restarted, "Redis restarted through existing VM command", timeout=30)
+    scratch = client.post(
+        f"/vms/{vm['id']}/exec",
+        {
+            "target": "vm",
+            "command": (
+                "set -eu; test \"$(cat /root/.capsem-restart-marker)\" = retained; "
+                "for path in /run /tmp /var/log; do "
+                "test ! -e \"$path/.capsem-restart-marker\"; done"
+            ),
+            "timeout_secs": 5,
+        },
+    )
+    assert scratch["exit_code"] == 0, scratch
     client.post(f"/vms/{vm['id']}/stop", {})
     with pytest.raises(OSError):
         socket.create_connection(("127.0.0.1", redis["port"]), timeout=1)

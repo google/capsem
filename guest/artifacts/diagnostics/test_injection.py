@@ -18,6 +18,11 @@ from .diagnostic_support import run
 MANIFEST_PATH = "/tmp/capsem-injection-manifest.json"
 
 
+def test_manifest_is_owner_only():
+    """The boot manifest carries injected values and must not be world-readable."""
+    assert stat.S_IMODE(os.stat(MANIFEST_PATH).st_mode) == 0o600
+
+
 def _load_manifest():
     if not os.path.isfile(MANIFEST_PATH):
         pytest.fail("no injection manifest (not running under injection harness)")
