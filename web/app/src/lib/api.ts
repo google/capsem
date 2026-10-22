@@ -920,10 +920,11 @@ export async function applyUpdate(
 /** Open a URL in the system default browser. Routes through the Tauri IPC
  * inside the desktop shell (where `window.open` is a no-op) and falls back to
  * a new tab in the browser. */
-export async function openUrl(url: string): Promise<void> {
+export async function openUrl(url: string, vmId?: string): Promise<void> {
   if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+    if (vmId && !_token) throw new Error('Browser session unavailable');
     const { invoke } = await import('@tauri-apps/api/core');
-    await invoke('open_url', { url });
+    await invoke('open_url', { url, browser: vmId ? { gatewayUrl: _baseUrl, token: _token, vmId } : null });
     return;
   }
   window.open(url, '_blank', 'noopener,noreferrer');

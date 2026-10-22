@@ -26,7 +26,7 @@
     const id = requestId;
     error = false;
     console.log('[browser] handoff id=%s automatic=%s', id, automatic);
-    void openUrl(target).then(() => {
+    void openUrl(target, session).then(() => {
       console.log('[browser] handoff accepted id=%s', id);
     }).catch(() => {
       console.warn('[browser] handoff failed id=%s', id);
