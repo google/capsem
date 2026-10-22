@@ -44,7 +44,6 @@ pub use rule_emission::*;
 
 pub const SECURITY_EVENT_EMIT_SPAN: &str = "capsem.security_event.emit";
 pub const DUMMY_EICAR_TEST_STRING: &str = r#"X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"#;
-
 mod emission;
 pub use emission::{
     admit_within, emit_security_write, emit_security_write_blocking, RuntimeSecurityEvent, SECURITY_ADMISSION_DEADLINE,
