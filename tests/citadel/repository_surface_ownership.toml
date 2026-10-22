@@ -161,6 +161,18 @@ debt = "config/gate.toml exact source-size and per-crate coverage ratchets"
 reason = "Crates retain their ownership; only path callers change after the explicit Rust checkpoint."
 
 [[surface]]
+id = "vendored-rust-terminals"
+state = "retained"
+current = ["third_party/rust/"]
+targets = ["third_party/rust/"]
+lint = ["fast.citadel"]
+tests = ["tests/citadel/test_terminal_vendor_provenance.py", "crates/capsem-core/src/terminal/tests.rs", "third_party/rust/vte/tests/checkpoint.rs", "third_party/rust/alacritty_terminal/tests/checkpoint.rs"]
+ci = ["fast-gate", "test-linux", "test", "test-install", "pr-gate"]
+coverage = "not-applicable: upstream dependency trees are excluded from first-party coverage; core terminal tests own application behavior"
+debt = "none: exact upstream source, licenses and local deltas are held by UPSTREAM.json, CAPSEM-PATCH.json and the Citadel provenance guard"
+reason = "Maintainer-approved pinned parser and terminal checkpoint patches retain upstream tests; first-party formatting never rewrites vendored sources."
+
+[[surface]]
 id = "guest"
 state = "retained"
 current = ["guest/"]

@@ -50,6 +50,7 @@ EXPECTED_TARGETS = frozenset(
         "sdk/",
         "skills/",
         "tests/",
+        "third_party/rust/",
         "web/app/",
         "web/docs/",
         "web/diagrams/",
