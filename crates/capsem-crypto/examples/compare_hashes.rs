@@ -75,7 +75,7 @@ fn fingerprint(algorithm: &str, bytes: &[u8]) -> [u8; 32] {
             // The return container is uniform, but the actual digest is 128 bits.
             // Padding is benchmark plumbing, never a 256-bit security claim.
             let mut result = [0; 32];
-            result[..16].copy_from_slice(&xxhash_rust::xxh3::xxh3_128(bytes).to_le_bytes());
+            result[..16].copy_from_slice(&capsem_crypto::xxh3::hash(bytes).to_le_bytes());
             result
         }
         _ => unreachable!(),

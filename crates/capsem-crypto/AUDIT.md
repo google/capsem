@@ -48,14 +48,19 @@ The normal `capsem-bench` crypto dimension records raw paired samples for
 accelerated SHA-256, an independent SHA reference, SIMD BLAKE2b-256,
 BLAKE2s-256 and BLAKE3, with a read-only control. The provider's example owns
 the algorithm loop; the existing benchmark binary owns statistics and storage.
-An optional, pinned `xxhash-rust` dependency (BSL-1.0, no runtime dependencies)
-extends this example with XXH3-128 one-shot comparisons for non-security uses.
-It is enabled only by `benchmark`, is not exported as a production API, and
-is optimized alongside BLAKE3 in debug measurements. Existing body hashes stay
-on the approved accelerated BLAKE3 owner. No production algorithm changes are
-implied by comparing throughput.
-There is no separate benchmark crate. BLAKE3 was the fastest bulk candidate on
-the measured host and guest. Warm file hash timings are not VM boot timings.
+The pinned `xxhash-rust` dependency (BSL-1.0, no runtime dependencies) supplies
+the production `xxh3` one-shot and incremental XXH3-128 APIs. Both use existing
+input slices without allocation or copying and are optimized alongside BLAKE3
+in debug builds. The example compares these same owner APIs with alternating
+sample order. Two native NEON runs measured XXH3 roughly 8.5 times faster on
+large hot-memory inputs and 13.7 times faster on 32-byte inputs. This supports
+using XXH3 for non-security fingerprints, quick corruption checks and dedup
+lookup keys; it does not measure frame latency or authorize changing an
+external digest contract. Dedup reuse must compare content, and stored format
+changes must retain explicit algorithm identities and compatible readers.
+Trusted-reference adversarial integrity stays on BLAKE3; compliance and
+externally mandated protocols retain SHA-256. There is no separate benchmark
+crate. Warm file hash timings are not VM boot timings.
 
 Focused qualification includes standard vectors, chunk boundaries, reader
 errors, corruption/size/subject cases, entropy shape, JWT signature corruption,

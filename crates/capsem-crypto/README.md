@@ -7,6 +7,7 @@ They call this crate instead of selecting a hash or TLS backend themselves.
 | Feature | API | Contract |
 |---|---|---|
 | always | `blake3::{hash, Hash, Hasher}`, `verify` | BLAKE3 identities, constant-time hash equality and bounded reader verification |
+| always | `xxh3::{hash, Hasher}` | Allocation-free one-shot and incremental XXH3-128 for non-security integrity, deduplication and fingerprints |
 | `sha256` (default) | `Sha256` | Streaming and one-shot SHA-256 through CPU-dispatched AWS-LC |
 | `sha256` | `websocket_accept_digest` | SHA-1 only for the RFC 6455 handshake |
 | `random` | `random`, `uuid_v4` | OS-seeded tokens, UUID identifiers, ranges and fallible entropy |
@@ -14,19 +15,20 @@ They call this crate instead of selecting a hash or TLS backend themselves.
 | `tls` | `tls` | Rustls provider, private key ownership and certificate minting |
 | `jwt` | `jwt` | RS256 public verification; signing and arbitrary key conversion refused |
 | `test-fixtures` | `jwt::sign_rs256_fixture` | Test-only signature construction from checked-in fixture keys |
-| `benchmark` | `compare_hashes` example | Optional SIMD BLAKE2, XXH3-128 non-security candidate and independent SHA reference |
+| `benchmark` | `compare_hashes` example | Optional SIMD BLAKE2 and independent SHA reference, compared with the production BLAKE3 and XXH3 owners |
 
 Foundation, protocol and archive callers disable default features to retain
-their lightweight BLAKE3 dependency surface. Benchmark candidates do not enter
-production binaries. The crypto crate and hot hash backends stay optimized in
+their lightweight BLAKE3 and XXH3 dependency surface. The optional BLAKE2 and
+independent SHA benchmark providers do not enter production binaries. The crypto crate and hot hash backends stay optimized in
 dev builds, enforced by Citadel.
 
 Hashing requires a documented contract; do not add fingerprints by default.
-Archive integrity and body deduplication retain accelerated BLAKE3. OCI, OAuth
-and release identities requiring SHA-256 keep SHA-256. XXH3-128 is an optional
-benchmark candidate for non-security identities, not a substitute for content
-integrity or authentication. Changing a stored algorithm identity requires a
-deliberate format migration. Do not truncate BLAKE2b-512 to pretend
+Choose crypto-owned XXH3-128 for non-security fingerprints, quick corruption
+checks and deduplication. Use BLAKE3 when integrity depends on a trusted digest
+against adversarial modification. Keep SHA-256 where compliance or an external
+protocol (OCI, OAuth, published manifests) requires it. Non-security deduplication
+must handle collisions correctly. Changing a stored algorithm identity requires
+an explicit format migration. Do not truncate BLAKE2b-512 to pretend
 it is BLAKE2b-256: the benchmark configures a 32-byte output directly.
 
 Build the optional `compare_hashes` example with `--features benchmark`, then

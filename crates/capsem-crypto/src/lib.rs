@@ -7,6 +7,8 @@ pub mod blake3 {
     pub use ::blake3::{hash, Hash, Hasher};
 }
 
+pub mod xxh3;
+
 #[cfg(feature = "sha256")]
 mod sha256;
 #[cfg(feature = "sha256")]
