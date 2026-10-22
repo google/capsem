@@ -27,6 +27,32 @@ async fn stable_inventory(owner: &ImageCache) -> Arc<CacheInventory> {
     .unwrap()
 }
 
+#[test]
+fn blob_ownership_requires_the_current_exact_lowercase_namespace() {
+    let root = crate::oci::tests::private_dir();
+    let cache = super::BlobCache::at(root.path()).unwrap();
+    let classify = |name: &str| {
+        super::category(
+            &cache,
+            &std::path::Path::new("blobs").join(name),
+            super::EntryKind::File,
+        )
+    };
+    let current = format!("{}-{}", "a".repeat(32), "b".repeat(64));
+    assert!(matches!(classify(&current), super::Category::Unassociated));
+    assert!(matches!(
+        classify(&format!("immutable-{current}")),
+        super::Category::Unassociated
+    ));
+    for foreign in [
+        current.to_uppercase(),
+        format!("{}-{}", "a".repeat(64), "b".repeat(64)),
+        format!("{}-{}-{}", "a".repeat(32), "b".repeat(32), "c".repeat(31)),
+    ] {
+        assert!(matches!(classify(&foreign), super::Category::Unmanaged), "{foreign}");
+    }
+}
+
 async fn fixture() -> (tempfile::TempDir, ImageCache, CacheKey, CacheKey) {
     // A watched cache must not descend from every other test's busy temp
     // namespace. Keep a private sibling while retaining real path watches.
@@ -253,14 +279,14 @@ async fn malformed_and_linked_receipts_are_counted_without_granting_reclaim_or_f
     std::fs::write(&unknown, b"unmanaged bytes").unwrap();
     let partial = root.path().join("blobs/.partial-download");
     std::fs::write(&partial, b"partial bytes").unwrap();
-    let forged = root.path().join(format!("blobs/receipt-oci-{}", "d".repeat(64)));
+    let forged = root.path().join(format!("blobs/receipt-oci-{}", "d".repeat(32)));
     std::fs::write(&forged, b"malformed").unwrap();
     let outside = tempfile::tempdir().unwrap();
     let target = outside.path().join("secret");
     std::fs::write(&target, vec![7; 1024 * 1024]).unwrap();
     std::os::unix::fs::symlink(
         &target,
-        root.path().join(format!("blobs/receipt-oci-{}", "e".repeat(64))),
+        root.path().join(format!("blobs/receipt-oci-{}", "e".repeat(32))),
     )
     .unwrap();
     let observed = owner.inventory().await.unwrap();

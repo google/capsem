@@ -15,6 +15,8 @@ fn canonical_cache_identity_has_a_stable_opaque_key() {
     assert_eq!(a.key(), b.key());
     assert_eq!(CacheKey::parse(a.key().as_str()).unwrap(), a.key());
     assert!(!a.key().as_str().contains("redis"));
+    assert_eq!(a.key().as_str().len(), 4 + 32);
+    assert!(CacheKey::parse(&format!("oci-{}", "a".repeat(64))).is_err());
 }
 
 #[test]

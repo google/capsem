@@ -168,7 +168,7 @@ impl BlobCache {
     pub(super) fn for_repository(&self, reference: &oci_client::Reference) -> Self {
         let mut cache = self.clone();
         let repository = format!("{}/{}", reference.resolve_registry(), reference.repository());
-        cache.namespace = format!("{:x}-", Sha256::digest(repository.as_bytes()));
+        cache.namespace = format!("{:032x}-", capsem_crypto::xxh3::hash(repository.as_bytes()));
         cache
     }
 

@@ -28,13 +28,18 @@ fn receipt_codec_preserves_facts_but_has_no_ready_or_authority_field() {
     assert_eq!(loaded.generation().unwrap(), original.generation().unwrap());
     let doc: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert!(doc.get("ready").is_none() && doc.get("allowed").is_none());
+    assert_eq!(doc["schema_version"], 2);
+    assert_eq!(
+        original.generation().unwrap(),
+        format!("xxh3-128:{:032x}", capsem_crypto::xxh3::hash(&bytes))
+    );
 }
 
 #[test]
 fn malformed_foreign_or_oversized_receipts_are_not_accepted_as_owner_metadata() {
     let original = receipt();
     let doc: serde_json::Value = serde_json::from_slice(&original.encode().unwrap()).unwrap();
-    for case in 0..7 {
+    for case in 0..8 {
         let mut changed = doc.clone();
         match case {
             0 => changed["schema_version"] = 999.into(),
@@ -47,6 +52,7 @@ fn malformed_foreign_or_oversized_receipts_are_not_accepted_as_owner_metadata() 
             4 => changed["blobs"][0]["digest"] = "sha256:../../outside".into(),
             5 => changed["blobs"] = serde_json::json!([]),
             6 => changed["ready"] = true.into(),
+            7 => changed["schema_version"] = 1.into(),
             _ => unreachable!(),
         }
         assert!(

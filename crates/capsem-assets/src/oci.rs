@@ -60,11 +60,25 @@ fn digest_hex(value: &str) -> Result<&str> {
     let hex = value
         .strip_prefix("sha256:")
         .context("only SHA-256 OCI digests are supported")?;
-    ensure!(
-        hex.len() == 64 && hex.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)),
-        "invalid SHA-256 digest"
-    );
+    ensure!(lower_hex(hex, 64), "invalid SHA-256 digest");
     Ok(hex)
+}
+
+fn lower_hex(value: &str, width: usize) -> bool {
+    value.len() == width && value.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+}
+
+/// Owned cache records use their actual persisted JSON bytes, streamed into
+/// XXH3 without a temporary document. This is change/corruption detection,
+/// never an OCI content address or permission to remove or execute anything.
+fn metadata_fingerprint(value: &impl serde::Serialize, domain: &[u8]) -> Result<String> {
+    let mut hash = capsem_crypto::xxh3::Hasher::new();
+    hash.update(domain);
+    let mut bounded = capsem_foundation::limited_writer::LimitedWriter::new(&mut hash, METADATA_LIMIT);
+    let encoded = serde_json::to_writer(&mut bounded, value);
+    ensure!(!bounded.exceeded(), "cache metadata exceeds metadata limit");
+    encoded?;
+    Ok(format!("xxh3-128:{:032x}", hash.finalize()))
 }
 
 fn verify_platform(config: &[u8], architecture: &str) -> Result<()> {

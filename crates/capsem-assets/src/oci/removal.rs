@@ -3,7 +3,6 @@
 use std::{collections::HashSet, fs::Metadata, os::unix::fs::MetadataExt};
 
 use anyhow::{ensure, Context, Result};
-use capsem_crypto::Sha256;
 use serde::{Deserialize, Serialize};
 
 use super::{receipts::BlobKind, CacheKey, ImageCache, METADATA_LIMIT};
@@ -135,15 +134,10 @@ impl RemovalPreview {
 }
 
 pub(super) fn preview_token(witness: &Witness) -> Result<String> {
-    let bytes = serde_json::to_vec(witness)?;
-    ensure!(
-        bytes.len() <= METADATA_LIMIT,
-        "OCI removal preview exceeds metadata limit"
-    );
-    let mut digest = Sha256::new();
-    digest.update(b"capsem-oci-removal-preview-v1\0");
-    digest.update(&bytes);
-    Ok(format!("remove-{:x}", digest.finalize()))
+    Ok(format!(
+        "remove-{}",
+        super::metadata_fingerprint(witness, b"capsem-oci-removal-preview-v2\0")?
+    ))
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -162,10 +156,10 @@ impl ImageCache {
         self.inner.preview_removal(key).await
     }
     pub async fn apply_removal(&self, key: &CacheKey, token: &str, reason: &str) -> Result<RemovalResult> {
-        super::Digest::parse(&format!(
-            "sha256:{}",
-            token.strip_prefix("remove-").context("invalid removal token")?
-        ))?;
+        let hex = token
+            .strip_prefix("remove-xxh3-128:")
+            .context("invalid removal token")?;
+        ensure!(super::lower_hex(hex, 32), "invalid removal token");
         ensure!(!reason.trim().is_empty(), "removal requires a reason");
         ensure!(reason.len() <= METADATA_LIMIT, "removal reason exceeds metadata limit");
         self.inner.apply_removal(key, token, reason).await

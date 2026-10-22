@@ -20,6 +20,8 @@ async fn completed_journal_compacts_ownership_evidence_and_preserves_exact_repla
         .await
         .unwrap();
     let applied: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(applied["schema_version"], 3);
+    assert!(applied["checksum"].as_str().unwrap().starts_with("xxh3-128:"));
     assert!(
         applied.get("witness").is_none() && applied.get("receipt_json").is_none(),
         "completed history needs request/result replay, not payload ownership evidence"

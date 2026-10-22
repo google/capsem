@@ -1,9 +1,9 @@
 //! A synced intent precedes each unlink; retries never invent a new target.
 
-use capsem_crypto::Sha256;
 use serde::{Deserialize, Serialize};
 
 use super::super::super::{
+    metadata_fingerprint,
     removal::{preview_token, Witness},
     RemovalResult, METADATA_LIMIT,
 };
@@ -43,15 +43,12 @@ pub(super) struct Applied {
 
 impl Applied {
     fn checksum(key: &str, token: &str, reason: &str, result: &RemovalResult) -> Result<String> {
-        let mut digest = Sha256::new();
-        digest.update(b"capsem-oci-removal-applied-v1\0");
-        digest.update(serde_json::to_vec(&(key, token, reason, result))?);
-        Ok(format!("{:x}", digest.finalize()))
+        metadata_fingerprint(&(key, token, reason, result), b"capsem-oci-removal-applied-v2\0")
     }
 
     pub(super) fn validate(&self, key: &CacheKey, token: &str, reason: &str) -> Result<()> {
         ensure!(
-            self.schema_version == 2
+            self.schema_version == 3
                 && self.key == key.as_str()
                 && self.token == token
                 && self.reason == reason
@@ -91,11 +88,7 @@ impl Journal {
                 file,
             })
         }))
-        .map(|step| serde_json::to_vec(&step).map(|bytes| bytes.len()))
-        .collect::<std::result::Result<Vec<_>, _>>()?
-        .into_iter()
-        .max()
-        .unwrap_or(0);
+        .try_fold(0, |largest, step| encoded_len(&step).map(|size| largest.max(size)))?;
         let counters = RemovalResult {
             removed_allocated_bytes: u64::MAX,
             removed_entries: u64::MAX,
@@ -103,10 +96,9 @@ impl Journal {
             retained_entries: u64::MAX,
             complete: false,
         };
-        let counters_size = serde_json::to_vec(&counters)?.len();
-        let size = serde_json::to_vec(self)?
-            .len()
-            .checked_add(serde_json::to_vec(&names)?.len())
+        let counters_size = encoded_len(&counters)?;
+        let size = encoded_len(self)?
+            .checked_add(encoded_len(&names)?)
             .and_then(|size| size.checked_add(pending))
             .and_then(|size| size.checked_add(counters_size))
             .context("removal reservation overflow")?;
@@ -122,11 +114,11 @@ impl Journal {
         // bound with varied bytes so compressed filesystems cannot underbill
         // the future JSON records; this stream carries no secret or authority.
         let mut sample = vec![0; size];
-        for (index, chunk) in sample.chunks_mut(32).enumerate() {
-            let mut digest = Sha256::new();
+        for (index, chunk) in sample.chunks_mut(16).enumerate() {
+            let mut digest = capsem_crypto::xxh3::Hasher::new();
             digest.update(self.token.as_bytes());
-            digest.update(index.to_be_bytes());
-            chunk.copy_from_slice(&digest.finalize().as_ref()[..chunk.len()]);
+            digest.update(&index.to_be_bytes());
+            chunk.copy_from_slice(&digest.finalize().to_le_bytes()[..chunk.len()]);
         }
         let mut reservations = Vec::new();
         for _ in 0..2 {
@@ -144,7 +136,7 @@ impl Journal {
 
     pub(super) fn new(plan: RemovalPreview, receipt: &CacheReceipt, reason: &str) -> Result<Self> {
         Ok(Self {
-            schema_version: 1,
+            schema_version: 2,
             key: plan.key().as_str().into(),
             token: plan.token().into(),
             reason: reason.into(),
@@ -158,7 +150,7 @@ impl Journal {
 
     pub(super) fn validate(&self, cache: &BlobCache, key: &CacheKey, token: &str, reason: &str) -> Result<()> {
         ensure!(
-            self.schema_version == 1
+            self.schema_version == 2
                 && self.key == key.as_str()
                 && self.witness.key == key.as_str()
                 && self.token == token
@@ -227,7 +219,7 @@ impl Journal {
     pub(super) fn save(&self, root: &ContainedDir) -> Result<()> {
         let bytes = if self.result.complete {
             serde_json::to_vec(&Applied {
-                schema_version: 2,
+                schema_version: 3,
                 key: self.key.clone(),
                 token: self.token.clone(),
                 reason: self.reason.clone(),
@@ -247,6 +239,14 @@ impl Journal {
         root.sync()?;
         Ok(())
     }
+}
+
+/// This is a real disk-allocation reservation, not IPC admission sizing.
+/// Count the persisted codec's output without allocating temporary documents.
+fn encoded_len(value: &impl Serialize) -> Result<usize> {
+    let mut writer = capsem_foundation::limited_writer::LimitedWriter::new(std::io::sink(), METADATA_LIMIT);
+    serde_json::to_writer(&mut writer, value)?;
+    Ok(METADATA_LIMIT - writer.remaining())
 }
 
 pub(super) fn load(root: &ContainedDir, token: &str) -> Result<Option<Saved>> {

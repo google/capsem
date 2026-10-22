@@ -85,6 +85,7 @@ async fn removal_preview_is_read_only_and_binds_current_inode_and_receipt_facts(
     registry.task.abort();
     let first = owner.preview_removal(&key).await.unwrap();
     assert!(first.allowed());
+    assert!(first.token().starts_with("remove-xxh3-128:"));
     assert_eq!(first.key(), &key);
     assert_eq!(first.token(), owner.preview_removal(&key).await.unwrap().token());
     let receipt_path = root.path().join("blobs").join(format!("receipt-{}", key.as_str()));

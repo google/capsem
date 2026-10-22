@@ -1,7 +1,6 @@
 //! Cache identity describes retained bytes, never permission to execute them.
 
 use anyhow::{ensure, Context, Result};
-use capsem_crypto::Sha256;
 
 use super::{image_reference, Digest, ImageReference, ResolvedImage};
 
@@ -50,14 +49,14 @@ impl CacheIdentity {
     }
 
     pub fn key(&self) -> CacheKey {
-        let mut digest = Sha256::new();
-        digest.update(b"capsem-oci-cache-key-v1\0");
+        let mut digest = capsem_crypto::xxh3::Hasher::new();
+        digest.update(b"capsem-oci-cache-key-v2\0");
         digest.update(self.image.to_string().as_bytes());
-        digest.update([0]);
+        digest.update(&[0]);
         digest.update(self.architecture.as_bytes());
-        digest.update([0]);
-        digest.update(self.runtime_contract.to_be_bytes());
-        CacheKey(format!("oci-{:x}", digest.finalize()))
+        digest.update(&[0]);
+        digest.update(&self.runtime_contract.to_be_bytes());
+        CacheKey(format!("oci-{:032x}", digest.finalize()))
     }
 }
 
@@ -68,7 +67,7 @@ pub struct CacheKey(String);
 impl CacheKey {
     pub fn parse(value: &str) -> Result<Self> {
         let hex = value.strip_prefix("oci-").context("invalid OCI cache key")?;
-        Digest::parse(&format!("sha256:{hex}"))?;
+        ensure!(super::lower_hex(hex, 32), "invalid XXH3-128 OCI cache key");
         Ok(Self(value.to_owned()))
     }
 

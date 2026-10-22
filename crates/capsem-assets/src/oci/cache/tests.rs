@@ -57,7 +57,7 @@ async fn a_receipt_shaped_name_does_not_make_unrecognized_bytes_prunable() {
     let path = root
         .path()
         .join("blobs")
-        .join(format!("receipt-oci-{}", "a".repeat(64)));
+        .join(format!("receipt-oci-{}", "a".repeat(32)));
     let unknown = b"unrecognized receipt bytes";
     std::fs::write(&path, unknown).unwrap();
     cache.policy.warm_size_bytes = baseline.max(1);

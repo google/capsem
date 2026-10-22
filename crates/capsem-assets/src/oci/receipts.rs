@@ -6,7 +6,6 @@ use std::{
 };
 
 use anyhow::{ensure, Context, Result};
-use capsem_crypto::Sha256;
 use oci_client::Reference;
 use serde::{Deserialize, Serialize};
 
@@ -92,7 +91,7 @@ impl CacheReceipt {
         let key = identity.key();
         let receipt = Self {
             record: Record {
-                schema_version: 1,
+                schema_version: 2,
                 key: key.as_str().to_owned(),
                 image: identity.image().to_string(),
                 origin: origin.to_string(),
@@ -124,7 +123,7 @@ impl CacheReceipt {
     }
 
     pub fn generation(&self) -> Result<String> {
-        Ok(format!("{:x}", Sha256::digest(self.encode()?)))
+        super::metadata_fingerprint(&self.record, b"")
     }
 
     pub(super) fn origin(&self) -> &str {
@@ -169,7 +168,7 @@ impl CacheReceipt {
     }
 
     fn validate(&self, expected: &CacheKey) -> Result<()> {
-        ensure!(self.record.schema_version == 1, "unsupported cache receipt schema");
+        ensure!(self.record.schema_version == 2, "unsupported cache receipt schema");
         ensure!(
             self.key() == *expected && self.record.key == expected.as_str(),
             "cache receipt key mismatch"

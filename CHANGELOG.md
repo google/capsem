@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Use current-format XXH3-128 image-cache fingerprints without temporary JSON copies; obsolete cache records are refused.
+
 - Use explicit XXH3-128 digests for exported WARC body blocks.
 
 - Keep valid duplex captures within bounded IPC frames and keep the channel usable after local encoding refusal.

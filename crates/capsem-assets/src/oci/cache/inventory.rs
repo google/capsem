@@ -360,10 +360,10 @@ fn category(cache: &BlobCache, path: &Path, kind: EntryKind) -> Category {
     }
     let identity = name.strip_prefix("immutable-").unwrap_or(name);
     if name.starts_with(".partial-")
-        || (matches!(identity.len(), 64 | 129)
-            && identity
-                .split('-')
-                .all(|part| crate::oci::digest_hex(&format!("sha256:{part}")).is_ok()))
+        || crate::oci::lower_hex(identity, 64)
+        || identity
+            .split_once('-')
+            .is_some_and(|(repository, blob)| crate::oci::lower_hex(repository, 32) && crate::oci::lower_hex(blob, 64))
     {
         Category::Unassociated
     } else {
