@@ -53,6 +53,13 @@ fn confinement_grants_exact_runtime_paths_and_attests_ledger_denial() {
 }
 
 #[test]
+fn owner_exec_denial_probe_names_an_installed_executable() {
+    let sandbox = include_str!("owner_sandbox.rs");
+    assert!(sandbox.contains("Command::new(\"/usr/bin/true\")"));
+    assert!(std::path::Path::new("/usr/bin/true").is_file());
+}
+
+#[test]
 fn suspend_checkpoint_stays_in_owner_state() {
     let session = Path::new("/tmp/session");
     assert_eq!(owner_checkpoint_path(session), session.join("owner/checkpoint.vzsave"));

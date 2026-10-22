@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Transfer guest environment values through a private one-use session file,
   keeping API keys out of the VM owner process command line on start and resume.
 
+- Use an installed executable for the macOS VM owner sandbox attestation, so
+  VM startup succeeds while still checking that execution is denied.
+
 - Keep verified VM asset hash cache entries under the owner-only runtime
   directory and read or replace them through no-follow directory descriptors.
 
