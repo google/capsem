@@ -1,9 +1,11 @@
 /** Display telemetry is informational, never an input/credential authority. */
 const numericFields = ['fps','frameMs','paintMs','decodeMs','decodeErrors','rttMs','mouseMs','keyMs',
-  'quality','depth','sourceWidth','sourceHeight','backingWidth','backingHeight','displayWidth','displayHeight','dpr'] as const;
+  'quality','depth','sourceWidth','sourceHeight','backingWidth','backingHeight','displayWidth','displayHeight','dpr',
+  'keyEvents','focusedWindow'] as const;
 type NumericField = typeof numericFields[number];
 export type SurfaceMetrics = Record<NumericField, number | null> & {
   codec: string | null; color: string | null; clientDpi?: number | null; guestDpi?: number | null;
+  keyboardCapture: boolean; documentFocused: boolean;
 };
 
 export function parseSurfaceMetrics(value: unknown): SurfaceMetrics | null {
@@ -15,6 +17,9 @@ export function parseSurfaceMetrics(value: unknown): SurfaceMetrics | null {
   }
   for (const field of ['codec', 'color']) {
     if (row[field] !== null && (typeof row[field] !== 'string' || row[field].length > 32)) return null;
+  }
+  for (const field of ['keyboardCapture', 'documentFocused']) {
+    if (typeof row[field] !== 'boolean') return null;
   }
   // Older running viewers remain usable while a new gateway is qualified.
   for (const field of ['clientDpi', 'guestDpi']) {

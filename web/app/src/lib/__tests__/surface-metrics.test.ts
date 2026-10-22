@@ -34,6 +34,22 @@ function load() {
 }
 
 describe('graphical display diagnostics', () => {
+  it('counts key events without retaining keys and exposes capture and focus state', () => {
+    const {run} = load();
+    run(`const meter = new CapsemSurfaceMetrics(0);
+      meter.input('key', 10); meter.input('key', 11); meter.input('mouse',12);`);
+    expect(run('meter.sample({capture_keyboard:true,focused_wid:42},20)')).toMatchObject({
+      keyEvents:2, keyboardCapture:true, focusedWindow:42, documentFocused:false,
+    });
+    expect(run('meter.sample({capture_keyboard:false,focused_wid:0},20)')).toMatchObject({
+      keyEvents:2, keyboardCapture:false, focusedWindow:0,
+    });
+    const row=run('meter.sample({},20)');
+    expect(parseSurfaceMetrics(row)).not.toBeNull();
+    for (const invalid of [{...row,keyboardCapture:'true'}, {...row,documentFocused:1}, {...row,keyEvents:-1}]) {
+      expect(parseSurfaceMetrics(invalid)).toBeNull();
+    }
+  });
   it('counts presented frames, reports zero at idle, and bounds retained timing samples', () => {
     const {run} = load();
     run('const meter = new CapsemSurfaceMetrics(0); meter.frame(100, 2); meter.frame(200, 3);');

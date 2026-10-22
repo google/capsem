@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Show key-event counts, keyboard capture and focus in the opt-in graphical
+  Debug overlay without recording input contents.
+
 - Add a shared Rust SDK browser callback handler that prepares exact client
   loopback listeners and returns matching sign-in responses through scoped previews.
 

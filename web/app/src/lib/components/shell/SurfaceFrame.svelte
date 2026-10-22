@@ -55,6 +55,8 @@
       <div>Decode + queue {metricMs(metrics.decodeMs)} · RTT {metricMs(metrics.rttMs)}</div>
       <div title="Time from the first outstanding input to the next presented update; not proof of a causally related guest response.">Mouse → next paint {metricMs(metrics.mouseMs)} (proxy)</div>
       <div>Key → next paint {metricMs(metrics.keyMs)} (proxy)</div>
+      <div>Keys {metrics.keyEvents} · Capture {metrics.keyboardCapture ? 'on' : 'off'}</div>
+      <div>Focus {metrics.focusedWindow || 'none'} · Viewer {metrics.documentFocused ? 'focused' : 'unfocused'}</div>
       <div class="mt-2">Codec {metrics.codec ?? '—'} · Q {metrics.quality ?? '—'}</div>
       <div>Wire color {metrics.color ?? 'not reported'} · Depth {metrics.depth == null ? 'not reported' : `${metrics.depth} bit`}</div>
       <div>Source {metricSize(metrics.sourceWidth, metrics.sourceHeight)}</div>
