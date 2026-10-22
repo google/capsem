@@ -72,6 +72,13 @@ Callers must also bound serialized bytes before decoding. Pair this model with
 the pinned vte processor checkpoint to retain unfinished escape/UTF-8 input.
 The versioned format is internal implementation state, not an external API.
 
+The model forwards the pinned parser's icon-name, visual-bell and notification
+callbacks as typed event-proxy data. They execute no host action. Notification
+and icon event Debug output omits payloads. The session owner retains metadata,
+applies presentation bounds and decides whether to show an event; checkpoint
+restore emits none of them. Explicit `Osc52::Disabled` remains required in the
+trusted session configuration for both clipboard store and load requests.
+
 Three upstream passwd fallback matches are consolidated to satisfy the pinned
 compiler's warning-denied Clippy checks. The standalone test lockfile resolves
 the sibling vte patch and pins its test-only MessagePack dependency cohort.

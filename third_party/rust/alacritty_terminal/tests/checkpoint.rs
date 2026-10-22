@@ -300,3 +300,60 @@ fn stored_tabs_survive_but_escape_cells_are_refused() {
     term.grid_mut()[Point::new(Line(0), Column(1))].c = '\x1b';
     assert!(term.checkpoint(&limits()).is_err());
 }
+
+#[test]
+fn semantic_effects_reach_the_owner_once_and_restore_without_replay() {
+    let events = Events::default();
+    let mut term = Term::new(config(), &Size(20, 6), events.clone());
+    let mut parser: Processor = Processor::new();
+    parser.advance(
+        &mut term,
+        concat!(
+            "\x1b]0;both\x07\x1b]1;icon\x07\x1b]2;title\x07",
+            "\x07\x1bg\x1b]9;ready 界\x07\x1b]777;notify;agent;done\x07",
+            "\x1b]52;c;aGVsbG8=\x07\x1b]52;c;?\x07"
+        )
+        .as_bytes(),
+    );
+    let actual: Vec<_> = events
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|event| match event {
+            Event::IconName(name) => format!("icon:{name:?}"),
+            Event::Title(title) => format!("title:{title}"),
+            Event::Bell => "bell".to_owned(),
+            Event::VisualBell => "visual-bell".to_owned(),
+            Event::Notification { title, body } => format!("notification:{title}:{body}"),
+            other => panic!("unexpected owner event: {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        actual,
+        [
+            "icon:Some(\"both\")",
+            "title:both",
+            "icon:Some(\"icon\")",
+            "title:title",
+            "bell",
+            "visual-bell",
+            "notification::ready 界",
+            "notification:agent:done",
+        ]
+    );
+    let (mut restored, restored_events) = restore(&term);
+    let mut resumed: Processor = Processor::new();
+    resumed.advance(&mut restored, b"continuation");
+    assert!(restored_events.0.lock().unwrap().is_empty());
+    assert_eq!(
+        format!(
+            "{:?}",
+            Event::Notification {
+                title: "secret".into(),
+                body: "private".into()
+            }
+        ),
+        "Notification"
+    );
+}

@@ -1443,6 +1443,19 @@ impl<T: EventListener> Handler for Term<T> {
     }
 
     #[inline]
+    fn visual_bell(&mut self) {
+        self.event_proxy.send_event(Event::VisualBell);
+    }
+
+    #[inline]
+    fn notification(&mut self, title: &[u8], body: &[u8]) {
+        self.event_proxy.send_event(Event::Notification {
+            title: String::from_utf8_lossy(title).into_owned(),
+            body: String::from_utf8_lossy(body).into_owned(),
+        });
+    }
+
+    #[inline]
     fn substitute(&mut self) {
         trace!("[unimplemented] Substitute");
     }
@@ -2232,6 +2245,11 @@ impl<T: EventListener> Handler for Term<T> {
         };
 
         self.event_proxy.send_event(title_event);
+    }
+
+    #[inline]
+    fn set_icon_name(&mut self, name: Option<String>) {
+        self.event_proxy.send_event(Event::IconName(name));
     }
 
     #[inline]

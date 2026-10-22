@@ -21,6 +21,12 @@ pub enum Event {
     /// Reset to the default window title.
     ResetTitle,
 
+    /// Icon-name metadata. The session owner retains and presents it.
+    IconName(Option<String>),
+
+    /// Notification data; grants no host notification or other authority.
+    Notification { title: String, body: String },
+
     /// Request to store a text string in the clipboard.
     ClipboardStore(ClipboardType, String),
 
@@ -51,6 +57,9 @@ pub enum Event {
     /// Terminal bell ring.
     Bell,
 
+    /// Visual terminal bell request.
+    VisualBell,
+
     /// Shutdown request.
     Exit,
 
@@ -67,11 +76,15 @@ impl Debug for Event {
             Event::ColorRequest(index, _) => write!(f, "ColorRequest({index})"),
             Event::PtyWrite(text) => write!(f, "PtyWrite({text})"),
             Event::Title(title) => write!(f, "Title({title})"),
+            // Metadata can contain private guest text; never format its payload.
+            Event::IconName(_) => write!(f, "IconName"),
+            Event::Notification { .. } => write!(f, "Notification"),
             Event::CursorBlinkingChange => write!(f, "CursorBlinkingChange"),
             Event::MouseCursorDirty => write!(f, "MouseCursorDirty"),
             Event::ResetTitle => write!(f, "ResetTitle"),
             Event::Wakeup => write!(f, "Wakeup"),
             Event::Bell => write!(f, "Bell"),
+            Event::VisualBell => write!(f, "VisualBell"),
             Event::Exit => write!(f, "Exit"),
             Event::ChildExit(status) => write!(f, "ChildExit({status:?})"),
         }
