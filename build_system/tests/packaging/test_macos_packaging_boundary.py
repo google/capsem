@@ -87,6 +87,19 @@ def test_macos_packaging_resources_preserve_reviewed_modes() -> None:
     assert tracked_source_modes(ROOT, MACOS) == EXPECTED_MODES
 
 
+def test_postinstall_never_edits_shell_profiles_as_root() -> None:
+    source = (MACOS / "pkg-scripts/postinstall").read_text(encoding="utf-8")
+    shell = source.split('CAPSEM_INSTALL_PHASE="configure_shell"', 1)[1].split(
+        '# Register LaunchAgent', 1
+    )[0].strip()
+    commands = "\n".join(line for line in shell.splitlines() if not line.startswith("#")).strip()
+    assert commands.startswith('su "$USER" -c \'')
+    assert commands.endswith("'")
+    assert '>> "$PROFILE"' in shell
+    assert '>> "$FISH_CONFIG"' in shell
+    assert "chown" not in shell
+
+
 def test_gate_selects_macos_packaging_resources_from_their_owner() -> None:
     config = tomllib.loads((ROOT / "config" / "gate.toml").read_text(encoding="utf-8"))
     prefix = "build_system/packaging/macos/"

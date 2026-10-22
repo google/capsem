@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Run macOS installer shell-profile edits as the installing user, preventing
+  root from following a user-controlled profile symlink.
+
 - Route guest suspend requests through the service's lifecycle admission and
   host-wide virtualization lock; reclaim cleanly stopped ephemeral sessions.
 

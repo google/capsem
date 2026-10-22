@@ -2924,7 +2924,7 @@ def test_macos_postinstall_adds_capsem_bin_to_fish_path() -> None:
 
     assert ".config/fish/config.fish" in postinstall
     assert "fish_add_path" in postinstall
-    assert "grep -qF 'fish_add_path --path \"$HOME/.capsem/bin\"'" in postinstall
+    assert r'grep -qF "fish_add_path --path \"\$HOME/.capsem/bin\""' in postinstall
     assert 'cp -R "$PKG_SHARE/assets/"* "$CAPSEM_DIR/assets/"' not in postinstall
     assert "pkill -x capsem-app" in postinstall
     assert 'INSTALL_LOG="$CAPSEM_DIR/logs/install.log"' in postinstall
