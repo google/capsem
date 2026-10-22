@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Negotiate uncompressed RGB for local graphical viewers and software JPEG/WebP
+  for remote viewers, with an automatic mode and a per-viewer override.
+
 - Add opt-in graphical display diagnostics for update FPS, frame/decode timing,
   connection RTT, input-to-next-paint estimates, codec/color format, and dimensions.
 

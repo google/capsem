@@ -214,6 +214,34 @@ async fn an_embedded_launcher_binds_its_parent_without_bypassing_top_level_click
 }
 
 #[tokio::test]
+async fn launcher_profiles_are_validated_before_becoming_bootstrap_metadata() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = state(&service(dir.path(), Arc::default()).await, 19444);
+    let app = gateway(&state);
+    for profile in ["auto", "local", "remote"] {
+        let (status, _, page) = call(
+            &app,
+            "GET",
+            &format!("/vms/gui/surface/?display_profile={profile}"),
+            &[],
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(page.contains(&format!("data-profile=\"{profile}\"")));
+    }
+    for profile in ["garbage", "%22%3E", "local&display_profile=remote"] {
+        let (status, _, _) = call(
+            &app,
+            "GET",
+            &format!("/vms/gui/surface/?display_profile={profile}"),
+            &[],
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+}
+
+#[tokio::test]
 async fn only_the_static_launcher_skips_authentication() {
     let dir = tempfile::tempdir().unwrap();
     let state = state(&service(dir.path(), Arc::default()).await, 19444);

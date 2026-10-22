@@ -55,6 +55,11 @@
         parent.name = "parent_origin";
         parent.value = parentOrigin;
         form.append(parent);
+        const profile = document.createElement("input");
+        profile.type = "hidden";
+        profile.name = "display_profile";
+        profile.value = document.body.dataset.profile || "auto";
+        form.append(profile);
       }
       const input = document.createElement("input");
       input.type = "hidden";

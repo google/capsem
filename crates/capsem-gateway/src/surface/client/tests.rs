@@ -39,7 +39,7 @@ fn the_page_split_refuses_a_page_it_cannot_split_exactly() {
     assert_eq!(page.main, "go()");
     assert_eq!(
         page.index,
-        "<html><head><script src=\"a.js\"></script><link rel=\"stylesheet\" href=\"capsem-surface.css\" />\n  <script src=\"capsem-surface-metrics.js\"></script>\n  <script src=\"capsem-surface.js\"></script>\n  </head><body><script src=\"xpra-main.js\"></script></body></html>"
+        "<html><head><script src=\"a.js\"></script><link rel=\"stylesheet\" href=\"capsem-surface.css\" />\n  <script src=\"capsem-surface-metrics.js\"></script>\n  <script src=\"capsem-surface-profile.js\"></script>\n  <script src=\"capsem-surface.js\"></script>\n  </head><body><script src=\"xpra-main.js\"></script></body></html>"
     );
     for bad in [
         "<html><head></head><body></body></html>",
@@ -220,7 +220,7 @@ fn the_unused_vendor_wallpaper_is_a_public_empty_image() {
 fn embedded_page_binds_one_trusted_parent_without_inline_script_or_url_credentials() {
     let token = "b".repeat(64);
     let parent = "http://127.0.0.1:5173";
-    let (head, body) = split(&embedded_response(&token, ORIGIN, parent).unwrap());
+    let (head, body) = split(&embedded_response(&token, ORIGIN, parent, super::super::DisplayProfile::Auto).unwrap());
     assert!(head.starts_with("HTTP/1.1 200 OK\r\n"));
     assert!(head.contains(&format!("frame-ancestors {parent};")));
     assert!(!head.contains("X-Frame-Options:") && !head.contains("Set-Cookie:"));
@@ -228,6 +228,7 @@ fn embedded_page_binds_one_trusted_parent_without_inline_script_or_url_credentia
     assert!(head.contains("Cache-Control: no-store") && head.contains("Referrer-Policy: no-referrer"));
     assert!(!head.contains(&token));
     let body = String::from_utf8(body).unwrap();
+    assert!(body.contains("data-display-profile=\"local\""));
     assert!(
         body.find("<meta name=\"capsem-surface-protocol\"").unwrap()
             < body.find("<script src=\"capsem-surface.js\"").unwrap(),
@@ -244,11 +245,30 @@ fn embedded_page_binds_one_trusted_parent_without_inline_script_or_url_credentia
         "http://localhost.evil.test",
         "http://127.0.0.1:5173/?x=y",
     ] {
-        assert!(embedded_response(&token, ORIGIN, parent).is_err());
+        assert!(embedded_response(&token, ORIGIN, parent, super::super::DisplayProfile::Auto).is_err());
     }
     for token in ["bad", "\"><script>bad()</script>"] {
-        assert!(embedded_response(token, ORIGIN, parent).is_err());
+        assert!(embedded_response(token, ORIGIN, parent, super::super::DisplayProfile::Auto).is_err());
     }
+}
+
+#[test]
+fn embedded_profile_precedes_policy_and_preserves_remote_override() {
+    let (_, body) = split(
+        &embedded_response(
+            &"b".repeat(64),
+            ORIGIN,
+            "http://127.0.0.1:5173",
+            super::super::DisplayProfile::Remote,
+        )
+        .unwrap(),
+    );
+    let body = String::from_utf8(body).unwrap();
+    assert!(body.contains("data-display-profile=\"remote\""));
+    assert!(body.find("capsem-surface-profile.js").unwrap() < body.find("capsem-surface.js").unwrap());
+    let (head, script) = get(&format!("{CLIENT_ROOT}capsem-surface-profile.js"));
+    assert!(head.starts_with("HTTP/1.1 200 OK\r\n"));
+    assert_eq!(script, SURFACE_PROFILE.as_bytes());
 }
 
 #[test]

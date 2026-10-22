@@ -4,7 +4,7 @@ import { expect, it, vi } from 'vitest';
 
 const script = readFileSync(new URL('../../../../../crates/capsem-gateway/src/surface/static/launch.js', import.meta.url), 'utf8');
 
-async function launch(statuses: number[], parent = '') {
+async function launch(statuses: number[], parent = '', profile = 'auto') {
   const nodes = {
     status: {textContent: ''}, open: {disabled: false, hidden: false, addEventListener: vi.fn()}, progress: {hidden: true},
   };
@@ -24,7 +24,7 @@ async function launch(statuses: number[], parent = '') {
     document: {
       getElementById: (id: keyof typeof nodes) => nodes[id],
       createElement: (name: string) => name === 'form' ? form : {type: '', name: '', value: ''},
-      body: {dataset: {auto: 'true', parent}, append: vi.fn()},
+      body: {dataset: {auto: 'true', parent, profile}, append: vi.fn()},
     },
   });
   vm.runInContext(script, context);
@@ -39,10 +39,15 @@ it('waits for a graphical exposure and posts scoped bootstrap into the current f
   expect(result.form.method).toBe('POST');
   expect(result.form.action).toBe('http://preview.localhost:19444/_capsem/surface/index.html');
   expect(result.children.map(({name, value}) => [name, value])).toEqual([
-    ['parent_origin', 'http://127.0.0.1:5173'], ['bootstrap_token', 'single-use-secret'],
+    ['parent_origin', 'http://127.0.0.1:5173'], ['display_profile', 'auto'], ['bootstrap_token', 'single-use-secret'],
   ]);
   expect(JSON.stringify(result.form)).not.toContain('secret');
   expect(result.nodes.progress.hidden).toBe(false);
+});
+
+it('carries the selected viewer profile through the authenticated form', async () => {
+  const result = await launch([200], 'http://127.0.0.1:5173', 'remote');
+  expect(result.children.find(input => input.name === 'display_profile')?.value).toBe('remote');
 });
 
 it('bounds an exposure that never appears and exposes a retry control', async () => {

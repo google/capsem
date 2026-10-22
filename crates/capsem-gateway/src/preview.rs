@@ -333,7 +333,10 @@ async fn exchange_bootstrap(
     let body = std::str::from_utf8(&request[head.header_bytes..])?;
     let token = parse_bootstrap_token(body)?;
     let embedded_parent = if head.path == embedded::PATH && scope.surface {
-        Some(embedded::parent_from_form(body, head)?)
+        Some((
+            embedded::parent_from_form(body, head)?,
+            crate::surface::DisplayProfile::from_form(body)?,
+        ))
     } else {
         None
     };
@@ -357,9 +360,9 @@ async fn exchange_bootstrap(
     } else {
         "/"
     };
-    let response = if let Some(parent) = embedded_parent {
+    let response = if let Some((parent, profile)) = embedded_parent {
         let origin = format!("{}.localhost:{}", head.label, state.previews.port);
-        crate::surface::embedded_response(&exchanged.session_token, &origin, &parent)?
+        crate::surface::embedded_response(&exchanged.session_token, &origin, &parent, profile)?
     } else {
         format!(
         "HTTP/1.1 303 See Other\r\nLocation: {location}\r\nSet-Cookie: {PREVIEW_COOKIE}={}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}\r\nCache-Control: no-store\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",

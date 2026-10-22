@@ -20,6 +20,7 @@ static VENDORED: &[(&str, &[u8])] = include!(concat!(env!("OUT_DIR"), "/xpra_htm
 
 const CAPSEM_SURFACE: &str = include_str!("static/capsem-surface.js");
 const SURFACE_METRICS: &str = include_str!("static/capsem-surface-metrics.js");
+const SURFACE_PROFILE: &str = include_str!("static/capsem-surface-profile.js");
 const SURFACE_WORKER: &str = include_str!("static/capsem-surface-worker.js");
 const SURFACE_STYLE: &str = include_str!("static/capsem-surface.css");
 const SETTINGS: &str = include_str!("static/default-settings.txt");
@@ -63,7 +64,7 @@ fn split_index(index: &str) -> Result<Page, String> {
     let end = body + index[body..].find(CLOSE).ok_or("unterminated inline script")?;
     Ok(Page {
         index: format!(
-            "{}<link rel=\"stylesheet\" href=\"capsem-surface.css\" />\n  <script src=\"capsem-surface-metrics.js\"></script>\n  <script src=\"capsem-surface.js\"></script>\n  {}<script src=\"xpra-main.js\"></script>{}",
+            "{}<link rel=\"stylesheet\" href=\"capsem-surface.css\" />\n  <script src=\"capsem-surface-metrics.js\"></script>\n  <script src=\"capsem-surface-profile.js\"></script>\n  <script src=\"capsem-surface.js\"></script>\n  {}<script src=\"xpra-main.js\"></script>{}",
             &index[..head_end],
             &index[head_end..start],
             &index[end + CLOSE.len()..],
@@ -101,6 +102,7 @@ fn asset(relative: &str) -> Option<(&'static [u8], &'static str)> {
         "xpra-main.js" => page?.main.as_bytes(),
         "capsem-surface.js" => CAPSEM_SURFACE.as_bytes(),
         "capsem-surface-metrics.js" => SURFACE_METRICS.as_bytes(),
+        "capsem-surface-profile.js" => SURFACE_PROFILE.as_bytes(),
         "js/capsem-surface-worker.js" => SURFACE_WORKER.as_bytes(),
         "capsem-surface.css" => SURFACE_STYLE.as_bytes(),
         "default-settings.txt" => SETTINGS.as_bytes(),
@@ -169,7 +171,12 @@ fn public_asset(relative: Option<&str>) -> bool {
 
 /// Only the single-use, trusted-parent POST can return an embeddable page.
 /// No credential enters a URL, cookie, inline script, or workload response.
-pub(crate) fn embedded_response(token: &str, origin: &str, parent: &str) -> anyhow::Result<Vec<u8>> {
+pub(crate) fn embedded_response(
+    token: &str,
+    origin: &str,
+    parent: &str,
+    profile: super::DisplayProfile,
+) -> anyhow::Result<Vec<u8>> {
     anyhow::ensure!(
         token.len() == 64 && token.bytes().all(|byte| byte.is_ascii_hexdigit()),
         "invalid surface session credential"
@@ -180,7 +187,8 @@ pub(crate) fn embedded_response(token: &str, origin: &str, parent: &str) -> anyh
     );
     let page = PAGE.as_ref().map_err(|error| anyhow::anyhow!("{error}"))?;
     let marker = format!(
-        "<meta name=\"capsem-surface-protocol\" data-parent-origin=\"{parent}\" content=\"{}{token}\" />",
+        "<meta name=\"capsem-surface-protocol\" data-parent-origin=\"{parent}\" data-display-profile=\"{}\" content=\"{}{token}\" />",
+        profile.resolve(parent).as_str(),
         capsem_proto::PREVIEW_WS_PROTOCOL_PREFIX
     );
     // The synchronous transport hook runs in the head while HTML is parsed.

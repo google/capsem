@@ -12,6 +12,9 @@
 //! No token appears in any URL.
 
 mod client;
+mod profile;
+
+pub(crate) use profile::DisplayProfile;
 
 pub(crate) use client::embedded_response;
 pub(crate) use client::{response as client_response, CLIENT_ROOT};
@@ -105,6 +108,8 @@ fn hardened(response: impl IntoResponse, content_type: &'static str, policy: Str
 #[derive(Default, serde::Deserialize)]
 pub struct LaunchOptions {
     parent_origin: Option<String>,
+    #[serde(default)]
+    display_profile: DisplayProfile,
 }
 
 pub async fn launcher(
@@ -133,7 +138,8 @@ pub async fn launcher(
     let embedded = !parent.is_empty() && headers.get("sec-fetch-dest").is_some_and(|value| value == "iframe");
     let page = LAUNCHER
         .replace("{{auto}}", if cross_site && !embedded { "false" } else { "true" })
-        .replace("{{parent}}", &parent);
+        .replace("{{parent}}", &parent)
+        .replace("{{profile}}", options.display_profile.as_str());
     let mut response = hardened(page, "text/html; charset=utf-8", policy);
     if !parent.is_empty() {
         response.headers_mut().remove(http::header::X_FRAME_OPTIONS);
