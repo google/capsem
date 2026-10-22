@@ -194,6 +194,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Launch `just dev ui` from the frontend workspace so Tauri starts its Astro
   development server before opening the desktop window.
 
+- Keep Astro attached to the Tauri development session under agent runners,
+  so closing the app also tears down the frontend server.
+
 - Guest `shell` and `exec` commands now honor `--slow` when changed inputs
   require rebuilding VM assets.
 
