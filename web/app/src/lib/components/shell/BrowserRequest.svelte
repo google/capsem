@@ -14,14 +14,22 @@
     const target = requests.next(vmId, request);
     // The native shell can launch the local browser after the guest round trip.
     // A browser tab still needs its explicit action because its gesture expired.
-    if (target && '__TAURI_INTERNALS__' in window) openTarget(target);
+    if (target) {
+      const native = '__TAURI_INTERNALS__' in window;
+      console.log('[browser] fresh request vm=%s id=%s native=%s', vmId, requestId, native);
+      if (native) openTarget(target, true);
+    }
   });
 
-  function openTarget(target: string) {
+  function openTarget(target: string, automatic = false) {
     const session = vmId;
     const id = requestId;
     error = false;
-    void openUrl(target).catch(() => {
+    console.log('[browser] handoff id=%s automatic=%s', id, automatic);
+    void openUrl(target).then(() => {
+      console.log('[browser] handoff accepted id=%s', id);
+    }).catch(() => {
+      console.warn('[browser] handoff failed id=%s', id);
       if (vmId === session && requestId === id && url === target) error = true;
     });
   }
