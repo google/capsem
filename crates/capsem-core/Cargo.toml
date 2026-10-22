@@ -45,6 +45,7 @@ tokio-util = { workspace = true }
 tokio-tungstenite = { version = "0.30.0", default-features = false }
 bytes = "1"
 serde_json = { workspace = true }
+rmp-serde = { workspace = true }
 uuid = { version = "1", features = ["v4", "serde"] }
 flate2 = "1"
 regex = { workspace = true }

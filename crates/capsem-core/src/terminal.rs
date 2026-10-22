@@ -11,6 +11,8 @@ use capsem_proto::{TERMINAL_COMBINING_CHARS, TERMINAL_DEFAULT_COLS, TERMINAL_DEF
 use tokio::sync::{broadcast, watch};
 
 mod callbacks;
+mod checkpoint;
+pub use checkpoint::{CheckpointError, MAX_CHECKPOINT_BYTES};
 mod osc_budget;
 mod projection;
 use callbacks::Proxy;

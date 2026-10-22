@@ -1,8 +1,10 @@
 //! Bound OSC before the upstream parser buffers it. Other VT bytes pass through
 //! unchanged; this owns a byte budget, not terminal interpretation.
 use capsem_proto::TERMINAL_CONTROL_STRING_BYTES;
+use serde::{Deserialize, Serialize};
 
-#[derive(Default)]
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct OscBudget {
     escape: bool,
     osc: bool,
@@ -11,6 +13,19 @@ pub(super) struct OscBudget {
 }
 
 impl OscBudget {
+    pub fn valid_checkpoint(&self) -> bool {
+        self.pending.len() <= TERMINAL_CONTROL_STRING_BYTES
+            && !(self.escape && self.osc)
+            && if self.discarded {
+                self.osc && self.pending.is_empty()
+            } else if self.osc {
+                self.pending.first() == Some(&b']')
+                    && !self.pending.iter().any(|byte| matches!(byte, 7 | 0x18 | 0x1a | 0x1b))
+            } else {
+                self.pending.is_empty()
+            }
+    }
+
     pub fn process(&mut self, mut bytes: &[u8], mut emit: impl FnMut(&[u8])) {
         while !bytes.is_empty() {
             if self.osc {
