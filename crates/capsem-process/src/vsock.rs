@@ -31,6 +31,7 @@ mod exec_completion;
 mod exec_dispatch;
 mod exec_input;
 mod exec_output;
+mod file_content;
 mod shutdown;
 
 use crate::ipc::file_boundary::{
@@ -963,68 +964,26 @@ async fn handle_guest_msg(
                 exec_completion::complete(id, exit_code, js, db, security_rules).await;
             }
         }
-        GuestToHost::FileContent { id, path, data } => {
+        GuestToHost::FileContent { id, path: _, data } => {
             let context = {
                 let mut active_file_ops = js.active_file_ops.lock().unwrap();
-                active_file_ops.remove(&id)
-            };
-            let (path, action) = match context {
-                Some(ActiveFileOp::Read { path }) => (path, capsem_logger::FileAction::Exported),
-                Some(ActiveFileOp::Write { path, .. }) => (path, capsem_logger::FileAction::Read),
-                None => (path, capsem_logger::FileAction::Read),
-            };
-            let boundary = emit_explicit_file_security_event(
-                db,
-                security_rules,
-                plugin_policy,
-                FileSecurityBoundary {
-                    action,
-                    path,
-                    size: Some(data.len() as u64),
-                    content: Some(file_content_preview(&data)),
-                    mime_type: None,
-                },
-            )
-            .await;
-            // An export leaves the sandbox, so it is refused unless its ledger
-            // record was admitted and allowed -- like exec and file import. A
-            // record that failed to write or evaluate refuses it too (#203):
-            // an export nobody could audit must not happen.
-            let refusal = match &boundary {
-                Ok(Some(emission)) if emission.enforcement.is_allowed() => None,
-                Ok(Some(emission)) => Some(
-                    emission
-                        .enforcement
-                        .reason
-                        .clone()
-                        .unwrap_or_else(|| "blocked by policy".into()),
-                ),
-                Ok(None) => Some("its security event could not be recorded".into()),
-                Err(error) => Some(format!("its security event failed: {error}")),
-            };
-            if let Some(reason) = refusal {
-                if action != capsem_logger::FileAction::Exported {
-                    warn!(id, action = ?action, reason, "file boundary not allowed after data was already local");
+                if matches!(active_file_ops.get(&id), Some(ActiveFileOp::Read { .. })) {
+                    active_file_ops.remove(&id)
                 } else {
-                    let error = Some(format!("file export refused: {reason}"));
-                    if let Some(tx) = js.jobs.lock().unwrap().remove(&id) {
-                        capsem_core::try_send!(
-                            "job_result_read_file_blocked",
-                            tx.send(JobResult::ReadFile { data: None, error })
-                        );
-                    }
-                    return;
+                    None
                 }
-            }
-            if let Some(tx) = js.jobs.lock().unwrap().remove(&id) {
-                capsem_core::try_send!(
-                    "job_result_read_file",
-                    tx.send(JobResult::ReadFile {
-                        data: Some(data),
-                        error: None
-                    })
-                );
-            }
+            };
+            let Some(context) = context else {
+                warn!(id, "unsolicited file content ignored");
+                return;
+            };
+            let js = Arc::clone(js);
+            let db = Arc::clone(db);
+            let security_rules = Arc::clone(security_rules);
+            let plugin_policy = Arc::clone(plugin_policy);
+            tokio::spawn(async move {
+                file_content::complete(id, context, data, js, db, security_rules, plugin_policy).await;
+            });
         }
         GuestToHost::FileOpDone { id } => {
             let context = {

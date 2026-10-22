@@ -561,6 +561,57 @@ async fn concurrent_exec_completions_keep_each_stdout() {
 }
 
 #[tokio::test]
+async fn unsolicited_file_content_cannot_create_a_file_security_event() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("session.db");
+    let db = Arc::new(capsem_logger::DbWriter::open(&db_path, 16).unwrap());
+    let rules = Arc::new(std::sync::RwLock::new(Arc::new(
+        capsem_core::net::policy_config::SecurityRuleSet::new(Vec::new()),
+    )));
+    let js = Arc::new(JobStore::new());
+    handle_guest_msg(
+        capsem_proto::GuestToHost::FileContent {
+            id: 990,
+            path: "/host/forged.txt".to_string(),
+            data: b"forged bytes".to_vec(),
+        },
+        &js,
+        &db,
+        &rules,
+        &empty_plugin_policy(),
+    )
+    .await;
+    js.active_file_ops.lock().unwrap().insert(
+        991,
+        ActiveFileOp::Write {
+            path: "/workspace/write.txt".to_string(),
+            data: b"original".to_vec(),
+        },
+    );
+    handle_guest_msg(
+        capsem_proto::GuestToHost::FileContent {
+            id: 991,
+            path: "/host/forged.txt".to_string(),
+            data: b"forged bytes".to_vec(),
+        },
+        &js,
+        &db,
+        &rules,
+        &empty_plugin_policy(),
+    )
+    .await;
+    assert!(matches!(
+        js.active_file_ops.lock().unwrap().get(&991),
+        Some(ActiveFileOp::Write { .. })
+    ));
+    db.shutdown_blocking();
+    let reader = capsem_logger::DbReader::open(&db_path).unwrap();
+    let rows: serde_json::Value =
+        serde_json::from_str(&reader.query_raw("SELECT COUNT(*) FROM fs_events").unwrap()).unwrap();
+    assert_eq!(rows["rows"][0][0].as_i64(), Some(0));
+}
+
+#[tokio::test]
 async fn read_file_content_emits_file_export_before_job_result() {
     use capsem_proto::GuestToHost;
     use std::sync::Arc;

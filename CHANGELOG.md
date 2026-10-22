@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Ignore unsolicited guest file-content frames and accept exports only for an
+  active read job, preventing forged file-security ledger events.
+
 - Admit at most two concurrent model or MCP body evaluations per VM, with
   bounded body sizes and deadlines, so guest traffic cannot multiply proxy
   memory use across hundreds of connections.
