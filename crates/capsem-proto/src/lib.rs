@@ -9,6 +9,7 @@
 //! `HostToGuest`. This is enforced at the type level by having separate
 //! encode/decode function pairs.
 
+pub mod browser;
 pub mod credential_injection;
 pub mod credential_reference;
 mod exec_stream;
@@ -718,6 +719,9 @@ pub fn decode_dns_response(payload: &[u8]) -> Result<DnsResponse> {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "t", content = "d", rename_all = "lowercase")]
 pub enum GuestToHost {
+    /// Request browser navigation on the attached client's machine, never
+    /// arbitrary host commands. The owner validates it before publication.
+    OpenUrl { url: browser::BrowserUrl },
     // -- Boot --
     /// Agent alive, waiting for boot config.
     Ready { version: String },

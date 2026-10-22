@@ -1,3 +1,3 @@
 # Deliberately combined dependency graph for #206 on 0.7.
-sha256 = "ee778b1b39e7ee334cb309761060f34dce5c3b4d4c6e122364ff331d27249216"
-reason = "The maintainer-approved terminal migration replaces vt100 with pinned alacritty_terminal 0.26.0 and vte checkpoint patches, including their terminal-model dependencies. Non-security XXH3-128 uses pinned xxhash-rust 0.8.19 with no runtime dependencies; the protocol build fingerprint uses the existing crypto owner as a build dependency. Existing trust, confinement, shared-cache and SDK dependencies remain in the deliberate 0.7.1 graph. Rebuild and qualify the host and guest cohort together."
+sha256 = "21fa11c42c672d90c57e66ea6892ed7957ab9bd16abfdadd72d09fec85be0989"
+reason = "The maintainer-approved terminal migration uses pinned alacritty_terminal 0.26.0 and vte checkpoint patches. Non-security fingerprints use crypto-owned xxhash-rust 0.8.19. General browser forwarding adds the existing locked url 2.5.8 dependency to capsem-proto for one standards-based HTTP(S) validator shared by guest, owner and TUI; no package version moved. Rebuild and qualify the host and guest cohort together."

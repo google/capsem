@@ -23,6 +23,7 @@ rmp-serde = { workspace = true }
 rmp = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
+url = "2"
 tokio = { workspace = true }
 
 [lints]

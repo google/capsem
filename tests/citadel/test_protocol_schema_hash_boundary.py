@@ -16,6 +16,7 @@ REQUIRED_INPUTS = {
     "lib.rs",
     "ipc.rs",
     "terminal.rs",
+    "browser.rs",
     "stream.rs",
     "handshake.rs",
     "router.rs",

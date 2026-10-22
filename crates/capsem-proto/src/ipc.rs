@@ -278,6 +278,8 @@ pub enum ServiceToProcess {
 /// Messages sent from capsem-process back to capsem-service over the per-VM UDS.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ProcessToService {
+    /// Latest ephemeral request, also replayed to metadata observers.
+    BrowserRequest { request: crate::browser::BrowserRequest },
     /// Response to Ping.
     Pong,
     /// Output bytes from the guest PTY.
