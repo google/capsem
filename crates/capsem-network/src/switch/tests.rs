@@ -62,7 +62,7 @@ fn a_tcp_segment_goes_to_the_port_owning_its_destination_mac() {
 }
 
 #[test]
-fn every_ethertype_crosses() {
+fn untagged_ethertypes_cross_after_source_checks() {
     for (ethertype, payload) in [
         (ETHERTYPE_IPV4, ipv4(B.address, C.address, 47)),
         (ETHERTYPE_ARP, arp(&B, B.address, C.address)),
@@ -77,6 +77,22 @@ fn every_ethertype_crosses() {
             "ethertype {ethertype:#06x}"
         );
     }
+}
+
+#[test]
+fn priority_tagged_frames_cannot_hide_an_ipv4_sender() {
+    for ethertype in [0x8100, 0x88a8] {
+        let mut payload = vec![0, 0, 0x08, 0x00]; // VID 0, inner IPv4.
+        payload.extend(ipv4(B.address, C.address, 6));
+        let frame = ethernet(C.mac, A.mac, ethertype, &payload);
+        assert_eq!(switch().route(&A, &frame), Route::Drop(DropReason::SourceAddress));
+    }
+}
+
+#[test]
+fn arp_sender_hardware_address_must_match_the_port() {
+    let frame = ethernet(C.mac, A.mac, ETHERTYPE_ARP, &arp(&B, A.address, C.address));
+    assert_eq!(switch().route(&A, &frame), Route::Drop(DropReason::SourceMac));
 }
 
 #[test]

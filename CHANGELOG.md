@@ -29,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Drop VLAN-tagged private-switch frames that could hide spoofed IPv4 sources,
+  and require ARP sender hardware addresses to match their assigned VM port.
+
 - Treat an empty plain-HTTP upstream port list as deny-all and preserve it
   through active-policy compilation; malformed lists fail closed.
 

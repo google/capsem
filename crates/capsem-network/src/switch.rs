@@ -14,8 +14,8 @@
 //! or an ARP message from that address -- port security, as a managed
 //! switch has it -- so no member speaks as another, no ARP reply steals
 //! another's traffic, and every counter names the port that sent the frame.
-//! Other ethertypes cross unchecked: members have IPv4 addresses and names
-//! only.
+//! Other ethertypes cross unchecked, except VLAN tags that would conceal
+//! an IPv4 or ARP source from these checks.
 //!
 //! The switch is a network, not a security boundary: whoever is plugged into
 //! it can reach everyone else plugged into it.
@@ -27,10 +27,13 @@ pub type Mac = [u8; 6];
 pub const ETHERNET_HEADER_BYTES: usize = 14;
 const ETHERTYPE_IPV4: [u8; 2] = [0x08, 0x00];
 const ETHERTYPE_ARP: [u8; 2] = [0x08, 0x06];
+const ETHERTYPE_VLAN: [u8; 2] = [0x81, 0x00];
+const ETHERTYPE_QINQ: [u8; 2] = [0x88, 0xa8];
 /// Where a frame names its sender's address: an IPv4 header's source, and
 /// the sender protocol address of an ARP message over ethernet.
 const IPV4_SOURCE: std::ops::Range<usize> = ETHERNET_HEADER_BYTES + 12..ETHERNET_HEADER_BYTES + 16;
 const ARP_SENDER: std::ops::Range<usize> = ETHERNET_HEADER_BYTES + 14..ETHERNET_HEADER_BYTES + 18;
+const ARP_SENDER_HARDWARE: std::ops::Range<usize> = ETHERNET_HEADER_BYTES + 8..ETHERNET_HEADER_BYTES + 14;
 
 /// Who is plugged into a port: its cable's MAC and the address it leased.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -128,7 +131,18 @@ impl<P> Table<P> {
         if frame[6..12] != own.mac[..] {
             return Route::Drop(DropReason::SourceMac);
         }
-        let sender = match [frame[12], frame[13]] {
+        let ethertype = [frame[12], frame[13]];
+        if matches!(ethertype, ETHERTYPE_VLAN | ETHERTYPE_QINQ) {
+            return Route::Drop(DropReason::SourceAddress);
+        }
+        if ethertype == ETHERTYPE_ARP {
+            match frame.get(ARP_SENDER_HARDWARE) {
+                None => return Route::Drop(DropReason::Short),
+                Some(mac) if mac != own.mac => return Route::Drop(DropReason::SourceMac),
+                Some(_) => {}
+            }
+        }
+        let sender = match ethertype {
             ETHERTYPE_IPV4 => Some(IPV4_SOURCE),
             ETHERTYPE_ARP => Some(ARP_SENDER),
             _ => None,
