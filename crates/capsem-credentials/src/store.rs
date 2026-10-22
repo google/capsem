@@ -77,6 +77,13 @@ impl CredentialStore {
     }
 
     pub fn capture(&self, provider: CredentialProvider, credential_ref: &str, raw_value: &str) -> Result<bool, String> {
+        if raw_value.len() > durable::MAX_CREDENTIAL_BYTES {
+            return Err("credential exceeds capture size limit".to_string());
+        }
+        let _durable_guard = self
+            .durable_lock
+            .lock()
+            .map_err(|_| "credential durable store lock poisoned".to_string())?;
         if let Some(existing) = self.cache_get(provider, credential_ref)? {
             if existing == raw_value {
                 return Ok(false);
@@ -86,11 +93,16 @@ impl CredentialStore {
                 provider.as_str()
             ));
         }
-        self.cache_insert(provider, credential_ref, raw_value)?;
-        let _durable_guard = self
-            .durable_lock
+        if self
+            .cache
             .lock()
-            .map_err(|_| "credential durable store lock poisoned".to_string())?;
+            .map_err(|_| "credential runtime cache lock poisoned".to_string())?
+            .len()
+            >= durable::MAX_CAPTURED_CREDENTIALS
+        {
+            return Err("credential runtime store is full".to_string());
+        }
+        self.cache_insert(provider, credential_ref, raw_value)?;
         if let Err(error) = durable::write(provider, credential_ref, raw_value) {
             self.mark_error(error.clone());
             warn!(

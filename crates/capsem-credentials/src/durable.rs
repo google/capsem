@@ -7,6 +7,8 @@ use crate::provider::credential_provider_from_str;
 use crate::{credential_store_account, CredentialProvider};
 
 pub const STORE_PATH_ENV: &str = "CAPSEM_CREDENTIAL_STORE_PATH";
+pub(crate) const MAX_CAPTURED_CREDENTIALS: usize = 1024;
+pub(crate) const MAX_CREDENTIAL_BYTES: usize = 4096;
 
 #[cfg(test)]
 mod tests;
@@ -57,12 +59,16 @@ fn disk_store_write(
     credential_ref: &str,
     raw_value: &str,
 ) -> Result<(), String> {
+    if raw_value.len() > MAX_CREDENTIAL_BYTES {
+        return Err("credential exceeds durable size limit".to_string());
+    }
     let _guard = StoreLock::exclusive(path)?;
     let mut map = disk_store_load(path)?;
-    map.insert(
-        credential_store_account(provider, credential_ref),
-        raw_value.to_string(),
-    );
+    let account = credential_store_account(provider, credential_ref);
+    if !map.contains_key(&account) && map.len() >= MAX_CAPTURED_CREDENTIALS {
+        return Err("credential durable store is full".to_string());
+    }
+    map.insert(account, raw_value.to_string());
     let json =
         serde_json::to_string_pretty(&map).map_err(|error| format!("serialize credential disk store: {error}"))?;
     write_secret_file(path, json.as_bytes())

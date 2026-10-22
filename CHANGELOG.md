@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Limit the credential store to 1,024 entries and 4 KiB per secret so repeated
+  captures cannot grow its plaintext file or rewrite cost without bound.
+
 - Capture HTTP credentials only for provider-bound destinations and credential
   fields, preventing arbitrary guest endpoints from filling the credential store.
 

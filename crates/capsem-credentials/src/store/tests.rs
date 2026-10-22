@@ -67,3 +67,20 @@ fn invalid_injection_is_redacted_and_does_not_enter_cache() {
     }
     assert_eq!(store.status().cached_count, 0);
 }
+
+#[test]
+fn capture_limit_refuses_new_secret_without_caching_it() {
+    let store = CredentialStore::default();
+    for index in 0..durable::MAX_CAPTURED_CREDENTIALS {
+        store
+            .cache_insert(CredentialProvider::OpenAi, &format!("ref-{index}"), "existing")
+            .unwrap();
+    }
+    let error = store
+        .capture(CredentialProvider::OpenAi, "new-ref", "new-secret")
+        .unwrap_err();
+    assert!(error.contains("full"));
+    assert_eq!(store.status().cached_count, durable::MAX_CAPTURED_CREDENTIALS);
+    assert_eq!(store.cache_get(CredentialProvider::OpenAi, "new-ref").unwrap(), None);
+    assert!(!store.capture(CredentialProvider::OpenAi, "ref-0", "existing").unwrap());
+}
