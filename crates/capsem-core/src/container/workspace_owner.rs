@@ -27,7 +27,7 @@ pub fn refresh(session_dir: &std::path::Path) -> Result<bool> {
     #[cfg(not(target_os = "linux"))]
     {
         let _ = session_dir;
-        return Ok(false);
+        Ok(false)
     }
 
     #[cfg(target_os = "linux")]
