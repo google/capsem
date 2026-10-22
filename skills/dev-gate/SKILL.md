@@ -104,6 +104,12 @@ isolated machine work. An explicit request covers the complete command,
 including Python or shell drivers that launch compilers. Complete gate/release
 isolation remains authoritative.
 
+Compiler lifetime is independent: known compiler commands automatically share
+the compiler cache, and opaque build drivers select `--compiler-cache` without
+serializing their work on the machine lock. Startup uses the short cache-owned
+startup lock. Reaping and final server shutdown require exclusive cache use,
+so a gate cannot terminate a concurrent focused compiler's server.
+
 Candidate, both release commands, and directly invoked private test modules
 run under Bubblewrap on Linux or Seatbelt on macOS. Linux receives loopback and
 the configured UNIX sockets but no external interface; macOS uses the generated

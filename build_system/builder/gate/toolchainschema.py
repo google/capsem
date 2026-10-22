@@ -69,6 +69,7 @@ class ToolchainConfig(Strict):
     sync: tuple[str, ...]
     compiler_cache_command: SafeToken
     compiler_cache_socket_name: SafeToken
+    compiler_cache_start_lock_name: SafeToken
     compiler_cache_client_side: StrictBool
     compiler_cache_idle_timeout_seconds: NonNegativeInt
     cargo_incremental: StrictBool

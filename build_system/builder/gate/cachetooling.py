@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import os
 import shutil
+from contextlib import ExitStack
 from pathlib import Path
 
 from .. import gatelaunch
-from ..cache.leases import retain_generation
+from ..cache.leases import exclusive_path, exclusive_paths, retain_generation, shared_use
 from ..cache.pythonenv import PYTEST_ADDOPTS
 from ..cache.pythonenv import select as select_python
 from ..cache.telemetry import CacheUse, ReuseScope, record_use
@@ -110,13 +111,14 @@ def compiler_environment(config: GateConfig) -> dict[str, str]:
 
 
 class CompilerCache(Resource, name="compiler-cache"):
-    """Keep one correctly scoped sccache server alive for a gate command."""
+    """Share a live server; stop it only after its last compiler user leaves."""
 
     def __init__(self, config: GateConfig, runner: Runner) -> None:
         self._config = config
         self._runner = runner
         self._environment = compiler_environment(config)
         self._active = False
+        self._users = ExitStack()
 
     def acquire(self) -> None:
         from .context import Context
@@ -130,18 +132,32 @@ class CompilerCache(Resource, name="compiler-cache"):
         stage = cachelayout.stage_path(self._config, "rust-sccache")
         MakeDir(stage).perform(Context(self._runner, self._config, env=self._environment))
         command = self._config.toolchain.compiler_cache_command
-        self._runner.succeeds((command, "--stop-server"), env=self._environment)
-        self._runner.run((command, "--start-server"), env=self._environment)
+        self._users.enter_context(shared_use(cachelayout.cache_paths(self._config), "rust-sccache"))
+        try:
+            # Upstream commands.rs routes --dist-status through
+            # connect_or_start_server even when distribution is disabled.
+            # --show-stats succeeds without starting; --start-server can
+            # replace a live UDS binding and strand its original daemon.
+            with exclusive_path(stage / self._config.toolchain.compiler_cache_start_lock_name, wait=True):
+                self._runner.capture((command, "--dist-status"), env=self._environment)
+        except BaseException:
+            self._users.close()
+            raise
         self._active = True
 
     def release(self) -> None:
         if not self._active:
             return
-        self._runner.run(
-            (self._config.toolchain.compiler_cache_command, "--stop-server"),
-            env=self._environment,
-        )
         self._active = False
+        self._users.close()
+        paths = cachelayout.cache_paths(self._config)
+        stage = paths.stage("rust-sccache")
+        with exclusive_paths(stage / lock for lock in paths.policy.stages["rust-sccache"].mutation_locks) as idle:
+            if idle:
+                self._runner.capture(
+                    (self._config.toolchain.compiler_cache_command, "--stop-server"),
+                    env=self._environment,
+                )
 
     def environment(self) -> dict[str, str]:
         return self._environment

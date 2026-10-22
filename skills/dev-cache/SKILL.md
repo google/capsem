@@ -250,8 +250,19 @@ Working-tree gates derive their private prefix name from the exact source
 digest. Do not replace it with a random run ID: Cargo fingerprints contain
 absolute source paths, so random prefixes turn an unchanged repeat into a
 rebuild. The gate owns sccache as a scoped `CompilerCache` resource, exports
-`SCCACHE_BASEDIRS` (plural), uses client-side mode, and stops the server during
-resource teardown. Do not manage its daemon in shell.
+`SCCACHE_BASEDIRS` (plural), and uses client-side mode. Gates and bounded
+compiler commands hold the cache stage's mutation locks shared. Startup alone
+is serialized by the configured startup lock; teardown and stale-server reaping
+require exclusive cache use. Another live compiler preserves the server, and
+only the last gate/bounded compiler user stops it. Kernel lock release lets the
+next reaper collect a server abandoned by a killed owner, without process-age
+guesses. Do not manage its daemon in shell.
+
+The bounded wrapper recognizes Cargo, rustc and sccache through configured
+wrappers. An opaque Python or shell build driver uses `--compiler-cache` for
+shared cache lifetime without a machine lease; `--machine-lease` includes it
+when complete isolation is intended. Ordinary inspection and cache-control
+commands hold no compiler lease, so cleanup cannot block itself.
 
 Cargo runs a workspace unit as `sccache <workspace wrapper> /abs/rustc ...`.
 sccache 0.17 drops that compiler argument only when it is spelled `rustc`, so

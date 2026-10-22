@@ -411,6 +411,7 @@ warm_size_bytes = 8589934592 # 8 GiB
 max_size_bytes = 12884901888 # 12 GiB
 prune_strategy = "lru"
 maximum_age_hours = 336
+mutation_locks = ["cache.lock"] # Live compilers share; cleanup requires exclusive use.
 
 [stages.buildkit-exports]
 description = "Portable BuildKit cache exports exchanged by hosted lanes."

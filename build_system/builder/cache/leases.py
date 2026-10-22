@@ -75,7 +75,7 @@ def lease_key(template: str, name: str) -> str | None:
 
 
 @contextmanager
-def exclusive_path(path: Path) -> Iterator[bool]:
+def exclusive_path(path: Path, *, wait: bool = False) -> Iterator[bool]:
     """Hold a lease exclusively while its generation is removed.
 
     Yields False when an owner holds it. Creating the file when it is missing
@@ -87,10 +87,22 @@ def exclusive_path(path: Path) -> Iterator[bool]:
     )
     with descriptor:
         try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(descriptor, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
         except BlockingIOError:
             yield False
             return
+        yield True
+
+
+@contextmanager
+def exclusive_paths(paths: Iterable[Path]) -> Iterator[bool]:
+    """Try an entire mutation boundary, retaining every lock until return."""
+    with ExitStack() as stack:
+        for path in sorted(set(paths)):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if not stack.enter_context(exclusive_path(path)):
+                yield False
+                return
         yield True
 
 

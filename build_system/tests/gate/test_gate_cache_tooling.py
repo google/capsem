@@ -160,8 +160,7 @@ def test_compiler_cache_server_is_scoped_to_the_gate_command(monkeypatch) -> Non
         assert resource.environment()[CONFIG.environment.sccache_idle_timeout] == "0"
 
     assert [command.argv for command in runner.commands] == [
-        ("sccache", "--stop-server"),
-        ("sccache", "--start-server"),
+        ("sccache", "--dist-status"),
         ("sccache", "--stop-server"),
     ]
     assert all(

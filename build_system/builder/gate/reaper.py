@@ -1,8 +1,7 @@
 """What earlier runs leaked is reaped when the next one starts, not by hand.
 
-Acquired under the machine lock and before `CompilerCache`: under the lock no
-other run is compiling, so every server in this repository's cache is stale,
-and the one this run needs has not been started yet. Released as a no-op --
+Acquired before `CompilerCache`. The cache's shared user locks preserve active
+focused compilers, which do not hold the gate's machine lock. Released as a no-op --
 what this run leaks is `OrphanAccounting`'s to report, and the next run's to
 reap.
 """
@@ -25,6 +24,13 @@ class StaleProcesses(Resource, name="stale-processes"):
         if self._runner.observing:
             return
         toolchain = self._config.toolchain
+        paths = cachelayout.cache_paths(self._config)
+        stage = paths.stage("rust-sccache")
+        locks = tuple(
+            argument
+            for lock in paths.policy.stages["rust-sccache"].mutation_locks
+            for argument in ("--lease-lock", str(stage / lock))
+        )
         self._runner.run(
             uv_run(
                 self._config,
@@ -39,6 +45,7 @@ class StaleProcesses(Resource, name="stale-processes"):
                 cachelayout.cache_paths(self._config).root,
                 "--grace-seconds",
                 toolchain.reaper_grace_seconds,
+                *locks,
             )
         )
 

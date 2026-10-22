@@ -1280,7 +1280,7 @@ run_marker = "CAPSEM_GATE_RUN"
 # coordinated by chat -- "starting VMs", "VMs done" -- with one of them paused
 # for ninety minutes of a day. A queue the kernel owns replaces all three:
 # it names its holder, and it is released when the holder dies.
-programs = ["cargo"]
+programs = ["cargo", "rustc", "sccache"]
 # These fixture scripts compile after preparing inputs. Their outer timeout
 # starts after the lease wait; leasing only nested Cargo is too late.
 command_prefixes = [
@@ -1291,7 +1291,7 @@ command_prefixes = [
 wrappers = ["env", "caffeinate", "nice", "time"]
 # Neither compile nor write the target directory, so queueing them behind a
 # forty-minute VM run buys nothing.
-exempt_subcommands = ["fmt", "metadata", "tree", "locate-project", "--version", "-V", "--list", "help"]
+exempt_subcommands = ["fmt", "metadata", "tree", "locate-project", "--version", "-V", "--list", "help", "--start-server", "--stop-server", "--show-stats", "--dist-status", "--zero-stats"]
 # EX_TEMPFAIL: the wait ran out, which is not the command's own failure and
 # not the wrapper's timeout (124) either.
 wait_exit_code = 75
@@ -1307,6 +1307,7 @@ wait_exit_code = 75
 sync = ["uv", "sync", "--project", "build_system", "--frozen"]
 compiler_cache_command = "sccache"
 compiler_cache_socket_name = "sccache.sock"
+compiler_cache_start_lock_name = "sccache-start.lock"
 compiler_cache_client_side = true
 compiler_cache_idle_timeout_seconds = 0
 # Gate commands and bounded builds compile without incremental sessions. A gate

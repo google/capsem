@@ -1,6 +1,7 @@
 """Focused diagnostics run freely; machine isolation is an explicit option.
 
-Real launcher subprocesses use a Cargo shim and an isolated kernel lock.
+Real launcher subprocesses use tool shims and an isolated kernel lock.
+Native compiler-cache behavior is proven by test_compiler_cache_lifetime.
 """
 
 from __future__ import annotations
@@ -50,9 +51,10 @@ def _home_path(home: Path, configured: str) -> Path:
 def _environment(tmp_path: Path, **extra: str) -> dict[str, str]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
-    cargo = bin_dir / "cargo"
-    cargo.write_text(FAKE_CARGO, encoding="utf-8")
-    cargo.chmod(cargo.stat().st_mode | stat.S_IXUSR)
+    for name, body in (("cargo", FAKE_CARGO), (CONFIG.toolchain.compiler_cache_command, "#!/bin/sh\nexit 0\n")):
+        tool = bin_dir / name
+        tool.write_text(body, encoding="utf-8")
+        tool.chmod(tool.stat().st_mode | stat.S_IXUSR)
     inherited = {name: value for name, value in os.environ.items() if name != LOCK.run_marker}
     return {
         **inherited,

@@ -13,7 +13,7 @@ import signal
 import subprocess
 import sys
 from collections.abc import Iterator, Sequence
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Protocol, cast
 
@@ -97,6 +97,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--grace-seconds", default=10.0, type=_nonnegative_seconds)
     parser.add_argument("--machine-lease", action="store_true",
                         help="explicitly isolate this command on the gate machine lock")
+    parser.add_argument("--compiler-cache", action="store_true",
+                        help="hold shared compiler-cache use for an opaque build driver")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     return parser
 
@@ -110,9 +112,22 @@ def run(argv: Sequence[str]) -> int:
         _parser().error("a command is required after --")
 
     root = _repository_root()
+    requested_command = tuple(command)
     command, keyed = _keyed_clippy(command, root)
     try:
-        with _machine(command, root, requested=args.machine_lease) as exported:
+        with ExitStack() as lifetime:
+            exported = lifetime.enter_context(_machine(command, root, requested=args.machine_lease))
+            if root is not None:
+                from capsem_builder.gate import boundedlease, cachetooling, config
+                from capsem_builder.gate.lifecycle import held
+                from capsem_builder.gate.proc import Runner
+
+                settings = config.load(root)
+                if args.compiler_cache or args.machine_lease or boundedlease.machine_work(requested_command, settings.locks.bounded):
+                    # Only cache lifetime is shared. Routine compilation never
+                    # queues on the machine lock; opaque drivers opt in.
+                    cache = cachetooling.CompilerCache(settings, Runner(root))
+                    lifetime.enter_context(held(cache))
             return _run(command, {**keyed, **exported}, args)
     except _MachineBusy as busy:
         print(f"bounded command never started: {busy}", file=sys.stderr)

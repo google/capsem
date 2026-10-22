@@ -6,8 +6,9 @@ run after. Servers are found by name and scoped by the socket they were started
 for, read from their own environment: that ties each one to a cache root, and a
 server started for another project's cache is not ours to kill.
 
-Only ever run while holding the machine lock. Under it nothing else is
-compiling, so every server inside the cache root is stale by construction.
+The machine lock excludes other gates, not routine focused compilers. Hold
+the cache's user locks exclusively through discovery and reaping; a live
+compiler's shared use preserves its server irrespective of process age.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ import time
 from pathlib import Path
 
 import psutil
+from capsem_builder.cache.leases import exclusive_paths
 from capsem_builder.gate.processstop import is_live
 
 
@@ -70,11 +72,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--socket-environment", required=True)
     parser.add_argument("--cache-root", required=True, type=Path)
     parser.add_argument("--grace-seconds", required=True, type=float)
+    parser.add_argument("--lease-lock", required=True, action="append", type=Path)
     args = parser.parse_args(argv)
 
-    survivors = reap(
-        stale_servers(args.program, args.socket_environment, args.cache_root), args.grace_seconds
-    )
+    with exclusive_paths(args.lease_lock) as idle:
+        if not idle:
+            print("compiler cache is in use; preserving its servers")
+            return 0
+        survivors = reap(
+            stale_servers(args.program, args.socket_environment, args.cache_root), args.grace_seconds
+        )
     for proc in survivors:
         print(f"pid {proc.pid} survived SIGKILL", file=sys.stderr)
     return 1 if survivors else 0

@@ -25,6 +25,7 @@ from pathlib import Path
 
 import psutil
 import pytest
+from capsem_builder.cache.config import load_policy
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate import preflight
 from capsem_builder.gate.cachetooling import CompilerCache
@@ -98,9 +99,12 @@ def _server(socket: Path) -> Iterator[psutil.Process]:
 
 
 def _reap(cache_root: Path) -> subprocess.CompletedProcess[str]:
+    stage = load_policy(ROOT).stages["rust-sccache"]
+    locks = [argument for lock in stage.mutation_locks
+             for argument in ("--lease-lock", str(cache_root / stage.path / lock))]
     return subprocess.run(
         [sys.executable, "-m", MODULE, "--program", PROGRAM, "--socket-environment", SOCKET_ENV,
-         "--cache-root", str(cache_root), "--grace-seconds", "2"],
+         "--cache-root", str(cache_root), "--grace-seconds", "2", *locks],
         capture_output=True, text=True, check=False, timeout=60,
     )
 
