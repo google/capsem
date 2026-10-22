@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Bound KVM virtio-blk DISCARD payloads to the advertised segment limit before
+  allocating host memory.
+
 - Reject KVM vsock connections whose peer CID is not the owning VM's CID,
   preventing one guest from reaching another guest's control listeners.
 

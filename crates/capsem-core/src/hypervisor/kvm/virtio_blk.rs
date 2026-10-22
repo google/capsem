@@ -47,6 +47,8 @@ const BLOCK_CHECKPOINT_STATE_LEN: usize = 8 + 4 + 8 + 8 + 8 + 8 + 1 + VIRTIO_BLK
 
 /// Size of one virtio discard segment.
 const DISCARD_SEGMENT_SIZE: usize = 16;
+const MAX_DISCARD_SEGMENTS: u32 = 32;
+const MAX_DISCARD_BYTES: usize = MAX_DISCARD_SEGMENTS as usize * DISCARD_SEGMENT_SIZE;
 
 // Feature bits
 const VIRTIO_BLK_F_RO: u64 = 1 << 5;
@@ -603,7 +605,11 @@ impl VirtioBlockDevice {
     }
 
     fn read_guest_data(mem: &GuestMemoryRef, data_descs: &[(u64, u32)]) -> Option<Vec<u8>> {
-        let total_len: usize = data_descs.iter().map(|&(_, len)| len as usize).sum();
+        let total_len = data_descs.iter().try_fold(0_usize, |total, &(_, len)| {
+            total
+                .checked_add(len as usize)
+                .filter(|&size| size <= MAX_DISCARD_BYTES)
+        })?;
         let mut data = Vec::with_capacity(total_len);
         for &(gpa, len) in data_descs {
             if len == 0 {
@@ -1372,7 +1378,7 @@ impl VirtioDevice for VirtioBlockDevice {
         if !self.read_only {
             let max_discard_sectors = self.capacity_sectors.min(u64::from(u32::MAX)) as u32;
             config[36..40].copy_from_slice(&max_discard_sectors.to_le_bytes());
-            config[40..44].copy_from_slice(&32_u32.to_le_bytes());
+            config[40..44].copy_from_slice(&MAX_DISCARD_SEGMENTS.to_le_bytes());
             config[44..48].copy_from_slice(&1_u32.to_le_bytes());
         }
 
