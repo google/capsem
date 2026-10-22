@@ -430,6 +430,7 @@ impl ServiceState {
             session_dir,
             retirement,
         );
+        guest_lifecycle::spawn_suspend_listener(Arc::clone(self), id.to_string(), generation);
 
         Ok(())
     }

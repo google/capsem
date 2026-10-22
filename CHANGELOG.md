@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Route guest suspend requests through the service's lifecycle admission and
+  host-wide virtualization lock; reclaim cleanly stopped ephemeral sessions.
+
 - Prevent guest lifecycle messages from directly starting a VM suspend inside
   capsem-process.
 

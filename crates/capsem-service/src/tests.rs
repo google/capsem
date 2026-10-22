@@ -256,10 +256,11 @@ pub(crate) fn spawn_fake_process(
                 .unwrap_or_else(|_| panic!("fake capsem-process got {received} of {expected} expected IPC connections"))
                 .unwrap();
             let std_stream = stream.into_std().unwrap();
-            let std_stream = tokio::task::spawn_blocking(move || {
+            let (std_stream, peer) = tokio::task::spawn_blocking(move || {
                 let mut std_stream = std_stream;
-                capsem_foundation::ipc_handshake::negotiate_responder(&mut std_stream, "capsem-process-test", "")?;
-                Ok::<_, capsem_proto::handshake::HandshakeError>(std_stream)
+                let peer =
+                    capsem_foundation::ipc_handshake::negotiate_responder(&mut std_stream, "capsem-process-test", "")?;
+                Ok::<_, capsem_proto::handshake::HandshakeError>((std_stream, peer))
             })
             .await
             .unwrap()
@@ -268,6 +269,13 @@ pub(crate) fn spawn_fake_process(
                 capsem_foundation::ipc_channel::Sender<ProcessToService>,
                 capsem_foundation::ipc_channel::Receiver<ServiceToProcess>,
             ) = capsem_foundation::ipc_channel::channel_from_std(std_stream).unwrap();
+            if peer.peer == "capsem-service-lifecycle" {
+                tokio::spawn(async move {
+                    let _tx = tx;
+                    let _ = rx.recv().await;
+                });
+                continue;
+            }
             let message = rx.recv().await.unwrap();
             if let ServiceToProcess::InjectCredentials { id, .. } = &message {
                 tx.send(ProcessToService::CredentialsInjected { id: *id, error: None })

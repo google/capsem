@@ -342,6 +342,7 @@ impl ServiceState {
             session_dir,
             retirement,
         );
+        guest_lifecycle::spawn_suspend_listener(Arc::clone(self), vm_id.clone(), generation);
         // A resumed member's networks get their links back.
         switches::plug_memberships(Arc::clone(self), vm_id.clone());
         Ok(vm_id)

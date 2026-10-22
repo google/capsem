@@ -207,6 +207,21 @@ pub(super) fn spawn_exit_reaper(
                 }
             } else {
                 tracing::info!(id, "child exited cleanly (guest-initiated shutdown)");
+                if !info.persistent {
+                    let session_dir = info.session_dir.clone();
+                    match state
+                        .off_worker(move |state| state.delete_session_dir(&session_dir))
+                        .await
+                    {
+                        Ok(Ok(())) => {
+                            if let Err(error) = state.ledger_workers.retire(&id).await {
+                                warn!(id, %error, "clean ephemeral checkpoint cleanup failed");
+                            }
+                        }
+                        Ok(Err(error)) => warn!(id, %error, "clean ephemeral session cleanup failed"),
+                        Err(error) => warn!(id, error = %error.body.error, "clean ephemeral cleanup worker failed"),
+                    }
+                }
             }
         } else {
             tracing::debug!(id, "child exited after explicit service-side shutdown");
