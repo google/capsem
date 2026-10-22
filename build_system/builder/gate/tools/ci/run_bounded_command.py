@@ -149,7 +149,7 @@ def _machine(command: Sequence[str], root: Path | None, *, requested: bool) -> I
     from capsem_builder.gate import boundedlease, config
     from capsem_builder.gate.errors import GateError
 
-    lease = boundedlease.leased(command, root, os.environ)
+    lease = boundedlease.leased(command, root, os.environ, force=True)
     try:
         exported = lease.__enter__()
     except GateError as refused:

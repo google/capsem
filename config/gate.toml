@@ -1268,8 +1268,9 @@ poll_interval_seconds = 0.25
 run_marker = "CAPSEM_GATE_RUN"
 
 [locks.bounded]
-# Explicit --machine-lease diagnostics use this selection. Routine bounded
-# compilation and local TDD do not acquire the global machine lock.
+# Internal callers use this automatic selection. Explicit --machine-lease
+# isolates the whole command, including opaque drivers that launch Cargo.
+# Routine bounded compilation and local TDD do not acquire the global lock.
 #
 # The lock used to coordinate `capsem-gate` processes and nothing else, while
 # that wrapper routed every worktree's cargo into the one shared target

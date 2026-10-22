@@ -139,6 +139,21 @@ def test_cargo_waits_for_a_running_gate_and_says_who_it_waits_for(tmp_path: Path
     assert "waiting" not in out, "a queue notice must never enter the command's stdout"
 
 
+def test_explicit_machine_lease_covers_an_opaque_compiler_driver(tmp_path: Path) -> None:
+    driver = "import subprocess; subprocess.run(['cargo', 'build'], check=True)"
+    with contextlib.ExitStack() as holding:
+        holding.enter_context(_gate_holds_the_machine(tmp_path))
+        with _bounded(tmp_path, sys.executable, "-c", driver) as waiting:
+            assert not _finished_within(waiting, LOCK.report_after_seconds + 3), (
+                "explicit lease was ignored because Python hid the Cargo child"
+            )
+            holding.close()
+            out, err = waiting.communicate(timeout=20)
+    assert waiting.returncode == 0, err
+    assert "cargo ran: build" in out
+    assert HOLDER in err
+
+
 def test_a_running_cargo_is_named_to_whoever_arrives_next(tmp_path: Path) -> None:
     record = _home_path(tmp_path, LOCK.holder_record)
     with _bounded(tmp_path, "cargo", "check", FAKE_CARGO_RECORD=str(record)) as done:
@@ -149,10 +164,10 @@ def test_a_running_cargo_is_named_to_whoever_arrives_next(tmp_path: Path) -> Non
     assert not record.exists(), "the holder record must not outlive the command"
 
 
-def test_a_command_that_is_not_machine_work_never_queues(tmp_path: Path) -> None:
+def test_a_command_without_explicit_isolation_never_queues(tmp_path: Path) -> None:
     with (
         _gate_holds_the_machine(tmp_path),
-        _bounded(tmp_path, sys.executable, "-c", "print('ran')") as free,
+        _bounded(tmp_path, sys.executable, "-c", "print('ran')", machine_lease=False) as free,
     ):
         assert _finished_within(free, 20)
         assert free.returncode == 0
@@ -162,7 +177,7 @@ def test_cargo_subcommands_that_neither_compile_nor_write_never_queue(tmp_path: 
     assert LEASE.exempt_subcommands, "the exemption list is empty, so `cargo fmt` queues"
     with _gate_holds_the_machine(tmp_path):
         for subcommand in LEASE.exempt_subcommands:
-            with _bounded(tmp_path, "cargo", subcommand) as free:
+            with _bounded(tmp_path, "cargo", subcommand, machine_lease=False) as free:
                 assert _finished_within(free, 20), f"`cargo {subcommand}` queued behind a gate"
                 assert free.returncode == 0
 
@@ -241,7 +256,7 @@ def test_zero_byte_expiry_does_not_claim_cargo_exceeded_its_limit() -> None:
 def test_cargo_in_an_argument_is_not_cargo_in_command_position(tmp_path: Path) -> None:
     with (
         _gate_holds_the_machine(tmp_path),
-        _bounded(tmp_path, sys.executable, "-c", "print('ran')", "cargo", "build") as free,
+        _bounded(tmp_path, sys.executable, "-c", "print('ran')", "cargo", "build", machine_lease=False) as free,
     ):
         assert _finished_within(free, 20)
 

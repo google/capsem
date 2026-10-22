@@ -100,7 +100,9 @@ During implementation, prefer minimal native TDD/regression checks instead of
 running gate plans repeatedly. Qualify the full outcome at major phase
 boundaries and before merge/release. Routine bounded commands do not take the
 global machine lock; use `--machine-lease` only when deliberately selecting
-isolated machine work. Complete gate/release isolation remains authoritative.
+isolated machine work. An explicit request covers the complete command,
+including Python or shell drivers that launch compilers. Complete gate/release
+isolation remains authoritative.
 
 Candidate, both release commands, and directly invoked private test modules
 run under Bubblewrap on Linux or Seatbelt on macOS. Linux receives loopback and

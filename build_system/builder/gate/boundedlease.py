@@ -57,7 +57,7 @@ def _to_stderr(message: str) -> None:
 
 @contextmanager
 def leased(
-    command: Sequence[str], root: Path, inherited: Mapping[str, str]
+    command: Sequence[str], root: Path, inherited: Mapping[str, str], *, force: bool = False,
 ) -> Iterator[dict[str, str]]:
     """Hold the machine for `command` if it needs it; yield what to export.
 
@@ -65,7 +65,7 @@ def leased(
     and its parent has the machine for it.
     """
     config = gate_config.load(root)
-    if inherited.get(config.locks.gate.run_marker) or not machine_work(command, config.locks.bounded):
+    if inherited.get(config.locks.gate.run_marker) or (not force and not machine_work(command, config.locks.bounded)):
         yield {}
         return
     lock = ExclusiveLock.for_gate(
