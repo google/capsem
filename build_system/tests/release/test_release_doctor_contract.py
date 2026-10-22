@@ -4819,6 +4819,9 @@ def test_binary_update_installer_scripts_replace_and_restart_full_helper_cohort(
     postinstall = (
         PROJECT_ROOT / "build_system" / "packaging" / "macos" / "pkg-scripts" / "postinstall"
     ).read_text()
+    install_manifest = (
+        PROJECT_ROOT / "build_system" / "packaging" / "shared" / "install-manifest"
+    ).read_text()
     linux = PROJECT_ROOT / "build_system" / "packaging" / "linux"
     deb_preinst = (linux / "deb-preinst.sh").read_text()
     deb_postinst = (linux / "deb-postinst.sh").read_text()
@@ -4864,15 +4867,20 @@ def test_binary_update_installer_scripts_replace_and_restart_full_helper_cohort(
     assert 'cp "$SCRIPT_DIR/deb-preinst.sh" "$WORK_DIR/deb/DEBIAN/preinst"' in repack_deb
     assert 'chmod 755 "$WORK_DIR/deb/DEBIAN/preinst"' in repack_deb
     assert "embed_native_cohort_retirement" in repack_deb
-    assert 'rm -rf "$USER_HOME/Applications/Capsem.app"' in preinstall
+    assert 'su "$USER" -c \'rm -rf "$HOME/Applications/Capsem.app"\'' in preinstall
+    assert 'rm -rf "$USER_HOME/Applications/Capsem.app"' not in preinstall
     assert "rm -rf /Applications/Capsem.app" in preinstall
     assert "rm -rf /usr/local/share/capsem" in preinstall
 
     for script in (postinstall, deb_postinst):
         for name in required_bins:
             assert name in script
-        assert "update --assets" in script
         assert "event=manifest_installed" in script
+
+    assert "capsem_user_manifest_command" in postinstall
+    assert 'su "$USER" -c "/bin/bash -c \'$USER_MANIFEST_CODE\'"' in postinstall
+    assert "update --assets" in install_manifest
+    assert "update --assets" in deb_postinst
 
     assert 'src="$PKG_SHARE/bin/$bin"' in postinstall
     assert 'cp "$src" "$CAPSEM_DIR/bin/$bin"' in postinstall
@@ -4884,7 +4892,8 @@ def test_binary_update_installer_scripts_replace_and_restart_full_helper_cohort(
     assert "capsem-tray &" not in postinstall
     assert "event=service_not_ready" in postinstall
 
-    assert 'ln -sf "/usr/bin/$bin" "$CAPSEM_DIR/bin/$bin"' in deb_postinst
+    assert 'ln -sf "/usr/bin/$bin" "$HOME/.capsem/bin/$bin"' in deb_postinst
+    assert 'ln -sf "/usr/bin/$bin" "$CAPSEM_DIR/bin/$bin"' not in deb_postinst
     assert 'su "$TARGET_USER" -c "XDG_RUNTIME_DIR=$XDG_DIR $CAPSEM_DIR/bin/capsem install"' in (
         deb_postinst
     )
