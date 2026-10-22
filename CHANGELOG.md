@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Mint the inspect-ai loopback OCI registry's certificates with SHA-256 and
+  named-curve EC keys, and replace weak or damaged cached certificates.
+
 - Update Astro, Vitest, and the MCP server's transitive `ip-address` package
   to patched versions for current CSS injection, mock registration, and
   oversized address parsing advisories.

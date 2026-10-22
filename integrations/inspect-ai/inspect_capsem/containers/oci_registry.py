@@ -46,7 +46,12 @@ def ensure_localhost_tls(cache_dir: Path | None = None) -> tuple[Path, Path, str
     with _TLS_LOCK, lock_path.open("a+", encoding="utf-8") as lock_fh:
         fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
         if ca_cert.is_file() and srv_cert.is_file() and srv_key.is_file():
-            return srv_cert, srv_key, ca_cert.read_text(encoding="utf-8")
+            try:
+                ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(srv_cert, srv_key)
+            except ssl.SSLError:
+                pass  # Replace weak or damaged cached certificates under the lock.
+            else:
+                return srv_cert, srv_key, ca_cert.read_text(encoding="utf-8")
 
         openssl = shutil.which("openssl")
         if openssl is None:
@@ -72,12 +77,16 @@ def ensure_localhost_tls(cache_dir: Path | None = None) -> tuple[Path, Path, str
                 "authorityKeyIdentifier=keyid:always\n",
                 encoding="utf-8",
             )
-            ec_args = ["-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes"]
+            ec_args = [
+                "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
+                "-pkeyopt", "ec_param_enc:named_curve", "-nodes",
+            ]
             for cmd in (
                 [
                     openssl,
                     "req",
                     "-x509",
+                    "-sha256",
                     *ec_args,
                     "-days",
                     "3650",
@@ -93,6 +102,7 @@ def ensure_localhost_tls(cache_dir: Path | None = None) -> tuple[Path, Path, str
                 [
                     openssl,
                     "req",
+                    "-sha256",
                     *ec_args,
                     "-keyout",
                     str(t_srv_key),
@@ -105,6 +115,7 @@ def ensure_localhost_tls(cache_dir: Path | None = None) -> tuple[Path, Path, str
                     openssl,
                     "x509",
                     "-req",
+                    "-sha256",
                     "-in",
                     str(csr),
                     "-CA",
