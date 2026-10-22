@@ -126,6 +126,37 @@ def test_request_rejects_symlink(tmp_path: Path) -> None:
     assert result.returncode != 0
 
 
+@pytest.mark.parametrize("mode", ("local", "stream"))
+def test_user_manifest_handoff_preserves_source_and_bytes(tmp_path: Path, mode: str) -> None:
+    home = tmp_path / "home"
+    binary = home / ".capsem/bin/capsem"
+    binary.parent.mkdir(parents=True)
+    binary.write_text(
+        '#!/bin/bash\nprintf "%s\\n" "$@" > "$CAPSEM_TEST_OUTPUT/args"\n'
+        'cat > "$CAPSEM_TEST_OUTPUT/stdin"\n',
+        encoding="utf-8",
+    )
+    binary.chmod(0o755)
+    manifest = tmp_path / "manifest.json"
+    manifest.write_bytes(b'{"channel":"nightly"}\n')
+    source = manifest.resolve().as_uri() if mode == "local" else "https://release.capsem.org/manifest.json"
+    payload = b"" if mode == "local" else manifest.read_bytes()
+
+    result = subprocess.run(
+        ["bash", "-c", 'source "$1"; code=$(capsem_user_manifest_command); bash -c "$code"', "bash", str(HELPER)],
+        input=source.encode() + b"\n" + mode.encode() + b"\n" + payload,
+        env={**os.environ, "HOME": str(home), "CAPSEM_TEST_OUTPUT": str(tmp_path)},
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr.decode()
+    assert (tmp_path / "args").read_text().splitlines() == [
+        "update", "--assets", "--manifest", source, "--install-manifest-stdin",
+    ]
+    assert (tmp_path / "stdin").read_bytes() == manifest.read_bytes()
+
+
 @pytest.mark.parametrize("exit_status", (0, 7))
 def test_shared_failure_trap_always_removes_install_manifest_request(
     tmp_path: Path,

@@ -138,3 +138,26 @@ capsem_materialize_install_manifest_input() {
     }
     printf '%s\n' "$path"
 }
+
+# This fixed Bash program runs as the installing user. The package script sends
+# source and mode as data on stdin, followed by manifest bytes for stream mode.
+# Keep single quotes out: postinstall passes the program through su's shell.
+capsem_user_manifest_command() {
+    cat <<'CAPSEM_USER'
+set -euo pipefail
+IFS= read -r manifest_source
+IFS= read -r manifest_mode
+run_update() {
+    CAPSEM_HOME="$HOME/.capsem" CAPSEM_RUN_DIR="$HOME/.capsem/run" \
+        "$HOME/.capsem/bin/capsem" update --assets --manifest "$manifest_source" --install-manifest-stdin
+}
+case "$manifest_mode" in
+    local)
+        [[ "$manifest_source" == file://* ]] || exit 2
+        cat "${manifest_source#file://}" | run_update
+        ;;
+    stream) run_update ;;
+    *) exit 2 ;;
+esac
+CAPSEM_USER
+}

@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Run macOS package writes under the installing user's identity, including
+  logs, binary staging, signing, and local manifest reads, so a user-controlled
+  home path cannot redirect a root write or read.
+
 - Run macOS installer shell-profile edits as the installing user, preventing
   root from following a user-controlled profile symlink.
 

@@ -10,11 +10,11 @@ import json
 import os
 import re
 import subprocess
-import tomllib
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
+import tomllib
 import yaml
 from blake3 import blake3
 from capsem_builder.release.tools import (
@@ -2652,7 +2652,11 @@ def test_native_postinstall_merges_fresh_check_into_manifest_metadata() -> None:
     ):
         script = (PROJECT_ROOT / relative).read_text()
         metadata = script.index("manifest-metadata.json")
-        hydrate = script.index('update --assets --manifest \\"$MANIFEST_SOURCE\\"')
+        hydrate = script.index(
+            "USER_MANIFEST_CODE=$(capsem_user_manifest_command)"
+            if "macos" in relative
+            else 'update --assets --manifest \\"$MANIFEST_SOURCE\\"'
+        )
         refresh = script.index("update --check", hydrate)
 
         assert metadata < hydrate < refresh, relative
@@ -2772,7 +2776,7 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "capsem-tui" in build_pkg
     assert "rm -rf /Applications/Capsem.app" in pkg_preinstall
     assert "event=remove_user_app_payload" in pkg_preinstall
-    assert 'rm -rf "$USER_HOME/Applications/Capsem.app"' in pkg_preinstall
+    assert 'su "$USER" -c \'rm -rf "$HOME/Applications/Capsem.app"\'' in pkg_preinstall
     assert "rm -rf /usr/local/share/capsem" in pkg_preinstall
     assert "pkill -9 -x capsem-app" in pkg_preinstall
     assert "capsem stop" not in pkg_preinstall
@@ -2785,7 +2789,7 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     )
     assert "install-current-run" in pkg_preinstall
     assert "install-latest.log" in pkg_preinstall
-    assert 'exec > >(tee -a "$INSTALL_LOG" "$INSTALL_RUN_LOG") 2>&1' in pkg_preinstall
+    assert 'exec > >(su "$USER" -c "tee -a' in pkg_preinstall
     assert 'source "$(dirname "$0")/install-user"' in pkg_preinstall
     assert "capsem_resolve_install_user" in pkg_preinstall
 
@@ -2893,10 +2897,8 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "packaged manifest-metadata.json missing" in pkg_postinstall
     assert "packaged manifest-metadata.json has no manifest_url" in pkg_postinstall
     assert "event=manifest_source" in pkg_postinstall
-    assert (
-        'CAPSEM_HOME=\\"$CAPSEM_DIR\\" CAPSEM_RUN_DIR=\\"$CAPSEM_DIR/run\\" \\"$CAPSEM_DIR/bin/capsem\\" update --assets --manifest \\"$MANIFEST_SOURCE\\"'
-        in pkg_postinstall
-    )
+    assert "USER_MANIFEST_CODE=$(capsem_user_manifest_command)" in pkg_postinstall
+    assert 'su "$USER" -c "/bin/bash -c' in pkg_postinstall
     assert "event=manifest_installed" in pkg_postinstall
     assert "event=assets_hydrated" not in pkg_postinstall
     assert "event=asset_hydration_failed" not in pkg_postinstall
@@ -2928,12 +2930,12 @@ def test_macos_postinstall_adds_capsem_bin_to_fish_path() -> None:
     assert 'cp -R "$PKG_SHARE/assets/"* "$CAPSEM_DIR/assets/"' not in postinstall
     assert "pkill -x capsem-app" in postinstall
     assert 'INSTALL_LOG="$CAPSEM_DIR/logs/install.log"' in postinstall
-    assert 'INSTALL_RUN_ID=$(cat "$INSTALL_RUN_FILE" 2>/dev/null || date' in postinstall
+    assert 'INSTALL_RUN_ID=$(su "$USER" -c \'cat "$HOME/.capsem/logs/install-current-run"\'' in postinstall
     assert (
         'INSTALL_RUN_LOG="$CAPSEM_DIR/logs/install-$INSTALL_RUN_ID.log"' in postinstall
     )
     assert "install-latest.log" in postinstall
-    assert 'exec > >(tee -a "$INSTALL_LOG" "$INSTALL_RUN_LOG") 2>&1' in postinstall
+    assert 'exec > >(su "$USER" -c "tee -a' in postinstall
     assert "event=readiness_poll" in postinstall
     assert "attempt=$attempt" in postinstall
 
