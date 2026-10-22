@@ -16,6 +16,7 @@ class CapsemSurfaceMetrics {
     this.decodeErrors = 0;
     this.paintMs = null;
     this.frameMs = null;
+    this.keyEvents = 0;
   }
 
   draw(packet) {
@@ -34,6 +35,7 @@ class CapsemSurfaceMetrics {
   }
 
   input(kind, now) {
+    if (kind === "key") this.keyEvents += 1;
     // Keep the first outstanding input, not the last event of a rapid burst.
     if (this.pending[kind] == null) this.pending[kind] = now;
   }
@@ -73,6 +75,9 @@ class CapsemSurfaceMetrics {
       decodeErrors: this.decodeErrors,
       rttMs: client.last_ping_echoed_time > 0 ? numeric(client.server_ping_latency) : null,
       mouseMs: input("mouse"), keyMs: input("key"),
+      keyEvents: this.keyEvents, keyboardCapture: client.capture_keyboard === true,
+      focusedWindow: numeric(client.focused_wid) ?? 0,
+      documentFocused: document.hasFocus?.() ?? false,
       codec: this.codec, quality: this.quality, color: this.color,
       depth: numeric(win?.metadata?.depth ?? client.server_last_info?.display?.depth),
       clientDpi: numeric(client.capabilities?.dpi?.[""]),
