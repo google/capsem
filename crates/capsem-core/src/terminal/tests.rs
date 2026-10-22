@@ -1,5 +1,26 @@
 use super::*;
 
+#[test]
+fn suspend_seals_view_authority_without_dropping_accepted_guest_output() {
+    let terminal = SessionTerminal::new(8);
+    let (view, _, _) = terminal.subscribe();
+    terminal.focus(view, 100, 30).unwrap();
+    terminal.seal_views();
+    assert!(!terminal.controls(view));
+    assert!(terminal.focus(view, 120, 40).is_err());
+    assert!(terminal.resize(view, 120, 40).is_err());
+    let (late, _, _) = terminal.subscribe();
+    assert!(terminal.focus(late, 120, 40).is_err());
+    terminal.publish(b"accepted\x1b]2;Saved\x07");
+    let state = terminal.subscribe().1.state;
+    assert_eq!((state.cols, state.rows), (100, 30));
+    assert_eq!(state.title, "Saved");
+    let restored = SessionTerminal::from_checkpoint(&terminal.checkpoint().unwrap(), 8).unwrap();
+    let (fresh, _, _) = restored.subscribe();
+    assert!(restored.focus(fresh, 100, 30).unwrap());
+    assert!(restored.controls(fresh));
+}
+
 fn display(update: &TerminalUpdate) -> vt100::Parser {
     let mut client = vt100::Parser::new(update.state.rows, update.state.cols, 0);
     client.process(&update.render);

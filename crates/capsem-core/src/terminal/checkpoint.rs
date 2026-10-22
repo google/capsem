@@ -169,6 +169,7 @@ impl SessionTerminal {
                 revision: saved.revision,
                 next_view: 0,
                 controller: None,
+                accepting_views: true,
                 updates: broadcast::channel(capacity).0,
                 summary: watch::channel(summary).0,
             }),

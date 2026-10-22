@@ -35,6 +35,7 @@ struct Inner {
     revision: u64,
     next_view: u64,
     controller: Option<u64>,
+    accepting_views: bool,
     updates: broadcast::Sender<Arc<TerminalUpdate>>,
     summary: watch::Sender<TerminalSummary>,
 }
@@ -84,6 +85,7 @@ impl SessionTerminal {
                 revision: 0,
                 next_view: 0,
                 controller: None,
+                accepting_views: true,
                 updates,
                 summary,
             }),
@@ -145,6 +147,9 @@ impl SessionTerminal {
     pub fn focus(&self, view: u64, cols: u16, rows: u16) -> Result<bool, &'static str> {
         size(cols, rows)?;
         let mut inner = self.inner.lock().unwrap();
+        if !inner.accepting_views {
+            return Err("terminal is suspending");
+        }
         if view == 0 || view > inner.next_view {
             return Err("unknown terminal view");
         }
@@ -158,6 +163,9 @@ impl SessionTerminal {
     pub fn resize(&self, view: u64, cols: u16, rows: u16) -> Result<bool, &'static str> {
         size(cols, rows)?;
         let mut inner = self.inner.lock().unwrap();
+        if !inner.accepting_views {
+            return Err("terminal is suspending");
+        }
         if inner.controller != Some(view) {
             return Ok(false);
         }
@@ -168,7 +176,13 @@ impl SessionTerminal {
         self.inner.lock().unwrap().summary.subscribe()
     }
     pub fn controls(&self, view: u64) -> bool {
-        self.inner.lock().unwrap().controller == Some(view)
+        let inner = self.inner.lock().unwrap();
+        inner.accepting_views && inner.controller == Some(view)
+    }
+    /// Permanently fence viewer mutation while the owner settles accepted
+    /// transport bytes. Restoring the continuation creates fresh authority.
+    pub fn seal_views(&self) {
+        self.inner.lock().unwrap().accepting_views = false;
     }
     pub fn release(&self, view: u64) {
         let mut inner = self.inner.lock().unwrap();
