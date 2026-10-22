@@ -236,16 +236,17 @@ where
     let (tx, mut rx) = tokio::sync::mpsc::channel::<OutboundFrame>(256);
     let streams = Arc::new(Mutex::new(StreamTracker::default()));
 
-    let writer_task = tokio::spawn(async move {
+    let mut writer_task = tokio::spawn(async move {
         while let Some(out) = rx.recv().await {
-            if let Err(e) = write_frame(&mut writer, &out).await {
-                debug!(error = %e, "framed MCP writer failed");
-                break;
-            }
+            write_frame(&mut writer, &out)
+                .await
+                .context("framed MCP writer failed")?;
         }
+        Ok::<(), anyhow::Error>(())
     });
 
-    let result: Result<()> = async {
+    let (result, writer_completed): (Result<()>, bool) = tokio::select! {
+        result = async {
         loop {
             let frame = match read_next_frame(&mut reader).await? {
                 FrameRead::Eof | FrameRead::End => return Ok(()),
@@ -462,11 +463,27 @@ where
                 }
             });
         }
-    }
-    .await;
+        } => (result, false),
+        writer_result = &mut writer_task => {
+            let result = match writer_result {
+                Ok(Ok(())) => Err(anyhow::anyhow!("framed MCP writer stopped before the reader")),
+                Ok(Err(error)) => Err(error),
+                Err(error) => Err(error.into()),
+            };
+            (result, true)
+        }
+    };
 
     drop(tx);
-    let _ = writer_task.await;
+    let result = if writer_completed {
+        result
+    } else {
+        match writer_task.await {
+            Ok(Ok(())) => result,
+            Ok(Err(error)) => Err(error),
+            Err(error) => Err(error.into()),
+        }
+    };
     match &result {
         Ok(()) => {
             ::metrics::counter!(

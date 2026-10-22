@@ -29,7 +29,12 @@ pub(super) async fn send_response(
     process_name: &str,
     response: &JsonRpcResponse,
 ) -> Result<()> {
-    let payload = serde_json::to_vec(response).context("serialize framed MCP response")?;
+    let mut payload = serde_json::to_vec(response).context("serialize framed MCP response")?;
+    let frame_len = capsem_proto::MCP_FRAME_HEADER_LEN as usize + process_name.len() + payload.len();
+    if frame_len > capsem_proto::MCP_FRAME_MAX_SIZE {
+        let fallback = JsonRpcResponse::err(response.id.clone(), -32000, "MCP result exceeds the frame limit");
+        payload = serde_json::to_vec(&fallback).context("serialize MCP size error")?;
+    }
     tx.send(OutboundFrame {
         stream_id,
         process_name: process_name.to_string(),

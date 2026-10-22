@@ -339,6 +339,86 @@ async fn response_writer_emits_a_decodable_attributed_frame() {
     assert_eq!(decoded_response.result, response.result);
 }
 
+#[tokio::test]
+async fn oversized_mcp_response_returns_error_and_preserves_next_reply() {
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+    let huge = ok_response(json!({"content": "x".repeat(capsem_proto::MCP_FRAME_MAX_SIZE)}));
+    send_response(&tx, 9, "codex", &huge).await.unwrap();
+    let first = rx.recv().await.unwrap();
+    capsem_proto::encode_mcp_frame(first.stream_id, 0, &first.process_name, &first.payload).unwrap();
+    let decoded: JsonRpcResponse = serde_json::from_slice(&first.payload).unwrap();
+    assert_eq!(decoded.id, Some(json!(1)));
+    assert!(decoded.error.is_some());
+
+    let small = ok_response(json!({"content": "ok"}));
+    send_response(&tx, 10, "codex", &small).await.unwrap();
+    let second = rx.recv().await.unwrap();
+    capsem_proto::encode_mcp_frame(second.stream_id, 0, &second.process_name, &second.payload).unwrap();
+    let decoded: JsonRpcResponse = serde_json::from_slice(&second.payload).unwrap();
+    assert_eq!(decoded.result, small.result);
+}
+
+struct FailingWriteStream {
+    request: Vec<u8>,
+    offset: usize,
+}
+
+impl tokio::io::AsyncRead for FailingWriteStream {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        if self.offset == self.request.len() {
+            return std::task::Poll::Pending;
+        }
+        let count = buf.remaining().min(self.request.len() - self.offset);
+        buf.put_slice(&self.request[self.offset..self.offset + count]);
+        self.offset += count;
+        std::task::Poll::Ready(Ok(()))
+    }
+}
+
+impl tokio::io::AsyncWrite for FailingWriteStream {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        _buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        std::task::Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()))
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+}
+
+#[tokio::test]
+async fn writer_failure_ends_framed_mcp_connection() {
+    let stream = FailingWriteStream {
+        request: tool_call_request(1),
+        offset: 0,
+    };
+    let endpoint = endpoint_with_matching_rule();
+    let db = Arc::new(DbWriter::open_in_memory(64).unwrap());
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        serve_io(Vec::new(), stream, endpoint, db),
+    )
+    .await;
+    assert!(result.expect("writer failure must wake the reader").is_err());
+}
+
 #[test]
 fn json_rpc_parser_preserves_ids_and_rejects_untrusted_shapes() {
     let valid = parse_json_rpc_payload(br#"{"jsonrpc":"2.0","id":"req-7","method":"tools/list"}"#).unwrap();

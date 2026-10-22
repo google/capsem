@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Return a bounded JSON-RPC error for an oversized framed MCP result and end
+  the connection if its writer fails, instead of silently losing later replies.
+
 - Return a bounded MCP error for oversized aggregator results and keep the
   connection available for later tool replies.
 
