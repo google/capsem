@@ -1,16 +1,9 @@
 // Capsem's policy for the pinned xpra-html5 client of an Xpra surface: one
 // application, fitted to the browser viewport.
 //
-// The gateway loads this after the client's own scripts and before the client
-// starts, so it adjusts the client's classes and the vendored files stay
-// byte-identical to the verified, reproducibly patched vendor tree.
-//
-// Xpra keeps a window's previous X11 position, and the v0.7 spike saw Claude
-// Desktop's 1200x800 window open beyond a narrower browser viewport. So the
-// application's main window is sized to the viewport and every other window
-// (dialogs, transients) is kept inside it, both when a window appears and
-// whenever the server or the viewport moves it. The new geometry is sent to
-// the server, so the application lays itself out for the space it really has.
+// The gateway adjusts classes before startup; verified vendor bytes stay intact.
+// Main windows fill the viewport, dialogs stay inside it, and the server receives
+// their real geometry so application layout and pointer coordinates agree.
 "use strict";
 
 (function () {
@@ -243,6 +236,14 @@
     const types = win.windowtype || [];
     return types.length === 0 || types.includes("NORMAL");
   }
+
+  // Fullscreen belongs to the guest window, not the host browser. It tells
+  // applications to hide their own titlebar controls as well as Xpra's chrome.
+  const configureWindow = XpraClient.prototype.send_configure_window;
+  XpraClient.prototype.send_configure_window = function (win, state, skipGeometry) {
+    if (isApplicationWindow(win) && isMainWindow(win)) state = { ...state, fullscreen: true };
+    return configureWindow.call(this, win, state, skipGeometry);
+  };
 
   /** Fit `win` to the viewport; true when its geometry changed. */
   function fit(win) {

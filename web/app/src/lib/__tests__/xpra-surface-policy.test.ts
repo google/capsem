@@ -20,6 +20,7 @@ class XpraClient {
   constructor(width, height) { this.desktop_width = width; this.desktop_height = height; this.capabilities = {}; }
   _get_desktop_size() { return [this.desktop_width, this.desktop_height]; }
   _make_hello() { this.capabilities.system_tray = true; this.capabilities.windows = true; }
+  send_configure_window(win, state, skip_geometry) { this.configuration = {state, skip_geometry}; }
   query_keyboard_map() { this.queried = true; }
   do_init_keyboard() { this.initialized = true; }
   connect() { this.connects = (this.connects || 0) + 1; }
@@ -57,6 +58,16 @@ function load(globals: Record<string, unknown> = {}) {
 }
 
 describe('capsem-surface.js', () => {
+  it('requests Xpra fullscreen state for the primary app while preserving dialog state', () => {
+    const run = load();
+    run(`const client = new XpraClient(800,600);
+      const win = new XpraWindow(client, {x:0,y:0,w:800,h:600});
+      client.send_configure_window(win, {focused:true}, true);`);
+    expect(run('client.configuration')).toEqual({state:{focused:true,fullscreen:true},skip_geometry:true});
+    run(`win.metadata = {'transient-for':1};
+      client.send_configure_window(win, {focused:true}, false);`);
+    expect(run('client.configuration')).toEqual({state:{focused:true},skip_geometry:false});
+  });
   it('uses Xpra undecorated windows for embedded apps while preserving desktop mode', () => {
     const run = load();
     run(`const client = new XpraClient(800, 600);

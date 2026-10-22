@@ -77,6 +77,8 @@ describe('graphical HiDPI integration', () => {
     expect(run('win.topoffset')).toBe(0);
     expect(run('win.get_internal_geometry()')).toMatchObject({x:0,y:0,w:1600,h:1200});
     expect(run('client.sent.at(-1)')).toEqual(['pointer-position',1,[180,120,180,120],[],[]]);
+    run('client.send_configure_window(win, {focused:true}, true);');
+    expect(run('client.sent.at(-1)[8]')).toEqual({focused:true,fullscreen:true});
   });
 
   it('uses physical backing pixels, negotiated DPI and the real upstream pointer transform', () => {

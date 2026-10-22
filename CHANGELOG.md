@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Request Xpra fullscreen state for the primary graphical app so its own
+  window controls can yield to Capsem's session controls.
+
 - Allow the macOS app to load isolated localhost graphical previews through
   a localhost-only transport exception, fixing the stuck app-opening screen.
 
