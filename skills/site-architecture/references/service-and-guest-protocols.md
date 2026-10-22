@@ -151,9 +151,12 @@ to `/vms/list`, session info and gateway overview, even without a terminal or
 graphical viewer. It is separate from terminal state and is not persisted as
 host session metadata. Request diagnostics redact the URL.
 
-The UI's explicit Open browser action and the TUI's `Alt+b` open the URL on
-the client's device. The browser needs this user gesture for popup policy;
-remote gateways must never open a browser on their server. Reuse this rail
+The native desktop shell opens fresh requests from its active session in the
+client's system browser. Attachment and session switches baseline the retained
+request rather than replaying an old login; repeated or stale snapshots do not
+reopen it. The explicit Open browser action remains available for retry. Browser
+clients need this user gesture for popup policy, and the TUI uses `Alt+b`.
+Remote gateways must never open a browser on their server. Reuse this rail
 instead of Xpra-specific popups or terminal escape-code side effects.
 
 All guest binaries live in `crates/capsem-agent/` and are cross-compiled for `aarch64-unknown-linux-musl` (and `x86_64-unknown-linux-musl`). Deployed chmod 555 (read-only) into the initrd at `/run/`.

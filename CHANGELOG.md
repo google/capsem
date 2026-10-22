@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Open fresh browser requests from the active desktop session in the local
+  system browser automatically, without a second toolbar click or replaying old sign-in links.
+
 - Share Xpra, Xdummy and graphical session setup through the existing Capsem
   base image; graphical app images inherit one runtime and launcher.
 

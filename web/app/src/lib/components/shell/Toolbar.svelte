@@ -178,7 +178,7 @@
 </script>
 
 <div class="flex items-center gap-x-2 bg-layer border-b border-line-2 px-2 py-1">
-  <BrowserRequest request={activeVm?.browser_request} />
+  <BrowserRequest vmId={activeVm?.id} request={activeVm?.browser_request} />
   <!-- Left: menu + view switcher -->
   <div class="relative" data-menu>
     <button
