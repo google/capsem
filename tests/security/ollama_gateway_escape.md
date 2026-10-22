@@ -26,6 +26,18 @@ Keep the latter claim open until a payload reads the harmless marker and its
 output is captured without printing other secrets. The launcher and guest
 script are in this directory.
 
+## Patched gateway regression
+
+The same Ollama-driven guest page was pointed at an isolated gateway built
+from this worktree on an OS-assigned port. In the browser it reported
+`STOPPED=Failed to fetch`, before a token or peer file request could complete.
+An unauthenticated direct `GET /token` returned 401, and a preflight request
+with the guest page's `Origin` received no `Access-Control-Allow-Origin`.
+This verifies the patched gateway blocks the demonstrated browser chain. The
+isolated patched service had no VMs of its own; the two live VMs belonged to
+the installed 0.7.1 service, and the script's `--gateway-port` selected which
+gateway the guest page tested.
+
 ## Where each boundary applies
 
 | Component | OS restriction | Why it did not stop the observed chain |
@@ -49,5 +61,6 @@ must be enforced in application code.
 The fixes remove `/token`, restrict browser origins to the app and fixed
 gateway origin, allocate host ports for guest exposures, and refuse OpenAI
 credential redemption for Ollama endpoints. The installed 0.7.1 reproduction
-above predates those fixes; it must not be used as proof that the patched build
-passes. The final combined branch still needs installed-package qualification.
+above predates those fixes. The isolated patched gateway regression covers the
+browser chain; the final combined branch still needs installed-package
+qualification, including the separate Linux KVM cross-VM vsock probe.

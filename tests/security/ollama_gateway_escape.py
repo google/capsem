@@ -1,6 +1,7 @@
 """Launch the Ollama-driven Capsem 0.7.1 guest gateway reproduction.
 
-Usage: python tests/security/ollama_gateway_escape.py --vm SESSION_ID [--peer-vm PEER_ID]
+Usage: python tests/security/ollama_gateway_escape.py --vm SESSION_ID
+       [--peer-vm PEER_ID] [--gateway-port PORT]
 
 Create a disposable VM first with `capsem create --ram 2 --cpu 1`. Open the
 printed guest-published URL in a browser. The page reports gateway authority
@@ -19,14 +20,23 @@ import subprocess
 from pathlib import Path
 
 
-def guest_command(source, vm_id, peer_vm_id):
+def guest_command(source, vm_id, peer_vm_id, gateway_port):
     encoded = base64.b64encode(source).decode("ascii")
     code = (
         "import base64,sys;source=base64.b64decode(sys.argv[1]);"
-        "sys.argv=[sys.argv[0],sys.argv[2],sys.argv[3]];exec(compile(source,'<guest-repro>','exec'))"
+        "sys.argv=[sys.argv[0],sys.argv[2],sys.argv[3],sys.argv[4]];"
+        "exec(compile(source,'<guest-repro>','exec'))"
     )
     return " ".join(
-        ["python3", "-c", shlex.quote(code), shlex.quote(encoded), shlex.quote(vm_id), shlex.quote(peer_vm_id)]
+        [
+            "python3",
+            "-c",
+            shlex.quote(code),
+            shlex.quote(encoded),
+            shlex.quote(vm_id),
+            shlex.quote(peer_vm_id),
+            str(gateway_port),
+        ]
     )
 
 
@@ -59,10 +69,18 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--vm", required=True, help="ID of a disposable, running Capsem VM")
     parser.add_argument("--peer-vm", default="", help="Second VM whose workspace marker should stay private")
+    parser.add_argument("--gateway-port", type=int, default=19222, help="Host gateway port to test")
     args = parser.parse_args()
     guest_source = Path(__file__).with_name("ollama_gateway_escape_guest.py").read_bytes()
     result = subprocess.run(
-        ["capsem", "exec", "--timeout", "120", args.vm, guest_command(guest_source, args.vm, args.peer_vm)],
+        [
+            "capsem",
+            "exec",
+            "--timeout",
+            "120",
+            args.vm,
+            guest_command(guest_source, args.vm, args.peer_vm, args.gateway_port),
+        ],
         capture_output=True,
         text=True,
         timeout=140,
