@@ -304,7 +304,7 @@ def _problems(policy: dict[str, Any], observed: Observed) -> list[str]:
 
 
 def _synthetic(**changes: tuple[str, ...]) -> Observed:
-    values = dict.fromkeys(Observed.__dataclass_fields__, ())
+    values: dict[str, tuple[str, ...]] = dict.fromkeys(Observed.__dataclass_fields__, ())
     values.update(changes)
     return Observed(**values)
 
