@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve foreign cache directories when case-insensitive filesystems expose
+  an uppercase name through a forged lowercase namespace alias.
+
 - Keep focused development builds alive during gate compiler-cache cleanup,
   and prevent simultaneous cold starts from leaking duplicate cache servers.
 

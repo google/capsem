@@ -39,13 +39,16 @@ def sweeps(stage_policy) -> bool:
     )
 
 
-def _real_namespace(root: Path, name: str) -> bool:
+def _real_namespace(root: Path, name: str, entries: list[Path] | None = None) -> bool:
     directory = root / name
     return (
         NAMESPACE.fullmatch(name) is not None
         and not directory.is_symlink()
         and directory.is_dir()
         and directory.resolve() == root.resolve() / name
+        # resolve() preserves the requested spelling on case-insensitive
+        # volumes. Only the exact directory entry grants namespace ownership.
+        and any(child.name == name for child in (root.iterdir() if entries is None else entries))
     )
 
 
@@ -58,8 +61,9 @@ def foreign_entries(
     if root.is_symlink() or not root.is_dir():
         return []
     entries: list[CacheEntry] = []
-    for child in sorted(root.iterdir(), key=lambda item: item.name):
-        if child.name == own.name or not _real_namespace(root, child.name):
+    children = sorted(root.iterdir(), key=lambda item: item.name)
+    for child in children:
+        if child.name == own.name or not _real_namespace(root, child.name, children):
             continue
         found = directory_entries(
             child, stage_policy, allocated_seen, busy=False, referenced=frozenset(),
