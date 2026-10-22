@@ -589,8 +589,12 @@ async fn interrupted_create_requires_an_absence_barrier_and_never_replays() {
     .unwrap();
     assert_eq!(fixture.reconciles.load(Ordering::SeqCst), 1);
     assert_eq!(fixture.cleanups.load(Ordering::SeqCst), 0);
+    // The deadline may expire just before the effect increments `creates`.
+    // What matters is that a closed request cannot start another effect.
+    let creates_after_close = fixture.creates.load(Ordering::SeqCst);
+    assert!(creates_after_close <= 1);
     assert!(owner.create(request, cap, policy, effects(&fixture)).await.is_err());
-    assert_eq!(fixture.creates.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.creates.load(Ordering::SeqCst), creates_after_close);
 }
 
 fn controller(root: &std::path::Path) -> Controller {
