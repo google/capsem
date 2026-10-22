@@ -2442,7 +2442,9 @@ contract_globs = ["tests/test_*contract.py", "tests/test_release_*.py"]
 
 # Formatting is source-only and belongs in fast feedback. Keep the complete
 # argv here so the plan, contracts, and developers all execute one command.
-rust_format = ["cargo", "fmt", "--all", "--", "--check"]
+# This virtual workspace's default members are all first-party crates. --all
+# also walks local path dependencies and would reformat verified vendor source.
+rust_format = ["cargo", "fmt", "--", "--check"]
 
 # The Rust coverage floors are measured ratchets, not aspirations to 100. Some
 # files -- uninstall, completions

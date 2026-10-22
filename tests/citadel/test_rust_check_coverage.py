@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import runpy
 import subprocess
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -149,8 +150,15 @@ def test_rust_format_covers_the_workspace() -> None:
     assert FORMAT_STEP in RUST.enforced_by, (
         RUST_COVERAGE_RATIONALE + f"\n{FORMAT_STEP} does not enforce the Rust surface"
     )
-    assert rendered == "cargo fmt --all -- --check", (
+    # In a virtual workspace, the default package set is every member. --all
+    # additionally traverses local path dependencies, including pinned source
+    # whose exact upstream delta is separately guarded.
+    assert rendered == "cargo fmt -- --check", (
         RUST_COVERAGE_RATIONALE + f"\nRust format command drifted: {rendered}"
+    )
+    workspace = tomllib.loads((PROJECT_ROOT / "Cargo.toml").read_text())["workspace"]
+    assert set(workspace.get("default-members", workspace["members"])) == set(workspace["members"]), (
+        RUST_COVERAGE_RATIONALE + "\nRust format must select every first-party workspace member"
     )
 
 
