@@ -745,8 +745,8 @@ pub fn child_trace_env(vm_id: &str) -> Vec<(String, String)> {
     out
 }
 
-/// Cheap 16-hex-char id derived from a seed. Uses blake3 for a stable,
-/// well-distributed mapping; deterministic so tests can exercise it.
+/// Non-security 64-bit telemetry identifier; the wire field requires 16 hex
+/// characters. XXH3 mixes the seed and startup salt without a crypto hash.
 fn synthesize_16hex_id(seed: &str) -> String {
     // Mix in process-startup nanos so two independent capsem-service
     // launches don't collide on the same vm_id.
@@ -754,11 +754,10 @@ fn synthesize_16hex_id(seed: &str) -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let mut hasher = capsem_crypto::blake3::Hasher::new();
+    let mut hasher = capsem_crypto::xxh3::Hasher::new();
     hasher.update(seed.as_bytes());
     hasher.update(&salt.to_le_bytes());
-    let hash = hasher.finalize();
-    hash.to_hex().chars().take(16).collect()
+    format!("{:016x}", hasher.finalize() as u64)
 }
 
 #[cfg(test)]

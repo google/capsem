@@ -65,7 +65,7 @@ fn private_fallback_dir_under(base: &Path) -> io::Result<PathBuf> {
 /// Where the service asks a VM owner for the guest's end of a cable it is
 /// plugging, one path per VM.
 ///
-/// Short forms come from blake3 over the run dir, id and role, so the
+/// Non-security short names use XXH3-128 over the run dir, id and role, so the
 /// fallback is the same in every process that derives it; `DefaultHasher` is
 /// seeded per process.
 pub fn private_handoff_socket_path(run_dir: &Path, id: &str) -> io::Result<PathBuf> {
@@ -77,11 +77,11 @@ fn owner_socket_path(run_dir: &Path, id: &str, role: &str) -> io::Result<PathBuf
     if preferred.as_os_str().len() < SUN_PATH_MAX {
         return Ok(ensured(preferred));
     }
-    let mut digest = capsem_crypto::blake3::Hasher::new();
+    let mut digest = capsem_crypto::xxh3::Hasher::new();
     digest.update(run_dir.as_os_str().as_encoded_bytes());
     digest.update(id.as_bytes());
     digest.update(role.as_bytes());
-    let short = &digest.finalize().to_hex()[..16];
+    let short = format!("{:032x}", digest.finalize());
     Ok(private_fallback_dir()?.join(format!("{short}-{role}.sock")))
 }
 
