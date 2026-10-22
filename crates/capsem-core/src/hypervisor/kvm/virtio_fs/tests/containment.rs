@@ -258,11 +258,16 @@ fn open_and_truncate_refuse_fifos_without_blocking() {
 fn a_parent_replaced_by_a_symlink_after_lookup_is_refused() {
     let mut a = attack("swap");
     std::fs::create_dir_all(a.share.join("sub")).unwrap();
+    std::fs::write(a.share.join("sub/authorized_keys"), b"safe").unwrap();
     let sub = lookup(&mut a.proc, 1, "sub").unwrap();
+    let file = lookup(&mut a.proc, sub, "authorized_keys").unwrap();
+    assert_eq!(request(&mut a.proc, FUSE_GETATTR, file, &[]), 0);
     // The guest (or anything) swaps the directory for a link after lookup.
+    std::fs::remove_file(a.share.join("sub/authorized_keys")).unwrap();
     std::fs::remove_dir(a.share.join("sub")).unwrap();
     std::os::unix::fs::symlink(&a.outside, a.share.join("sub")).unwrap();
 
+    assert!(request(&mut a.proc, FUSE_GETATTR, file, &[]) < 0);
     assert!(request(&mut a.proc, FUSE_UNLINK, sub, &name_body("authorized_keys")) < 0);
     assert!(
         request(

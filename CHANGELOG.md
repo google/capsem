@@ -29,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Recheck KVM VirtioFS inode parent containment before `GETATTR`, refusing
+  attributes for an inode whose parent was replaced by an outside symlink.
+
 - Drop VLAN-tagged private-switch frames that could hide spoofed IPv4 sources,
   and require ARP sender hardware addresses to match their assigned VM port.
 
