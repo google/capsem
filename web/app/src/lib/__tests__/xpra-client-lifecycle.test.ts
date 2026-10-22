@@ -7,6 +7,27 @@ import { expect, it } from 'vitest';
 const root = '../../../../../crates/capsem-gateway/';
 const client = readFileSync(new URL(root + 'vendor/xpra-html5/www/js/Client.js', import.meta.url), 'utf8');
 const policy = readFileSync(new URL(root + 'src/surface/static/capsem-surface.js', import.meta.url), 'utf8');
+const windowSource = readFileSync(new URL(root + 'vendor/xpra-html5/www/js/Window.js', import.meta.url), 'utf8');
+
+it.each(['mousedown', 'mouseup', 'mousemove'])('preserves the canvas %s callback propagation decision', event => {
+  const handlers = new Map<string, (event: object) => unknown>();
+  const context = vm.createContext({
+    jQuery: () => Object.fromEntries(['mousedown', 'mouseup', 'mousemove'].map(name =>
+      [name, (callback: (event: object) => unknown) => handlers.set(name, callback)])),
+  });
+  vm.runInContext(windowSource, context);
+  vm.runInContext(`
+    globalThis.propagate = false;
+    const win = Object.create(XpraWindow.prototype);
+    win.mouse_down_cb = win.mouse_up_cb = win.mouse_move_cb = () => propagate;
+    win.register_canvas_mouse_events({});
+  `, context);
+  // jQuery consumes false to stop propagation. Dropping it sends the same
+  // browser event through both the window callback and the screen listener.
+  expect(handlers.get(event)?.({})).toBe(false);
+  vm.runInContext('propagate = true;', context);
+  expect(handlers.get(event)?.({})).toBe(true);
+});
 
 function load() {
   const timers = new Map<number, () => void>();

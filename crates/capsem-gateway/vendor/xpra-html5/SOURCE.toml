@@ -1,6 +1,6 @@
 # The xpra-html5 client capsem-gateway serves for Xpra surfaces, vendored
 # from the verified upstream package (MPL-2.0, see LICENSE), then patched
-# reproducibly with the declared lifecycle repair.
+# reproducibly with the declared client repairs.
 #
 # The pin is the one the v0.7 GUI spike proved against Xpra 6.5.1 servers: the
 # SHA-256 was read from xpra.org's signature-verified bookworm package index
@@ -13,4 +13,4 @@ version = "21-r1-1"
 url = "https://xpra.org/dists/bookworm/main/binary-arm64/xpra-html5-21-r1-1.deb"
 sha256 = "232d498314d302983522fbb8c9b6f91bd4ce12a9de2f37970ae3a7f5ff0ce466"
 license = "MPL-2.0"
-patches = ["patches/client-lifecycle.patch"]
+patches = ["patches/client-lifecycle.patch", "patches/canvas-mouse-propagation.patch"]

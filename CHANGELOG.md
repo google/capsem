@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Send graphical canvas mouse input once instead of processing it again at
+  the root screen listener.
+
 - Cancel graphical reconnects after final close and keep mouse handlers and
   bell audio resources from accumulating across reconnects.
 

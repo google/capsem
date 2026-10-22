@@ -1,7 +1,7 @@
-# Owned lifecycle repair
+# Owned graphical client repairs
 
 The upstream package remains pinned by URL and SHA-256 in `SOURCE.toml`.
-`patches/client-lifecycle.patch` is applied only after that package verifies.
+Declared `patches/` inputs are applied only after that package verifies.
 `SHA256SUMS` covers the pin, license, this note, patch and generated client.
 The gateway build verifies the complete inventory and embeds only `www/`.
 
@@ -16,6 +16,13 @@ The patch changes client resource ownership:
   retries and is idempotent. Previously a delayed retry could access a drawing
   DOM already replaced by Capsem's disconnected control.
 - Final disconnect invokes the close callback once.
+
+`patches/canvas-mouse-propagation.patch` retains the delegated mouse callbacks'
+return values. Xpra's window callbacks return false when they consume an event;
+jQuery then stops propagation. Discarding that result let the root screen
+listener send a second pointer packet for the same browser event. Mouse events
+outside a window still reach the screen listener, and callbacks that return
+true retain their propagation behavior.
 
 Normal reconnect still resets connection state and retains the original
 upstream transport, parser, geometry and window behavior. No codec, color,

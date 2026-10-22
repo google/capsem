@@ -1,0 +1,18 @@
+--- a/js/Window.js
++++ b/js/Window.js
+@@ -391,12 +391,12 @@
+   register_canvas_mouse_events(canvas) {
+     // Hook up the events we want to receive:
+     jQuery(canvas).mousedown((e) => {
+-      this.mouse_down_cb(e, this);
++      return this.mouse_down_cb(e, this);
+     });
+     jQuery(canvas).mouseup((e) => {
+-      this.mouse_up_cb(e, this);
++      return this.mouse_up_cb(e, this);
+     });
+     jQuery(canvas).mousemove((e) => {
+-      this.mouse_move_cb(e, this);
++      return this.mouse_move_cb(e, this);
+     });
+   }
