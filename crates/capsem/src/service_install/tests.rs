@@ -40,7 +40,8 @@ async fn retiring_installed_helpers_spares_command_line_lookalikes() {
     if unsupported {
         // macOS 14 lacks native PID-version guarded signaling. Refuse the
         // orphan without falling back to a race-prone raw PID kill.
-        assert!(cfg!(target_os = "macos"));
+        #[cfg(not(target_os = "macos"))]
+        panic!("orphan retirement is unsupported on this host");
         assert!(!owned_exited, "an unsupported host signaled the orphan");
     } else {
         result.unwrap();
