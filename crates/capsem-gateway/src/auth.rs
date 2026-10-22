@@ -224,8 +224,8 @@ fn is_stream_path(path: &str) -> bool {
 
 /// `/vms/{id}/surface/` and its `launch.js`: the static launcher of a VM's
 /// app surface. A browser opens it by URL, so it cannot carry a bearer
-/// header; it holds nothing secret and fetches the token itself, from
-/// `/token`, under the same loopback and Host checks as the Capsem UI.
+/// header; it holds nothing secret and fetches the token from `/token` on
+/// the gateway's own origin.
 fn is_surface_launcher_path(path: &str) -> bool {
     matches!(
         path.trim_start_matches('/').split('/').collect::<Vec<_>>().as_slice(),

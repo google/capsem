@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Restrict gateway browser access to the app and gateway origins, and refuse
+  token requests from guest-published loopback pages.
+
 - Refuse to redeem stored OpenAI credentials for Ollama endpoints, including
   guest-supplied broker references in proxy requests.
 

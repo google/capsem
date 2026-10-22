@@ -482,12 +482,17 @@ fn request_trace_layer() -> TraceLayer<
     })
 }
 
-/// Return the auth token. Hardcoded to only accept requests from 127.0.0.1.
+/// Return the auth token to the app or gateway browser origin on loopback.
 async fn handle_token(
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: http::HeaderMap,
 ) -> impl IntoResponse {
-    if !addr.ip().is_loopback() {
+    if !addr.ip().is_loopback()
+        || headers
+            .get(http::header::ORIGIN)
+            .is_some_and(|origin| !cors::is_allowed_origin(origin))
+    {
         return (
             axum::http::StatusCode::FORBIDDEN,
             Json(serde_json::json!({"error": "forbidden"})),

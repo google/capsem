@@ -165,6 +165,34 @@ async fn token_allows_ipv6_loopback() {
     assert_eq!(resp.status(), http::StatusCode::OK);
 }
 
+#[tokio::test]
+async fn token_rejects_guest_published_browser_origin() {
+    let (app, _) = token_app();
+    let mut req = http::Request::builder()
+        .uri("/token")
+        .header(http::header::ORIGIN, "http://127.0.0.1:63575")
+        .body(Body::empty())
+        .unwrap();
+    req.extensions_mut()
+        .insert(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 12345))));
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), http::StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn token_accepts_tauri_origin() {
+    let (app, _) = token_app();
+    let mut req = http::Request::builder()
+        .uri("/token")
+        .header(http::header::ORIGIN, "tauri://localhost")
+        .body(Body::empty())
+        .unwrap();
+    req.extensions_mut()
+        .insert(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 12345))));
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), http::StatusCode::OK);
+}
+
 // --- CORS restriction (issue #1) ---
 
 fn cors_app() -> axum::Router {
@@ -191,7 +219,7 @@ fn cors_app() -> axum::Router {
 }
 
 #[tokio::test]
-async fn cors_allows_localhost_origin() {
+async fn cors_rejects_other_localhost_origin() {
     let app = cors_app();
     let resp = app
         .oneshot(
@@ -204,10 +232,7 @@ async fn cors_allows_localhost_origin() {
         .await
         .unwrap();
     assert_eq!(resp.status(), http::StatusCode::OK);
-    assert_eq!(
-        resp.headers().get("access-control-allow-origin").unwrap(),
-        "http://localhost:4321"
-    );
+    assert!(resp.headers().get("access-control-allow-origin").is_none());
 }
 
 #[tokio::test]
