@@ -34,9 +34,12 @@ export function surfaceLauncherUrl(gatewayUrl: string, vmId: string): string {
   return `${gatewayUrl.replace(/\/+$/, '')}/vms/${encodeURIComponent(vmId)}/surface/`;
 }
 
-export function surfaceEmbedUrl(gatewayUrl: string, vmId: string, parentOrigin: string): string {
+export type SurfaceProfile = 'auto' | 'local' | 'remote';
+
+export function surfaceEmbedUrl(gatewayUrl: string, vmId: string, parentOrigin: string, profile: SurfaceProfile = 'auto'): string {
   const url = new URL(surfaceLauncherUrl(gatewayUrl, vmId));
   url.searchParams.set('parent_origin', parentOrigin);
+  url.searchParams.set('display_profile', profile);
   return url.href;
 }
 

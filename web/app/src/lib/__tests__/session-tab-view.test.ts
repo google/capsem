@@ -10,6 +10,17 @@ beforeEach(()=>{
   vi.mocked(getContainerStatus).mockReset().mockResolvedValue(null);
 });
 describe('session tab presentation',()=>{
+  it('keeps a display preference per viewer without replacing the VM or terminal',()=>{
+    tabStore.openVM('gui','Desktop','ui');
+    const first=tabStore.active!;
+    tabStore.setSurfaceProfile(first.id,'remote');
+    tabStore.openVM('other','Other','ui');
+    expect(tabStore.active?.surfaceProfile).toBeUndefined();
+    tabStore.openVM('gui','Desktop');
+    expect(tabStore.active).toBe(first);
+    expect(first.surfaceProfile).toBe('remote');
+    expect(first.terminalOpened).toBeFalsy();
+  });
   it('opens known graphical images directly in UI without starting a terminal',()=>{
     tabStore.openVM('gui','Desktop','ui');
     expect(tabStore.active?.view).toBe('ui');

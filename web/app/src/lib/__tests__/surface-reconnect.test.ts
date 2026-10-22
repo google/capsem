@@ -1,5 +1,12 @@
 import { expect, it } from 'vitest';
-import { isSurfaceReconnectMessage } from '../models/surface';
+import { isSurfaceReconnectMessage, surfaceEmbedUrl } from '../models/surface';
+
+it('opens each viewer with its selected profile and no URL credential', () => {
+  const url = new URL(surfaceEmbedUrl('http://localhost:19222/', 'gui/1', 'http://localhost:5173', 'remote'));
+  expect(url.pathname).toBe('/vms/gui%2F1/surface/');
+  expect([...url.searchParams]).toEqual([['parent_origin', 'http://localhost:5173'], ['display_profile', 'remote']]);
+  expect(new URL(surfaceEmbedUrl('http://localhost:19222', 'gui', 'tauri://localhost')).searchParams.get('display_profile')).toBe('auto');
+});
 
 it('accepts reconnect only from the mounted surface frame', () => {
   const frame = {} as Window;

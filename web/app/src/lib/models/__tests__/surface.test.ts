@@ -22,10 +22,10 @@ describe('app surface', () => {
     expect(defaultSessionView(null)).toBe('terminal');
   });
 
-  it('embeds through the authenticated launcher with only the public parent origin in its URL', () => {
+  it('embeds through the authenticated launcher with public parent and profile in its URL', () => {
     const url=new URL(surfaceEmbedUrl('http://127.0.0.1:19222','vm-1','http://localhost:5173'));
     expect(url.pathname).toBe('/vms/vm-1/surface/');
-    expect([...url.searchParams]).toEqual([['parent_origin','http://localhost:5173']]);
+    expect([...url.searchParams]).toEqual([['parent_origin','http://localhost:5173'],['display_profile','auto']]);
   });
 
   it('is openable only once the workload runs and its surface is exposed', () => {

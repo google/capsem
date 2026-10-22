@@ -1,5 +1,5 @@
 import { getContainerStatus } from '../api';
-import { defaultSessionView } from '../models/surface';
+import { defaultSessionView, type SurfaceProfile } from '../models/surface';
 
 export type TabView = 'new-tab' | 'overview' | 'terminal' | 'ui' | 'stats' | 'files' | 'logs' | 'settings' | 'about';
 
@@ -14,6 +14,7 @@ export interface Tab {
   terminalOpened?: boolean;
   surfaceRevision?: number;
   surfaceDebug?: boolean;
+  surfaceProfile?: SurfaceProfile;
 }
 
 let nextId = 0;
@@ -129,6 +130,11 @@ class TabStore {
   toggleSurfaceDebug(id: string) {
     const tab = this.tabs.find(tab => tab.id === id);
     if (tab) tab.surfaceDebug = !tab.surfaceDebug;
+  }
+
+  setSurfaceProfile(id: string, profile: SurfaceProfile) {
+    const tab = this.tabs.find(tab => tab.id === id);
+    if (tab) tab.surfaceProfile = profile;
   }
 
   openSingleton(view: TabView, title: string) {

@@ -326,6 +326,17 @@
       {/each}
     </div>
     {#if active?.view === 'ui'}
+      <select aria-label="Display profile" title="Auto uses RGB on this machine; Remote uses JPEG/WebP. Override for forwarded connections."
+        class="rounded-md border border-line-2 bg-layer px-2 py-1 text-xs text-foreground"
+        value={active.surfaceProfile ?? 'auto'}
+        onchange={event => {
+          const profile = event.currentTarget.value;
+          if (active && (profile === 'auto' || profile === 'local' || profile === 'remote')) tabStore.setSurfaceProfile(active.id, profile);
+        }}>
+        <option value="auto">Auto</option>
+        <option value="local">Local · RGB</option>
+        <option value="remote">Remote · JPEG/WebP</option>
+      </select>
       <button type="button" class="inline-flex items-center gap-x-1 px-2 py-1 text-xs rounded-md text-muted-foreground-1 hover:text-foreground"
         onclick={() => { if (active) tabStore.reloadSurface(active.id); }} title="Reconnect app" aria-label="Reconnect app">
         <ArrowClockwise size={14} />

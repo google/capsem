@@ -150,7 +150,7 @@
               {/if}
               {#if tab.surface}
                 <div class="absolute inset-0" class:hidden={tab.view !== 'ui'}>
-                  <SurfaceFrame vmId={tab.vmId} revision={tab.surfaceRevision ?? 0} debug={tab.surfaceDebug ?? false} />
+                  <SurfaceFrame vmId={tab.vmId} revision={tab.surfaceRevision ?? 0} debug={tab.surfaceDebug ?? false} profile={tab.surfaceProfile ?? 'auto'} />
                 </div>
               {/if}
               {#if tab.view === 'stats'}

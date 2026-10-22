@@ -1,14 +1,14 @@
 <script lang="ts">
   import { getBaseUrl } from '../../api';
-  import { isSurfaceReconnectMessage, surfaceEmbedUrl } from '../../models/surface';
+  import { isSurfaceReconnectMessage, surfaceEmbedUrl, type SurfaceProfile } from '../../models/surface';
   import { vmStore } from '../../stores/vms.svelte';
   import { metricMs, metricSize, parseSurfaceMetrics, type SurfaceMetrics } from '../../models/surface-metrics';
 
-  let { vmId, revision = 0, debug = false }: { vmId: string; revision?: number; debug?: boolean } = $props();
+  let { vmId, revision = 0, debug = false, profile = 'auto' }: { vmId: string; revision?: number; debug?: boolean; profile?: SurfaceProfile } = $props();
   let frame: HTMLIFrameElement | undefined = $state();
   let metrics: SurfaceMetrics | null = $state(null);
   let reconnect = $state(0);
-  let src = $derived(surfaceEmbedUrl(getBaseUrl(), vmId, window.location.origin));
+  let src = $derived(surfaceEmbedUrl(getBaseUrl(), vmId, window.location.origin, profile));
   // Keep the graphical connection across UI/Terminal/Stats switches. A VM
   // lifecycle transition starts a fresh bootstrap against the current owner.
   let status = $derived(vmStore.vms.find(vm => vm.id === vmId)?.status);
@@ -32,7 +32,7 @@
   if (debug && event.data?.type === 'capsem:surface-metrics') metrics = parseSurfaceMetrics(event.data.metrics);
 }} />
 
-{#key `${status}:${revision}:${reconnect}`}
+{#key `${status}:${revision}:${reconnect}:${profile}`}
   <iframe
     bind:this={frame}
     {src}
