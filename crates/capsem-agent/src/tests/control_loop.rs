@@ -308,7 +308,14 @@ fn ackable_response_id_covers_response_variants() {
     // Non-ackable variants
     assert_eq!(ackable_response_id(&GuestToHost::Pong), None);
     assert_eq!(ackable_response_id(&GuestToHost::Ack { id: 5 }), None);
-    assert_eq!(ackable_response_id(&GuestToHost::SnapshotReady), None);
+    assert_eq!(
+        ackable_response_id(&GuestToHost::SnapshotTransitioned {
+            id: 1,
+            frozen: true,
+            error: None
+        }),
+        None
+    );
     assert_eq!(ackable_response_id(&GuestToHost::Ready { version: "x".into() }), None);
 }
 

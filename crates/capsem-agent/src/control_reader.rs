@@ -276,7 +276,7 @@ pub(crate) fn control_loop(
                     break;
                 }
             }
-            Ok(request @ (HostToGuest::PrepareSnapshot | HostToGuest::SnapshotTransition { frozen: true, .. })) => {
+            Ok(HostToGuest::SnapshotTransition { id, frozen: true }) => {
                 drop(publications.take());
                 // Flush guest dirty pages out to the system-overlay
                 // virtio-blk device (/dev/vdb) before host save_state /
@@ -289,7 +289,7 @@ pub(crate) fn control_loop(
                 // The guest only writes the overlay through /dev/vdb; the
                 // image is not in the VirtioFS share, so no FUSE_FSYNC is
                 // needed here.
-                eprintln!("[capsem-agent] PrepareSnapshot: syncing and flushing /dev/vdb");
+                eprintln!("[capsem-agent] SnapshotTransition {id}: syncing and flushing /dev/vdb");
                 unsafe {
                     libc::sync();
                 }
@@ -319,35 +319,20 @@ pub(crate) fn control_loop(
                 }
 
                 let result = freeze_system_filesystem();
-                let response = match request {
-                    HostToGuest::SnapshotTransition { id, .. } => {
-                        crate::snapshot::transition_response(id, true, result)
-                    }
-                    _ => {
-                        if let Err(error) = result {
-                            eprintln!("[capsem-agent] PrepareSnapshot: freeze failed: {error}");
-                            continue;
-                        }
-                        GuestToHost::SnapshotReady
-                    }
-                };
+                let response = crate::snapshot::transition_response(id, true, result);
                 if ctrl_tx.send(response).is_err() {
                     let _ = thaw_system_filesystem();
                     break;
                 }
             }
-            Ok(request @ (HostToGuest::Unfreeze | HostToGuest::SnapshotTransition { frozen: false, .. })) => {
-                eprintln!("[capsem-agent] Unfreeze: thawing {SYSTEM_FS_MOUNT}");
+            Ok(HostToGuest::SnapshotTransition { id, frozen: false }) => {
+                eprintln!("[capsem-agent] SnapshotTransition {id}: thawing {SYSTEM_FS_MOUNT}");
                 let result = thaw_system_filesystem();
-                if let HostToGuest::SnapshotTransition { id, .. } = request {
-                    if ctrl_tx
-                        .send(crate::snapshot::transition_response(id, false, result))
-                        .is_err()
-                    {
-                        break;
-                    }
-                } else if let Err(error) = result {
-                    eprintln!("[capsem-agent] failed to thaw system filesystem: {error}");
+                if ctrl_tx
+                    .send(crate::snapshot::transition_response(id, false, result))
+                    .is_err()
+                {
+                    break;
                 }
             }
             Ok(msg) => {

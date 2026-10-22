@@ -6,6 +6,7 @@ use std::os::unix::io::{FromRawFd, IntoRawFd};
 use super::audit::{extract_audit_id, extract_audit_timestamp_us, extract_execve_argv, extract_field};
 
 mod control_loop;
+mod snapshot;
 
 pub(crate) fn test_ctrl_channel() -> (CtrlSender, SharedCtrlReceiver) {
     CtrlSender::new(std::sync::Arc::new(std::sync::Mutex::new(
@@ -213,51 +214,6 @@ fn send_recv_exec_done_over_pipe() {
         }
         other => panic!("expected ExecDone, got {other:?}"),
     }
-    unsafe {
-        libc::close(read_fd);
-        libc::close(write_fd);
-    }
-}
-
-#[test]
-fn prepare_snapshot_roundtrip() {
-    let (read_fd, write_fd) = make_pipe();
-    let msg = HostToGuest::PrepareSnapshot;
-    let frame = capsem_proto::encode_host_msg(&msg).unwrap();
-    write_all_fd(write_fd, &frame).unwrap();
-    let decoded = recv_host_msg(read_fd).unwrap();
-    assert!(matches!(decoded, HostToGuest::PrepareSnapshot));
-    unsafe {
-        libc::close(read_fd);
-        libc::close(write_fd);
-    }
-}
-
-#[test]
-fn unfreeze_roundtrip() {
-    let (read_fd, write_fd) = make_pipe();
-    let msg = HostToGuest::Unfreeze;
-    let frame = capsem_proto::encode_host_msg(&msg).unwrap();
-    write_all_fd(write_fd, &frame).unwrap();
-    let decoded = recv_host_msg(read_fd).unwrap();
-    assert!(matches!(decoded, HostToGuest::Unfreeze));
-    unsafe {
-        libc::close(read_fd);
-        libc::close(write_fd);
-    }
-}
-
-#[test]
-fn snapshot_ready_roundtrip() {
-    let (read_fd, write_fd) = make_pipe();
-    send_guest_msg(write_fd, &GuestToHost::SnapshotReady).unwrap();
-    let mut len_buf = [0u8; 4];
-    read_exact_fd(read_fd, &mut len_buf).unwrap();
-    let len = u32::from_be_bytes(len_buf) as usize;
-    let mut payload = vec![0u8; len];
-    read_exact_fd(read_fd, &mut payload).unwrap();
-    let decoded = capsem_proto::decode_guest_msg(&payload).unwrap();
-    assert!(matches!(decoded, GuestToHost::SnapshotReady));
     unsafe {
         libc::close(read_fd);
         libc::close(write_fd);
