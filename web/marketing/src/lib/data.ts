@@ -42,6 +42,21 @@ export const UI = {
   download: "Download", source: "GitHub", copy: "Copy command", copied: "Copied", copyFailed: "Select and copy the command",
   openMenu: "Open menu", closeMenu: "Close menu", skip: "Skip to content",
 } as const;
+export const SETUP = {
+  title: "Set up with your AI",
+  openIn: "Open in",
+  copy: "Copy setup prompt",
+  copied: "Prompt copied",
+  failed: "Select and copy the prompt below.",
+  show: "View setup prompt",
+  paste: "Paste into your agent to get started.",
+  guide: "Installation guide",
+  agents: [
+    { name: "Claude Code", icon: "claude" },
+    { name: "Codex", icon: "openai" },
+    { name: "Cursor", icon: null },
+  ],
+} as const;
 export const AGENTS = {
   title: "Your favorite AIs.",
   description: "Switch anytime — or use all of them in parallel.",
