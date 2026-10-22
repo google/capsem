@@ -44,6 +44,9 @@ def _legacy_records(sources: dict[str, str]) -> tuple[str, ...]:
                 path == excluded or path.startswith(excluded) for excluded in EXCLUDED
             )
             if "baselines" not in Path(path).parts
+            # Pinned upstream terminal recordings are captured screen bytes,
+            # including historical commands, not Capsem build-state callers.
+            if not (path.startswith("third_party/") and "/tests/ref/" in path and path.endswith(".recording"))
             if not (path.startswith("tests/citadel/") and path.endswith("_debt.toml"))
             for number, line in enumerate(text.splitlines(), 1)
             if LEGACY.search(line)
@@ -87,6 +90,18 @@ def test_an_isolated_container_target_is_not_repository_state() -> None:
     )
 
     assert not records, RATIONALE
+
+
+def test_upstream_terminal_recordings_are_data_while_owned_callers_stay_guarded() -> None:
+    upstream = "third_party/rust/terminal/tests/ref/example/alacritty.recording"
+    source = "third_party/rust/terminal/src/lib.rs"
+    owned = "tests/fixtures/terminal/alacritty.recording"
+    records = _legacy_records(dict.fromkeys((upstream, source, owned), "target/debug/app"))
+
+    assert len(records) == 2, RATIONALE
+    assert all(not record.startswith(upstream + ":") for record in records), RATIONALE
+    assert any(record.startswith(source + ":") for record in records), RATIONALE
+    assert any(record.startswith(owned + ":") for record in records), RATIONALE
 
 
 def test_generated_state_has_one_root() -> None:
