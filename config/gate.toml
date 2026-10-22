@@ -3604,12 +3604,6 @@ subject = "su $TARGET_USER -c XDG_RUNTIME_DIR=$XDG_DIR journalctl --user-unit ca
 reason = "diagnostics; there may be no journal yet on a first install"
 
 [[boundary.discarded_verdicts]]
-digest = "30e2e243eea1"
-where = "build_system/packaging/linux/deb-preinst.sh"
-subject = "chown -R $TARGET_USER:$(id -gn $TARGET_USER) $CAPSEM_DIR/logs"
-reason = "the log directory may not exist before the first run"
-
-[[boundary.discarded_verdicts]]
 digest = "d52766736735"
 where = "build_system/packaging/linux/deb-preinst.sh"
 subject = "su $TARGET_USER -c XDG_RUNTIME_DIR=$XDG_DIR systemctl --user stop capsem.service"
