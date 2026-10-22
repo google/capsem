@@ -47,6 +47,7 @@ REFERENCE_PATTERNS = {
     ),
 }
 OWNED_WEB_PATH = re.compile(r"(?<![\w./-])web/(?:app|docs|marketing)/(?:[\w.-]+/)*[\w.-]+")
+ABSOLUTE_WEB_URL = re.compile(r"(?<![\w./-])https?://[^\s<>\"'`]+", re.IGNORECASE)
 
 
 STATIC_LITERAL = re.compile(
@@ -91,6 +92,7 @@ def _digest(records: tuple[str, ...]) -> str:
 #: matching, so a file is skipped only while its bytes match its pin; an
 #: edited one is scanned like any other source.
 VENDORED_TREES = ("crates/capsem-gateway/vendor/xpra-html5",)
+RUST_VENDOR_ROOT = "third_party/rust"
 BENCHMARK_SOURCE_ROOTS = ("benchmarks/collectors/", "benchmarks/helpers/")
 
 
@@ -102,6 +104,13 @@ def _pinned_vendor_files(root: Path = ROOT) -> dict[str, str]:
             digest, path = line.split("  ", 1)
             if path.startswith("www/"):
                 pinned[f"{tree}/{path}"] = digest
+    # Upstream Markdown documents describe their own repository layout. Keep
+    # executable source guarded, and rescan any document changed from its pin.
+    for manifest in (root / RUST_VENDOR_ROOT).glob("*/UPSTREAM.json"):
+        files = json.loads(manifest.read_text(encoding="utf-8"))["files"]
+        for path, digest in files.items():
+            if Path(path).suffix == ".md":
+                pinned[(manifest.parent / path).relative_to(root).as_posix()] = digest
     return pinned
 
 
@@ -131,7 +140,8 @@ def _text_sources(
 def _without_owned_paths(line: str) -> str:
     # Canonical docs contain src/content/docs; the second docs is not an old root.
     return OWNED_WEB_PATH.sub(
-        lambda match: match[0] if ".." in match[0].split("/") else "", line
+        lambda match: match[0] if ".." in match[0].split("/") else "",
+        ABSOLUTE_WEB_URL.sub("", line),
     )
 
 
@@ -390,7 +400,7 @@ def test_only_vendored_bytes_that_match_their_pin_are_skipped(tmp_path: Path) ->
     for path, text in {
         vendored: pinned_text,
         edited: pinned_text + "read docs/guide here\n",
-        own: pinned_text,
+        own: pinned_text + "read docs/guide here\n",
     }.items():
         (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / path).write_text(text, encoding="utf-8")
@@ -406,7 +416,7 @@ def test_only_vendored_bytes_that_match_their_pin_are_skipped(tmp_path: Path) ->
 def test_every_vendored_tree_has_its_pinned_checksums() -> None:
     pinned = _pinned_vendor_files()
     assert pinned and all(re.fullmatch(r"[0-9a-f]{64}", d) for d in pinned.values())
-    assert all(path.startswith(VENDORED_TREES) for path in pinned)
+    assert all(path.startswith((*VENDORED_TREES, RUST_VENDOR_ROOT + "/")) for path in pinned)
 
 
 def test_legacy_reference_fingerprint_changes_for_new_debt() -> None:
@@ -417,6 +427,33 @@ def test_legacy_reference_fingerprint_changes_for_new_debt() -> None:
 
     assert len(after) == len(before) + 1
     assert _digest(after) != _digest(before)
+
+
+def test_external_documentation_urls_do_not_hide_adjacent_repository_callers() -> None:
+    url = "https://github.com/upstream/tool/blob/main/docs/guide.md"
+    assert not _legacy_references({"settings.txt": f"# {url}"}), RATIONALE
+    assert _legacy_references({"source.py": f"url = '{url}'; path = 'docs/retired.md'"}), RATIONALE
+    assert _legacy_references({"source.py": "prefix/https://upstream/docs/retired.md"}), RATIONALE
+
+
+def test_only_byte_identical_upstream_rust_documentation_is_skipped(tmp_path: Path) -> None:
+    vendor = tmp_path / VENDORED_TREES[0]
+    vendor.mkdir(parents=True)
+    (vendor / "SHA256SUMS").write_text("")
+    tree = tmp_path / "third_party/rust/example"
+    (tree / "src").mkdir(parents=True)
+    doc, source = tree / "README.md", tree / "src/lib.rs"
+    for path in (doc, source):
+        path.write_text("docs/relative.md")
+    (tree / "UPSTREAM.json").write_text(json.dumps({"files": {
+        path.relative_to(tree).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in (doc, source)
+    }}))
+    paths = tuple(path.relative_to(tmp_path).as_posix() for path in (doc, source))
+    observed = _text_sources(paths, root=tmp_path)
+    assert set(observed) == {paths[1]}, "actual source remains guarded even if upstream pinned"
+    doc.write_text("docs/edited.md")
+    assert set(_text_sources(paths, root=tmp_path)) == set(paths), "edited documentation loses its skip"
 
 
 def test_openapi_wire_enums_are_not_repository_paths() -> None:
