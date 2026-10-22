@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Write support bundles atomically with owner-only permissions, restrict their
+  directory, and record proxy configuration without embedding proxy URLs or credentials.
+
 - Ignore unsolicited guest file-content frames and accept exports only for an
   active read job, preventing forged file-security ledger events.
 
