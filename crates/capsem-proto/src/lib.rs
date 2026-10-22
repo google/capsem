@@ -550,10 +550,6 @@ pub enum HostToGuest {
     // -- Lifecycle --
     /// Graceful shutdown request.
     Shutdown,
-    /// Quiescence: sync + fsfreeze before snapshot.
-    PrepareSnapshot,
-    /// Resume filesystem I/O after snapshot.
-    Unfreeze,
     /// Correlated filesystem barrier. Freeze syncs before stopping writes;
     /// thaw must report completion before a rejected suspend is recoverable.
     SnapshotTransition { id: u64, frozen: bool },
@@ -784,8 +780,6 @@ pub enum GuestToHost {
     /// fixed timer; `SHUTDOWN_COMPLETE_TIMEOUT_SECS` bounds a guest that
     /// never answers.
     ShutdownComplete,
-    /// Quiescence ack: filesystem frozen, safe to snapshot.
-    SnapshotReady,
     /// Result of the exact requested filesystem transition, not receipt.
     SnapshotTransitioned {
         id: u64,
