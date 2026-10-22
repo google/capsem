@@ -172,6 +172,36 @@ fn unrecognized_method_is_classified_unknown_not_guessed() {
 }
 
 #[test]
+fn guest_chosen_mcp_methods_share_one_bounded_metric_label() {
+    use metrics_util::debugging::DebuggingRecorder;
+
+    let recorder = DebuggingRecorder::new();
+    let snapshotter = recorder.snapshotter();
+    let _guard = ::metrics::set_default_local_recorder(&recorder);
+    let long_method = "guest/".repeat(100);
+    for method in ["guest/one", "guest/two", long_method.as_str()] {
+        record_method_metric(&interpret_mcp_method(&request(method, json!({}))));
+    }
+    record_method_metric(&interpret_mcp_method(&request("tools/call", json!({}))));
+
+    let mut labels: Vec<String> = snapshotter
+        .snapshot()
+        .into_vec()
+        .iter()
+        .filter(|(key, _, _, _)| key.key().name() == m::MCP_METHODS_TOTAL)
+        .flat_map(|(key, _, _, _)| {
+            key.key()
+                .labels()
+                .filter(|label| label.key() == "method")
+                .map(|label| label.value().to_string())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    labels.sort();
+    assert_eq!(labels, ["tools/call", "unknown"]);
+}
+
+#[test]
 fn list_methods_attribute_to_the_wildcard_server() {
     for method in ["tools/list", "resources/list", "prompts/list"] {
         let summary = interpret_mcp_method(&request(method, json!({})));

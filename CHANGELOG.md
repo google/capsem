@@ -29,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Bound MCP method telemetry labels to known protocol methods plus one
+  unknown label, preventing guest-selected strings from growing metric state.
+
 - Keep guest HTTP query values out of network and security-rule ledgers while
   forwarding the original query upstream and evaluating policy on it.
 

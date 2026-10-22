@@ -252,7 +252,7 @@ pub(in crate::net::mitm_proxy) fn truncate_preview(input: &str, max_bytes: usize
 pub(super) fn record_method_metric(summary: &McpMethodSummary) {
     ::metrics::counter!(
         m::MCP_METHODS_TOTAL,
-        "method" => summary.method.clone(),
+        "method" => summary.kind.label(),
         "kind" => summary.kind.label(),
     )
     .increment(1);
