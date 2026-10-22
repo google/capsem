@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Update Astro, Vitest, and the MCP server's transitive `ip-address` package
+  to patched versions for current CSS injection, mock registration, and
+  oversized address parsing advisories.
+
 - Write support bundles atomically with owner-only permissions, restrict their
   directory, and record proxy configuration without embedding proxy URLs or credentials.
 

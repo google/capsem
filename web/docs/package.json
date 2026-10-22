@@ -13,7 +13,7 @@
     "@astrojs/starlight-tailwind": "^5.0.0",
     "@capsem/diagrams": "file:../diagrams",
     "@tailwindcss/vite": "^4.3.3",
-    "astro": "^7.2.8",
+    "astro": "^7.3.3",
     "sharp": "^0.35.5",
     "tailwindcss": "^4.3.3"
   },

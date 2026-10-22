@@ -8,7 +8,7 @@
   "engines": {"node": ">=20"},
   "bin": {"capsem-mcp": "./dist/cli.js"},
   "files": ["dist", "README.md"],
-  "pnpm": {"overrides": {"hono": "4.13.11", "vite": "8.3.3"}},
+  "pnpm": {"overrides": {"hono": "4.13.11", "ip-address": "10.7.4", "vite": "8.3.3"}},
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "tsc --noEmit -p tsconfig.test.json",
@@ -24,8 +24,8 @@
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
-    "@vitest/coverage-v8": "4.1.11",
+    "@vitest/coverage-v8": "4.1.12",
     "typescript": "5.9.3",
-    "vitest": "4.1.11"
+    "vitest": "4.1.12"
   }
 }
