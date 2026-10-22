@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep valid duplex captures within bounded IPC frames and keep the channel usable after local encoding refusal.
+
 - Use compact XXH3-128 corruption checks for body archives, with one current
   format and no legacy readers or migration paths.
 

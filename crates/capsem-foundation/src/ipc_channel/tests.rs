@@ -26,6 +26,27 @@ async fn wire_is_one_bounded_big_endian_msgpack_frame() {
 }
 
 #[tokio::test]
+async fn a_prepared_frame_serializes_once_and_keeps_the_original_message() {
+    struct Counted<'a>(&'a std::sync::atomic::AtomicUsize);
+    impl Serialize for Counted<'_> {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            serializer.serialize_str("prepared once")
+        }
+    }
+    let (left, right) = UnixStream::pair().unwrap();
+    let (sender, _) = channel_from_std::<Counted<'_>, String>(left).unwrap();
+    let (_, receiver) = channel_from_std::<String, String>(right).unwrap();
+    let count = std::sync::atomic::AtomicUsize::new(0);
+    let message = Counted(&count);
+    let frame = Sender::prepare(&message).unwrap();
+    let (sent, received) = tokio::join!(sender.send_prepared(frame), receiver.recv());
+    sent.unwrap();
+    assert_eq!(received.unwrap(), "prepared once");
+    assert_eq!(message.0.load(std::sync::atomic::Ordering::Relaxed), 1);
+}
+
+#[tokio::test]
 async fn oversized_frame_is_rejected_before_payload_allocation() {
     let (channel, mut peer) = UnixStream::pair().unwrap();
     channel.set_nonblocking(true).unwrap();

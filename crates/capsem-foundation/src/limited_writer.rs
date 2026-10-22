@@ -20,6 +20,10 @@ impl<W> LimitedWriter<W> {
     pub fn exceeded(&self) -> bool {
         self.exceeded
     }
+
+    pub fn remaining(&self) -> usize {
+        self.remaining
+    }
 }
 
 impl<W: Write> Write for LimitedWriter<W> {

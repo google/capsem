@@ -22,12 +22,19 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::Mutex;
 
-/// Largest service-to-owner or owner-to-service payload (16 MiB).
+/// Largest service-to-owner or owner-to-service payload (32 MiB).
 ///
-/// Exec and file APIs allow 10 MiB bodies. The remaining space covers the
+/// An exec completion can contain two 10 MiB lanes; HTTP events can likewise
+/// contain a 10 MiB request and response. The remaining space covers the
 /// typed envelope while keeping an unauthenticated local peer from announcing
 /// an allocation anywhere near the old u32 maximum.
-pub const MAX_IPC_FRAME_SIZE: u32 = 16 * 1024 * 1024;
+pub const MAX_IPC_FRAME_SIZE: u32 = 32 * 1024 * 1024;
+
+/// A complete, bounded wire frame. Only the typed encoder can construct one.
+pub struct PreparedFrame<T> {
+    bytes: Vec<u8>,
+    marker: PhantomData<fn(T)>,
+}
 
 /// The sending half of a typed channel.
 pub struct Sender<T> {
@@ -122,6 +129,12 @@ where
 {
     /// Serialize and send one complete bounded frame.
     pub async fn send(&self, message: T) -> io::Result<()> {
+        self.send_prepared(Self::prepare(&message)?).await
+    }
+
+    /// Encode the final frame without socket I/O. The caller retains ownership
+    /// of its message, so a rejected batch can be split without cloning bodies.
+    pub fn prepare(message: &T) -> io::Result<PreparedFrame<T>> {
         // Encode once into the final frame. Reject excess bytes during encode,
         // before socket I/O; neither preflight serialization nor a payload copy.
         let mut frame = vec![0; 4];
@@ -137,7 +150,15 @@ where
         })?;
         let len = (frame.len() - 4) as u32;
         frame[..4].copy_from_slice(&len.to_be_bytes());
-        self.inner.lock().await.write_all(&frame).await
+        Ok(PreparedFrame {
+            bytes: frame,
+            marker: PhantomData,
+        })
+    }
+
+    /// Write an already encoded frame without another serialization or copy.
+    pub async fn send_prepared(&self, frame: PreparedFrame<T>) -> io::Result<()> {
+        self.inner.lock().await.write_all(&frame.bytes).await
     }
 }
 
