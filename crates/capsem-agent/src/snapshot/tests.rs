@@ -24,7 +24,11 @@ fn failed_freeze_or_thaw_keeps_the_last_successful_state() {
     for mut frozen in [false, true] {
         let previous = frozen;
         let result = transition(&mut frozen, !previous, |_| Err(io::Error::other("fixture failure")));
-        assert!(result.is_err());
+        let reply = transition_response(73, !previous, result);
+        assert!(
+            matches!(reply, capsem_proto::GuestToHost::SnapshotTransitioned {id: 73, frozen: requested, error: Some(error)}
+            if requested == !previous && error == "fixture failure")
+        );
         assert_eq!(frozen, previous);
         transition(&mut frozen, !previous, |_| Ok(())).unwrap();
         assert_eq!(frozen, !previous);

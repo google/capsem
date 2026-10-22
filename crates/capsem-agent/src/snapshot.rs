@@ -46,5 +46,13 @@ pub(crate) fn thaw_system_filesystem() -> io::Result<()> {
     set_system_filesystem_frozen(false)
 }
 
+pub(crate) fn transition_response(id: u64, frozen: bool, result: io::Result<()>) -> capsem_proto::GuestToHost {
+    capsem_proto::GuestToHost::SnapshotTransitioned {
+        id,
+        frozen,
+        error: result.err().map(|error| error.to_string()),
+    }
+}
+
 #[cfg(test)]
 mod tests;

@@ -4,6 +4,20 @@ use super::*;
 // control_loop integration tests
 // -------------------------------------------------------------------
 
+#[test]
+fn correlated_thaw_reports_completion_and_is_idempotent() {
+    let replies = run_control_loop_with_messages(vec![
+        HostToGuest::SnapshotTransition { id: 41, frozen: false },
+        HostToGuest::SnapshotTransition { id: 42, frozen: false },
+    ]);
+    assert_eq!(replies.len(), 2, "{replies:?}");
+    for (reply, expected) in replies.into_iter().zip([41, 42]) {
+        assert!(
+            matches!(reply, GuestToHost::SnapshotTransitioned { id, frozen: false, error: None } if id == expected)
+        );
+    }
+}
+
 /// Feed host messages into control_loop and collect guest responses.
 fn run_control_loop_with_messages(messages: Vec<HostToGuest>) -> Vec<GuestToHost> {
     run_control_loop_with_messages_and_pending(messages, None).0

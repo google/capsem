@@ -276,7 +276,7 @@ pub(crate) fn control_loop(
                     break;
                 }
             }
-            Ok(HostToGuest::PrepareSnapshot) => {
+            Ok(request @ (HostToGuest::PrepareSnapshot | HostToGuest::SnapshotTransition { frozen: true, .. })) => {
                 drop(publications.take());
                 // Flush guest dirty pages out to the system-overlay
                 // virtio-blk device (/dev/vdb) before host save_state /
@@ -318,22 +318,36 @@ pub(crate) fn control_loop(
                     );
                 }
 
-                if let Err(e) = freeze_system_filesystem() {
-                    eprintln!("[capsem-agent] PrepareSnapshot: failed to freeze system filesystem: {e}");
-                    // Do not acknowledge an unsafe snapshot. The host timeout
-                    // path sends Unfreeze and fails the suspend closed.
-                    continue;
-                }
-
-                if ctrl_tx.send(GuestToHost::SnapshotReady).is_err() {
+                let result = freeze_system_filesystem();
+                let response = match request {
+                    HostToGuest::SnapshotTransition { id, .. } => {
+                        crate::snapshot::transition_response(id, true, result)
+                    }
+                    _ => {
+                        if let Err(error) = result {
+                            eprintln!("[capsem-agent] PrepareSnapshot: freeze failed: {error}");
+                            continue;
+                        }
+                        GuestToHost::SnapshotReady
+                    }
+                };
+                if ctrl_tx.send(response).is_err() {
                     let _ = thaw_system_filesystem();
                     break;
                 }
             }
-            Ok(HostToGuest::Unfreeze) => {
+            Ok(request @ (HostToGuest::Unfreeze | HostToGuest::SnapshotTransition { frozen: false, .. })) => {
                 eprintln!("[capsem-agent] Unfreeze: thawing {SYSTEM_FS_MOUNT}");
-                if let Err(e) = thaw_system_filesystem() {
-                    eprintln!("[capsem-agent] failed to thaw system filesystem: {e}");
+                let result = thaw_system_filesystem();
+                if let HostToGuest::SnapshotTransition { id, .. } = request {
+                    if ctrl_tx
+                        .send(crate::snapshot::transition_response(id, false, result))
+                        .is_err()
+                    {
+                        break;
+                    }
+                } else if let Err(error) = result {
+                    eprintln!("[capsem-agent] failed to thaw system filesystem: {error}");
                 }
             }
             Ok(msg) => {
