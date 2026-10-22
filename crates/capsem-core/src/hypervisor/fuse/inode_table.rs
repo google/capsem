@@ -131,10 +131,15 @@ impl InodeTable {
 
     /// `path` names an existing entry (regular file, directory, symlink, or
     /// special file) whose parent directory is contained and symlink-free, so
-    /// a no-follow operation on the entry itself stays inside the share.
+    /// a no-follow operation on the entry itself stays inside the share. The
+    /// share root is checked directly because its parent is outside the share.
     pub(crate) fn is_contained_entry(&self, path: &Path) -> bool {
-        path.parent().is_some_and(|parent| self.is_contained_real_path(parent))
-            && std::fs::symlink_metadata(path).is_ok()
+        let parent_contained = if path == self.root_canonical {
+            self.is_contained_real_path(path)
+        } else {
+            path.parent().is_some_and(|parent| self.is_contained_real_path(parent))
+        };
+        parent_contained && std::fs::symlink_metadata(path).is_ok()
     }
 
     /// Canonicalize `path` and return it only if it resolves inside the share.

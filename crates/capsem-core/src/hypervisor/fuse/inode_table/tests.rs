@@ -18,6 +18,22 @@ fn root_is_1() {
 }
 
 #[test]
+fn root_entry_is_contained_until_replaced_by_an_outside_symlink() {
+    let base = tempfile::tempdir().unwrap();
+    let root = base.path().join("root");
+    let outside = base.path().join("outside");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::create_dir(&outside).unwrap();
+    let root = root.canonicalize().unwrap();
+    let table = InodeTable::new(&root).unwrap();
+
+    assert!(table.is_contained_entry(&root), "the share root is its own boundary");
+    std::fs::remove_dir(&root).unwrap();
+    std::os::unix::fs::symlink(&outside, &root).unwrap();
+    assert!(!table.is_contained_entry(&root), "a replaced root must be refused");
+}
+
+#[test]
 fn lookup_creates_inode() {
     let dir = temp_share("inode-lookup");
     std::fs::write(dir.join("hello.txt"), b"world").unwrap();

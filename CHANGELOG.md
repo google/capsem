@@ -195,6 +195,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Restore KVM VirtioFS root attributes after containment checks while still
+  refusing a share root replaced by an outside symlink.
+
 - Launch `just dev ui` from the frontend workspace so Tauri starts its Astro
   development server before opening the desktop window.
 
