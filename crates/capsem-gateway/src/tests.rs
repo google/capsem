@@ -8,6 +8,12 @@ use crate::status::StatusCache;
 mod hostile;
 mod route_forwarding;
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn attestation_exec_probe_exists_on_target() {
+    assert!(gateway_exec_probe_path().is_file());
+}
+
 #[test]
 fn entry_closes_ambient_descriptors_before_runtime_construction() {
     let source = include_str!("main.rs");

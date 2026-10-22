@@ -256,8 +256,16 @@ fn attest_gateway(uds_path: &std::path::Path, listener: SocketAddr) -> Result<()
         std::os::unix::net::UnixStream::connect(uds_path),
         "dial control sockets by path",
     )?;
-    require_denied(std::process::Command::new("/bin/true").status(), "execute processes")?;
+    require_denied(
+        std::process::Command::new(gateway_exec_probe_path()).status(),
+        "execute processes",
+    )?;
     Ok(())
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn gateway_exec_probe_path() -> &'static std::path::Path {
+    std::path::Path::new("/usr/bin/true")
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]

@@ -84,6 +84,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Use an executable that exists on macOS and Linux for the gateway's sandbox
+  startup check, restoring gateway startup on hosts without `/bin/true`.
+
 - Runtime publication preserves the immutable version-and-commit revision selected
   by release preflight instead of replacing it with a date-derived asset revision.
 
