@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use capsem_core::{read_control_msg, write_control_msg, VsockConnection};
 use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
 use capsem_proto::{self as proto, GuestToHost, HostToGuest, HostVsockService};
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -186,7 +186,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
         warn!(error = %e, "failed to create ready sentinel");
     }
 
-    terminal::spawn(
+    let _terminal_bridge = terminal::spawn(
         Arc::clone(&terminal_output),
         terminal_rekey_rx,
         term_in_rx,

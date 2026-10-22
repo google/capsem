@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep terminal timeouts and reconnects responsive under blocked I/O,
+  preserving partial writes and query replies generated between connections.
+
 - Render graphical surfaces at display density with consistent resize and
   pointer coordinates, and show negotiated DPI in the Debug overlay.
 

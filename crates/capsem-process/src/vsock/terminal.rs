@@ -1,106 +1,189 @@
 //! The session terminal's transport. Byte interpretation belongs to core.
 use super::*;
+use std::collections::VecDeque;
+use std::os::fd::AsFd;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+struct Connection {
+    anchor: Arc<VsockConnection>,
+    reader: tokio::net::unix::OwnedReadHalf,
+    writer: tokio::net::unix::OwnedWriteHalf,
+}
+
+impl Connection {
+    fn open(anchor: Arc<VsockConnection>) -> std::io::Result<Self> {
+        let fd = anchor.try_clone_fd()?;
+        capsem_foundation::unix::fd::set_nonblocking(fd.as_fd(), true)?;
+        let stream = tokio::net::UnixStream::from_std(std::os::unix::net::UnixStream::from(fd))?;
+        let (reader, writer) = stream.into_split();
+        Ok(Self { anchor, reader, writer })
+    }
+}
+
+impl Drop for Connection {
+    fn drop(&mut self) {
+        if let Err(error) = self.anchor.shutdown_both() {
+            if error.kind() != std::io::ErrorKind::NotConnected {
+                warn!(operation = "shutdown-terminal-vsock", error = %error, "terminal shutdown failed");
+            }
+        }
+    }
+}
+
+async fn deadline(at: Option<tokio::time::Instant>) {
+    match at {
+        Some(at) => tokio::time::sleep_until(at).await,
+        None => std::future::pending().await,
+    }
+}
 
 pub(super) fn spawn(
-    terminal_output: Arc<capsem_core::terminal::SessionTerminal>,
-    mut terminal_rekey_rx: mpsc::Receiver<Arc<VsockConnection>>,
-    mut term_in_rx: mpsc::Receiver<Vec<u8>>,
+    terminal: Arc<capsem_core::terminal::SessionTerminal>,
+    mut rekey: mpsc::Receiver<Arc<VsockConnection>>,
+    mut input: mpsc::Receiver<Vec<u8>>,
     pty_log: Option<Arc<capsem_core::pty_log::PtyLog>>,
-    serial_log: capsem_foundation::telemetry::SharedLogWriter,
-) {
-    // 1. Stable Terminal Bridge (Read + Write)
-    let term_out = terminal_output;
-    let pty_log_out = pty_log;
-    let (serial_log_tx, serial_log_handle) = spawn_serial_log_writer(move || Ok(serial_log));
-
+    serial_log: impl std::io::Write + Send + 'static,
+) -> tokio::task::JoinHandle<()> {
+    let (log, log_handle) = spawn_serial_log_writer(move || Ok(serial_log));
     tokio::spawn(async move {
-        let mut current_conn = terminal_rekey_rx.recv().await;
+        let mut active: Option<Connection> = None;
+        let mut coalesce = capsem_core::vm::vsock::CoalesceBuffer::new();
+        let mut coalesce_at = None;
+        let mut pending_log = None;
+        let mut logging = true;
+        let mut input_open = true;
+        let mut outgoing = VecDeque::<Vec<u8>>::new();
+        let mut written = 0;
+        // One input frame may be pending. Once replies appear, stop reading
+        // until they drain, so a guest that never reads cannot grow a queue.
+        // An outstanding synchronized update can add one final bounded reply.
+        let mut replies_pending = false;
+        let mut buffer = vec![0u8; 65536];
         loop {
-            let conn = match current_conn.take() {
-                Some(c) => c,
-                None => match terminal_rekey_rx.recv().await {
-                    Some(c) => c,
-                    None => break,
-                },
-            };
-
-            info!("terminal bridge: active");
-            let Some(mut reader) = clone_fd(&conn, "duplicate-terminal-vsock-reader") else {
-                continue;
-            };
-            let Some(mut writer) = clone_fd(&conn, "duplicate-terminal-vsock-writer") else {
-                continue;
-            };
-            let (tx, mut rx) = mpsc::channel::<Vec<u8>>(128);
-
-            // Blocking read thread for this specific FD
-            let read_handle = std::thread::spawn(move || {
-                let mut buf = vec![0u8; 65536];
-                while let Ok(n) = reader.read(&mut buf) {
-                    if n == 0 {
-                        break;
-                    }
-                    if tx.blocking_send(buf[..n].to_vec()).is_err() {
-                        break;
+            let mut flush = false;
+            let mut replace = None;
+            let mut finish = false;
+            let connected = active.is_some();
+            let sync_at = terminal.sync_deadline().map(tokio::time::Instant::from_std);
+            let (reader, writer) = active.as_mut().map(|c| (&mut c.reader, &mut c.writer)).unzip();
+            let remaining = outgoing.front().map_or(&[][..], |bytes| &bytes[written..]);
+            // read/write are cancellation safe. In particular, never restart a
+            // write_all after a timer or reconnect: retain its exact cursor.
+            tokio::select! {
+                connection = rekey.recv() => {
+                    finish = connection.is_none();
+                    replace = Some(connection);
+                    flush = true;
+                }
+                _ = deadline(sync_at) => {
+                    let replies = terminal.expire_sync();
+                    // A timeout can expire between sockets. Its new replies
+                    // have never been written and belong on the next socket.
+                    if !replies.is_empty() {
+                        replies_pending = true;
+                        outgoing.push_back(replies);
                     }
                 }
-            });
-
-            let mut coalesce = capsem_core::vm::vsock::CoalesceBuffer::new();
-            loop {
-                tokio::select! {
-                    // Incoming from Guest
-                    res = rx.recv() => {
-                        match res {
-                            Some(data) => {
-                                coalesce.push(&data);
-                                let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(coalesce.window_ms());
-                                while !coalesce.is_full() {
-                                    match tokio::time::timeout_at(deadline, rx.recv()).await {
-                                        Ok(Some(d)) => { coalesce.push(&d); }
-                                        _ => break,
-                                    }
-                                }
-                                let batch = coalesce.flush_to(<[u8]>::to_vec);
-                                let replies = term_out.publish(&batch);
-                                if !replies.is_empty() && writer.write_all(&replies).is_err() { break; }
-                                if let Some(ref pl) = pty_log_out { pl.record_output(&batch); }
-                                let _ = serial_log_tx.send(batch).await;
-
-                            }
-                            None => break, // FD closed
+                _ = deadline(coalesce_at), if pending_log.is_none() => flush = true,
+                permit = log.reserve(), if pending_log.is_some() => {
+                    match permit {
+                        Ok(permit) => permit.send(pending_log.take().unwrap()),
+                        Err(error) => {
+                            warn!(%error, "terminal serial log writer disconnected");
+                            pending_log = None;
+                            logging = false;
                         }
                     }
-                    // Outgoing to Guest (Terminal Input)
-                    Some(data) = term_in_rx.recv() => {
-                        if writer.write_all(&data).is_err() { break; }
-                        let _ = writer.flush();
+                }
+                result = async {
+                    match writer {
+                        Some(writer) => writer.write(remaining).await,
+                        None => std::future::pending().await,
                     }
-                    // Reconnection arriving
-                    Some(new_conn) = terminal_rekey_rx.recv() => {
-                        current_conn = Some(new_conn);
-                        break;
+                }, if !outgoing.is_empty() => {
+                    match result {
+                        Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                        Ok(0) | Err(_) => { replace = Some(None); flush = true; }
+                        Ok(count) => {
+                            written += count;
+                            if written == outgoing.front().unwrap().len() {
+                                outgoing.pop_front();
+                                written = 0;
+                                if outgoing.is_empty() { replies_pending = false; }
+                            }
+                        }
+                    }
+                }
+                result = async {
+                    match reader {
+                        Some(reader) => reader.read(&mut buffer).await,
+                        None => std::future::pending().await,
+                    }
+                }, if pending_log.is_none() && !replies_pending => {
+                    match result {
+                        Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                        Ok(0) | Err(_) => { replace = Some(None); flush = true; }
+                        Ok(count) => {
+                            if coalesce.is_empty() {
+                                coalesce_at = Some(tokio::time::Instant::now() +
+                                    std::time::Duration::from_millis(coalesce.window_ms()));
+                            }
+                            flush = coalesce.push(&buffer[..count]);
+                        }
+                    }
+                }
+                data = input.recv(), if input_open && connected && outgoing.is_empty() => {
+                    match data {
+                        Some(data) if !data.is_empty() => outgoing.push_back(data),
+                        Some(_) => {}
+                        None => input_open = false,
                     }
                 }
             }
-            // The reader thread is parked in read() on a dup of this socket.
-            // Closing our fd does not wake it and a half-open post-restore
-            // socket never EOFs, so joining here parked a runtime worker for
-            // good and the new connection was never activated. Shut the
-            // socket down so the read returns, then join off the runtime.
-            if let Err(error) = conn.shutdown_both() {
-                if error.kind() != std::io::ErrorKind::NotConnected {
-                    warn!(
-                        operation = "shutdown-terminal-vsock",
-                        errno = error.raw_os_error(),
-                        error = %error,
-                        "failed to wake terminal reader"
-                    );
+            if flush && !coalesce.is_empty() {
+                let batch = coalesce.flush_to(<[u8]>::to_vec);
+                let replies = terminal.publish(&batch);
+                if !replies.is_empty() && active.is_some() {
+                    replies_pending = true;
+                    outgoing.push_back(replies);
+                }
+                if let Some(ref pty_log) = pty_log {
+                    pty_log.record_output(&batch);
+                }
+                if logging {
+                    pending_log = Some(batch);
+                }
+                coalesce_at = None;
+            }
+            if let Some(connection) = replace {
+                // A connection is a byte stream with its own partial writes.
+                // Never replay an ambiguous prefix or suffix on a replacement.
+                if let Some(old) = active.take() {
+                    drop(old);
+                    outgoing.clear();
+                    written = 0;
+                    replies_pending = false;
+                }
+                match connection {
+                    Some(connection) => match Connection::open(connection) {
+                        Ok(connection) => {
+                            active = Some(connection);
+                            info!("terminal bridge: active");
+                        }
+                        Err(error) => warn!(%error, "terminal bridge could not adopt vsock"),
+                    },
+                    None if finish => break,
+                    None => {}
                 }
             }
-            let _ = tokio::task::spawn_blocking(move || read_handle.join()).await;
         }
-        drop(serial_log_tx);
-        let _ = tokio::task::spawn_blocking(move || serial_log_handle.join()).await;
-    });
+        if let Some(batch) = pending_log {
+            let _ = log.send(batch).await;
+        }
+        drop(log);
+        let _ = tokio::task::spawn_blocking(move || log_handle.join()).await;
+    })
 }
+
+#[cfg(test)]
+mod tests;
