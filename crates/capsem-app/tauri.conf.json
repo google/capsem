@@ -4,7 +4,7 @@
   "version": "0.7.1",
   "identifier": "com.capsem.capsem",
   "build": {
-    "beforeDevCommand": "pnpm dev",
+    "beforeDevCommand": "pnpm --dir ../../web/app dev",
     "devUrl": "http://localhost:5173",
     "beforeBuildCommand": "",
     "frontendDist": "../../web/app/dist"

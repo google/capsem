@@ -191,6 +191,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Launch `just dev ui` from the frontend workspace so Tauri starts its Astro
+  development server before opening the desktop window.
+
 - Guest `shell` and `exec` commands now honor `--slow` when changed inputs
   require rebuilding VM assets.
 
