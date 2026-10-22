@@ -5,6 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
+mod compatibility;
 mod concurrent;
 mod crash;
 mod stream;

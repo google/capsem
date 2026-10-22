@@ -3,7 +3,7 @@
 //! The SQLite index is the only source of truth for what exists: a reader
 //! never scans the file. It seeks to the block an index row names and walks
 //! that block's segments, bounding every header before it allocates and
-//! verifying blake3 over each segment's inflated bytes before returning any of
+//! verifying the versioned checksum over inflated bytes before returning any of
 //! them. It stops at the segment that ends the requested span, so it never
 //! reads past what the writer had committed when that row became visible --
 //! which is what makes reading a block the writer is still appending to safe
@@ -352,7 +352,7 @@ impl BodyLogReader {
 /// Exactly means all four of: every compressed byte consumed, exactly
 /// `raw_len` bytes produced (the output buffer has one byte of slack, so an
 /// overlong segment is seen rather than silently cut), the stream ended if
-/// and only if the segment is FINAL, and blake3 over the produced bytes equal
+/// and only if the segment is FINAL, and the produced bytes' checksum equal
 /// to the header's. A non-final segment must also end on a sync flush, or the
 /// next one would not decode after it.
 fn inflate_segment(cursor: &mut Cursor, header: &SegmentHeader, comp: &[u8], at: u64) -> Result<()> {
@@ -362,10 +362,14 @@ fn inflate_segment(cursor: &mut Cursor, header: &SegmentHeader, comp: &[u8], at:
     if raw.len() != want {
         return Err(ArchiveError::Integrity(at));
     }
-    if capsem_crypto::blake3::hash(&raw).as_bytes() != &header.hash {
+    if header.checksum.hash(&raw) != header.hash {
         return Err(ArchiveError::Integrity(at));
     }
-    cursor.raw.extend_from_slice(&raw);
+    if cursor.raw.is_empty() {
+        cursor.raw = raw;
+    } else {
+        cursor.raw.extend_from_slice(&raw);
+    }
     debug_assert_eq!(cursor.raw.len(), start + want);
     Ok(())
 }

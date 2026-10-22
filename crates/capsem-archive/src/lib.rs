@@ -9,8 +9,9 @@
 //! the same provider share most of their text, so a block compresses several
 //! times better than a body on its own.
 //!
-//! Format version 3 authenticates the immutable identities in each generation
-//! header. Descriptor-based readers enforce the ledger's committed file and
+//! Format version 4 checksums immutable generation identities and segments
+//! with XXH3-128, retaining version 3 BLAKE3 read/append compatibility. These
+//! are corruption checks, not authentication. Descriptor-based readers enforce the ledger's committed file and
 //! block extents, so appended or torn bytes cannot widen a selected snapshot.
 //!
 //! This crate remains pure Rust. The codec interface lets a separately
@@ -20,7 +21,9 @@
 #[cfg(not(unix))]
 compile_error!("capsem-archive relies on O_NOFOLLOW and mode 0600");
 
+mod checksum;
 mod codec;
+pub use checksum::Checksum;
 pub mod format;
 pub mod reader;
 pub mod retain;
