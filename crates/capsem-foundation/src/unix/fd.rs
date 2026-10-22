@@ -128,6 +128,24 @@ pub fn duplicate(fd: BorrowedFd<'_>) -> io::Result<OwnedFd> {
     Ok(unsafe { OwnedFd::from_raw_fd(raw) })
 }
 
+/// Set or clear the kernel receive timeout on a connected socket descriptor.
+/// A timeout also bounds blocking reads made through duplicated descriptors.
+pub fn set_receive_timeout(fd: BorrowedFd<'_>, timeout: Option<Duration>) -> io::Result<()> {
+    let value = match timeout {
+        Some(duration) if duration.is_zero() => {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "zero receive timeout"))
+        }
+        Some(duration) => {
+            let seconds = i64::try_from(duration.as_secs())
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "receive timeout too large"))?;
+            let micros = duration.subsec_micros().max(1) as i32;
+            nix::sys::time::TimeVal::new(seconds, micros)
+        }
+        None => nix::sys::time::TimeVal::new(0, 0),
+    };
+    retry_eintr(|| socket::setsockopt(&fd, socket::sockopt::ReceiveTimeout, &value)).map_err(errno::io)
+}
+
 /// Prevent an existing descriptor from crossing a later exec boundary.
 /// Returns whether `FD_CLOEXEC` was already set and preserves other flags.
 pub fn set_close_on_exec(fd: BorrowedFd<'_>) -> io::Result<bool> {
