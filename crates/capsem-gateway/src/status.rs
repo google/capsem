@@ -104,6 +104,8 @@ struct ListResponse {
 #[derive(Deserialize)]
 struct SessionInfo {
     #[serde(default)]
+    browser_request: Option<capsem_api::BrowserRequest>,
+    #[serde(default)]
     terminal: Option<capsem_api::TerminalSummary>,
     id: String,
     #[serde(default)]
@@ -186,6 +188,7 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
         }
 
         vms.push(VmSummary {
+            browser_request: sess.browser_request.clone(),
             terminal: sess.terminal.clone(),
             id: sess.id.clone(),
             name: sess.name.clone(),

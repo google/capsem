@@ -248,6 +248,7 @@ use crate::AppState;
 
 fn test_vm(id: &str, name: Option<&str>, status: VmLifecycleState, persistent: bool) -> VmSummary {
     VmSummary {
+        browser_request: None,
         terminal: None,
         id: id.into(),
         name: name.map(|s| s.into()),
