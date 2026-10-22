@@ -82,7 +82,7 @@ def test_ghcr_prefers_package_read_credentials_over_an_anonymous_token(monkeypat
     challenge = Message()
     challenge["WWW-Authenticate"] = 'Bearer realm="https://ghcr.io/token",service="ghcr.io"'
 
-    class Client:
+    class Client(pinned_image._Registry):
         def __init__(self):
             self.calls = []
 
