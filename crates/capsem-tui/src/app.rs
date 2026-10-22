@@ -29,6 +29,7 @@ pub enum AppOverlay {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ControlAction {
     OpenBrowser {
+        id: String,
         request: capsem_sdk::models::BrowserRequest,
     },
     StartService,
@@ -276,6 +277,7 @@ impl App {
             {
                 if request.validated_url().is_ok() {
                     return AppAction::Invoke(ControlAction::OpenBrowser {
+                        id: self.state.active_session_id.clone(),
                         request: request.clone(),
                     });
                 }

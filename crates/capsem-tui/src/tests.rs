@@ -32,6 +32,7 @@ fn browser_request_uses_explicit_local_action_without_stealing_guest_keys() {
         .find(|session| session.id == state.active_session_id)
         .unwrap();
     active.browser_request = Some(request.clone());
+    let session_id = state.active_session_id.clone();
     let mut app = App::new(state);
     assert!(render_app_snapshot(&app, 140, 36).unwrap().contains("Alt+b browser"));
     assert_eq!(
@@ -40,7 +41,10 @@ fn browser_request_uses_explicit_local_action_without_stealing_guest_keys() {
     );
     assert_eq!(
         app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::ALT)),
-        AppAction::Invoke(ControlAction::OpenBrowser { request })
+        AppAction::Invoke(ControlAction::OpenBrowser {
+            id: session_id,
+            request
+        })
     );
     assert_eq!(app.overlay(), AppOverlay::None);
 }

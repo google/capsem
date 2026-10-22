@@ -18,3 +18,24 @@ fn native_opener_receives_one_validated_argument_without_shell_interpolation() {
     })
     .is_err());
 }
+
+#[tokio::test]
+async fn browser_callback_failure_prevents_launching_the_opener() {
+    let vm = capsem_sdk::VM::new(
+        "https://remote.example",
+        "synthetic",
+        capsem_sdk::VmSelector::Id("vm-1".into()),
+    )
+    .unwrap();
+    let request = BrowserRequest {
+        id: 1,
+        url: "https://login.example/?redirect_uri=http%3A%2F%2Flocalhost%3A45000%2Fcallback&state=synthetic-state-1234"
+            .into(),
+    };
+    let callbacks = Callbacks::default();
+    assert!(open(&request, &vm, &callbacks)
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("callback"));
+}

@@ -378,23 +378,31 @@ fn handle_terminal_event(
 }
 
 struct ControlBridge {
-    commands: mpsc::Sender<ControlAction>,
+    commands: tokio::sync::mpsc::UnboundedSender<ControlAction>,
     events: mpsc::Receiver<ControlEvent>,
 }
 
 impl ControlBridge {
     fn spawn(provider: GatewayProvider) -> Self {
-        let (command_tx, command_rx) = mpsc::channel::<ControlAction>();
+        let (command_tx, mut command_rx) = tokio::sync::mpsc::unbounded_channel::<ControlAction>();
         let (event_tx, event_rx) = mpsc::channel::<ControlEvent>();
         thread::spawn(move || {
-            while let Ok(action) = command_rx.recv() {
-                let label = action.progress_label().to_string();
-                let _ = event_tx.send(ControlEvent::Started(label));
-                let result = provider
-                    .invoke(&action)
-                    .map_err(|error| format!("{} failed: {error}", action.label()));
-                let _ = event_tx.send(ControlEvent::Finished(action, result));
-            }
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("build capsem-tui control runtime");
+            runtime.block_on(async move {
+                while let Some(action) = command_rx.recv().await {
+                    let label = action.progress_label().to_string();
+                    let _ = event_tx.send(ControlEvent::Started(label));
+                    let result = provider
+                        .invoke_async(&action)
+                        .await
+                        .map_err(|error| format!("{} failed: {error}", action.label()));
+                    let _ = event_tx.send(ControlEvent::Finished(action, result));
+                }
+                let _ = provider.close_browser().await;
+            });
         });
         Self {
             commands: command_tx,

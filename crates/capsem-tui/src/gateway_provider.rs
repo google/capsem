@@ -25,6 +25,7 @@ pub struct GatewayProvider {
     /// (and its TLS setup), so they are built once per token rather than once
     /// per refresh tick and per action.
     clients: Arc<Mutex<Option<(String, Hypervisor, Transport)>>>,
+    callbacks: Arc<crate::browser::Callbacks>,
 }
 
 impl PartialEq for GatewayProvider {
@@ -99,6 +100,7 @@ impl GatewayProvider {
             client: reqwest::Client::new(),
             token: Arc::new(Mutex::new(None)),
             clients: Arc::new(Mutex::new(None)),
+            callbacks: Arc::new(crate::browser::Callbacks::default()),
         }
     }
 
@@ -130,18 +132,11 @@ impl GatewayProvider {
         Ok(status_response_to_state(status, started.elapsed()))
     }
 
-    pub fn invoke(&self, action: &ControlAction) -> Result<ActionOutcome> {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .context("build capsem-tui gateway action runtime")?;
-        runtime.block_on(self.invoke_async(action))
+    pub async fn close_browser(&self) -> Result<()> {
+        self.callbacks.close().await
     }
 
     pub async fn invoke_async(&self, action: &ControlAction) -> Result<ActionOutcome> {
-        if let ControlAction::OpenBrowser { request } = action {
-            return crate::browser::open(request).await;
-        }
         if matches!(action, ControlAction::StartService) {
             return start_service().await;
         }
@@ -150,6 +145,10 @@ impl GatewayProvider {
         }
         let token = self.token().await?;
         let (hypervisor, transport) = self.clients(&token)?;
+        if let ControlAction::OpenBrowser { id, request } = action {
+            let vm = hypervisor.vm(capsem_sdk::VmSelector::Id(id.clone()))?;
+            return crate::browser::open(request, &vm, &self.callbacks).await;
+        }
         invoke_action(&hypervisor, &transport, action).await
     }
 
