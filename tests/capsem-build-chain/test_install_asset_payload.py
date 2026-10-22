@@ -10,11 +10,11 @@ import json
 import os
 import re
 import subprocess
-import tomllib
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
+import tomllib
 import yaml
 from blake3 import blake3
 from capsem_builder.release.tools import (
@@ -2840,7 +2840,7 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
         not in deb_postinst
     )
     assert (
-        'install -m 0644 /usr/share/capsem/assets/manifest-metadata.json "$CAPSEM_DIR/assets/manifest-metadata.json"'
+        'install -m 0644 /usr/share/capsem/assets/manifest-metadata.json "$HOME/.capsem/assets/manifest-metadata.json"'
         in deb_postinst
     )
     assert "event=manifest_copied" not in deb_postinst
@@ -2872,7 +2872,7 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     )
     assert "install-current-run" in deb_postinst
     assert "install-latest.log" in deb_postinst
-    assert 'exec > >(tee -a "$INSTALL_LOG" "$INSTALL_RUN_LOG") 2>&1' in deb_postinst
+    assert 'exec > >(su "$TARGET_USER" -c "tee -a' in deb_postinst
     assert "capsem-admin" in deb_postinst
     assert "capsem-tui" in deb_postinst
 

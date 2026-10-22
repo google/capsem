@@ -271,6 +271,19 @@ def test_release_skills_document_the_old_service_package_handoff() -> None:
     assert "preserves the old cohort" in release_skill
 
 
+def test_debian_maintainer_scripts_do_not_write_user_home_as_root() -> None:
+    for path in (DEB_PREINSTALL, DEB_POSTINSTALL):
+        script = path.read_text()
+        assert "getent passwd 1000" not in script
+        assert "eval echo" not in script
+        assert "CAPSEM_INSTALL_FAILURE_AS_USER=1" in script
+        assert 'exec > >(su "$TARGET_USER" -c "tee -a' in script
+        assert 'chown -R "$TARGET_USER' not in script
+    assert '/usr/sbin/runuser -u "$target_user" -- "$kill_command"' in (
+        INSTALL_COHORT.read_text()
+    )
+
+
 def test_guard_rejects_the_failure_shapes_that_reached_release_qualification() -> None:
     good = _function(
         UPDATE_COMMAND.read_text(),

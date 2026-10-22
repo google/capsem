@@ -291,6 +291,7 @@ def test_the_manifest_handoff_is_written_before_the_package_is_installed(
         r"install-manifest-request\.sh write",
         r"dpkg -i",
     )
+    assert "SUDO_USER=capsem" in runner.matching(r"dpkg -i")[0]
     assert runner.ran(rf"--source-commit {SOURCE_COMMIT}")
 
 

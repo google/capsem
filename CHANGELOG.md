@@ -29,6 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Run Debian maintainer-script changes to `~/.capsem` as the selected user,
+  including logs, manifests, binary links, and stale-file cleanup. Reject
+  unattended installs without an explicit user instead of choosing UID 1000;
+  retire user processes without root signalling authority.
+
 - Mount guest runtime scratch and logs on fresh tmpfs at every boot and keep
   the injected boot manifest owner-only, so secrets do not persist in the
   system overlay.

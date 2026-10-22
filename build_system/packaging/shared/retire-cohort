@@ -50,6 +50,7 @@ capsem_process_is_package_owned() {
 capsem_retire_native_cohort() {
     local capsem_dir="$1"
     local target_uid="$2"
+    local target_user="${3:-}"
     local kill_command="${CAPSEM_INSTALL_KILL:-/bin/kill}"
     local killed=""
     local name pid
@@ -57,7 +58,13 @@ capsem_retire_native_cohort() {
     for name in capsem-service capsem-gateway capsem-tray capsem-process capsem-ledger capsem-proxy capsem-router capsem-port-router capsem-mcp-aggregator capsem-mcp-builtin; do
         for pid in $(pgrep -u "$target_uid" -f "$name" 2>/dev/null || true); do
             if capsem_process_is_package_owned "$capsem_dir" "$target_uid" "$name" "$pid"; then
-                "$kill_command" -9 "$pid"
+                if [ -n "$target_user" ]; then
+                    # The PID can be reused after inspection. Drop root before
+                    # signalling so a race cannot kill another user's process.
+                    /usr/sbin/runuser -u "$target_user" -- "$kill_command" -9 "$pid"
+                else
+                    "$kill_command" -9 "$pid"
+                fi
                 killed="$killed $pid"
                 echo "retired native helper pid=$pid name=$name"
             fi
