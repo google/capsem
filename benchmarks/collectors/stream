@@ -15,6 +15,7 @@ Prints raw samples on stdout; `capsem-bench` computes every statistic.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
 import time
@@ -29,8 +30,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import msgpack
 import psutil
-from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
-from helpers.service import ServiceInstance, wait_exec_ready
+from helpers.image_session import image_session
+from helpers.service import ServiceInstance
 from websockets.sync.client import ClientConnection, connect
 from websockets.typing import Subprotocol
 
@@ -54,22 +55,23 @@ def stdin(data: bytes) -> bytes:
     return msgpack.packb({"stdin": data}, use_bin_type=True)
 
 
-def open_stream(gateway: Gateway, vm: str, start: dict) -> ClientConnection:
+@contextlib.contextmanager
+def open_stream(gateway: Gateway, vm: str, start: dict):
     url = f"ws://127.0.0.1:{gateway.port}/vms/{vm}/stream"
-    stream = connect(
+    with connect(
         url,
         additional_headers={"Authorization": f"Bearer {gateway.token}"},
         subprotocols=[SUBPROTOCOL],
         max_size=WIRE["max_frame_bytes"],
         open_timeout=30,
-    )
-    stream.send(control(start))
-    status = next_frame(stream, timeout=60)
-    if status != (STATUS, {"type": "started"}):
-        raise RuntimeError(f"stream did not start: {status}")
-    if start["kind"] == "terminal":
-        stream.send(control({"type": "focus", "cols": 80, "rows": 24}))
-    return stream
+    ) as stream:
+        stream.send(control(start))
+        status = next_frame(stream, timeout=60)
+        if status != (STATUS, {"type": "started"}):
+            raise RuntimeError(f"stream did not start: {status}")
+        if start["kind"] == "terminal":
+            stream.send(control({"type": "focus", "cols": 80, "rows": 24}))
+        yield stream
 
 
 def next_frame(stream: ClientConnection, timeout: float) -> tuple[str, object]:
@@ -89,10 +91,6 @@ def next_frame(stream: ClientConnection, timeout: float) -> tuple[str, object]:
     raise RuntimeError(f"unexpected stream record: {channel}")
 
 
-#: The guest shell's prompt ends in `# ` as root and `$ ` otherwise.
-PROMPTS = (b"# ", b"$ ")
-
-
 def read_until(stream: ClientConnection, marker: bytes | tuple[bytes, ...], timeout: float) -> int:
     """Bytes of output up to and including `marker` (or any of several)."""
     markers = marker if isinstance(marker, tuple) else (marker,)
@@ -100,7 +98,12 @@ def read_until(stream: ClientConnection, marker: bytes | tuple[bytes, ...], time
     seen = b""
     total = 0
     while not any(candidate in seen for candidate in markers):
-        channel, payload = next_frame(stream, max(deadline - time.monotonic(), 0.001))
+        try:
+            channel, payload = next_frame(stream, max(deadline - time.monotonic(), 0.001))
+        except TimeoutError as error:
+            raise TimeoutError(
+                f"terminal lacks {marker!r}; last output: {seen[-500:]!r}"
+            ) from error
         if channel == STATUS:
             if isinstance(payload, dict) and payload.get("type") == "terminal":
                 continue
@@ -111,11 +114,23 @@ def read_until(stream: ClientConnection, marker: bytes | tuple[bytes, ...], time
     return total
 
 
+def ready_terminal(stream: ClientConnection) -> None:
+    # A canonical screen projection may style or reposition each prompt cell.
+    # Use expanded foreground output rather than guessing a prompt's bytes.
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        stream.send(stdin(b"printf 'BENCH_READY_%s_DONE\\n' 42\n"))
+        try:
+            read_until(stream, b"BENCH_READY_42_DONE", timeout=2)
+            return
+        except TimeoutError:
+            if time.monotonic() >= deadline:
+                raise
+
+
 def keystroke_echo(gateway: Gateway, vm: str, keystrokes: int) -> list[float]:
-    stream = open_stream(gateway, vm, {"type": "start", "kind": "terminal"})
-    try:
-        stream.send(stdin(b"\n"))
-        read_until(stream, PROMPTS, timeout=30)
+    with open_stream(gateway, vm, {"type": "start", "kind": "terminal"}) as stream:
+        ready_terminal(stream)
         samples = []
         for index in range(keystrokes):
             if index and index % 40 == 0:
@@ -132,16 +147,12 @@ def keystroke_echo(gateway: Gateway, vm: str, keystrokes: int) -> list[float]:
             samples.append((time.monotonic() - started) * 1000)
         stream.send(stdin(KILL_LINE))
         return samples
-    finally:
-        stream.close()
 
 
 def terminal_output(gateway: Gateway, vm: str) -> float:
     """Megabits per second of base64 text rendered through the terminal."""
-    stream = open_stream(gateway, vm, {"type": "start", "kind": "terminal"})
-    try:
-        stream.send(stdin(b"\n"))
-        read_until(stream, PROMPTS, timeout=30)
+    with open_stream(gateway, vm, {"type": "start", "kind": "terminal"}) as stream:
+        ready_terminal(stream)
         # The typed command echoes `STREAM_$((6*7))`; only its output says 42.
         command = f"head -c {TERMINAL_BYTES} /dev/zero | base64; echo STREAM_$((6*7))\n"
         stream.send(stdin(command.encode()))
@@ -149,14 +160,11 @@ def terminal_output(gateway: Gateway, vm: str) -> float:
         received = read_until(stream, b"STREAM_42", timeout=300)
         elapsed = time.monotonic() - started
         return received * 8 / 1_000_000 / elapsed
-    finally:
-        stream.close()
 
 
 def resize_echo(gateway: Gateway, vm: str) -> list[float]:
     """SIGWINCH and dimensions must reach the real foreground shell."""
-    stream = open_stream(gateway, vm, {"type": "start", "kind": "terminal"})
-    try:
+    with open_stream(gateway, vm, {"type": "start", "kind": "terminal"}) as stream:
         stream.send(
             stdin(
                 b"trap 'printf \"BENCH_SIZE_%s_DONE\\n\" \"$(stty size)\"' WINCH; printf 'BENCH_READY_%s_DONE\\n' 42\n"
@@ -171,16 +179,13 @@ def resize_echo(gateway: Gateway, vm: str) -> list[float]:
             samples.append((time.monotonic() - started) * 1000)
         stream.send(stdin(b"trap - WINCH\n"))
         return samples
-    finally:
-        stream.close()
 
 
 def exec_output(gateway: Gateway, vm: str) -> tuple[float, float]:
     """Megabits per second and seconds for a 100 MiB streaming command."""
-    stream = open_stream(
+    with open_stream(
         gateway, vm, {"type": "start", "kind": "exec", "command": f"head -c {EXEC_BYTES} /dev/zero"}
-    )
-    try:
+    ) as stream:
         started = time.monotonic()
         received = 0
         while True:
@@ -195,8 +200,6 @@ def exec_output(gateway: Gateway, vm: str) -> tuple[float, float]:
                 f"exec stream ended {payload} after {received} of {EXEC_BYTES} bytes"
             )
         return received * 8 / 1_000_000 / elapsed, elapsed
-    finally:
-        stream.close()
 
 
 def main() -> int:
@@ -219,38 +222,28 @@ def main() -> int:
         service.start()
         gateway = service_gateway(service)
         root = psutil.Process(service.proc.pid)
-        client = service.client()
         name = f"bench-stream-{uuid.uuid4().hex[:8]}"
-        created = client.post(
-            "/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS}
-        )
-        # The stream route addresses a VM by the id create returns, not its name.
-        vm = str((created or {}).get("id") or "")
-        if not vm:
-            raise RuntimeError(f"create {name} returned {created}")
-        if not wait_exec_ready(client, vm, timeout=EXEC_READY_TIMEOUT):
-            raise RuntimeError(f"{vm} never became exec-ready")
-        measure(metrics, "idle.before", root, lambda: time.sleep(5))
-        print(f"stream: {keystrokes} keystrokes", file=sys.stderr)
-        echo = measure(
-            metrics, "terminal.echo", root, lambda: keystroke_echo(gateway, vm, keystrokes)
-        )
-        record("terminal.keystroke_echo_ms", "milliseconds", echo)
-        resized = measure(metrics, "terminal.resize", root, lambda: resize_echo(gateway, vm))
-        record("terminal.resize_echo_ms", "milliseconds", resized)
-        for index in range(runs):
-            print(f"stream: transfer run {index + 1}/{runs}", file=sys.stderr)
-            output = measure(
-                metrics, f"terminal.output.{index}", root, lambda: terminal_output(gateway, vm)
+        with image_session(service, service.tmp_dir / "benchmark-image", name) as vm:
+            measure(metrics, "idle.before", root, lambda: time.sleep(5))
+            print(f"stream: {keystrokes} keystrokes", file=sys.stderr)
+            echo = measure(
+                metrics, "terminal.echo", root, lambda: keystroke_echo(gateway, vm, keystrokes)
             )
-            record("terminal.output_mbps", "megabits_per_second", output)
-            mbps, seconds = measure(
-                metrics, f"exec.output.{index}", root, lambda: exec_output(gateway, vm)
-            )
-            record("exec.output_mbps", "megabits_per_second", mbps)
-            record("exec.output_100mib_seconds", "seconds", seconds)
-        measure(metrics, "idle.after", root, lambda: time.sleep(5))
-        client.delete(f"/vms/{vm}/delete")
+            record("terminal.keystroke_echo_ms", "milliseconds", echo)
+            resized = measure(metrics, "terminal.resize", root, lambda: resize_echo(gateway, vm))
+            record("terminal.resize_echo_ms", "milliseconds", resized)
+            for index in range(runs):
+                print(f"stream: transfer run {index + 1}/{runs}", file=sys.stderr)
+                output = measure(
+                    metrics, f"terminal.output.{index}", root, lambda: terminal_output(gateway, vm)
+                )
+                record("terminal.output_mbps", "megabits_per_second", output)
+                mbps, seconds = measure(
+                    metrics, f"exec.output.{index}", root, lambda: exec_output(gateway, vm)
+                )
+                record("exec.output_mbps", "megabits_per_second", mbps)
+                record("exec.output_100mib_seconds", "seconds", seconds)
+            measure(metrics, "idle.after", root, lambda: time.sleep(5))
     finally:
         service.stop()
 

@@ -1,5 +1,6 @@
 """The terminal benchmark must exercise the current public stream protocol."""
 
+import inspect
 import json
 import runpy
 from pathlib import Path
@@ -23,12 +24,22 @@ class Socket:
     def __init__(self, *frames):
         self.frames = iter(frames)
         self.sent = []
+        self.entered = False
+        self.closed = False
+
+    def __enter__(self):
+        self.entered = True
+        return self
+
+    def __exit__(self, *_):
+        self.closed = True
 
     def recv(self, timeout):
         assert timeout > 0
         return next(self.frames)
 
     def send(self, frame):
+        assert self.entered, "connect must be entered before it owns a connection"
         self.sent.append(frame)
 
 
@@ -74,12 +85,13 @@ def test_stream_open_uses_header_authentication_and_focuses_terminal():
         calls.append((url, kwargs))
         return socket
 
-    module["open_stream"].__globals__["connect"] = connect
-    module["open_stream"](
+    inspect.unwrap(module["open_stream"]).__globals__["connect"] = connect
+    with module["open_stream"](
         SimpleNamespace(port=12345, token="private-token"),
         "session-id",
         {"type": "start", "kind": "terminal"},
-    )
+    ) as opened:
+        assert opened is socket
     url, options = calls[0]
     assert url == "ws://127.0.0.1:12345/vms/session-id/stream"
     assert options["additional_headers"] == {"Authorization": "Bearer private-token"}
@@ -88,6 +100,23 @@ def test_stream_open_uses_header_authentication_and_focuses_terminal():
         module["control"]({"type": "start", "kind": "terminal"}),
         module["control"]({"type": "focus", "cols": 80, "rows": 24}),
     ]
+    assert socket.closed
+
+
+def test_failed_start_releases_the_connection():
+    module = collector()
+    socket = Socket(b"not a messagepack frame")
+    inspect.unwrap(module["open_stream"]).__globals__["connect"] = lambda *_, **__: socket
+    with (
+        pytest.raises((ValueError, RuntimeError)),
+        module["open_stream"](
+            SimpleNamespace(port=12345, token="private-token"),
+            "session-id",
+            {"type": "start", "kind": "terminal"},
+        ),
+    ):
+        raise AssertionError("invalid start must not reach benchmark workload")
+    assert socket.closed
 
 
 def test_terminal_metadata_does_not_end_an_output_measurement():
@@ -100,6 +129,14 @@ def test_terminal_metadata_does_not_end_an_output_measurement():
         module["read_until"](Socket(bytes(terminal["frame"]), bytes(output["frame"])), b"hello", 1)
         == 6
     )
+
+
+def test_readiness_uses_foreground_output_instead_of_prompt_format():
+    module = collector()
+    socket = Socket(msgpack.packb({"stdout": b"\x1b[0mBENCH_READY_42_DONE\r\n"}, use_bin_type=True))
+    socket.entered = True
+    module["ready_terminal"](socket)
+    assert b"printf" in msgpack.unpackb(socket.sent[0])["stdin"]
 
 
 def test_endpoint_reuses_the_service_owned_companion(tmp_path):
