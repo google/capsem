@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Capture HTTP credentials only for provider-bound destinations and credential
+  fields, preventing arbitrary guest endpoints from filling the credential store.
+
 - Evaluate MCP argument rules against the full parsed request on framed and
   HTTP transports while keeping stored request previews bounded.
 

@@ -132,6 +132,9 @@ pub fn detect_http_credential_with_provider(
     header_name: &str,
     header_value: &[u8],
 ) -> Option<CredentialObservation> {
+    if !credential_header(header_name) {
+        return None;
+    }
     let value = std::str::from_utf8(header_value).ok()?.trim();
     if value.is_empty() {
         return None;
@@ -140,6 +143,11 @@ pub fn detect_http_credential_with_provider(
         return None;
     }
     let raw = bearer_value(value).unwrap_or(value).trim();
+    if let Some(token_provider) = known_token_provider(raw) {
+        if credential_provider_for_request(domain, ai_provider) != Some(token_provider) {
+            return None;
+        }
+    }
     let provider = provider_for_token(domain, header_name, raw)
         .or_else(|| provider_for_header_hint(domain, ai_provider, header_name, raw))?;
     Some(CredentialObservation {
@@ -166,23 +174,22 @@ fn provider_for_header_hint(
         return None;
     }
     let header = header_name.to_ascii_lowercase();
-    if header == "x-goog-api-key" {
-        return Some(CredentialProvider::Google);
-    }
-    if matches!(ai_provider, Some(ProviderKind::Unknown)) && header == "authorization" {
-        return Some(CredentialProvider::OpenAi);
-    }
-    if matches!(ai_provider, Some(ProviderKind::Unknown)) && header == "x-api-key" {
-        return Some(CredentialProvider::Anthropic);
-    }
-    let credential_header = header == "authorization"
-        || header == "x-api-key"
-        || header == "x-goog-api-key"
-        || header == "api-key"
-        || header == "apikey";
+    let credential_header = matches!(
+        header.as_str(),
+        "authorization" | "x-api-key" | "x-goog-api-key" | "api-key" | "apikey"
+    );
     credential_header
         .then(|| credential_provider_for_request(domain, ai_provider))
         .flatten()
+}
+
+fn credential_header(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    matches!(
+        name.as_str(),
+        "authorization" | "x-api-key" | "x-goog-api-key" | "api-key" | "apikey" | "access_token" | "refresh_token"
+    ) || name.ends_with("_token")
+        || name.ends_with("token")
 }
 
 pub fn detect_http_body_credentials(
@@ -678,23 +685,8 @@ fn provider_for_env_name(name: &str) -> Option<CredentialProvider> {
 
 fn provider_for_token(domain: &str, header_name: &str, token: &str) -> Option<CredentialProvider> {
     let header = header_name.to_ascii_lowercase();
-    if token.starts_with("sk-ant-") {
-        return Some(CredentialProvider::Anthropic);
-    }
-    if token.starts_with("sk-") {
-        return Some(CredentialProvider::OpenAi);
-    }
-    if token.starts_with("AIza") {
-        return Some(CredentialProvider::Google);
-    }
-    if token.starts_with("ghp_")
-        || token.starts_with("github_pat_")
-        || token.starts_with("gho_")
-        || token.starts_with("ghu_")
-        || token.starts_with("ghs_")
-        || token.starts_with("ghr_")
-    {
-        return Some(CredentialProvider::Github);
+    if let Some(provider) = known_token_provider(token) {
+        return (credential_provider_for_request(domain, None) == Some(provider)).then_some(provider);
     }
     if host_is_or_under(domain, "github.com")
         && (header == "authorization"
@@ -706,6 +698,23 @@ fn provider_for_token(domain: &str, header_name: &str, token: &str) -> Option<Cr
         return Some(CredentialProvider::Github);
     }
     None
+}
+
+fn known_token_provider(token: &str) -> Option<CredentialProvider> {
+    if token.starts_with("sk-ant-") {
+        Some(CredentialProvider::Anthropic)
+    } else if token.starts_with("sk-") {
+        Some(CredentialProvider::OpenAi)
+    } else if token.starts_with("AIza") {
+        Some(CredentialProvider::Google)
+    } else if ["ghp_", "github_pat_", "gho_", "ghu_", "ghs_", "ghr_"]
+        .iter()
+        .any(|prefix| token.starts_with(prefix))
+    {
+        Some(CredentialProvider::Github)
+    } else {
+        None
+    }
 }
 
 fn collect_json_credentials(
