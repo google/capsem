@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Prevent guest lifecycle messages from directly starting a VM suspend inside
+  capsem-process.
+
 - Bound KVM virtio-blk DISCARD payloads to the advertised segment limit before
   allocating host memory.
 

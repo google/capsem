@@ -933,7 +933,6 @@ fn dispatch_aux_connection(
                             "ipc_lifecycle_suspend",
                             itx.send(ProcessToService::SuspendRequested { id })
                         );
-                        capsem_core::try_send!("ctrl_lifecycle_suspend", ctx.blocking_send(ServiceToProcess::Suspend));
                     }
                     other => {
                         // W4: a lifecycle-port frame the host doesn't recognize
