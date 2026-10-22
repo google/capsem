@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ContainerState, ContainerSurfaceKind, type ContainerStatusResponse } from '@capsem/sdk';
-import { hasOpenableSurface, surfaceLauncherUrl, surfaceMayAppear } from '../surface';
+import { hasOpenableSurface, surfaceLauncherUrl, surfaceLaunchUrl, surfaceMayAppear } from '../surface';
 
 const EXPOSURE = '0199df26-d0f2-74f2-a304-ef67b79d1217';
 
@@ -43,5 +43,16 @@ describe('app surface', () => {
       'http://127.0.0.1:19222/vms/a%20b%2Fc/surface/',
     );
     expect(surfaceLauncherUrl('http://127.0.0.1:19222', 'vm-1')).not.toMatch(/token|\?/);
+  });
+
+  it('passes only the single-use preview bootstrap in a browser fragment', () => {
+    const session = {
+      url: 'http://surface.localhost:19444/_capsem/bootstrap',
+      bootstrap_token: 'one-use-preview-token',
+    };
+    const url = new URL(surfaceLaunchUrl('http://127.0.0.1:19222', 'vm-1', session));
+    expect(url.pathname).toBe('/vms/vm-1/surface/');
+    expect(url.search).toBe('');
+    expect(JSON.parse(decodeURIComponent(url.hash.slice(1)))).toEqual(session);
   });
 });

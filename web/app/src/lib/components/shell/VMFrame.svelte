@@ -4,15 +4,14 @@
   import type { ParentToIframeMsg } from '../../terminal/postmessage.ts';
   import { themeStore } from '../../stores/theme.svelte.ts';
   import { tabStore } from '../../stores/tabs.svelte.ts';
+  import { readGatewayToken } from '../../gateway-token';
 
   let { vmId, tabId }: { vmId: string; tabId: string } = $props();
 
   let iframeRef: HTMLIFrameElement | null = $state(null);
 
-  // allow-same-origin required so the iframe can fetch the gateway token
-  // (tauri://localhost origin is CORS-whitelisted by the gateway) and open
-  // a WebSocket without an opaque origin. Isolation comes from the sandbox
-  // attribute + Tauri protocol boundary.
+  // The terminal frame shares the bundled app origin. It asks this parent
+  // for the gateway token because Tauri IPC is injected into the main frame.
   const sandboxAttr = 'allow-scripts allow-same-origin';
 
   // Initial state baked into the iframe URL. vmId is the tab's identity, so
@@ -34,7 +33,7 @@
   }
 
   function sendToIframe(msg: ParentToIframeMsg): void {
-    iframeRef?.contentWindow?.postMessage(msg, '*');
+    iframeRef?.contentWindow?.postMessage(msg, window.location.origin);
   }
 
   // Runtime theme changes flow to the iframe (fire-and-forget; if iframe isn't
@@ -57,11 +56,16 @@
   });
 
   function onMessage(event: MessageEvent): void {
-    if (event.source !== iframeRef?.contentWindow) return;
+    if (event.source !== iframeRef?.contentWindow || event.origin !== window.location.origin) return;
     const msg = parseIframeMessage(event.data);
     if (!msg) return;
 
     switch (msg.type) {
+      case 'gateway-token-request':
+        void readGatewayToken('http://127.0.0.1:19222')
+          .then(token => sendToIframe({ type: 'gateway-token', requestId: msg.requestId, token }))
+          .catch(() => sendToIframe({ type: 'gateway-token', requestId: msg.requestId, token: null }));
+        break;
       case 'title-update':
         tabStore.updateSubtitle(tabId, msg.title);
         break;

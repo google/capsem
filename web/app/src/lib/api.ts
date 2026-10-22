@@ -5,14 +5,15 @@ import { Connections, CredentialGrants, HostLogSource, NetworkError, ServiceAvai
 import type { AuthorizeGoogleRequest, CreateSessionGrantRequest } from '@capsem/sdk';
 import type { StopResponse, VmActionResponse, LogsResponse, VmStatsDetailResponse, EventBodiesResponse } from '@capsem/sdk';
 import type { ContainerStatusResponse, ImageListResponse, CredentialInjectProvider, CredentialInjectResponse, CredentialStorage } from '@capsem/sdk';
-import { surfaceLauncherUrl } from './models/surface';
+import { surfaceLaunchUrl } from './models/surface';
+import { readGatewayToken } from './gateway-token';
+import { invoke } from '@tauri-apps/api/core';
 import type { AssetStatus, UpdateApplyRequest } from '@capsem/sdk';
 export type { LogsResponse as RawLogsResponse, VmStatsDetailResponse } from '@capsem/sdk';
 import { ApiError, GatewaySdk, isAuthRefreshStatus } from './gateway-sdk';
 import type {
   StatusResponse,
   SandboxInfo,
-  TokenResponse,
   HealthResponse,
   ProvisionRequest,
   ProvisionResponse,
@@ -245,15 +246,13 @@ export async function init(): Promise<InitResult> {
     }
     const health: HealthResponse = await healthResp.json();
 
-    // Fetch token from gateway (unauthenticated, localhost-only)
-    const tokenResp = await fetch(`${_baseUrl}/token`);
-    if (!tokenResp.ok) {
+    const token = await readGatewayToken(_baseUrl);
+    if (!token) {
       _connected = false;
       
       return { connected: false, reachable: true, version: health.version, reason: 'auth' };
     }
-    const tokenData: TokenResponse = await tokenResp.json();
-    _applyToken(tokenData.token);
+    _applyToken(token);
 
     const serviceRunning = await _serviceStatusRunning();
     if (!serviceRunning) {
@@ -298,14 +297,13 @@ function _applyToken(token: string): void {
 
 async function _refreshToken(): Promise<boolean> {
   try {
-    const tokenResp = await fetch(`${_baseUrl}/token`);
-    if (!tokenResp.ok) {
+    const token = await readGatewayToken(_baseUrl);
+    if (!token) {
       _connected = false;
       _token = null;
       return false;
     }
-    const tokenData: TokenResponse = await tokenResp.json();
-    _applyToken(tokenData.token);
+    _applyToken(token);
     _connected = true;
     return true;
   } catch {
@@ -574,7 +572,9 @@ export async function getContainerStatus(id: string): Promise<ContainerStatusRes
 
 /** Open a session's app surface in the browser, through the gateway. */
 export async function openSurface(id: string): Promise<void> {
-  await openUrl(surfaceLauncherUrl(_baseUrl, id));
+  const response = await _post(`/vms/${encodeURIComponent(id)}/surface/session`);
+  const session: { url: string; bootstrap_token: string } = await response.json();
+  await openUrl(surfaceLaunchUrl(_baseUrl, id, session));
 }
 
 export async function getVmStatsDetail(id: string): Promise<VmStatsDetailResponse> {
@@ -954,7 +954,6 @@ export async function applyUpdate(
  * a new tab in the browser. */
 export async function openUrl(url: string): Promise<void> {
   if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
-    const { invoke } = await import('@tauri-apps/api/core');
     await invoke('open_url', { url });
     return;
   }
