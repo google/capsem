@@ -1,5 +1,7 @@
 use super::*;
 
+mod http;
+
 pub(super) fn validate_blake3_hex(field: &str, value: &str) -> Result<()> {
     if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         anyhow::bail!("{field} must be a 64-character BLAKE3 hex digest");
@@ -664,7 +666,7 @@ pub(super) async fn download_release_channel_runtime_asset(
     match parsed.scheme() {
         "file" => download_release_channel_runtime_asset_from_file(&target, &parsed, download)
             .with_context(|| format!("copy runtime image {}", download.url))?,
-        "http" | "https" => download_release_channel_runtime_asset_from_http(&target, &url, download).await?,
+        "http" | "https" => http::download_release_channel_runtime_asset_from_http(&target, &url, download).await?,
         scheme => anyhow::bail!("unsupported runtime image URL scheme {scheme}: use https://, http://, or file://"),
     }
     Ok(())
@@ -737,29 +739,6 @@ pub(super) fn download_release_channel_runtime_asset_from_file(
         blake3_hasher.finalize().to_hex().to_string(),
         format!("{:x}", sha256_hasher.finalize()),
     )
-}
-
-pub(super) async fn download_release_channel_runtime_asset_from_http(
-    target: &Path,
-    url: &str,
-    download: &ReleaseChannelAssetDownload,
-) -> Result<()> {
-    let parsed = reqwest::Url::parse(url).with_context(|| format!("parse runtime image URL {url}"))?;
-    let bytes = release_http_get_bytes(parsed, None, url)
-        .await
-        .with_context(|| format!("read runtime image body from {url}"))?;
-
-    let tmp = target.with_extension("tmp");
-    let _ = std::fs::remove_file(&tmp);
-    let bytes_done = bytes.len() as u64;
-    let actual_blake3 = capsem_crypto::blake3::hash(&bytes).to_hex().to_string();
-    let actual_sha256 = sha256_hex(&bytes);
-    if let Err(error) = std::fs::write(&tmp, &bytes) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(anyhow::Error::new(error).context(format!("write {}", tmp.display())));
-    }
-
-    finish_release_channel_asset_download(target, &tmp, download, bytes_done, actual_blake3, actual_sha256)
 }
 
 pub(super) fn finish_release_channel_asset_download(
