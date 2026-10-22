@@ -1,6 +1,23 @@
 use super::*;
 
 #[test]
+fn browser_helper_sends_the_shared_bounded_messagepack_request() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("browser.sock");
+    let receiver = std::os::unix::net::UnixDatagram::bind(&path).unwrap();
+    receiver.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+    open_browser(&path, &["https://example.org/login?state=opaque".into()]).unwrap();
+    let mut buffer = [0; 9000];
+    let size = receiver.recv(&mut buffer).unwrap();
+    assert_eq!(u32::from_be_bytes(buffer[..4].try_into().unwrap()) as usize, size - 4);
+    assert!(
+        matches!(capsem_proto::decode_guest_msg(&buffer[4..size]).unwrap(), GuestToHost::OpenUrl { url } if url.0 == "https://example.org/login?state=opaque")
+    );
+    assert!(open_browser(&path, &["file:///etc/passwd".into()]).is_err());
+    assert!(open_browser(&path, &[]).is_err());
+}
+
+#[test]
 fn command_name_strips_path() {
     assert_eq!(command_name("/sbin/shutdown"), "shutdown");
     assert_eq!(command_name("/usr/local/bin/suspend"), "suspend");

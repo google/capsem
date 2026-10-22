@@ -1,14 +1,15 @@
-// capsem-sysutil: Multi-call guest system binary for VM lifecycle commands.
+// capsem-sysutil: Multi-call guest system helpers.
 //
 // Dispatches on argv[0] (busybox pattern). Symlinked at boot by capsem-init:
-//   /sbin/shutdown  -> /run/capsem-sysutil
 //   /sbin/halt      -> /run/capsem-sysutil
 //   /sbin/poweroff  -> /run/capsem-sysutil
 //   /sbin/reboot    -> /run/capsem-sysutil
 //   /usr/local/bin/suspend -> /run/capsem-sysutil
+//   /usr/local/bin/xdg-open -> /run/capsem-sysutil
+//   /usr/local/bin/capsem-open -> /run/capsem-sysutil
 //
-// Opens its own vsock:5004 connection directly (independent of capsem-pty-agent).
-// This means shutdown works even if the agent is hung.
+// Lifecycle commands use vsock:5004 independently of the agent. Browser
+// requests use only the guest-local socket, not direct host authority.
 
 #[path = "../vsock_io.rs"]
 mod vsock_io;
@@ -88,6 +89,15 @@ fn print_help(cmd: &str) {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let cmd = command_name(&args[0]);
+
+    if matches!(cmd, "xdg-open" | "capsem-open") {
+        if open_browser(capsem_proto::browser::BROWSER_SOCKET, &args[1..]).is_err() {
+            // Login challenge URLs never enter diagnostics.
+            eprintln!("[capsem] browser request failed; expected one HTTP(S) URL");
+            process::exit(1);
+        }
+        return;
+    }
 
     // Handle --help for any command
     if args.iter().any(|a| a == "--help" || (a == "-h" && cmd != "shutdown")) {
@@ -175,6 +185,21 @@ fn main() {
             }
         }
     }
+}
+
+fn open_browser(socket: impl AsRef<std::path::Path>, args: &[String]) -> io::Result<()> {
+    let [value] = args else {
+        return Err(io::Error::from(io::ErrorKind::InvalidInput));
+    };
+    let url = capsem_proto::browser::browser_url(value).map_err(io::Error::other)?;
+    let frame = encode_guest_msg(&GuestToHost::OpenUrl {
+        url: capsem_proto::browser::BrowserUrl(url),
+    })
+    .map_err(io::Error::other)?;
+    let sender = std::os::unix::net::UnixDatagram::unbound()?;
+    sender.set_write_timeout(Some(Duration::from_secs(2)))?;
+    sender.send_to(&frame, socket)?;
+    Ok(())
 }
 
 #[cfg(test)]

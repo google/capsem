@@ -223,6 +223,10 @@ def configure(unpacked, image, options, detached=False):
     if detached:
         environment.update(TERMINAL_ENV)
     environment.update(options["env"])
+    # One guest -> session browser rail for graphical and terminal workloads.
+    # The helper and socket directory are read-only runtime mounts below.
+    environment["BROWSER"] = "/usr/local/bin/xdg-open"
+    environment["PATH"] = ":".join(dict.fromkeys(["/usr/local/bin", *environment.get("PATH", "/usr/bin:/bin").split(":")]))
     process.update(
         terminal=detached,
         env=[f"{key}={value}" for key, value in environment.items()],
@@ -331,6 +335,18 @@ def configure(unpacked, image, options, detached=False):
                 "options": ["ro", "nosuid", "nodev", "noexec", "mode=000", "size=4k"],
             }
         )
+    mounts.extend(
+        {
+            "destination": destination,
+            "type": "bind",
+            "source": source,
+            "options": ["bind", "ro", "nosuid", "nodev", *extra],
+        }
+        for destination, source, extra in (
+            ("/usr/local/bin/xdg-open", "/run/capsem-sysutil", []),
+            ("/run/capsem-browser", "/run/capsem-browser", ["noexec"]),
+        )
+    )
     return {
         "ociVersion": "1.0.2",
         # The image under the session's layer (mount_layer): writable like a

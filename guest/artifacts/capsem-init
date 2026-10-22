@@ -600,6 +600,8 @@ if [ -x /newroot/run/capsem-sysutil ]; then
     ln -sf /run/capsem-sysutil /newroot/sbin/reboot
     mkdir -p /newroot/usr/local/bin
     ln -sf /run/capsem-sysutil /newroot/usr/local/bin/suspend
+    ln -sf /run/capsem-sysutil /newroot/usr/local/bin/xdg-open
+    ln -sf /run/capsem-sysutil /newroot/usr/local/bin/capsem-open
     echo "[capsem-init] capsem-sysutil deployed (halt/poweroff/reboot/suspend)"
 fi
 

@@ -108,6 +108,16 @@ def test_default_command_user_and_workdir_survive_hardening(launcher):
     assert process["user"] == {"uid": 0, "gid": 0}
     assert process["cwd"] == "/data"
     assert process["noNewPrivileges"] is True
+    env = dict(entry.split("=", 1) for entry in process["env"])
+    assert env["BROWSER"] == "/usr/local/bin/xdg-open"
+    assert env["PATH"].split(":")[0] == "/usr/local/bin"
+    helper = next(mount for mount in config["mounts"] if mount["destination"] == env["BROWSER"])
+    assert helper["source"] == "/run/capsem-sysutil"
+    assert {"ro", "nosuid", "nodev"} <= set(helper["options"])
+    assert "noexec" not in helper["options"]
+    browser = next(mount for mount in config["mounts"] if mount["destination"] == "/run/capsem-browser")
+    assert browser["source"] == "/run/capsem-browser"
+    assert {"ro", "noexec", "nosuid", "nodev"} <= set(browser["options"])
     # The image under the session's layer: writable, the image never written.
     assert config["root"] == {"path": str(launcher.MERGED), "readonly": False}
     assert set(config["hooks"]) == {"prestart", "poststart"}
@@ -188,12 +198,14 @@ def test_container_trusts_capsem_ca_and_resolves_through_the_gateway(launcher):
     }
     # Only these VM files ever enter a container, and only read-only; the
     # image's own volumes are its state (test_image_volumes_live_on_...).
-    assert set(binds) == {"/etc/resolv.conf", "/etc/hosts", launcher.CA_BUNDLE}
+    assert set(binds) == {"/etc/resolv.conf", "/etc/hosts", launcher.CA_BUNDLE, "/usr/local/bin/xdg-open", "/run/capsem-browser"}
     assert binds["/etc/hosts"]["source"] == str(launcher.RUNTIME / "hosts")
     assert binds[launcher.CA_BUNDLE]["source"] == launcher.CA_BUNDLE
     assert binds["/etc/resolv.conf"]["source"] == str(launcher.RUNTIME / "resolv.conf")
     for mount in binds.values():
-        assert {"bind", "ro", "nosuid", "nodev", "noexec"} <= set(mount["options"])
+        assert {"bind", "ro", "nosuid", "nodev"} <= set(mount["options"])
+        if mount["destination"] != "/usr/local/bin/xdg-open":
+            assert "noexec" in mount["options"]
     env = dict(entry.split("=", 1) for entry in config["process"]["env"])
     assert env["SSL_CERT_FILE"] == launcher.CA_BUNDLE
     assert env["REQUESTS_CA_BUNDLE"] == launcher.CA_BUNDLE
@@ -482,6 +494,7 @@ def test_command_override_replaces_cmd_but_preserves_entrypoint(launcher):
         f"CURL_CA_BUNDLE={launcher.CA_BUNDLE}",
         f"NODE_EXTRA_CA_CERTS={launcher.CA_BUNDLE}",
         "B=a=b",
+        "BROWSER=/usr/local/bin/xdg-open",
     ]
 
 

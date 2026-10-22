@@ -41,8 +41,8 @@ pub(crate) type PendingResponses = std::sync::Arc<std::sync::Mutex<std::collecti
 
 pub(crate) type SharedCtrlReceiver = std::sync::Arc<std::sync::Mutex<std::sync::mpsc::Receiver<Queued>>>;
 
-/// A queued network report retains its credit even if an earlier replay was
-/// acknowledged. Otherwise reconnects could free slots ahead of queue drain.
+/// Queued network reports and browser requests retain their own credit until
+/// delivery. Reconnects cannot free slots ahead of queue drain.
 #[derive(Debug, Clone)]
 pub(crate) struct Queued {
     pub(crate) message: GuestToHost,
@@ -64,6 +64,7 @@ pub(crate) struct Queued {
 /// them and every fresh connection replays what is left.
 #[derive(Clone)]
 pub(crate) struct CtrlSender {
+    browser_credit: std::sync::Arc<tokio::sync::Semaphore>,
     tx: std::sync::mpsc::Sender<Queued>,
     pub(crate) pending: PendingResponses,
     pub(crate) network: std::sync::Arc<network::Reports>,
@@ -75,6 +76,7 @@ impl CtrlSender {
     pub(crate) fn new(pending: PendingResponses) -> (Self, SharedCtrlReceiver) {
         let (tx, rx) = std::sync::mpsc::channel();
         let sender = Self {
+            browser_credit: std::sync::Arc::new(tokio::sync::Semaphore::new(1)),
             tx,
             pending,
             network: std::sync::Arc::new(network::Reports::default()),
@@ -84,7 +86,7 @@ impl CtrlSender {
     }
 
     pub(crate) fn send(&self, msg: GuestToHost) -> Result<(), std::sync::mpsc::SendError<GuestToHost>> {
-        if matches!(msg, GuestToHost::PortClosed { .. }) {
+        if matches!(msg, GuestToHost::PortClosed { .. } | GuestToHost::OpenUrl { .. }) {
             return Err(std::sync::mpsc::SendError(msg));
         }
         if let Some(id) = ackable_response_id(&msg) {
@@ -103,6 +105,24 @@ impl CtrlSender {
                 acknowledged: None,
             })
             .map_err(|error| std::sync::mpsc::SendError(error.0.message))
+    }
+
+    pub(crate) fn send_browser(&self, url: &str) -> std::io::Result<()> {
+        let url = capsem_proto::browser::browser_url(url).map_err(std::io::Error::other)?;
+        let credit = self
+            .browser_credit
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| std::io::Error::from(std::io::ErrorKind::WouldBlock))?;
+        self.tx
+            .send(Queued {
+                message: GuestToHost::OpenUrl {
+                    url: capsem_proto::browser::BrowserUrl(url),
+                },
+                credit: Some(std::sync::Arc::new(credit)),
+                acknowledged: None,
+            })
+            .map_err(|_| std::io::Error::from(std::io::ErrorKind::BrokenPipe))
     }
 
     pub(crate) fn send_closed(

@@ -3,6 +3,7 @@
 
 mod audit;
 mod boot_timing;
+mod browser;
 mod cli;
 mod control_reader;
 mod control_writer;
@@ -263,7 +264,7 @@ fn main() {
     blog_line(&mut blog, "sent Ready");
 
     // Step 3: Boot handshake -- receive BootConfig, then SetEnv/FileWrite/BootConfigDone.
-    let mut boot_env: Vec<(String, String)> = Vec::new();
+    let mut boot_env: Vec<(String, String)> = vec![("BROWSER".into(), "/usr/local/bin/xdg-open".into())];
     let mut file_count: usize = 0;
 
     // 3a: Receive BootConfig (clock sync).
@@ -536,6 +537,7 @@ fn main() {
             let pending_responses: PendingResponses =
                 std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
             let (ctrl_sender, ctrl_rx) = CtrlSender::new(std::sync::Arc::clone(&pending_responses));
+            browser::start(ctrl_sender.clone()).expect("start guest browser request socket");
             // The audit tailer owns its host connection and reconnects on its
             // own, so it is spawned once for the process, not per bridge.
             thread::spawn(audit_reader_loop);
