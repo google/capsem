@@ -795,6 +795,7 @@ dependencies = [
 name = "capsem-app"
 version = "0.7.1"
 dependencies = [
+ "capsem-foundation",
  "capsem-proto",
  "filetime",
  "serde_json",
