@@ -6,6 +6,7 @@ use nix::errno::Errno;
 use std::{
     io,
     mem::{size_of, MaybeUninit},
+    path::PathBuf,
     sync::OnceLock,
     time::{Duration, Instant},
 };
@@ -72,6 +73,27 @@ pub struct ProcessHandle {
 impl ProcessHandle {
     pub fn pid(&self) -> ProcessId {
         self.pid
+    }
+
+    /// Resolve the executable for this native PID version, refusing a reused
+    /// numeric PID before the caller can use the path as authorization.
+    pub fn executable_path(&self) -> io::Result<PathBuf> {
+        use std::os::unix::ffi::OsStringExt;
+        if self.has_exited()? {
+            return Err(io::Error::new(io::ErrorKind::NotFound, "process exited"));
+        }
+        let mut bytes = [0u8; 4096];
+        // libproc has no nix wrapper. The buffer is writable and bounded;
+        // proc_pidpath writes a NUL-terminated executable path.
+        let size = unsafe { libc::proc_pidpath(self.pid.get() as i32, bytes.as_mut_ptr().cast(), bytes.len() as u32) };
+        if size <= 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if self.has_exited()? {
+            return Err(io::Error::new(io::ErrorKind::NotFound, "process exited"));
+        }
+        let end = bytes.iter().position(|byte| *byte == 0).unwrap_or(size as usize);
+        Ok(PathBuf::from(std::ffi::OsString::from_vec(bytes[..end].to_vec())))
     }
     pub fn open(pid: ProcessId) -> io::Result<Self> {
         let info = read_info(pid)?;
