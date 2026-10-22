@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Use webpki roots for Rust SDK WebSocket TLS, matching its HTTP transport
+  without loading the macOS keychain trust stack.
+
 - Preserve the selected Docker endpoint for inspect-ai host builds while
   keeping registry authentication out of the temporary Docker CLI config.
 
