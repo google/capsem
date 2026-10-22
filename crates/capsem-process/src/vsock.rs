@@ -21,6 +21,7 @@ mod handshake;
 mod streams;
 mod terminal;
 use handshake::{collect_terminal_control_pair, is_retryable_handshake_error, perform_handshake};
+pub(crate) use terminal::TerminalBridge;
 mod guest_report;
 use guest_report::{ackable_id, ackable_response_id, is_guest_liveness_message};
 mod exec_completion;
@@ -56,7 +57,6 @@ const HANDSHAKE_RETRY_MAX: usize = 3;
 /// especially just after resume. Keep a generous transport-loss bound without
 /// imposing any delay on already-deposited or genuinely empty commands.
 const EXEC_OUTPUT_DEPOSIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-const SERIAL_LOG_QUEUE_CAPACITY: usize = 8;
 use capsem_foundation::paths::checkpoint_complete_path;
 
 pub(crate) struct VsockOptions {
@@ -79,7 +79,7 @@ pub(crate) struct VsockOptions {
     pub(crate) vm_ready: Arc<AtomicBool>,
     pub(crate) ready: std::fs::File,
     pub(crate) db: Arc<capsem_logger::DbWriter>,
-    pub(crate) pty_log: Option<Arc<capsem_core::pty_log::PtyLog>>,
+    pub(crate) pty_log: Option<capsem_core::pty_log::PtyRecorder>,
     pub(crate) serial_log: capsem_foundation::telemetry::SharedLogWriter,
     pub(crate) shutdown: Arc<tokio::sync::Mutex<crate::Shutdown>>,
 }
@@ -186,13 +186,14 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
         warn!(error = %e, "failed to create ready sentinel");
     }
 
-    let _terminal_bridge = terminal::spawn(
+    let terminal_bridge = terminal::spawn(
         Arc::clone(&terminal_output),
         terminal_rekey_rx,
         term_in_rx,
         pty_log.clone(),
         serial_log,
     );
+    shutdown.lock().await.terminal_bridge = Some(terminal_bridge);
 
     // 2. Stable Control Bridge (Read + Write)
     let (ctrl_out_tx, mut ctrl_out_rx) = mpsc::channel::<HostToGuest>(128);
@@ -406,7 +407,9 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
             match msg {
                 ServiceToProcess::TerminalInput { data } => {
                     if let Some(ref pl) = pty_log_for_cmd {
-                        pl.record_input(&data);
+                        // The optional recorder logs its first failure once.
+                        // Never refuse terminal input because storage failed.
+                        let _ = pl.record_input(&data);
                     }
                     capsem_core::try_send!("term_in", term_in_tx.send(data).await);
                 }
@@ -890,28 +893,6 @@ fn surrender_proxy_traffic(
         }
         Err(error) => warn!(%error, "{label} port: cannot duplicate the session descriptor"),
     }
-}
-
-fn spawn_serial_log_writer<W, F>(open: F) -> (mpsc::Sender<Vec<u8>>, std::thread::JoinHandle<()>)
-where
-    W: std::io::Write + Send + 'static,
-    F: FnOnce() -> std::io::Result<W> + Send + 'static,
-{
-    let (tx, mut rx) = mpsc::channel::<Vec<u8>>(SERIAL_LOG_QUEUE_CAPACITY);
-    let handle = std::thread::spawn(move || {
-        let mut writer = match open() {
-            Ok(writer) => writer,
-            Err(error) => {
-                warn!(error = %error, "failed to open serial log");
-                return;
-            }
-        };
-        while let Some(batch) = rx.blocking_recv() {
-            let _ = writer.write_all(&batch);
-        }
-        let _ = writer.flush();
-    });
-    (tx, handle)
 }
 
 /// Read one length-prefixed payload without allocating beyond the protocol

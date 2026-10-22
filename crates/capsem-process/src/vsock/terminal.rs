@@ -4,6 +4,8 @@ use std::collections::VecDeque;
 use std::os::fd::AsFd;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+const SERIAL_LOG_QUEUE_CAPACITY: usize = 8;
+
 struct Connection {
     anchor: Arc<VsockConnection>,
     reader: tokio::net::unix::OwnedReadHalf,
@@ -37,15 +39,28 @@ async fn deadline(at: Option<tokio::time::Instant>) {
     }
 }
 
+pub(crate) struct TerminalBridge {
+    stop: tokio::sync::oneshot::Sender<()>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl TerminalBridge {
+    pub(crate) async fn shutdown(self) -> Result<(), tokio::task::JoinError> {
+        let _ = self.stop.send(());
+        self.task.await
+    }
+}
+
 pub(super) fn spawn(
     terminal: Arc<capsem_core::terminal::SessionTerminal>,
     mut rekey: mpsc::Receiver<Arc<VsockConnection>>,
     mut input: mpsc::Receiver<Vec<u8>>,
-    pty_log: Option<Arc<capsem_core::pty_log::PtyLog>>,
+    pty_log: Option<capsem_core::pty_log::PtyRecorder>,
     serial_log: impl std::io::Write + Send + 'static,
-) -> tokio::task::JoinHandle<()> {
+) -> TerminalBridge {
     let (log, log_handle) = spawn_serial_log_writer(move || Ok(serial_log));
-    tokio::spawn(async move {
+    let (stop, mut stopped) = tokio::sync::oneshot::channel();
+    let task = tokio::spawn(async move {
         let mut active: Option<Connection> = None;
         let mut coalesce = capsem_core::vm::vsock::CoalesceBuffer::new();
         let mut coalesce_at = None;
@@ -70,6 +85,11 @@ pub(super) fn spawn(
             // read/write are cancellation safe. In particular, never restart a
             // write_all after a timer or reconnect: retain its exact cursor.
             tokio::select! {
+                _ = &mut stopped => {
+                    finish = true;
+                    replace = Some(None);
+                    flush = true;
+                }
                 connection = rekey.recv() => {
                     finish = connection.is_none();
                     replace = Some(connection);
@@ -148,7 +168,8 @@ pub(super) fn spawn(
                     outgoing.push_back(replies);
                 }
                 if let Some(ref pty_log) = pty_log {
-                    pty_log.record_output(&batch);
+                    // Failure is reported once by the optional storage owner.
+                    let _ = pty_log.record_output(&batch);
                 }
                 if logging {
                     pending_log = Some(batch);
@@ -182,7 +203,30 @@ pub(super) fn spawn(
         }
         drop(log);
         let _ = tokio::task::spawn_blocking(move || log_handle.join()).await;
-    })
+    });
+    TerminalBridge { stop, task }
+}
+
+pub(super) fn spawn_serial_log_writer<W, F>(open: F) -> (mpsc::Sender<Vec<u8>>, std::thread::JoinHandle<()>)
+where
+    W: std::io::Write + Send + 'static,
+    F: FnOnce() -> std::io::Result<W> + Send + 'static,
+{
+    let (tx, mut rx) = mpsc::channel::<Vec<u8>>(SERIAL_LOG_QUEUE_CAPACITY);
+    let handle = std::thread::spawn(move || {
+        let mut writer = match open() {
+            Ok(writer) => writer,
+            Err(error) => {
+                warn!(error = %error, "failed to open serial log");
+                return;
+            }
+        };
+        while let Some(batch) = rx.blocking_recv() {
+            let _ = writer.write_all(&batch);
+        }
+        let _ = writer.flush();
+    });
+    (tx, handle)
 }
 
 #[cfg(test)]

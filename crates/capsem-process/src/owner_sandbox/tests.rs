@@ -135,16 +135,27 @@ fn owner_log_sandbox_child() {
         std::fs::remove_file(log_dir.join("pty.log")).unwrap();
         std::os::unix::fs::symlink(unrelated, log_dir.join("pty.log")).unwrap();
     } else {
-        log.record_output(&[b'a'; 80]);
-        log.record_output(&[b'b'; 80]);
+        // Start after confinement, as in the real VM owner. Rotation happens
+        // on the inherited-policy worker, not on this already-confined thread.
+        let recorder = capsem_core::pty_log::PtyRecorder::new(log).unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        recorder.record_output(&[b'a'; 80]).unwrap();
+        recorder.record_output(&[b'b'; 80]).unwrap();
+        runtime.block_on(recorder.flush()).unwrap();
         assert!(
             log_dir.join("pty.log.1").exists(),
             "rotation was denied under owner confinement"
         );
         assert_eq!(std::fs::metadata(log_dir.join("pty.log")).unwrap().len(), 0);
-        log.record_output(&[b'c'; 80]);
-        log.record_output(&[b'd'; 80]);
-        log.record_output(b"current marker");
+        recorder.record_output(&[b'c'; 80]).unwrap();
+        recorder.record_output(&[b'd'; 80]).unwrap();
+        recorder.record_output(b"current marker").unwrap();
+        runtime.block_on(recorder.shutdown()).unwrap();
+        drop(recorder);
+        drop(runtime);
         use std::io::Write;
         serial.write_all(b"aaaa").unwrap();
         terminal.write_all(b"bbbb").unwrap();

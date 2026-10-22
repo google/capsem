@@ -3,6 +3,8 @@ use std::os::fd::{AsFd, AsRawFd};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+mod drain;
+
 fn connection() -> (Arc<VsockConnection>, tokio::net::UnixStream) {
     let (owner, guest) = std::os::unix::net::UnixStream::pair().unwrap();
     guest.set_nonblocking(true).unwrap();
@@ -46,7 +48,7 @@ async fn quiet_guest_sync_timeout_flushes_display_effects_and_query_reply_once()
     owner.shutdown_both().unwrap();
     drop(rekey);
     drop(input);
-    tokio::time::timeout(Duration::from_secs(2), bridge)
+    tokio::time::timeout(Duration::from_secs(2), bridge.shutdown())
         .await
         .unwrap()
         .unwrap();
@@ -118,7 +120,7 @@ async fn blocked_guest_input_does_not_stall_sync_expiry_or_rekey() {
     replacement.shutdown_both().unwrap();
     drop(input);
     drop(rekey);
-    tokio::time::timeout(Duration::from_secs(2), bridge)
+    tokio::time::timeout(Duration::from_secs(2), bridge.shutdown())
         .await
         .unwrap()
         .unwrap();
@@ -171,7 +173,7 @@ async fn timer_cancellation_preserves_the_partial_write_cursor() {
     assert_eq!(&marker, b"after", "partial write was replayed or truncated");
     drop(rekey);
     drop(input);
-    tokio::time::timeout(Duration::from_secs(2), bridge)
+    tokio::time::timeout(Duration::from_secs(2), bridge.shutdown())
         .await
         .unwrap()
         .unwrap();
@@ -211,7 +213,7 @@ async fn disconnected_guest_still_expires_the_session_sync_deadline() {
     assert_eq!(&response, b"\x1b[1;5R", "query expired between connections was lost");
     drop(rekey);
     drop(input);
-    tokio::time::timeout(Duration::from_secs(2), bridge)
+    tokio::time::timeout(Duration::from_secs(2), bridge.shutdown())
         .await
         .unwrap()
         .unwrap();
@@ -313,7 +315,7 @@ async fn full_serial_log_queue_does_not_stall_sync_expiry_or_socket_rekey() {
     assert_eq!(summaries.borrow().title, "After log unblocked");
     drop(rekey);
     drop(input);
-    tokio::time::timeout(Duration::from_secs(2), bridge)
+    tokio::time::timeout(Duration::from_secs(2), bridge.shutdown())
         .await
         .unwrap()
         .unwrap();

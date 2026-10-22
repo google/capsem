@@ -91,7 +91,7 @@ fn serial_log_writer_runs_on_a_dedicated_thread() {
     let writer_thread = Arc::new(std::sync::Mutex::new(None));
     let bytes_for_writer = Arc::clone(&bytes);
     let thread_for_writer = Arc::clone(&writer_thread);
-    let (tx, handle) = spawn_serial_log_writer(move || {
+    let (tx, handle) = terminal::spawn_serial_log_writer(move || {
         Ok(TrackingWriter {
             bytes: bytes_for_writer,
             writer_thread: thread_for_writer,

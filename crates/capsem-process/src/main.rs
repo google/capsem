@@ -42,6 +42,8 @@ use vsock::VsockOptions;
 /// cleanup".
 #[derive(Default)]
 pub(crate) struct Shutdown {
+    terminal_bridge: Option<vsock::TerminalBridge>,
+    pty_log: Option<capsem_core::pty_log::PtyRecorder>,
     publisher: Option<Arc<capsem_core::container::publish::Publisher>>,
     db: Option<Arc<DbWriter>>,
     fs_monitor: Option<FsMonitor>,
@@ -56,7 +58,7 @@ struct PreparedOwnerResources {
     ipc_listener: std::os::unix::net::UnixListener,
     launched: std::fs::File,
     ready: std::fs::File,
-    pty_log: Option<Arc<capsem_core::pty_log::PtyLog>>,
+    pty_log: Option<capsem_core::pty_log::PtyLog>,
     serial_log: capsem_foundation::telemetry::SharedLogWriter,
     aggregator: capsem_proto::mcp_aggregator::AggregatorClient,
     mcp_servers: Vec<capsem_proto::mcp_contracts::McpServerDef>,
@@ -87,37 +89,53 @@ impl PreparedLedger {
     }
 }
 
-impl Shutdown {
-    /// Drain in order: fs_events fan into DbWriter, so FsMonitor must
-    /// finish its final flush before the DbWriter runs its checkpoint.
-    /// Blocking — caller should run this from `spawn_blocking`.
-    fn drain_blocking(&mut self) {
-        if let Some(fs_monitor) = self.fs_monitor.take() {
-            fs_monitor.shutdown_and_join();
-        }
-        if let Some(db) = self.db.take() {
-            db.shutdown_blocking();
-        }
-    }
-}
-
 pub(crate) async fn drain_background_owners(shutdown: &Arc<Mutex<Shutdown>>) {
     // Keep the lock through joining: a concurrent shutdown caller must not
     // stop the run loop while the first caller is still draining its owners.
     let mut guard = shutdown.lock().await;
-    let mut owned = std::mem::take(&mut *guard);
-    if let Some(proxy_mcp) = owned.proxy_mcp.take() {
+    let Shutdown {
+        terminal_bridge,
+        pty_log,
+        publisher,
+        db,
+        fs_monitor,
+        proxy_mcp,
+        proxy_trace_hints,
+    } = std::mem::take(&mut *guard);
+    // Stop accepting terminal bytes and flush the final coalesced batch
+    // before closing the transcript producer shared by input and output.
+    if let Some(terminal) = terminal_bridge {
+        if let Err(error) = terminal.shutdown().await {
+            error!(%error, "terminal bridge drain failed");
+        }
+    }
+    if let Some(recorder) = pty_log {
+        if let Err(error) = recorder.shutdown().await {
+            warn!(%error, "terminal transcript drain incomplete");
+        }
+    }
+    if let Some(proxy_mcp) = proxy_mcp {
         proxy_mcp.abort();
         let _ = proxy_mcp.await;
     }
-    if let Some(proxy_trace_hints) = owned.proxy_trace_hints.take() {
+    if let Some(proxy_trace_hints) = proxy_trace_hints {
         proxy_trace_hints.abort();
         let _ = proxy_trace_hints.await;
     }
-    if let Some(publisher) = owned.publisher.take() {
+    if let Some(publisher) = publisher {
         publisher.shutdown().await;
     }
-    if let Err(error) = tokio::task::spawn_blocking(move || owned.drain_blocking()).await {
+    if let Err(error) = tokio::task::spawn_blocking(move || {
+        // FsMonitor's final events must reach DbWriter before checkpointing.
+        if let Some(fs_monitor) = fs_monitor {
+            fs_monitor.shutdown_and_join();
+        }
+        if let Some(db) = db {
+            db.shutdown_blocking();
+        }
+    })
+    .await
+    {
         error!(%error, "background owner drain failed");
     }
     drop(guard);
@@ -362,7 +380,7 @@ fn main() -> Result<()> {
     let logs = capsem_core::session::prepare_session_logs(&session_dir).context("prepare private session logs")?;
     let serial_log = logs.open_serial().context("prepare shared console log")?;
     let pty_log = match logs.open_pty() {
-        Ok(log) => Some(Arc::new(log)),
+        Ok(log) => Some(log),
         Err(error) => {
             warn!(%error, "failed to prepare pty.log");
             None
@@ -609,6 +627,16 @@ async fn run_async_main_loop(
         ledger,
     } = prepared;
     let terminal_output = capsem_core::terminal::SessionTerminal::new(capsem_proto::TERMINAL_SUBSCRIBER_UPDATES);
+    // This runs after owner confinement. The storage worker must inherit
+    // that policy rather than being started while preparing file handles.
+    let pty_log = pty_log.and_then(|log| match capsem_core::pty_log::PtyRecorder::new(log) {
+        Ok(recorder) => Some(recorder),
+        Err(error) => {
+            warn!(%error, "terminal transcript worker could not start");
+            None
+        }
+    });
+    shutdown.lock().await.pty_log = pty_log.clone();
 
     let ledger_path = session_dir.join("session.db");
     // The config-owned queue covers the supported concurrent network burst.

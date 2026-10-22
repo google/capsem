@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Move terminal transcript storage off input/output handlers, with bounded
+  recording, ordered shutdown, and explicit disk or queue failures.
+
 - Clear stale graphical diagnostics when the viewer disconnects.
 
 - Keep terminal timeouts and reconnects responsive under blocked I/O,
