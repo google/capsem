@@ -1,5 +1,6 @@
 //! Raw samples for the capsem-bench collector protocol; no statistics here.
-//! Single-threaded, CPU-dispatched implementations, all producing 256 bits.
+//! Single-threaded, CPU-dispatched implementations. Cryptographic candidates
+//! produce 256 bits; the optional non-security XXH3 comparison produces 128 bits.
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::hint::black_box;
@@ -65,6 +66,47 @@ fn sample(metrics: &mut BTreeMap<String, Vec<f64>>, key: String, started: Instan
     let seconds = started.elapsed().as_secs_f64();
     eprintln!("{key}: {seconds:.9}s");
     metrics.entry(key).or_default().push(seconds);
+}
+
+fn fingerprint(algorithm: &str, bytes: &[u8]) -> [u8; 32] {
+    match algorithm {
+        "blake3-256" => *capsem_crypto::blake3::hash(bytes).as_bytes(),
+        "xxh3-128" => {
+            // The return container is uniform, but the actual digest is 128 bits.
+            // Padding is benchmark plumbing, never a 256-bit security claim.
+            let mut result = [0; 32];
+            result[..16].copy_from_slice(&xxhash_rust::xxh3::xxh3_128(bytes).to_le_bytes());
+            result
+        }
+        _ => unreachable!(),
+    }
+}
+
+fn fingerprint_samples(metrics: &mut BTreeMap<String, Vec<f64>>, bytes: &[u8]) {
+    // Paired one-shot calls avoid per-iteration heap allocation or input copies.
+    // Small-input samples amortize the clock; the benchmark owner computes stats.
+    for round in 0..8 {
+        let mut algorithms = ["blake3-256", "xxh3-128"];
+        if round % 2 == 1 {
+            algorithms.reverse();
+        }
+        for size in [32, 128, 1024, 64 * 1024, CHUNK, 10 * CHUNK] {
+            let input = &bytes[..size];
+            let iterations = (8 * CHUNK / size).max(1);
+            for algorithm in algorithms {
+                let expected = fingerprint(algorithm, input);
+                let started = Instant::now();
+                for _ in 0..iterations {
+                    assert_eq!(black_box(fingerprint(algorithm, black_box(input))), expected);
+                }
+                sample(
+                    metrics,
+                    format!("oneshot.{size}.iterations-{iterations}.{algorithm}.wall_s"),
+                    started,
+                );
+            }
+        }
+    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -134,8 +176,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+    fingerprint_samples(&mut metrics, &bytes);
     let sidecar = serde_json::json!({"files": files, "file_sizes": file_sizes,
         "digests": identities, "chunk_bytes": CHUNK, "threads": 1,
+        "fingerprint_output_bits": {"blake3-256":256, "xxh3-128":128},
+        "fingerprint_input_copies":0, "fingerprint_heap_allocations_per_call":0,
+        "architecture":std::env::consts::ARCH,
+        "xxh3_feature":"xxh3", "xxh3_crate_version":"0.8.19",
+        "neon":cfg!(target_feature="neon"), "avx2":cfg!(target_feature="avx2"),
         "cpu_flags": std::fs::read_to_string("/proc/cpuinfo").ok()
             .and_then(|text| text.lines().find(|line| line.starts_with("flags")).map(str::to_owned))});
     let metrics: BTreeMap<_, _> = metrics

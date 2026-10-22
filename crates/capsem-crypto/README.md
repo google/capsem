@@ -14,16 +14,19 @@ They call this crate instead of selecting a hash or TLS backend themselves.
 | `tls` | `tls` | Rustls provider, private key ownership and certificate minting |
 | `jwt` | `jwt` | RS256 public verification; signing and arbitrary key conversion refused |
 | `test-fixtures` | `jwt::sign_rs256_fixture` | Test-only signature construction from checked-in fixture keys |
-| `benchmark` | `compare_hashes` example | Optional SIMD BLAKE2 candidates and independent SHA reference |
+| `benchmark` | `compare_hashes` example | Optional SIMD BLAKE2, XXH3-128 non-security candidate and independent SHA reference |
 
 Foundation, protocol and archive callers disable default features to retain
 their lightweight BLAKE3 dependency surface. Benchmark candidates do not enter
 production binaries. The crypto crate and hot hash backends stay optimized in
 dev builds, enforced by Citadel.
 
-Use BLAKE3 for new internal fingerprints. OCI, OAuth and release identities
-already requiring SHA-256 keep SHA-256. Changing a stored algorithm identity
-requires a deliberate format migration. Do not truncate BLAKE2b-512 to pretend
+Hashing requires a documented contract; do not add fingerprints by default.
+Archive integrity and body deduplication retain accelerated BLAKE3. OCI, OAuth
+and release identities requiring SHA-256 keep SHA-256. XXH3-128 is an optional
+benchmark candidate for non-security identities, not a substitute for content
+integrity or authentication. Changing a stored algorithm identity requires a
+deliberate format migration. Do not truncate BLAKE2b-512 to pretend
 it is BLAKE2b-256: the benchmark configures a 32-byte output directly.
 
 Build the optional `compare_hashes` example with `--features benchmark`, then
@@ -31,8 +34,15 @@ set `CAPSEM_CRYPTO_BENCH_BINARY` and `CAPSEM_CRYPTO_BENCH_FILES` (a JSON array
 of immutable EROFS paths) for the `crypto` benchmark collector. It prints raw
 paired wall-time samples for 32-byte through 256-MiB memory inputs and cached
 file reads. It rotates algorithm order, uses one thread and bounded memory,
-and includes a read-only control. Small-input timings include state creation;
-the large BLAKE3 state is boxed. `capsem-bench-rs run crypto` owns statistics
+and includes a read-only control. Streaming timings include state creation;
+the large BLAKE3 state is boxed. Separate paired `oneshot` metrics compare
+allocation-free BLAKE3-256 and XXH3-128 on 32 B, 128 B, 1 KiB, 64 KiB, 1 MiB
+and 10 MiB inputs. Each records eight raw batch samples with alternating order;
+divide batch timing by the iterations named in its metric for per-call cost.
+These are hot-memory microbenchmarks, not end-to-end frame latency or per-call
+tail distributions. Digest widths are explicit; XXH3's 128 bits are padded only
+in the example's uniform result container. No payload is copied in the timed
+one-shot calls. `capsem-bench-rs run crypto` owns statistics
 and storage. `CAPSEM_CRYPTO_BENCH_SAMPLES` imports retained raw samples without
 repeating the measurement.
 

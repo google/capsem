@@ -90,6 +90,10 @@ opt-level = 3
 [profile.dev.package.blake2s_simd]
 opt-level = 3
 
+# Optional non-cryptographic benchmark candidate; compare optimized backends.
+[profile.dev.package.xxhash-rust]
+opt-level = 3
+
 # Always optimize hot wire-format codecs in dev/install builds. `just install`
 # and manual release validation use debug binaries, so leaving these crates at
 # opt-level 0 makes the gateway and ledger paths look broken when the real bug is

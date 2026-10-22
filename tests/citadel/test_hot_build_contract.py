@@ -21,6 +21,7 @@ HOT_DEV_OPTIMIZED_PACKAGES = {
     "libsqlite3-sys",
     "blake2b_simd",
     "blake2s_simd",
+    "xxhash-rust",
     "serde",
     "serde_core",
     "serde_json",

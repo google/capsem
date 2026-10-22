@@ -11,7 +11,7 @@ owned upstream; they are not first-party primitive implementations.
 | Prepared EROFS v2 | Image producer, subject-bound pinned artifact, assets cache, core staging, guest held-descriptor mount | Python SIMD BLAKE3 producer; `capsem-crypto::verify` on host and guest |
 | Release packages and VM asset manifests | Admin/build/release tooling, installer/updater/assets | Explicit existing SHA-256 and BLAKE3 fields; owned Rust/Python bindings |
 | Build, source and cache keys | Builder/gate and foundation | Existing BLAKE3, SHA-256 and configured BLAKE2 identities retained |
-| Archive blocks, ledger content, exported bodies | Archive/logger readers and writers | Owned BLAKE3; size and domain checks stay with storage owners |
+| Archive blocks, deduplicated stored spans, exported bodies | Archive/logger readers and writers | Owned BLAKE3; storage corruption and wrong-span checks stay with storage owners; no event admission commitments |
 | Credential fingerprints and session capabilities | Protocol, credentials, service, gateway, core | Owned BLAKE3 derivation, OS entropy, constant-time checks and erasure |
 | IDs and UUID-derived private secrets | Archive, logger, core, service | `capsem-crypto::uuid_v4`, including test/build callers |
 | OAuth PKCE and ID tokens | Credential owner | AWS-LC SHA-256 and restricted RS256 JWT verification; issuer, audience, expiry, nonce and JWKS admission remain credential policy |
@@ -48,6 +48,12 @@ The normal `capsem-bench` crypto dimension records raw paired samples for
 accelerated SHA-256, an independent SHA reference, SIMD BLAKE2b-256,
 BLAKE2s-256 and BLAKE3, with a read-only control. The provider's example owns
 the algorithm loop; the existing benchmark binary owns statistics and storage.
+An optional, pinned `xxhash-rust` dependency (BSL-1.0, no runtime dependencies)
+extends this example with XXH3-128 one-shot comparisons for non-security uses.
+It is enabled only by `benchmark`, is not exported as a production API, and
+is optimized alongside BLAKE3 in debug measurements. Existing body hashes stay
+on the approved accelerated BLAKE3 owner. No production algorithm changes are
+implied by comparing throughput.
 There is no separate benchmark crate. BLAKE3 was the fastest bulk candidate on
 the measured host and guest. Warm file hash timings are not VM boot timings.
 

@@ -12,7 +12,7 @@ authors.workspace = true
 [features]
 default = ["sha256"]
 sha256 = ["dep:aws-lc-rs"]
-benchmark = ["sha256", "dep:blake2b_simd", "dep:blake2s_simd", "dep:serde_json", "dep:sha2"]
+benchmark = ["sha256", "dep:blake2b_simd", "dep:blake2s_simd", "dep:serde_json", "dep:sha2", "dep:xxhash-rust"]
 random = ["dep:rand", "dep:getrandom", "dep:uuid"]
 secrets = ["dep:subtle", "dep:zeroize"]
 jwt = ["sha256", "secrets", "random", "dep:jsonwebtoken", "dep:ring", "dep:signature", "dep:serde"]
@@ -26,6 +26,7 @@ blake2b_simd = { version = "1", optional = true }
 blake2s_simd = { version = "1", optional = true }
 serde_json = { workspace = true, optional = true }
 sha2 = { version = "0.10", optional = true }
+xxhash-rust = { version = "=0.8.19", features = ["xxh3"], optional = true }
 rand = { version = "0.9", optional = true }
 uuid = { version = "1", features = ["v4"], optional = true }
 getrandom = { version = "0.3", optional = true }

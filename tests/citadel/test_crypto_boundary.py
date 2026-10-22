@@ -19,6 +19,7 @@ PROVIDERS = frozenset(
         "blake2b_simd",
         "blake2s_simd",
         "blake3",
+        "xxhash-rust",
         "digest",
         "hmac",
         "ring",
