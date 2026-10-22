@@ -82,6 +82,13 @@ fn replies_correlate_to_requests_by_id_and_broadcasts_answer_nothing() {
             None,
         ),
         (
+            ProcessToService::SuspendRolledBack {
+                id: "vm".into(),
+                error: "busy".into(),
+            },
+            None,
+        ),
+        (
             ProcessToService::StateChanged {
                 id: "vm".into(),
                 state: "s".into(),

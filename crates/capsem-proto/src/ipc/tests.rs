@@ -194,6 +194,23 @@ fn state_changed_roundtrip() {
 }
 
 #[test]
+fn suspend_rollback_msgpack_roundtrip_is_distinct_from_fatal_failure() {
+    let message = ProcessToService::SuspendRolledBack {
+        id: "vm-checkpoint".into(),
+        error: "terminal input is busy; session remains running".into(),
+    };
+    assert_eq!(message.reply_id(), None, "lifecycle confirmation is not an exec reply");
+    let bytes = rmp_serde::to_vec_named(&message).unwrap();
+    match rmp_serde::from_slice::<ProcessToService>(&bytes).unwrap() {
+        ProcessToService::SuspendRolledBack { id, error } => {
+            assert_eq!(id, "vm-checkpoint");
+            assert_eq!(error, "terminal input is busy; session remains running");
+        }
+        other => panic!("recoverable rejection changed disposition: {other:?}"),
+    }
+}
+
+#[test]
 fn suspend_failed_msgpack_roundtrip_preserves_exact_cause() {
     let msg = ProcessToService::SuspendFailed {
         id: "vm-checkpoint".into(),

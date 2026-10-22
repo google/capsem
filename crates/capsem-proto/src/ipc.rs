@@ -366,9 +366,13 @@ pub enum ProcessToService {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
-    /// Warm suspend failed before the durable checkpoint marker was written.
+    /// Warm suspend failed and its owner cannot safely retain the running VM.
     /// Named MessagePack variants remain stable independently of source order.
     SuspendFailed { id: String, error: String },
+    /// Suspend was rejected after rollback restored the running VM, guest
+    /// filesystem, terminal transport and viewer authority. Retain this owner.
+    /// A failed or timed-out rollback must use SuspendFailed instead.
+    SuspendRolledBack { id: String, error: String },
     /// Live stdout or stderr for an ExecStream job. Each chunk is at most 8 KiB.
     ExecOutput {
         id: u64,

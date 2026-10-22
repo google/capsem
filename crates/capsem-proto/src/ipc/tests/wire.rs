@@ -173,6 +173,10 @@ fn process_to_service_variant_names_and_roundtrips_are_stable() {
             id: "vm".into(),
             error: "failed".into(),
         },
+        ProcessToService::SuspendRolledBack {
+            id: "vm".into(),
+            error: "busy".into(),
+        },
         ProcessToService::ExecOutput {
             id: 10,
             channel: crate::ExecOutputChannel::Stderr,
@@ -197,6 +201,7 @@ fn process_to_service_variant_names_and_roundtrips_are_stable() {
         "McpRefreshResult",
         "McpCallToolResult",
         "SuspendFailed",
+        "SuspendRolledBack",
         "ExecOutput",
     ];
     assert_eq!(messages.len(), names.len());
