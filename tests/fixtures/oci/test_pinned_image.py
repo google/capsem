@@ -58,9 +58,9 @@ def test_only_private_ghcr_uses_the_existing_github_login(
         def open(self, url, token=None, accept=None, basic=None):
             self.calls.append((url, basic))
             if url == f"https://{registry}/v2/":
-                raise urllib.error.HTTPError(url, 401, "unauthorized", challenge, None)
+                raise urllib.error.HTTPError(url, 401, "unauthorized", challenge, io.BytesIO())
             if basic is None:
-                raise urllib.error.HTTPError(url, status, "private", Message(), None)
+                raise urllib.error.HTTPError(url, status, "private", Message(), io.BytesIO())
             return io.BytesIO(b'{"token":"registry-token"}')
 
     client = Client()
@@ -76,6 +76,27 @@ def test_only_private_ghcr_uses_the_existing_github_login(
         "https://ghcr.io/token?service=ghcr.io&scope=repository%3Agoogle%2Fcapsem%2Fdev%3Apull",
         ("x-access-token", "github-token"),
     )
+
+
+def test_ghcr_prefers_package_read_credentials_over_an_anonymous_token(monkeypatch):
+    challenge = Message()
+    challenge["WWW-Authenticate"] = 'Bearer realm="https://ghcr.io/token",service="ghcr.io"'
+
+    class Client:
+        def __init__(self):
+            self.calls = []
+
+        def open(self, url, token=None, accept=None, basic=None):
+            self.calls.append((url, basic))
+            if url == "https://ghcr.io/v2/":
+                raise urllib.error.HTTPError(url, 401, "unauthorized", challenge, io.BytesIO())
+            value = "authenticated-token" if basic else "anonymous-token"
+            return io.BytesIO(json.dumps({"token": value}).encode())
+
+    client = Client()
+    monkeypatch.setattr(pinned_image, "github_token", lambda: "github-token")
+    assert pinned_image._token(client, "ghcr.io", "google/capsem/dev") == "authenticated-token"
+    assert client.calls[-1][1] == ("x-access-token", "github-token")
 
 
 def _layout(root, *, architecture="arm64", media=MANIFEST):
