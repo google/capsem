@@ -39,7 +39,7 @@ fn the_page_split_refuses_a_page_it_cannot_split_exactly() {
     assert_eq!(page.main, "go()");
     assert_eq!(
         page.index,
-        "<html><head><script src=\"a.js\"></script><link rel=\"stylesheet\" href=\"capsem-surface.css\" />\n  <script src=\"capsem-surface.js\"></script>\n  </head><body><script src=\"xpra-main.js\"></script></body></html>"
+        "<html><head><script src=\"a.js\"></script><link rel=\"stylesheet\" href=\"capsem-surface.css\" />\n  <script src=\"capsem-surface-metrics.js\"></script>\n  <script src=\"capsem-surface.js\"></script>\n  </head><body><script src=\"xpra-main.js\"></script></body></html>"
     );
     for bad in [
         "<html><head></head><body></body></html>",
@@ -97,6 +97,23 @@ fn capsem_serves_its_own_settings_and_disconnect_page() {
     assert!(disconnected.contains("Capsem") && !disconnected.contains("<script"));
     let (_, surface) = get(&format!("{CLIENT_ROOT}capsem-surface.js"));
     assert!(String::from_utf8(surface).unwrap().contains("system_tray = false"));
+}
+
+#[test]
+fn display_diagnostics_are_served_as_owned_script_without_changing_vendor_files() {
+    let (head, script) = get(&format!("{CLIENT_ROOT}capsem-surface-metrics.js"));
+    assert!(head.starts_with("HTTP/1.1 200 OK\r\n"));
+    assert!(head.contains("Content-Type: text/javascript; charset=utf-8"));
+    assert!(String::from_utf8(script)
+        .unwrap()
+        .contains("class CapsemSurfaceMetrics"));
+    let page = PAGE.as_ref().unwrap();
+    let metrics = page.index.find("src=\"capsem-surface-metrics.js\"").unwrap();
+    let policy = page.index.find("src=\"capsem-surface.js\"").unwrap();
+    assert!(
+        metrics < policy,
+        "read the trusted parent origin before bootstrap metadata is removed"
+    );
 }
 
 #[test]

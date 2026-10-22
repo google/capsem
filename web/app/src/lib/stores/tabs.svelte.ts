@@ -13,6 +13,7 @@ export interface Tab {
   presentationPending?: boolean;
   terminalOpened?: boolean;
   surfaceRevision?: number;
+  surfaceDebug?: boolean;
 }
 
 let nextId = 0;
@@ -123,6 +124,11 @@ class TabStore {
   reloadSurface(id: string) {
     const tab = this.tabs.find(tab => tab.id === id);
     if (tab) tab.surfaceRevision = (tab.surfaceRevision ?? 0) + 1;
+  }
+
+  toggleSurfaceDebug(id: string) {
+    const tab = this.tabs.find(tab => tab.id === id);
+    if (tab) tab.surfaceDebug = !tab.surfaceDebug;
   }
 
   openSingleton(view: TabView, title: string) {

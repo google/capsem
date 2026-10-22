@@ -19,6 +19,7 @@ pub(crate) const CLIENT_ROOT: &str = "/_capsem/surface/";
 static VENDORED: &[(&str, &[u8])] = include!(concat!(env!("OUT_DIR"), "/xpra_html5.rs"));
 
 const CAPSEM_SURFACE: &str = include_str!("static/capsem-surface.js");
+const SURFACE_METRICS: &str = include_str!("static/capsem-surface-metrics.js");
 const SURFACE_WORKER: &str = include_str!("static/capsem-surface-worker.js");
 const SURFACE_STYLE: &str = include_str!("static/capsem-surface.css");
 const SETTINGS: &str = include_str!("static/default-settings.txt");
@@ -62,7 +63,7 @@ fn split_index(index: &str) -> Result<Page, String> {
     let end = body + index[body..].find(CLOSE).ok_or("unterminated inline script")?;
     Ok(Page {
         index: format!(
-            "{}<link rel=\"stylesheet\" href=\"capsem-surface.css\" />\n  <script src=\"capsem-surface.js\"></script>\n  {}<script src=\"xpra-main.js\"></script>{}",
+            "{}<link rel=\"stylesheet\" href=\"capsem-surface.css\" />\n  <script src=\"capsem-surface-metrics.js\"></script>\n  <script src=\"capsem-surface.js\"></script>\n  {}<script src=\"xpra-main.js\"></script>{}",
             &index[..head_end],
             &index[head_end..start],
             &index[end + CLOSE.len()..],
@@ -99,6 +100,7 @@ fn asset(relative: &str) -> Option<(&'static [u8], &'static str)> {
         "" | "index.html" => page?.index.as_bytes(),
         "xpra-main.js" => page?.main.as_bytes(),
         "capsem-surface.js" => CAPSEM_SURFACE.as_bytes(),
+        "capsem-surface-metrics.js" => SURFACE_METRICS.as_bytes(),
         "js/capsem-surface-worker.js" => SURFACE_WORKER.as_bytes(),
         "capsem-surface.css" => SURFACE_STYLE.as_bytes(),
         "default-settings.txt" => SETTINGS.as_bytes(),

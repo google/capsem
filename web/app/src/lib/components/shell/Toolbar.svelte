@@ -330,6 +330,13 @@
         onclick={() => { if (active) tabStore.reloadSurface(active.id); }} title="Reconnect app" aria-label="Reconnect app">
         <ArrowClockwise size={14} />
       </button>
+      <button type="button" class="px-2 py-1 text-xs rounded-md hover:text-foreground"
+        class:bg-layer={active.surfaceDebug} class:text-primary={active.surfaceDebug}
+        class:text-muted-foreground-1={!active.surfaceDebug}
+        aria-pressed={Boolean(active.surfaceDebug)} aria-label="Display diagnostics"
+        title="Display diagnostics" onclick={() => { if (active) tabStore.toggleSurfaceDebug(active.id); }}>
+        Debug
+      </button>
     {/if}
   {/if}
 
