@@ -95,6 +95,8 @@ class CapsemSurfaceMetrics {
   let timer;
   let lastDisplayRequest = -Infinity;
   function disable() {
+    // A stopped sampler must not leave its last FPS/latency looking live.
+    if (meter) parent.postMessage({type: "capsem:surface-metrics", metrics: null}, parentOrigin);
     if (timer != null) clearInterval(timer);
     timer = undefined;
     meter = undefined;

@@ -102,6 +102,23 @@ describe('graphical display diagnostics', () => {
     expect(metricSize(null,720)).toBe('—');
   });
 
+  it.each(['close', 'pagehide'])('clears the parent measurements on %s instead of freezing the last FPS', reason => {
+    const {run,toggle,tick,messages,listeners,hasTimer} = load();
+    run('const client = new XpraClient(); client._process_open();');
+    toggle(true);
+    tick(100);
+    run('client.pending_redraw = [1]; client.draw_pending_list();');
+    tick(1000);
+    expect(messages.at(-1)).toMatchObject({metrics: {fps: 1}});
+    if (reason === 'close') run('client._process_close();');
+    else listeners.pagehide({});
+    expect(messages.at(-1)).toEqual({type:'capsem:surface-metrics',metrics:null});
+    expect(hasTimer()).toBe(false);
+    const count = messages.length;
+    tick(2000);
+    expect(messages).toHaveLength(count);
+  });
+
   it('requests only display information at a bounded frequency while enabled', () => {
     const {run,toggle,tick} = load();
     run('const client = new XpraClient(); client.connected=true; client.uuid="test"; client._process_open();');

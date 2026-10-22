@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Clear stale graphical diagnostics when the viewer disconnects.
+
 - Keep terminal timeouts and reconnects responsive under blocked I/O,
   preserving partial writes and query replies generated between connections.
 
