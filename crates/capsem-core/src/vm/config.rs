@@ -373,7 +373,7 @@ impl VmConfigBuilder {
         })?;
         let cache = Self::hash_cache_dir(root)?;
         let name = Self::hash_cache_name(path);
-        let temporary = format!(".hash-{}.tmp", uuid::Uuid::new_v4());
+        let temporary = format!(".hash-{}.tmp", capsem_crypto::uuid_v4());
         let mut file = cache.create_new_private_file(std::ffi::OsStr::new(&temporary))?;
         let result = (|| {
             file.write_all(fingerprint.as_bytes())?;
