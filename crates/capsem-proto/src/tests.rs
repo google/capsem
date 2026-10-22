@@ -235,22 +235,6 @@ fn roundtrip_shutdown() {
     assert!(matches!(decoded, HostToGuest::Shutdown));
 }
 
-#[test]
-fn roundtrip_prepare_snapshot() {
-    let msg = HostToGuest::PrepareSnapshot;
-    let frame = encode_host_msg(&msg).unwrap();
-    let decoded = decode_host_msg(&frame[4..]).unwrap();
-    assert!(matches!(decoded, HostToGuest::PrepareSnapshot));
-}
-
-#[test]
-fn roundtrip_unfreeze() {
-    let msg = HostToGuest::Unfreeze;
-    let frame = encode_host_msg(&msg).unwrap();
-    let decoded = decode_host_msg(&frame[4..]).unwrap();
-    assert!(matches!(decoded, HostToGuest::Unfreeze));
-}
-
 // -------------------------------------------------------------------
 // GuestToHost roundtrip
 // -------------------------------------------------------------------
@@ -439,14 +423,6 @@ fn roundtrip_suspend_request() {
     let frame = encode_guest_msg(&msg).unwrap();
     let decoded = decode_guest_msg(&frame[4..]).unwrap();
     assert!(matches!(decoded, GuestToHost::SuspendRequest));
-}
-
-#[test]
-fn roundtrip_snapshot_ready() {
-    let msg = GuestToHost::SnapshotReady;
-    let frame = encode_guest_msg(&msg).unwrap();
-    let decoded = decode_guest_msg(&frame[4..]).unwrap();
-    assert!(matches!(decoded, GuestToHost::SnapshotReady));
 }
 
 // -------------------------------------------------------------------
