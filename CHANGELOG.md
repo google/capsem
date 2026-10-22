@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Validate KVM virtqueue ring geometry for every nonzero queue before device
+  activation, even when the guest leaves the ready flag clear.
+
 - Remove the unauthenticated gateway token endpoint. The desktop shell reads
   its private token through IPC, and external app surfaces receive only a
   single-use preview bootstrap.
