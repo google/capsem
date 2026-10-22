@@ -1692,9 +1692,12 @@ impl<T: EventListener> Handler for Term<T> {
         trace!("Requested write of escape sequence for color code {prefix}: color[{index}]");
 
         let terminator = terminator.to_owned();
+        // The proxy can run after later PTY bytes change the palette.
+        let configured = self.colors[index];
         self.event_proxy.send_event(Event::ColorRequest(
             index,
             Arc::new(move |color| {
+                let color = configured.unwrap_or(color);
                 format!(
                     "\x1b]{};rgb:{1:02x}{1:02x}/{2:02x}{2:02x}/{3:02x}{3:02x}{4}",
                     prefix, color.r, color.g, color.b, terminator

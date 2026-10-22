@@ -357,3 +357,27 @@ fn semantic_effects_reach_the_owner_once_and_restore_without_replay() {
         "Notification"
     );
 }
+
+#[test]
+fn color_query_captures_the_override_before_later_palette_changes() {
+    use alacritty_terminal::vte::ansi::Rgb;
+    let events = Events::default();
+    let mut term = Term::new(config(), &Size(20, 6), events.clone());
+    let mut parser: Processor = Processor::new();
+    parser.advance(
+        &mut term,
+        b"\x1b]4;1;rgb:12/34/56\x07\x1b]4;1;?\x07\x1b]4;1;rgb:aa/bb/cc\x07\x1b]4;2;?\x07",
+    );
+    let events = events.0.lock().unwrap();
+    let replies: Vec<_> = events
+        .iter()
+        .map(|event| match event {
+            Event::ColorRequest(_, format) => format(Rgb { r: 1, g: 2, b: 3 }),
+            other => panic!("unexpected color event: {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        replies,
+        ["\x1b]4;1;rgb:1212/3434/5656\x07", "\x1b]4;2;rgb:0101/0202/0303\x07"]
+    );
+}
