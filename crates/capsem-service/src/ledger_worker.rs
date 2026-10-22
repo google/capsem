@@ -8,7 +8,6 @@
     )
 )]
 
-use std::ffi::OsStr;
 use std::fmt::Write as _;
 use std::io;
 use std::os::fd::{AsRawFd as _, OwnedFd};
@@ -49,21 +48,18 @@ type ControlFrame = capsem_foundation::unix::router_channel::DescriptorFrame<LED
 struct LedgerSlot {
     database: PathBuf,
     worker: LedgerWorker,
-    commitments: Arc<crate::ledger_commitment::CommitmentAuthority>,
 }
 
 /// Service-owned table that serializes each session's ledger lifetime.
 pub(crate) struct LedgerWorkers {
     binary: PathBuf,
-    commitment_root: PathBuf,
     slots: tokio::sync::Mutex<std::collections::HashMap<String, LedgerSlot>>,
 }
 
 impl LedgerWorkers {
-    pub(crate) fn new(binary: PathBuf, commitment_root: PathBuf) -> Self {
+    pub(crate) fn new(binary: PathBuf) -> Self {
         Self {
             binary,
-            commitment_root,
             slots: tokio::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
@@ -78,7 +74,7 @@ impl LedgerWorkers {
         log_path: &Path,
         role: LedgerClientRole,
     ) -> Result<LedgerClient> {
-        let (worker, commitments) = {
+        let worker = {
             let mut slots = self.slots.lock().await;
             let mut watcher = None;
             if slots
@@ -95,26 +91,18 @@ impl LedgerWorkers {
                         database.display()
                     );
                 }
-                (slot.worker.clone(), Arc::clone(&slot.commitments))
+                slot.worker.clone()
             } else {
                 let worker = self.spawn(database, log_path).await?;
-                let commitments =
-                    crate::ledger_commitment::CommitmentAuthority::open(&self.commitment_root, session_id).await?;
-                #[cfg(not(test))]
-                if let Err(error) = verify_commitments(&worker, database, &commitments).await {
-                    let _ = worker.clone().shutdown().await;
-                    return Err(error);
-                }
                 slots.insert(
                     session_id.to_string(),
                     LedgerSlot {
                         database: database.to_path_buf(),
                         worker: worker.clone(),
-                        commitments: Arc::clone(&commitments),
                     },
                 );
                 watcher = Some((worker.generation(), worker.stop_receiver()));
-                (worker, commitments)
+                worker
             };
             drop(slots);
             if let Some((generation, mut stopped)) = watcher {
@@ -135,33 +123,7 @@ impl LedgerWorkers {
             }
             selected
         };
-        let mut client = worker.connect(role).await?;
-        if role.producer_name().is_some() {
-            let (producer, coordinator) = UnixStream::pair().context("create ledger commitment channel")?;
-            let grant = client.grant;
-            tokio::spawn(async move {
-                if let Err(error) = crate::ledger_commitment::serve(commitments, coordinator, grant).await {
-                    tracing::warn!(client_id = grant.client_id(), %error, "ledger commitment channel stopped");
-                }
-            });
-            client.commitment = Some(producer);
-        }
-        Ok(client)
-    }
-
-    /// Fence the trusted producer history across a coordinator-owned ledger copy.
-    pub(crate) async fn checkpoint_snapshot(
-        &self,
-        session_id: &str,
-    ) -> Result<crate::ledger_commitment::CheckpointSnapshot> {
-        let authority = self
-            .slots
-            .lock()
-            .await
-            .get(session_id)
-            .map(|slot| Arc::clone(&slot.commitments))
-            .context("source ledger worker has no commitment authority")?;
-        Ok(authority.snapshot().await)
+        worker.connect(role).await
     }
 
     /// Stop and reap the current generation before vacating its slot.
@@ -181,8 +143,7 @@ impl LedgerWorkers {
         result
     }
 
-    /// Stop every remaining worker before the service relinquishes its
-    /// checkpoint authority. Continue after one failed shutdown so no sibling
+    /// Stop every remaining worker before the service exits. Continue after one failed shutdown so no sibling
     /// generation is left running merely because an earlier child was sick.
     pub(crate) async fn shutdown_all(&self) {
         let session_ids = self.slots.lock().await.keys().cloned().collect::<Vec<_>>();
@@ -191,44 +152,6 @@ impl LedgerWorkers {
                 tracing::warn!(session_id, %error, "failed to stop ledger worker during service shutdown");
             }
         }
-    }
-
-    /// Remove the trusted checkpoint state after the corresponding session
-    /// directory has been permanently deleted. A stopped persistent session
-    /// keeps its checkpoints and therefore continues to verify on restart.
-    pub(crate) async fn retire(&self, session_id: &str) -> Result<()> {
-        if self.slots.lock().await.contains_key(session_id) {
-            bail!("cannot retire checkpoints for a live ledger worker");
-        }
-        let root = self.commitment_root.clone();
-        let session_id = session_id.to_string();
-        tokio::task::spawn_blocking(move || retire_checkpoints(&root, &session_id))
-            .await
-            .context("join ledger checkpoint retirement")?
-    }
-
-    /// Move trusted checkpoints with a failed session's forensic directory.
-    /// Failed IDs are never live worker slots, so retention can later remove
-    /// both artifacts without weakening the active session name.
-    pub(crate) fn preserve_quiesced(&self, session_id: &str, failed_id: &str) -> Result<()> {
-        let root = match capsem_foundation::unix::contained::ContainedDir::open_root(&self.commitment_root) {
-            Ok(root) => root,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-            Err(error) => return Err(error.into()),
-        };
-        let source = checkpoint_key(session_id);
-        let destination = checkpoint_key(failed_id);
-        match root.rename_to(OsStr::new(&source), &root, OsStr::new(&destination)) {
-            Ok(()) => root.sync().map_err(Into::into),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(error.into()),
-        }
-    }
-
-    /// Remove checkpoints for a session that cannot have a live worker, such
-    /// as a retained failed-session directory being culled synchronously.
-    pub(crate) fn retire_quiesced(&self, session_id: &str) -> Result<()> {
-        retire_checkpoints(&self.commitment_root, session_id)
     }
 
     async fn spawn(&self, database: &Path, log_path: &Path) -> Result<LedgerWorker> {
@@ -253,47 +176,9 @@ impl LedgerWorkers {
     }
 }
 
-fn checkpoint_key(session_id: &str) -> String {
-    capsem_crypto::blake3::hash(session_id.as_bytes()).to_hex().to_string()
-}
-
-fn retire_checkpoints(root: &Path, session_id: &str) -> Result<()> {
-    let root = match capsem_foundation::unix::contained::ContainedDir::open_root(root) {
-        Ok(root) => root,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error.into()),
-    };
-    match root.remove_tree(OsStr::new(&checkpoint_key(session_id))) {
-        Ok(()) => root.sync().map_err(Into::into),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error.into()),
-    }
-}
-
-#[cfg(not(test))]
-async fn verify_commitments(
-    worker: &LedgerWorker,
-    database: &Path,
-    commitments: &crate::ledger_commitment::CommitmentAuthority,
-) -> Result<()> {
-    let channel = worker.connect(LedgerClientRole::Reader).await?;
-    let (stream, commitment, grant) = channel.into_parts();
-    if commitment.is_some() {
-        bail!("reader received a producer commitment channel");
-    }
-    let client = capsem_logger::ledger_client::LedgerClient::connect(stream, grant, database.to_path_buf())
-        .await
-        .map_err(anyhow::Error::msg)?;
-    commitments
-        .verify_ledger(&client)
-        .await
-        .context("verify session ledger against trusted producer checkpoints")
-}
-
 #[derive(Debug)]
 pub(crate) struct LedgerClient {
     stream: UnixStream,
-    commitment: Option<UnixStream>,
     grant: LedgerChannelGrant,
 }
 
@@ -302,23 +187,14 @@ impl LedgerClient {
         self.grant
     }
 
-    pub(crate) fn into_parts(self) -> (UnixStream, Option<UnixStream>, LedgerChannelGrant) {
-        (self.stream, self.commitment, self.grant)
+    pub(crate) fn into_parts(self) -> (UnixStream, LedgerChannelGrant) {
+        (self.stream, self.grant)
     }
 
     #[cfg(test)]
-    pub(crate) fn test_pair(grant: LedgerChannelGrant) -> io::Result<(Self, UnixStream, UnixStream)> {
+    pub(crate) fn test_pair(grant: LedgerChannelGrant) -> io::Result<(Self, UnixStream)> {
         let (stream, worker) = UnixStream::pair()?;
-        let (commitment, commitment_worker) = UnixStream::pair()?;
-        Ok((
-            Self {
-                stream,
-                commitment: Some(commitment),
-                grant,
-            },
-            worker,
-            commitment_worker,
-        ))
+        Ok((Self { stream, grant }, worker))
     }
 }
 
@@ -497,11 +373,7 @@ impl WorkerProcess {
                 } if generation == self.generation && adopted == client_id => {
                     // A queued SCM_RIGHTS reference alone is insufficient on Darwin.
                     drop(worker);
-                    return Ok(LedgerClient {
-                        stream: client,
-                        commitment: None,
-                        grant,
-                    });
+                    return Ok(LedgerClient { stream: client, grant });
                 }
                 LedgerControlEvent::Rejected {
                     generation,

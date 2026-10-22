@@ -9,7 +9,9 @@ async fn interactions_project_model_messages_tools_and_results_without_cross_cal
     let writer = capsem_logger::DbWriter::open(&db_path, 8).unwrap();
     writer.shutdown_blocking();
     let connection = rusqlite::Connection::open(&db_path).unwrap();
-    connection.execute_batch(r#"
+    connection
+        .execute_batch(
+            r#"
         INSERT INTO model_calls(id,event_id,timestamp,provider,method,path,trace_id)
         VALUES(1,'aaaaaa000001','2026-09-10T00:00:01Z','openai','POST','/v1/responses','trace-1'),
               (2,'aaaaaa000002','2026-09-10T00:00:02Z','openai','POST','/v1/responses','trace-1'),
@@ -17,13 +19,13 @@ async fn interactions_project_model_messages_tools_and_results_without_cross_cal
         INSERT INTO model_items(event_id,model_call_id,timestamp,provider,path,trace_id,turn_id,
                                 kind,item_index,call_id,content,content_hash)
         VALUES('bbbbbb000001',1,'2026-09-10T00:00:01Z','openai','/v1/responses','trace-1','turn-1',
-               'request',1,'','{"input":"hello"}','blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
+               'request',1,'','{"input":"hello"}','xxh3-128:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
               ('bbbbbb000002',1,'2026-09-10T00:00:01Z','openai','/v1/responses','trace-1','turn-1',
-               'reasoning',2,'','plan','blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'),
+               'reasoning',2,'','plan','xxh3-128:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'),
               ('bbbbbb000003',1,'2026-09-10T00:00:01Z','openai','/v1/responses','trace-1','turn-1',
-               'response',3,'','null','blake3:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'),
+               'response',3,'','null','xxh3-128:cccccccccccccccccccccccccccccccc'),
               ('bbbbbb000004',2,'2026-09-10T00:00:02Z','openai','/v1/responses','trace-1','turn-1',
-               'tool_response',1,'reused','{"result":[true,null,3]}','blake3:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd');
+               'tool_response',1,'reused','{"result":[true,null,3]}','xxh3-128:dddddddddddddddddddddddddddddddd');
         INSERT INTO tool_calls(event_id,timestamp,model_call_id,trace_id,turn_id,call_index,call_id,
                                tool_name,origin,server_name,arguments,response_preview,decision,error_message)
         VALUES('cccccc000001','2026-09-10T00:00:01Z',1,'trace-1','turn-1',0,'reused','lookup','model',NULL,
@@ -35,7 +37,9 @@ async fn interactions_project_model_messages_tools_and_results_without_cross_cal
         INSERT INTO tool_responses(model_call_id,call_id,content_preview,is_error,trace_id)
         VALUES(2,'reused','{"result":[true,null,3]}',0,'trace-1'),
               (3,'reused','WRONG RESULT',1,'other-trace');
-    "#).unwrap();
+    "#,
+        )
+        .unwrap();
     drop(connection);
     insert_fake_instance_with_session_dir(&state, "interactions", std::process::id(), session);
     let app = build_service_router(Arc::clone(&state));
@@ -119,7 +123,7 @@ async fn interactions_fail_on_missing_schema_or_corrupt_result_flags() {
                 r#"
             INSERT INTO model_items(event_id,model_call_id,timestamp,provider,path,kind,item_index,call_id,content_hash)
             VALUES('dddddd000001',1,'now','openai','/model','tool_response',1,'reused',
-                   'blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+                   'xxh3-128:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
         "#,
             )
             .unwrap();

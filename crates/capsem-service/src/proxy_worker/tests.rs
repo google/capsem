@@ -255,13 +255,8 @@ async fn capacity_rejection_fails_only_the_grant_and_keeps_the_worker_healthy() 
 async fn ledger_descriptor_carries_its_exact_proxy_authority() {
     let worker = fake("ledger").await.unwrap();
     let (peer, granted) = UnixStream::pair().unwrap();
-    let (commitment_peer, commitment) = UnixStream::pair().unwrap();
-    worker
-        .grant_ledger(granted, commitment, proxy_ledger_grant())
-        .await
-        .unwrap();
+    worker.grant_ledger(granted, proxy_ledger_grant()).await.unwrap();
     drop(peer);
-    drop(commitment_peer);
     worker.shutdown().await.unwrap();
 }
 

@@ -31,8 +31,8 @@ async fn host_events_are_on_disk_when_recorded() {
         .host_events()
         .unwrap()
         .into_iter()
-        .filter(|(event, _, _)| event.session_id.as_deref() == Some("s1"))
-        .map(|(event, _, _)| event.kind)
+        .filter(|event| event.session_id.as_deref() == Some("s1"))
+        .map(|event| event.kind)
         .collect();
     assert_eq!(
         kinds,
@@ -41,7 +41,6 @@ async fn host_events_are_on_disk_when_recorded() {
             capsem_logger::HostEventKind::SessionStopped
         ]
     );
-    assert!(reader.verify_host_chain().unwrap() >= 2);
 }
 
 #[tokio::test]

@@ -63,7 +63,7 @@ pub(super) fn persistent_resume_state_fingerprint(state: &ServiceState, entry: &
 pub(super) fn small_file_fingerprint(path: &StdPath) -> Option<String> {
     std::fs::read(path)
         .ok()
-        .map(|bytes| capsem_crypto::blake3::hash(&bytes).to_hex().to_string())
+        .map(|bytes| format!("xxh3-128:{:032x}", capsem_crypto::xxh3::hash(&bytes)))
 }
 
 pub(super) fn file_metadata_fingerprint(path: &StdPath) -> Option<(u64, u128)> {
@@ -580,12 +580,6 @@ pub(super) async fn handle_stop(
                         format!("ephemeral session cleanup failed: {error:#}"),
                     )
                 })?;
-            state.ledger_workers.retire(&id).await.map_err(|error| {
-                AppError::new(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("ephemeral checkpoint cleanup failed: {error:#}"),
-                )
-            })?;
         }
         Ok(Json(api::StopResponse {
             success: true,
@@ -643,12 +637,6 @@ pub(super) async fn handle_delete(
                 format!("delete session state failed: {error:#}"),
             )
         })?;
-    state.ledger_workers.retire(&id).await.map_err(|error| {
-        AppError::new(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("delete session checkpoints failed: {error:#}"),
-        )
-    })?;
 
     // Unregister from persistent registry only after filesystem deletion
     // succeeds. An unsafe or failed delete therefore remains discoverable

@@ -61,31 +61,6 @@ fn preserve_renames_session_dir_and_keeps_logs() {
 }
 
 #[test]
-fn preserve_discards_evidence_when_its_checkpoint_authority_cannot_move() {
-    let dir = tempfile::tempdir().unwrap();
-    let state = make_state_in(dir.path().to_path_buf());
-    let session_dir = state.run_dir.join("sessions").join("vm-broken-authority");
-    std::fs::create_dir_all(&session_dir).unwrap();
-    std::fs::write(session_dir.join("session.db"), b"untrusted without its checkpoints").unwrap();
-    std::fs::write(state.run_dir.join("ledger-commitments"), b"not a directory").unwrap();
-
-    assert!(
-        state
-            .preserve_failed_session_dir(&session_dir, "vm-broken-authority")
-            .is_none(),
-        "evidence without its checkpoint authority must not be exposed"
-    );
-    assert!(!session_dir.exists());
-    assert!(std::fs::read_dir(state.run_dir.join("sessions"))
-        .unwrap()
-        .flatten()
-        .all(|entry| !entry
-            .file_name()
-            .to_string_lossy()
-            .starts_with("vm-broken-authority-failed-")));
-}
-
-#[test]
 fn cull_keeps_newest_and_prunes_oldest() {
     let dir = tempfile::tempdir().unwrap();
     let state = make_state_in(dir.path().to_path_buf());

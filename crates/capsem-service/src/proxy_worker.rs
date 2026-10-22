@@ -101,13 +101,8 @@ impl ProxyWorker {
             .await
     }
 
-    pub(crate) async fn grant_ledger(
-        &self,
-        stream: UnixStream,
-        commitment: UnixStream,
-        grant: LedgerChannelGrant,
-    ) -> Result<()> {
-        self.grant_capability(GrantedCapability::Ledger(grant), vec![stream.into(), commitment.into()])
+    pub(crate) async fn grant_ledger(&self, stream: UnixStream, grant: LedgerChannelGrant) -> Result<()> {
+        self.grant_capability(GrantedCapability::Ledger(grant), vec![stream.into()])
             .await
     }
 
@@ -841,10 +836,9 @@ impl ServiceState {
             )
             .await
             .context("acquire proxy ledger channel")?;
-        let (stream, commitment, grant) = client.into_parts();
-        let commitment = commitment.context("proxy ledger grant omitted its commitment channel")?;
+        let (stream, grant) = client.into_parts();
         worker
-            .grant_ledger(stream, commitment, grant)
+            .grant_ledger(stream, grant)
             .await
             .context("grant proxy ledger channel")
     }

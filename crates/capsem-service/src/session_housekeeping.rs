@@ -56,18 +56,6 @@ impl ServiceState {
             .and_then(|()| std::fs::rename(session_dir, &failed_dir));
         match moved {
             Ok(()) => {
-                if let Err(error) = self.ledger_workers.preserve_quiesced(id, &failed_id) {
-                    warn!(id, failed_id, %error, "failed to preserve trusted ledger checkpoints; discarding unauthenticated evidence");
-                    if let Err(delete_error) = self.delete_session_dir(&failed_dir) {
-                        warn!(id, failed_id, %delete_error, "failed to discard unauthenticated session evidence");
-                    }
-                    for checkpoint_id in [id, failed_id.as_str()] {
-                        if let Err(retire_error) = self.ledger_workers.retire_quiesced(checkpoint_id) {
-                            warn!(checkpoint_id, %retire_error, "failed to retire unpreserved ledger checkpoints");
-                        }
-                    }
-                    return None;
-                }
                 info!(
                     id,
                     path = %failed_dir.display(),
@@ -96,9 +84,6 @@ impl ServiceState {
                         error = %e,
                         "also failed to remove session dir -- orphaned on disk"
                     );
-                }
-                if let Err(error) = self.ledger_workers.retire_quiesced(id) {
-                    warn!(id, %error, "failed to retire checkpoints after lost session evidence");
                 }
                 None
             }
@@ -176,14 +161,7 @@ impl ServiceState {
         for (path, _) in failed_dirs.iter().take(to_delete) {
             info!(path = %path.display(), "culling old failed session dir");
             match self.delete_session_dir(path) {
-                Ok(()) => {
-                    if let Some(id) = path.file_name().and_then(|name| name.to_str()) {
-                        if let Err(error) = self.ledger_workers.retire_quiesced(id) {
-                            warn!(id, %error, "failed to retire culled session checkpoints");
-                        }
-                    }
-                    culled += 1;
-                }
+                Ok(()) => culled += 1,
                 Err(e) => warn!(path = %path.display(), error = %e, "cull failed session delete failed"),
             }
         }

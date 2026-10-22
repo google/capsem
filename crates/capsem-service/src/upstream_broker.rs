@@ -769,10 +769,8 @@ async fn run(
                         continue;
                     };
                     let client = source.acquire().await?;
-                    let (stream, commitment, grant) = client.into_parts();
-                    let commitment =
-                        commitment.ok_or_else(|| "ledger producer omitted commitment channel".to_string())?;
-                    let descriptors = vec![OwnedFd::from(stream), OwnedFd::from(commitment)];
+                    let (stream, grant) = client.into_parts();
+                    let descriptors = vec![OwnedFd::from(stream)];
                     let descriptor_refs = descriptors.iter().collect::<Vec<_>>();
                     send_response_descriptors(
                         &responses,

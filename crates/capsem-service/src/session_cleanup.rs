@@ -89,12 +89,6 @@ pub(super) async fn finalize_one_shot_session(
                 )
             })?;
     }
-    state.ledger_workers.retire(&id).await.map_err(|error| {
-        AppError::new(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("one-shot checkpoint cleanup failed: {error:#}"),
-        )
-    })?;
     Ok(None)
 }
 

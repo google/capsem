@@ -287,7 +287,7 @@ fn seed_ledger(session_dir: &std::path::Path, rows: i64) -> PathBuf {
         INSERT INTO model_items(id, event_id, model_call_id, timestamp, provider, path, kind, item_index,
                                 call_id, content_hash)
         SELECT i, printf('4%011x', i), i, printf('2026-09-10T%08d', i), 'openai', '/v1/responses',
-               'tool_response', 0, printf('call-%d', i), 'blake3:' || printf('%064x', i) FROM n;
+               'tool_response', 0, printf('call-%d', i), 'xxh3-128:' || printf('%032x', i) FROM n;
         WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < {rows})
         INSERT INTO security_rule_events(id, timestamp_unix_ms, event_id, event_type, rule_id, rule_action, rule_json)
         SELECT i, i, printf('c%011x', i), 'http.request', 'rule', 'allow', '{{}}' FROM n;
@@ -304,7 +304,7 @@ fn seed_ledger(session_dir: &std::path::Path, rows: i64) -> PathBuf {
                                      stored_bytes, truncated, body_hash, block_offset, body_offset,
                                      body_len, created_at)
         SELECT printf('%s%011x', prefix, i), event_type, source_table, direction, 1, 1, 0,
-               'blake3:' || printf('%064x', i), 80, 0, 1, '2026-09-10'
+               'xxh3-128:' || printf('%032x', i), 80, 0, 1, '2026-09-10'
         FROM n, sources;
         COMMIT;
         "#

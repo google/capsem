@@ -111,7 +111,7 @@ async fn stats_detail_has_typed_nullable_events_and_captured_bodies() {
         INSERT INTO event_body_blobs(event_id,event_type,source_table,direction,original_bytes,
             stored_bytes,truncated,body_hash,block_offset,body_offset,body_len,created_at)
         VALUES('abcdef000001','model.call','model_calls','response',100,4,1,
-            'blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            'xxh3-128:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
             128,0,4,'2026-09-10T00:00:00Z');
     "#,
         )
