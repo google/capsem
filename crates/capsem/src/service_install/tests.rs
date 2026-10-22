@@ -1,6 +1,35 @@
 use super::*;
 use std::path::Path;
 
+#[tokio::test]
+async fn retiring_installed_helpers_spares_command_line_lookalikes() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let bin = dir.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    let installed = bin.join("capsem-service");
+    std::fs::copy("/bin/sleep", &installed).unwrap();
+    std::fs::set_permissions(&installed, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut owned = tokio::process::Command::new(&installed).arg("30").spawn().unwrap();
+    let mut lookalike = tokio::process::Command::new("python3")
+        .args(["-c", "import time; time.sleep(30)", installed.to_str().unwrap()])
+        .spawn()
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+
+    let result = retire_installed_helpers(&bin).await;
+    let owned_exited = tokio::time::timeout(std::time::Duration::from_secs(2), owned.wait()).await;
+    let lookalike_alive = lookalike.try_wait().unwrap().is_none();
+    let _ = owned.start_kill();
+    let _ = lookalike.start_kill();
+    let _ = owned.wait().await;
+    let _ = lookalike.wait().await;
+
+    result.unwrap();
+    assert!(owned_exited.is_ok(), "the installed helper was not retired");
+    assert!(lookalike_alive, "a command-line lookalike was killed");
+}
+
 fn service_paths(bin_dir: &Path) -> paths::CapsemPaths {
     paths::CapsemPaths {
         service_bin: bin_dir.join("capsem-service"),

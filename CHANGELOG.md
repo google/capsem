@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Stop installer and uninstaller helpers only after checking their pinned
+  process identity and exact installed executable path; command-line matches
+  no longer authorize a kill.
+
 - Preserve the last good MCP tool cache and approval pins when an aggregator
   tool-list request fails instead of treating the failure as an empty catalog.
 
