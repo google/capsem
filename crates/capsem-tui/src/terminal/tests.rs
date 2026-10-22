@@ -221,7 +221,7 @@ async fn terminal_manager_reconnects_same_session_after_connection_task_exits() 
         })
         .expect("send first connect");
     let first = recv_status(event_rx.clone()).await;
-    assert!(first.contains("token failed"), "{first}");
+    assert!(first.contains("token failed") || first.contains("connect failed"), "{first}");
     std::thread::sleep(std::time::Duration::from_millis(50));
 
     command_tx
@@ -232,7 +232,7 @@ async fn terminal_manager_reconnects_same_session_after_connection_task_exits() 
         })
         .expect("send reconnect");
     let second = recv_status(event_rx.clone()).await;
-    assert!(second.contains("token failed"), "{second}");
+    assert!(second.contains("token failed") || second.contains("connect failed"), "{second}");
 
     command_tx.send(TerminalCommand::Shutdown).expect("send shutdown");
     manager.await.expect("terminal manager exits cleanly");

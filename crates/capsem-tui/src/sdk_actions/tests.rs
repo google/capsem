@@ -10,12 +10,10 @@ async fn invoke_with_response(
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move {
-        for _ in 0..2 {
+        for _ in 0..1 {
             let (mut stream, _) = listener.accept().await.unwrap();
             let request = read_http_request(&mut stream).await;
-            if request.contains("GET /token ") {
-                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
-            } else {
+            {
                 assert!(request.contains(path), "{request}");
                 assert!(request
                     .to_ascii_lowercase()
@@ -24,7 +22,9 @@ async fn invoke_with_response(
             }
         }
     });
-    let outcome = GatewayProvider::new(url).invoke_async(&action).await;
+    let outcome = GatewayProvider::with_test_token(url, "test-token")
+        .invoke_async(&action)
+        .await;
     server.await.unwrap();
     outcome
 }
@@ -112,12 +112,10 @@ async fn gateway_provider_invokes_stop_over_authenticated_gateway() {
         .expect("bind test gateway");
     let addr = listener.local_addr().expect("local addr");
     let server = tokio::spawn(async move {
-        for _ in 0..2 {
+        for _ in 0..1 {
             let (mut stream, _) = listener.accept().await.expect("accept request");
             let request = read_http_request(&mut stream).await;
-            if request.contains("GET /token ") {
-                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
-            } else {
+            {
                 assert!(
                     request.contains("POST /vms/vm-1/stop "),
                     "unexpected request: {request:?}"
@@ -132,7 +130,7 @@ async fn gateway_provider_invokes_stop_over_authenticated_gateway() {
         }
     });
 
-    let outcome = GatewayProvider::new(format!("http://{addr}"))
+    let outcome = GatewayProvider::with_test_token(format!("http://{addr}"), "test-token")
         .invoke_async(&ControlAction::Stop {
             id: "vm-1".to_string(),
             label: "main-session".to_string(),
@@ -151,12 +149,10 @@ async fn gateway_provider_invokes_named_create_over_authenticated_gateway() {
         .expect("bind test gateway");
     let addr = listener.local_addr().expect("local addr");
     let server = tokio::spawn(async move {
-        for _ in 0..2 {
+        for _ in 0..1 {
             let (mut stream, _) = listener.accept().await.expect("accept request");
             let request = read_http_request(&mut stream).await;
-            if request.contains("GET /token ") {
-                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
-            } else {
+            {
                 assert!(request.contains("POST /vms/create "), "unexpected request: {request:?}");
                 // The service decides CPU, memory and what the VM runs: the
                 // TUI sends only the name and that the workspace persists.
@@ -173,7 +169,7 @@ async fn gateway_provider_invokes_named_create_over_authenticated_gateway() {
         }
     });
 
-    let outcome = GatewayProvider::new(format!("http://{addr}"))
+    let outcome = GatewayProvider::with_test_token(format!("http://{addr}"), "test-token")
         .invoke_async(&ControlAction::CreateSession {
             name: Some("vm-1-proof".to_string()),
             image: None,
@@ -193,12 +189,10 @@ async fn gateway_provider_preserves_service_owned_persistent_names() {
         .expect("bind test gateway");
     let addr = listener.local_addr().expect("local addr");
     let server = tokio::spawn(async move {
-        for _ in 0..2 {
+        for _ in 0..1 {
             let (mut stream, _) = listener.accept().await.expect("accept request");
             let request = read_http_request(&mut stream).await;
-            if request.contains("GET /token ") {
-                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
-            } else {
+            {
                 assert!(request.contains("POST /vms/create "), "unexpected request: {request:?}");
                 assert_eq!(
                     request_body(&request),
@@ -213,7 +207,7 @@ async fn gateway_provider_preserves_service_owned_persistent_names() {
         }
     });
 
-    let outcome = GatewayProvider::new(format!("http://{addr}"))
+    let outcome = GatewayProvider::with_test_token(format!("http://{addr}"), "test-token")
         .invoke_async(&ControlAction::CreateSession {
             name: None,
             image: None,
@@ -233,12 +227,10 @@ async fn gateway_provider_invokes_fork_over_authenticated_gateway() {
         .expect("bind test gateway");
     let addr = listener.local_addr().expect("local addr");
     let server = tokio::spawn(async move {
-        for _ in 0..2 {
+        for _ in 0..1 {
             let (mut stream, _) = listener.accept().await.expect("accept request");
             let request = read_http_request(&mut stream).await;
-            if request.contains("GET /token ") {
-                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
-            } else {
+            {
                 assert!(
                     request.contains("POST /vms/vm-2/fork "),
                     "unexpected request: {request:?}"
@@ -253,7 +245,7 @@ async fn gateway_provider_invokes_fork_over_authenticated_gateway() {
         }
     });
 
-    let outcome = GatewayProvider::new(format!("http://{addr}"))
+    let outcome = GatewayProvider::with_test_token(format!("http://{addr}"), "test-token")
         .invoke_async(&ControlAction::Fork {
             id: "vm-2".to_string(),
             name: "vm-2-fork-copy".to_string(),
@@ -273,12 +265,10 @@ async fn gateway_provider_invokes_checkpoint_over_suspend_endpoint() {
         .expect("bind test gateway");
     let addr = listener.local_addr().expect("local addr");
     let server = tokio::spawn(async move {
-        for _ in 0..2 {
+        for _ in 0..1 {
             let (mut stream, _) = listener.accept().await.expect("accept request");
             let request = read_http_request(&mut stream).await;
-            if request.contains("GET /token ") {
-                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
-            } else {
+            {
                 assert!(
                     request.contains("POST /vms/vm-1/pause "),
                     "unexpected request: {request:?}"
@@ -288,7 +278,7 @@ async fn gateway_provider_invokes_checkpoint_over_suspend_endpoint() {
         }
     });
 
-    let outcome = GatewayProvider::new(format!("http://{addr}"))
+    let outcome = GatewayProvider::with_test_token(format!("http://{addr}"), "test-token")
         .invoke_async(&ControlAction::Checkpoint {
             id: "vm-1".to_string(),
             label: "main-session".to_string(),
@@ -307,12 +297,10 @@ async fn gateway_provider_invokes_purge_over_authenticated_gateway() {
         .expect("bind test gateway");
     let addr = listener.local_addr().expect("local addr");
     let server = tokio::spawn(async move {
-        for _ in 0..2 {
+        for _ in 0..1 {
             let (mut stream, _) = listener.accept().await.expect("accept request");
             let request = read_http_request(&mut stream).await;
-            if request.contains("GET /token ") {
-                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
-            } else {
+            {
                 assert!(request.contains("POST /purge "), "unexpected request: {request:?}");
                 assert!(
                     request.contains("authorization: Bearer test-token")
@@ -329,7 +317,7 @@ async fn gateway_provider_invokes_purge_over_authenticated_gateway() {
         }
     });
 
-    let outcome = GatewayProvider::new(format!("http://{addr}"))
+    let outcome = GatewayProvider::with_test_token(format!("http://{addr}"), "test-token")
         .invoke_async(&ControlAction::Purge { all: false })
         .await
         .expect("invoke purge");
@@ -346,12 +334,10 @@ async fn gateway_provider_reports_defunct_persistent_purge() {
         .expect("bind test gateway");
     let addr = listener.local_addr().expect("local addr");
     let server = tokio::spawn(async move {
-        for _ in 0..2 {
+        for _ in 0..1 {
             let (mut stream, _) = listener.accept().await.expect("accept request");
             let request = read_http_request(&mut stream).await;
-            if request.contains("GET /token ") {
-                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
-            } else {
+            {
                 assert!(request.contains("POST /purge "), "unexpected request: {request:?}");
                 assert!(request.contains(r#""all":false"#));
                 write_json_response(
@@ -363,7 +349,7 @@ async fn gateway_provider_reports_defunct_persistent_purge() {
         }
     });
 
-    let outcome = GatewayProvider::new(format!("http://{addr}"))
+    let outcome = GatewayProvider::with_test_token(format!("http://{addr}"), "test-token")
         .invoke_async(&ControlAction::Purge { all: false })
         .await
         .expect("invoke purge");
@@ -379,12 +365,10 @@ async fn gateway_provider_surfaces_action_error_body() {
         .expect("bind test gateway");
     let addr = listener.local_addr().expect("local addr");
     let server = tokio::spawn(async move {
-        for _ in 0..2 {
+        for _ in 0..1 {
             let (mut stream, _) = listener.accept().await.expect("accept request");
             let request = read_http_request(&mut stream).await;
-            if request.contains("GET /token ") {
-                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
-            } else {
+            {
                 assert!(
                     request.contains("DELETE /vms/vm-1/delete "),
                     "unexpected request: {request:?}"
@@ -394,7 +378,7 @@ async fn gateway_provider_surfaces_action_error_body() {
         }
     });
 
-    let error = GatewayProvider::new(format!("http://{addr}"))
+    let error = GatewayProvider::with_test_token(format!("http://{addr}"), "test-token")
         .invoke_async(&ControlAction::Delete {
             id: "vm-1".to_string(),
             label: "main-session".to_string(),

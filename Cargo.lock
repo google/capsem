@@ -1405,6 +1405,7 @@ name = "capsem-tui"
 version = "0.7.1"
 dependencies = [
  "anyhow",
+ "capsem-foundation",
  "capsem-sdk",
  "clap",
  "crossterm",
@@ -1413,6 +1414,7 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tokio-tungstenite 0.30.0",
  "vt100",

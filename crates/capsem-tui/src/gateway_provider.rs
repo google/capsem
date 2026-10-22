@@ -6,7 +6,6 @@ use anyhow::{Context, Result};
 use capsem_sdk::models::{HypervisorInfo, ServiceAvailability, UpdateStatusResponse, VmLifecycleState, VmSummary};
 use capsem_sdk::transport::Transport;
 use capsem_sdk::Hypervisor;
-use serde::Deserialize;
 
 use crate::app::ControlAction;
 use crate::model::{
@@ -18,8 +17,7 @@ use crate::provider::StateProvider;
 #[derive(Clone, Debug)]
 pub struct GatewayProvider {
     base_url: String,
-    /// Used only for `GET /token`, which precedes having one.
-    client: reqwest::Client,
+    token_path: PathBuf,
     token: Arc<Mutex<Option<String>>>,
     /// The SDK clients for the current token. They hold the connection pool
     /// (and its TLS setup), so they are built once per token rather than once
@@ -87,7 +85,7 @@ impl GatewayProvider {
         if let Some(token) = self.auth_token()? {
             return Ok(token);
         }
-        let token = fetch_token(&self.client, &self.base_url).await?;
+        let token = load_token(&self.base_url, &self.token_path).await?;
         self.store_auth_token(token)
     }
 }
@@ -96,7 +94,7 @@ impl GatewayProvider {
     pub fn new(base_url: String) -> Self {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
-            client: reqwest::Client::new(),
+            token_path: run_dir().join("gateway.token"),
             token: Arc::new(Mutex::new(None)),
             clients: Arc::new(Mutex::new(None)),
         }
@@ -104,6 +102,13 @@ impl GatewayProvider {
 
     pub fn base_url(&self) -> &str {
         &self.base_url
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_test_token(base_url: String, token: &str) -> Self {
+        let provider = Self::new(base_url);
+        provider.store_auth_token(token.to_string()).unwrap();
+        provider
     }
 
     pub fn default_base_url() -> String {
@@ -193,16 +198,28 @@ impl StateProvider for GatewayProvider {
     }
 }
 
-async fn fetch_token(client: &reqwest::Client, base_url: &str) -> Result<String> {
-    let response = client
-        .get(format!("{base_url}/token"))
-        .send()
+pub(crate) async fn load_token(base_url: &str, token_path: &Path) -> Result<String> {
+    if let Ok(token) = std::env::var("CAPSEM_GATEWAY_TOKEN") {
+        anyhow::ensure!(!token.is_empty(), "CAPSEM_GATEWAY_TOKEN is empty");
+        return Ok(token);
+    }
+    let endpoint = reqwest::Url::parse(base_url).context("parse capsem gateway URL")?;
+    let local = endpoint.host_str().is_some_and(|host| {
+        host == "localhost"
+            || host
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|address| address.is_loopback())
+    });
+    anyhow::ensure!(local, "a remote gateway requires CAPSEM_GATEWAY_TOKEN");
+    let path = token_path.to_path_buf();
+    let bytes = tokio::task::spawn_blocking(move || capsem_foundation::unix::fs::read_regular_file_no_follow(&path))
         .await
-        .context("fetch capsem gateway token")?
-        .error_for_status()
-        .context("capsem gateway token request failed")?;
-    let token: TokenResponse = response.json().await.context("parse capsem gateway token response")?;
-    Ok(token.token)
+        .context("read gateway token task")?
+        .context("gateway token unavailable")?;
+    let token = String::from_utf8(bytes).context("gateway token is not UTF-8")?;
+    let token = token.trim();
+    anyhow::ensure!(!token.is_empty(), "gateway token is empty");
+    Ok(token.to_string())
 }
 
 async fn fetch_status(hypervisor: &Hypervisor) -> Result<HypervisorInfo> {
@@ -215,7 +232,7 @@ fn gateway_port() -> Option<u16> {
     raw.trim().parse().ok()
 }
 
-fn run_dir() -> PathBuf {
+pub(crate) fn run_dir() -> PathBuf {
     if let Ok(run_dir) = std::env::var("CAPSEM_RUN_DIR") {
         return PathBuf::from(run_dir);
     }
@@ -478,11 +495,6 @@ fn home_dir() -> PathBuf {
     std::env::var("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("."))
-}
-
-#[derive(Debug, Deserialize)]
-struct TokenResponse {
-    token: String,
 }
 
 #[cfg(test)]
