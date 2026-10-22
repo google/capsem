@@ -7,7 +7,7 @@ import time
 import msgpack
 import pytest
 from helpers.image_session import image_session, workload_exec
-from helpers.service import vm_session_dir
+from helpers.service import exec_output_text, vm_session_dir
 
 from tests.ironbank.kingslanding.test_run import service
 from tests.ironbank.kingslanding.test_terminal_state import next_state, terminal_summary
@@ -50,6 +50,7 @@ try:
     with open('/workspace/suspend-rollback-write', 'w') as stream:
         stream.write('foreground survived')
     os.write(1, b'20;30m\x1b]2;Foreground survived\x07FOREGROUND-SURVIVED\n')
+    assert os.read(0, 1) == b'q'
 finally:
     termios.tcsetattr(0, termios.TCSANOW, before)
 """
@@ -81,7 +82,14 @@ finally:
                 assert b"38;2;10;20;30" in display(socket, b"FOREGROUND-SURVIVED")
                 result = workload_exec(client, vm_id, "cat /workspace/suspend-rollback-write")
                 assert result["exit_code"] == 0 and result["stdout_text"] == "foreground survived", result
+                thawed = client.post(f"/vms/{vm_id}/exec", {
+                    "target": "vm",
+                    "command": "printf thawed > /etc/capsem-suspend-rollback-probe && cat /etc/capsem-suspend-rollback-probe",
+                    "timeout_secs": 5,
+                }, timeout=15)
+                assert thawed["exit_code"] == 0 and exec_output_text(thawed) == "thawed", thawed
                 assert not (session / "owner/checkpoint.vzsave.complete").exists()
+                send(socket, b"q")
             finally:
                 if fault == "native-slot":
                     invalid_slot.rmdir()
