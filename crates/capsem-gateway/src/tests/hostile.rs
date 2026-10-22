@@ -33,7 +33,7 @@ async fn hostile_host_spellings_are_all_refused() {
     ];
     for host in hosts {
         let (app, _) = guarded_app();
-        let resp = get_with_host(app, "/token", Some(host)).await;
+        let resp = get_with_host(app, "/health", Some(host)).await;
         assert_eq!(
             resp.status(),
             http::StatusCode::FORBIDDEN,
@@ -46,7 +46,7 @@ async fn hostile_host_spellings_are_all_refused() {
 async fn a_second_host_header_does_not_smuggle_a_foreign_host() {
     let (app, _) = guarded_app();
     let mut req = http::Request::builder()
-        .uri("/token")
+        .uri("/health")
         .header(http::header::HOST, "localhost")
         .header(http::header::HOST, "evil.example")
         .body(Body::empty())
@@ -54,9 +54,8 @@ async fn a_second_host_header_does_not_smuggle_a_foreign_host() {
     req.extensions_mut()
         .insert(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 12345))));
     let resp = app.oneshot(req).await.unwrap();
-    // The first value wins for hyper; a foreign value anywhere is still a
-    // request that never came from a real browser on this machine, so either
-    // outcome is acceptable except leaking the token to a foreign first value.
+    // The first value wins for hyper, so either a valid loopback first value
+    // or a refusal is acceptable for this ambiguous raw HTTP request.
     assert!(
         resp.status() == http::StatusCode::OK || resp.status() == http::StatusCode::FORBIDDEN,
         "{}",
@@ -68,7 +67,7 @@ async fn a_second_host_header_does_not_smuggle_a_foreign_host() {
 async fn a_foreign_host_on_an_authenticated_route_is_refused_before_auth() {
     // A correct bearer never rescues a foreign Host: the refusal is a property
     // of the connection's origin, not of the caller's credentials.
-    let (_, state) = token_app();
+    let (_, state) = health_app("/tmp/test.sock");
     let app = axum::Router::new()
         .route("/status", axum::routing::get(handle_health))
         .layer(axum::middleware::from_fn_with_state(
@@ -91,7 +90,7 @@ async fn a_foreign_host_on_an_authenticated_route_is_refused_before_auth() {
 /// Query-string token shapes that must not authenticate a WebSocket route.
 #[tokio::test]
 async fn hostile_query_tokens_do_not_authenticate() {
-    let (_, state) = token_app();
+    let (_, state) = health_app("/tmp/test.sock");
     let token = state.token.clone();
     let queries = [
         format!("xtoken={token}"),
@@ -129,7 +128,7 @@ async fn hostile_query_tokens_do_not_authenticate() {
 
 #[tokio::test]
 async fn query_token_is_only_honoured_on_websocket_routes() {
-    let (_, state) = token_app();
+    let (_, state) = health_app("/tmp/test.sock");
     let app = axum::Router::new()
         .route("/status", axum::routing::get(handle_health))
         .layer(axum::middleware::from_fn_with_state(

@@ -6,10 +6,11 @@
 //! origin's host-only, SameSite=Lax session cookie, which a page on any other
 //! site cannot send. So the gateway serves the pinned xpra-html5 client there
 //! (see `client` and `preview`), and its own origin serves only a launcher:
-//! `GET /vms/{id}/surface/` reads the gateway token like the Capsem UI does,
-//! mints a single-use bootstrap with `POST /vms/{id}/surface/session`, and
-//! POSTs it to the surface's origin, which sets the cookie and opens the
-//! client. No token appears in any URL.
+//! The desktop UI mints a single-use bootstrap with an authenticated
+//! `POST /vms/{id}/surface/session`, then opens the launcher with that limited
+//! capability in a URL fragment. The launcher POSTs it to the surface's
+//! origin, which sets the cookie and opens the client. The gateway bearer
+//! never enters the external browser.
 
 mod client;
 
@@ -98,9 +99,9 @@ fn hardened(response: impl IntoResponse, content_type: &'static str, policy: Str
     response
 }
 
-/// GET /vms/{id}/surface/ -- the launcher page. It holds nothing secret, so
-/// it is served without a bearer token. A page another site opened must be
-/// clicked through: it can open this tab, but not open the app in it.
+/// GET /vms/{id}/surface/ -- the launcher page. It holds no gateway bearer,
+/// so it is served without one. A page another site opened must be clicked
+/// through; a page without a minted preview bootstrap cannot open the app.
 pub async fn launcher(State(state): State<Arc<AppState>>, Path(vm_id): Path<String>, headers: HeaderMap) -> Response {
     if !crate::preview::safe_id(&vm_id) {
         return StatusCode::BAD_REQUEST.into_response();

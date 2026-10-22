@@ -154,7 +154,8 @@ async fn the_launcher_is_served_without_a_token_and_holds_none() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(headers[http::header::CONTENT_TYPE], "text/javascript; charset=utf-8");
     assert!(script.contains("form.method = \"POST\"") && script.contains("bootstrap_token"));
-    assert!(!script.contains("?token") && !script.contains("location.search"));
+    assert!(script.contains("location.hash") && script.contains("history.replaceState"));
+    assert!(!script.contains("/token") && !script.contains("Authorization"));
 }
 
 #[tokio::test]

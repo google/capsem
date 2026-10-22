@@ -189,11 +189,11 @@ pub fn token_matches(candidate: &str, token: &str) -> bool {
 
 /// True unless the request names a host that is not this machine.
 ///
-/// The gateway binds 127.0.0.1 and `/token` trusts a loopback peer, but a page
-/// at `http://evil.example:19222` whose DNS answer flips to 127.0.0.1 (DNS
-/// rebinding) is a loopback peer making a same-origin request: CORS never
-/// enters into it. The Host header is the one thing such a page cannot forge,
-/// so a foreign host is refused on every route. An absent header passes:
+/// The gateway binds 127.0.0.1, but a page at `http://evil.example:19222`
+/// whose DNS answer flips to 127.0.0.1 (DNS rebinding) is a loopback peer
+/// making a same-origin request: CORS never enters into it. The Host header
+/// is the one thing such a page cannot forge, so a foreign host is refused on
+/// every route. An absent header passes:
 /// browsers always send Host, so it cannot be a rebinding page, only raw
 /// HTTP/1.0 tooling.
 pub fn request_names_loopback_host<B>(req: &Request<B>) -> bool {
@@ -224,8 +224,8 @@ fn is_stream_path(path: &str) -> bool {
 
 /// `/vms/{id}/surface/` and its `launch.js`: the static launcher of a VM's
 /// app surface. A browser opens it by URL, so it cannot carry a bearer
-/// header; it holds nothing secret and fetches the token from `/token` on
-/// the gateway's own origin.
+/// header; it holds no gateway bearer and consumes only a one-use preview
+/// bootstrap passed in its URL fragment by the desktop app.
 fn is_surface_launcher_path(path: &str) -> bool {
     matches!(
         path.trim_start_matches('/').split('/').collect::<Vec<_>>().as_slice(),
@@ -234,7 +234,7 @@ fn is_surface_launcher_path(path: &str) -> bool {
 }
 
 /// Axum middleware: refuse foreign hosts, then require a Bearer token on all
-/// routes except `GET /health`, `GET /token` and the surface launcher.
+/// routes except `GET /health` and the surface launcher.
 pub async fn auth_middleware(
     State(state): State<Arc<AppState>>,
     req: Request<axum::body::Body>,
@@ -249,11 +249,9 @@ pub async fn auth_middleware(
             .into_response();
     }
 
-    // Health check and token endpoint are unauthenticated (token has its own IP check)
+    // Health check and the static surface launcher are unauthenticated.
     let path = req.uri().path();
-    if req.method() == http::Method::GET
-        && (path == "/" || path == "/health" || path == "/token" || is_surface_launcher_path(path))
-    {
+    if req.method() == http::Method::GET && (path == "/" || path == "/health" || is_surface_launcher_path(path)) {
         return next.run(req).await;
     }
 

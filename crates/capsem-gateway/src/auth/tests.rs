@@ -409,7 +409,7 @@ async fn health_exempt_only_exact_paths() {
 }
 
 #[tokio::test]
-async fn token_endpoint_exempt_from_auth() {
+async fn token_endpoint_is_not_available_to_raw_local_clients() {
     let app = test_app("tok");
     let resp = app
         .oneshot(
@@ -421,10 +421,7 @@ async fn token_endpoint_exempt_from_auth() {
         )
         .await
         .unwrap();
-    // Should pass through middleware without 401 (handler may still fail
-    // without ConnectInfo in unit test, but the point is it's not rejected
-    // by auth middleware).
-    assert_ne!(resp.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
 // --- WebSocket query-param auth ---
@@ -578,7 +575,7 @@ async fn post_to_token_requires_auth() {
         )
         .await
         .unwrap();
-    // POST /token is not exempt (only GET is)
+    // Neither method on the retired token path bypasses authentication.
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 

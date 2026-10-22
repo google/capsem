@@ -16,7 +16,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use axum::extract::connect_info::ConnectInfo;
 use axum::extract::State;
 use axum::response::IntoResponse;
 use axum::routing::{delete, get, patch, post, put};
@@ -168,27 +167,7 @@ async fn run(args: Args) -> Result<()> {
         preview::serve(preview_listener, preview_state).await;
     });
 
-    let app = Router::new()
-        .route("/", get(handle_health))
-        .route("/health", get(handle_health))
-        .route("/token", get(handle_token))
-        .route("/status", get(status::handle_status))
-        .route("/events", get(handle_events_ws))
-        .merge(schema::routes())
-        .merge(surface::routes())
-        .merge(service_proxy_routes())
-        .layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            auth::auth_middleware,
-        ))
-        .layer(
-            CorsLayer::new()
-                .allow_origin(AllowOrigin::predicate(|origin, _| cors::is_allowed_origin(origin)))
-                .allow_methods(tower_http::cors::Any)
-                .allow_headers(tower_http::cors::Any),
-        )
-        .layer(request_trace_layer())
-        .with_state(state.clone());
+    let app = gateway_router(state.clone());
 
     auth_state.publish(&state.token, bound_port, preview_port)?;
 
@@ -213,6 +192,29 @@ async fn run(args: Args) -> Result<()> {
     .context("server error")?;
 
     Ok(())
+}
+
+fn gateway_router(state: Arc<AppState>) -> Router {
+    Router::new()
+        .route("/", get(handle_health))
+        .route("/health", get(handle_health))
+        .route("/status", get(status::handle_status))
+        .route("/events", get(handle_events_ws))
+        .merge(schema::routes())
+        .merge(surface::routes())
+        .merge(service_proxy_routes())
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            auth::auth_middleware,
+        ))
+        .layer(
+            CorsLayer::new()
+                .allow_origin(AllowOrigin::predicate(|origin, _| cors::is_allowed_origin(origin)))
+                .allow_methods(tower_http::cors::Any)
+                .allow_headers(tower_http::cors::Any),
+        )
+        .layer(request_trace_layer())
+        .with_state(state)
 }
 
 #[cfg(target_os = "linux")]
@@ -480,26 +482,6 @@ fn request_trace_layer() -> TraceLayer<
             version = ?req.version(),
         )
     })
-}
-
-/// Return the auth token to the app or gateway browser origin on loopback.
-async fn handle_token(
-    State(state): State<Arc<AppState>>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    headers: http::HeaderMap,
-) -> impl IntoResponse {
-    if !addr.ip().is_loopback()
-        || headers
-            .get(http::header::ORIGIN)
-            .is_some_and(|origin| !cors::is_allowed_origin(origin))
-    {
-        return (
-            axum::http::StatusCode::FORBIDDEN,
-            Json(serde_json::json!({"error": "forbidden"})),
-        )
-            .into_response();
-    }
-    Json(serde_json::json!({ "token": state.token })).into_response()
 }
 
 async fn shutdown_signal() {

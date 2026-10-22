@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Remove the unauthenticated gateway token endpoint. The desktop shell reads
+  its private token through IPC, and external app surfaces receive only a
+  single-use preview bootstrap.
+
 - Guest MCP port exposure now allocates its host loopback port; a guest cannot
   select a fixed port already trusted by another host application.
 

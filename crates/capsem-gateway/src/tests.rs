@@ -111,86 +111,28 @@ async fn health_version_matches_cargo_pkg() {
     assert_eq!(json["version"].as_str().unwrap(), env!("CARGO_PKG_VERSION"));
 }
 
-// --- Token endpoint ---
-
-fn token_app() -> (axum::Router, Arc<AppState>) {
-    let state = Arc::new(AppState {
-        token: "test-secret-token-64chars-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
-        uds_path: "/tmp/test.sock".into(),
-        service_client: ServiceClient::new(std::path::Path::new("/tmp/test.sock")),
-        status_cache: StatusCache::new(),
-        auth_failures: AuthFailureTracker::new(),
-        events_tx: tokio::sync::broadcast::channel(16).0,
-        previews: crate::preview::PreviewState::new(0),
-    });
-    let app = axum::Router::new()
-        .route("/token", axum::routing::get(handle_token))
-        .with_state(state.clone());
-    (app, state)
-}
-
 #[tokio::test]
-async fn token_returns_token_from_loopback() {
-    let (app, state) = token_app();
-    let mut req = http::Request::builder().uri("/token").body(Body::empty()).unwrap();
-    req.extensions_mut()
-        .insert(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 12345))));
-    let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), http::StatusCode::OK);
-    let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
-    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(json["token"].as_str().unwrap(), state.token);
-}
-
-#[tokio::test]
-async fn token_rejects_non_loopback_ip() {
-    let (app, _) = token_app();
-    let mut req = http::Request::builder().uri("/token").body(Body::empty()).unwrap();
-    req.extensions_mut()
-        .insert(ConnectInfo(SocketAddr::from(([192, 168, 1, 100], 12345))));
-    let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), http::StatusCode::FORBIDDEN);
-    let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
-    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(json["error"], "forbidden");
-}
-
-#[tokio::test]
-async fn token_allows_ipv6_loopback() {
-    let (app, _) = token_app();
-    let mut req = http::Request::builder().uri("/token").body(Body::empty()).unwrap();
-    req.extensions_mut()
-        .insert(ConnectInfo(SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], 12345))));
-    let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), http::StatusCode::OK);
-}
-
-#[tokio::test]
-async fn token_rejects_guest_published_browser_origin() {
-    let (app, _) = token_app();
-    let mut req = http::Request::builder()
+async fn production_router_has_no_token_disclosure_route() {
+    let (_, state) = health_app("/tmp/test.sock");
+    let app = gateway_router(state.clone());
+    let request = http::Request::builder()
         .uri("/token")
-        .header(http::header::ORIGIN, "http://127.0.0.1:63575")
+        .header(http::header::HOST, "127.0.0.1:19222")
         .body(Body::empty())
         .unwrap();
-    req.extensions_mut()
-        .insert(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 12345))));
-    let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), http::StatusCode::FORBIDDEN);
-}
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), http::StatusCode::UNAUTHORIZED);
 
-#[tokio::test]
-async fn token_accepts_tauri_origin() {
-    let (app, _) = token_app();
-    let mut req = http::Request::builder()
+    let request = http::Request::builder()
         .uri("/token")
-        .header(http::header::ORIGIN, "tauri://localhost")
+        .header(http::header::HOST, "127.0.0.1:19222")
+        .header(http::header::AUTHORIZATION, format!("Bearer {}", state.token))
         .body(Body::empty())
         .unwrap();
-    req.extensions_mut()
-        .insert(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 12345))));
-    let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), http::StatusCode::OK);
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), http::StatusCode::NOT_FOUND);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert!(!String::from_utf8_lossy(&body).contains(&state.token));
 }
 
 // --- CORS restriction (issue #1) ---
@@ -385,31 +327,6 @@ async fn health_reports_service_socket_path() {
     assert_eq!(json["service_socket"].as_str().unwrap(), "/tmp/unique-socket-path.sock");
 }
 
-// --- Token endpoint: loopback matrix ---
-
-#[tokio::test]
-async fn token_rejects_another_external_ipv4() {
-    let (app, _) = token_app();
-    let mut req = http::Request::builder().uri("/token").body(Body::empty()).unwrap();
-    req.extensions_mut()
-        .insert(ConnectInfo(SocketAddr::from(([8, 8, 8, 8], 443))));
-    let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), http::StatusCode::FORBIDDEN);
-}
-
-#[tokio::test]
-async fn token_rejects_external_ipv6() {
-    let (app, _) = token_app();
-    let mut req = http::Request::builder().uri("/token").body(Body::empty()).unwrap();
-    // 2001:4860:4860::8888 (public Google DNS) -- not loopback.
-    req.extensions_mut().insert(ConnectInfo(SocketAddr::from((
-        [0x2001, 0x4860, 0x4860, 0, 0, 0, 0, 0x8888],
-        443,
-    ))));
-    let resp = app.oneshot(req).await.unwrap();
-    assert_eq!(resp.status(), http::StatusCode::FORBIDDEN);
-}
-
 // --- Events WebSocket: verify the route mounts and upgrades ---
 
 #[tokio::test]
@@ -436,17 +353,14 @@ async fn events_ws_without_upgrade_header_is_rejected() {
 
 // --- Host header: DNS rebinding ---
 //
-// `/token` is unauthenticated and gated by the peer being loopback. A page at
-// `http://evil.example:19222` whose DNS answer flips to 127.0.0.1 is a
-// same-origin caller from a loopback peer: CORS never enters into it, and the
-// token came back. The Host header is the one thing a rebinding page cannot
-// forge, so every request must name a loopback host.
+// A page at `http://evil.example:19222` whose DNS answer flips to 127.0.0.1
+// can make same-origin requests: CORS never enters into it. Every request must
+// still name a loopback host.
 
 fn guarded_app() -> (axum::Router, Arc<AppState>) {
-    let (_, state) = token_app();
+    let (_, state) = health_app("/tmp/test.sock");
     let app = axum::Router::new()
         .route("/health", axum::routing::get(handle_health))
-        .route("/token", axum::routing::get(handle_token))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::auth_middleware,
@@ -464,18 +378,6 @@ async fn get_with_host(app: axum::Router, path: &str, host: Option<&str>) -> htt
     req.extensions_mut()
         .insert(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 12345))));
     app.oneshot(req).await.unwrap()
-}
-
-#[tokio::test]
-async fn token_refuses_a_rebound_host_from_a_loopback_peer() {
-    let (app, state) = guarded_app();
-    let resp = get_with_host(app, "/token", Some("evil.example:19222")).await;
-    assert_eq!(resp.status(), http::StatusCode::FORBIDDEN);
-    let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
-    assert!(
-        !String::from_utf8_lossy(&body).contains(&state.token),
-        "the token must not leave for a foreign host"
-    );
 }
 
 #[tokio::test]
@@ -503,12 +405,9 @@ async fn loopback_hosts_in_every_spelling_are_accepted() {
         "[::1]",
         "[::1]:19222",
     ] {
-        let (app, state) = guarded_app();
-        let resp = get_with_host(app, "/token", Some(host)).await;
+        let (app, _) = guarded_app();
+        let resp = get_with_host(app, "/health", Some(host)).await;
         assert_eq!(resp.status(), http::StatusCode::OK, "host {host}");
-        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(json["token"], state.token, "host {host}");
     }
 }
 
