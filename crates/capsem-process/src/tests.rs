@@ -492,8 +492,8 @@ fn args_checkpoint_path_set() {
 }
 
 #[test]
-fn args_env_vars_parsed() {
-    let args = Args::try_parse_from([
+fn args_reject_secret_bearing_env_flags() {
+    let result = Args::try_parse_from([
         "capsem-process",
         "--id",
         "vm",
@@ -515,52 +515,8 @@ fn args_env_vars_parsed() {
         "/u",
         "--env",
         "FOO=bar",
-        "--env",
-        "BAZ=qux",
-    ])
-    .unwrap();
-    assert_eq!(args.env, vec!["FOO=bar", "BAZ=qux"]);
-}
-
-// -----------------------------------------------------------------------
-// CLI env parsing (used in run_async_main_loop)
-// -----------------------------------------------------------------------
-
-#[test]
-fn cli_env_parsing_valid() {
-    let env = ["FOO=bar".to_string(), "BAZ=qux=extra".to_string()];
-    let parsed: Vec<(String, String)> = env
-        .iter()
-        .filter_map(|kv| kv.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
-        .collect();
-    assert_eq!(
-        parsed,
-        vec![
-            ("FOO".to_string(), "bar".to_string()),
-            ("BAZ".to_string(), "qux=extra".to_string()),
-        ]
-    );
-}
-
-#[test]
-fn cli_env_parsing_no_equals_skipped() {
-    let env = ["NOEQ".to_string(), "GOOD=val".to_string()];
-    let parsed: Vec<(String, String)> = env
-        .iter()
-        .filter_map(|kv| kv.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
-        .collect();
-    assert_eq!(parsed.len(), 1);
-    assert_eq!(parsed[0], ("GOOD".to_string(), "val".to_string()));
-}
-
-#[test]
-fn cli_env_parsing_empty_value() {
-    let env = ["KEY=".to_string()];
-    let parsed: Vec<(String, String)> = env
-        .iter()
-        .filter_map(|kv| kv.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
-        .collect();
-    assert_eq!(parsed, vec![("KEY".to_string(), "".to_string())]);
+    ]);
+    assert!(result.is_err());
 }
 
 // -----------------------------------------------------------------------

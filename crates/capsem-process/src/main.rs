@@ -1,5 +1,6 @@
 mod aggregator;
 mod cables;
+mod guest_env;
 mod helpers;
 mod ipc;
 mod job_store;
@@ -191,9 +192,6 @@ struct Args {
     metric_broker: bool,
     #[arg(long)]
     checkpoint_path: Option<PathBuf>,
-    /// Environment variables to inject into guest (repeatable: --env KEY=VALUE)
-    #[arg(long = "env")]
-    env: Vec<String>,
 }
 
 /// Generate a short (16-hex-char) correlation id for this
@@ -310,6 +308,7 @@ fn main() -> Result<()> {
     }
     let _owner_singleton = capsem_guard::Singleton::try_acquire(&session_dir.join("process.lock"))?
         .context("this session already has a running VM owner")?;
+    let guest_env = guest_env::load(&session_dir)?;
 
     // A current-thread runtime creates no worker before confinement. Tasks
     // queued during preparation start only after the sandbox is installed.
@@ -501,6 +500,7 @@ fn main() -> Result<()> {
     rt.spawn(async move {
         if let Err(e) = Box::pin(run_async_main_loop(
             args,
+            guest_env,
             controller,
             vm_arc,
             vsock_rx,
@@ -583,6 +583,7 @@ fn main() -> Result<()> {
 #[allow(clippy::too_many_arguments)]
 async fn run_async_main_loop(
     args: Args,
+    cli_env: Vec<(String, String)>,
     controller: capsem_foundation::unix::peer::PeerIdentity,
     vm: Arc<tokio::sync::Mutex<Box<dyn capsem_core::hypervisor::VmHandle>>>,
     vsock_rx: mpsc::UnboundedReceiver<VsockConnection>,
@@ -773,13 +774,6 @@ async fn run_async_main_loop(
 
     let net_state_clone = Arc::clone(&net_state);
     let upstream_grants_for_vsock = Arc::clone(&upstream_grants);
-
-    // Parse --env KEY=VALUE pairs for guest injection
-    let cli_env: Vec<(String, String)> = args
-        .env
-        .iter()
-        .filter_map(|kv| kv.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
-        .collect();
 
     let vm_ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
