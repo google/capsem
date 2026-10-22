@@ -7,9 +7,11 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 from capsem_builder.gate.shellnodes import commands
 from capsem_builder.gate.shellparse import parse
+from capsem_builder.gate.tools.ci import classify_ci_scope
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github" / "workflows" / "ci.yaml"
@@ -274,3 +276,19 @@ def test_public_web_deployments_run_only_for_owned_and_shared_inputs() -> None:
         "web/marketing/**",
         "web/graphics/**",
     }
+
+
+@pytest.mark.parametrize("path", (
+    "third_party/rust/vte/src/ansi.rs", "third_party/rust/vte/Cargo.toml",
+    "third_party/rust/alacritty_terminal/LICENSE-APACHE",
+))
+def test_vendored_terminal_changes_require_the_product_ci_jobs(path: str) -> None:
+    assert (ROOT / path).is_file()
+    assert classify_ci_scope.ci_scopes((path,)) == {"rust_guest_config"}
+    assert classify_ci_scope.ci_owners((path,)) == classify_ci_scope.PRODUCT_JOBS | classify_ci_scope.FAST_AND_FINAL
+
+
+@pytest.mark.parametrize("path", ("third_party/python/library.py", "third_party/rusty/library.rs"))
+def test_unknown_vendor_subtrees_still_fail_closed(path: str) -> None:
+    with pytest.raises(ValueError, match="unowned"):
+        classify_ci_scope.ci_scopes((path,))

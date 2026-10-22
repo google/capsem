@@ -64,6 +64,7 @@ KNOWN_DIRECTORIES = frozenset(
         "sprints",
         "src",
         "tests",
+        "third_party",
         "tmp",
         "web",
     }
@@ -214,7 +215,11 @@ def _path_scopes(path: str) -> frozenset[str]:
         scopes = {"benchmarks"}
     elif root in {"mcp", "sdk"}:
         scopes = {"sdk"}
-    elif root in RUST_GUEST_CONFIG_ROOTS or path in RUST_GUEST_CONFIG_FILES:
+    elif (
+        root in RUST_GUEST_CONFIG_ROOTS
+        or path in RUST_GUEST_CONFIG_FILES
+        or path.startswith("third_party/rust/")
+    ):
         scopes = {"rust_guest_config"}
     elif root in SHARED_ROOTS or root in KNOWN_ROOT_FILES:
         scopes = {"shared"}
@@ -235,11 +240,7 @@ def ci_scopes(paths: Iterable[str]) -> frozenset[str]:
 
 def ci_owners(paths: Iterable[str]) -> frozenset[str]:
     """Return required CI job owners for changed paths."""
-    scopes = ci_scopes(paths)
-    owners = set(FAST_AND_FINAL)
-    for scope in scopes:
-        owners.update(SCOPE_JOBS[scope])
-    return frozenset(owners)
+    return FAST_AND_FINAL.union(*(SCOPE_JOBS[scope] for scope in ci_scopes(paths)))
 
 
 def paths_from_git(payload: bytes) -> tuple[str, ...]:
