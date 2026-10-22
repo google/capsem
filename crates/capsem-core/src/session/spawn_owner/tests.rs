@@ -1,5 +1,6 @@
 use super::*;
 use capsem_foundation::unix::process::parent_process_id;
+use std::io::{BufRead, Write};
 
 fn new_binding() -> VmBinding {
     VmBinding::new("owner-vm".into(), capsem_crypto::uuid_v4()).unwrap()
@@ -140,6 +141,8 @@ fn spawn_owner_subprocess_fixture() {
     let binding: VmBinding = serde_json::from_str(&std::env::var("CAPSEM_TEST_OWNER_BINDING").unwrap()).unwrap();
     let parent = parent_process_id().unwrap().get();
     let _owner = enter(Path::new(&path), &binding, parent).unwrap();
+    println!("CAPSEM_OWNER_READY");
+    std::io::stdout().flush().unwrap();
     let mut input = String::new();
     std::io::stdin().read_to_string(&mut input).unwrap();
 }
@@ -168,18 +171,24 @@ fn spawn_owner_subprocess_holds_native_lifetime_until_actual_exit() {
             .env("CAPSEM_TEST_OWNER_ROOT", directory.path())
             .env("CAPSEM_TEST_OWNER_BINDING", serde_json::to_string(&binding).unwrap())
             .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
             .spawn()
             .unwrap(),
     );
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-    while read(&root).unwrap().unwrap().pid != Some(child.0.id()) {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "native child did not publish its witness"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
+    // `read` verifies a single-linked private witness. Polling it during the
+    // child's atomic rename can open the old inode just before it is unlinked.
+    // Observe publication through the child, then read its stable witness.
+    let output = child.0.stdout.take().unwrap();
+    let (ready, published) = std::sync::mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        for line in std::io::BufReader::new(output).lines() {
+            if line.unwrap() == "CAPSEM_OWNER_READY" {
+                ready.send(()).unwrap();
+            }
+        }
+    });
+    published.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+    assert_eq!(read(&root).unwrap().unwrap().pid, Some(child.0.id()));
     assert!(
         fence(directory.path(), &binding).is_err(),
         "cross-process lifetime lock was bypassed"
@@ -193,6 +202,7 @@ fn spawn_owner_subprocess_holds_native_lifetime_until_actual_exit() {
     assert_eq!(fenced.pid().unwrap().get(), child.0.id());
     assert!(fenced.confirm_exit().unwrap());
     assert!(child.0.wait().unwrap().success());
+    reader.join().unwrap();
     assert!(enter(directory.path(), &binding, std::process::id()).is_err());
     drop(fenced);
     assert!(fence(directory.path(), &binding).unwrap().confirm_exit().unwrap());
