@@ -1,6 +1,7 @@
 import {execFileSync, spawnSync} from 'node:child_process';
 import {copyFileSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync} from 'node:fs';
 import {sha256} from '../../../sdk/typescript/tools/crypto.mjs';
+import {packPackage} from '../../../sdk/typescript/tools/pack.mjs';
 import {createServer as createHttpServer} from 'node:http';
 import type {AddressInfo} from 'node:net';
 import {homedir, tmpdir} from 'node:os';
@@ -36,9 +37,7 @@ describe('packed-package', () => {
     fixtures.push(fixture);
     const input = join(fixture, 'selected'), output = join(fixture, 'acceptance');
     mkdirSync(input);
-    execFileSync('pnpm', ['pack', '--config.ignore-scripts=true', '--pack-destination', input], {
-      cwd: join(project, '../../sdk/typescript'), stdio: 'pipe', timeout: 15_000,
-    });
+    packPackage(join(project, '../../sdk/typescript'), input);
     const name = readdirSync(input).find(name => name.endsWith('.tgz'));
     expect(name).toBeDefined();
     const selected = join(input, name!);
@@ -51,7 +50,8 @@ describe('packed-package', () => {
     const result = spawnSync(process.execPath, [join(project, 'tools/prewarm-package.mjs')], {
       cwd: project, encoding: 'utf8', timeout: 90_000,
       env: {...process.env, CAPSEM_SDK_PACKAGE_ARCHIVES: input,
-        CAPSEM_MCP_PACKAGE_ARCHIVES: output, NPM_CONFIG_OFFLINE: 'true'},
+        CAPSEM_MCP_PACKAGE_ARCHIVES: output, NPM_CONFIG_OFFLINE: 'true',
+        COREPACK_HOME: join(fixture, 'empty-corepack'), COREPACK_ENABLE_NETWORK: '0'},
     });
     expect(result.status, result.stdout + result.stderr).toBe(0);
     expect(digest(join(output, name!))).toBe(before);
@@ -95,9 +95,7 @@ describe('packed-package', () => {
         const path = join(selectedDirectory, `capsem-${owner}-${version}.tgz`);
         retained.push({path, sha256: digest(path)});
         copyFileSync(path, join(destination, `capsem-${owner}-${version}.tgz`));
-      } else execFileSync('pnpm', ['pack', '--config.ignore-scripts=true', '--pack-destination', destination], {
-        cwd: source, stdio: 'pipe', timeout: 15_000, env: {...process.env, HOME: fixture},
-      });
+      } else packPackage(source, destination, {...process.env, HOME: fixture});
       const name = readdirSync(destination).find(entry => entry.endsWith('.tgz'));
       if (!name) throw new Error('pnpm pack did not create a tarball');
       const archive = join(destination, name);

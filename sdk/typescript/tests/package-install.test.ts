@@ -1,10 +1,11 @@
 import {execFileSync, spawnSync} from 'node:child_process';
 import {sha256} from '../tools/crypto.mjs';
+import {packPackage} from '../tools/pack.mjs';
 import {copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, relative, resolve, sep} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {expect, it} from 'vitest';
+import {expect, it, vi} from 'vitest';
 
 interface Manifest {name: string; version: string; dependencies: Record<string, string>; devDependencies: Record<string, string>}
 interface Report {ok: boolean; sha256: string; version: string; httpPaths: string[]; lifecyclePaths: string[]; credentialPaths: string[]; nodeVersion: string; nodeExecutable: string; nodeArgs: string[]}
@@ -14,6 +15,17 @@ const root = resolve(source, '../..');
 const sha = (path: string): string => sha256(readFileSync(path));
 const usableHome = (): string => process.env.HOME && existsSync(process.env.HOME) ? process.env.HOME : tmpdir();
 const npmCache = (): string => process.env.NPM_CONFIG_CACHE ?? join(usableHome(), '.npm');
+
+it.each([undefined, 'pnpm', '/not-selected/npm-cli.js'])('refuses an unselected package manager: %s', manager => {
+  vi.stubEnv('npm_execpath', manager);
+  try {
+    expect(() => packPackage('/not-used', '/not-used')).toThrow(
+      'run packaging through pnpm run to retain the selected package manager',
+    );
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
 
 it('prewarms offline without forwarding unsupported pnpm settings to npm', () => {
   const prewarm = spawnSync(process.execPath, [join(source, 'tools/prewarm-package.mjs')], {
@@ -73,9 +85,7 @@ it('installs and exercises the actual SDK tarball without checkout or developmen
       expect(lstatSync(selectedArchive).isFile()).toBe(true);
       copyFileSync(selectedArchive, join(archiveDirectory, 'selected-sdk.tgz'));
     }
-    else execFileSync('pnpm', ['pack', '--config.ignore-scripts=true', '--pack-destination', archiveDirectory], {
-      cwd: source, stdio: 'pipe', timeout: 15_000, env: {...process.env, HOME: usableHome()},
-    });
+    else packPackage(source, archiveDirectory, {...process.env, HOME: usableHome()});
     const archives = readdirSync(archiveDirectory).filter(name => name.endsWith('.tgz'));
     expect(archives).toHaveLength(1);
     const archive = join(archiveDirectory, archives[0]!);

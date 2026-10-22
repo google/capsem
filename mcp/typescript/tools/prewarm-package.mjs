@@ -6,6 +6,7 @@ import {homedir, tmpdir} from 'node:os';
 import {join} from 'node:path';
 import process from 'node:process';
 import {fileURLToPath} from 'node:url';
+import {packPackage} from '../../../sdk/typescript/tools/pack.mjs';
 
 const project = fileURLToPath(new URL('../', import.meta.url));
 const fixture = mkdtempSync(join(tmpdir(), 'capsem-mcp-prewarm-'));
@@ -24,9 +25,7 @@ try {
       assert.ok(stat.isFile() && !stat.isSymbolicLink(), 'selected SDK archive must be a regular file');
       copyFileSync(selected, join(output, `capsem-sdk-${version}.tgz`));
     } else {
-      execFileSync('pnpm', ['pack', '--config.ignore-scripts=true', '--pack-destination', output], {
-        cwd: source, stdio: 'pipe', timeout: 15_000, env: {...process.env, HOME: fixture},
-      });
+      packPackage(source, output, {...process.env, HOME: fixture});
     }
     const names = readdirSync(output).filter(name => name === `capsem-${owner}-${version}.tgz`);
     assert.equal(names.length, 1);
