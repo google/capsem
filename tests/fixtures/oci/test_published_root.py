@@ -66,14 +66,16 @@ def test_a_producer_output_for_another_image_is_not_staged(tmp_path):
     assert not (layout / "rootfs-v2").exists()
 
 
-def test_the_registry_serves_the_catalog_and_subject_bound_root(tmp_path):
+@pytest.mark.parametrize("surface", ["terminal", "xpra"])
+def test_the_registry_serves_the_catalog_and_subject_bound_root(tmp_path, surface):
     import ssl
     import urllib.request
 
     from tests.fixtures.oci.published_root import ready, stage
     from tests.fixtures.oci.registry import grant_exact, layout_registry
 
-    layout, subject, _ = _layout(tmp_path)
+    labels = {"org.capsem.surface": "xpra"} if surface == "xpra" else {}
+    layout, subject, _ = _layout(tmp_path, config={"Labels": labels})
     output = tmp_path / "output"
     output.mkdir()
     payload = b"prepared filesystem"
@@ -92,6 +94,7 @@ def test_the_registry_serves_the_catalog_and_subject_bound_root(tmp_path):
 
         artifact = json.loads(get("/v2/library/catalog/manifests/stable"))
         catalog = json.loads(get(f"/v2/library/catalog/blobs/{artifact['layers'][0]['digest']}"))
+        assert catalog["entries"]["fixture"]["surface"] == surface
         (version,) = catalog["entries"]["fixture"]["versions"]
         assert version["image"] == image
         root = json.loads(get(f"/v2/library/fixture/manifests/{version['erofs']['arm64']}"))

@@ -78,7 +78,7 @@ def test_only_private_ghcr_uses_the_existing_github_login(
     )
 
 
-def _layout(root, *, architecture="arm64", media=MANIFEST):
+def _layout(root, *, architecture="arm64", media=MANIFEST, config=None):
     """A one-layer OCI layout; returns (layout, manifest digest, blobs by digest)."""
     blobs = {}
 
@@ -87,7 +87,10 @@ def _layout(root, *, architecture="arm64", media=MANIFEST):
         blobs[digest] = data
         return {"mediaType": kind, "digest": digest, "size": len(data)}
 
-    config = blob(json.dumps({"os": "linux", "architecture": architecture}).encode(), "config")
+    config = blob(
+        json.dumps({"os": "linux", "architecture": architecture, "config": config or {}}).encode(),
+        "config",
+    )
     layer = blob(b"layer bytes", "application/vnd.oci.image.layer.v1.tar+gzip")
     manifest = json.dumps(
         {"schemaVersion": 2, "mediaType": media, "config": config, "layers": [layer]}

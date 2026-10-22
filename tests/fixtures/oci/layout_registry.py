@@ -56,6 +56,9 @@ def layout_registry(directory, layout, image, *, referrers_api=True):
                 {
                     image: {
                         "description": "Prepared native fixture",
+                        "surface": (config.get("config", {}).get("Labels") or {}).get(
+                            "org.capsem.surface", "terminal"
+                        ),
                         "versions": [
                             {
                                 "image": reference,
