@@ -7,10 +7,12 @@
 
 mod asset_install;
 mod candidate_audit;
+mod privileged_install;
 mod verified_update;
 
 use asset_install::*;
 use candidate_audit::*;
+use privileged_install::*;
 use verified_update::*;
 
 #[cfg(test)]
@@ -104,11 +106,6 @@ pub struct BinaryInstaller {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct BinaryInstallerApplyPlan {
-    commands: Vec<BinaryInstallerApplyCommand>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 enum ChannelTransition {
     Preserve,
     PreservePackageOrigin,
@@ -134,49 +131,6 @@ impl ChannelTransition {
             Self::PreservePackageOrigin => ManifestMetadataPolicy::PreservePackageOrigin,
             Self::Preserve | Self::Public(_) | Self::Corporate => ManifestMetadataPolicy::RecordSource,
         }
-    }
-}
-
-impl BinaryInstallerApplyPlan {
-    fn command_lines(&self) -> Vec<String> {
-        self.commands
-            .iter()
-            .map(BinaryInstallerApplyCommand::command_line)
-            .collect()
-    }
-}
-
-async fn apply_binary_installer_plan(plan: &BinaryInstallerApplyPlan) -> Result<()> {
-    for command in &plan.commands {
-        let line = command.command_line();
-        info!("applying binary update with package manager: {line}");
-        let status = tokio::process::Command::new(&command.program)
-            .args(&command.args)
-            .status()
-            .await
-            .with_context(|| format!("run binary update apply command: {line}"))?;
-        if !status.success() {
-            anyhow::bail!(
-                "binary update apply command failed with {status}: {line}. Current installation was left for the package manager to preserve or repair."
-            );
-        }
-    }
-    Ok(())
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct BinaryInstallerApplyCommand {
-    program: String,
-    args: Vec<String>,
-}
-
-impl BinaryInstallerApplyCommand {
-    fn command_line(&self) -> String {
-        std::iter::once(self.program.as_str())
-            .chain(self.args.iter().map(String::as_str))
-            .map(shell_quote)
-            .collect::<Vec<_>>()
-            .join(" ")
     }
 }
 
@@ -1566,48 +1520,6 @@ fn binary_installer_cache_path_at(capsem_home: &Path, installer: &BinaryInstalle
         .join(&installer.name))
 }
 
-fn binary_installer_apply_plan(installer: &BinaryInstaller, path: &Path) -> Result<BinaryInstallerApplyPlan> {
-    validate_binary_installer_metadata(installer)?;
-    if !path.is_file() {
-        anyhow::bail!("verified installer package is missing: {}", path.display());
-    }
-    let package_path = path.display().to_string();
-    let commands = match installer.install_layout.as_str() {
-        "macos_pkg" => {
-            if !installer.name.ends_with(".pkg") {
-                anyhow::bail!("macOS installer must be a .pkg file");
-            }
-            vec![BinaryInstallerApplyCommand {
-                program: "sudo".to_string(),
-                args: vec![
-                    "/usr/sbin/installer".to_string(),
-                    "-pkg".to_string(),
-                    package_path,
-                    "-target".to_string(),
-                    "/".to_string(),
-                ],
-            }]
-        }
-        "linux_deb" => {
-            if !installer.name.ends_with(".deb") {
-                anyhow::bail!("Linux installer must be a .deb file");
-            }
-            vec![BinaryInstallerApplyCommand {
-                program: "sudo".to_string(),
-                args: vec![
-                    "apt-get".to_string(),
-                    "install".to_string(),
-                    "--yes".to_string(),
-                    "--allow-downgrades".to_string(),
-                    package_path,
-                ],
-            }]
-        }
-        other => anyhow::bail!("unsupported binary installer layout {other}"),
-    };
-    Ok(BinaryInstallerApplyPlan { commands })
-}
-
 fn validate_binary_installer_metadata(installer: &BinaryInstaller) -> Result<()> {
     let parsed = reqwest::Url::parse(&installer.url)
         .with_context(|| format!("binary installer URL must be valid: {}", installer.url))?;
@@ -1671,19 +1583,6 @@ fn verify_binary_installer_bytes(bytes: &[u8], installer: &BinaryInstaller) -> R
         );
     }
     Ok(())
-}
-
-fn shell_quote(value: &str) -> String {
-    if value.is_empty() {
-        return "''".to_string();
-    }
-    if value
-        .bytes()
-        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'.' | b'_' | b'-' | b'+' | b':'))
-    {
-        return value.to_string();
-    }
-    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 /// Compare versions: is `latest` newer than `current`?

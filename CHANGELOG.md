@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Recopy binary update packages into a private directory after elevation and
+  verify their size and SHA-256 there before invoking the package manager.
+
 - Run macOS package writes under the installing user's identity, including
   logs, binary staging, signing, and local manifest reads, so a user-controlled
   home path cannot redirect a root write or read.
