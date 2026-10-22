@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add the standalone Antigravity IDE graphical image for ARM64 and Intel,
   using Capsem's integrated UI and the shared Xpra session setup.
 
+### Fixed
+
+- Raise graphical app encoding's minimum quality while retaining adaptive
+  codec selection, and disable automatic resolution downscaling.
+
 ### Security
 
 - Bound combining-character retention in the session terminal engine, keeping

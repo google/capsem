@@ -100,6 +100,25 @@ fn capsem_serves_its_own_settings_and_disconnect_page() {
 }
 
 #[test]
+fn graphical_sessions_keep_adaptive_encoding_without_low_quality_or_downscaling() {
+    let (_, settings) = get(&format!("{CLIENT_ROOT}default-settings.txt"));
+    let settings = String::from_utf8(settings).unwrap();
+    let value = |key: &str| {
+        settings
+            .lines()
+            .filter_map(|line| line.split_once('='))
+            .find_map(|(name, value)| (name.trim() == key).then(|| value.trim().parse::<u32>().unwrap()))
+    };
+    // Leave codec and quality selection to Xpra, within a useful quality
+    // floor. Fixed lossless quality can stall a high-motion application.
+    assert_eq!(value("initial_quality"), None);
+    assert_eq!(value("quality"), None);
+    assert_eq!(value("min-quality"), Some(80));
+    assert!(!settings.lines().any(|line| line.trim_start().starts_with("encoding =")));
+    assert_eq!(value("scaling.control"), Some(0));
+}
+
+#[test]
 fn the_single_app_page_disables_the_unbundled_desktop_background() {
     let (_, page) = get(CLIENT_ROOT);
     let page = String::from_utf8(page).unwrap();

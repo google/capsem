@@ -19,5 +19,10 @@ clock = false
 clipboard_poll = false
 reconnect = true
 blocked-hosts = xpra.org,www.xpra.org
-min-quality = 10
+# Xpra recommends automatic codec/quality selection with a quality floor:
+# https://github.com/Xpra-org/xpra/blob/master/docs/Usage/Encodings.md
+# Keep WebP/RGB and adaptive compression available; protect text from the
+# old quality-10 floor without forcing every moving frame to be lossless.
+min-quality = 80
+scaling.control = 0
 min-speed = 50
