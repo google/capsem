@@ -327,7 +327,7 @@ impl UpstreamGrantResponse {
             Self::DescriptorGranted { .. }
             | Self::LoopbackListenerGranted { .. }
             | Self::McpAggregatorGranted { .. } => 1,
-            Self::LedgerGranted { .. } => 2,
+            Self::LedgerGranted { .. } => 1,
             Self::TcpResolved { .. }
             | Self::Denied { .. }
             | Self::GuestModeSet { .. }

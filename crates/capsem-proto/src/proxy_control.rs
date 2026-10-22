@@ -136,14 +136,9 @@ impl ProxyChannelGrant {
         self.ledger_grant
     }
 
-    /// Ledger writers receive the storage channel and its independent trusted
-    /// checkpoint channel. Every other capability owns one descriptor.
+    /// Each granted capability owns one connected descriptor.
     pub const fn expected_descriptor_count(self) -> usize {
-        if matches!(self.capability, ProxyCapability::Ledger) {
-            2
-        } else {
-            1
-        }
+        1
     }
 }
 

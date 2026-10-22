@@ -46,13 +46,13 @@ fn ledger_grants_round_trip_exact_worker_authority() {
 }
 
 #[test]
-fn only_ledger_grants_require_two_descriptors() {
+fn every_grant_requires_one_descriptor() {
     let ledger = LedgerChannelGrant::new(LedgerGeneration::new([3; 16]), 9, LedgerClientRole::Proxy).unwrap();
     assert_eq!(
         ProxyChannelGrant::with_ledger(GENERATION, 7, ledger)
             .unwrap()
             .expected_descriptor_count(),
-        2
+        1
     );
     assert_eq!(
         ProxyChannelGrant::new(GENERATION, 8, ProxyCapability::Credential)

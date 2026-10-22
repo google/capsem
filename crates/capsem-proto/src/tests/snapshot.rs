@@ -16,6 +16,8 @@ fn filesystem_snapshot_transitions_preserve_correlation_phase_and_errors() {
                 error: error.clone(),
             })
             .unwrap();
+            let fields: serde_json::Value = rmp_serde::from_slice(&frame[4..]).unwrap();
+            assert_eq!(fields["d"].get("error").is_some(), error.is_some());
             let decoded = decode_guest_msg(&frame[4..]).unwrap();
             match decoded {
                 GuestToHost::SnapshotTransitioned {
