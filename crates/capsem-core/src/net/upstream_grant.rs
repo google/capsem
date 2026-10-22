@@ -59,7 +59,7 @@ enum Command {
         reply: oneshot::Sender<Result<(), String>>,
     },
     OpenLedger {
-        reply: oneshot::Sender<Result<(UnixStream, UnixStream, LedgerChannelGrant), String>>,
+        reply: oneshot::Sender<Result<(UnixStream, LedgerChannelGrant), String>>,
     },
     SetGuestMode {
         relative_path: Vec<u8>,
@@ -149,7 +149,7 @@ impl UpstreamGrantClient {
             .map_err(anyhow::Error::msg)
     }
 
-    pub async fn open_ledger(&self) -> Result<(UnixStream, UnixStream, LedgerChannelGrant)> {
+    pub async fn open_ledger(&self) -> Result<(UnixStream, LedgerChannelGrant)> {
         let (reply, result) = oneshot::channel();
         self.commands
             .send(Command::OpenLedger { reply })
@@ -587,7 +587,7 @@ async fn open_ledger(
     sender: &WireSender,
     receiver: &WireReceiver,
     request_id: u64,
-) -> Result<Result<(UnixStream, UnixStream, LedgerChannelGrant), String>, String> {
+) -> Result<Result<(UnixStream, LedgerChannelGrant), String>, String> {
     send_request(sender, &UpstreamGrantRequest::OpenLedger { request_id }).await?;
     let (response, mut fds) = receive_response(receiver).await?;
     match response {
@@ -599,7 +599,6 @@ async fn open_ledger(
             request_id: response_id,
             grant,
         } if response_id == request_id => {
-            let commitment = fds.pop().ok_or("ledger grant omitted its commitment descriptor")?;
             let descriptor = fds.pop().ok_or("ledger grant omitted its storage descriptor")?;
             send_request(
                 sender,
@@ -609,14 +608,10 @@ async fn open_ledger(
             )
             .await?;
             let stream = UnixStream::from(descriptor);
-            let commitment = UnixStream::from(commitment);
             stream
                 .peer_addr()
                 .map_err(|error| format!("adopt granted ledger channel: {error}"))?;
-            commitment
-                .peer_addr()
-                .map_err(|error| format!("adopt granted commitment channel: {error}"))?;
-            Ok(Ok((stream, commitment, grant)))
+            Ok(Ok((stream, grant)))
         }
         response => Err(format!(
             "unexpected session ledger response for request {request_id}: {response:?}"

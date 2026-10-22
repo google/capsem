@@ -206,12 +206,12 @@ pub fn compute_tool_hash(tool: &McpToolDef) -> String {
         hasher.update(desc.as_bytes());
     }
     hasher.update(b"|");
-    hasher.update(tool.input_schema.to_string().as_bytes());
+    // Preserve the approved JSON pin bytes without allocating another document.
+    serde_json::to_writer(&mut hasher, &tool.input_schema)
+        .expect("JSON values serialize into an infallible hash writer");
     hasher.update(b"|");
     if let Some(ann) = &tool.annotations {
-        if let Ok(json) = serde_json::to_string(ann) {
-            hasher.update(json.as_bytes());
-        }
+        serde_json::to_writer(&mut hasher, ann).expect("tool annotations serialize into an infallible hash writer");
     }
     hasher.finalize().to_hex().to_string()
 }

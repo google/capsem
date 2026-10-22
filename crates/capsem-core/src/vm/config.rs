@@ -316,10 +316,10 @@ impl VmConfigBuilder {
             .map(PathBuf::from)
             .unwrap_or_else(|| std::env::temp_dir().join("capsem-asset-hash-cache"));
         let cache_key_path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-        let digest = capsem_crypto::blake3::hash(cache_key_path.to_string_lossy().as_bytes())
-            .to_hex()
-            .to_string();
-        root.join(format!("{}-{name}.capsem-hash-ok", &digest[..16]))
+        // XXH3 only selects a cache filename; the entry still binds the expected
+        // security digest and file metadata. It never replaces asset verification.
+        let digest = capsem_crypto::xxh3::hash(cache_key_path.to_string_lossy().as_bytes());
+        root.join(format!("{digest:032x}-{name}.capsem-hash-ok"))
     }
 
     fn hash_cache_fingerprint(path: &Path, expected_hash: &str) -> Result<String, ConfigError> {

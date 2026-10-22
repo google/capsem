@@ -93,27 +93,19 @@ pub(super) fn security_event_forensic_json(event: &SecurityEvent) -> serde_json:
 /// on the full in-memory value before this projection is built; the rule row
 /// carries the same event id as `net_events` or `model_calls`, whose archived
 /// request body remains exact.
-fn referenced_request_body(body: Option<&str>) -> (Option<&str>, Option<String>, Option<usize>, bool) {
+fn referenced_request_body(body: Option<&str>) -> (Option<&str>, Option<usize>, bool) {
     let Some(body) = body else {
-        return (None, None, None, false);
+        return (None, None, false);
     };
     let mut end = body.len().min(SECURITY_BODY_PREVIEW_BYTES);
     while !body.is_char_boundary(end) {
         end -= 1;
     }
-    (
-        Some(&body[..end]),
-        Some(format!(
-            "blake3:{}",
-            capsem_crypto::blake3::hash(body.as_bytes()).to_hex()
-        )),
-        Some(body.len()),
-        end < body.len(),
-    )
+    (Some(&body[..end]), Some(body.len()), end < body.len())
 }
 
 fn http_forensic_json(http: &HttpSecurityEvent) -> serde_json::Value {
-    let (body, body_hash, body_bytes, body_truncated) = referenced_request_body(http.body.as_deref());
+    let (body, body_bytes, body_truncated) = referenced_request_body(http.body.as_deref());
     json!({
         "host": http.host,
         "method": http.method,
@@ -121,7 +113,6 @@ fn http_forensic_json(http: &HttpSecurityEvent) -> serde_json::Value {
         "query": http.query,
         "status": http.status,
         "body": body,
-        "body_hash": body_hash,
         "body_bytes": body_bytes,
         "body_truncated": body_truncated,
         "body_source": http.body.as_ref().map(|_| json!({
@@ -132,13 +123,12 @@ fn http_forensic_json(http: &HttpSecurityEvent) -> serde_json::Value {
 }
 
 fn model_forensic_json(model: &ModelSecurityEvent) -> serde_json::Value {
-    let (request_body, request_body_hash, request_body_bytes, request_body_truncated) =
+    let (request_body, request_body_bytes, request_body_truncated) =
         referenced_request_body(model.request_body.as_deref());
     json!({
         "provider": model.provider,
         "name": model.name,
         "request_body": request_body,
-        "request_body_hash": request_body_hash,
         "request_body_bytes": request_body_bytes,
         "request_body_truncated": request_body_truncated,
         "request_body_source": model.request_body.as_ref().map(|_| json!({

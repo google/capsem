@@ -214,7 +214,6 @@ async fn ledger_channel_preserves_grant_and_is_adopted_before_use() {
     let client = UpstreamGrantClient::start(worker).unwrap();
     let (requests, responses) = channels(broker);
     let (ledger, mut ledger_peer) = UnixStream::pair().unwrap();
-    let (commitment, mut commitment_peer) = UnixStream::pair().unwrap();
     let broker_task = tokio::spawn(async move {
         assert_eq!(
             receive_request(&requests).await,
@@ -223,7 +222,7 @@ async fn ledger_channel_preserves_grant_and_is_adopted_before_use() {
         send_response_many(
             &responses,
             &UpstreamGrantResponse::LedgerGranted { request_id: 1, grant },
-            &[ledger.as_raw_fd(), commitment.as_raw_fd()],
+            &[ledger.as_raw_fd()],
         )
         .await;
         assert_eq!(
@@ -234,15 +233,12 @@ async fn ledger_channel_preserves_grant_and_is_adopted_before_use() {
         );
     });
 
-    let (mut stream, mut commitment_stream, received) = client.open_ledger().await.unwrap();
+    let (mut stream, received) = client.open_ledger().await.unwrap();
     assert_eq!(received, grant);
     stream.write_all(b"hello").unwrap();
     let mut message = [0_u8; 5];
     ledger_peer.read_exact(&mut message).unwrap();
     assert_eq!(&message, b"hello");
-    commitment_stream.write_all(b"proof").unwrap();
-    commitment_peer.read_exact(&mut message).unwrap();
-    assert_eq!(&message, b"proof");
     broker_task.await.unwrap();
 }
 

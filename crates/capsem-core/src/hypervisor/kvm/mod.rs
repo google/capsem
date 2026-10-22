@@ -56,7 +56,9 @@ fn require_metadata_authority(config: &VmConfig) -> Result<()> {
 }
 
 pub(crate) fn kvm_vsock_seed(config: &VmConfig) -> u32 {
-    let mut hasher = capsem_crypto::blake3::Hasher::new();
+    // A deterministic non-security port-offset seed; transport authority is
+    // granted separately. No cryptographic digest is needed for this mapping.
+    let mut hasher = capsem_crypto::xxh3::Hasher::new();
     hasher.update(config.kernel_path.to_string_lossy().as_bytes());
     if let Some(path) = config.scratch_disk_path.as_ref().or(config.disk_path.as_ref()) {
         hasher.update(path.to_string_lossy().as_bytes());
@@ -65,10 +67,7 @@ pub(crate) fn kvm_vsock_seed(config: &VmConfig) -> u32 {
         hasher.update(share.tag.as_bytes());
         hasher.update(share.host_path.to_string_lossy().as_bytes());
     }
-    let hash = hasher.finalize();
-    let mut bytes = [0u8; 4];
-    bytes.copy_from_slice(&hash.as_bytes()[..4]);
-    u32::from_le_bytes(bytes)
+    hasher.finalize() as u32
 }
 
 fn append_kvm_vsock_port_offset(cmdline: &str, offset: u32) -> String {

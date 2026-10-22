@@ -46,6 +46,31 @@ fn compute_tool_hash_deterministic() {
 }
 
 #[test]
+fn compute_tool_hash_preserves_approved_canonical_pin_bytes() {
+    for annotations in [
+        None,
+        Some(ToolAnnotations {
+            read_only_hint: true,
+            ..Default::default()
+        }),
+    ] {
+        let mut tool = make_tool("github__search", "search", "github", Some("Search \"repos\"\n漢字"));
+        tool.annotations = annotations;
+        let schema = serde_json::to_string(&tool.input_schema).unwrap();
+        let annotations = tool
+            .annotations
+            .as_ref()
+            .map(|value| serde_json::to_string(value).unwrap())
+            .unwrap_or_default();
+        let preimage = format!("search|Search \"repos\"\n漢字|{schema}|{annotations}");
+        assert_eq!(
+            compute_tool_hash(&tool),
+            capsem_crypto::blake3::hash(preimage.as_bytes()).to_hex().to_string()
+        );
+    }
+}
+
+#[test]
 fn compute_tool_hash_changes_on_description() {
     let mut tool = make_tool("github__search", "search", "github", Some("Search repos"));
     let h1 = compute_tool_hash(&tool);

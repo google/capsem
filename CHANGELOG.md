@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Link security request previews to their archived bodies without rehashing each body for every rule.
+
 - Preserve large captured output through the authenticated binary ledger without redundant JSON sizing or commitment channels. Body and model-content identities use the current XXH3-128 format; obsolete ledgers are refused.
 
 - Use current-format XXH3-128 image-cache fingerprints without temporary JSON copies; obsolete cache records are refused.

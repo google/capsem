@@ -248,9 +248,9 @@ match = 'http.body.contains("kept-exact")'
         serde_json::from_str(&archived_payload(&db_path, event_id.as_str()).await).unwrap();
     assert_eq!(payload["http"]["body"].as_str().unwrap().len(), 2 * 1024);
     assert_eq!(payload["http"]["body_bytes"], body.len());
-    assert_eq!(
-        payload["http"]["body_hash"],
-        format!("blake3:{}", capsem_crypto::blake3::hash(body.as_bytes()).to_hex())
+    assert!(
+        payload["http"].get("body_hash").is_none(),
+        "the event/source reference replaces a duplicate body fingerprint"
     );
     assert_eq!(payload["http"]["body_truncated"], true);
     assert_eq!(payload["http"]["body_source"]["source_table"], "net_events");
