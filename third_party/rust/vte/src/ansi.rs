@@ -499,6 +499,12 @@ pub trait Handler {
     /// OSC to set window title.
     fn set_title(&mut self, _: Option<String>) {}
 
+    /// OSC to set the window icon name. Data only; defaults to no action.
+    fn set_icon_name(&mut self, _: Option<String>) {}
+
+    /// OSC 9 or 777 notification. The owner decides how to present this data.
+    fn notification(&mut self, _title: &[u8], _body: &[u8]) {}
+
     /// Set the cursor style.
     fn set_cursor_style(&mut self, _: Option<CursorStyle>) {}
 
@@ -560,6 +566,9 @@ pub trait Handler {
     ///
     /// Hopefully this is never implemented.
     fn bell(&mut self) {}
+
+    /// Visual bell request; defaults to no action.
+    fn visual_bell(&mut self) {}
 
     /// Substitute char under cursor.
     fn substitute(&mut self) {}
@@ -1353,8 +1362,8 @@ where
         }
 
         match params[0] {
-            // Set window title.
-            b"0" | b"2" => {
+            // Set icon name and/or window title.
+            b"0" | b"1" | b"2" => {
                 if params.len() >= 2 {
                     let title = params[1..]
                         .iter()
@@ -1363,10 +1372,25 @@ where
                         .join(";")
                         .trim()
                         .to_owned();
-                    self.handler.set_title(Some(title));
+                    if params[0] != b"2" {
+                        self.handler.set_icon_name(Some(title.clone()));
+                    }
+                    if params[0] != b"1" {
+                        self.handler.set_title(Some(title));
+                    }
                     return;
                 }
                 unhandled(params);
+            },
+
+            // Application notifications carry no host authority.
+            b"9" => match params {
+                [_, body] => self.handler.notification(b"", body),
+                _ => unhandled(params),
+            },
+            b"777" => match params {
+                [_, b"notify", title, body] => self.handler.notification(title, body),
+                _ => unhandled(params),
             },
 
             // Set color index.
@@ -1814,6 +1838,7 @@ where
             (b'M', []) => self.handler.reverse_index(),
             (b'Z', []) => self.handler.identify_terminal(None),
             (b'c', []) => self.handler.reset_state(),
+            (b'g', []) => self.handler.visual_bell(),
             (b'0', intermediates) => {
                 configure_charset!(StandardCharset::SpecialCharacterAndLineDrawing, intermediates)
             },

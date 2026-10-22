@@ -26,6 +26,13 @@ caller bounds serialized input before decoding and owns the pending-byte
 budget. The format is versioned implementation state, not a stable external
 wire format. Ordinary builds without the feature keep the upstream API.
 
+Additive, default-inert ANSI handler callbacks expose icon names, visual bells
+and OSC 9/777 notification data. OSC 0 updates icon and title, OSC 1 only the
+icon and OSC 2 only the title. This keeps Capsem's semantic events on the same
+parser that owns the terminal, with no second raw-output observer. These
+callbacks grant no host capabilities; presentation and all limits remain the
+session owner's responsibility. Existing handlers need not implement them.
+
 The patch also fixes a fragmented UTF-8 consumption bug: after dispatching one
 completed scalar, the parser consumed an entire valid prefix and silently lost
 ASCII before the next partial or invalid scalar. It now consumes only the

@@ -72,6 +72,66 @@ fn fragmented_utf8_retains_ascii_before_the_next_partial_or_invalid_scalar() {
 }
 
 #[test]
+fn semantic_effects_dispatch_once_across_every_split_and_checkpoint() {
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    enum Effect {
+        Title(Option<String>),
+        Icon(Option<String>),
+        Bell(bool),
+        Notification(Vec<u8>, Vec<u8>),
+    }
+    #[derive(Default, Clone)]
+    struct Effects(Vec<Effect>);
+    impl Handler for Effects {
+        fn set_title(&mut self, title: Option<String>) {
+            self.0.push(Effect::Title(title));
+        }
+        fn set_icon_name(&mut self, name: Option<String>) {
+            self.0.push(Effect::Icon(name));
+        }
+        fn bell(&mut self) {
+            self.0.push(Effect::Bell(false));
+        }
+        fn visual_bell(&mut self) {
+            self.0.push(Effect::Bell(true));
+        }
+        fn notification(&mut self, title: &[u8], body: &[u8]) {
+            self.0.push(Effect::Notification(title.to_vec(), body.to_vec()));
+        }
+    }
+    let input = concat!(
+        "\x1b]0;both\x07\x1b]1;icon\x1b\\\x1b]2;title\x07\x07\x1bg",
+        "\x1b]9;ready 界\x07\x1b]777;notify;agent;done\x1b\\",
+        // Malformed/unknown notifications and clipboard requests add no effects.
+        "\x1b]9;invalid;extra\x07\x1b]777;other;x;y\x07",
+        "\x1b]777;notify;missing\x07\x1b]52;c;aGVsbG8=\x07"
+    )
+    .as_bytes();
+    let expected = vec![
+        Effect::Icon(Some("both".into())),
+        Effect::Title(Some("both".into())),
+        Effect::Icon(Some("icon".into())),
+        Effect::Title(Some("title".into())),
+        Effect::Bell(false),
+        Effect::Bell(true),
+        Effect::Notification(Vec::new(), "ready 界".as_bytes().to_vec()),
+        Effect::Notification(b"agent".to_vec(), b"done".to_vec()),
+    ];
+    for split in 0..=input.len() {
+        let mut parser = Processor::new();
+        let mut effects = Effects::default();
+        parser.advance(&mut effects, &input[..split]);
+        let checkpoint = serde_json::to_vec(&parser.checkpoint(8192).unwrap()).unwrap();
+        let mut restored = Processor::from_checkpoint(serde_json::from_slice(&checkpoint).unwrap(), 8192).unwrap();
+        let mut resumed_effects = effects.clone();
+        parser.advance(&mut effects, &input[split..]);
+        restored.advance(&mut resumed_effects, &input[split..]);
+        assert_eq!(effects.0, expected, "direct split {split}");
+        assert_eq!(resumed_effects.0, expected, "checkpoint split {split}");
+    }
+}
+
+#[test]
 fn continuation_matches_at_every_byte_split_without_replaying_effects() {
     let input = "before\x07\x1b]2;title\x07\x1b[38:2::1:2:3m界e\u{301}🙂\x1b[3bafter".as_bytes();
     for split in 0..=input.len() {
