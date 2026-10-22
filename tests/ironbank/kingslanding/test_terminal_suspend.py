@@ -33,6 +33,66 @@ def send(socket, data):
     socket.send(msgpack.packb({"stdin": data}, use_bin_type=True))
 
 
+@pytest.mark.parametrize("fault", ["native-slot", "terminal-permissions"])
+def test_failed_suspend_keeps_the_running_owner_and_foreground(service, tmp_path, fault):
+    client = service.client()
+    with image_session(service, tmp_path, "suspend-failure") as vm_id:
+        original_pid = client.get(f"/vms/{vm_id}/info")["pid"]
+        with terminal(service, vm_id) as socket:
+            assert probe(socket) == ("1000", "100000", "workload")
+            script = r"""
+import os, termios, tty
+before = termios.tcgetattr(0)
+try:
+    tty.setraw(0)
+    os.write(1, b'\x1b]2;Suspend failure probe\x07FOREGROUND-READY\n\x07\x1b]777;notify;Rollback;Preserved\x07\x1b[38;2;10;')
+    assert os.read(0, 1) == b'k'
+    with open('/workspace/suspend-rollback-write', 'w') as stream:
+        stream.write('foreground survived')
+    os.write(1, b'20;30m\x1b]2;Foreground survived\x07FOREGROUND-SURVIVED\n')
+finally:
+    termios.tcsetattr(0, termios.TCSANOW, before)
+"""
+            send(socket, ("python3 -c " + shlex.quote(script) + "\n").encode())
+            before = next_state(socket, lambda state: state.get("last_notification") is not None
+                                and state["last_notification"]["title"] == "Rollback")
+            display(socket, b"FOREGROUND-READY")
+            # Host-owned faults at two stages of the same checkpoint pair:
+            # the native slot is not removable, or terminal publication is
+            # refused because the existing private file has unsafe mode.
+            session = vm_session_dir(service.tmp_dir, client, vm_id)
+            if fault == "native-slot":
+                invalid_slot = session / "owner/checkpoint.vzsave"
+                invalid_slot.mkdir()
+            else:
+                invalid_slot = session / "owner/terminal/checkpoint.msgpack"
+                assert not invalid_slot.exists()
+                invalid_slot.write_bytes(b"unsafe fixture mode")
+                invalid_slot.chmod(0o644)
+            try:
+                status, error = client.call_json("POST", f"/vms/{vm_id}/pause", {}, timeout=60)
+                assert status == 500, (status, error)
+                assert client.get(f"/vms/{vm_id}/status")["status"] == "Running"
+                assert client.get(f"/vms/{vm_id}/info")["pid"] == original_pid
+                send(socket, b"k")
+                after = next_state(socket, lambda state: state["title"] == "Foreground survived")
+                assert after["bell_count"] == before["bell_count"]
+                assert after["last_notification"] == before["last_notification"]
+                assert b"38;2;10;20;30" in display(socket, b"FOREGROUND-SURVIVED")
+                result = workload_exec(client, vm_id, "cat /workspace/suspend-rollback-write")
+                assert result["exit_code"] == 0 and result["stdout_text"] == "foreground survived", result
+                assert not (session / "owner/checkpoint.vzsave.complete").exists()
+            finally:
+                if fault == "native-slot":
+                    invalid_slot.rmdir()
+                else:
+                    invalid_slot.unlink()
+        # Correcting the fault must permit a new checkpoint on the same
+        # owner, with fresh viewer/transport authority and actual guest thaw.
+        assert client.post(f"/vms/{vm_id}/pause", {}, timeout=60) == {"success": True}
+        assert client.get(f"/vms/{vm_id}/status")["status"] == "Suspended"
+
+
 def test_failed_restore_preserves_suspended_state_without_cold_boot(service, tmp_path):
     client = service.client()
     with image_session(service, tmp_path, "restore-failure") as vm_id:
