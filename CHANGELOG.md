@@ -29,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Replace the MCP tool cache through an owner-only atomic write, preventing
+  torn reads and writes through a planted cache-file symlink.
+
 - Keep guest exec audit streaming alive when auditd rotates or truncates its
   log, including records split across the old and new files.
 
