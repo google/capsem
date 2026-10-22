@@ -128,10 +128,12 @@ async fn db_handle_query_records_read_metrics() {
         key.key().name() == DB_QUERY_DURATION_MS && matches!(value, DebugValue::Histogram(_))
     }));
     assert!(snapshot.iter().any(|(key, _, _, value)| {
-        key.key().name() == DB_QUERY_RESULT_ROWS && matches!(value, DebugValue::Histogram(_))
+        key.key().name() == DB_QUERY_RESULT_ROWS
+            && matches!(value, DebugValue::Histogram(samples) if samples.iter().map(|sample| sample.0).collect::<Vec<_>>() == vec![1.0])
     }));
     assert!(snapshot.iter().any(|(key, _, _, value)| {
-        key.key().name() == DB_QUERY_RESULT_BYTES && matches!(value, DebugValue::Histogram(_))
+        key.key().name() == DB_QUERY_RESULT_BYTES
+            && matches!(value, DebugValue::Histogram(samples) if samples.iter().map(|sample| sample.0).collect::<Vec<_>>() == vec![raw.len() as f64])
     }));
     assert!(snapshot.iter().any(|(key, _, _, value)| {
         key.key().name() == DB_QUERY_PARAMS_COUNT && matches!(value, DebugValue::Histogram(_))

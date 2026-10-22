@@ -548,6 +548,7 @@ impl DbReader {
 }
 
 mod rawquery;
+pub(crate) use rawquery::QueryOutput;
 mod rows;
 use rows::{
     read_audit_history_row, read_exec_history_row, read_file_event_row, read_security_ask_event_row,

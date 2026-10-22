@@ -85,7 +85,7 @@ pub(super) fn reader_loop(
                 // committed, so every read path moves the handle's epochs the
                 // same way and no caller can be told the ledger stood still.
                 let result = observe_change(&reader).and_then(|observed| {
-                    let executed = reader.query_raw_with_params(&sql, &params);
+                    let executed = reader.query_counted(&sql, &params);
                     record_query_metrics("execute", started, params_count, &executed);
                     executed.map(|value| Observed {
                         changed: commit(&reader, observed),
@@ -253,9 +253,9 @@ fn execute_query_many(reader: &DbReader, queries: Vec<DbQueryOwned>) -> DbResult
     let mut results = Vec::with_capacity(queries.len());
     for (sql, params) in queries {
         let started = Instant::now();
-        let result = reader.query_raw_with_params(&sql, &params);
+        let result = reader.query_counted(&sql, &params);
         record_query_metrics("execute_many", started, params.len(), &result);
-        results.push(result?);
+        results.push(result?.json);
     }
     Ok(results)
 }

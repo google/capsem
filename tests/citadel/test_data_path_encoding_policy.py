@@ -118,3 +118,25 @@ def test_terminal_and_admission_do_not_hash_or_use_json() -> None:
         ROOT / "crates/capsem-logger/src/writer/remote.rs",
     ]
     assert all(not any(uses(path.read_text()).values()) for path in paths), DATA_PATH_RATIONALE
+
+
+def query_metrics_reparse(source: str) -> bool:
+    return bool(re.search(r"\bserde_json\s*::\s*from_\w+\s*(?:::<[^;]+?>)?\s*\(", code(source)))
+
+
+def test_query_metrics_carry_counts_without_reparsing_the_encoded_result() -> None:
+    paths = ["crates/capsem-logger/src/db.rs", "crates/capsem-logger/src/db/reader_worker.rs"]
+    assert not any(query_metrics_reparse((ROOT / path).read_text()) for path in paths), (
+        "The SQLite reader already knows the row count. Carry it with the encoded "
+        "result instead of rebuilding a JSON DOM in execute/handle telemetry. " + DATA_PATH_RATIONALE
+    )
+
+
+@pytest.mark.parametrize("source", [
+    "serde_json::from_str::<serde_json::Value>(raw)",
+    "serde_json::from_slice(bytes)",
+    "use serde_json as codec; codec::from_str(raw)",
+    "use serde_json::{from_str as decode}; decode(raw)",
+])
+def test_query_reparse_guard_catches_direct_and_aliased_calls(source: str) -> None:
+    assert query_metrics_reparse(source)

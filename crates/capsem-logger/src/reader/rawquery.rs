@@ -8,10 +8,23 @@ use serde_json::Value;
 
 use super::{validate_select_only, DbReader};
 
+/// One encoding for the public columnar JSON contract, with metadata already
+/// known by the SQLite reader. Telemetry must never decode it again.
+pub(crate) struct QueryOutput {
+    pub json: String,
+    pub rows: usize,
+}
+
+#[derive(serde::Serialize)]
+struct QueryRows {
+    columns: Vec<String>,
+    rows: Vec<Vec<Value>>,
+}
+
 impl DbReader {
-    fn with_query_timeout<F>(&self, run_query: F) -> Result<String, String>
+    fn with_query_timeout<F>(&self, run_query: F) -> Result<QueryOutput, String>
     where
-        F: FnOnce() -> Result<String, String>,
+        F: FnOnce() -> Result<QueryOutput, String>,
     {
         const TIMEOUT_MS: u64 = 5_000;
         const PROGRESS_OPS: i32 = 10_000;
@@ -38,14 +51,7 @@ impl DbReader {
     /// Caps output at 10,000 rows. Interrupts queries that run longer than
     /// 5 seconds via `sqlite3_interrupt`.
     pub fn query_raw(&self, sql: &str) -> Result<String, String> {
-        // Defense-in-depth: reject non-SELECT SQL up front. The production
-        // connection is opened read-only (SQLITE_OPEN_READ_ONLY) so writes
-        // would fail at execution with a cryptic SQLite error -- validating
-        // here gives a clear, consistent error and also guards open_in_memory().
-        validate_select_only(sql)?;
-
-        const MAX_ROWS: usize = 10_000;
-        self.with_query_timeout(|| self.query_raw_inner(sql, MAX_ROWS))
+        self.query_raw_with_params(sql, &[])
     }
 
     /// Execute an arbitrary read-only SQL query with bind parameters and return JSON.
@@ -54,23 +60,26 @@ impl DbReader {
     /// Parameters use `?` positional placeholders (rusqlite native syntax).
     /// Supported param types: null, i64, f64, string (from serde_json::Value).
     pub fn query_raw_with_params(&self, sql: &str, params: &[Value]) -> Result<String, String> {
-        // Defense-in-depth: same rationale as query_raw.
+        self.query_counted(sql, params).map(|output| output.json)
+    }
+
+    pub(crate) fn query_counted(&self, sql: &str, params: &[Value]) -> Result<QueryOutput, String> {
+        // Fail explicitly on non-read SQL, including in-memory test readers.
         validate_select_only(sql)?;
 
         const MAX_ROWS: usize = 10_000;
         self.with_query_timeout(|| self.query_raw_params_inner(sql, params, MAX_ROWS))
     }
 
-    fn query_raw_inner(&self, sql: &str, max_rows: usize) -> Result<String, String> {
-        self.query_raw_params_inner(sql, &[], max_rows)
-    }
-
-    fn query_raw_params_inner(&self, sql: &str, params: &[Value], max_rows: usize) -> Result<String, String> {
+    fn query_raw_params_inner(&self, sql: &str, params: &[Value], max_rows: usize) -> Result<QueryOutput, String> {
         let result = self.query_rows(sql, params, max_rows).map_err(|e| e.to_string())?;
-        serde_json::to_string(&result).map_err(|e| e.to_string())
+        Ok(QueryOutput {
+            rows: result.rows.len(),
+            json: serde_json::to_string(&result).map_err(|e| e.to_string())?,
+        })
     }
 
-    fn query_rows(&self, sql: &str, params: &[Value], max_rows: usize) -> rusqlite::Result<Value> {
+    fn query_rows(&self, sql: &str, params: &[Value], max_rows: usize) -> rusqlite::Result<QueryRows> {
         let mut stmt = self.conn.prepare_cached(sql)?;
 
         let columns: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
@@ -133,9 +142,6 @@ impl DbReader {
             rows.push(values);
         }
 
-        Ok(serde_json::json!({
-            "columns": columns,
-            "rows": rows,
-        }))
+        Ok(QueryRows { columns, rows })
     }
 }

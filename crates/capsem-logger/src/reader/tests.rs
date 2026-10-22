@@ -3,6 +3,27 @@ use serde_json::{json, Value};
 
 mod readiness;
 
+#[test]
+fn counted_queries_report_encoded_rows_including_empty_and_bounded_results() {
+    let reader = DbReader::open_in_memory().unwrap();
+    for (sql, expected) in [
+        (r#"SELECT 'rows: [[fake]], "quotes"' AS text"#, 1),
+        ("SELECT 1 WHERE 0", 0),
+        (
+            "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<10001) SELECT x FROM n",
+            10_000,
+        ),
+    ] {
+        let counted = reader.query_counted(sql, &[]).unwrap();
+        assert_eq!(counted.rows, expected);
+        assert_eq!(counted.json, reader.query_raw(sql).unwrap());
+        let parsed: Value = serde_json::from_str(&counted.json).unwrap();
+        assert_eq!(parsed["rows"].as_array().unwrap().len(), expected);
+    }
+    assert!(reader.query_counted("SELECT * FROM missing_table", &[]).is_err());
+    assert!(reader.query_counted("DELETE FROM net_events", &[]).is_err());
+}
+
 fn setup_reader_with_data() -> DbReader {
     let reader = DbReader::open_in_memory().unwrap();
     reader

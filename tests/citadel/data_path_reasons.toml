@@ -440,7 +440,7 @@ json = { count = 3, reason = "db-json" }
 json = { count = 2, reason = "db-json" }
 
 [sources."crates/capsem-logger/src/db.rs"]
-json = { count = 5, reason = "db-json" }
+json = { count = 3, reason = "db-json" }
 
 [sources."crates/capsem-logger/src/events/transport.rs"]
 json = { count = 1, reason = "db-json" }
@@ -452,7 +452,7 @@ json = { count = 12, reason = "db-json" }
 hash = { count = 2, reason = "hash-archive" }
 
 [sources."crates/capsem-logger/src/reader/rawquery.rs"]
-json = { count = 6, reason = "db-json" }
+json = { count = 4, reason = "db-json" }
 
 [sources."crates/capsem-logger/src/reader/rows.rs"]
 json = { count = 4, reason = "db-json" }
