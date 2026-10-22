@@ -22,6 +22,9 @@ use std::time::SystemTime;
 use capsem_foundation::unix::contained::{ContainedDir, ContainedOpenOptions};
 use capsem_foundation::unix::fs::open_single_link_file_no_follow;
 
+mod recorder;
+pub use recorder::PtyRecorder;
+
 /// Direction tag for PTY log entries.
 pub const DIR_INPUT: u8 = 0x00;
 pub const DIR_OUTPUT: u8 = 0x01;
@@ -96,49 +99,31 @@ impl PtyLog {
         if data.is_empty() {
             return;
         }
-        let timestamp_us = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_micros() as u64;
-        let len = data.len() as u32;
-
-        // Frame: direction(1) + timestamp(8) + length(4) + data(len)
-        let frame_size = 1 + 8 + 4 + data.len();
-        let mut frame = Vec::with_capacity(frame_size);
-        frame.push(direction);
-        frame.extend_from_slice(&timestamp_us.to_le_bytes());
-        frame.extend_from_slice(&len.to_le_bytes());
-        frame.extend_from_slice(data);
-
-        let mut inner = match self.inner.lock() {
-            Ok(g) => g,
-            Err(_) => return, // poisoned mutex, skip
-        };
-        let _ = inner.file.write_all(&frame);
-        inner.bytes_written += frame_size as u64;
-
-        // Rotate if needed
-        if inner.bytes_written >= inner.max_bytes {
-            self.rotate_locked(&mut inner);
-        }
+        let _ = self.write_frame(&record_frame(direction, data));
     }
 
-    fn rotate_locked(&self, inner: &mut PtyLogInner) {
-        let rotated = Path::new(&inner.name).with_extension("log.1").into_os_string();
-        // Best-effort: rename current -> .1, open fresh
-        if inner
-            .directory
-            .rename_to(&inner.name, &inner.directory, &rotated)
-            .is_ok()
-        {
-            if let Ok(new_file) = inner
-                .directory
-                .open_single_link_file(&inner.name, ContainedOpenOptions::append_create(0o600))
-            {
-                inner.file = new_file;
-                inner.bytes_written = 0;
-            }
+    fn write_frame(&self, frame: &[u8]) -> std::io::Result<()> {
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| std::io::Error::other("PTY log lock poisoned"))?;
+        inner.file.write_all(frame)?;
+        inner.bytes_written += frame.len() as u64;
+        if inner.bytes_written >= inner.max_bytes {
+            Self::rotate_locked(&mut inner)?;
         }
+        drop(inner);
+        Ok(())
+    }
+
+    fn rotate_locked(inner: &mut PtyLogInner) -> std::io::Result<()> {
+        let rotated = Path::new(&inner.name).with_extension("log.1").into_os_string();
+        inner.directory.rename_to(&inner.name, &inner.directory, &rotated)?;
+        inner.file = inner
+            .directory
+            .open_single_link_file(&inner.name, ContainedOpenOptions::append_create(0o600))?;
+        inner.bytes_written = 0;
+        Ok(())
     }
 
     /// Current byte count written to the active log file.
@@ -146,6 +131,28 @@ impl PtyLog {
     pub fn bytes_written(&self) -> u64 {
         self.inner.lock().map(|g| g.bytes_written).unwrap_or(0)
     }
+}
+
+fn timestamp_us() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_micros() as u64
+}
+
+fn record_frame(direction: u8, data: &[u8]) -> Vec<u8> {
+    let timestamp_us = timestamp_us();
+    let len = data.len() as u32;
+
+    // Frame: direction(1) + timestamp(8) + length(4) + data(len)
+    let frame_size = 1 + 8 + 4 + data.len();
+    let mut frame = Vec::with_capacity(frame_size);
+    frame.push(direction);
+    frame.extend_from_slice(&timestamp_us.to_le_bytes());
+    frame.extend_from_slice(&len.to_le_bytes());
+    frame.extend_from_slice(data);
+
+    frame
 }
 
 /// Read and iterate over PTY log entries from a file.
