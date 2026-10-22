@@ -1,5 +1,36 @@
 use super::*;
 
+#[tokio::test]
+async fn fixture_owner_survives_a_peer_closing_after_hello() {
+    let directory = tempfile::tempdir().unwrap();
+    let socket = directory.path().join("owner.sock");
+    let owner = spawn_fake_process(&socket, 1, |message| {
+        assert!(matches!(message, ServiceToProcess::Ping));
+        Box::pin(async { Some(ProcessToService::Pong) })
+    });
+    for stage in 0..3 {
+        let socket = socket.clone();
+        let stream = tokio::task::spawn_blocking(move || {
+            let mut stream = std::os::unix::net::UnixStream::connect(socket).unwrap();
+            if stage > 0 {
+                capsem_foundation::ipc_handshake::negotiate_initiator(&mut stream, "capsem-service-test", "").unwrap();
+            }
+            stream
+        })
+        .await
+        .unwrap();
+        if stage < 2 {
+            drop(stream);
+            continue;
+        }
+        let (tx, rx): (Sender<ServiceToProcess>, Receiver<ProcessToService>) = channel_from_std(stream).unwrap();
+        tx.send(ServiceToProcess::Ping).await.unwrap();
+        assert!(matches!(rx.recv().await.unwrap(), ProcessToService::Pong));
+    }
+    let messages = owner.await.unwrap();
+    assert_eq!(messages.len(), 1, "a handshake-only peer is not a command");
+}
+
 #[test]
 fn socket_replacement_victim_child() {
     let Some(path) = std::env::var_os("CAPSEM_OWNER_SOCKET_TEST") else {

@@ -32,7 +32,7 @@ async fn catalog_root_failure_refuses_create_before_staging_or_launch() {
         root_calls: Arc::clone(&root_calls),
         ..images()
     });
-    let owner = owner_accepting_stage_and_launch(&fx.uds_path, 4);
+    let owner = owner_accepting_stage_and_launch(&fx.uds_path);
     let mut request = spec(None);
     request.image = "published".into();
     let generation = fx.state.containers.begin("box", &request.image);

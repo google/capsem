@@ -165,7 +165,16 @@ async fn exec_timeout_and_missing_vm_routes_return_structured_error_codes() {
     let st = || State(Arc::clone(&state));
     let run_req: RunRequest = serde_json::from_value(json!({"command": "sleep", "timeout_secs": 1})).unwrap();
     let run_err = handle_run(st(), Json(run_req)).await.unwrap_err();
-    assert_eq!(run_err.status, StatusCode::GATEWAY_TIMEOUT, "{run_err:?}");
+    let owner_logs: Vec<_> = std::fs::read_dir(state.run_dir.join("sessions"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| (entry.path(), read_process_log_tail(&entry.path(), 80)))
+        .collect();
+    assert_eq!(
+        run_err.status,
+        StatusCode::GATEWAY_TIMEOUT,
+        "{run_err:?}; {owner_logs:?}"
+    );
     assert_eq!(run_err.body.code, Some(ErrorCode::ExecTimeout));
     assert_eq!(run_err.body.timeout_secs, Some(1));
     assert_eq!(run_err.body.error, "exec failed: IPC command timed out after 1s");

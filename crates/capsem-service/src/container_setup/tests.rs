@@ -3,6 +3,9 @@ use crate::tests::{insert_fake_instance_with_session_dir, spawn_fake_process};
 use capsem_api::RegistryAccess;
 use tokio::sync::Notify;
 
+mod owners;
+use owners::{control_file_names, owner_accepting_stage_and_launch, owner_admitting_pull, setup_message_count};
+
 mod published;
 mod registry;
 mod surface;
@@ -248,7 +251,7 @@ async fn admitted_pull_progresses_while_the_guest_is_still_booting() {
 #[tokio::test]
 async fn staged_workload_waits_for_guest_readiness_before_launching() {
     let fx = fixture(images());
-    let owner = owner_accepting_stage_and_launch(&fx.uds_path, 4);
+    let owner = owner_accepting_stage_and_launch(&fx.uds_path);
     let ready = fx.uds_path.with_extension("ready");
     std::fs::remove_file(&ready).unwrap();
     std::fs::write(fx.uds_path.with_extension("launched"), b"launched\n").unwrap();
@@ -379,7 +382,7 @@ fn mark(fx: &Fixture, marker: &str) {
 #[tokio::test]
 async fn create_wait_reports_a_detached_workload_running_once_the_guest_marks_it_running() {
     let fx = fixture(images());
-    let owner = owner_accepting_stage_and_launch(&fx.uds_path, 4);
+    let owner = owner_accepting_stage_and_launch(&fx.uds_path);
     start(&fx.state, "box".into(), spec(None));
     owner.await.unwrap();
     wait_for(&fx.state, "box", |s| s.state == ContainerState::Starting).await;
@@ -413,7 +416,7 @@ async fn create_wait_reports_a_detached_workload_running_once_the_guest_marks_it
 #[tokio::test]
 async fn create_wait_reports_a_detached_workload_that_never_started_as_failed() {
     let fx = fixture(images());
-    let owner = owner_accepting_stage_and_launch(&fx.uds_path, 4);
+    let owner = owner_accepting_stage_and_launch(&fx.uds_path);
     start(&fx.state, "box".into(), spec(None));
     owner.await.unwrap();
     wait_for(&fx.state, "box", |s| s.state == ContainerState::Starting).await;
@@ -431,50 +434,6 @@ async fn create_wait_reports_a_detached_workload_that_never_started_as_failed() 
         status.error.as_deref(),
         Some("the workload did not start; `capsem logs` shows why")
     );
-}
-
-fn owner_accepting_stage_and_launch(
-    uds_path: &StdPath,
-    expected: usize,
-) -> tokio::task::JoinHandle<Vec<ServiceToProcess>> {
-    spawn_fake_process(uds_path, expected, |message| {
-        let reply = match message {
-            ServiceToProcess::AdmitContainerPull { id, .. } => Some(ProcessToService::ContainerPullAdmission {
-                id: *id,
-                error: None,
-                policy_refused: false,
-            }),
-            ServiceToProcess::LogFileBoundary { id, .. } => Some(ProcessToService::LogFileBoundaryResult {
-                id: *id,
-                success: true,
-                data: None,
-                error: None,
-            }),
-            ServiceToProcess::Exec { id, .. } => Some(ProcessToService::ExecResult {
-                id: *id,
-                stdout: vec![],
-                stderr: vec![],
-                exit_code: 0,
-                truncated: false,
-            }),
-            other => panic!("unexpected IPC message during container setup: {other:?}"),
-        };
-        Box::pin(async move { reply })
-    })
-}
-
-fn owner_admitting_pull(uds_path: &StdPath) -> tokio::task::JoinHandle<Vec<ServiceToProcess>> {
-    spawn_fake_process(uds_path, 1, |message| {
-        let reply = match message {
-            ServiceToProcess::AdmitContainerPull { id, .. } => Some(ProcessToService::ContainerPullAdmission {
-                id: *id,
-                error: None,
-                policy_refused: false,
-            }),
-            other => panic!("pull admission sent an unexpected owner message: {other:?}"),
-        };
-        Box::pin(async move { reply })
-    })
 }
 
 #[tokio::test]
@@ -556,9 +515,9 @@ async fn setup_stages_the_plan_through_the_import_ledger_then_launches_detached(
     let images = images();
     let catalog_reads = Arc::clone(&images.catalog_reads);
     let fx = fixture(images);
-    // Pull admission, options.json, launch.py, then the launch exec: the
+    // Pull admission, options and controller files, then the launch exec: the
     // image's blobs go to the share, not through the workspace.
-    let owner = owner_accepting_stage_and_launch(&fx.uds_path, 4);
+    let owner = owner_accepting_stage_and_launch(&fx.uds_path);
     start(&fx.state, "box".into(), spec(None));
 
     let status = wait_for(&fx.state, "box", |s| s.state == ContainerState::Starting).await;
@@ -583,7 +542,11 @@ async fn setup_stages_the_plan_through_the_import_ledger_then_launches_detached(
             _ => None,
         })
         .collect();
-    assert_eq!(staged, [".capsem-image/options.json", ".capsem-image/launch.py"]);
+    let expected_staged: Vec<_> = control_file_names()
+        .iter()
+        .map(|name| format!("{}/{name}", capsem_core::container::STAGE))
+        .collect();
+    assert_eq!(staged, expected_staged);
     match messages.last() {
         Some(ServiceToProcess::Exec { command, .. }) => {
             assert_eq!(command, &capsem_core::container::detached_launch_command())
@@ -596,7 +559,9 @@ async fn setup_stages_the_plan_through_the_import_ledger_then_launches_detached(
         .map(|entry| entry.unwrap().file_name().into_string().unwrap())
         .collect();
     names.sort();
-    assert_eq!(names, ["launch.py", "options.json"], "only control files are staged");
+    let mut expected_names = control_file_names();
+    expected_names.sort_unstable();
+    assert_eq!(names, expected_names, "only control files are staged");
     for file in walk(&fx.workspace) {
         let bytes = std::fs::read(&file).unwrap();
         assert!(
@@ -718,7 +683,7 @@ async fn registry_credentials_never_reach_the_owner_or_the_staged_workload() {
         access: Arc::clone(&access),
         ..images()
     });
-    let owner = owner_accepting_stage_and_launch(&fx.uds_path, 4);
+    let owner = owner_accepting_stage_and_launch(&fx.uds_path);
     let secret = RegistryAccess {
         username: Some("robot-user".into()),
         password: Some("registry-password".into()),
@@ -816,7 +781,7 @@ async fn container_status_route_reports_no_workload_as_not_found() {
 #[tokio::test]
 async fn container_status_route_reports_running_only_once_the_guest_marks_it_running() {
     let fx = fixture(images());
-    let owner = owner_accepting_stage_and_launch(&fx.uds_path, 4);
+    let owner = owner_accepting_stage_and_launch(&fx.uds_path);
     start(&fx.state, "box".into(), spec(None));
     owner.await.unwrap();
     wait_for(&fx.state, "box", |s| s.state == ContainerState::Starting).await;
@@ -843,7 +808,7 @@ async fn container_status_route_reports_running_only_once_the_guest_marks_it_run
 #[tokio::test]
 async fn container_status_reports_a_workload_that_ran_and_ended_as_exited_with_its_code() {
     let fx = fixture(images());
-    let owner = owner_accepting_stage_and_launch(&fx.uds_path, 4);
+    let owner = owner_accepting_stage_and_launch(&fx.uds_path);
     start(&fx.state, "box".into(), spec(None));
     owner.await.unwrap();
     wait_for(&fx.state, "box", |s| s.state == ContainerState::Starting).await;
@@ -862,7 +827,7 @@ async fn container_status_reports_a_workload_that_ran_and_ended_as_exited_with_i
 #[tokio::test]
 async fn container_status_survives_a_service_restart_through_the_launch_record() {
     let fx = fixture(images());
-    let owner = owner_accepting_stage_and_launch(&fx.uds_path, 4);
+    let owner = owner_accepting_stage_and_launch(&fx.uds_path);
     start(&fx.state, "box".into(), spec(None));
     owner.await.unwrap();
     wait_for(&fx.state, "box", |s| s.state == ContainerState::Starting).await;

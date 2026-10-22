@@ -257,19 +257,35 @@ pub(crate) fn spawn_fake_process(
                 .unwrap_or_else(|_| panic!("fake capsem-process got {received} of {expected} expected IPC connections"))
                 .unwrap();
             let std_stream = stream.into_std().unwrap();
-            let std_stream = tokio::task::spawn_blocking(move || {
+            let negotiated = tokio::task::spawn_blocking(move || {
                 let mut std_stream = std_stream;
                 capsem_foundation::ipc_handshake::negotiate_responder(&mut std_stream, "capsem-process-test", "")?;
                 Ok::<_, capsem_proto::handshake::HandshakeError>(std_stream)
             })
             .await
-            .unwrap()
             .unwrap();
+            let std_stream = match negotiated {
+                Ok(stream) => stream,
+                Err(error) => {
+                    // Like the real owner, reject a failed connection while
+                    // retaining the listener. macOS can report EINVAL when
+                    // the peer closes before its accepted socket is set up.
+                    eprintln!("fake owner rejected handshake: {error}");
+                    continue;
+                }
+            };
             let (tx, rx): (
                 capsem_foundation::ipc_channel::Sender<ProcessToService>,
                 capsem_foundation::ipc_channel::Receiver<ServiceToProcess>,
             ) = capsem_foundation::ipc_channel::channel_from_std(std_stream).unwrap();
-            let message = rx.recv().await.unwrap();
+            let message = match rx.recv().await {
+                Ok(message) => message,
+                // Readiness/authority probes and cancelled requests can
+                // complete Hello without ever sending a command. They must
+                // not kill the owner fixture or consume its command budget.
+                Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => continue,
+                Err(error) => panic!("fake owner request failed: {error}"),
+            };
             if let ServiceToProcess::InjectCredentials { id, .. } = &message {
                 tx.send(ProcessToService::CredentialsInjected { id: *id, error: None })
                     .await

@@ -265,7 +265,11 @@ fn a_clone_starts_without_its_sources_run_markers() {
         .collect();
     assert_eq!(
         left,
-        [STAGE_READY, "options.json", "launch.py"].map(String::from).into()
+        std::iter::once(STAGE_READY)
+            .chain(std::iter::once("options.json"))
+            .chain(capsem_core::container::LAUNCHER_FILES.iter().map(|(name, _)| *name))
+            .map(String::from)
+            .collect()
     );
 }
 
