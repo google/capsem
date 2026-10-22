@@ -27,6 +27,35 @@ async fn archived_payload(db_path: &std::path::Path, event_id: &str) -> String {
     archived_payload_of(db_path, "security_rule_events", event_id).await
 }
 
+#[test]
+fn forensic_rule_payload_omits_raw_http_query_values() {
+    let profile = SecurityRuleProfile::parse_toml(
+        r#"
+[profiles.rules.query_probe]
+name = "query_probe"
+action = "allow"
+match = 'http.path == "/v1/messages"'
+"#,
+    )
+    .unwrap();
+    let rules = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).unwrap();
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+        path: Some("/v1/messages".into()),
+        query: Some("key=AIza-harmless-marker".into()),
+        ..Default::default()
+    });
+    let row = security_rule_event(
+        SecurityEventId::parse("abcdef123456").unwrap(),
+        RuntimeSecurityEventType::HttpRequest,
+        &rules.rules()[0],
+        &event,
+        1_789_000_000_000,
+    )
+    .unwrap();
+    assert!(row.event_json.contains("[REDACTED]"));
+    assert!(!row.event_json.contains("AIza-harmless-marker"));
+}
+
 #[tokio::test]
 async fn network_decision_ledger_preserves_owner_facts_and_sanitizes_before_storage() {
     let dir = tempfile::tempdir().unwrap();

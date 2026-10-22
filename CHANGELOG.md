@@ -29,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Keep guest HTTP query values out of network and security-rule ledgers while
+  forwarding the original query upstream and evaluating policy on it.
+
 - Allocate a new KVM VirtioFS node ID after guest unlink and recreation, so
   a cached inode cannot alias a different file at the same name.
 

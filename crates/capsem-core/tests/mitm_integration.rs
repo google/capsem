@@ -1362,12 +1362,10 @@ async fn mitm_proxy_plain_http_records_every_http_method() {
     }
 }
 
-/// T2.2: query string is split off the path and stored separately
-/// in `NetEvent.query`. Multiple parameters, including ones with
-/// repeated keys, equals signs, and percent-encoded values, are
-/// preserved verbatim. Path side stays clean (no `?` or query).
+/// T2.2: upstream receives the original query, while the ledger records only
+/// its presence. Path side stays clean (no `?` or query).
 #[tokio::test]
-async fn mitm_proxy_plain_http_records_query_string_with_parameters() {
+async fn mitm_proxy_plain_http_forwards_query_without_logging_values() {
     let received: Arc<std::sync::Mutex<Vec<u8>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
     let received_for_serve = Arc::clone(&received);
 
@@ -1387,7 +1385,7 @@ async fn mitm_proxy_plain_http_records_query_string_with_parameters() {
     let (config, db) = make_proxy_config_full(&["127.0.0.1"], &[], false, &[80, upstream_port]);
     let (proxy_task, proxy_addr) = spawn_proxy(config).await;
 
-    let query = "q=hello%20world&page=2&filter=active&tag=a&tag=b";
+    let query = "q=hello%20world&page=2&filter=active&tag=a&tag=b&key=AIza-harmless-marker";
     let req = format!("GET /search?{query} HTTP/1.1\r\nHost: 127.0.0.1:{upstream_port}\r\nConnection: close\r\n\r\n");
     let mut tcp = tokio::net::TcpStream::connect(proxy_addr).await.unwrap();
     tcp.write_all(req.as_bytes()).await.unwrap();
@@ -1418,8 +1416,8 @@ async fn mitm_proxy_plain_http_records_query_string_with_parameters() {
     assert_eq!(ev.path.as_deref(), Some("/search"), "path must not include the query");
     assert_eq!(
         ev.query.as_deref(),
-        Some(query),
-        "NetEvent.query must equal the inbound query string verbatim",
+        Some("[REDACTED]"),
+        "NetEvent.query must not retain query values",
     );
 }
 

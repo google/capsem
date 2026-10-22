@@ -1,6 +1,30 @@
 use super::*;
 
 #[test]
+fn logging_plugin_redacts_query_even_without_credential_observations() {
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
+        .with_http(HttpSecurityEvent {
+            query: Some("key=AIza-harmless-marker".into()),
+            ..Default::default()
+        })
+        .with_http_request(HttpRequestSecurityEvent::new(
+            "generativelanguage.googleapis.com",
+            None,
+            http::HeaderMap::new(),
+            Some("key=AIza-harmless-marker".into()),
+        ));
+    let result = LogSanitizerPlugin
+        .apply(
+            event,
+            plugin_config(SecurityPluginMode::Rewrite, DetectionLevel::Informational),
+        )
+        .unwrap();
+    assert!(result.applied);
+    assert_eq!(result.event.http.unwrap().query.as_deref(), Some("[REDACTED]"));
+    assert_eq!(result.event.http_request.unwrap().query.as_deref(), Some("[REDACTED]"));
+}
+
+#[test]
 fn network_event_engine_rejects_missing_facts_and_defaults_to_block() {
     let rules = SecurityRuleSet::compile_profile(&SecurityRuleProfile::default(), SecurityRuleSource::User).unwrap();
     let engine = SecurityEventEngine::with_builtin_actions(Arc::new(RecordingEmitter::new()));

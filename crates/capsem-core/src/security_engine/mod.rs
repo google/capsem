@@ -37,6 +37,7 @@ pub use network::NetworkSecurityEvent;
 mod plugins;
 mod rule_decision;
 mod rule_emission;
+pub(crate) use plugins::redact_query_for_ledger;
 use plugins::{CredentialBrokerPlugin, DummyPostAllowPlugin, DummyPreEicarPlugin, LogSanitizerPlugin};
 use rule_decision::*;
 pub use rule_emission::*;
