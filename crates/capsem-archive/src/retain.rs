@@ -4,7 +4,7 @@
 //! to write the file again without it. Kept blocks are copied **verbatim**,
 //! in ascending offset order, into a sibling temporary: no re-deflating, so a
 //! retention pass costs I/O rather than CPU over the whole surviving archive,
-//! and every segment keeps the blake3 its writer computed.
+//! and every segment keeps the XXH3-128 checksum its writer computed.
 //!
 //! A block is kept to its **committed extent** -- `body_blocks.disk_len`, the
 //! bytes the index vouches for -- not to the end of whatever the file holds

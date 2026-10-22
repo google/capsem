@@ -53,12 +53,12 @@ fn a_record_is_one_gzip_member_with_the_standard_headers_in_order() {
          WARC-Record-ID: <urn:capsem:0123456789ab:response>\r\n\
          WARC-Target-URI: https://example.test/answer\r\n\
          WARC-Date: 2026-09-17T10:11:12Z\r\n\
-         WARC-Block-Digest: blake3:{digest}\r\n\
+         WARC-Block-Digest: xxh3-128:{digest:032x}\r\n\
          Content-Type: application/json\r\n\
          Content-Length: 16\r\n\
          \r\n\
          {{\"answer\":\"yes\"}}\r\n\r\n",
-        digest = capsem_crypto::blake3::hash(body).to_hex()
+        digest = capsem_crypto::xxh3::hash(body)
     );
     assert_eq!(
         text, expected,
@@ -67,13 +67,13 @@ fn a_record_is_one_gzip_member_with_the_standard_headers_in_order() {
 }
 
 #[test]
-fn the_block_digest_is_blake3_of_the_body() {
+fn the_block_digest_is_xxh3_128_of_the_body() {
     let body = b"digest me";
     let text = String::from_utf8(members(&write_one(&record(body, None)))[0].clone()).expect("text");
     assert!(
         text.contains(&format!(
-            "WARC-Block-Digest: blake3:{}\r\n",
-            capsem_crypto::blake3::hash(body).to_hex()
+            "WARC-Block-Digest: xxh3-128:{:032x}\r\n",
+            capsem_crypto::xxh3::hash(body)
         )),
         "{text}"
     );

@@ -127,13 +127,12 @@ pub fn write_record<W: Write>(out: &mut W, rec: &WarcRecord<'_>) -> Result<()> {
 /// Order is not significant to a WARC reader, but it is significant to a human
 /// diffing two exports, and a fixed one costs nothing.
 fn header_block(rec: &WarcRecord<'_>) -> String {
-    // blake3, where the spec's examples and most tools use base32 sha1 or
-    // sha256. Deliberate: this is the hash the ledger index already records
+    // XXH3-128: this is the fingerprint the ledger index already records
     // for every body, so the digest here is the one a reader can check against
     // SQLite rather than a second one computed only for the file. The cost is
     // real and worth knowing -- a tool that verifies block digests will not
     // verify these and should treat them as opaque.
-    let digest = capsem_crypto::blake3::hash(rec.body);
+    let digest = capsem_crypto::xxh3::hash(rec.body);
     let content_type = rec.content_type.unwrap_or(DEFAULT_CONTENT_TYPE);
     let target_uri = rec
         .target_uri
@@ -149,7 +148,7 @@ fn header_block(rec: &WarcRecord<'_>) -> String {
          WARC-Record-ID: <{record_id}>\r\n\
          {target_uri}\
          WARC-Date: {date}\r\n\
-         WARC-Block-Digest: blake3:{digest}\r\n\
+         WARC-Block-Digest: xxh3-128:{digest:032x}\r\n\
          {truncated}\
          Content-Type: {content_type}\r\n\
          Content-Length: {length}\r\n\

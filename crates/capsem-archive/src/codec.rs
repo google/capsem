@@ -42,7 +42,7 @@ pub struct ArchiveCodecs {
 }
 
 impl ArchiveCodecs {
-    /// The v3 compatibility configuration: write and read raw deflate.
+    /// Write and read blocks using raw deflate.
     #[must_use]
     pub fn deflate() -> Self {
         let codec: Arc<dyn BlockCodec> = Arc::new(DeflateCodec);
@@ -52,7 +52,7 @@ impl ArchiveCodecs {
         }
     }
 
-    /// Write with `codec` while retaining v3 deflate read compatibility.
+    /// Write with `codec` and accept both it and the built-in deflate codec.
     pub fn with_write_codec(codec: Arc<dyn BlockCodec>) -> Result<Self> {
         let id = codec.id();
         if id == 0 || id == CODEC_DEFLATE {
