@@ -60,6 +60,7 @@
       <div>Source {metricSize(metrics.sourceWidth, metrics.sourceHeight)}</div>
       <div>Canvas {metricSize(metrics.backingWidth, metrics.backingHeight)}</div>
       <div>Display {metricSize(metrics.displayWidth, metrics.displayHeight)} · DPR {metrics.dpr ?? '—'}</div>
+      <div title="Client-advertised and server-requested DPI; the virtual display's hardware DPI can differ.">DPI client {metrics.clientDpi ?? '—'} · server {metrics.guestDpi ?? '—'}</div>
       <div class="text-muted-foreground-1">Decode errors {metrics.decodeErrors ?? 0} · Idle = 0 FPS</div>
     {:else}
       <span class="text-muted-foreground-1">Waiting for viewer metrics…</span>

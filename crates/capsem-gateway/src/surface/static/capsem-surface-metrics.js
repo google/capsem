@@ -74,7 +74,9 @@ class CapsemSurfaceMetrics {
       rttMs: client.last_ping_echoed_time > 0 ? numeric(client.server_ping_latency) : null,
       mouseMs: input("mouse"), keyMs: input("key"),
       codec: this.codec, quality: this.quality, color: this.color,
-      depth: numeric(win?.metadata?.depth),
+      depth: numeric(win?.metadata?.depth ?? client.server_last_info?.display?.depth),
+      clientDpi: numeric(client.capabilities?.dpi?.[""]),
+      guestDpi: numeric(client.server_last_info?.display?.dpi?.value),
       sourceWidth: numeric(win?.w), sourceHeight: numeric(win?.h),
       backingWidth: numeric(canvas?.width), backingHeight: numeric(canvas?.height),
       displayWidth: numeric(rect?.width), displayHeight: numeric(rect?.height),
@@ -91,14 +93,24 @@ class CapsemSurfaceMetrics {
   let client;
   let meter;
   let timer;
+  let lastDisplayRequest = -Infinity;
   function disable() {
     if (timer != null) clearInterval(timer);
     timer = undefined;
     meter = undefined;
+    lastDisplayRequest = -Infinity;
   }
   function publish() {
     if (meter && client && !document.hidden) {
-      parent.postMessage({type: "capsem:surface-metrics", metrics: meter.sample(client, performance.now())}, parentOrigin);
+      const now = performance.now();
+      if (client.connected && now - lastDisplayRequest >= 2000) {
+        // Ask only for public display diagnostics, never process/environment
+        // info. The vendor owns response decoding and the current info value.
+        // Xpra names these subsystems after the actual manager classes.
+        client.send([PACKET_TYPES.info_request, [client.uuid], [], ["displaymanager", "x11displaymanager"]]);
+        lastDisplayRequest = now;
+      }
+      parent.postMessage({type: "capsem:surface-metrics", metrics: meter.sample(client, now)}, parentOrigin);
     }
   }
   addEventListener("message", event => {

@@ -13,6 +13,7 @@ function load() {
   const parent = { postMessage: (message: unknown) => messages.push(message) };
   const context = vm.createContext({
     performance: { now: () => clock }, parent, devicePixelRatio: 2, TextDecoder, Uint8Array,
+    PACKET_TYPES: {info_request:'info-request'},
     document: { hidden: false, querySelector: () => ({dataset: {parentOrigin: 'http://parent.localhost'}}),
       addEventListener: (name: string, listener: (e: unknown) => void) => {listeners[name] = listener;} },
     addEventListener: (name: string, listener: (e: unknown) => void) => {listeners[name] = listener;},
@@ -23,6 +24,7 @@ function load() {
     _process_open() {} _process_close() {} _process_draw() {}
     draw_pending_list() { this.pending_redraw = []; }
     do_send_damage_sequence() {}
+    send(packet) { (this.sent ||= []).push(packet); }
   }`, context);
   vm.runInContext(SCRIPT, context);
   const run = (code: string) => vm.runInContext(code, context);
@@ -91,12 +93,27 @@ describe('graphical display diagnostics', () => {
     const {run} = load();
     const row = run('new CapsemSurfaceMetrics(0).sample({},1000)');
     expect(parseSurfaceMetrics(row)).not.toBeNull();
-    for (const bad of [null, [], {}, {...row,fps:Infinity}, {...row,mouseMs:-1}, {...row,codec:'x'.repeat(33)}, {...row,dpr:undefined}]) {
+    for (const bad of [null, [], {}, {...row,fps:Infinity}, {...row,mouseMs:-1}, {...row,codec:'x'.repeat(33)}, {...row,dpr:undefined}, {...row,guestDpi:Infinity}]) {
       expect(parseSurfaceMetrics(bad)).toBeNull();
     }
     expect(metricMs(null)).toBe('—');
     expect(metricMs(12.345)).toBe('12.3 ms');
     expect(metricSize(1280,720)).toBe('1280 × 720');
     expect(metricSize(null,720)).toBe('—');
+  });
+
+  it('requests only display information at a bounded frequency while enabled', () => {
+    const {run,toggle,tick} = load();
+    run('const client = new XpraClient(); client.connected=true; client.uuid="test"; client._process_open();');
+    toggle(true);
+    tick(500); tick(1500); tick(2000);
+    expect(run('client.sent')).toEqual([
+      ['info-request',['test'],[],['displaymanager','x11displaymanager']],
+      ['info-request',['test'],[],['displaymanager','x11displaymanager']],
+    ]);
+    run('client.server_last_info = {display:{depth:24,dpi:{value:192}}}; client.capabilities={dpi:{"":192}};');
+    expect(run('new CapsemSurfaceMetrics(0).sample(client,2000)')).toMatchObject({depth:24,clientDpi:192,guestDpi:192});
+    toggle(false); tick(5000);
+    expect(run('client.sent.length')).toBe(2);
   });
 });

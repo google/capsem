@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Render graphical surfaces at display density with consistent resize and
+  pointer coordinates, and show negotiated DPI in the Debug overlay.
+
 - Restore graphical app DPI updates with a rootless Xorg display and a pinned
   fix for Xpra's X11 settings dispatch.
 

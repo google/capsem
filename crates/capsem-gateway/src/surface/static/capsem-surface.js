@@ -14,6 +14,91 @@
 "use strict";
 
 (function () {
+  // The vendor's scale already maps CSS coordinates to backing pixels,
+  // including mouse input. Use it for density rather than stretching a
+  // low-resolution canvas. Server capabilities replace this pre-hello bound.
+  const displayLimits = new WeakMap();
+  const viewportObservers = new WeakMap();
+  function watchViewport(client) {
+    if (typeof ResizeObserver === "undefined" || viewportObservers.has(client)) return;
+    const parent = client.container?.parentElement;
+    if (!parent) return;
+    // Observing the parent avoids a feedback loop from our own scale styles.
+    const observer = new ResizeObserver(() => client._screen_resized());
+    observer.observe(parent);
+    viewportObservers.set(client, observer);
+  }
+  function updateDensity(client) {
+    const parent = client.container.parentElement;
+    const width = parent.clientWidth;
+    const height = parent.clientHeight;
+    if (!(width > 0 && height > 0)) return false;
+    const requested = globalThis.devicePixelRatio;
+    const density = Number.isFinite(requested) && requested > 0 ? requested : 1;
+    const [maxWidth, maxHeight] = displayLimits.get(client) || [8192, 4096];
+    const scale = Math.min(density, maxWidth / width, maxHeight / height);
+    if (scale === client.scale) return false;
+    client.scale = scale;
+    Object.assign(client.container.style, {
+      width: `${100 * scale}%`, height: `${100 * scale}%`,
+      transform: `scale(${1 / scale})`, transformOrigin: "top left",
+    });
+    for (const win of Object.values(client.id_to_window || {})) win.scale = scale;
+    return true;
+  }
+  const init = XpraClient.prototype.init;
+  XpraClient.prototype.init = function () {
+    updateDensity(this);
+    const result = init.apply(this, arguments);
+    watchViewport(this);
+    return result;
+  };
+  const close = XpraClient.prototype.close;
+  XpraClient.prototype.close = function () {
+    viewportObservers.get(this)?.disconnect();
+    viewportObservers.delete(this);
+    return close.apply(this, arguments);
+  };
+  const dpi = XpraClient.prototype._get_DPI;
+  XpraClient.prototype._get_DPI = function () {
+    return Math.round(dpi.call(this) * (this.scale || 1));
+  };
+  const displayCaps = XpraClient.prototype._get_display_caps;
+  XpraClient.prototype._get_display_caps = function () {
+    // The base hello captures display geometry before _make_hello refreshes
+    // it. Keep both halves of that handshake in the same physical space.
+    updateDensity(this);
+    if (this.container.clientWidth > 0 && this.container.clientHeight > 0) {
+      this.desktop_width = this.container.clientWidth;
+      this.desktop_height = this.container.clientHeight;
+    }
+    return displayCaps.apply(this, arguments);
+  };
+  const resized = XpraClient.prototype._screen_resized;
+  XpraClient.prototype._screen_resized = function () {
+    const parent = this.container.parentElement;
+    // A view switch can temporarily hide the iframe. Retain its last useful
+    // dimensions instead of configuring a zero-sized desktop in the guest.
+    if (!(parent.clientWidth > 0 && parent.clientHeight > 0)) return;
+    if (updateDensity(this)) this.desktop_width = -1;
+    return resized.apply(this, arguments);
+  };
+  const hello = XpraClient.prototype._process_hello;
+  XpraClient.prototype._process_hello = function (packet) {
+    const maximum = packet[1]?.max_desktop_size;
+    if (Array.isArray(maximum) && maximum.length === 2 &&
+        maximum.every(value => Number.isSafeInteger(value) && value > 0)) {
+      displayLimits.set(this, maximum);
+    }
+    const changed = updateDensity(this);
+    const result = hello.apply(this, arguments);
+    if (changed) {
+      this.desktop_width = -1;
+      this._screen_resized();
+    }
+    return result;
+  };
+
   // Embedded documents receive a scoped session in trusted HTML, independently
   // of third-party cookies. Only the pinned transport worker gets it, and the
   // confined router removes it before the workload sees the WebSocket offer.
@@ -92,6 +177,7 @@
   XpraClient.prototype._process_open = function () {
     const state = startup.get(this);
     if (state) state.opened = true;
+    watchViewport(this);
     return processOpen.apply(this, arguments);
   };
   const processError = XpraClient.prototype._process_error;
@@ -189,6 +275,10 @@
   XpraClient.prototype._make_hello = function () {
     makeHello.call(this);
     this.capabilities.system_tray = false;
+    // Xpra 6.5 uses the mean DPI for XSettings, independently of the x/y
+    // display dimensions. The pinned HTML5 client only supplies the axes;
+    // without the mean, GTK/Electron keep the startup font/device scale.
+    if (this.capabilities.dpi) this.capabilities.dpi[""] = this._get_DPI();
   };
 
   globalThis.CapsemSurface = Object.freeze({ fitGeometry, fit });
