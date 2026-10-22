@@ -77,6 +77,7 @@ fn runtime_policy_source_loads_rules_plugins_mcp() {
         r#"
 [corp_rules]
 [network]
+http_upstream_ports = [80, 3128, 3713, 8080, 11434]
 
 [user_rules.profiles.rules.runtime_http]
 name = "runtime_http"
