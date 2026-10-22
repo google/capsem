@@ -83,6 +83,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Clear obsolete app-download errors after preparation recovers, while keeping
+  launch failures visible with the correct action label.
+
 - Use Alacritty for session-owned terminals, preserving explicit links and
   dynamic colors while reflowing soft-wrapped lines when the window grows.
   Viewers receive reconstructed snapshots and incremental display updates.

@@ -5,7 +5,7 @@
   import { vmStore } from '../../stores/vms.svelte';
   import { tabStore } from '../../stores/tabs.svelte';
   import { sessionActionError } from '../../models/session-action-error';
-  import { imageNeedsDownload, imageLaunchRequest, imageInterfaceLabel } from '../../models/image-launch';
+  import { imageNeedsDownload, imageLaunchRequest, imageInterfaceLabel, retainImageActionFailure, type ImageActionFailure } from '../../models/image-launch';
   import { imageDownloadView } from '../../models/image-download';
   import CircleNotch from 'phosphor-svelte/lib/CircleNotch';
   import DownloadSimple from 'phosphor-svelte/lib/DownloadSimple';
@@ -18,25 +18,26 @@
   let controller: AbortController | null = null;
   let caching = $state<string | null>(null);
   let lastProgress = $state<ImageDownloadProgress | null>(null);
-  let cacheError = $state<string | null>(null);
+  let failure = $state<ImageActionFailure | null>(null);
   let launching = $state<string | null>(null);
-  let failedImage = $state<string | null>(null);
   let availableImages = $derived(images.filter(image => image.image));
   let observationTimer: ReturnType<typeof setTimeout> | null = null;
+
+  $effect(() => {
+    failure = retainImageActionFailure(failure, images, ready);
+  });
 
   async function activate(image: ImageInfo) {
     if (!image.image || caching || launching || vmStore.acting) return;
     if (!imageNeedsDownload(image, ready)) {
       launching = image.name;
-      cacheError = null;
-      failedImage = null;
+      failure = null;
       try {
         const graphical = image.surface === ImageSurface.XPRA;
         const { id, name } = await vmStore.provision(imageLaunchRequest(image));
         tabStore.openVM(id, name, graphical ? 'ui' : 'terminal');
       } catch (e) {
-        failedImage = image.name;
-        cacheError = sessionActionError(e);
+        failure = { image: image.name, action: 'launch', message: sessionActionError(e) };
       } finally {
         launching = null;
       }
@@ -44,16 +45,14 @@
     }
     caching = image.name;
     lastProgress = null;
-    cacheError = null;
-    failedImage = null;
+    failure = null;
     void load(false, true);
     try {
       if (!ready) await prepareRuntime();
       if (image.cached !== ImageCacheState.READY) await pullImage(image.image);
       await load(false, true);
     } catch (e) {
-      failedImage = image.name;
-      cacheError = sessionActionError(e);
+      failure = { image: image.name, action: 'prepare', message: sessionActionError(e) };
     } finally {
       caching = null;
       lastProgress = null;
@@ -154,10 +153,10 @@
             </button>
             {/if}
           </div>
-          {#if failedImage === image.name && cacheError}
+          {#if failure?.image === image.name}
             <div class="mt-2 text-xs text-destructive break-words" role="alert">
-              <p>Couldn't prepare this app. Try again.</p>
-              <details class="mt-1"><summary class="cursor-pointer">Details</summary>{cacheError}</details>
+              <p>Couldn't {failure.action === 'launch' ? 'launch' : 'prepare'} this app. Try again.</p>
+              <details class="mt-1"><summary class="cursor-pointer">Details</summary>{failure.message}</details>
             </div>
           {/if}
         </article>
