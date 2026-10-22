@@ -42,6 +42,7 @@ async fn retiring_installed_helpers_spares_command_line_lookalikes() {
         // orphan without falling back to a race-prone raw PID kill.
         #[cfg(not(target_os = "macos"))]
         panic!("orphan retirement is unsupported on this host");
+        #[cfg(target_os = "macos")]
         assert!(!owned_exited, "an unsupported host signaled the orphan");
     } else {
         result.unwrap();
