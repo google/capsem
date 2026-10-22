@@ -63,9 +63,17 @@ source_build_network = "none"
 [build.guest_rust_builder]
 dockerfile = "build_system/docker/Dockerfile.guest-rust-builder"
 tag_template = "capsem-guest-rust-{arch}:{digest}"
-identity_inputs = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "sdk/rust/Cargo.toml"]
+identity_inputs = [
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain.toml",
+    "sdk/rust/Cargo.toml",
+    "third_party/rust/alacritty_terminal/Cargo.toml",
+    "third_party/rust/vte/Cargo.toml",
+]
 source_roots = [
     "Cargo.toml",
+    "third_party/rust",
     "Cargo.lock",
     "rust-toolchain.toml",
     "crates/capsem-agent",

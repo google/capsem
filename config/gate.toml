@@ -370,7 +370,7 @@ identity_inputs = [
     "build_system/docker/materialize-install-os.sh",
     "build_system/scripts/build/configure-apt-snapshot.sh",
 ]
-identity_globs = ["crates/*/Cargo.toml"]
+identity_globs = ["crates/*/Cargo.toml", "third_party/rust/*/Cargo.toml"]
 materialize_build_network = "default"
 source_build_network = "none"
 cargo_store = "/opt/capsem/install-cargo"
@@ -651,7 +651,7 @@ identity_inputs = [
     "build_system/scripts/build/rustc-workspace-wrapper.sh",
     "build_system/docker/swap-dev-libs.sh",
 ]
-identity_globs = ["crates/*/Cargo.toml"]
+identity_globs = ["crates/*/Cargo.toml", "third_party/rust/*/Cargo.toml"]
 # BuildKit and containers have different network vocabularies. `default` is
 # the ordinary networked BuildKit boundary; `bridge` is a container mode and
 # is deliberately rejected by the image adapter before Docker is invoked.
@@ -739,6 +739,7 @@ test_root = "cache/target/tests/ironbank"
 # boots -- and never remove one to make a rebuild go away.
 identity_roots = [
     "guest",
+    "third_party/rust",
     "config",
     "build_system/builder/image",
     "crates/capsem-admin",
@@ -1631,10 +1632,20 @@ lane_tag = "capsem-linux-rust:latest"
 # again -- it carries the build arguments' defaults and every `RUN` -- and so is the current image id of `tag`, because `:latest`
 # is a pointer and a rebuilt parent is a different image under the same name.
 #
-# Not the workspace manifests: `cargo fetch --locked` fetches everything the
-# lock resolves regardless of features, so a manifest edit that leaves
-# `Cargo.lock` alone leaves the sealed lane with every source it needs.
-identity_inputs = ["Cargo.lock", "rust-toolchain.toml", "sdk/typescript/pnpm-lock.yaml", "web/app/pnpm-lock.yaml", "build_system/pyproject.toml", "build_system/uv.lock", "build_system/patches/http-cache-semantics@4.3.0.patch"]
+# Ordinary workspace manifests need not key a registry fetch: the lock covers
+# every feature. Vendored path manifests must be present before Cargo can load
+# that lock, so changes to those inputs invalidate the materialized helper.
+identity_inputs = [
+    "Cargo.lock",
+    "rust-toolchain.toml",
+    "sdk/typescript/pnpm-lock.yaml",
+    "web/app/pnpm-lock.yaml",
+    "build_system/pyproject.toml",
+    "build_system/uv.lock",
+    "build_system/patches/http-cache-semantics@4.3.0.patch",
+    "third_party/rust/alacritty_terminal/Cargo.toml",
+    "third_party/rust/vte/Cargo.toml",
+]
 # Named here so the lane's refusal and the recipe that answers it cannot drift
 # apart. `test_every_recipe_the_gate_tells_an_operator_to_run_exists` checks
 # this resolves to a real recipe -- the last time a message named one that did

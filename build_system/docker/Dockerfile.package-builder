@@ -13,6 +13,7 @@ COPY Cargo.toml Cargo.lock rust-toolchain.toml /prefetch/
 COPY .cargo/config.toml /prefetch/.cargo/config.toml
 COPY --chmod=555 build_system/scripts/build/rustc-workspace-wrapper.sh /prefetch/build_system/scripts/build/rustc-workspace-wrapper.sh
 COPY crates /prefetch/crates
+COPY third_party/rust /prefetch/third_party/rust
 COPY sdk/rust/Cargo.toml /prefetch/sdk/rust/Cargo.toml
 RUN mkdir -p /prefetch/sdk/rust/src && : > /prefetch/sdk/rust/src/lib.rs
 COPY sdk/typescript/package.json sdk/typescript/pnpm-lock.yaml /prefetch/sdk/typescript/

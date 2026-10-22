@@ -19,6 +19,7 @@ FROM ${BASE}
 # exists for.
 COPY Cargo.toml Cargo.lock rust-toolchain.toml /src/
 COPY crates /src/crates
+COPY third_party/rust /src/third_party/rust
 # Workspace crates embed or inspect files from these repository roots at
 # compile time. Copy every such root before prewarming so adding another
 # fixture under an existing root cannot silently turn the warm build cold.
