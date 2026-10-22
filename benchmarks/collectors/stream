@@ -149,8 +149,12 @@ def keystroke_echo(gateway: Gateway, vm: str, keystrokes: int) -> list[float]:
         return samples
 
 
-def terminal_output(gateway: Gateway, vm: str) -> float:
-    """Megabits per second of base64 text rendered through the terminal."""
+def terminal_output(gateway: Gateway, vm: str) -> tuple[float, float]:
+    """Known input Mbps and projected wire Mbps until foreground completion.
+
+    The canonical terminal coalesces redundant screen updates, so received
+    bytes measure wire traffic rather than source processing throughput.
+    """
     with open_stream(gateway, vm, {"type": "start", "kind": "terminal"}) as stream:
         ready_terminal(stream)
         # The typed command echoes `STREAM_$((6*7))`; only its output says 42.
@@ -159,7 +163,7 @@ def terminal_output(gateway: Gateway, vm: str) -> float:
         started = time.monotonic()
         received = read_until(stream, b"STREAM_42", timeout=300)
         elapsed = time.monotonic() - started
-        return received * 8 / 1_000_000 / elapsed
+        return TERMINAL_BYTES * 8 / 1_000_000 / elapsed, received * 8 / 1_000_000 / elapsed
 
 
 def resize_echo(gateway: Gateway, vm: str) -> list[float]:
@@ -234,10 +238,11 @@ def main() -> int:
             record("terminal.resize_echo_ms", "milliseconds", resized)
             for index in range(runs):
                 print(f"stream: transfer run {index + 1}/{runs}", file=sys.stderr)
-                output = measure(
+                source_mbps, projected_mbps = measure(
                     metrics, f"terminal.output.{index}", root, lambda: terminal_output(gateway, vm)
                 )
-                record("terminal.output_mbps", "megabits_per_second", output)
+                record("terminal.source_input_mbps", "megabits_per_second", source_mbps)
+                record("terminal.projected_wire_mbps", "megabits_per_second", projected_mbps)
                 mbps, seconds = measure(
                     metrics, f"exec.output.{index}", root, lambda: exec_output(gateway, vm)
                 )

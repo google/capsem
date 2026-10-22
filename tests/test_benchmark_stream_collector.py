@@ -3,6 +3,7 @@
 import inspect
 import json
 import runpy
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -152,3 +153,18 @@ def test_phase_resources_are_sampled_through_the_existing_tree_owner():
     assert metrics["idle.wall_s"]["samples"][0] >= 0
     assert metrics["idle.resources.total.peak_rss_bytes"]["samples"][0] > 0
     assert metrics["idle.resources.total.cpu_s"]["unit"] == "seconds"
+
+
+def test_terminal_distinguishes_source_processing_from_projected_wire_rate(monkeypatch):
+    module = collector()
+    function = module["terminal_output"]
+    socket = Socket()
+    socket.entered = True
+    ticks = iter((10.0, 12.0))
+    monkeypatch.setitem(function.__globals__, "open_stream", lambda *_: nullcontext(socket))
+    monkeypatch.setitem(function.__globals__, "ready_terminal", lambda _: None)
+    monkeypatch.setitem(function.__globals__, "read_until", lambda *_, **__: 1_000_000)
+    monkeypatch.setitem(function.__globals__, "time", SimpleNamespace(monotonic=lambda: next(ticks)))
+    source_mbps, projected_mbps = function(None, "session-id")
+    assert source_mbps == 67.108864  # 16 MiB input completed in two seconds.
+    assert projected_mbps == 4.0  # Screen projection transmitted only 1 MB.
