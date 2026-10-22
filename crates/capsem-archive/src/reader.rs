@@ -362,7 +362,7 @@ fn inflate_segment(cursor: &mut Cursor, header: &SegmentHeader, comp: &[u8], at:
     if raw.len() != want {
         return Err(ArchiveError::Integrity(at));
     }
-    if header.checksum.hash(&raw) != header.hash {
+    if capsem_crypto::xxh3::hash(&raw).to_le_bytes() != header.hash {
         return Err(ArchiveError::Integrity(at));
     }
     if cursor.raw.is_empty() {

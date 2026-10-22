@@ -9,8 +9,7 @@ fn segment(last: bool, raw_start: u32, raw_len: u32, comp_len: u32) -> SegmentHe
         raw_start,
         raw_len,
         comp_len,
-        checksum: Checksum::Blake3,
-        hash: [7; 32],
+        hash: [7; 16],
     }
 }
 
@@ -38,45 +37,19 @@ fn new_file_headers_use_version_four_and_a_full_xxh3_128_checksum() {
     let header = encode_file_header(archive, generation);
     assert_eq!(u16::from_le_bytes(header[8..10].try_into().unwrap()), 4);
     assert_eq!(&header[48..64], &capsem_crypto::xxh3::hash(&header[..48]).to_le_bytes());
-    assert_eq!(&header[64..], &[0; 16]);
+    assert_eq!(header.len(), 64);
 }
 
 #[test]
-fn file_header_has_the_exact_v3_golden_bytes_and_round_trips() {
-    let (archive_id, generation_id) = identities();
-    // Independent old-format fixture: do not ask the new writer to encode v3.
-    let mut header = [0u8; FILE_HEADER_BYTES];
-    header[..8].copy_from_slice(b"CAPSEMBL");
-    header[8..10].copy_from_slice(&3u16.to_le_bytes());
-    header[12..16].copy_from_slice(&80u32.to_le_bytes());
-    header[16..32].copy_from_slice(&ARCHIVE_BYTES);
-    header[32..48].copy_from_slice(&GENERATION_BYTES);
-    header[48..].copy_from_slice(&[
-        0x82, 0x1a, 0xeb, 0x26, 0x07, 0x9e, 0x7e, 0x03, 0x97, 0x62, 0xbb, 0x20, 0xec, 0x05, 0x79, 0xc2, 0xc7, 0xf1,
-        0x31, 0x80, 0xa1, 0x75, 0x41, 0xd0, 0xc2, 0xe8, 0x82, 0x32, 0xb4, 0xee, 0x12, 0xd8,
-    ]);
-    assert_eq!(
-        &header[..48],
-        &[
-            b'C', b'A', b'P', b'S', b'E', b'M', b'B', b'L', 3, 0, 0, 0, 80, 0, 0, 0, 0x10, 0x11, 0x12, 0x13, 0x14,
-            0x15, 0x46, 0x17, 0x98, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x46,
-            0x27, 0xa8, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f,
-        ]
-    );
-    assert_eq!(
-        &header[48..],
-        &[
-            0x82, 0x1a, 0xeb, 0x26, 0x07, 0x9e, 0x7e, 0x03, 0x97, 0x62, 0xbb, 0x20, 0xec, 0x05, 0x79, 0xc2, 0xc7, 0xf1,
-            0x31, 0x80, 0xa1, 0x75, 0x41, 0xd0, 0xc2, 0xe8, 0x82, 0x32, 0xb4, 0xee, 0x12, 0xd8,
-        ]
-    );
-    assert_eq!(
-        decode_file_header(&header).unwrap(),
-        FileHeader {
-            archive_id,
-            generation_id
-        }
-    );
+fn obsolete_file_versions_are_refused() {
+    let (archive, generation) = identities();
+    for version in [1u16, 2, 3, 5] {
+        let mut header = encode_file_header(archive, generation);
+        header[8..10].copy_from_slice(&version.to_le_bytes());
+        let digest = capsem_crypto::xxh3::hash(&header[..48]).to_le_bytes();
+        header[48..].copy_from_slice(&digest);
+        assert!(matches!(decode_file_header(&header), Err(ArchiveError::BadFileHeader)));
+    }
 }
 
 #[test]
@@ -104,7 +77,7 @@ fn another_magic_or_a_short_file_header_is_refused() {
 fn file_header_rejects_flags_length_uuid_and_hash_damage() {
     let (archive_id, generation_id) = identities();
     let good = encode_file_header(archive_id, generation_id);
-    for index in [10, 11, 12, 13, 14, 15, 16, 22, 24, 38, 40, 48, 79] {
+    for index in [10, 11, 12, 13, 14, 15, 16, 22, 24, 38, 40, 48, 63] {
         let mut damaged = good;
         damaged[index] ^= 0x01;
         assert!(
@@ -236,20 +209,5 @@ fn unknown_segment_flags_reserved_bytes_and_magic_are_refused() {
             is_bad_segment(parse_segment_header(&bytes, AT, 0)),
             "byte {index} = {value:#x}"
         );
-    }
-}
-
-#[test]
-fn xxh3_segment_tag_requires_canonical_128_bit_checksum_padding() {
-    let mut header = segment(false, 0, 10, 12);
-    header.checksum = Checksum::Xxh3;
-    header.hash = [0; 32];
-    header.hash[..16].copy_from_slice(&capsem_crypto::xxh3::hash(b"ten bytes!").to_le_bytes());
-    let good = encode_segment_header(&header);
-    assert_eq!(parse_segment_header(&good, AT, 0).unwrap(), header);
-    for index in 36..52 {
-        let mut bytes = good;
-        bytes[index] = 1;
-        assert!(is_bad_segment(parse_segment_header(&bytes, AT, 0)));
     }
 }

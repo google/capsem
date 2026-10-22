@@ -63,7 +63,7 @@ struct OpenBlock {
     /// which carries the block header with it.
     disk_len: u64,
     /// Versioned corruption checksum of the segment in progress.
-    hasher: crate::checksum::Hasher,
+    hasher: capsem_crypto::xxh3::Hasher,
     /// Compressed bytes of the segment in progress.
     out: Vec<u8>,
 }
@@ -81,7 +81,6 @@ pub struct BodyLogWriter {
     end: u64,
     block: Option<OpenBlock>,
     codecs: ArchiveCodecs,
-    checksum: crate::Checksum,
     /// Set by a write that failed part-way through. See
     /// [`ArchiveError::Poisoned`].
     poisoned: bool,
@@ -150,22 +149,14 @@ impl BodyLogWriter {
                 generation_id: GenerationId::generate(),
             };
             file.write_all(&format::encode_file_header(header.archive_id, header.generation_id))?;
-            return Ok(Self::at(
-                file,
-                header,
-                FILE_HEADER_BYTES as u64,
-                codecs,
-                crate::Checksum::Xxh3,
-            ));
+            return Ok(Self::at(file, header, FILE_HEADER_BYTES as u64, codecs));
         }
         file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
         let mut header = [0u8; FILE_HEADER_BYTES];
         file.seek(SeekFrom::Start(0))?;
         file.read_exact(&mut header).map_err(|_| ArchiveError::BadFileHeader)?;
         let decoded = format::decode_file_header(&header)?;
-        let checksum = crate::Checksum::for_version(u16::from_le_bytes([header[8], header[9]]))
-            .expect("decode_file_header accepted this version");
-        Ok(Self::at(file, decoded, end, codecs, checksum))
+        Ok(Self::at(file, decoded, end, codecs))
     }
 
     /// Exclusively create a generation beneath an already-open private
@@ -193,13 +184,7 @@ impl BodyLogWriter {
             generation_id,
         };
         file.write_all(&format::encode_file_header(archive_id, generation_id))?;
-        Ok(Self::at(
-            file,
-            header,
-            FILE_HEADER_BYTES as u64,
-            codecs,
-            crate::Checksum::Xxh3,
-        ))
+        Ok(Self::at(file, header, FILE_HEADER_BYTES as u64, codecs))
     }
 
     /// Reopen the exact generation selected by the authoritative SQLite row.
@@ -227,9 +212,7 @@ impl BodyLogWriter {
         file.read_exact(&mut encoded).map_err(|_| ArchiveError::BadFileHeader)?;
         let header = format::decode_file_header(&encoded)?;
         header.validate(expected.archive_id, expected.generation_id, &name)?;
-        let checksum = crate::Checksum::for_version(u16::from_le_bytes([encoded[8], encoded[9]]))
-            .expect("decode_file_header accepted this version");
-        Ok(Self::at(file, header, end, codecs, checksum))
+        Ok(Self::at(file, header, end, codecs))
     }
 
     /// Copy one already-validated committed block extent verbatim into a new
@@ -283,14 +266,13 @@ impl BodyLogWriter {
         Ok(())
     }
 
-    fn at(file: File, header: FileHeader, end: u64, codecs: ArchiveCodecs, checksum: crate::Checksum) -> Self {
+    fn at(file: File, header: FileHeader, end: u64, codecs: ArchiveCodecs) -> Self {
         Self {
             file,
             header,
             end,
             block: None,
             codecs,
-            checksum,
             poisoned: false,
             #[cfg(test)]
             fail_write_after: None,
@@ -343,7 +325,7 @@ impl BodyLogWriter {
                 raw_len: 0,
                 flushed_raw: 0,
                 disk_len: 0,
-                hasher: self.checksum.start(),
+                hasher: capsem_crypto::xxh3::Hasher::new(),
                 out: Vec::new(),
             });
         }
@@ -445,8 +427,7 @@ impl BodyLogWriter {
             raw_start: block.flushed_raw,
             raw_len: block.raw_len - block.flushed_raw,
             comp_len,
-            checksum: self.checksum,
-            hash: block.hasher.finish_and_reset(),
+            hash: block.hasher.finalize().to_le_bytes(),
         });
         let mut bytes = Vec::with_capacity(BLOCK_HEADER_BYTES + SEGMENT_HEADER_BYTES + block.out.len());
         if block.disk_len == 0 {
@@ -461,6 +442,7 @@ impl BodyLogWriter {
         self.end += bytes.len() as u64;
         block.disk_len += bytes.len() as u64;
         block.flushed_raw = block.raw_len;
+        block.hasher = capsem_crypto::xxh3::Hasher::new();
         block.out.clear();
         Ok(SegmentWritten {
             block_offset: block.offset,

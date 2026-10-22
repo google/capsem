@@ -10,7 +10,7 @@
 //! times better than a body on its own.
 //!
 //! Format version 4 checksums immutable generation identities and segments
-//! with XXH3-128, retaining version 3 BLAKE3 read/append compatibility. These
+//! with XXH3-128. Earlier formats are refused. These
 //! are corruption checks, not authentication. Descriptor-based readers enforce the ledger's committed file and
 //! block extents, so appended or torn bytes cannot widen a selected snapshot.
 //!
@@ -21,9 +21,7 @@
 #[cfg(not(unix))]
 compile_error!("capsem-archive relies on O_NOFOLLOW and mode 0600");
 
-mod checksum;
 mod codec;
-pub use checksum::Checksum;
 pub mod format;
 pub mod reader;
 pub mod retain;

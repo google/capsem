@@ -17,8 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Use accelerated XXH3-128 corruption checks for new body archives while
-  retaining existing BLAKE3 archive reads, appends and retention.
+- Use compact XXH3-128 corruption checks for body archives, with one current
+  format and no legacy readers or migration paths.
 
 - Encode internal IPC directly into a bounded final frame, avoiding a second
   payload allocation and copy and rejecting oversized output during encoding.
