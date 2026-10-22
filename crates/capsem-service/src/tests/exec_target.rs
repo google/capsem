@@ -210,7 +210,7 @@ async fn exec_timeout_and_missing_vm_routes_return_structured_error_codes() {
         .vms
         .insert("unresumable".into(), existing);
     let resume_existing_err = handle_resume(st(), Path(existing_id)).await.unwrap_err();
-    assert_eq!(resume_existing_err.status, StatusCode::NOT_FOUND);
+    assert_eq!(resume_existing_err.status, StatusCode::INTERNAL_SERVER_ERROR);
     assert_eq!(resume_existing_err.body.code, None);
     assert_eq!(resume_existing_err.body.vm_id, None);
     std::fs::create_dir_all(dir.path().join("session.db")).unwrap();

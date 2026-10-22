@@ -50,8 +50,14 @@ pub(crate) async fn handle_resume(
         }
         Err(e) => {
             error!(id, error = %e, "resume failed");
-            let mut err = AppError::new(StatusCode::NOT_FOUND, format!("resume failed: {e}"));
-            if find_persistent_entry_by_route_id(&state, &id).is_none() {
+            let exists = find_persistent_entry_by_route_id(&state, &id).is_some();
+            let status = if exists {
+                StatusCode::INTERNAL_SERVER_ERROR
+            } else {
+                StatusCode::NOT_FOUND
+            };
+            let mut err = AppError::new(status, format!("resume failed: {e}"));
+            if !exists {
                 err = err.with_code(ErrorCode::VmNotFound).with_vm_id(&id);
             }
             Err(err)
@@ -83,3 +89,6 @@ pub(crate) async fn stop_failed_resume_process_under_lock(state: &ServiceState, 
     let _ = std::fs::remove_file(uds_path.with_extension("ready"));
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;
