@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Transfer guest environment values through a private one-use session file,
+  keeping API keys out of the VM owner process command line on start and resume.
+
 - Keep verified VM asset hash cache entries under the owner-only runtime
   directory and read or replace them through no-follow directory descriptors.
 
