@@ -132,7 +132,7 @@ class InstallProof:
         self._docker.shell(
             self._container,
             f'dpkg -i "{package}"',
-            env={"SUDO_USER": self._settings.guest_user.name},
+            env={self._config.environment.install.sudo_user: self._settings.guest_user.name},
         )
         installed = self._docker.capture(
             self._container,

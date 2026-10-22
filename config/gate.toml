@@ -488,6 +488,7 @@ command_sandbox_mode = "CAPSEM_GATE_COMMAND_SANDBOX_MODE"
 [environment.install]
 test_output_root = "CAPSEM_TEST_OUTPUT_ROOT"
 project_environment = "UV_PROJECT_ENVIRONMENT"
+sudo_user = "SUDO_USER"
 # pnpm asks before purging a `node_modules` it did not create, and refuses when
 # it cannot ask: `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`. The install
 # proof reaches that state legitimately now -- `/src/build_system/release_site` comes from
