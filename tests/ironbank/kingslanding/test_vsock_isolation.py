@@ -15,6 +15,10 @@ pytestmark = [pytest.mark.integration, pytest.mark.skipif(sys.platform != "linux
 
 def test_foreign_vm_cannot_hold_its_siblings_control_vsock(members, service):
     alpha, beta = members["alpha"], members["beta"]
+    marker = "/root/capsem-peer-vsock-marker"
+    assert guest(service, beta["id"], f"printf VM_B_ONLY > {marker}")["exit_code"] == 0
+    assert guest(service, alpha["id"], f"test ! -e {marker}")["exit_code"] == 0
+    assert guest(service, beta["id"], f"cat {marker}")["stdout"].strip() == "VM_B_ONLY"
 
     def offset(vm):
         cmdline = guest(service, vm["id"], "cat /proc/cmdline")["stdout"]
