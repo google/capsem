@@ -6,9 +6,6 @@ export function setupPrompt(agent?: string): string {
 }
 
 // Prefill only; these documented routes never submit or execute the prompt.
-// Claude: support.claude.com/en/articles/14729294-open-claude-desktop-with-a-link
-// Codex: learn.chatgpt.com/docs/reference/commands#chats
-// Cursor: cursor.com/docs/reference/deeplinks
 export function setupLink(agent: string): string | null {
   const prompt = encodeURIComponent(setupPrompt(agent));
   switch (agent) {
