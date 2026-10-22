@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Start the marketing TUI empty, create OCI image sessions before showing tabs
+  or agent output, and remove obsolete profile controls from TUI and GUI scenes.
+
 - Corrected the hero's isolation narrative: removed guest-side cross-VM
   inspection and the return to the TUI during Scale. New VMs are visibly named,
   created and booted before their tabs receive prompts. TUI session creation

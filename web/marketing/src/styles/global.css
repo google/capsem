@@ -310,7 +310,8 @@
 .demo-tui-name b { font-weight: 400; color: var(--color-demo-tui-active); }
 .demo-tui-name i { display: inline-block; width: .6em; height: 1.1em; vertical-align: -.15em; background: var(--color-demo-tui-active); animation: demo-cursor 1s step-end infinite; }
 .demo-tui-hint { overflow: hidden; white-space: nowrap; font-size: 9px; }
-.demo-tui-profiles { margin-top: 12px; }
+.demo-tui-empty { position: absolute; inset: 42% 0 auto; display: grid; justify-items: center; gap: 4px; color: var(--color-demo-tui-muted); font: 12px Menlo, monospace; }
+.demo-tui-empty strong { color: var(--color-demo-tui-text); }
 .demo-app-views { display: flex; gap: 3px; padding: 2px; margin: 0 auto; border-radius: 5px; background: var(--color-demo-app-bar); font-size: 10px; }
 .demo-app-views > span { padding: 3px 7px; color: var(--color-demo-app-muted); }
 .demo-app-views .selected { background: var(--color-demo-app); border-radius: 3px; color: var(--color-demo-app-text); }
@@ -318,11 +319,10 @@
 .demo-agent-terminal { position: relative; height: calc(100% - 61px); background: var(--color-demo-tui); color: var(--color-demo-text); overflow: hidden; }
 .demo-agent-terminal .demo-terminal { height: 100%; }
 .demo-agent-terminal .demo-codex-header { top: 16px; }
-.demo-profile-title { font-size: 9px; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px; }
-.demo-profile-card { border: 1px solid var(--color-demo-app-line); border-radius: 8px; padding: 10px; display: flex; align-items: center; gap: 9px; margin-bottom: 12px; }
-.demo-profile-card > div { flex: 1; min-width: 0; }
-.demo-profile-card strong { font-size: 11px; }
-.demo-profile-card p { font-size: 9px; color: var(--color-demo-app-muted); }
+.demo-session-launcher { border: 1px solid var(--color-demo-app-line); border-radius: 8px; padding: 10px; display: flex; align-items: center; gap: 9px; margin-bottom: 12px; }
+.demo-session-launcher > div { flex: 1; min-width: 0; }
+.demo-session-launcher strong { font-size: 11px; }
+.demo-session-launcher p { font-size: 9px; color: var(--color-demo-app-muted); }
 .demo-app-create-button { display: inline-block; padding: 5px 11px; border-radius: 6px; background: var(--color-demo-active); color: var(--color-demo-glass); font-size: 10px; white-space: nowrap; }
 .demo-gui-boot { height: calc(100% - 61px); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; background: var(--color-demo-tui); color: var(--color-demo-tui-text); font: 13px Menlo, monospace; }
 .demo-boot-spinner { width: 18px; height: 18px; border: 2px solid var(--color-demo-tui-selected); border-top-color: var(--color-demo-tui-active); border-radius: 50%; animation: demo-spin 700ms linear infinite; }
@@ -385,7 +385,7 @@
   .demo-tui-status > div > span { max-width: 18ch; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0; }
   .demo-tui-hint { font-size: 8px; }
   .demo-tui-name > span { padding-left: 2ch; }
-  .demo-profile-card p { display: none; }
-  .demo-profile-card { padding: 9px; }
+  .demo-session-launcher p { display: none; }
+  .demo-session-launcher { padding: 9px; }
 }
 @media (prefers-reduced-motion: reduce) { .demo-browser, .demo-insert, .demo-input-active i, .demo-scale, .demo-tui-name i { animation: none; } .demo-window, .demo-dock > span { transition: none; } }

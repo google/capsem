@@ -2,9 +2,9 @@
   import { HERO_DEMO, HERO_AGY_BANNER, HERO_TERMINAL_SCRIPT } from "$lib/data";
   import { stepDuration } from "$lib/hero-terminal";
   import HeroAgentTerminal from "./HeroAgentTerminal.svelte";
-  let { active, view, session, stage, input, draft, position } : {
+  let { active, view, session, stage, input, draft, image, position } : {
     active: number; view: "sessions" | "create" | "boot" | "terminal"; session: number;
-    stage: "shell" | "agent"; input: string | null; draft: string; position: number;
+    stage: "shell" | "agent"; input: string | null; draft: string; image: "plain" | "agy" | "codex"; position: number;
   } = $props();
   const copy = HERO_DEMO.scale;
   let clock = 0;
@@ -47,13 +47,12 @@
   {:else}
     <div class="demo-scale-content">
       <header class="demo-scale-heading"><h3>{copy.tab}</h3><span class="demo-app-refresh" aria-hidden="true">{copy.refresh}</span></header>
-      <h4 class="demo-profile-title">{copy.start}</h4>
-      <div class="demo-profile-card"><div><strong>{copy.profileName}</strong><p>{copy.profileDescription}</p></div><span class="demo-app-create-button">{copy.new}</span><span class="demo-app-refresh" data-gui-customize>{copy.customize}</span></div>
+      <div class="demo-session-launcher"><div><strong>{copy.start}</strong><p>{copy.launcherDescription}</p></div><span class="demo-app-create-button">{copy.new}</span><span class="demo-app-refresh" data-gui-customize>{copy.customize}</span></div>
       <table class="demo-sessions">
         <thead><tr>{#each copy.columns as column}<th scope="col">{column}</th>{/each}</tr></thead>
         <tbody>
           {#each copy.sessions.slice(0, active) as item, index}
-            <tr><td><strong>{item.name}</strong></td><td><span class="demo-session-status">{copy.running}</span></td><td>{item.profile}</td><td>{Math.max(Number.parseInt(item.uptime), Math.floor(Math.max(0, ages[index]) / 1000))}s</td><td data-session-tokens={index}>{metrics[index].tokens}</td><td>{metrics[index].cost}</td><td aria-hidden="true"><span class="demo-session-actions">{#each ["pause", "stop", "git-fork", "trash"] as icon}<img src={`/demo/${icon}.svg`} alt="" />{/each}</span></td></tr>
+            <tr><td><strong>{item.name}</strong></td><td><span class="demo-session-status">{copy.running}</span></td><td>{Math.max(Number.parseInt(item.uptime), Math.floor(Math.max(0, ages[index]) / 1000))}s</td><td data-session-tokens={index}>{metrics[index].tokens}</td><td>{metrics[index].cost}</td><td aria-hidden="true"><span class="demo-session-actions">{#each ["pause", "stop", "git-fork", "trash"] as icon}<img src={`/demo/${icon}.svg`} alt="" />{/each}</span></td></tr>
           {/each}
         </tbody>
       </table>
@@ -62,8 +61,8 @@
       <div class="demo-gui-dialog-backdrop">
         <div class="demo-gui-dialog" role="group" aria-label={copy.dialog}>
           <h4>{copy.dialog}</h4>
-          <span>{copy.profileLabel}</span><div class="demo-gui-field">{copy.profileName}<span>⌄</span></div>
           <span>{copy.nameLabel}</span><div class="demo-gui-field" data-gui-name>{draft}<i></i></div>
+          <span>{copy.imageLabel}</span><div class="demo-gui-field" data-gui-image>{image === "plain" ? HERO_DEMO.tui.plain : image}<span>⌄</span></div>
           <div class="demo-gui-resources"><div><span>{copy.ramLabel}</span><div class="demo-gui-field">2048 MB</div></div><div><span>{copy.cpuLabel}</span><div class="demo-gui-field">2</div></div></div>
           <footer><span class="demo-app-refresh">{copy.cancel}</span><span class="demo-app-create-button" data-gui-create>{copy.create}</span></footer>
         </div>

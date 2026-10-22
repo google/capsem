@@ -14,7 +14,7 @@ export interface TerminalStep {
   scale?: number;
   surface?: "gui" | "tui";
   window?: boolean;
-  cursor?: "start" | "terminal" | "app" | "body" | "link" | "preview" | "gui-customize" | "gui-name" | "gui-create" | "gui-sessions" | `tab-${number}`;
+  cursor?: "start" | "terminal" | "app" | "body" | "link" | "preview" | "gui-customize" | "gui-name" | "gui-image" | "gui-create" | "gui-sessions" | `tab-${number}`;
   guiView?: "sessions" | "create" | "boot" | "terminal";
   guiSession?: number;
   guiStage?: "shell" | "agent";
@@ -24,8 +24,9 @@ export interface TerminalStep {
   tui?: boolean;
   overlay?: "sessions" | "create" | null;
   workflow?: "website" | "email";
-  email?: boolean;
-  profile?: "code" | "co-work";
+  sessions?: number;
+  activity?: number;
+  image?: "plain" | "agy" | "codex";
   key?: string | null;
   caption?: string | null;
 }

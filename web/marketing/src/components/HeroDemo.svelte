@@ -36,9 +36,10 @@
   let tui = $state(false);
   let overlay = $state<TerminalStep["overlay"]>(null);
   let workflow = $state<"website" | "email">("website");
-  let email = $state(false);
+  let sessions = $state(0);
+  let activity = $state(0);
   let draft = $state("");
-  let profile = $state<"code" | "co-work">("code");
+  let image = $state<"plain" | "agy" | "codex">("plain");
   let key = $state<string | null>(null);
   let guiView = $state<NonNullable<TerminalStep["guiView"]>>("sessions");
   let guiSession = $state(0);
@@ -108,8 +109,9 @@
         if (step.overlay !== undefined) overlay = step.overlay;
         if (step.overlay === "create") draft = step.type ?? "";
         if (step.workflow !== undefined) workflow = step.workflow;
-        if (step.email !== undefined) email = step.email;
-        if (step.profile !== undefined) profile = step.profile;
+        if (step.sessions !== undefined) sessions = step.sessions;
+        if (step.activity !== undefined) activity = step.activity;
+        if (step.image !== undefined) image = step.image;
         if (step.key !== undefined) key = step.key;
         if (step.guiView !== undefined) guiView = step.guiView;
         if (step.guiView === "create") draft = step.type ?? "";
@@ -123,7 +125,7 @@
       const resetView = () => {
         title = demo.shellTitle; preview = false; insert = null; codex = false; input = null; scale = -1; surface = "gui";
         windowOpen = false; cursor = "start"; clicking = false; tui = false; overlay = null;
-        workflow = "website"; email = false; draft = ""; profile = "code"; key = null; guiView = "sessions"; guiSession = 0; guiStage = "agent"; caption = null;
+        workflow = "website"; sessions = 0; activity = 0; draft = ""; image = "plain"; key = null; guiView = "sessions"; guiSession = 0; guiStage = "agent"; caption = null;
         mouseX = 82; mouseY = 68;
         dockItems = [0, 1, 2].map(() => ({ scale: 1, x: 0, y: 0 }));
         velocities.forEach(value => { value.scale = value.x = 0; }); bounceAt = -Infinity;
@@ -226,7 +228,7 @@
     <div class="demo-terminal" class:is-codex={codex} bind:this={terminalElement}></div>
     {#if !mounted}<pre class="demo-fallback">$ {HERO_TERMINAL_SCRIPT.find(step => step.type)?.type}</pre>{/if}
     {#if codex}<HeroCodexChrome {input} />{/if}
-    {#if tui}<HeroTui overlay={overlay ?? null} {workflow} {email} parallel={scale} {draft} {profile} started={codex} />{/if}
+    {#if tui}<HeroTui overlay={overlay ?? null} {workflow} count={sessions} {activity} {draft} {image} />{/if}
   </div>
   {#if preview}
     <div class="demo-browser" role="group" aria-label={demo.previewLabel}>
@@ -242,7 +244,7 @@
 
     </div>
   {/if}
-    {#if showGui}<HeroScale active={scale} view={guiView} session={guiSession} stage={guiStage} {input} {draft} {position} />{/if}
+    {#if showGui}<HeroScale active={scale} view={guiView} session={guiSession} stage={guiStage} {input} {draft} {image} {position} />{/if}
     <div class="demo-dock" style:--dock-spread={`${Math.max(...dockItems.map(item => item.scale - 1)) * 25}px`} aria-hidden="true">
       {#each ["terminal", "browser", "app"] as app, index}
         {@const item = dockItems[index]}

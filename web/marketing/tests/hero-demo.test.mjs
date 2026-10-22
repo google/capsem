@@ -28,11 +28,27 @@ test('Scale creates each VM before its prompt and stays in the GUI', () => {
 });
 
 test('TUI creation holds on confirmation and the new running session', () => {
-  const start = steps.findIndex(step => step.overlay === 'create');
+  const start = steps.findIndex(step => step.overlay === 'create' && step.type === 'Email productivity');
   const flow = steps.slice(start, steps.findIndex(step => step.chapter === 3));
   assert.equal(flow[0].type, 'Email productivity');
   assert.ok(flow.some(step => step.key === 'Enter' && step.wait >= 500));
   assert.ok(flow.some(step => step.overlay === 'sessions' && step.wait >= 1000));
+});
+
+test('TUI opens empty and creates OCI sessions before showing agents or tabs', () => {
+  const start = steps.findIndex(step => step.tui);
+  assert.equal(steps[start].sessions, 0);
+  assert.ok(!steps[start].write?.includes('Antigravity'));
+  const created = steps.filter(step => step.sessions > 0);
+  assert.deepEqual(created.map(step => step.sessions), [1, 2]);
+  for (const [index, step] of created.entries()) {
+    const before = steps.slice(start, steps.indexOf(step));
+    assert.ok(before.some(entry => entry.overlay === 'create' && entry.type === HERO_DEMO.scale.sessions[index].name));
+    assert.ok(before.some(entry => entry.image === HERO_DEMO.scale.sessions[index].image));
+    assert.ok(before.some(entry => entry.key === 'Enter'));
+  }
+  assert.ok(!JSON.stringify(HERO_DEMO.tui).toLowerCase().includes('profile'));
+  assert.ok(!JSON.stringify(HERO_DEMO.scale).toLowerCase().includes('profile'));
 });
 
 test('dock magnification and nudge are continuous across the icon center', () => {
