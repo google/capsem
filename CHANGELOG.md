@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Guest MCP port exposure now allocates its host loopback port; a guest cannot
+  select a fixed port already trusted by another host application.
+
 - Restrict gateway browser access to the app and gateway origins, and refuse
   token requests from guest-published loopback pages.
 
