@@ -97,10 +97,13 @@ def resize_workload(socket):
     socket.send(
         msgpack.packb({"stdin": b"trap 'printf \"RESIZE-%s\\n\" \"$(stty size)\"' WINCH; printf 'RESIZE-%s\\n' ready\n"}, use_bin_type=True)
     )
-    expect_output(socket, b"RESIZE-ready\r\n")
+    # Canonical projections may end a displayed line with cursor movement,
+    # not the raw PTY's CRLF. These expanded markers cannot match the echoed
+    # printf command, whose format string still contains the literal %s.
+    expect_output(socket, b"RESIZE-ready")
     for rows, cols in ((33, 101), (20, 60), (45, 150)):
         socket.send(msgpack.packb({"control": {"type": "resize", "cols": cols, "rows": rows}}, use_bin_type=True))
-        expect_output(socket, f"RESIZE-{rows} {cols}\r\n".encode())
+        expect_output(socket, f"RESIZE-{rows} {cols}".encode())
     socket.send(msgpack.packb({"stdin": b"trap - WINCH\n"}, use_bin_type=True))
 
 
