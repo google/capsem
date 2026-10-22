@@ -16,9 +16,9 @@ use crate::job_store::{with_quiescence, ActiveFileOp, JobResult, JobStore};
 
 mod audit;
 mod aux;
-use aux::{dispatch_aux_connection, AuxConnectionLimits, MAX_DEFERRED_AUX_CONNECTIONS};
 #[cfg(test)]
 use audit::serve_audit_records;
+use aux::{dispatch_aux_connection, AuxConnectionLimits, MAX_DEFERRED_AUX_CONNECTIONS};
 mod clone_state;
 #[cfg(test)]
 use audit::handle_audit_frame;
