@@ -757,7 +757,10 @@ async fn runtime_download_deadline_is_shared_across_files() {
                 break;
             }
             if let Ok(update) = progress.try_recv() {
-                done = update.done;
+                // The final byte arrives before the separate `done` update.
+                // Do not advance across that gap: the next file can already
+                // be opening its real TCP connection (with a 10-second budget).
+                done = update.done || update.bytes_total.is_some_and(|total| update.bytes_done >= total);
                 break;
             }
             assert!(
