@@ -29,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Reject unsupported KVM VirtioFS `RENAME2` flags instead of executing a plain
+  rename that can overwrite or lose guest files.
+
 - Recheck KVM VirtioFS inode parent containment before `GETATTR`, refusing
   attributes for an inode whose parent was replaced by an outside symlink.
 

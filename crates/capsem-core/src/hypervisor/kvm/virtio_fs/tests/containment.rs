@@ -132,6 +132,25 @@ fn rename_through_a_symlinked_parent_does_not_steal_outside_files() {
 }
 
 #[test]
+fn rename2_flags_cannot_silently_overwrite_or_exchange_files() {
+    let mut a = attack("rename2-flags");
+    std::fs::write(a.share.join("source"), b"source").unwrap();
+    std::fs::write(a.share.join("target"), b"target").unwrap();
+    for flags in [1, 2, 4, u32::MAX] {
+        let mut body = fuse::as_bytes(&FuseRename2In {
+            newdir: 1,
+            flags,
+            padding: 0,
+        })
+        .to_vec();
+        body.extend(two_names("source", "target"));
+        assert_eq!(request(&mut a.proc, FUSE_RENAME2, 1, &body), -libc::ENOSYS);
+        assert_eq!(std::fs::read(a.share.join("source")).unwrap(), b"source");
+        assert_eq!(std::fs::read(a.share.join("target")).unwrap(), b"target");
+    }
+}
+
+#[test]
 fn mkdir_create_mknod_symlink_and_link_through_a_symlinked_parent_are_refused() {
     let mut a = attack("create");
     let parent = dirlink(&mut a);

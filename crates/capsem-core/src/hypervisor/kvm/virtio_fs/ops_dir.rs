@@ -211,6 +211,9 @@ impl FuseProcessor {
             Some(s) => s,
             None => return fuse::error_response(header.unique, -libc::EIO),
         };
+        if r.flags != 0 {
+            return fuse::error_response(header.unique, -libc::ENOSYS);
+        }
         self.rename_impl(header, r.newdir, &body[std::mem::size_of::<FuseRename2In>()..])
     }
 
