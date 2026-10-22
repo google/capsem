@@ -1,6 +1,45 @@
 use super::*;
 
 #[test]
+fn suspend_rollback_restores_only_the_retained_view_authority_without_replaying_state() {
+    for released in [false, true] {
+        let terminal = SessionTerminal::new(8);
+        let (controller, _, mut updates) = terminal.subscribe();
+        terminal.focus(controller, 100, 30).unwrap();
+        terminal.publish(b"\x07\x1b]777;notify;Pause;Retained\x07\x1b]2;Working\x07");
+        terminal.seal_views();
+        let (late, _, _) = terminal.subscribe();
+        assert!(terminal.focus(late, 120, 40).is_err());
+        if released {
+            terminal.release(controller);
+        }
+        // Accepted output and unfinished parser input must remain exact.
+        terminal.publish(b"settled\x1b[38;2;10;");
+        let before = terminal.checkpoint().unwrap();
+        while updates.try_recv().is_ok() {}
+        terminal.resume_views();
+        assert_eq!(terminal.checkpoint().unwrap(), before);
+        assert!(matches!(updates.try_recv(), Err(broadcast::error::TryRecvError::Empty)));
+        assert_eq!(terminal.controls(controller), !released);
+        assert!(!terminal.controls(late));
+        assert!(terminal.focus(0, 100, 30).is_err());
+        assert!(terminal.focus(late + 1, 100, 30).is_err());
+        terminal.publish(b"20;30mX");
+        let snapshot = terminal.subscribe().1;
+        assert_eq!(snapshot.state.title, "Working");
+        assert_eq!(snapshot.state.bell_count, 1);
+        assert_eq!(snapshot.state.last_notification.as_ref().unwrap().body, "Retained");
+        assert_eq!(
+            display(&snapshot).screen().cell(0, 7).unwrap().fgcolor(),
+            vt100::Color::Rgb(10, 20, 30)
+        );
+        assert!(terminal.focus(late, 120, 40).unwrap());
+        assert!(terminal.controls(late));
+        assert!(!terminal.controls(controller));
+    }
+}
+
+#[test]
 fn suspend_seals_view_authority_without_dropping_accepted_guest_output() {
     let terminal = SessionTerminal::new(8);
     let (view, _, _) = terminal.subscribe();

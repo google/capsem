@@ -179,10 +179,16 @@ impl SessionTerminal {
         let inner = self.inner.lock().unwrap();
         inner.accepting_views && inner.controller == Some(view)
     }
-    /// Permanently fence viewer mutation while the owner settles accepted
-    /// transport bytes. Restoring the continuation creates fresh authority.
+    /// Fence viewer mutation while the owner settles accepted transport
+    /// bytes. A restored continuation creates fresh authority; a failed
+    /// suspend may reopen the existing views after rolling back the VM.
     pub fn seal_views(&self) {
         self.inner.lock().unwrap().accepting_views = false;
+    }
+    /// Reopen viewer mutation after the owner has rolled back suspend.
+    /// A controller released during the fence is not reacquired.
+    pub fn resume_views(&self) {
+        self.inner.lock().unwrap().accepting_views = true;
     }
     pub fn release(&self, view: u64) {
         let mut inner = self.inner.lock().unwrap();
