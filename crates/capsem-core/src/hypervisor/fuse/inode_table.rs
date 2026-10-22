@@ -200,6 +200,13 @@ impl InodeTable {
         }
     }
 
+    /// Drop names removed from the share, even if the guest has not sent
+    /// FORGET. A later file at the same path must get a fresh FUSE nodeid.
+    pub(crate) fn invalidate_path(&mut self, path: &Path) {
+        self.entries
+            .retain(|ino, entry| *ino == 1 || !same_or_descendant(&entry.host_path, path));
+    }
+
     pub fn rename_path(&mut self, old_path: &Path, new_path: &Path) {
         let moved: Vec<u64> = self
             .entries

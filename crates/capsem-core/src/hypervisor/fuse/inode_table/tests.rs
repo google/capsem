@@ -38,6 +38,21 @@ fn lookup_same_name_same_inode() {
 }
 
 #[test]
+fn invalidated_name_gets_a_new_inode_after_recreation() {
+    let dir = temp_share("inode-recreate");
+    std::fs::write(dir.join("file.txt"), b"first").unwrap();
+    let mut table = InodeTable::new(&dir).unwrap();
+    let old = table.lookup(1, b"file.txt").unwrap();
+    std::fs::remove_file(dir.join("file.txt")).unwrap();
+    table.invalidate_path(&dir.join("file.txt"));
+    std::fs::write(dir.join("file.txt"), b"second").unwrap();
+    let new = table.lookup(1, b"file.txt").unwrap();
+    assert_ne!(old, new);
+    assert!(table.get(old).is_none());
+    assert_eq!(table.get(new).unwrap(), &dir.join("file.txt"));
+}
+
+#[test]
 fn lookup_preserves_symlink_with_absolute_target() {
     let dir = temp_share("inode-symlink-absolute");
     std::os::unix::fs::symlink("/etc/passwd", dir.join("link")).unwrap();

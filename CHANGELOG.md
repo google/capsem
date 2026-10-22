@@ -29,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Allocate a new KVM VirtioFS node ID after guest unlink and recreation, so
+  a cached inode cannot alias a different file at the same name.
+
 - Reject unsupported KVM VirtioFS `RENAME2` flags instead of executing a plain
   rename that can overwrite or lose guest files.
 

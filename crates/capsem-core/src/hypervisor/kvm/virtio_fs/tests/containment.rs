@@ -151,6 +151,22 @@ fn rename2_flags_cannot_silently_overwrite_or_exchange_files() {
 }
 
 #[test]
+fn unlink_then_recreate_does_not_reuse_a_fuse_nodeid() {
+    let mut a = attack("inode-recreate");
+    std::fs::write(a.share.join("file"), b"first").unwrap();
+    let old = lookup(&mut a.proc, 1, "file").unwrap();
+    assert_eq!(request(&mut a.proc, FUSE_UNLINK, 1, &name_body("file")), 0);
+    assert_eq!(
+        request(&mut a.proc, FUSE_CREATE, 1, &create_body(libc::O_WRONLY as u32, "file")),
+        0
+    );
+    let new = lookup(&mut a.proc, 1, "file").unwrap();
+    assert_ne!(old, new);
+    assert_eq!(request(&mut a.proc, FUSE_GETATTR, old, &[]), -libc::ENOENT);
+    assert_eq!(request(&mut a.proc, FUSE_GETATTR, new, &[]), 0);
+}
+
+#[test]
 fn mkdir_create_mknod_symlink_and_link_through_a_symlinked_parent_are_refused() {
     let mut a = attack("create");
     let parent = dirlink(&mut a);

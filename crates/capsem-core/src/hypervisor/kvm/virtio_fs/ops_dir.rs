@@ -168,8 +168,11 @@ impl FuseProcessor {
             Some(p) => p,
             None => return fuse::error_response(header.unique, -libc::EINVAL),
         };
-        match std::fs::remove_file(path) {
-            Ok(()) => fuse::success_response(header.unique, &[]),
+        match std::fs::remove_file(&path) {
+            Ok(()) => {
+                self.inodes.invalidate_path(&path);
+                fuse::success_response(header.unique, &[])
+            }
             Err(e) => fuse::error_response(header.unique, -fuse::io_error_to_errno(&e)),
         }
     }
@@ -186,8 +189,11 @@ impl FuseProcessor {
             Some(p) => p,
             None => return fuse::error_response(header.unique, -libc::EINVAL),
         };
-        match std::fs::remove_dir(path) {
-            Ok(()) => fuse::success_response(header.unique, &[]),
+        match std::fs::remove_dir(&path) {
+            Ok(()) => {
+                self.inodes.invalidate_path(&path);
+                fuse::success_response(header.unique, &[])
+            }
             Err(e) => fuse::error_response(header.unique, -fuse::io_error_to_errno(&e)),
         }
     }
