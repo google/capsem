@@ -29,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Reject invalid plain-HTTP upstream ports when loading user or corporate
+  settings, instead of silently dropping out-of-range entries.
+
 - Mint the inspect-ai loopback OCI registry's certificates with SHA-256 and
   named-curve EC keys, and replace weak or damaged cached certificates.
 

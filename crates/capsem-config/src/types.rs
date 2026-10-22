@@ -605,6 +605,14 @@ impl DnsNetworkConfig {
 }
 
 pub fn validate_stored_setting_contract(id: &str, value: &SettingValue) -> Result<(), String> {
+    if id == "security.web.http_upstream_ports" {
+        let Some(ports) = value.as_int_list() else {
+            return Err(format!("{id} must be an integer list"));
+        };
+        if ports.iter().any(|port| !(1..=65_535).contains(port)) {
+            return Err(format!("{id} entries must be in 1..=65535"));
+        }
+    }
     if is_brokered_credential_setting_id(id) {
         let Some(value) = value.as_text() else {
             return Err(format!("{id} must be stored as a broker credential ref"));
