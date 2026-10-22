@@ -524,15 +524,15 @@ fn http_upstream_port_gate_allows_listed_ports() {
 }
 
 #[test]
-fn http_upstream_port_gate_ignores_tls_and_empty_allowlist() {
+fn http_upstream_port_gate_ignores_tls_and_denies_empty_allowlist() {
     let policy = NetworkMechanics::default();
     // TLS terminates at 443 and is not gated by the plain-HTTP allowlist.
     assert!(http_upstream_port_allowed(&policy, Protocol::Tls, 22));
 
     let mut open = NetworkMechanics::default();
     open.http_upstream_ports.clear();
-    // Empty allowlist means "no restriction configured".
-    assert!(http_upstream_port_allowed(&open, Protocol::Http, 22));
+    assert!(!http_upstream_port_allowed(&open, Protocol::Http, 22));
+    assert!(http_upstream_port_allowed(&open, Protocol::Tls, 22));
 }
 
 // -- classification read deadline (slowloris) --

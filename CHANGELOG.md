@@ -29,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Treat an empty plain-HTTP upstream port list as deny-all and preserve it
+  through active-policy compilation; malformed lists fail closed.
+
 - Reject invalid plain-HTTP upstream ports when loading user or corporate
   settings, instead of silently dropping out-of-range entries.
 
