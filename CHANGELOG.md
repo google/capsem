@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Share Xpra, Xdummy and graphical session setup through the existing Capsem
   base image; graphical app images inherit one runtime and launcher.
 
+- Guest applications can request the browser through one session-owned path.
+  The UI offers Open browser for graphical and terminal sessions; the TUI
+  exposes the same request with Alt+b on the client machine. Login URLs are
+  validated and kept out of host logs and saved session metadata.
+
 - Keep graphical cursor size and click hotspots correct on high-DPI displays.
 
 - Keep concurrent gateway requests in their own tracing contexts across async waits.

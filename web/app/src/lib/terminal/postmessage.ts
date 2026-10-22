@@ -5,7 +5,7 @@
 const MAX_TITLE_LENGTH = 128;
 const MAX_CLIPBOARD_SIZE = 1_048_576; // 1 MB
 const MAX_ERROR_MSG_LENGTH = 256;
-const MAX_LINK_LENGTH = 8192;
+import { browserUrl } from '../models/browser';
 
 // -- Parent -> Iframe --
 
@@ -87,12 +87,8 @@ export function parseIframeMessage(data: unknown): IframeToParentMsg | null {
 
   switch (msg.type) {
     case 'open-url': {
-      if (typeof msg.url !== 'string' || msg.url.length > MAX_LINK_LENGTH) return null;
-      try {
-        const url = new URL(msg.url);
-        return url.protocol === 'https:' || url.protocol === 'http:'
-          ? { type: 'open-url', url: url.href } : null;
-      } catch { return null; }
+      const url = browserUrl(msg.url);
+      return url ? { type: 'open-url', url } : null;
     }
     case 'title-update': {
       if (typeof msg.title !== 'string') return null;

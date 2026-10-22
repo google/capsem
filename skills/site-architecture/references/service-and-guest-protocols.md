@@ -137,6 +137,25 @@ Serial console stays active for kernel boot logs. Terminal I/O switches to vsock
 
 ## Guest agent architecture
 
+### Browser requests
+
+Graphical and terminal workloads use the same `xdg-open`/`BROWSER` helper.
+The runtime mounts the read-only sysutil helper and `/run/capsem-browser`
+socket directory into every workload. Its bounded datagrams carry the shared
+MessagePack `OpenUrl` record to the agent's serialized control writer, with
+one outstanding browser credit. The helper has no host process authority.
+
+The VM owner validates HTTP(S), size and absence of embedded credentials,
+then retains only the latest `BrowserRequest`. Metadata observers deliver it
+to `/vms/list`, session info and gateway overview, even without a terminal or
+graphical viewer. It is separate from terminal state and is not persisted as
+host session metadata. Request diagnostics redact the URL.
+
+The UI's explicit Open browser action and the TUI's `Alt+b` open the URL on
+the client's device. The browser needs this user gesture for popup policy;
+remote gateways must never open a browser on their server. Reuse this rail
+instead of Xpra-specific popups or terminal escape-code side effects.
+
 All guest binaries live in `crates/capsem-agent/` and are cross-compiled for `aarch64-unknown-linux-musl` (and `x86_64-unknown-linux-musl`). Deployed chmod 555 (read-only) into the initrd at `/run/`.
 
 ### capsem-pty-agent (main agent)

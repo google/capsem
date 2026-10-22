@@ -5,6 +5,7 @@
   import { vmStore } from '../../stores/vms.svelte.ts';
   import { gatewayStore } from '../../stores/gateway.svelte.ts';
   import Modal from './Modal.svelte';
+  import BrowserRequest from './BrowserRequest.svelte';
   import Stop from 'phosphor-svelte/lib/Stop';
   import Trash from 'phosphor-svelte/lib/Trash';
   import GitFork from 'phosphor-svelte/lib/GitFork';
@@ -177,6 +178,7 @@
 </script>
 
 <div class="flex items-center gap-x-2 bg-layer border-b border-line-2 px-2 py-1">
+  <BrowserRequest request={activeVm?.browser_request} />
   <!-- Left: menu + view switcher -->
   <div class="relative" data-menu>
     <button
