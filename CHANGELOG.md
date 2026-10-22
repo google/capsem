@@ -29,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Preserve the last good MCP tool cache and approval pins when an aggregator
+  tool-list request fails instead of treating the failure as an empty catalog.
+
 - Replace the MCP tool cache through an owner-only atomic write, preventing
   torn reads and writes through a planted cache-file symlink.
 
