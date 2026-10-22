@@ -1,4 +1,5 @@
 mod aggregator;
+mod browser;
 mod cables;
 mod helpers;
 mod ipc;
@@ -708,6 +709,7 @@ async fn run_async_main_loop(
     });
     shutdown.lock().await.publisher = Some(job_store.publisher.clone());
     let (ipc_tx, _) = broadcast::channel::<ProcessToService>(128);
+    let session_browser = Arc::new(browser::SessionBrowser::default());
     let (ctrl_tx, ctrl_rx) = mpsc::channel::<ServiceToProcess>(32);
     let seats = prepared_seats.activate(&job_store, ctrl_tx.clone())?;
     // Held until the process exits: dropping it flushes the last measurements.
@@ -801,6 +803,7 @@ async fn run_async_main_loop(
     let ipc_tx_clone = ipc_tx.clone();
     let job_store_clone = Arc::clone(&job_store);
     let terminal_output_clone = Arc::clone(&terminal_output);
+    let browser_for_vsock = Arc::clone(&session_browser);
 
     // Serial log is written by a thread attached inside the hypervisor's
     // boot() (before machine.start() spawns the reader), so no subscription
@@ -843,6 +846,7 @@ async fn run_async_main_loop(
             _ctrl_tx: ctrl_tx,
             ctrl_rx,
             terminal_output: terminal_output_clone,
+            session_browser: browser_for_vsock,
             job_store: job_store_clone,
             cli_env,
             guest_config,
@@ -881,6 +885,7 @@ async fn run_async_main_loop(
         let tx_c = ctrl_tx_ipc.clone();
         let ipc_tx_pass = ipc_tx.clone();
         let term_c = Arc::clone(&session_terminal);
+        let browser_c = Arc::clone(&session_browser);
         let job_c = Arc::clone(&job_store);
         let net_c = Arc::clone(&net_state);
         let mcp_c = Arc::clone(&mcp_runtime);
@@ -896,6 +901,7 @@ async fn run_async_main_loop(
                 tx_c,
                 ipc_tx_pass,
                 term_c,
+                browser_c,
                 job_c,
                 net_c,
                 mcp_c,

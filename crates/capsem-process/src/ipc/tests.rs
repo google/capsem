@@ -94,6 +94,7 @@ async fn malformed_handshake_is_refused_before_typed_ipc_starts() {
 pub(in crate::ipc) struct Dispatcher {
     job_store: Arc<JobStore>,
     session_terminal: Arc<SessionTerminal>,
+    session_browser: Arc<crate::browser::SessionBrowser>,
     ctrl_tx: mpsc::Sender<ServiceToProcess>,
     events_tx: broadcast::Sender<ProcessToService>,
     pub(in crate::ipc) net_state: Arc<capsem_core::SandboxNetworkState>,
@@ -204,6 +205,7 @@ impl Dispatcher {
             Self {
                 job_store,
                 session_terminal,
+                session_browser: Arc::new(crate::browser::SessionBrowser::default()),
                 ctrl_tx,
                 events_tx,
                 net_state,
@@ -223,6 +225,7 @@ impl Dispatcher {
             self.ctrl_tx.clone(),
             self.events_tx.clone(),
             Arc::clone(&self.session_terminal),
+            Arc::clone(&self.session_browser),
             Arc::clone(&self.job_store),
             Arc::clone(&self.net_state),
             Arc::clone(&self.mcp_runtime),

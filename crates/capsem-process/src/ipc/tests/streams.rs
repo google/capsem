@@ -89,6 +89,32 @@ async fn a_lagging_terminal_stream_ends_with_an_explicit_reason() {
 }
 
 #[tokio::test]
+async fn inventory_observer_receives_browser_request_without_terminal_attachment() {
+    let temp = tempfile::tempdir().unwrap();
+    let (dispatcher, _) = Dispatcher::new(temp.path());
+    dispatcher
+        .session_browser
+        .request("https://example.org/login?state=opaque")
+        .unwrap();
+    for _ in 0..2 {
+        let (_tx, rx) = connect_as(&dispatcher, "capsem-terminal-observer").await;
+        let request = loop {
+            match tokio::time::timeout(Duration::from_secs(1), rx.recv())
+                .await
+                .unwrap()
+                .unwrap()
+            {
+                ProcessToService::BrowserRequest { request } => break request,
+                ProcessToService::TerminalSummary { .. } => {}
+                other => panic!("unexpected observer message: {other:?}"),
+            }
+        };
+        assert_eq!(request.id, 1);
+        assert_eq!(request.url, "https://example.org/login?state=opaque");
+    }
+}
+
+#[tokio::test]
 async fn inventory_observer_receives_retained_metadata_without_a_terminal_view() {
     let temp = tempfile::tempdir().unwrap();
     let (dispatcher, _) = Dispatcher::new(temp.path());

@@ -14,9 +14,9 @@ use crate::job_store::{ActiveFileOp, JobResult, JobStore};
 
 mod audit;
 mod clone_state;
-#[cfg(test)]
-use audit::handle_audit_frame;
 use audit::serve_audit_records;
+#[cfg(test)]
+use audit::{handle_audit_frame, read_bounded_frame};
 mod handshake;
 mod streams;
 mod suspend;
@@ -68,6 +68,7 @@ pub(crate) struct VsockOptions {
     pub(crate) _ctrl_tx: mpsc::Sender<ServiceToProcess>,
     pub(crate) ctrl_rx: mpsc::Receiver<ServiceToProcess>,
     pub(crate) terminal_output: Arc<capsem_core::terminal::SessionTerminal>,
+    pub(crate) session_browser: Arc<crate::browser::SessionBrowser>,
     pub(crate) job_store: Arc<JobStore>,
     pub(crate) cli_env: Vec<(String, String)>,
     pub(crate) guest_config: capsem_core::net::policy_config::GuestConfig,
@@ -95,6 +96,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
         ipc_tx,
         ctrl_rx,
         terminal_output,
+        session_browser,
         job_store,
         cli_env,
         guest_config,
@@ -331,6 +333,14 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                                 }
                             }
                             Some(Ok(msg)) => {
+                                if let GuestToHost::OpenUrl { url } = &msg {
+                                    // Never log a login challenge or turn guest
+                                    // browser requests into terminal output.
+                                    if session_browser.request(&url.0).is_err() {
+                                        warn!("guest browser request rejected");
+                                    }
+                                    continue;
+                                }
                                 if let Some(id) = ackable_response_id(&msg) {
                                     let frame = proto::encode_host_msg(&HostToGuest::AckReply { id })
                                         .expect("fixed-size control acknowledgement");
@@ -780,30 +790,6 @@ fn surrender_proxy_traffic(
         }
         Err(error) => warn!(%error, "{label} port: cannot duplicate the session descriptor"),
     }
-}
-
-/// Read one length-prefixed payload without allocating beyond the protocol
-/// frame limit. EOF while reading the next prefix ends the stream; malformed
-/// lengths and truncated payloads are framing errors.
-fn read_bounded_frame(reader: &mut impl std::io::Read) -> std::io::Result<Option<Vec<u8>>> {
-    let mut len_buf = [0u8; 4];
-    match reader.read_exact(&mut len_buf) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
-        Err(error) => return Err(error),
-    }
-
-    let len = u32::from_be_bytes(len_buf) as usize;
-    if len > capsem_proto::MAX_FRAME_SIZE as usize {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!("frame too large ({len} > MAX_FRAME_SIZE)"),
-        ));
-    }
-
-    let mut payload = vec![0u8; len];
-    reader.read_exact(&mut payload)?;
-    Ok(Some(payload))
 }
 
 /// The message to fail an exec job with, or `None` when the command may run.

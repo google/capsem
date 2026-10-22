@@ -3,7 +3,25 @@
 
 use std::sync::Arc;
 
-use super::read_bounded_frame;
+/// Read one audit record with a bound checked before allocation.
+pub(super) fn read_bounded_frame(reader: &mut impl std::io::Read) -> std::io::Result<Option<Vec<u8>>> {
+    let mut prefix = [0u8; 4];
+    match reader.read_exact(&mut prefix) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+        Err(error) => return Err(error),
+    }
+    let length = u32::from_be_bytes(prefix) as usize;
+    if length > capsem_proto::MAX_FRAME_SIZE as usize {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "audit frame too large",
+        ));
+    }
+    let mut payload = vec![0u8; length];
+    reader.read_exact(&mut payload)?;
+    Ok(Some(payload))
+}
 
 /// Serve one guest audit connection: decode records until the stream ends.
 pub(super) fn serve_audit_records(

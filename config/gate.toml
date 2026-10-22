@@ -1157,7 +1157,6 @@ must_stay_below_lines = 3000
 "crates/capsem-core/tests/mitm_integration.rs" = 2087
 "crates/capsem-logger/src/writer/tests.rs" = 1237
 "crates/capsem-mock-server/src/main.rs" = 1167
-"crates/capsem-process/src/vsock.rs" = 1013
 "crates/capsem-proto/src/tests.rs" = 1322
 "crates/capsem-service/src/tests/assets_registry.rs" = 1067
 "crates/capsem-service/src/tests/lifecycle.rs" = 1232

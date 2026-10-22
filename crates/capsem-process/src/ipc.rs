@@ -139,6 +139,7 @@ pub(crate) async fn handle_ipc_connection(
     ctrl_tx: mpsc::Sender<ServiceToProcess>,
     ipc_tx: broadcast::Sender<ProcessToService>,
     session_terminal: Arc<SessionTerminal>,
+    session_browser: Arc<crate::browser::SessionBrowser>,
     job_store: Arc<JobStore>,
     net_state: Arc<capsem_core::SandboxNetworkState>,
     mcp_runtime: Arc<McpRuntime>,
@@ -174,6 +175,25 @@ pub(crate) async fn handle_ipc_connection(
     // and the service times out waiting for confirmation.
     // A stream-role connection carries one stream and nothing else.
     if terminal_observer {
+        let mut requests = session_browser.subscribe();
+        let request_tx = ipc_tx_out.clone();
+        connection_tasks.spawn(async move {
+            loop {
+                let request = requests.borrow_and_update().clone();
+                if let Some(request) = request {
+                    if request_tx
+                        .send(ProcessToService::BrowserRequest { request })
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                if requests.changed().await.is_err() {
+                    break;
+                }
+            }
+        });
         let mut summaries = session_terminal.subscribe_summary();
         let summary_tx = ipc_tx_out.clone();
         connection_tasks.spawn(async move {
