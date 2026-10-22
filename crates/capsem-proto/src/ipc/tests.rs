@@ -634,6 +634,18 @@ fn mcp_tools_result_roundtrip() {
 }
 
 #[test]
+fn mcp_tools_failure_is_distinct_from_an_empty_catalog() {
+    let failed = ProcessToService::McpToolsFailed {
+        id: 21,
+        error: "aggregator unavailable".into(),
+    };
+    let encoded = serde_json::to_vec(&failed).unwrap();
+    let decoded: ProcessToService = serde_json::from_slice(&encoded).unwrap();
+    assert_eq!(decoded.reply_id(), Some(21));
+    assert!(matches!(decoded, ProcessToService::McpToolsFailed { id: 21, .. }));
+}
+
+#[test]
 fn mcp_call_tool_result_roundtrip() {
     let msg = ProcessToService::McpCallToolResult {
         id: 30,
