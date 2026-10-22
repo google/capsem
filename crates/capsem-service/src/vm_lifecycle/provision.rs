@@ -385,6 +385,7 @@ impl ServiceState {
             id.to_string(),
             InstanceInfo {
                 terminal: None,
+                browser_request: None,
                 generation,
                 authority,
                 upstream_policy,

@@ -200,6 +200,7 @@ pub(super) fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
 pub(crate) fn test_instance() -> InstanceInfo {
     InstanceInfo {
         terminal: None,
+        browser_request: None,
         generation: capsem_crypto::uuid_v4(),
         authority: Default::default(),
         upstream_policy: upstream_broker::test_policy_publisher(),
@@ -422,6 +423,7 @@ pub(crate) fn insert_fake_instance_with_session_dir(state: &ServiceState, id: &s
         id.to_string(),
         InstanceInfo {
             terminal: None,
+            browser_request: None,
             id: id.to_string(),
             name: id.to_string(),
             pid,
@@ -604,6 +606,22 @@ pub(crate) use assets_registry::make_state_in;
 use settings_files::make_test_state_with_tempdir_at;
 pub(crate) use settings_files::{install_empty_settings_env, EnvVarGuard};
 use update_routes::decode_response_json;
+
+#[test]
+fn browser_request_is_in_inventory_and_invalidates_its_runtime_snapshot() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let instance = test_instance();
+    let id = instance.id.clone();
+    state.instances.lock().unwrap().insert(id.clone(), instance);
+    let before = list_response_fingerprint(&state);
+    state.instances.lock().unwrap().get_mut(&id).unwrap().browser_request = Some(capsem_api::BrowserRequest {
+        id: 1,
+        url: "https://example.org/login?state=opaque".into(),
+    });
+    let (response, _) = sandbox_info::build_list_response(&state);
+    assert_eq!(response.sandboxes[0].browser_request.as_ref().unwrap().id, 1);
+    assert_ne!(list_response_fingerprint(&state), before);
+}
 
 #[test]
 fn terminal_metadata_is_in_inventory_and_invalidates_its_runtime_snapshot() {

@@ -43,6 +43,7 @@ impl WorkerGrant {
 }
 
 pub(crate) struct InstanceInfo {
+    pub(crate) browser_request: Option<capsem_api::BrowserRequest>,
     pub(crate) terminal: Option<capsem_api::TerminalSummary>,
     pub(crate) id: String,
     /// One actual spawn, never reused when an ID is resumed or replaced.

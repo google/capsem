@@ -607,6 +607,7 @@ async fn failed_resume_teardown_clears_running_instance() {
         vm_id.clone(),
         InstanceInfo {
             terminal: None,
+            browser_request: None,
             id: vm_id.clone(),
             name: "resume-vm".into(),
             uds_path: uds_path.clone(),

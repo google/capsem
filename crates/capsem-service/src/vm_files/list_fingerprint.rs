@@ -33,8 +33,9 @@ pub(crate) fn list_response_fingerprint(state: &ServiceState) -> String {
         for i in instances.values() {
             let _ = write!(
                 fingerprint,
-                "terminal={:?};",
-                i.terminal.as_ref().map(|terminal| terminal.revision)
+                "terminal={:?};browser={:?};",
+                i.terminal.as_ref().map(|terminal| terminal.revision),
+                i.browser_request.as_ref().map(|request| request.id)
             );
             append_fingerprint_field(&mut fingerprint, &i.id);
             append_fingerprint_field(&mut fingerprint, &i.name);

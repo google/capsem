@@ -6,6 +6,7 @@ pub(super) fn running_sandbox_info(i: &InstanceInfo) -> SandboxInfo {
     let mut info = SandboxInfo::new(i.id.clone(), i.pid, VmLifecycleState::Running, i.persistent);
     info.name = Some(i.name.clone());
     info.terminal = i.terminal.clone();
+    info.browser_request = i.browser_request.clone();
     info.ram_mb = Some(i.ram_mb);
     info.cpus = Some(i.cpus);
     info.version = Some(i.base_version.clone());

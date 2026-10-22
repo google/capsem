@@ -42,6 +42,23 @@ pub(super) fn start(state: Arc<ServiceState>, id: String, generation: uuid::Uuid
                         instance.terminal = Some(summary);
                     }
                     drop(instances);
+                } else if let ProcessToService::BrowserRequest { mut request } = message {
+                    request.url = capsem_proto::browser::browser_url(&request.url).map_err(str::to_owned)?;
+                    let mut instances = state.instances.lock().unwrap();
+                    let Some(instance) = instances
+                        .get_mut(&id)
+                        .filter(|instance| instance.generation == generation)
+                    else {
+                        return Ok(());
+                    };
+                    if instance
+                        .browser_request
+                        .as_ref()
+                        .is_none_or(|current| request.id > current.id)
+                    {
+                        instance.browser_request = Some(request);
+                    }
+                    drop(instances);
                 }
             }
         }

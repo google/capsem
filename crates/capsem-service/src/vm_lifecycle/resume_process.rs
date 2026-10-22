@@ -280,6 +280,7 @@ impl ServiceState {
             vm_id.clone(),
             InstanceInfo {
                 terminal: None,
+                browser_request: None,
                 generation,
                 authority,
                 upstream_policy,
