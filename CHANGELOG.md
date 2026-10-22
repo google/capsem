@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Reject KVM vsock connections whose peer CID is not the owning VM's CID,
+  preventing one guest from reaching another guest's control listeners.
+
 - Validate KVM virtqueue ring geometry for every nonzero queue before device
   activation, even when the guest leaves the ready flag clear.
 

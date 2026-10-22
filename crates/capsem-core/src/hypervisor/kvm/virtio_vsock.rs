@@ -851,6 +851,7 @@ pub(super) fn spawn_vsock_listeners(
     shutdown: Arc<AtomicBool>,
 ) -> Vec<JoinHandle<()>> {
     let mut handles = Vec::new();
+    let guest_cid = listeners.guest_cid;
 
     for listener in listeners.listeners {
         let tx = tx.clone();
@@ -861,7 +862,7 @@ pub(super) fn spawn_vsock_listeners(
         let handle = thread::Builder::new()
             .name(format!("vsock-listen-{physical_port}"))
             .spawn(move || {
-                if let Err(e) = vsock_listener_loop(listener, &tx, &shutdown) {
+                if let Err(e) = vsock_listener_loop(listener, guest_cid, &tx, &shutdown) {
                     warn!(
                         logical_port,
                         physical_port,
@@ -880,6 +881,7 @@ pub(super) fn spawn_vsock_listeners(
 
 fn vsock_listener_loop(
     listener: BoundVsockListener,
+    guest_cid: u32,
     tx: &mpsc::UnboundedSender<VsockConnection>,
     shutdown: &AtomicBool,
 ) -> Result<()> {
@@ -909,11 +911,20 @@ fn vsock_listener_loop(
             continue; // timeout, check shutdown
         }
 
+        let mut peer = SockaddrVm {
+            svm_family: 0,
+            svm_reserved1: 0,
+            svm_port: 0,
+            svm_cid: 0,
+            svm_flags: 0,
+            svm_zero: [0; 3],
+        };
+        let mut peer_len = std::mem::size_of::<SockaddrVm>() as libc::socklen_t;
         let conn_fd = unsafe {
             libc::accept4(
                 sock.as_raw_fd(),
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
+                &mut peer as *mut SockaddrVm as *mut libc::sockaddr,
+                &mut peer_len,
                 libc::SOCK_CLOEXEC,
             )
         };
@@ -926,9 +937,24 @@ fn vsock_listener_loop(
             continue;
         }
 
-        debug!(logical_port, physical_port, fd = conn_fd, "vsock: accepted connection");
-
         let anchor = VsockSocketAnchor(unsafe { OwnedFd::from_raw_fd(conn_fd) });
+        if !vsock_peer_matches_guest(&peer, peer_len, guest_cid) {
+            warn!(
+                logical_port,
+                physical_port,
+                peer_cid = peer.svm_cid,
+                guest_cid,
+                "vsock: rejected foreign peer"
+            );
+            continue;
+        }
+        debug!(
+            logical_port,
+            physical_port,
+            fd = conn_fd,
+            peer_cid = peer.svm_cid,
+            "vsock: accepted connection"
+        );
         let conn = VsockConnection::new(conn_fd, logical_port, Box::new(anchor));
 
         if let Err(e) = tx.send(conn) {
@@ -941,6 +967,12 @@ fn vsock_listener_loop(
     }
 
     Ok(())
+}
+
+fn vsock_peer_matches_guest(peer: &SockaddrVm, peer_len: libc::socklen_t, guest_cid: u32) -> bool {
+    peer_len as usize >= std::mem::size_of::<SockaddrVm>()
+        && peer.svm_family == AF_VSOCK as u16
+        && peer.svm_cid == guest_cid
 }
 
 // ---------------------------------------------------------------------------

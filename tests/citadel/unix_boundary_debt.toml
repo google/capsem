@@ -34,7 +34,7 @@
 "crates/capsem-core/src/hypervisor/kvm/virtio_fs/ops_file.rs" = "9f99917b8f9e273f2de49df5c515f41e154cb5ba2284c7b8e74f5dd80caf4a20"
 "crates/capsem-core/src/hypervisor/kvm/virtio_fs/ops_meta.rs" = "b933aa796bce77d6bf0face797a38163ce4c473dacc149c23c5baa3390166a4c"
 "crates/capsem-core/src/hypervisor/kvm/virtio_mmio.rs" = "f9797a518c8d6273151bc775f9a176a72f3b0a62e09cd4cd4fb636477b58627b"
-"crates/capsem-core/src/hypervisor/kvm/virtio_vsock.rs" = "e8497a3dd53669d1e463c69a098214ece6257555c2a11d10a3d5642027e0a56a"
+"crates/capsem-core/src/hypervisor/kvm/virtio_vsock.rs" = "aca9188c7c4e56c0e15e8e4e420ed829cfe60306d0d64e4db67007e833f28bf5"
 "crates/capsem-core/src/hypervisor/kvm/virtio_vsock/lifecycle.rs" = "83c7ec268765e594bebe53715a3d148a37e0cd9ad3dd9bb58f1d15a4eaba093b"
 
 [domain_abi.manifest]
