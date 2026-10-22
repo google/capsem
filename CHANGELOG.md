@@ -29,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Keep guest exec audit streaming alive when auditd rotates or truncates its
+  log, including records split across the old and new files.
+
 - Bound MCP method telemetry labels to known protocol methods plus one
   unknown label, preventing guest-selected strings from growing metric state.
 
