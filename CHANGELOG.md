@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Restrict the service runtime directory to the installing user before creating
+  sockets, logs, or credential-bearing runtime files, including existing installs.
+
 - Recopy binary update packages into a private directory after elevation and
   verify their size and SHA-256 there before invoking the package manager.
 
