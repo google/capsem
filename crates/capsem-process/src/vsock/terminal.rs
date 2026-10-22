@@ -6,13 +6,13 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const SERIAL_LOG_QUEUE_CAPACITY: usize = 8;
 
-struct Connection {
+struct TerminalSocket {
     anchor: Arc<VsockConnection>,
     reader: tokio::net::unix::OwnedReadHalf,
     writer: tokio::net::unix::OwnedWriteHalf,
 }
 
-impl Connection {
+impl TerminalSocket {
     fn open(anchor: Arc<VsockConnection>) -> std::io::Result<Self> {
         let fd = anchor.try_clone_fd()?;
         capsem_foundation::unix::fd::set_nonblocking(fd.as_fd(), true)?;
@@ -22,7 +22,7 @@ impl Connection {
     }
 }
 
-impl Drop for Connection {
+impl Drop for TerminalSocket {
     fn drop(&mut self) {
         if let Err(error) = self.anchor.shutdown_both() {
             if error.kind() != std::io::ErrorKind::NotConnected {
@@ -61,7 +61,7 @@ pub(super) fn spawn(
     let (log, log_handle) = spawn_serial_log_writer(move || Ok(serial_log));
     let (stop, mut stopped) = tokio::sync::oneshot::channel();
     let task = tokio::spawn(async move {
-        let mut active: Option<Connection> = None;
+        let mut active: Option<TerminalSocket> = None;
         let mut coalesce = capsem_core::vm::vsock::CoalesceBuffer::new();
         let mut coalesce_at = None;
         let mut pending_log = None;
@@ -186,7 +186,7 @@ pub(super) fn spawn(
                     replies_pending = false;
                 }
                 match connection {
-                    Some(connection) => match Connection::open(connection) {
+                    Some(connection) => match TerminalSocket::open(connection) {
                         Ok(connection) => {
                             active = Some(connection);
                             info!("terminal bridge: active");
