@@ -6,7 +6,7 @@ use std::time::Duration;
 use nix::fcntl::{fcntl, FcntlArg, FdFlag};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use super::bind_loopback;
+use super::{bind_loopback, bind_loopback_port};
 
 #[test]
 fn wildcard_and_nonloopback_addresses_are_refused_before_binding() {
@@ -15,7 +15,28 @@ fn wildcard_and_nonloopback_addresses_are_refused_before_binding() {
             bind_loopback(address.parse().unwrap()).unwrap_err().kind(),
             io::ErrorKind::InvalidInput
         );
+        assert_eq!(
+            bind_loopback_port(address.parse().unwrap(), 12345).unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
     }
+}
+
+#[test]
+fn an_exact_callback_port_can_be_reserved_on_both_loopbacks_without_stealing_a_listener() {
+    let ipv4 = "127.0.0.1".parse().unwrap();
+    let ipv6 = "::1".parse().unwrap();
+    let first = bind_loopback(ipv4).unwrap();
+    let port = first.local_addr().unwrap().port();
+    let second = bind_loopback_port(ipv6, port).unwrap();
+    assert_eq!(second.local_addr().unwrap(), std::net::SocketAddr::new(ipv6, port));
+    assert_eq!(
+        bind_loopback_port(ipv4, port).unwrap_err().kind(),
+        io::ErrorKind::AddrInUse
+    );
+    drop(first);
+    let replacement = bind_loopback_port(ipv4, port).unwrap();
+    assert_eq!(replacement.local_addr().unwrap(), std::net::SocketAddr::new(ipv4, port));
 }
 
 #[tokio::test]

@@ -8,13 +8,20 @@ use std::os::fd::AsFd;
 /// The returned listener is nonblocking and can be adopted by Tokio. Dropping
 /// it, including after failed reactor registration, closes the owned socket.
 pub fn bind_loopback(ip: IpAddr) -> io::Result<TcpListener> {
+    bind_loopback_port(ip, 0)
+}
+
+/// Reserve an exact loopback port, for protocols whose redirect URI already
+/// names it. Zero selects a free port. An occupied address fails without reuse
+/// or replacement; each address family must be reserved independently.
+pub fn bind_loopback_port(ip: IpAddr, port: u16) -> io::Result<TcpListener> {
     if !ip.is_loopback() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "listener must bind a literal loopback IP",
         ));
     }
-    let listener = TcpListener::bind(SocketAddr::new(ip, 0))?;
+    let listener = TcpListener::bind(SocketAddr::new(ip, port))?;
     super::fd::set_nonblocking(listener.as_fd(), true)?;
     Ok(listener)
 }
