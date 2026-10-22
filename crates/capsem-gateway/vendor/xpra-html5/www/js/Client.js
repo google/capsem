@@ -123,6 +123,7 @@ class XpraClient {
     this.send_chunks_in_progress = new Map();
     this.receive_chunks_in_progress = new Map();
     this.keyboard_layout = null;
+    this.capture_keyboard = false;
     this.printing = false;
     this.key_packets = [];
     this.clipboard_delayed_event_time = 0;
@@ -809,7 +810,6 @@ var win = this.id_to_window[index];
   }
   do_init_keyboard() {
     this.altgr_state = false;
-    this.capture_keyboard = false;
     // assign the key callbacks
     document.addEventListener("keydown", (e) => {
 var preview_element = $(WINDOW_PREVIEW_SELECTOR);

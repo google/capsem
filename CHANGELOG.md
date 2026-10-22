@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve graphical keyboard capture when browser keyboard-layout discovery
+  completes after the connection is ready.
+
 - Keep TUI browser sign-in callbacks alive on its control runtime and bind
   Alt+b to the originating session through the shared Rust SDK.
 
