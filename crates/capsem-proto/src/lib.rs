@@ -554,6 +554,9 @@ pub enum HostToGuest {
     PrepareSnapshot,
     /// Resume filesystem I/O after snapshot.
     Unfreeze,
+    /// Correlated filesystem barrier. Freeze syncs before stopping writes;
+    /// thaw must report completion before a rejected suspend is recoverable.
+    SnapshotTransition { id: u64, frozen: bool },
     /// Connect to loopback `port` in the `target` namespace. Absent on older
     /// hosts, where every publication was the container's.
     ConnectPort {
@@ -783,6 +786,12 @@ pub enum GuestToHost {
     ShutdownComplete,
     /// Quiescence ack: filesystem frozen, safe to snapshot.
     SnapshotReady,
+    /// Result of the exact requested filesystem transition, not receipt.
+    SnapshotTransitioned {
+        id: u64,
+        frozen: bool,
+        error: Option<String>,
+    },
     /// Terminal guest endpoint report. Replayed until PortCloseAck.
     PortClosed {
         flow: router::FlowKey,
