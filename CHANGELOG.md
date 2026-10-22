@@ -29,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Bound initial and reconnected guest control handshakes, shut down stalled
+  sockets, and keep reconnect work off the central vsock dispatcher.
+
 - Log only the variant identifier for unhandled guest control frames, so a
   guest cannot flood `process.log` with a frame's attacker-controlled payload.
 

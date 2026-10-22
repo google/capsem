@@ -7,6 +7,24 @@ mod ports;
 mod ack;
 mod audit;
 
+#[tokio::test]
+async fn stalled_control_handshake_has_a_deadline() {
+    let (host, mut guest) = std::os::unix::net::UnixStream::pair().unwrap();
+    let fd = std::fs::File::from(std::os::fd::OwnedFd::from(host));
+    let result = tokio::time::timeout(
+        std::time::Duration::from_millis(200),
+        handshake::perform_handshake_bounded(fd, false, Vec::new(), None, std::time::Duration::from_millis(40)),
+    )
+    .await;
+    assert!(
+        matches!(result, Ok(Err(_))),
+        "a silent guest kept its handshake task alive"
+    );
+    guest.set_nonblocking(true).unwrap();
+    let mut byte = [0];
+    assert_eq!(guest.read(&mut byte).unwrap(), 0, "stalled socket was not shut down");
+}
+
 #[test]
 fn unhandled_guest_frame_log_excludes_guest_payload() {
     #[derive(Clone)]

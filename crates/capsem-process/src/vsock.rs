@@ -24,7 +24,7 @@ mod clone_state;
 use audit::handle_audit_frame;
 mod handshake;
 mod streams;
-use handshake::{collect_terminal_control_pair, is_retryable_handshake_error, perform_handshake};
+use handshake::{collect_terminal_control_pair, is_retryable_handshake_error, perform_handshake_bounded};
 mod guest_report;
 use guest_report::{ackable_id, ackable_response_id, is_guest_liveness_message, warn_unhandled_guest_msg};
 mod exec_completion;
@@ -129,18 +129,21 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
             let (terminal_conn, control_conn) =
                 collect_terminal_control_pair(&mut vsock_rx, &mut attempt_deferred).await?;
 
-            let mut initial_ctrl = control_conn
+            let initial_ctrl = control_conn
                 .try_clone_file()
                 .context("duplicate initial control vsock for handshake")?;
             let is_rest = is_restore;
             let cli_env_clone = cli_env.clone();
             let guest_config_clone = guest_config.clone();
 
-            let handshake_res = tokio::task::spawn_blocking(move || {
-                perform_handshake(&mut initial_ctrl, is_rest, &cli_env_clone, Some(guest_config_clone))
-            })
-            .await
-            .context("handshake task panicked")?;
+            let handshake_res = perform_handshake_bounded(
+                initial_ctrl,
+                is_rest,
+                cli_env_clone,
+                Some(guest_config_clone),
+                std::time::Duration::from_secs(60),
+            )
+            .await;
 
             match handshake_res {
                 Ok(()) => {
@@ -730,15 +733,12 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
     let vm_id_lifecycle = vm_id.clone();
     let job_store_vsock = Arc::clone(&job_store);
 
-    let mut current_is_restore = true; // Always true after initial handshake
-    let mut initial_handshake_done = true;
-
     tokio::spawn(async move {
-        let mut pending_aux = deferred_conns;
         let aux_limits = AuxConnectionLimits::default();
+        let handshake_slot = Arc::new(tokio::sync::Semaphore::new(1));
 
-        // Immediately dispatch the deferred_conns from the initial collect
-        for conn in pending_aux.drain(..) {
+        // Immediately dispatch the auxiliary connections from the initial collect.
+        for conn in deferred_conns {
             dispatch_aux_connection(
                 conn,
                 &upstream_grants_loop,
@@ -756,53 +756,34 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
             match conn.port {
                 proto::VSOCK_PORT_CONTROL => {
                     info!("control port: connection accepted, performing handshake");
-                    let Some(mut fd) = clone_fd(&conn, "duplicate-control-vsock-handshake") else {
-                        pending_aux.clear();
+                    let Ok(permit) = Arc::clone(&handshake_slot).try_acquire_owned() else {
+                        warn!("control port: handshake already in progress; dropping reconnect");
                         continue;
                     };
-                    let is_rest = current_is_restore;
+                    let Some(fd) = clone_fd(&conn, "duplicate-control-vsock-handshake") else {
+                        continue;
+                    };
                     let cli_env_clone = cli_env.clone();
                     let guest_config_clone = guest_config.clone();
-                    let hs_res = tokio::task::spawn_blocking(move || {
-                        perform_handshake(&mut fd, is_rest, &cli_env_clone, Some(guest_config_clone))
-                    })
-                    .await;
-
-                    match hs_res {
-                        Ok(Ok(())) => {
-                            info!("control port: handshake successful, re-keying bridge");
-                            let conn_arc = Arc::new(conn);
-                            capsem_core::try_send!("control_rekey", control_rekey_tx.send(conn_arc).await);
-
-                            // Handshake succeeded: dispatch any auxiliary connections that arrived with it
-                            for aux_conn in pending_aux.drain(..) {
-                                dispatch_aux_connection(
-                                    aux_conn,
-                                    &upstream_grants_loop,
-                                    &security_rules_loop,
-                                    &job_store_vsock,
-                                    &db_for_audit,
-                                    &ipc_tx_lifecycle,
-                                    &ctrl_tx_lifecycle,
-                                    &vm_id_lifecycle,
-                                    &aux_limits,
-                                );
+                    let rekey_tx = control_rekey_tx.clone();
+                    tokio::spawn(async move {
+                        let _permit = permit;
+                        match perform_handshake_bounded(
+                            fd,
+                            true,
+                            cli_env_clone,
+                            Some(guest_config_clone),
+                            std::time::Duration::from_secs(10),
+                        )
+                        .await
+                        {
+                            Ok(()) => {
+                                info!("control port: handshake successful, re-keying bridge");
+                                capsem_core::try_send!("control_rekey", rekey_tx.send(Arc::new(conn)).await);
                             }
-
-                            if !initial_handshake_done {
-                                initial_handshake_done = true;
-                                current_is_restore = true; // Subsequent connections are always "restores"
-                            }
+                            Err(e) => error!(error = format!("{e:#}"), "control port: handshake failed"),
                         }
-                        Ok(Err(e)) => {
-                            error!(error = format!("{e:#}"), "control port: handshake failed");
-                            pending_aux.clear(); // Drop dead FDs
-                        }
-                        Err(e) => {
-                            error!(error = %e, "control port: handshake panicked");
-                            pending_aux.clear();
-                        }
-                    }
+                    });
                 }
                 proto::VSOCK_PORT_TERMINAL => {
                     info!("terminal port: connection accepted, re-keying bridge");
@@ -810,29 +791,17 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     capsem_core::try_send!("terminal_rekey", terminal_rekey_tx.send(conn_arc).await);
                 }
                 _ => {
-                    if initial_handshake_done {
-                        // After initial boot, buffer them until the next handshake succeeds
-                        // Actually, if we're mid-session and receive an aux conn, it might be legit.
-                        // But if it arrives *during* a reconnection storm, we should buffer.
-                        // To keep it simple: just dispatch them. The control port rekeying is the
-                        // only thing that requires a successful handshake lock-step.
-                        dispatch_aux_connection(
-                            conn,
-                            &upstream_grants_loop,
-                            &security_rules_loop,
-                            &job_store_vsock,
-                            &db_for_audit,
-                            &ipc_tx_lifecycle,
-                            &ctrl_tx_lifecycle,
-                            &vm_id_lifecycle,
-                            &aux_limits,
-                        );
-                    } else {
-                        // Before initial boot, buffer them
-                        if pending_aux.len() < MAX_DEFERRED_AUX_CONNECTIONS {
-                            pending_aux.push(conn);
-                        }
-                    }
+                    dispatch_aux_connection(
+                        conn,
+                        &upstream_grants_loop,
+                        &security_rules_loop,
+                        &job_store_vsock,
+                        &db_for_audit,
+                        &ipc_tx_lifecycle,
+                        &ctrl_tx_lifecycle,
+                        &vm_id_lifecycle,
+                        &aux_limits,
+                    );
                 }
             }
         }
