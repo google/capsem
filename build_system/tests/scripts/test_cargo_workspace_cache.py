@@ -166,7 +166,7 @@ def test_a_workspace_unit_is_served_from_sccache_on_a_second_build(tmp_path: Pat
     into an empty output directory: the second compile is a cache hit."""
     sccache = shutil.which("sccache")
     rustc = subprocess.run(
-        ["rustc", "--print", "sysroot"], capture_output=True, text=True, timeout=30, check=False,
+        bounded(["rustc", "--print", "sysroot"], 30), capture_output=True, text=True, check=False,
     )
     if sccache is None or rustc.returncode:
         pytest.skip("needs sccache and rustc")
