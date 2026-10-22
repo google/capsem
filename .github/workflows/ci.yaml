@@ -610,6 +610,15 @@ jobs:
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
         run: uv run --project build_system --frozen capsem-gate test-glowup --slow
 
+      # The unit lane checks the CID filter, but only two live KVM guests can
+      # prove a sibling cannot hold the other's listener or see its workspace.
+      - name: Prove live sibling VM isolation
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+        run: uv run --project build_system --frozen capsem-gate test-kingslanding --slow
+
       - name: Upload install and glow-up evidence on failure
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
