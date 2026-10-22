@@ -1,6 +1,6 @@
 //! Accelerated XXH3-128 for non-security fingerprints, quick corruption checks
 //! and deduplication. This is not authentication or adversarial integrity proof.
-//! Content reuse still needs collision handling; external digest contracts keep
+//! Fingerprints are probabilistic identities; external digest contracts keep
 //! their required algorithm. The backend selects NEON/SIMD at compilation.
 
 /// Hash existing bytes without allocation or copying.
@@ -26,6 +26,17 @@ impl Hasher {
     #[inline]
     pub fn finalize(&self) -> u128 {
         self.0.digest128()
+    }
+}
+
+impl std::io::Write for Hasher {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.update(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }
 

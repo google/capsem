@@ -10,8 +10,9 @@ owned upstream; they are not first-party primitive implementations.
 | OCI manifests, configs, layers and registry addresses | Registry, assets pull/cache, guest launcher | Rust AWS-LC SHA-256; portable guest OpenSSL SHA-256 |
 | Prepared EROFS v2 | Image producer, subject-bound pinned artifact, assets cache, core staging, guest held-descriptor mount | Python SIMD BLAKE3 producer; `capsem-crypto::verify` on host and guest |
 | Release packages and VM asset manifests | Admin/build/release tooling, installer/updater/assets | Explicit existing SHA-256 and BLAKE3 fields; owned Rust/Python bindings |
-| Build, source and cache keys | Builder/gate and foundation | Existing BLAKE3, SHA-256 and configured BLAKE2 identities retained |
-| Archive blocks, deduplicated stored spans, exported bodies | Archive/logger readers and writers | Owned BLAKE3; storage corruption and wrong-span checks stay with storage owners; no event admission commitments |
+| Build, source and cache keys | Builder/gate and foundation | XXH3-128 for Rust non-security fingerprints; configured tooling/source identities retain their explicit bindings |
+| Owned image-cache metadata | Assets receipts, namespaces and removal records | XXH3-128, streamed over actual bounded metadata; current formats only; inode/receipt ownership checks authorize removal |
+| Archive blocks, deduplicated stored spans, exported bodies | Archive/logger readers and writers | Owned XXH3-128; storage corruption and wrong-span checks stay with storage owners; no event admission commitments or legacy readers |
 | Credential fingerprints and session capabilities | Protocol, credentials, service, gateway, core | Owned BLAKE3 derivation, OS entropy, constant-time checks and erasure |
 | IDs and UUID-derived private secrets | Archive, logger, core, service | `capsem-crypto::uuid_v4`, including test/build callers |
 | OAuth PKCE and ID tokens | Credential owner | AWS-LC SHA-256 and restricted RS256 JWT verification; issuer, audience, expiry, nonce and JWKS admission remain credential policy |
@@ -56,8 +57,9 @@ sample order. Two native NEON runs measured XXH3 roughly 8.5 times faster on
 large hot-memory inputs and 13.7 times faster on 32-byte inputs. This supports
 using XXH3 for non-security fingerprints, quick corruption checks and dedup
 lookup keys; it does not measure frame latency or authorize changing an
-external digest contract. Dedup reuse must compare content, and stored format
-changes must retain explicit algorithm identities and compatible readers.
+external digest contract. Non-security dedup uses full 128-bit fingerprints;
+exact comparison APIs must compare bytes. Stored format changes carry explicit
+algorithm identities and refuse obsolete input; no compatibility engine is kept.
 Trusted-reference adversarial integrity stays on BLAKE3; compliance and
 externally mandated protocols retain SHA-256. There is no separate benchmark
 crate. Warm file hash timings are not VM boot timings.

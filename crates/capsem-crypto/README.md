@@ -23,12 +23,16 @@ independent SHA benchmark providers do not enter production binaries. The crypto
 dev builds, enforced by Citadel.
 
 Hashing requires a documented contract; do not add fingerprints by default.
+The incremental XXH3 state implements `std::io::Write`, so persisted metadata
+can stream its actual codec bytes into the owner without a temporary document.
 Choose crypto-owned XXH3-128 for non-security fingerprints, quick corruption
 checks and deduplication. Use BLAKE3 when integrity depends on a trusted digest
 against adversarial modification. Keep SHA-256 where compliance or an external
-protocol (OCI, OAuth, published manifests) requires it. Non-security deduplication
-must handle collisions correctly. Changing a stored algorithm identity requires
-an explicit format migration. Do not truncate BLAKE2b-512 to pretend
+protocol (OCI, OAuth, published manifests) requires it. XXH3 fingerprints are
+probabilistic identities; use byte equality when exact comparison is required.
+Changing a stored algorithm advances its explicit format; obsolete formats are
+refused and owned fixtures regenerated. Add legacy support only when requested.
+Do not truncate BLAKE2b-512 to pretend
 it is BLAKE2b-256: the benchmark configures a 32-byte output directly.
 
 Build the optional `compare_hashes` example with `--features benchmark`, then

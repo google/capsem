@@ -21,6 +21,16 @@ fn streaming_matches_one_shot_across_simd_and_chunk_boundaries() {
 }
 
 #[test]
+fn standard_writer_hashes_the_existing_bytes_without_a_document_buffer() {
+    use std::io::Write;
+    let mut writer = Hasher::new();
+    writer.write_all(b"first").unwrap();
+    writer.write_all(b"-second").unwrap();
+    writer.flush().unwrap();
+    assert_eq!(writer.finalize(), hash(b"first-second"));
+}
+
+#[test]
 fn cloned_state_can_continue_independently() {
     let mut original = Hasher::new();
     original.update(b"prefix");
