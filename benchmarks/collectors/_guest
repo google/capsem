@@ -26,13 +26,11 @@ import sys
 import uuid
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-
 # Both, because the test helpers import each other as `helpers.*` and the
 # repository scripts as `scripts.*`; pytest puts the rootdir on the path and a
 # collector run outside pytest has to do the same.
-sys.path.insert(0, str(PROJECT_ROOT / "tests"))
-sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from capsem_builder.gate import config as gate_config
 from helpers.constants import DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
@@ -43,8 +41,8 @@ from benchmarks.helpers.guest_measurements import (
     flatten,
     load_quality_metrics,
     mitm_runtime_failures,
+    numeric_metrics,
     resource_samples,
-    unit_for,
 )
 from benchmarks.helpers.guest_runtime import (
     LOAD_MODES,
@@ -58,6 +56,7 @@ from benchmarks.helpers.guest_runtime import (
     process_tree_sampler,
 )
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PROTOCOL_SETTINGS = gate_config.load(PROJECT_ROOT).benchmark.protocol
 
 
@@ -238,11 +237,7 @@ def main() -> int:
     measured = (
         dict(protocol_collection["metrics"])
         if protocol_collection is not None
-        else {
-            key: {"unit": unit, "samples": [value]}
-            for key, value in sorted(numbers.items())
-            if (unit := unit_for(key)) is not None
-        }
+        else numeric_metrics(mode, numbers)
     )
     if protocol_collection is None:
         measured.update(load_quality_metrics(section))

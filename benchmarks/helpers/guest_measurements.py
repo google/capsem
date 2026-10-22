@@ -6,6 +6,7 @@ import json
 
 UNITS = {
     "_mbps": "megabits_per_second",
+    "_mbit_s": "megabits_per_second",
     "_ms": "milliseconds",
     "_bytes": "bytes",
     "iops": "operations",
@@ -53,6 +54,24 @@ def unit_for(key: str) -> str | None:
         if key.endswith(suffix):
             return unit
     return None
+
+
+def numeric_metrics(mode: str, numbers: dict[str, float]) -> dict[str, dict]:
+    """Normalize current guest I/O byte rates into the shared bit-rate unit.
+
+    capsem_bench.helpers.throughput_mbps and the snapshot renderer divide
+    bytes by 1024², so those four modes actually report MiB/s. Give corrected
+    metrics distinct keys; old mislabeled records cannot be compared to them.
+    Other modes' genuine network rates retain their existing unit and value.
+    """
+    metrics = {}
+    for key, value in sorted(numbers.items()):
+        if mode in {"disk", "rootfs", "storage", "snapshot"} and key.endswith("throughput_mbps"):
+            key = key.removesuffix("mbps") + "mbit_s"
+            value *= 8 * 1024 * 1024 / 1_000_000
+        if (unit := unit_for(key)) is not None:
+            metrics[key] = {"unit": unit, "samples": [value]}
+    return metrics
 
 
 def flatten(node, prefix: str = "") -> dict[str, float]:
