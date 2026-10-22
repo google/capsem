@@ -21,7 +21,6 @@ use rustls::pki_types::ServerName;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_rustls::TlsConnector;
 
-// Case modules live beside this file; the ratcheted line count stays flat.
 #[path = "mitm_integration/mod.rs"]
 mod cases;
 #[path = "mitm_integration/grants.rs"]
@@ -213,6 +212,7 @@ fn make_proxy_config_with_mechanics(
         mcp_endpoint: None,
         upstream_resolver: Default::default(),
         upstream_grants: Some(upstream_grants),
+        semantic_body_budget: MitmProxyConfig::new_semantic_body_budget(),
     });
     (config, db)
 }

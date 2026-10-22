@@ -3,6 +3,17 @@ use crate::net::policy::NetworkMechanics;
 use crate::net::policy_config::{SecurityRuleAction, SecurityRuleProfile, SecurityRuleSet};
 
 #[test]
+fn semantic_body_admission_is_shared_and_releases_capacity() {
+    let budget = MitmProxyConfig::new_semantic_body_budget();
+    let first = Arc::clone(&budget).try_acquire_owned().unwrap();
+    let second = Arc::clone(&budget).try_acquire_owned().unwrap();
+    assert!(Arc::clone(&budget).try_acquire_owned().is_err());
+    drop(first);
+    assert!(Arc::clone(&budget).try_acquire_owned().is_ok());
+    drop(second);
+}
+
+#[test]
 fn standalone_target_uses_only_the_configured_provider_authority() {
     let profile = crate::net::policy_config::ProviderRuleProfile::parse_toml(
         r#"

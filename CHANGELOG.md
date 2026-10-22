@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Admit at most two concurrent model or MCP body evaluations per VM, with
+  bounded body sizes and deadlines, so guest traffic cannot multiply proxy
+  memory use across hundreds of connections.
+
 - Return a bounded JSON-RPC error for an oversized framed MCP result and end
   the connection if its writer fails, instead of silently losing later replies.
 

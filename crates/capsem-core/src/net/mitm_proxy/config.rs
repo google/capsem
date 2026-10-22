@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use capsem_logger::DbWriter;
+use tokio::sync::Semaphore;
 
 use super::mcp_endpoint::McpEndpointState;
 use super::pipeline;
@@ -41,4 +42,14 @@ pub struct MitmProxyConfig {
     pub upstream_resolver: crate::net::upstream_address::UpstreamResolver,
     /// Trusted coordinator connection grants for confined workers.
     pub upstream_grants: Option<Arc<dyn TcpUpstreamGrants>>,
+    /// Shared by all requests in this VM. Semantic policy evaluates complete
+    /// bodies, so admitting every connected client would multiply the body
+    /// limit by the network client's much larger connection capacity.
+    pub semantic_body_budget: Arc<Semaphore>,
+}
+
+impl MitmProxyConfig {
+    pub fn new_semantic_body_budget() -> Arc<Semaphore> {
+        Arc::new(Semaphore::new(2))
+    }
 }
