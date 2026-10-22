@@ -13,6 +13,10 @@ pub(super) fn is_guest_liveness_message(msg: &GuestToHost) -> bool {
     matches!(msg, GuestToHost::Pong)
 }
 
+pub(super) fn warn_unhandled_guest_msg(msg: &GuestToHost) {
+    warn!(target: "ipc", variant = ?std::mem::discriminant(msg), "handle_guest_msg: unknown variant; this binary may be older than its peer");
+}
+
 /// Stages the guest may report, and the longest a name may be. The guest
 /// sanitizes before sending; the host does not trust that.
 const MAX_BOOT_STAGES: usize = 32;

@@ -1,10 +1,50 @@
 use super::*;
 use capsem_core::net::dns::session::emit_dns_security_write_and_rules;
+use std::io::Write;
 
 mod ports;
 
 mod ack;
 mod audit;
+
+#[test]
+fn unhandled_guest_frame_log_excludes_guest_payload() {
+    #[derive(Clone)]
+    struct CapturedLog(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl Write for CapturedLog {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let captured = CapturedLog(Arc::new(std::sync::Mutex::new(Vec::new())));
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_writer({
+            let captured = captured.clone();
+            move || captured.clone()
+        })
+        .finish();
+    tracing::subscriber::with_default(subscriber, || {
+        warn_unhandled_guest_msg(&GuestToHost::FileCreated {
+            path: "PRIVATE_GUEST_FRAME_CANARY".into(),
+            size: 1,
+        });
+    });
+
+    let output = String::from_utf8(captured.0.lock().unwrap().clone()).unwrap();
+    assert!(output.contains("unknown variant"), "warning was not emitted");
+    assert!(
+        !output.contains("PRIVATE_GUEST_FRAME_CANARY"),
+        "guest payload reached process log"
+    );
+}
 
 struct InterruptedThenData {
     interrupted: bool,

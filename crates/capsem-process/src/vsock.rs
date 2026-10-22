@@ -26,7 +26,7 @@ mod handshake;
 mod streams;
 use handshake::{collect_terminal_control_pair, is_retryable_handshake_error, perform_handshake};
 mod guest_report;
-use guest_report::{ackable_id, ackable_response_id, is_guest_liveness_message};
+use guest_report::{ackable_id, ackable_response_id, is_guest_liveness_message, warn_unhandled_guest_msg};
 mod exec_completion;
 mod exec_dispatch;
 mod exec_input;
@@ -1047,7 +1047,7 @@ async fn handle_guest_msg(
             trace!(target: "ipc", message = ?other, "guest liveness reply");
         }
         other => {
-            warn!(target: "ipc", unhandled = ?other, "handle_guest_msg: unknown variant; this binary may be older than its peer");
+            warn_unhandled_guest_msg(&other);
         }
     }
 }

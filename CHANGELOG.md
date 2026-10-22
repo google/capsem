@@ -29,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Log only the variant identifier for unhandled guest control frames, so a
+  guest cannot flood `process.log` with a frame's attacker-controlled payload.
+
 - Stop installer and uninstaller helpers only after checking their pinned
   process identity and exact installed executable path; command-line matches
   no longer authorize a kill.
