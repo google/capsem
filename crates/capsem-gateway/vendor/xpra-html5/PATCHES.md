@@ -24,6 +24,12 @@ listener send a second pointer packet for the same browser event. Mouse events
 outside a window still reach the screen listener, and callbacks that return
 true retain their propagation behavior.
 
+`patches/notification-text.patch` creates notification titles, bodies and
+action labels with text APIs. Guest-controlled strings cannot create markup
+or attributes. Notification IDs use attribute assignment and exact DOM lookup,
+never HTML interpolation or CSS selector construction; icon lookup stays
+within the notification. Action identity and close callbacks are retained.
+
 Normal reconnect still resets connection state and retains the original
 upstream transport, parser, geometry and window behavior. No codec, color,
 security policy or guest application setting changes here.

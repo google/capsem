@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Render graphical notification messages and action labels as text so guest
+  content cannot inject viewer markup or controls.
+
 - Send graphical canvas mouse input once instead of processing it again at
   the root screen listener.
 

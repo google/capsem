@@ -38,14 +38,11 @@ var NOTIFICATION_SELECTOR = ".notifications";
       onClose
     );
 var nID = `notification${nid}`;
-var a = $(
-      `<div id="${nID}" class="alert ${type}">` +
-      `<img class="notification_icon" id="notification_icon${nID}">` +
-      `<span class="title">${title}</span>` +
-      `<span class="message">${message}</span>` +
-      `<div class="dismiss">&#215;</div>` +
-      `</div>`
-    );
+var a = $('<div class="alert"></div>').attr("id", nID).addClass(type);
+    a.append($('<img class="notification_icon">'));
+    a.append($('<span class="title"></span>').text(title));
+    a.append($('<span class="message"></span>').text(message));
+    a.append($('<div class="dismiss">&#215;</div>'));
 var notifications_elements = $(NOTIFICATION_SELECTOR);
     notifications_elements.prepend(a);
     if (actions) {
@@ -74,7 +71,7 @@ var img_data = icon[3];
 var source = `data:image/${encoding};base64,${Utilities.ArrayBufferToBase64(
           img_data
         )}`;
-        $(`#notification_icon${nID}`).attr("src", source);
+        a.find(".notification_icon").attr("src", source);
       }
     }
 
@@ -122,9 +119,7 @@ var tleft = a.data("timeLeft") - 1;
     onAction,
     onClose
   ) {
-var notification_button = $(
-      `<div class="notification_button" id=notification"${action_id}">${action_label}</div>`
-    );
+var notification_button = $('<div class="notification_button"></div>').text(action_label);
     notification_button.on("click", function() {
       window.closeNotification(nid);
       if (onAction) {
@@ -153,7 +148,7 @@ for(var nid in window.notification_timers) {
   window.closeNotification = function(nid) {
     window.cancelNotificationTimer(nid);
 var nID = `notification${nid}`;
-    $(NOTIFICATION_SELECTOR).find(`#${nID}`).find(".dismiss").trigger("click");
+    $(document.getElementById(nID)).find(".dismiss").trigger("click");
   };
 
   window.clearNotifications = function() {
