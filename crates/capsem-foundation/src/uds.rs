@@ -6,8 +6,7 @@
 //! in `/tmp`.
 //!
 //! This module is the single source of truth for that rule. Clients MUST NOT
-//! recompute the fallback path -- the fallback hash uses `DefaultHasher` which
-//! is not stable across processes. Callers get the chosen path from the
+//! recompute the fallback path. Callers get the chosen path from the
 //! service via the provision response.
 
 use std::io;
@@ -27,19 +26,14 @@ pub const SUN_PATH_MAX: usize = 90;
 /// fallback directory, which is an error when that directory cannot be
 /// created or is not ours alone.
 ///
-/// The hashed path uses `DefaultHasher` which is randomised per-process --
-/// so this function's output is ONLY valid in the process that originally
-/// computed it. Other processes must receive the chosen path via IPC.
+/// The non-security XXH3-128 name is deterministic. Clients still receive the
+/// selected path through IPC so the service remains the layout owner.
 pub fn instance_socket_path(run_dir: &Path, id: &str) -> io::Result<PathBuf> {
     let preferred = run_dir.join("instances").join(format!("{id}.sock"));
     if preferred.as_os_str().len() < SUN_PATH_MAX {
         return Ok(preferred);
     }
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    id.hash(&mut h);
-    run_dir.hash(&mut h);
-    Ok(private_fallback_dir()?.join(format!("{:x}.sock", h.finish())))
+    Ok(private_fallback_dir()?.join(format!("{:032x}.sock", socket_fingerprint(run_dir, id, "instance"))))
 }
 
 /// `/tmp/capsem-<uid>`, created 0700 and verified to be exactly that.
@@ -66,8 +60,7 @@ fn private_fallback_dir_under(base: &Path) -> io::Result<PathBuf> {
 /// plugging, one path per VM.
 ///
 /// Non-security short names use XXH3-128 over the run dir, id and role, so the
-/// fallback is the same in every process that derives it; `DefaultHasher` is
-/// seeded per process.
+/// fallback is the same in every process that derives it.
 pub fn private_handoff_socket_path(run_dir: &Path, id: &str) -> io::Result<PathBuf> {
     owner_socket_path(run_dir, id, "handoff")
 }
@@ -77,12 +70,18 @@ fn owner_socket_path(run_dir: &Path, id: &str, role: &str) -> io::Result<PathBuf
     if preferred.as_os_str().len() < SUN_PATH_MAX {
         return Ok(ensured(preferred));
     }
-    let mut digest = capsem_crypto::xxh3::Hasher::new();
-    digest.update(run_dir.as_os_str().as_encoded_bytes());
-    digest.update(id.as_bytes());
-    digest.update(role.as_bytes());
-    let short = format!("{:032x}", digest.finalize());
+    let short = format!("{:032x}", socket_fingerprint(run_dir, id, role));
     Ok(private_fallback_dir()?.join(format!("{short}-{role}.sock")))
+}
+
+fn socket_fingerprint(run_dir: &Path, id: &str, role: &str) -> u128 {
+    let mut digest = capsem_crypto::xxh3::Hasher::new();
+    for part in [run_dir.as_os_str().as_encoded_bytes(), id.as_bytes(), role.as_bytes()] {
+        // Length prefixes distinguish differently partitioned path/id tuples.
+        digest.update(&(part.len() as u64).to_le_bytes());
+        digest.update(part);
+    }
+    digest.finalize()
 }
 
 /// A path with a directory to bind in.

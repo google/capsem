@@ -17,6 +17,11 @@ fn long_path_falls_back_to_tmp_capsem() {
         p.display()
     );
     assert!(p.as_os_str().len() < SUN_PATH_MAX);
+    assert_eq!(
+        p.file_stem().unwrap().len(),
+        32,
+        "fallback keeps a full XXH3-128 identity"
+    );
 }
 
 #[test]
