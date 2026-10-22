@@ -354,7 +354,7 @@ def test_only_run_and_lease_names_in_namespace_names_are_touched(tmp_path: Path)
     (tmp_path / "outside/keep").write_bytes(b"keep")
     legacy = root / "capsem-test-0904"
     foreign_run(legacy, "run-53")
-    not_hex = root / "DEADBEEF"
+    not_hex = root / "ABCDEF12"
     foreign_run(not_hex, "run-54")
     (root / "a1b2c3d4").write_text("a file, not a namespace", encoding="utf-8")
 
@@ -373,7 +373,7 @@ def test_only_run_and_lease_names_in_namespace_names_are_touched(tmp_path: Path)
     "target",
     [
         "capsem-test-0904/run-1",
-        "DEADBEEF/run-1",
+        "ABCDEF12/run-1",
         "deadbeef/../outside/run-1",
         "deadbeef/run-1/pytest",
         "cafebabe/run-1",
@@ -390,7 +390,7 @@ def test_apply_refuses_a_forged_target_outside_a_real_namespace(
 
     paths = scratch(tmp_path)
     root = paths.stage("test-temp").parent
-    for name in ("capsem-test-0904", "DEADBEEF", "outside"):
+    for name in ("capsem-test-0904", "ABCDEF12", "outside"):
         foreign_run(root / name, "run-1")
     foreign_run(foreign(paths), "run-1")
     (foreign(paths) / "notes.txt").write_text("keep", encoding="utf-8")
