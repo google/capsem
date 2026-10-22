@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Return a bounded MCP error for oversized aggregator results and keep the
+  connection available for later tool replies.
+
 - Cap guest exec, audit, and lifecycle vsock workers and bound initial exec
   and lifecycle reads, preventing connection floods from exhausting the VM owner.
 
