@@ -29,7 +29,9 @@ impl Channel {
     fn new(stream: UnixStream) -> io::Result<Self> {
         stream.set_nonblocking(true)?;
         Ok(Self {
-            io: AsyncFd::new(stream)?,
+            // SAFETY: Channel exclusively owns this stream and never replaces or
+            // closes its descriptor before AsyncFd deregisters it on drop.
+            io: unsafe { AsyncFd::register(stream) }?,
             operation: Mutex::new(()),
         })
     }

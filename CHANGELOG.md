@@ -32,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Update Tokio to 1.53.3 for RUSTSEC-2026-0386 and explicitly preserve socket
+  ownership throughout asynchronous descriptor registration.
+
 - Cap gateway buffering of unsized JSON responses at 32 MiB, preventing a
   large service response from exhausting gateway memory.
 
