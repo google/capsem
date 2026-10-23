@@ -8,10 +8,9 @@ import msgpack
 import pytest
 from helpers.image_session import image_session, workload_exec
 from helpers.service import exec_output_text, vm_session_dir
-
-from tests.ironbank.kingslanding.test_run import service
-from tests.ironbank.kingslanding.test_terminal_state import next_state, terminal_summary
-from tests.ironbank.kingslanding.test_workload_terminal import probe, terminal
+from ironbank.kingslanding.test_run import service
+from ironbank.kingslanding.test_terminal_state import next_state, terminal_summary
+from ironbank.kingslanding.test_workload_terminal import probe, terminal
 
 __all__ = ["service"]
 pytestmark = pytest.mark.integration
