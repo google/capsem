@@ -30,9 +30,8 @@ from helpers.service import (
     wait_exec_ready,
 )
 from helpers.session_ledger import open_session_ledger
+from ironbank.approval_fixture import resolve_original_operation
 from log_streams import assert_service_log_evidence, read_log_stream
-
-from tests.ironbank.approval_fixture import resolve_original_operation
 
 pytestmark = pytest.mark.integration
 
