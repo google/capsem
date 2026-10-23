@@ -26,6 +26,33 @@ where
 }
 
 #[test]
+fn exec_approval_progress_is_typed_and_never_answers_the_original_request() {
+    let registration = crate::approval::ApprovalRegistration {
+        ask_id: "0123456789ab".into(),
+        event_id: "abcdef012345".into(),
+        expires_at_unix_ms: 2_000_000_000_000,
+        remaining_ms: 120_000,
+    };
+    let messages = [
+        ProcessToService::ExecApproval {
+            id: 7,
+            progress: ExecApprovalProgress::Registered(registration.clone()),
+        },
+        ProcessToService::ExecApproval {
+            id: 7,
+            progress: ExecApprovalProgress::Resolved {
+                ask_id: registration.ask_id,
+                event_id: registration.event_id,
+            },
+        },
+    ];
+    for message in messages {
+        assert_eq!(message.reply_id(), None);
+        assert_rmp_variant_name(&message, "ExecApproval");
+    }
+}
+
+#[test]
 fn service_to_process_variant_names_and_roundtrips_are_stable() {
     let messages = vec![
         ServiceToProcess::Ping,

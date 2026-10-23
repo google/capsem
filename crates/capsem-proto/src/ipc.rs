@@ -282,6 +282,15 @@ pub enum ServiceToProcess {
 
 /// Messages sent from capsem-process back to capsem-service over the per-VM UDS.
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum ExecApprovalProgress {
+    /// Canonical broker verification and publication have admitted this wait.
+    Registered(crate::approval::ApprovalRegistration),
+    /// The same broker wait ended; this grants no permission to execute.
+    Resolved { ask_id: String, event_id: String },
+}
+
+/// Messages sent from capsem-process back to capsem-service over the per-VM UDS.
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ProcessToService {
     /// Latest ephemeral request, also replayed to metadata observers.
     BrowserRequest {
@@ -316,6 +325,8 @@ pub enum ProcessToService {
         state: String,
         trigger: String,
     },
+    /// Progress of the original exec's bounded human wait, never its result.
+    ExecApproval { id: u64, progress: ExecApprovalProgress },
     /// Result of an Exec command.
     ExecResult {
         id: u64,
