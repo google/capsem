@@ -7,13 +7,13 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from helpers.service import exec_output_text
-from helpers.settings_policy import apply_settings_rule
 from ironbank.approval_fixture import (
     assert_original_cancelled,
     pending_original_operation,
     resolve_original_operation,
 )
 from ironbank.approval_native import (
+    apply_native_user_rule,
     assert_approval_audit,
     native_approval_session,
     upstream_records,
@@ -177,13 +177,7 @@ def test_dns_policy_change_cancels_original_query_without_authorizing_a_late_dec
             # A TCP FIN also means a valid SHUT_WR. Revoke the original
             # policy owner explicitly instead of pretending FIN proves that
             # the peer stopped reading its eventual answer.
-            apply_settings_rule(
-                service,
-                "cancel_original_dns",
-                action="block",
-                priority=0,
-                match='dns.qname == "unrelated-never-requested.example"',
-            )
+            apply_native_user_rule(service, "cancel_original_dns")
             result = original.result(timeout=15)
             assert result["exit_code"] == 0, result
         receipt = assert_original_cancelled(api, vm_id, listing)

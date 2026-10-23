@@ -7,13 +7,13 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from helpers.service import exec_output_text
-from helpers.settings_policy import apply_settings_rule
 from ironbank.approval_fixture import (
     assert_original_cancelled,
     pending_original_operation,
     resolve_original_operation,
 )
 from ironbank.approval_native import (
+    apply_native_user_rule,
     assert_approval_audit,
     native_approval_session,
 )
@@ -26,13 +26,7 @@ SEED = b"original-guest-file"
 def prepare(service, client, vm_id, action):
     seed = client.upload_file(vm_id, NAME, SEED)
     assert seed["success"], seed
-    apply_settings_rule(
-        service,
-        "ask_native_file",
-        action="ask",
-        priority=0,
-        match=f'file.{action}.path.endsWith("{NAME}")',
-    )
+    apply_native_user_rule(service, f"ask_native_file_{action}")
     return seed["vm_path"]
 
 
@@ -86,7 +80,9 @@ def test_file_original_boundary_resolves_once(action, decision):
             else:
                 assert body == SEED
         else:
-            assert data not in body and SEED not in body, "refusal returned private file bytes"
+            assert data not in body and SEED not in body, (
+                "refusal returned private file bytes"
+            )
         expected = data if action == "import" and decision == "approve" else SEED
         assert guest_bytes(client, vm_id, path) == expected
         assert_approval_audit(service, client, vm_id, receipt, table="fs_events")
@@ -107,4 +103,6 @@ def test_file_caller_disconnect_cancels_original_boundary(action):
                 original.result(timeout=10)
         receipt = assert_original_cancelled(api, vm_id, listing)
         assert guest_bytes(client, vm_id, path) == SEED
-        assert_approval_audit(service, client, vm_id, receipt, cancelled=True, table="fs_events")
+        assert_approval_audit(
+            service, client, vm_id, receipt, cancelled=True, table="fs_events"
+        )

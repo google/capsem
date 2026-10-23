@@ -6,6 +6,7 @@ import json
 import os
 import sqlite3
 import textwrap
+import tomllib
 from contextlib import closing, contextmanager, suppress
 from pathlib import Path
 
@@ -24,6 +25,17 @@ from helpers.service import (
     wait_exec_ready,
 )
 from helpers.session_ledger import open_session_ledger, stop_session_for_ledger_read
+from helpers.settings_policy import apply_settings_rule
+
+
+def apply_native_user_rule(service, rule_id):
+    """Use the exact user policy exercised by the real product compiler tests."""
+    fixture = (
+        Path(__file__).resolve().parents[1]
+        / "fixtures/config/security-rule-profile/native-approval.toml"
+    )
+    rule = tomllib.loads(fixture.read_text())["profiles"]["rules"][rule_id]
+    return apply_settings_rule(service, rule_id, **rule)
 
 
 @contextmanager
