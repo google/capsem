@@ -23,7 +23,7 @@ import sys
 import termios
 import time
 import tty
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 # The guest-writable stage must not grow an import cache or load stale pyc.
 _console = runpy.run_path(str(Path(__file__).with_name("runtime_console.py")))
@@ -34,6 +34,8 @@ _pty = runpy.run_path(str(Path(__file__).with_name("runtime_pty.py")))
 RuntimeConsole, Console = (_pty[name] for name in ("RuntimeConsole", "Console"))
 _terminal = runpy.run_path(str(Path(__file__).with_name("runtime_terminal.py")))
 Relay, relay = (_terminal[name] for name in ("Relay", "relay"))
+_workspace = runpy.run_path(str(Path(__file__).with_name("runtime_workspace.py")))
+_safe_mount_point = _workspace["safe_mount_point"]
 
 RUNTIME = Path("/var/tmp/capsem-container")
 HOSTNAME = "container"
@@ -180,20 +182,6 @@ def loop_device(fd):
         os.close(loop)
 
 
-def _safe_mount_point(value):
-    """An absolute, normalized path the container may mount something at."""
-    path = PurePosixPath(value)
-    return (
-        isinstance(value, str)
-        and path.is_absolute()
-        and ".." not in path.parts
-        and str(path) == value
-        and len(path.parts) >= 2
-        and len(value) <= 4096
-        and path.parts[1] not in {"proc", "dev", "sys", "usr", "bin", "sbin", "lib", "lib64", "etc"}
-    )
-
-
 def configure(unpacked, image, options, detached=False):
     for key in ("capabilities", "seccomp", "id_map", "resources"):
         if key not in options:
@@ -335,6 +323,7 @@ def configure(unpacked, image, options, detached=False):
                 "options": ["ro", "nosuid", "nodev", "noexec", "mode=000", "size=4k"],
             }
         )
+    mounts.extend(_workspace["alias_mounts"](image, workspace, str(WORKSPACE_VIEW), STAGE))
     mounts.extend(
         {
             "destination": destination,
@@ -1029,6 +1018,11 @@ def run(stage, detached=False):
             bundle / "rootfs",
             checked_id_map(options["id_map"]),
         )
+        if _workspace["enabled"](image, options.get("workspace")):
+            user = config["process"]["user"]
+            workspace_mappings(id_map, user)  # Reject identities outside the existing map.
+            owner = tuple(id_map["hostID"] + user[key] for key in ("uid", "gid"))
+            _workspace["import_scratch"](volume_dir(_workspace["HOME"]), WORKSPACE_VIEW, LAYER, owner)
         config_path.write_text(json.dumps(config))
         (RUNTIME / "resolv.conf").write_text(resolv_conf())
         (RUNTIME / "hosts").write_text(hosts_file())

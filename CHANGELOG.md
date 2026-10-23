@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Support Antigravity's image-declared scratch workspace alias with bounded,
+  conflict-safe imports that retain original files and leave credential siblings alone.
+
 - Acknowledge successful TUI browser opens at their VM owner so other clients
   stop offering the handled request, with bounded metadata-only retries.
 
