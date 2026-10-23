@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 @contextlib.contextmanager
-def layout_registry(directory, layout, image, *, referrers_api=True):
+def layout_registry(directory, layout, image, *, referrers_api=True, official=False, evidence=None):
     """Serve the single-platform image in an OCI layout (`docker buildx build
     --output type=oci,tar=false`) under `library/<image>`."""
     from tests.fixtures.oci.registry import publish_catalog, serve
@@ -46,7 +46,13 @@ def layout_registry(directory, layout, image, *, referrers_api=True):
             "application/vnd.oci.image.index.v1+json",
         )
     with serve(directory, image, manifest, entry["mediaType"], fetch, artifacts) as served:
-        if prepared:
+        if official:
+            from tests.fixtures.oci.catalog_evidence import publish
+
+            reference, _, _ = served
+            config = json.loads(fetch(json.loads(manifest)["config"]["digest"]))
+            publish(artifacts, reference, entry, config, evidence, artifact if prepared else None)
+        elif prepared:
             reference, _, _ = served
             config = json.loads(fetch(json.loads(manifest)["config"]["digest"]))
             publish_catalog(

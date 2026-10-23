@@ -247,6 +247,26 @@ separate evidence in Sprinty; Linux package assembly and complete release
 qualification are not claimed by this local gate. Historical router line coverage
 was 93/136 (68.38%); confined children cannot write profiling files.
 
+## Prepared official catalogue acceptance
+
+`layout_registry(..., official=True, evidence=produce)` uses the publication
+catalogue producer and `images/catalog.toml` metadata for an existing recipe.
+The image's real interface must match that metadata. Generic fixtures retain
+their explicit fixture description unless this option is selected.
+
+The callback receives the final local immutable image reference and returns a
+directory containing canonical `packages.json` and `obom.cdx.json` output. Run
+`images.ci.rootfs.main` against the verified retained image tag with that local
+repository and digest; retain its normal image/cache leases. A GHCR inventory
+cannot be copied into this local repository: its embedded subject differs.
+The fixture verifies both subjects, publishes their OCI manifests and referrers,
+and lists exact evidence pins in the generated catalogue. An already prepared
+EROFS remains bound to the original platform digest. Missing optional evidence
+is absent; malformed or foreign supplied evidence fails setup.
+
+This is a local registry acceptance surface, not publication or evidence that
+the official GHCR catalogue has received these image versions.
+
 ## Limits and next work
 
 Next: policy-controlled container egress.
