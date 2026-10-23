@@ -81,7 +81,7 @@ use util::{
 
 pub use config::MitmProxyConfig;
 pub use mcp_endpoint::{McpEndpointState, McpTimeouts, ScopedMcpTools};
-pub use mcp_frame::{dispatch_logged_mcp_request, McpTransport};
+pub use mcp_frame::{dispatch_cancellable_mcp_request, dispatch_logged_mcp_request, McpTransport};
 pub use pipeline_factory::{make_production_pipeline, make_production_pipeline_with_trace_hints};
 pub use upstream::{
     GrantedTcpStream, TcpConnectGrantFuture, TcpGrantSelection, TcpResolveGrantFuture, TcpUpstreamGrants,

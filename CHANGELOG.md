@@ -371,6 +371,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Bound direct MCP retained requests and cancel their pending approvals with
+  the original caller, while draining audits for tools already executed.
+
 - Cancel pending DNS approvals when the original guest connection closes,
   draining owned audit producers before the session ends.
 

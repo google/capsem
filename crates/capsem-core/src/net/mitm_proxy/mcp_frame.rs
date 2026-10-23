@@ -93,13 +93,28 @@ impl McpTransport {
     }
 }
 
-pub async fn dispatch_logged_mcp_request(
+pub async fn dispatch_cancellable_mcp_request(
     endpoint: Arc<McpEndpointState>,
     db: Arc<DbWriter>,
     request: JsonRpcRequest,
     process_name: String,
     transport: McpTransport,
+    cancellation: tokio_util::sync::CancellationToken,
 ) -> Option<LoggedMcpResponse> {
+    // Direct host calls have no framed-session owner to reserve this budget.
+    let _admission = if transport == McpTransport::Direct {
+        match endpoint.admit_frame(memory::request(&request)) {
+            Some(admission) => Some(admission),
+            None => {
+                return Some(LoggedMcpResponse {
+                    response: JsonRpcResponse::err(request.id.clone(), -32603, "MCP request capacity exceeded"),
+                    event_id: None,
+                })
+            }
+        }
+    } else {
+        None
+    };
     let caller = McpCaller {
         process_name: &process_name,
         transport,
@@ -111,6 +126,7 @@ pub async fn dispatch_logged_mcp_request(
         &db,
         mcp_security_event_from_summary(runtime_event_type, &summary, &process_name, None),
         memory::request(&request),
+        Some(&cancellation),
     )
     .await;
 
@@ -133,9 +149,16 @@ pub async fn dispatch_logged_mcp_request(
     }
 
     let start = Instant::now();
-    let response = match endpoint.inflight.acquire().await {
-        Ok(_permit) => endpoint.handle_request(&request).await?,
-        Err(_) => JsonRpcResponse::err(request.id.clone(), -32603, "MCP endpoint is shutting down"),
+    let response = {
+        let permit = tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => None,
+            permit = endpoint.inflight.acquire() => permit.ok(),
+        };
+        match permit {
+            Some(_permit) => endpoint.handle_request(&request).await?,
+            None => JsonRpcResponse::err(request.id.clone(), -32603, "MCP caller or endpoint stopped"),
+        }
     };
     let duration_ms = start.elapsed().as_millis() as u64;
 
@@ -149,6 +172,7 @@ pub async fn dispatch_logged_mcp_request(
             Some(&response),
         ),
         memory::request(&request).saturating_add(memory::response(&response)),
+        Some(&cancellation),
     )
     .await;
     let final_decision = if response_decision.is_allowed() {
@@ -175,6 +199,23 @@ pub async fn dispatch_logged_mcp_request(
         response,
         event_id: emission.event_id,
     })
+}
+
+pub fn dispatch_logged_mcp_request(
+    endpoint: Arc<McpEndpointState>,
+    db: Arc<DbWriter>,
+    request: JsonRpcRequest,
+    process_name: String,
+    transport: McpTransport,
+) -> impl std::future::Future<Output = Option<LoggedMcpResponse>> + Send {
+    dispatch_cancellable_mcp_request(
+        endpoint,
+        db,
+        request,
+        process_name,
+        transport,
+        tokio_util::sync::CancellationToken::new(),
+    )
 }
 
 /// What one streamable-HTTP MCP message gets back.
@@ -748,6 +789,7 @@ async fn evaluate_mcp_security_event(
     db: &DbWriter,
     event: SecurityEvent,
     held_bytes: usize,
+    cancellation: Option<&tokio_util::sync::CancellationToken>,
 ) -> SecurityEnforcementDecision {
     let (rules, plugin_policy) = endpoint.policy_snapshot();
     let result = async {
@@ -760,7 +802,7 @@ async fn evaluate_mcp_security_event(
                 &rules,
                 &mut evaluation,
                 held_bytes,
-                None,
+                cancellation,
             ))
             .await?;
             let (current_rules, current_plugins) = endpoint.policy_snapshot();

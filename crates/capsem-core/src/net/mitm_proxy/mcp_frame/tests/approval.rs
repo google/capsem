@@ -31,6 +31,48 @@ fn endpoint() -> (
 }
 
 #[tokio::test]
+async fn direct_connection_cancellation_denies_original_mcp_without_executing_tool() {
+    let (endpoint, driver, sender, receiver) = endpoint();
+    let db = Arc::new(DbWriter::open_in_memory(64).unwrap());
+    let cancellation = tokio_util::sync::CancellationToken::new();
+    let call = tokio::spawn(dispatch_cancellable_mcp_request(
+        Arc::clone(&endpoint),
+        db,
+        request("tools/call", json!({"name":"local__slow"})),
+        "service".into(),
+        McpTransport::Direct,
+        cancellation.clone(),
+    ));
+    let ApprovalClientMessage::Begin { request_id, .. } = tokio::time::timeout(Duration::from_secs(2), receiver.recv())
+        .await
+        .unwrap()
+        .unwrap()
+    else {
+        panic!("begin")
+    };
+    cancellation.cancel();
+    let response = tokio::time::timeout(Duration::from_secs(2), call)
+        .await
+        .expect("original connection cancellation ends its approval wait")
+        .unwrap()
+        .unwrap();
+    assert!(response.response.error.is_some());
+    assert_eq!(driver.started.load(Ordering::SeqCst), 0);
+    assert!(
+        matches!(tokio::time::timeout(Duration::from_secs(2), receiver.recv()).await.unwrap().unwrap(),
+        ApprovalClientMessage::Cancel { request_id: id } if id == request_id)
+    );
+    sender
+        .send(ApprovalServerMessage {
+            request_id,
+            outcome: ApprovalOutcome::Approved,
+        })
+        .await
+        .unwrap();
+    assert_eq!(driver.started.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
 async fn tiny_json_values_cannot_bypass_the_retained_body_budget() {
     let (endpoint, driver, _sender, _receiver) = endpoint();
     let db = Arc::new(DbWriter::open_in_memory(64).unwrap());
@@ -45,6 +87,68 @@ async fn tiny_json_values_cannot_bypass_the_retained_body_budget() {
     .unwrap();
     assert!(response.response.error.is_some());
     assert_eq!(driver.started.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn direct_mcp_shares_the_endpoint_retained_body_admission() {
+    let (endpoint, driver, _sender, _receiver) = endpoint();
+    let _held = endpoint.admit_frame(capsem_proto::APPROVAL_HELD_BYTES_TOTAL).unwrap();
+    let db = Arc::new(DbWriter::open_in_memory(64).unwrap());
+    let response = tokio::time::timeout(
+        Duration::from_secs(2),
+        dispatch_logged_mcp_request(
+            endpoint,
+            db,
+            request("tools/call", json!({"name":"local__slow"})),
+            "service".into(),
+            McpTransport::Direct,
+        ),
+    )
+    .await
+    .expect("overload must fail closed before creating an approval wait")
+    .unwrap();
+    assert!(response.response.error.is_some());
+    assert_eq!(driver.started.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn disconnect_after_tool_started_drains_the_original_execution_audit() {
+    let (endpoint, driver) = gated_endpoint(1, true);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("session.db");
+    let db = Arc::new(DbWriter::open(&path, 64).unwrap());
+    let cancellation = tokio_util::sync::CancellationToken::new();
+    let call = tokio::spawn(dispatch_cancellable_mcp_request(
+        endpoint,
+        Arc::clone(&db),
+        request("tools/call", json!({"name":"local__slow"})),
+        "service".into(),
+        McpTransport::Direct,
+        cancellation.clone(),
+    ));
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while driver.started.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    cancellation.cancel();
+    driver.release.send(true).unwrap();
+    let response = tokio::time::timeout(Duration::from_secs(2), call)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert!(response.event_id.is_some());
+    assert_eq!(driver.started.load(Ordering::SeqCst), 1);
+    db.flush_checked().await.unwrap();
+    let reader = capsem_logger::DbReader::open(&path).unwrap();
+    assert_eq!(
+        count(&reader, "tool_calls"),
+        1,
+        "disconnect cannot erase an executed tool's audit"
+    );
 }
 
 #[tokio::test]
