@@ -104,6 +104,8 @@ struct ListResponse {
 #[derive(Deserialize)]
 struct SessionInfo {
     #[serde(default)]
+    app: Option<capsem_api::ImageApp>,
+    #[serde(default)]
     browser_request: Option<capsem_api::BrowserRequest>,
     #[serde(default)]
     terminal: Option<capsem_api::TerminalSummary>,

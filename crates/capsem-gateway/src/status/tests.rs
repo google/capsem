@@ -770,3 +770,19 @@ async fn overview_keeps_session_terminal_title_bell_and_notification() {
     );
     handle.abort();
 }
+
+#[tokio::test]
+async fn overview_keeps_the_sessions_canonical_pinned_app_metadata() {
+    let app = serde_json::json!({"catalog_name":"dev","display_name":"Development","description":"Tools",
+        "image":format!("registry.example/dev@sha256:{}","a".repeat(64)),"architecture":"arm64","interfaces":["terminal"],"evidence":[]});
+    let served = app.clone();
+    let mock=axum::Router::new().route("/internal/gateway/status",axum::routing::get(move || {
+        let app=served.clone();
+        async move { axum::Json(serde_json::json!({"sandboxes":[{"id":"session","name":"My work","pid":1,"status":"Running","persistent":true,"app":app,"available_actions":[]}]})) }
+    }));
+    let (path, handle, _dir) = mock_uds(mock).await;
+    let response = fetch_status(&test_app_state(&path)).await;
+    assert_eq!(response.vms[0].name.as_deref(), Some("My work"));
+    assert_eq!(serde_json::to_value(&response.vms[0].app).unwrap(), app);
+    handle.abort();
+}
