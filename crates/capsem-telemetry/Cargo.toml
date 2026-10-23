@@ -10,6 +10,7 @@ repository.workspace = true
 authors.workspace = true
 
 [features]
+http-observation = ["dep:axum", "dep:http-body", "dep:tracing"]
 # OTLP/HTTP export of the metrics facade. Off for the crates that only record
 # (logger, core); on for the processes that own export (service, process).
 export = [
@@ -24,6 +25,9 @@ export = [
 ]
 
 [dependencies]
+axum = { version = "0.8", default-features = false, features = ["matched-path"], optional = true }
+http-body = { version = "1", optional = true }
+tracing = { workspace = true, optional = true }
 metrics = "0.24"
 opentelemetry = { version = "0.33", default-features = false, features = ["metrics"], optional = true }
 opentelemetry_sdk = { version = "0.33", default-features = false, features = ["metrics"], optional = true }
@@ -40,5 +44,9 @@ async-trait = { version = "0.1", optional = true }
 workspace = true
 
 [dev-dependencies]
+futures.workspace = true
+http-body-util.workspace = true
+tower = { version = "0.5", features = ["util"] }
+tracing-subscriber.workspace = true
 metrics-util = "0.19"
 opentelemetry_sdk = { version = "0.33", default-features = false, features = ["metrics", "testing"] }

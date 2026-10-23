@@ -10,6 +10,7 @@ const SOURCES: &[(&str, &str)] = &[
     ("cache", include_str!("cache.rs")),
     ("db", include_str!("db.rs")),
     ("dns", include_str!("dns.rs")),
+    ("http", include_str!("http.rs")),
     ("mitm", include_str!("mitm.rs")),
     ("security", include_str!("security.rs")),
     ("session", include_str!("session.rs")),

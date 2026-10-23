@@ -21,6 +21,7 @@ pub mod db;
 pub mod dns;
 #[cfg(feature = "export")]
 pub mod export;
+pub mod http;
 pub mod mitm;
 pub mod security;
 pub mod session;
@@ -72,6 +73,7 @@ pub const DOMAINS: &[(&str, &[MetricSpec])] = &[
     ("cache", cache::SPECS),
     ("db", db::SPECS),
     ("dns", dns::SPECS),
+    ("http", http::SPECS),
     ("mitm", mitm::SPECS),
     ("security", security::SPECS),
     ("session", session::SPECS),
