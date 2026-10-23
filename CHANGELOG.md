@@ -243,6 +243,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep the pending-browser Alt+B action available while TUI Manager or another
+  overlay is open, matching its footer hint without reopening handled requests.
+
 - Suggest TUI session and fork names from existing human names, avoiding collisions
   and keeping fork suffixes within the public name limit.
 

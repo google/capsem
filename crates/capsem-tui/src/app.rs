@@ -302,6 +302,24 @@ impl App {
         if self.handle_overlay_key(key) {
             return AppAction::Consumed;
         }
+        if is_alt_key(key.modifiers) && matches!(key.code, KeyCode::Char('b' | 'B')) {
+            if let Some(request) = self
+                .state
+                .active_session()
+                .and_then(|session| session.browser_request.as_ref())
+                .cloned()
+            {
+                if request.validated_url().is_ok() {
+                    let id = self.state.active_session_id.clone();
+                    self.handled_browser.insert(id.clone(), request.clone());
+                    if let Some(session) = self.state.sessions.iter_mut().find(|session| session.id == id) {
+                        session.browser_request = None;
+                    }
+                    return AppAction::Invoke(ControlAction::OpenBrowser { id, request });
+                }
+            }
+            return AppAction::Consumed;
+        }
         if self.overlay == AppOverlay::Approvals {
             return self.handle_approval_key(key);
         }
@@ -361,24 +379,6 @@ impl App {
         }
         if is_new_key(key) {
             self.open_create();
-            return AppAction::Consumed;
-        }
-        if is_alt_key(key.modifiers) && matches!(key.code, KeyCode::Char('b' | 'B')) {
-            if let Some(request) = self
-                .state
-                .active_session()
-                .and_then(|session| session.browser_request.as_ref())
-                .cloned()
-            {
-                if request.validated_url().is_ok() {
-                    let id = self.state.active_session_id.clone();
-                    self.handled_browser.insert(id.clone(), request.clone());
-                    if let Some(session) = self.state.sessions.iter_mut().find(|session| session.id == id) {
-                        session.browser_request = None;
-                    }
-                    return AppAction::Invoke(ControlAction::OpenBrowser { id, request });
-                }
-            }
             return AppAction::Consumed;
         }
         if is_fork_key(key) && self.open_fork() {

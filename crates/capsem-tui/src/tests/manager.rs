@@ -167,3 +167,48 @@ fn manager_selects_sessions_and_confirms_lifecycle_actions() {
     assert_eq!(app.overlay(), AppOverlay::Confirm);
     assert!(matches!(app.pending_action(), Some(ControlAction::Stop { id, .. }) if id == "linux-os"));
 }
+
+#[test]
+fn pending_browser_shortcut_matches_its_global_footer_hint() {
+    for shortcut in ['m', '?', 'n', 'f', 'a'] {
+        let mut state = fixture_state();
+        let id = state.active_session_id.clone();
+        let request = capsem_sdk::models::BrowserRequest {
+            owner_generation: Some("18f59e33-8af6-4992-81d9-71e10873af9a".into()),
+            id: 1,
+            url: "http://fixture.localhost/proof".into(),
+        };
+        state.sessions[0].browser_request = Some(request.clone());
+        let mut app = App::new(state.clone());
+        app.handle_key(key(KeyCode::Char(shortcut), KeyModifiers::ALT));
+        let overlay = app.overlay();
+        assert_ne!(overlay, AppOverlay::None);
+        assert!(render_app_snapshot(&app, 150, 42).unwrap().contains("Alt+b browser"));
+        let action = app.handle_key(key(KeyCode::Char('b'), KeyModifiers::ALT));
+        assert_eq!(
+            action,
+            AppAction::Invoke(ControlAction::OpenBrowser { id, request }),
+            "overlay {overlay:?}"
+        );
+        assert_eq!(app.overlay(), overlay);
+        app.replace_state(state);
+        assert_eq!(
+            app.handle_key(key(KeyCode::Char('b'), KeyModifiers::ALT)),
+            AppAction::Consumed
+        );
+        assert!(!render_app_snapshot(&app, 150, 42).unwrap().contains("Alt+b browser"));
+    }
+}
+
+#[test]
+fn manager_without_pending_browser_has_no_browser_action_or_hint() {
+    let mut app = App::new(fixture_state());
+    app.handle_key(key(KeyCode::Char('m'), KeyModifiers::ALT));
+    assert_eq!(app.overlay(), AppOverlay::Home);
+    assert!(!render_app_snapshot(&app, 150, 42).unwrap().contains("Alt+b browser"));
+    assert_eq!(
+        app.handle_key(key(KeyCode::Char('b'), KeyModifiers::ALT)),
+        AppAction::Consumed
+    );
+    assert_eq!(app.overlay(), AppOverlay::Home);
+}
