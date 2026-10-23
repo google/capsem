@@ -146,6 +146,7 @@ pub struct App {
     catalog_generation: u64,
     catalog_request: Option<ImageCatalogRequest>,
     fork_draft: Option<ForkDraft>,
+    handled_browser: std::collections::BTreeMap<String, capsem_sdk::models::BrowserRequest>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -173,6 +174,7 @@ impl App {
             catalog_generation: 0,
             catalog_request: None,
             fork_draft: None,
+            handled_browser: Default::default(),
         };
         app.ensure_active_tab_visible();
         app.sync_empty_state_prompt();
@@ -204,6 +206,18 @@ impl App {
     }
 
     pub fn replace_state(&mut self, mut state: AppState) {
+        self.handled_browser.retain(|id, handled| {
+            state.sessions.iter().any(|session| {
+                &session.id == id
+                    && session.lifecycle == SessionLifecycle::Working
+                    && session.browser_request.as_ref() == Some(handled)
+            })
+        });
+        for session in &mut state.sessions {
+            if self.handled_browser.get(&session.id) == session.browser_request.as_ref() {
+                session.browser_request = None;
+            }
+        }
         state.service.control_message = self.state.service.control_message.clone();
         let previous_active_id = self.state.active_session_id.clone();
         if let Some(index) = self.pending_focus_index(&state) {
@@ -233,6 +247,18 @@ impl App {
 
     pub fn clear_control_progress(&mut self) {
         self.control_progress = None;
+    }
+
+    pub fn complete_browser_open(&mut self, id: &str, request: &capsem_sdk::models::BrowserRequest, success: bool) {
+        if success || self.handled_browser.get(id) != Some(request) {
+            return;
+        }
+        self.handled_browser.remove(id);
+        if let Some(session) = self.state.sessions.iter_mut().find(|session| session.id == id) {
+            if session.browser_request.is_none() {
+                session.browser_request = Some(request.clone());
+            }
+        }
     }
 
     pub fn focus_session_when_available(&mut self, id: impl Into<String>) {
@@ -309,12 +335,15 @@ impl App {
                 .state
                 .active_session()
                 .and_then(|session| session.browser_request.as_ref())
+                .cloned()
             {
                 if request.validated_url().is_ok() {
-                    return AppAction::Invoke(ControlAction::OpenBrowser {
-                        id: self.state.active_session_id.clone(),
-                        request: request.clone(),
-                    });
+                    let id = self.state.active_session_id.clone();
+                    self.handled_browser.insert(id.clone(), request.clone());
+                    if let Some(session) = self.state.sessions.iter_mut().find(|session| session.id == id) {
+                        session.browser_request = None;
+                    }
+                    return AppAction::Invoke(ControlAction::OpenBrowser { id, request });
                 }
             }
             return AppAction::Consumed;

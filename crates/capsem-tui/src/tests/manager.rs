@@ -11,6 +11,52 @@ fn footer_anchors_latency_left_and_shortcuts_right_without_overlap() {
 }
 
 #[test]
+fn browser_handoff_is_single_use_across_polls_and_explicitly_retryable_on_failure() {
+    let mut state = fixture_state();
+    let id = state.active_session_id.clone();
+    let request = capsem_sdk::models::BrowserRequest {
+        id: 1,
+        url: "https://example.org/login".into(),
+    };
+    state.sessions[0].browser_request = Some(request.clone());
+    let mut app = App::new(state.clone());
+    let open = key(KeyCode::Char('b'), KeyModifiers::ALT);
+    assert!(matches!(
+        app.handle_key(open),
+        AppAction::Invoke(ControlAction::OpenBrowser { .. })
+    ));
+    assert_eq!(app.handle_key(open), AppAction::Consumed);
+    app.replace_state(state.clone());
+    assert!(!render_app_snapshot(&app, 150, 42).unwrap().contains("Alt+b browser"));
+    app.complete_browser_open(&id, &request, false);
+    assert!(render_app_snapshot(&app, 150, 42).unwrap().contains("Alt+b browser"));
+    assert!(matches!(
+        app.handle_key(open),
+        AppAction::Invoke(ControlAction::OpenBrowser { .. })
+    ));
+    app.complete_browser_open(&id, &request, true);
+    app.replace_state(state);
+    assert_eq!(app.handle_key(open), AppAction::Consumed);
+    let mut next = fixture_state();
+    let newer = capsem_sdk::models::BrowserRequest {
+        id: 2,
+        url: "https://example.org/next".into(),
+    };
+    next.sessions[0].browser_request = Some(newer);
+    app.replace_state(next);
+    assert!(matches!(
+        app.handle_key(open),
+        AppAction::Invoke(ControlAction::OpenBrowser { .. })
+    ));
+    app.complete_browser_open(&id, &request, false);
+    assert_eq!(
+        app.handle_key(open),
+        AppAction::Consumed,
+        "stale failure cannot restore an older request"
+    );
+}
+
+#[test]
 fn chooser_has_spaced_table_and_bottom_legend_and_direct_arrow_navigation() {
     for (width, height) in [(150, 42), (80, 24)] {
         let mut app = App::new(fixture_state());

@@ -207,6 +207,9 @@ fn run_loop(
                         app.set_control_progress(label);
                     }
                     ControlEvent::Finished(action, Ok(outcome)) => {
+                        if let ControlAction::OpenBrowser { id, request } = &action {
+                            app.complete_browser_open(id, request, true);
+                        }
                         if matches!(action, ControlAction::CreateSession { .. }) {
                             app.complete_create(true);
                         }
@@ -221,6 +224,9 @@ fn run_loop(
                         should_refresh = true;
                     }
                     ControlEvent::Finished(action, Err(error)) => {
+                        if let ControlAction::OpenBrowser { id, request } = &action {
+                            app.complete_browser_open(id, request, false);
+                        }
                         if matches!(action, ControlAction::CreateSession { .. }) {
                             app.complete_create(false);
                         }
@@ -339,6 +345,9 @@ fn handle_terminal_event(
                 if let Some(bridge) = control_bridge {
                     bridge.invoke(action);
                 } else {
+                    if let ControlAction::OpenBrowser { id, request } = &action {
+                        app.complete_browser_open(id, request, false);
+                    }
                     if matches!(action, ControlAction::CreateSession { .. }) {
                         app.complete_create(false);
                     }

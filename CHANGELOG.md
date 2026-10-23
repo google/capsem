@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Consume handled TUI browser handoffs once per client and suppress duplicate
+  opens across polls; restore the pending shortcut after an opener failure.
+
 - Make the TUI chooser respond directly to arrow keys, show owner/image/cache
   status/description rows, and place keyboard hints below the list. Keep
   latency at the far left and navigation shortcuts at the far right.
