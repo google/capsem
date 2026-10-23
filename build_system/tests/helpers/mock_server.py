@@ -154,6 +154,7 @@ def start_mock_server(
     timeout_s: float = 120,
     retry_interval_s: float = 0.2,
     dns_answers: str = "loopback",
+    otlp_http_fixture: bool = False,
 ) -> tuple[subprocess.Popen[str], dict[str, Any]]:
     """Start the mock upstream; `ready["dns_answer_ip"]` is what its provider
     and model names resolve to. `dns_answers="routable"` is for clients in a
@@ -173,6 +174,8 @@ def start_mock_server(
             "--dns-answers",
             dns_answers,
         ]
+        if otlp_http_fixture:
+            command.append("--otlp-http-fixture")
         if capture_requests:
             request_log_path = request_log or (
                 Path(tempfile.mkdtemp(prefix="capsem-mock-server-")) / "requests.jsonl"
