@@ -40,10 +40,7 @@ AGENTS = {
     "claude-code": (["claude", "--version"], "2.1.229"),
     "agy": (["agy-real", "--version"], "1.1.3"),
     "claude-desktop": (["dpkg-query", "-W", "claude-desktop"], "1.22209.0"),
-    "antigravity-desktop": (["python3", "-c", (
-        "import json,pathlib; "
-        "print(json.loads(pathlib.Path('/opt/antigravity-ide/resources/app/product.json').read_text())['ideVersion'])"
-    )], "2.5.5"),
+    "antigravity-desktop": (["dpkg-query", "-W", "antigravity"], "2.26.0"),
 }
 
 
@@ -79,13 +76,14 @@ def test_codex_uses_the_managed_image_update_policy(service, tmp_path):
     )], "managed updates; MCP configured")
 
 
-def test_antigravity_leaves_window_controls_to_capsem(service, tmp_path):
+def test_antigravity_is_the_agent_first_app(service, tmp_path):
     _run_in_image(service, tmp_path, "antigravity-desktop", ["python3", "-c", (
-        "import json,pathlib; "
-        "config = json.loads(pathlib.Path('/home/capsem/.config/Antigravity IDE/User/settings.json').read_text()); "
-        "assert config['window.controlsStyle'] == 'hidden'; "
-        "print('window controls owned by Capsem')"
-    )], "window controls owned by Capsem")
+        "import pathlib; "
+        "assert pathlib.Path('/opt/antigravity/resources/app.asar').is_file(); "
+        "assert pathlib.Path('/opt/antigravity/antigravity').is_file(); "
+        "assert not pathlib.Path('/opt/antigravity-ide').exists(); "
+        "print('Antigravity App installed')"
+    )], "Antigravity App installed")
 
 
 CHROMIUM_PROCESSES = (

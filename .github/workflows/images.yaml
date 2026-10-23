@@ -176,7 +176,7 @@ jobs:
           - image: claude-desktop
             agent_version: dpkg-query -W claude-desktop xpra-server
           - image: antigravity-desktop
-            agent_version: antigravity-ide --version
+            agent_version: dpkg-query -W antigravity
     env:
       IMAGE: ${{ matrix.image }}
       ARCH: ${{ matrix.arch }}

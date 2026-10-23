@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Ship Google's agent-first Antigravity 2 App 2.26.0 in the desktop image,
+  replacing the standalone IDE while keeping the shared graphical runtime.
+
 - Hide completed native browser handoffs from the session toolbar, retaining
   a retry action when opening the browser fails.
 

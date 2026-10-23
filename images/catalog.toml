@@ -25,4 +25,4 @@ description = "Claude Desktop on the Capsem base, streamed as a single-applicati
 
 [images.antigravity-desktop]
 surface = "xpra"
-description = "Antigravity IDE, the standalone graphical coding editor."
+description = "Antigravity App 2, Google's agent-first desktop application."

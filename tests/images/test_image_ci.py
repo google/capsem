@@ -150,8 +150,8 @@ def test_catalog_surfaces_match_the_images_actual_declarations() -> None:
         assert (surface == "xpra") == ('org.capsem.surface="xpra"' in dockerfile), name
 
 
-def test_antigravity_ide_is_published_as_a_graphical_image_for_both_architectures() -> None:
-    """The IDE is distinct from agy CLI and has real Linux artifacts for both CPUs."""
+def test_antigravity_app_is_published_as_a_graphical_image_for_both_architectures() -> None:
+    """The agent-first App is distinct from agy CLI and the standalone IDE."""
     assert catalog.surfaces()["antigravity-desktop"] == "xpra"
     assert catalog.surfaces()["agy"] == "terminal"
     workflow = yaml.safe_load((ROOT / ".github/workflows/images.yaml").read_text())
@@ -159,6 +159,9 @@ def test_antigravity_ide_is_published_as_a_graphical_image_for_both_architecture
     assert "antigravity-desktop" in matrix["image"]
     assert set(matrix["arch"]) == {"arm64", "amd64"}
     assert not any(row["image"] == "antigravity-desktop" for row in matrix["exclude"])
+    entry = next(row for row in matrix["include"] if row.get("image") == "antigravity-desktop")
+    assert entry["agent_version"] == "dpkg-query -W antigravity"
+    assert "Antigravity App" in catalog.descriptions()["antigravity-desktop"]
 
 
 def test_a_rebuilt_image_becomes_one_version() -> None:

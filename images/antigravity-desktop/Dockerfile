@@ -1,16 +1,14 @@
 # check=skip=InvalidDefaultArgInFrom
-# Standalone Antigravity IDE, not the separate Antigravity App/hub.
+# Google's Antigravity 2 App, the agent-first desktop application.
 # Xpra and the graphical launcher are inherited from the Capsem base.
 ARG BASE
 FROM ${BASE}
 ARG TARGETARCH
 USER root
-COPY install-ide.sh /tmp/install-ide.sh
-RUN sh /tmp/install-ide.sh "$TARGETARCH" && rm /tmp/install-ide.sh
-# Xpra removes its own decorations; the IDE must also hide its native controls.
-COPY --chown=capsem:capsem ["settings.json", "/home/capsem/.config/Antigravity IDE/User/settings.json"]
+COPY install-app.sh /tmp/install-app.sh
+RUN sh /tmp/install-app.sh "$TARGETARCH" && rm /tmp/install-app.sh
 USER capsem
-ENV CAPSEM_GUI_APP=/opt/antigravity-ide/antigravity-ide
+ENV CAPSEM_GUI_APP=/opt/antigravity/antigravity
 LABEL org.capsem.contract="1" \
       org.capsem.surface="xpra" \
       org.capsem.surface.port="14500" \
