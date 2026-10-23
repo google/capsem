@@ -7,7 +7,9 @@ boundary; a separate retained service generation never rewrites the active sink.
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from pathlib import Path
+from uuid import UUID
 
 import tomllib
 from helpers.stopped_workspace import VM_ID
@@ -48,3 +50,19 @@ def seed_logs(service, cfg: dict) -> None:
         assert not path.exists(), f"refusing to replace an existing log: {path}"
         path.write_bytes(content)
         path.chmod(0o600)
+
+
+@contextmanager
+def network_fixture(service):
+    """Actual isolated metadata create/delete; this is not transport log data."""
+    client = service.client()
+    name = corpus_config()["network_name"]
+    created = client.post("/networks", {"name": name})
+    network_id = created["id"]
+    assert str(UUID(network_id)) == network_id
+    try:
+        assert created["name"] == name and created["members"] == []
+        yield network_id
+    finally:
+        deleted = client.delete(f"/networks/{network_id}")
+        assert deleted["success"] is True, "network fixture teardown failed"

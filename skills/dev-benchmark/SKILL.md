@@ -212,14 +212,14 @@ It retains raw concurrent latency, aggregate RPS and CPU samples. Managed claim
 and close measure repeatable closed tombstones, not initial lifecycle operations.
 Uncovered mutations require their real disposable lifecycle fixtures; successful
 read timing and functional acceptance are not proof of mutation performance.
-The collector currently declares 55 cases over 51 operations, including four
+The collector currently declares 56 cases over 52 operations, including four
 plugin-detail IDs, the existing stopped recorded session and one live image VM.
 Untimed preflight validates selected public SDK schemas and private DTO/counter
 contracts, checks nonempty recorded traffic/history and reconciles shared
 counters. The original HTTP/JSON checks remain in every timed request. Security
 ledger arrays can be empty in this recorded corpus; an idle Ask queue is explicitly
 not pending approval performance. Initial managed claim/close and pending Ask
-cases remain named `unmeasured_cases`; 65 other operations retain their owners.
+cases remain named `unmeasured_cases`; 64 other operations retain their owners.
 The additional read corpus is config-owned under `[benchmark.routes.corpus]`:
 64 workspace files plus two changed files, 1 MiB logs with 128-byte unique lines,
 16-line filtered tails within 100 KiB reads, and one cached builtin tool metadata
@@ -227,7 +227,10 @@ entry. The cache grants no approval and calls no tool. The service endpoint stay
 plain text; host log JSON uses explicit Accept negotiation. A retained service
 stream generation leaves its active writer untouched. None of these cases uses
 real credentials. Connection enrollment metadata remains uncovered because the
-production connection profile is deliberately unconfigured.
+production connection profile is deliberately unconfigured. Network inspection
+creates and deletes one actual isolated registry record through public APIs.
+Its empty member list is real metadata, not a transport-log fixture: network
+creation writes no network_events, so populated log timing stays uncovered.
 Metric keys include method, template and case, so plugin cases never overwrite
 one another. Sample counts, raw retention, fitness, CPU and statistics owners are
 unchanged. Added coverage is source readiness until the exact-source native

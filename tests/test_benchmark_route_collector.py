@@ -25,7 +25,7 @@ def _collector() -> dict:
 def test_every_measured_route_resolves_to_a_concrete_fixture_request() -> None:
     collector = _collector()
 
-    assert all("{" not in case.resolve("live-owner") for case in collector["measured_cases"]())
+    assert all("{" not in case.resolve("live-owner", "network-id") for case in collector["measured_cases"]())
 
 
 def test_managed_routes_use_repeatable_authenticated_posts() -> None:
@@ -171,4 +171,4 @@ def test_preflight_checks_declared_method_and_real_payload_before_timing() -> No
 def test_all_configured_cases_use_the_declared_http_method() -> None:
     collector = _collector()
     for case in collector["measured_cases"]():
-        assert collector["request_input"](case.resolve("live-id"))[0] == case.method
+        assert collector["request_input"](case.resolve("live-id", "network-id"))[0] == case.method

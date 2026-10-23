@@ -34,12 +34,14 @@ class RouteCase:
     def metric_key(self) -> str:
         return f"{self.method} {self.path} [{self.case}]"
 
-    def resolve(self, live_id: str | None) -> str:
+    def resolve(self, live_id: str | None, network_id: str | None = None) -> str:
         if self.live and live_id is None:
             raise ValueError(f"case requires a live owner fixture: {self.metric_key}")
         if self.path == BODY_ROUTE:
             return BODY_URL
-        subject = live_id if self.live else VM_ID
+        if self.path.startswith("/networks/{id}") and network_id is None:
+            raise ValueError("case requires a real network fixture")
+        subject = network_id if self.path.startswith("/networks/{id}") else live_id if self.live else VM_ID
         assert subject is not None
         path = self.path.replace("{id}", subject)
         path = path.replace("{request_id}", MANAGED_REQUEST_ID)

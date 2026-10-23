@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import sys
+from ipaddress import IPv4Network
 from pathlib import Path
 
 # Use the selected source contract without installing another SDK cohort.
@@ -21,6 +22,7 @@ from capsem.models.mcp_default_permission_response import McpDefaultPermissionRe
 from capsem.models.mcp_info_response import McpInfoResponse
 from capsem.models.mcp_servers_list_response import McpServersListResponse
 from capsem.models.mcp_tools_list_response import McpToolsListResponse
+from capsem.models.network_info import NetworkInfo
 from capsem.models.sandbox_info import SandboxInfo
 from capsem.models.security_ask_list_response import SecurityAskListResponse
 from capsem.models.timeline_response import TimelineResponse
@@ -35,6 +37,7 @@ from .route_fixtures import MARKER, corpus_config
 # Private UI routes are intentionally not all in selected OpenAPI. Their
 # explicit field/counter contracts below come from the service DTOs.
 SCHEMAS = {path: TypeAdapter(model) for path, model in {
+    "/networks/{id}": NetworkInfo,
     "/vms/{id}/files/list": FileListResponse,
     "/vms/{id}/logs": LogsResponse,
     "/host-logs/{name}": HostLogsResponse,
@@ -77,10 +80,14 @@ def plugin_info(payload: dict, expected: str | None = None) -> None:
     assert isinstance(runtime["brokered_credentials"], list)
 
 
-def validate_case(case: RouteCase, payload, live_id: str | None) -> None:
+def validate_case(case: RouteCase, payload, live_id: str | None, network_id: str | None = None) -> None:
     """Reject a fast empty/error response before any timed request."""
     path = case.path
-    if path == "/vms/{id}/files/list":
+    if path == "/networks/{id}":
+        assert network_id is not None and payload["id"] == network_id
+        assert payload["name"] == corpus_config()["network_name"] and payload["members"] == []
+        assert count(payload["created_unix_ms"]) > 0 and IPv4Network(payload["subnet"]).is_private
+    elif path == "/vms/{id}/files/list":
         cfg = corpus_config()
         names = {f"unchanged-{index:03}.txt" for index in range(cfg["workspace_files"])} | {"modified.txt", "created.txt"}
         assert {entry["path"] for entry in payload["entries"]} == names
@@ -176,7 +183,7 @@ def validate_log(text: str, *, tail: bool) -> None:
     assert len(set(matches)) == len(matches)
 
 
-def validate_wire(case: RouteCase, body: bytes, live_id: str | None) -> object:
+def validate_wire(case: RouteCase, body: bytes, live_id: str | None, network_id: str | None = None) -> object:
     if case.response == "text":
         assert case.path == "/service-logs", "unreviewed text contract"
         text = body.decode("utf-8")
@@ -185,7 +192,7 @@ def validate_wire(case: RouteCase, body: bytes, live_id: str | None) -> object:
     if schema := SCHEMAS.get(case.path):
         schema.validate_json(body)
     payload = json.loads(body)
-    validate_case(case, payload, live_id)
+    validate_case(case, payload, live_id, network_id)
     return payload
 
 

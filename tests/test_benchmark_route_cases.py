@@ -10,14 +10,14 @@ from benchmarks.helpers.route_validation import validate_case, validate_snapshot
 
 def test_slice_one_and_two_are_successful_cases_not_method_wildcards() -> None:
     cases = measured_cases()
-    assert len(cases) == 55
+    assert len(cases) == 56
     assert len({case.metric_key for case in cases}) == len(cases)
-    assert len({case.path for case in cases}) == 51
+    assert len({case.path for case in cases}) == 52
     assert {case.case for case in cases if "{plugin_id}" in case.path} == {
         "credential_broker", "pii_filter", "secret_exfiltration", "utf8_guard",
     }
     for case in cases:
-        assert "{" not in case.resolve("live-id")
+        assert "{" not in case.resolve("live-id", "network-id")
         if case.live:
             with pytest.raises(ValueError, match="live"):
                 case.resolve(None)

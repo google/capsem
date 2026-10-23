@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Keep TUI Manager and Help reachable from an empty image picker, and preserve
   its dismissal across session refreshes.
+- Benchmark real isolated network inspection with public setup and teardown; keep
+  populated transport-log and unavailable enrollment timing explicitly uncovered.
+
 - Add bounded route benchmark cases for seeded workspace listings, real VM and host
   log tails, plain-text service logs and cached local MCP tool metadata.
 

@@ -44,6 +44,7 @@ class RouteCorpusConfig(Strict):
     log_read_bytes: PositiveInt
     file_depth: PositiveInt
     mcp_tools: tuple[str, ...]
+    network_name: str
 
 
 class RouteCoverageConfig(Strict):

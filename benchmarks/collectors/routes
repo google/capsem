@@ -44,7 +44,12 @@ from helpers.stopped_workspace import (
 )
 
 from benchmarks.helpers.route_cases import RouteCase, measured_cases
-from benchmarks.helpers.route_fixtures import corpus_config, seed_logs, seed_metadata
+from benchmarks.helpers.route_fixtures import (
+    corpus_config,
+    network_fixture,
+    seed_logs,
+    seed_metadata,
+)
 from benchmarks.helpers.route_measurements import route_metrics
 from benchmarks.helpers.route_validation import validate_snapshot, validate_wire
 from benchmarks.helpers.stream_measurements import service_gateway
@@ -103,16 +108,16 @@ def request(transport: Transport, target: Target, path: str, response: str = "js
     return body
 
 
-def preflight(target: Target, cases: list[RouteCase], live_id: str | None) -> None:
+def preflight(target: Target, cases: list[RouteCase], live_id: str | None, network_id: str | None = None) -> None:
     """Validate real schemas/counters outside all measured windows."""
     transport = target.transport_factory()
     payloads = {}
     try:
         for case in cases:
-            path = case.resolve(live_id)
+            path = case.resolve(live_id, network_id)
             if request_input(path)[0] != case.method:
                 raise ValueError(f"case method differs from its request: {case.metric_key}")
-            payloads[case.path] = validate_wire(case, request(transport, target, path, case.response), live_id)
+            payloads[case.path] = validate_wire(case, request(transport, target, path, case.response), live_id, network_id)
         validate_snapshot(payloads)
     finally:
         transport.close()
@@ -253,6 +258,7 @@ def main() -> int:
             ),
         )
         with ExitStack() as fixtures:
+            network_id = fixtures.enter_context(network_fixture(service)) if any(case.path.startswith("/networks/{id}") for case in cases) else None
             live_id = None
             if any(case.live for case in cases):
                 live_id = fixtures.enter_context(
@@ -260,9 +266,9 @@ def main() -> int:
                 )
             seed_logs(service, corpus_config())
             for target in targets:
-                preflight(target, cases, live_id)
+                preflight(target, cases, live_id, network_id)
             for case in cases:
-                concrete_path = case.resolve(live_id)
+                concrete_path = case.resolve(live_id, network_id)
                 path = case.metric_key
                 for target in targets:
                     print(f"{target.label} {path}", file=sys.stderr)

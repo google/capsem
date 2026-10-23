@@ -3137,6 +3137,7 @@ measured = [
     { method = "GET", path = "/host-logs/{name}", case = "service-tail", parameters = { name = "service" }, query = { tail = 16, max_bytes = 102400, grep = "CAPSEM-ROUTE-CORPUS" } },
     { method = "GET", path = "/service-logs", case = "retained-text", response = "text" },
     { method = "GET", path = "/mcp/servers/{server_id}/tools/list", case = "local-cache", parameters = { server_id = "local" } },
+    { method = "GET", path = "/networks/{id}", case = "created-network" },
 ]
 
 [benchmark.routes.unmeasured]
@@ -3149,14 +3150,13 @@ measured = [
 "DELETE /vms/{id}/exposures/{exposure_id}" = { owner = "tests/ironbank/kingslanding/test_preview.py", reason = "Needs actual exposure ownership and single-use preview capability lifecycle, including revoke/delete cleanup." }
 "DELETE /vms/{id}/exposures/{exposure_id}/preview-session" = { owner = "tests/ironbank/kingslanding/test_preview.py", reason = "Needs actual exposure ownership and single-use preview capability lifecycle, including revoke/delete cleanup." }
 "GET /" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
-"GET /connections/authorizations/{transaction_id}" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
-"GET /connections/{connection_id}" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
+"GET /connections/authorizations/{transaction_id}" = { owner = "crates/capsem-service/src/connection_routes.rs", reason = "Production Runtime constructs only disabled unconfigured agy-native profile; successful enrollment metadata needs an implemented provider contract, never fabricated authority." }
+"GET /connections/{connection_id}" = { owner = "crates/capsem-service/src/connection_routes.rs", reason = "Production Runtime constructs only disabled unconfigured agy-native profile; successful enrollment metadata needs an implemented provider contract, never fabricated authority." }
 "GET /events" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
 "GET /health" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
 "GET /images" = { owner = "tests/ironbank/kingslanding/test_image_catalog.py", reason = "Needs hermetic registry and installed inventory fixture; never time vendor downloads." }
 "GET /images/{name}/inventory" = { owner = "tests/ironbank/kingslanding/test_image_catalog.py", reason = "Needs hermetic registry and installed inventory fixture; never time vendor downloads." }
-"GET /networks/{id}" = { owner = "tests/ironbank/test_managed_network_lifecycle.py", reason = "Needs isolated network membership and bounded logs; mutations must measure completed ownership changes." }
-"GET /networks/{id}/logs" = { owner = "tests/ironbank/test_managed_network_lifecycle.py", reason = "Needs isolated network membership and bounded logs; mutations must measure completed ownership changes." }
+"GET /networks/{id}/logs" = { owner = "tests/ironbank/test_managed_network_lifecycle.py", reason = "Fresh network metadata writes no transport events; populated timing requires actual recorded transport traffic." }
 "GET /openapi.json" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
 "GET /panics" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
 "GET /triage" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
@@ -3229,6 +3229,7 @@ log_line_bytes = 128
 log_tail = 16
 log_read_bytes = 102400
 mcp_tools = ["fetch_http"]
+network_name = "route-read-network"
 
 # Concurrent kept-alive clients exercise the same measured read-only routes as
 # the latency lane. This catches cache lock and single-flight contention while
