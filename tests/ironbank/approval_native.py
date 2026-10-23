@@ -9,11 +9,21 @@ import textwrap
 from contextlib import closing, contextmanager, suppress
 from pathlib import Path
 
-from helpers.constants import ASSETS_DIR, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
+from helpers.constants import (
+    ASSETS_DIR,
+    DEFAULT_CPUS,
+    DEFAULT_RAM_MB,
+    EXEC_READY_TIMEOUT,
+)
 from helpers.gateway import GatewayInstance, TcpHttpClient
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
-from helpers.service import ServiceInstance, vm_name, vm_session_db_path, wait_exec_ready
-from helpers.session_ledger import open_session_ledger
+from helpers.service import (
+    ServiceInstance,
+    vm_name,
+    vm_session_db_path,
+    wait_exec_ready,
+)
+from helpers.session_ledger import open_session_ledger, stop_session_for_ledger_read
 
 
 @contextmanager
@@ -23,7 +33,9 @@ def native_approval_session(policy: str = ""):
     gateway = mock = client = session_id = None
     old_corp = os.environ.get("CAPSEM_CORP_CONFIG")
     try:
-        mock, ready = start_mock_server(request_log=service.tmp_dir / "approval-upstream.jsonl")
+        mock, ready = start_mock_server(
+            request_log=service.tmp_dir / "approval-upstream.jsonl"
+        )
         corp = service.tmp_dir / "corp.toml"
         corp.write_text(
             textwrap.dedent(f"""
@@ -85,9 +97,12 @@ def upstream_records(ready: dict) -> list[dict]:
     )
 
 
-def assert_approval_audit(service, client, session_id, receipt, *, cancelled=False, table=None):
-    """Trusted resolver flush makes this a barrier read, never a sleep/poll."""
+def assert_approval_audit(
+    service, client, session_id, receipt, *, cancelled=False, table=None
+):
+    """Stop our named fixture to drain all operation producers before disk reads."""
     path = vm_session_db_path(service.tmp_dir, client, session_id)
+    stop_session_for_ledger_read(client, session_id, path)
     with closing(open_session_ledger(path)) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
@@ -96,12 +111,22 @@ def assert_approval_audit(service, client, session_id, receipt, *, cancelled=Fal
             (receipt["ask_id"],),
         ).fetchall()
         terminal = "denied" if cancelled else receipt["status"]
-        assert [row["status"] for row in rows] == ["pending", terminal], [dict(row) for row in rows]
+        assert [row["status"] for row in rows] == ["pending", terminal], [
+            dict(row) for row in rows
+        ]
         assert rows[0]["event_id"] == rows[1]["event_id"] == receipt["event_id"]
         assert rows[1]["resolver"] == "authenticated_client"
-        assert rows[1]["reason"] == ("request_cancelled" if cancelled else "human_decision")
+        assert rows[1]["reason"] == (
+            "request_cancelled" if cancelled else "human_decision"
+        )
         if table is not None:
-            assert table in {"dns_events", "tool_calls", "exec_events", "fs_events"}
+            assert table in {
+                "dns_events",
+                "tool_calls",
+                "exec_events",
+                "fs_events",
+                "net_events",
+            }
             count = conn.execute(
                 f"SELECT COUNT(*) FROM {table} WHERE event_id=?", (receipt["event_id"],)
             ).fetchone()[0]

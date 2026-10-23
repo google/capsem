@@ -3,21 +3,22 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 import textwrap
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import closing
 
 import pytest
 from helpers.service import (
     exec_output_text,
-    vm_session_db_path,
 )
-from helpers.session_ledger import open_session_ledger
+
 from ironbank.approval_fixture import resolve_original_operation
-from ironbank.approval_native import native_approval_session, upstream_records
+from ironbank.approval_native import (
+    assert_approval_audit,
+    native_approval_session,
+    upstream_records,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -40,7 +41,9 @@ def _echo_rows(ready: dict) -> list[dict]:
 
 
 @pytest.mark.parametrize("decision", ["approve", "deny"])
-def test_original_http_waiter_resolves_once_with_audit(approval_vm, decision: str) -> None:
+def test_original_http_waiter_resolves_once_with_audit(
+    approval_vm, decision: str
+) -> None:
     service, client, api, session_id, ready = approval_vm
     nonce = uuid.uuid4().hex
     script = textwrap.dedent(f"""
@@ -55,16 +58,20 @@ def test_original_http_waiter_resolves_once_with_audit(approval_vm, decision: st
             result = {{'status': response.code, 'body': response.read().decode()}}
         print('APPROVAL_RESULT=' + json.dumps(result))
     """).strip()
-    assert client.upload_file(session_id, "approval-echo.py", script)["success"]
+    uploaded = client.upload_file(session_id, "approval-echo.py", script)
+    assert uploaded["success"]
 
     def no_effect() -> None:
-        assert _echo_rows(ready) == [], "held original operation already reached upstream"
+        assert _echo_rows(ready) == [], (
+            "held original operation already reached upstream"
+        )
 
     result, receipt = resolve_original_operation(
         lambda: client.post(
             f"/vms/{session_id}/exec",
             {
-                "command": "python3 /root/approval-echo.py",
+                "command": f"python3 {uploaded['vm_path']}",
+                "target": "vm",
                 "timeout_secs": 60,
             },
             timeout=90,
@@ -87,23 +94,11 @@ def test_original_http_waiter_resolves_once_with_audit(approval_vm, decision: st
     if decision == "approve":
         assert json.loads(response["body"])["body_size"] == len(nonce)
     assert len(_echo_rows(ready)) == (1 if decision == "approve" else 0)
-    # Canonical on-disk ledger, after the trusted resolver's flush barrier.
-    path = vm_session_db_path(service.tmp_dir, client, session_id)
-    with closing(open_session_ledger(path)) as conn:
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            "SELECT status,resolver,reason,event_id FROM security_ask_events "
-            "WHERE ask_id = ? ORDER BY id",
-            (receipt["ask_id"],),
-        ).fetchall()
-        assert [row["status"] for row in rows] == ["pending", receipt["status"]]
-        assert rows[0]["event_id"] == rows[1]["event_id"] == receipt["event_id"]
-        assert rows[1]["resolver"] == "authenticated_client"
-        assert rows[1]["reason"] == "human_decision"
+    assert_approval_audit(service, client, session_id, receipt, table="net_events")
 
 
 def test_disconnected_http_waiter_cancels_without_upstream_effect(approval_vm) -> None:
-    _, client, api, session_id, ready = approval_vm
+    service, client, api, session_id, ready = approval_vm
     script = textwrap.dedent(f"""
         import urllib.request
         request = urllib.request.Request({json.dumps(ready["base_url"].rstrip("/") + "/echo")},
@@ -114,14 +109,16 @@ def test_disconnected_http_waiter_cancels_without_upstream_effect(approval_vm) -
         except TimeoutError:
             print('ORIGINAL_HTTP_CLOSED')
     """).strip()
-    assert client.upload_file(session_id, "approval-disconnect.py", script)["success"]
+    uploaded = client.upload_file(session_id, "approval-disconnect.py", script)
+    assert uploaded["success"]
     route = f"/vms/{session_id}/security/asks"
     with ThreadPoolExecutor(max_workers=1) as executor:
         original = executor.submit(
             client.post,
             f"/vms/{session_id}/exec",
             {
-                "command": "python3 /root/approval-disconnect.py",
+                "command": f"python3 {uploaded['vm_path']}",
+                "target": "vm",
                 "timeout_secs": 30,
             },
             timeout=40,
@@ -144,9 +141,13 @@ def test_disconnected_http_waiter_cancels_without_upstream_effect(approval_vm) -
         final = api.get(route, timeout=2)
         if final["pending_count"] == 0:
             break
-        assert time.monotonic() < deadline, "closed guest HTTP connection retained a live waiter"
+        assert time.monotonic() < deadline, (
+            "closed guest HTTP connection retained a live waiter"
+        )
         time.sleep(0.05)
-    row = next(row for row in final["requests"] if row["ask_id"] == pending[0]["ask_id"])
+    row = next(
+        row for row in final["requests"] if row["ask_id"] == pending[0]["ask_id"]
+    )
     assert row["status"] == "cancelled", row
     assert row["resolution_reason"] == "request_cancelled", row
     status, _ = api.call_json(
@@ -159,3 +160,4 @@ def test_disconnected_http_waiter_cancels_without_upstream_effect(approval_vm) -
     )
     assert status == 409
     assert _echo_rows(ready) == []
+    assert_approval_audit(service, client, session_id, row, cancelled=True)

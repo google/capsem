@@ -31,7 +31,10 @@ match = 'mcp.method == "tools/call" && mcp.response.valid == "false"'
 
 
 def arguments(ready, nonce):
-    return {"url": ready["base_url"].rstrip("/") + "/html/about?approval=" + nonce, "method": "GET"}
+    return {
+        "url": ready["base_url"].rstrip("/") + "/html/about?approval=" + nonce,
+        "method": "GET",
+    }
 
 
 def effects(ready, surface, nonce):
@@ -51,7 +54,11 @@ def effects(ready, surface, nonce):
 
 def guest_script(ready, surface, nonce, *, cancel=False):
     observed = surface == "observed-http"
-    url = ready["base_url"].rstrip("/") + "/mcp" if observed else "http://mcp.capsem.internal/mcp"
+    url = (
+        ready["base_url"].rstrip("/") + "/mcp"
+        if observed
+        else "http://mcp.capsem.internal/mcp"
+    )
     message = {
         "jsonrpc": "2.0",
         "id": 731,
@@ -107,19 +114,25 @@ def operation(client, api, vm_id, surface, ready, nonce, uploaded=None, *, timeo
 
 @pytest.mark.parametrize("surface", SURFACES)
 @pytest.mark.parametrize("decision", ["approve", "deny"])
-def test_mcp_original_call_resolves_once(surface, decision):
-    with native_approval_session(POLICY) as (service, client, api, vm_id, ready):
+@pytest.mark.parametrize("stage", ["request", "response"])
+def test_mcp_original_call_resolves_once(surface, decision, stage):
+    policy = POLICY if stage == "request" else POLICY.replace('"false"', '"true"')
+    with native_approval_session(policy) as (service, client, api, vm_id, ready):
         nonce = uuid.uuid4().hex
         uploaded = (
             None
             if surface == "direct"
-            else client.upload_file(vm_id, "approval-mcp.py", guest_script(ready, surface, nonce))
+            else client.upload_file(
+                vm_id, "approval-mcp.py", guest_script(ready, surface, nonce)
+            )
         )
         if uploaded is not None:
             assert uploaded["success"]
 
         def no_effect():
-            assert effects(ready, surface, nonce) == [], "held original tool reached upstream"
+            assert len(effects(ready, surface, nonce)) == (
+                1 if stage == "response" else 0
+            ), "held original operation has an unexpected upstream execution count"
 
         result, receipt = resolve_original_operation(
             lambda: operation(client, api, vm_id, surface, ready, nonce, uploaded),
@@ -138,24 +151,34 @@ def test_mcp_original_call_resolves_once(surface, decision):
         assert status == expected, result
         if decision == "approve":
             envelope = payload if isinstance(payload, dict) else json.loads(payload)
-            assert "error" not in envelope and envelope["result"]["isError"] is False, envelope
+            assert "error" not in envelope and envelope["result"]["isError"] is False, (
+                envelope
+            )
             text = envelope["result"]["content"][0]["text"]
-            assert ("fixture_lookup" if surface == "observed-http" else "Status: 200 OK") in text
+            assert (
+                "fixture_lookup" if surface == "observed-http" else "Status: 200 OK"
+            ) in text
         elif surface == "internal-http":
             assert "error" in json.loads(payload), payload
-        assert len(effects(ready, surface, nonce)) == (1 if decision == "approve" else 0)
+        assert len(effects(ready, surface, nonce)) == (
+            1 if decision == "approve" or stage == "response" else 0
+        )
         assert_approval_audit(service, client, vm_id, receipt, table="tool_calls")
 
 
 @pytest.mark.parametrize("surface", SURFACES)
-def test_mcp_caller_disconnect_cancels_original_call(surface):
-    with native_approval_session(POLICY) as (service, client, api, vm_id, ready):
+@pytest.mark.parametrize("stage", ["request", "response"])
+def test_mcp_caller_disconnect_cancels_original_call(surface, stage):
+    policy = POLICY if stage == "request" else POLICY.replace('"false"', '"true"')
+    with native_approval_session(policy) as (service, client, api, vm_id, ready):
         nonce = uuid.uuid4().hex
         uploaded = (
             None
             if surface == "direct"
             else client.upload_file(
-                vm_id, "approval-mcp-close.py", guest_script(ready, surface, nonce, cancel=True)
+                vm_id,
+                "approval-mcp-close.py",
+                guest_script(ready, surface, nonce, cancel=True),
             )
         )
         with ThreadPoolExecutor(max_workers=1) as executor:
@@ -177,12 +200,21 @@ def test_mcp_caller_disconnect_cancels_original_call(surface):
                     timeout=40,
                 )
             listing = pending_original_operation(api, vm_id, original, timeout=2)
-            assert effects(ready, surface, nonce) == []
+            assert len(effects(ready, surface, nonce)) == (
+                1 if stage == "response" else 0
+            )
             if surface == "direct":
                 with pytest.raises(ConnectionError):
                     original.result(timeout=10)
             else:
                 assert guest_result(original.result(timeout=15)) == {"closed": True}
         receipt = assert_original_cancelled(api, vm_id, listing)
-        assert effects(ready, surface, nonce) == []
-        assert_approval_audit(service, client, vm_id, receipt, cancelled=True)
+        assert len(effects(ready, surface, nonce)) == (1 if stage == "response" else 0)
+        assert_approval_audit(
+            service,
+            client,
+            vm_id,
+            receipt,
+            cancelled=True,
+            table="tool_calls" if stage == "response" else None,
+        )

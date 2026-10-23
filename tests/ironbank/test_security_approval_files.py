@@ -13,7 +13,10 @@ from ironbank.approval_fixture import (
     pending_original_operation,
     resolve_original_operation,
 )
-from ironbank.approval_native import assert_approval_audit, native_approval_session
+from ironbank.approval_native import (
+    assert_approval_audit,
+    native_approval_session,
+)
 
 pytestmark = pytest.mark.integration
 NAME = "approval-boundary.txt"
