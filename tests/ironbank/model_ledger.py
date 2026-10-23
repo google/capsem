@@ -623,6 +623,7 @@ def _usage_from_upstream(row: dict[str, Any]) -> dict[str, int] | None:
             payload["response"]
             for payload in payloads
             if isinstance(payload.get("response"), dict)
+            and isinstance(payload["response"].get("usageMetadata"), dict)
         ]
         if response_payloads:
             payload = response_payloads[-1]
@@ -662,6 +663,8 @@ def _usage_from_upstream(row: dict[str, Any]) -> dict[str, int] | None:
                 payload = {}
     else:
         payload = json.loads(body)
+        if isinstance(payload.get("response"), dict):
+            payload = payload["response"]
 
     usage = payload.get("usage") or payload.get("usageMetadata")
     if not isinstance(usage, dict):
@@ -683,6 +686,11 @@ def _usage_from_upstream(row: dict[str, Any]) -> dict[str, int] | None:
         or _nested_int(usage, "completion_tokens_details", "reasoning_tokens")
         or int(usage.get("thinking_tokens") or usage.get("thoughtsTokenCount") or 0)
     )
+    if isinstance(payload.get("usageMetadata"), dict):
+        # Google reports candidate and thought output separately. OpenAI's
+        # completion/output count already includes its reasoning detail.
+        input_tokens += int(usage.get("toolUsePromptTokenCount") or 0)
+        output_tokens += int(usage.get("thoughtsTokenCount") or 0)
     return {
         "input_tokens": int(input_tokens),
         "output_tokens": int(output_tokens),
