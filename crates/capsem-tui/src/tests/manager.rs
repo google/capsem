@@ -15,6 +15,7 @@ fn browser_handoff_is_single_use_across_polls_and_explicitly_retryable_on_failur
     let mut state = fixture_state();
     let id = state.active_session_id.clone();
     let request = capsem_sdk::models::BrowserRequest {
+        owner_generation: Some("18f59e33-8af6-4992-81d9-71e10873af9a".into()),
         id: 1,
         url: "https://example.org/login".into(),
     };
@@ -39,6 +40,7 @@ fn browser_handoff_is_single_use_across_polls_and_explicitly_retryable_on_failur
     assert_eq!(app.handle_key(open), AppAction::Consumed);
     let mut next = fixture_state();
     let newer = capsem_sdk::models::BrowserRequest {
+        owner_generation: Some("18f59e33-8af6-4992-81d9-71e10873af9a".into()),
         id: 2,
         url: "https://example.org/next".into(),
     };

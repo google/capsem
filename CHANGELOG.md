@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Acknowledge successful TUI browser opens at their VM owner so other clients
+  stop offering the handled request, with bounded metadata-only retries.
+
 - Mark terminal sessions with live approval requests and show Alt+A only when
   the selected session has requests waiting for a decision.
 

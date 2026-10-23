@@ -32,6 +32,7 @@ fn choose_test_image(app: &mut App) {
 fn browser_request_uses_explicit_local_action_without_stealing_guest_keys() {
     let mut state = fixture_state();
     let request = capsem_sdk::models::BrowserRequest {
+        owner_generation: Some("18f59e33-8af6-4992-81d9-71e10873af9a".into()),
         id: 1,
         url: "https://example.org/login?state=opaque".into(),
     };

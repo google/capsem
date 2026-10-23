@@ -33,6 +33,26 @@ pub(crate) async fn open(
     vm: &capsem_sdk::VM,
     callbacks: &Callbacks,
 ) -> Result<ActionOutcome> {
+    open_with(request, vm, callbacks, |command| async move {
+        let status = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            tokio::process::Command::from(command).kill_on_drop(true).status(),
+        )
+        .await
+        .context("browser opener timed out")?
+        .context("could not start browser opener")?;
+        anyhow::ensure!(status.success(), "browser opener failed");
+        Ok(())
+    })
+    .await
+}
+
+async fn open_with<F: std::future::Future<Output = Result<()>>>(
+    request: &BrowserRequest,
+    vm: &capsem_sdk::VM,
+    callbacks: &Callbacks,
+    opener: impl FnOnce(std::process::Command) -> F,
+) -> Result<ActionOutcome> {
     let command = command(request)?;
     let mut current = callbacks.0.lock().await;
     if let Some(previous) = current.take() {
@@ -41,18 +61,29 @@ pub(crate) async fn open(
     let prepared = capsem_sdk::browser::BrowserCallback::prepare(vm, &request.url)
         .await
         .context("prepare browser callback")?;
-    let status = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        tokio::process::Command::from(command).kill_on_drop(true).status(),
-    )
-    .await
-    .context("browser opener timed out")?
-    .context("could not start browser opener")?;
-    anyhow::ensure!(status.success(), "browser opener failed");
+    opener(command).await?;
     *current = prepared;
     drop(current);
+    let mut acknowledged = false;
+    for _ in 0..3 {
+        match vm.acknowledge_browser_request(request).await {
+            Ok(()) => {
+                acknowledged = true;
+                break;
+            }
+            // Repeating a metadata-only acknowledgement is safe after an
+            // ambiguous transport/server failure, never after stale ownership.
+            Err(capsem_sdk::Error::Transport(_) | capsem_sdk::Error::Http { status: 500..=599, .. }) => {}
+            Err(_) => break,
+        }
+    }
     Ok(ActionOutcome {
-        message: "opened browser on this device".into(),
+        message: if acknowledged {
+            "opened browser on this device"
+        } else {
+            "opened browser; owner acknowledgement unavailable"
+        }
+        .into(),
         focus_session: None,
         approval_requests: None,
     })
