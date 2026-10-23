@@ -3,6 +3,8 @@
 import ctypes
 import json
 import os
+import re
+import shlex
 import stat
 from pathlib import Path
 
@@ -20,13 +22,20 @@ class WindowAttributes(ctypes.Structure):
     ]
 
 
+def process_arguments(cmdline):
+    """Electron can rewrite argv into one space-delimited process title."""
+    arguments = cmdline.rstrip(b"\0").split(b"\0")
+    if len(arguments) == 1:
+        return [os.fsencode(arg) for arg in shlex.split(os.fsdecode(arguments[0]))]
+    return arguments
+
+
 def application_processes():
     application = Path(os.environ["CAPSEM_GUI_APP"]).name
     rows = []
-    display = {}
     for process in Path("/proc").glob("[0-9]*"):
         try:
-            argv = process.joinpath("cmdline").read_bytes().rstrip(b"\0").split(b"\0")
+            argv = process_arguments(process.joinpath("cmdline").read_bytes())
             if not argv or Path(os.fsdecode(argv[0])).name != application:
                 continue
             status = dict(line.split(":", 1) for line in process.joinpath("status").read_text().splitlines())
@@ -35,21 +44,30 @@ def application_processes():
                          "nspid": status["NSpid"].split(), "seccomp": status["Seccomp"].strip(),
                          "no_new_privs": status["NoNewPrivs"].strip(),
                          "sandbox_disabled": b"--no-sandbox" in argv})
-            if not kinds:
-                environment = dict(entry.split(b"=", 1) for entry in process.joinpath("environ").read_bytes().split(b"\0") if b"=" in entry)
-                display = {key: os.fsdecode(environment[os.fsencode(key)])
-                           for key in ("DISPLAY", "XAUTHORITY") if os.fsencode(key) in environment}
         except (FileNotFoundError, ProcessLookupError, PermissionError):
             continue
-    return rows, display
+    return rows
+
+
+def display_environment(argv):
+    """The Xserver owns display identity; Electron may erase its original env."""
+    arguments = [os.fsdecode(arg) for arg in argv]
+    display = next((arg for arg in arguments if re.fullmatch(r":\d+(?:\.\d+)?", arg)), None)
+    if display is None:
+        return {}
+    environment = {"DISPLAY": display}
+    if "-auth" in arguments:
+        environment["XAUTHORITY"] = arguments[arguments.index("-auth") + 1]
+    return environment
 
 
 def display_processes():
     """The display runs in the same unprivileged, confined workload."""
     rows = []
+    environment = {}
     for process in Path("/proc").glob("[0-9]*"):
         try:
-            argv = process.joinpath("cmdline").read_bytes().split(b"\0")
+            argv = process_arguments(process.joinpath("cmdline").read_bytes())
             binary = Path(os.readlink(process / "exe"))
             # Xpra deliberately renames argv[0] (for example Xvfb-for-Xpra).
             # The executable inode identifies the actual display server.
@@ -59,9 +77,13 @@ def display_processes():
             rows.append({"binary": str(binary), "uid": int(status["Uid"].split()[0]),
                          "setuid": bool(binary.stat().st_mode & stat.S_ISUID),
                          "seccomp": status["Seccomp"].strip(), "no_new_privs": status["NoNewPrivs"].strip()})
+            observed = display_environment(argv)
+            if environment and environment != observed:
+                raise RuntimeError("graphical fixture has multiple X11 displays")
+            environment = observed
         except (FileNotFoundError, ProcessLookupError, PermissionError):
             continue
-    return rows
+    return rows, environment
 
 
 def display_dimensions(environment):
@@ -174,7 +196,8 @@ def window_titles(environment):
 
 
 if __name__ == "__main__":
-    processes, environment = application_processes()
-    print(json.dumps({"processes": processes, "display_processes": display_processes(),
+    processes = application_processes()
+    displays, environment = display_processes()
+    print(json.dumps({"processes": processes, "display_processes": displays,
                       "display_dimensions": display_dimensions(environment),
                       "window_titles": window_titles(environment)}))
