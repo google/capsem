@@ -2,14 +2,15 @@
 //!
 //! The service grants the image's declared port as an `http_preview`
 //! exposure and reports it in the VM's container status. The client must run
-//! on that exposure's preview origin. A scoped WebSocket credential supports
-//! embedding without third-party cookies; standalone previews use a host-only
-//! SameSite=Lax cookie. The pinned xpra-html5 client runs there (see `client`
-//! and `preview`), and the gateway's own origin serves only a launcher:
-//! `GET /vms/{id}/surface/` reads the gateway token like the Capsem UI does,
-//! mints a single-use bootstrap with `POST /vms/{id}/surface/session`, and
-//! POSTs it to the surface's origin, which authenticates and opens the client.
-//! No token appears in any URL.
+//! on that exposure's preview origin: its websocket is authenticated by the
+//! scoped WebSocket capability for embedding, or its host-only SameSite=Lax
+//! session cookie for standalone previews. The pinned xpra-html5 client runs there
+//! (see `client` and `preview`), and its own origin serves only a launcher:
+//! The desktop UI mints a single-use bootstrap with an authenticated
+//! `POST /vms/{id}/surface/session`, then opens the launcher with that limited
+//! capability in a URL fragment. The launcher POSTs it to the surface's
+//! origin, which sets the cookie and opens the client. The gateway bearer
+//! never enters the external browser.
 
 mod client;
 mod profile;
@@ -102,9 +103,8 @@ fn hardened(response: impl IntoResponse, content_type: &'static str, policy: Str
     response
 }
 
-/// GET /vms/{id}/surface/ -- the launcher page. It holds nothing secret, so
-/// it is served without a bearer token. A page another site opened must be
-/// clicked through: it can open this tab, but not open the app in it.
+/// GET /vms/{id}/surface/ -- a bearer-free launcher consuming only an already
+/// minted single-use preview bootstrap. No ambient gateway token is exposed.
 #[derive(Default, serde::Deserialize)]
 pub struct LaunchOptions {
     parent_origin: Option<String>,

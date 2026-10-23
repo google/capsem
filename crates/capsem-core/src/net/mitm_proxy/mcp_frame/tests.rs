@@ -28,6 +28,29 @@ fn log_attribution_reads_tool_namespace() {
 }
 
 #[test]
+fn framed_mcp_request_arguments_survive_preview_truncation() {
+    let arguments = json!({"padding": "x".repeat(5000), "marker": "deny-me"});
+    let req = request("tools/call", json!({"name": "local__echo", "arguments": arguments}));
+    let summary = interpret_mcp_method(&req);
+    assert!(summary.request_preview.as_ref().unwrap().len() <= MCP_REQUEST_PREVIEW_BYTES);
+    let event = mcp_security_event_from_summary(RuntimeSecurityEventType::McpToolCall, &summary, "agent", None);
+    let profile = crate::net::policy_config::SecurityRuleProfile::parse_toml(
+        r#"[profiles.rules.block_marker]
+name = "block_marker"
+action = "block"
+match = 'mcp.request.arguments.contains("deny-me")'"#,
+    )
+    .unwrap();
+    let rules =
+        SecurityRuleSet::compile_profile(&profile, crate::net::policy_config::SecurityRuleSource::User).unwrap();
+    assert_eq!(
+        rules.evaluate(&event).unwrap().enforcement_rules()[0].rule_id,
+        "profiles.rules.block_marker"
+    );
+    assert_eq!(event.mcp.unwrap().request.unwrap().arguments, Some(arguments));
+}
+
+#[test]
 fn log_attribution_reads_resource_namespace() {
     let req = request("resources/read", json!({"uri": "capsem://slowlist/doc://slow"}));
 
@@ -146,6 +169,36 @@ fn unrecognized_method_is_classified_unknown_not_guessed() {
     assert_eq!(summary.kind, McpMethodKind::Unknown);
     assert_eq!(summary.kind.label(), "unknown");
     assert!(summary.tool_name.is_none());
+}
+
+#[test]
+fn guest_chosen_mcp_methods_share_one_bounded_metric_label() {
+    use metrics_util::debugging::DebuggingRecorder;
+
+    let recorder = DebuggingRecorder::new();
+    let snapshotter = recorder.snapshotter();
+    let _guard = ::metrics::set_default_local_recorder(&recorder);
+    let long_method = "guest/".repeat(100);
+    for method in ["guest/one", "guest/two", long_method.as_str()] {
+        record_method_metric(&interpret_mcp_method(&request(method, json!({}))));
+    }
+    record_method_metric(&interpret_mcp_method(&request("tools/call", json!({}))));
+
+    let mut labels: Vec<String> = snapshotter
+        .snapshot()
+        .into_vec()
+        .iter()
+        .filter(|(key, _, _, _)| key.key().name() == m::MCP_METHODS_TOTAL)
+        .flat_map(|(key, _, _, _)| {
+            key.key()
+                .labels()
+                .filter(|label| label.key() == "method")
+                .map(|label| label.value().to_string())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    labels.sort();
+    assert_eq!(labels, ["tools/call", "unknown"]);
 }
 
 #[test]
@@ -314,6 +367,86 @@ async fn response_writer_emits_a_decodable_attributed_frame() {
     assert_eq!(decoded.process_name, "codex");
     let decoded_response: JsonRpcResponse = serde_json::from_slice(&decoded.payload).unwrap();
     assert_eq!(decoded_response.result, response.result);
+}
+
+#[tokio::test]
+async fn oversized_mcp_response_returns_error_and_preserves_next_reply() {
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+    let huge = ok_response(json!({"content": "x".repeat(capsem_proto::MCP_FRAME_MAX_SIZE)}));
+    send_response(&tx, 9, "codex", &huge).await.unwrap();
+    let first = rx.recv().await.unwrap();
+    capsem_proto::encode_mcp_frame(first.stream_id, 0, &first.process_name, &first.payload).unwrap();
+    let decoded: JsonRpcResponse = serde_json::from_slice(&first.payload).unwrap();
+    assert_eq!(decoded.id, Some(json!(1)));
+    assert!(decoded.error.is_some());
+
+    let small = ok_response(json!({"content": "ok"}));
+    send_response(&tx, 10, "codex", &small).await.unwrap();
+    let second = rx.recv().await.unwrap();
+    capsem_proto::encode_mcp_frame(second.stream_id, 0, &second.process_name, &second.payload).unwrap();
+    let decoded: JsonRpcResponse = serde_json::from_slice(&second.payload).unwrap();
+    assert_eq!(decoded.result, small.result);
+}
+
+struct FailingWriteStream {
+    request: Vec<u8>,
+    offset: usize,
+}
+
+impl tokio::io::AsyncRead for FailingWriteStream {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        if self.offset == self.request.len() {
+            return std::task::Poll::Pending;
+        }
+        let count = buf.remaining().min(self.request.len() - self.offset);
+        buf.put_slice(&self.request[self.offset..self.offset + count]);
+        self.offset += count;
+        std::task::Poll::Ready(Ok(()))
+    }
+}
+
+impl tokio::io::AsyncWrite for FailingWriteStream {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        _buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        std::task::Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()))
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+}
+
+#[tokio::test]
+async fn writer_failure_ends_framed_mcp_connection() {
+    let stream = FailingWriteStream {
+        request: tool_call_request(1),
+        offset: 0,
+    };
+    let endpoint = endpoint_with_matching_rule();
+    let db = Arc::new(DbWriter::open_in_memory(64).unwrap());
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        serve_io(Vec::new(), stream, endpoint, db),
+    )
+    .await;
+    assert!(result.expect("writer failure must wake the reader").is_err());
 }
 
 #[test]

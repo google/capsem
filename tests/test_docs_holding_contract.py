@@ -163,7 +163,7 @@ def test_docs_deploy_smokes_the_manual() -> None:
     workflow = workflow_reachable_text(
         PROJECT_ROOT, PROJECT_ROOT / ".github/workflows/docs.yaml"
     )
-    for title in ("How Capsem works", "Getting started with the SDK", "Security architecture"):
+    for title in ("Install Capsem", "Getting started with the SDK", "Security architecture"):
         assert title in workflow
     assert "pre-release qualification" not in workflow
 

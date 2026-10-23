@@ -75,7 +75,7 @@ def test_overlay_writes_are_ephemeral():
 
 @pytest.mark.parametrize("path", ["/root", "/tmp", "/run", "/var/log", "/var/tmp"])
 def test_writable_mounts(path):
-    """Writable paths (/root=ext4 scratch, others=overlay tmpfs upper) must allow write + readback."""
+    """Workspace and runtime mounts must allow write + readback."""
     test_file = f"{path}/.capsem_rw_test"
     payload = "capsem-writable-ok"
     result = run(f'echo "{payload}" > {test_file} && cat {test_file}')

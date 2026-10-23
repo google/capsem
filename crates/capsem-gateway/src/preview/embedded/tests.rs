@@ -58,13 +58,15 @@ fn credentials_refuse_http_other_scopes_expiry_and_body_framing() {
 
 #[test]
 fn embedding_parents_use_the_exact_capsem_origin_allowlist() {
-    for origin in ["http://127.0.0.1:5173", "http://localhost:19222", "tauri://localhost"] {
+    for origin in ["http://127.0.0.1:19222", "tauri://localhost"] {
         assert_eq!(trusted_parent(&head(origin)).unwrap(), origin);
     }
     for origin in [
         "null",
         "https://attacker.test",
         "http://localhost.evil.test",
+        "http://127.0.0.1:5173",
+        "http://localhost:19222",
         "http://127.0.0.1:5173/path",
     ] {
         assert!(trusted_parent(&head(origin)).is_err());
@@ -78,18 +80,45 @@ fn embedding_parents_use_the_exact_capsem_origin_allowlist() {
 fn parent_from_launcher_is_validated_independently_of_its_trusted_initiator() {
     let request = head("http://127.0.0.1:19222");
     assert_eq!(
-        parent_from_form("parent_origin=http%3A%2F%2Flocalhost%3A5173", &request).unwrap(),
-        "http://localhost:5173"
+        parent_from_form("parent_origin=tauri%3A%2F%2Flocalhost", &request, 19222).unwrap(),
+        "tauri://localhost"
     );
     assert_eq!(
-        parent_from_form("bootstrap_token=x", &request).unwrap(),
+        parent_from_form("bootstrap_token=x", &request, 19222).unwrap(),
         "http://127.0.0.1:19222"
     );
     for body in [
         "parent_origin=https%3A%2F%2Fattacker.test",
         "parent_origin=http%3A%2F%2Flocalhost&parent_origin=http%3A%2F%2Flocalhost",
     ] {
-        assert!(parent_from_form(body, &request).is_err());
+        assert!(parent_from_form(body, &request, 19222).is_err());
     }
-    assert!(parent_from_form("parent_origin=http%3A%2F%2Flocalhost", &head("https://attacker.test")).is_err());
+    assert!(parent_from_form(
+        "parent_origin=http%3A%2F%2Flocalhost",
+        &head("https://attacker.test"),
+        19222
+    )
+    .is_err());
+}
+
+#[test]
+fn bootstrap_initiator_is_the_bound_gateway_never_another_loopback_service() {
+    assert!(trusted_initiator(&head("http://127.0.0.1:54321"), 54321).is_ok());
+    assert!(trusted_initiator(&head("tauri://localhost"), 54321).is_ok());
+    for origin in [
+        "http://127.0.0.1:54322",
+        "http://127.0.0.1:19222",
+        "http://localhost:54321",
+        "null",
+    ] {
+        assert!(trusted_initiator(&head(origin), 54321).is_err(), "{origin}");
+    }
+    let gateway = head("http://127.0.0.1:54321");
+    assert_eq!(
+        parent_from_form("parent_origin=tauri%3A%2F%2Flocalhost", &gateway, 54321).unwrap(),
+        "tauri://localhost"
+    );
+    for parent in ["http%3A%2F%2F127.0.0.1%3A54322", "https%3A%2F%2Fattacker.test"] {
+        assert!(parent_from_form(&format!("parent_origin={parent}"), &gateway, 54321).is_err());
+    }
 }

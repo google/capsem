@@ -41,8 +41,7 @@ def test_native_app_allows_only_localhost_preview_transport() -> None:
     ["NSAllowsArbitraryLoads", "NSAllowsArbitraryLoadsInWebContent", "NSAllowsArbitraryLoadsForMedia"],
 )
 def test_global_transport_exceptions_are_refused(key: str) -> None:
-    transport = copy.deepcopy(TRANSPORT)
-    transport[key] = True
+    transport = {**copy.deepcopy(TRANSPORT), key: True}
     assert not _scoped_transport({"NSAppTransportSecurity": transport}), RATIONALE
 
 

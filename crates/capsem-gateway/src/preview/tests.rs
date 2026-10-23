@@ -181,7 +181,7 @@ async fn assert_bootstrap_is_scoped(surface: bool) {
         status_cache: StatusCache::new(),
         auth_failures: AuthFailureTracker::new(),
         events_tx: tokio::sync::broadcast::channel(4).0,
-        previews: PreviewState::new(preview_port),
+        previews: PreviewState::new(preview_port, 19222),
     });
     let control = Router::new()
         .route(
@@ -235,7 +235,7 @@ async fn assert_bootstrap_is_scoped(surface: bool) {
             String::from_utf8(response).unwrap()
         }
     };
-    let parent = surface.then_some("http://127.0.0.1:5173");
+    let parent = surface.then_some("tauri://localhost");
     if surface {
         let denied = exchange(EXPOSURE, Some("https://attacker.test")).await;
         assert!(denied.starts_with("HTTP/1.1 403 Forbidden"));
@@ -247,7 +247,7 @@ async fn assert_bootstrap_is_scoped(surface: bool) {
     let response = exchange(EXPOSURE, parent).await;
     if surface {
         assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
-        assert!(response.contains("frame-ancestors http://127.0.0.1:5173;"));
+        assert!(response.contains("frame-ancestors tauri://localhost;"));
         assert!(response.contains(&format!("capsem-preview.{SESSION}")));
         assert!(!response.contains("Set-Cookie:") && !response.contains("X-Frame-Options:"));
     } else {

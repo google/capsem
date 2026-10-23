@@ -6,13 +6,14 @@ import type { AuthorizeGoogleRequest, CreateSessionGrantRequest } from '@capsem/
 import type { StopResponse, VmActionResponse, LogsResponse, VmStatsDetailResponse, EventBodiesResponse } from '@capsem/sdk';
 import type { ContainerStatusResponse, ImageListResponse, ImagePullResponse, CredentialInjectProvider, CredentialInjectResponse, CredentialStorage } from '@capsem/sdk';
 import { gatewayBaseUrl } from './gateway-url';
+import { surfaceLaunchUrl, type SurfaceSession } from './models/surface';
+import { readGatewayToken } from './gateway-token';
 import type { AssetStatus, UpdateApplyRequest } from '@capsem/sdk';
 export type { LogsResponse as RawLogsResponse, VmStatsDetailResponse } from '@capsem/sdk';
 import { ApiError, GatewaySdk, isAuthRefreshStatus } from './gateway-sdk';
 import type {
   StatusResponse,
   SandboxInfo,
-  TokenResponse,
   HealthResponse,
   ProvisionRequest,
   ProvisionResponse,
@@ -226,15 +227,13 @@ export async function init(): Promise<InitResult> {
     }
     const health: HealthResponse = await healthResp.json();
 
-    // Fetch token from gateway (unauthenticated, localhost-only)
-    const tokenResp = await fetch(`${_baseUrl}/token`);
-    if (!tokenResp.ok) {
+    const token = await readGatewayToken(_baseUrl);
+    if (!token) {
       _connected = false;
       
       return { connected: false, reachable: true, version: health.version, reason: 'auth' };
     }
-    const tokenData: TokenResponse = await tokenResp.json();
-    _applyToken(tokenData.token);
+    _applyToken(token);
 
     const serviceRunning = await _serviceStatusRunning();
     if (!serviceRunning) {
@@ -279,14 +278,13 @@ function _applyToken(token: string): void {
 
 async function _refreshToken(): Promise<boolean> {
   try {
-    const tokenResp = await fetch(`${_baseUrl}/token`);
-    if (!tokenResp.ok) {
+    const token = await readGatewayToken(_baseUrl);
+    if (!token) {
       _connected = false;
       _token = null;
       return false;
     }
-    const tokenData: TokenResponse = await tokenResp.json();
-    _applyToken(tokenData.token);
+    _applyToken(token);
     _connected = true;
     return true;
   } catch {
@@ -314,7 +312,7 @@ export async function healthCheck(): Promise<boolean> {
 
 // -- HTTP helpers (private) --
 
-async function _request(method: string, path: string, body?: unknown, retryAuth = true): Promise<Response> {
+async function _request(method: string, path: string, body?: unknown, retryAuth = true, signal?: AbortSignal): Promise<Response> {
   const init: RequestInit = {
     headers: {
       Authorization: `Bearer ${_token}`,
@@ -327,9 +325,10 @@ async function _request(method: string, path: string, body?: unknown, retryAuth 
   }
   const resp = await fetch(`${_baseUrl}${path}`, {
     ...init,
+    ...(signal ? { signal } : {}),
   });
   if (!resp.ok && retryAuth && isAuthRefreshStatus(resp.status) && await _refreshToken()) {
-    return _request(method, path, body, false);
+    return _request(method, path, body, false, signal);
   }
   if (!resp.ok) {
     const body = await resp.text();
@@ -550,6 +549,32 @@ export async function getContainerStatus(id: string): Promise<ContainerStatusRes
       return null;
     }
     throw err;
+  }
+}
+
+/** Open a session's app surface in the browser, through the gateway. */
+export async function openSurface(id: string): Promise<void> {
+  const session = await createSurfaceSession(id);
+  await openUrl(surfaceLaunchUrl(_baseUrl, id, session));
+}
+
+/** Mint only a scoped preview; the workload's exposure may still be starting. */
+export async function createSurfaceSession(id: string, signal = AbortSignal.timeout(120_000)): Promise<SurfaceSession> {
+  const deadline = Date.now() + 120_000;
+  for (;;) {
+    signal.throwIfAborted();
+    try {
+      const response = await _request('POST', `/vms/${encodeURIComponent(id)}/surface/session`, undefined, true, signal);
+      return await response.json();
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 404 || Date.now() >= deadline) throw error;
+    }
+    await new Promise<void>((resolve, reject) => {
+      const abort = () => { clearTimeout(timer); signal.removeEventListener('abort', abort); reject(signal.reason); };
+      const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve(); }, 500);
+      signal.addEventListener('abort', abort, { once: true });
+      if (signal.aborted) abort();
+    });
   }
 }
 

@@ -65,13 +65,15 @@ impl Scope {
 
 pub struct PreviewState {
     port: u16,
+    gateway_port: u16,
     scopes: Mutex<HashMap<String, Scope>>,
 }
 
 impl PreviewState {
-    pub fn new(port: u16) -> Self {
+    pub fn new(port: u16, gateway_port: u16) -> Self {
         Self {
             port,
+            gateway_port,
             scopes: Mutex::new(HashMap::new()),
         }
     }
@@ -268,7 +270,8 @@ async fn admit(
     let embed = scope.surface && head.method == "POST" && head.path == embedded::PATH;
     if embed || (head.method == "POST" && head.path == "/_capsem/bootstrap") {
         if embed {
-            embedded::trusted_parent(&head).map_err(|error| refuse("403 Forbidden", DENIED, error))?;
+            embedded::trusted_initiator(&head, state.previews.gateway_port)
+                .map_err(|error| refuse("403 Forbidden", DENIED, error))?;
         }
         return exchange_bootstrap(stream, state, &scope, &head)
             .await
@@ -334,7 +337,7 @@ async fn exchange_bootstrap(
     let token = parse_bootstrap_token(body)?;
     let embedded_parent = if head.path == embedded::PATH && scope.surface {
         Some((
-            embedded::parent_from_form(body, head)?,
+            embedded::parent_from_form(body, head, state.previews.gateway_port)?,
             crate::surface::DisplayProfile::from_form(body)?,
         ))
     } else {

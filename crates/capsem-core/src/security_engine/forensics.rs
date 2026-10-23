@@ -110,7 +110,7 @@ fn http_forensic_json(http: &HttpSecurityEvent) -> serde_json::Value {
         "host": http.host,
         "method": http.method,
         "path": http.path,
-        "query": http.query,
+        "query": http.query.as_deref().map(redact_query_for_ledger),
         "status": http.status,
         "body": body,
         "body_bytes": body_bytes,
@@ -165,7 +165,7 @@ pub(super) fn http_request_forensic_json(request: &HttpRequestSecurityEvent) -> 
         "domain": request.domain,
         "ai_provider": request.ai_provider.map(|provider| provider.as_str()),
         "headers": headers,
-        "query": request.query,
+        "query": request.query.as_deref().map(redact_query_for_ledger),
     })
 }
 

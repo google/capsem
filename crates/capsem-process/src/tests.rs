@@ -50,6 +50,14 @@ fn confinement_grants_exact_runtime_paths_and_attests_ledger_denial() {
 }
 
 #[test]
+fn owner_exec_denial_probe_names_an_installed_executable() {
+    let sandbox = include_str!("owner_sandbox.rs");
+    assert!(sandbox.contains("worker_sandbox::EXECUTION_PROBE"));
+    assert!(!sandbox.contains("Command::new(\"/bin/true\")"));
+    assert!(std::path::Path::new(capsem_foundation::unix::worker_sandbox::EXECUTION_PROBE).is_file());
+}
+
+#[test]
 fn suspend_checkpoint_stays_in_owner_state() {
     let session = Path::new("/tmp/session");
     assert_eq!(owner_checkpoint_path(session), session.join("owner/checkpoint.vzsave"));
@@ -157,6 +165,68 @@ fn args_parses_all_required() {
     assert_eq!(args.session_dir, PathBuf::from("/tmp/session"));
     assert_eq!(args.active_policy, PathBuf::from("/tmp/session/vm/active_policy.toml"));
     assert_eq!(args.uds_path, PathBuf::from("/tmp/vm.sock"));
+    assert_eq!(args.retention_days, None);
+}
+
+#[test]
+fn args_accept_retention_days_from_service() {
+    let args = Args::try_parse_from([
+        "capsem-process",
+        "--id",
+        "test-vm",
+        "--assets-dir",
+        "/tmp/assets",
+        "--rootfs",
+        "/tmp/rootfs.img",
+        "--session-dir",
+        "/tmp/session",
+        "--active-policy",
+        "/tmp/active_policy.toml",
+        "--expected-kernel-hash",
+        "aa",
+        "--expected-initrd-hash",
+        "bb",
+        "--expected-rootfs-hash",
+        "cc",
+        "--uds-path",
+        "/tmp/vm.sock",
+        "--retention-days",
+        "7",
+    ])
+    .unwrap();
+    assert_eq!(args.retention_days, Some(7));
+}
+
+#[tokio::test]
+async fn shutdown_trims_archived_bodies_before_closing_ledger() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("session.db");
+    let db = Arc::new(DbWriter::open(&db_path, 16).unwrap());
+    db.write_checked(capsem_logger::WriteOp::SecurityRuleEvent(
+        capsem_logger::SecurityRuleEvent::new(
+            1_789_000_223_456,
+            "abcdef123450",
+            "model.call",
+            "profiles.rules.example",
+            r#"{"name":"example"}"#,
+            r#"{"from":"an old session"}"#,
+        ),
+    ))
+    .await
+    .unwrap();
+    db.flush_checked().await.unwrap();
+    let shutdown = Arc::new(Mutex::new(Shutdown {
+        db: Some(db),
+        retention_days: Some(0),
+        ..Shutdown::default()
+    }));
+    drain_background_owners(&shutdown).await;
+    let reader = capsem_logger::DbReader::open(&db_path).unwrap();
+    let raw = reader
+        .query_raw_with_params("SELECT COUNT(*) FROM body_blocks", &[])
+        .unwrap();
+    let rows: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(rows["rows"][0][0].as_u64(), Some(0));
 }
 
 /// The metric broker is granted by the service at launch; without the flag
@@ -489,8 +559,8 @@ fn args_checkpoint_path_set() {
 }
 
 #[test]
-fn args_env_vars_parsed() {
-    let args = Args::try_parse_from([
+fn args_reject_secret_bearing_env_flags() {
+    let result = Args::try_parse_from([
         "capsem-process",
         "--id",
         "vm",
@@ -512,52 +582,8 @@ fn args_env_vars_parsed() {
         "/u",
         "--env",
         "FOO=bar",
-        "--env",
-        "BAZ=qux",
-    ])
-    .unwrap();
-    assert_eq!(args.env, vec!["FOO=bar", "BAZ=qux"]);
-}
-
-// -----------------------------------------------------------------------
-// CLI env parsing (used in run_async_main_loop)
-// -----------------------------------------------------------------------
-
-#[test]
-fn cli_env_parsing_valid() {
-    let env = ["FOO=bar".to_string(), "BAZ=qux=extra".to_string()];
-    let parsed: Vec<(String, String)> = env
-        .iter()
-        .filter_map(|kv| kv.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
-        .collect();
-    assert_eq!(
-        parsed,
-        vec![
-            ("FOO".to_string(), "bar".to_string()),
-            ("BAZ".to_string(), "qux=extra".to_string()),
-        ]
-    );
-}
-
-#[test]
-fn cli_env_parsing_no_equals_skipped() {
-    let env = ["NOEQ".to_string(), "GOOD=val".to_string()];
-    let parsed: Vec<(String, String)> = env
-        .iter()
-        .filter_map(|kv| kv.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
-        .collect();
-    assert_eq!(parsed.len(), 1);
-    assert_eq!(parsed[0], ("GOOD".to_string(), "val".to_string()));
-}
-
-#[test]
-fn cli_env_parsing_empty_value() {
-    let env = ["KEY=".to_string()];
-    let parsed: Vec<(String, String)> = env
-        .iter()
-        .filter_map(|kv| kv.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
-        .collect();
-    assert_eq!(parsed, vec![("KEY".to_string(), "".to_string())]);
+    ]);
+    assert!(result.is_err());
 }
 
 // -----------------------------------------------------------------------

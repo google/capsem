@@ -221,14 +221,16 @@ async fn run_terminal_connection(
     mut input_rx: tokio_mpsc::UnboundedReceiver<TerminalInput>,
     events: tokio_mpsc::Sender<TerminalEvent>,
 ) {
-    let client = reqwest::Client::new();
-    let token = match fetch_token(&client, &base_url).await {
-        Ok(token) => token,
-        Err(error) => {
-            send_status(&events, &session_id, format!("token failed: {error:#}")).await;
-            return;
-        }
-    };
+    let token =
+        match crate::gateway_provider::load_token(&base_url, &crate::gateway_provider::run_dir().join("gateway.token"))
+            .await
+        {
+            Ok(token) => token,
+            Err(error) => {
+                send_status(&events, &session_id, format!("token failed: {error:#}")).await;
+                return;
+            }
+        };
     let mut request = match stream_ws_url(&base_url, &session_id, &token).into_client_request() {
         Ok(request) => request,
         Err(error) => {
@@ -383,22 +385,6 @@ fn coalesced_terminal_inputs(
         }
     }
     inputs
-}
-
-async fn fetch_token(client: &reqwest::Client, base_url: &str) -> anyhow::Result<String> {
-    #[derive(serde::Deserialize)]
-    struct TokenResponse {
-        token: String,
-    }
-
-    let token = client
-        .get(format!("{}/token", base_url.trim_end_matches('/')))
-        .send()
-        .await?
-        .error_for_status()?
-        .json::<TokenResponse>()
-        .await?;
-    Ok(token.token)
 }
 
 fn stream_ws_url(base_url: &str, session_id: &str, token: &str) -> String {

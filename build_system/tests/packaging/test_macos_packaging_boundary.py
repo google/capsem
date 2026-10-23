@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 import tomllib
 from pathlib import Path
@@ -85,6 +86,59 @@ def test_macos_packaging_resources_have_one_exact_owner() -> None:
 
 def test_macos_packaging_resources_preserve_reviewed_modes() -> None:
     assert tracked_source_modes(ROOT, MACOS) == EXPECTED_MODES
+
+
+def test_postinstall_never_edits_shell_profiles_as_root() -> None:
+    source = (MACOS / "pkg-scripts/postinstall").read_text(encoding="utf-8")
+    shell = source.split('CAPSEM_INSTALL_PHASE="configure_shell"', 1)[1].split(
+        '# Register LaunchAgent', 1
+    )[0].strip()
+    commands = "\n".join(line for line in shell.splitlines() if not line.startswith("#")).strip()
+    assert commands.startswith('su "$USER" -c \'')
+    assert commands.endswith("'")
+    assert '>> "$PROFILE"' in shell
+    assert '>> "$FISH_CONFIG"' in shell
+    assert "chown" not in shell
+
+
+@pytest.mark.parametrize("name", ["preinstall", "postinstall"])
+def test_package_root_script_does_not_write_through_user_home(name: str) -> None:
+    source = (MACOS / "pkg-scripts" / name).read_text(encoding="utf-8")
+    write = re.compile(
+        r'^\s*(?:mkdir|touch|cp|chmod|chown|rm|install|ln|codesign|printf)\b.*'
+        r'\$(?:CAPSEM_DIR|USER_HOME|INSTALL_LOG|INSTALL_RUN_LOG|INSTALL_RUN_FILE)'
+    )
+    in_user_script = False
+    violations = []
+    for line in source.splitlines():
+        if line.lstrip().startswith('su "$USER" -c ') and line.endswith("<<'CAPSEM_USER'"):
+            in_user_script = True
+        elif line == "CAPSEM_USER":
+            in_user_script = False
+        elif not in_user_script and write.search(line):
+            violations.append(line.strip())
+    assert not violations, f"root writes through installing user's home: {violations}"
+    if name == "postinstall":
+        assert 'exec > >(tee -a "$INSTALL_LOG" "$INSTALL_RUN_LOG")' not in source
+    else:
+        assert 'INSTALL_LOG="/var/run/capsem/install.log"' in source
+
+
+def test_macos_failure_report_is_written_under_installing_uid() -> None:
+    source = (ROOT / "build_system/packaging/shared/install-diagnostics").read_text(encoding="utf-8")
+    assert 'CAPSEM_INSTALL_FAILURE_AS_USER' in source
+    assert 'su "$install_user" -c' in source
+    for name in ("preinstall", "postinstall"):
+        script = (MACOS / "pkg-scripts" / name).read_text(encoding="utf-8")
+        assert 'CAPSEM_INSTALL_FAILURE_AS_USER=1' in script
+
+
+def test_user_selected_local_manifest_is_opened_after_dropping_root() -> None:
+    source = (MACOS / "pkg-scripts/postinstall").read_text(encoding="utf-8")
+    helper = (ROOT / "build_system/packaging/shared/install-manifest").read_text(encoding="utf-8")
+    assert 'if [[ "$MANIFEST_SOURCE" == file://* && -z "$MANIFEST_PAYLOAD" ]]' in source
+    assert 'cat "${manifest_source#file://}"' in helper
+    assert 'su "$USER" -c "/bin/bash -c' in source
 
 
 def test_gate_selects_macos_packaging_resources_from_their_owner() -> None:

@@ -21,13 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add opt-in graphical display diagnostics for update FPS, frame/decode timing,
   connection RTT, input-to-next-paint estimates, codec/color format, and dimensions.
 
-- Add the standalone Antigravity IDE graphical image for ARM64 and Intel,
+- Add Google's agent-first Antigravity 2 App 2.26.0 for ARM64 and Intel,
   using Capsem's integrated UI and the shared Xpra session setup.
 
 ### Fixed
-
-- Ship Google's agent-first Antigravity 2 App 2.26.0 in the desktop image,
-  replacing the standalone IDE while keeping the shared graphical runtime.
 
 - Hide completed native browser handoffs from the session toolbar, retaining
   a retry action when opening the browser fails.
@@ -40,9 +37,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Resolve deep-linked session tabs to their names when status arrives and
   reflect session renames without reopening the tab.
-
-- Hide Antigravity IDE's own minimize, maximize and close buttons through its
-  supported window setting, leaving session window controls to Capsem.
 
 - Restore graphical keyboard focus when clicking back into the app after
   using Capsem's toolbar or returning from the browser.
@@ -201,6 +195,177 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Use SHA256 signatures and named EC curves for Inspect's loopback registry
   certificates so macOS creates certificates accepted by strict TLS clients.
+### Changed
+
+- Use webpki roots for Rust SDK WebSocket TLS, matching its HTTP transport
+  without loading the macOS keychain trust stack.
+
+- Preserve the selected Docker endpoint for inspect-ai host builds while
+  keeping registry authentication out of the temporary Docker CLI config.
+
+- Stream release runtime images into size-bounded temporary files with
+  incremental BLAKE3 and SHA-256 checks, so slow downloads no longer hit a
+  two-minute total timeout or buffer whole images in memory.
+
+- Apply `vm.resources.retention_days` to archived session bodies when a VM
+  stops, including persistent VMs resumed from an earlier session.
+
+- Add agent-assisted setup with local app links, copyable prompts, and actionable agent logos on the marketing site.
+
+- Correct the hero walkthrough to show independently launched, isolated environments and source-matched GUI creation flows.
+
+- Group hero copy and downloads into a left-aligned stack centered beside the walkthrough.
+
+- Refresh the marketing hero with a continuous desktop walkthrough and a larger, centered Capsem wordmark.
+
+### Security
+
+- Cap gateway buffering of unsized JSON responses at 32 MiB, preventing a
+  large service response from exhausting gateway memory.
+
+- Redact injected environment values in guest boot diagnostics instead of
+  writing their first 40 characters to the host-visible workspace log.
+
+- Bind the Tauri development UI to one exact loopback address and fail if its
+  port is occupied, so a different local page cannot become the token-capable
+  WebView when Astro would otherwise choose another port.
+
+- Run Debian maintainer-script changes to `~/.capsem` as the selected user,
+  including logs, manifests, binary links, and stale-file cleanup. Reject
+  unattended installs without an explicit user instead of choosing UID 1000;
+  retire user processes without root signalling authority.
+
+- Mount guest runtime scratch and logs on fresh tmpfs at every boot and keep
+  the injected boot manifest owner-only, so secrets do not persist in the
+  system overlay.
+
+- Bound initial and reconnected guest control handshakes, shut down stalled
+  sockets, and keep reconnect work off the central vsock dispatcher.
+
+- Log only the variant identifier for unhandled guest control frames, so a
+  guest cannot flood `process.log` with a frame's attacker-controlled payload.
+
+- Stop installer and uninstaller helpers only after checking their pinned
+  process identity and exact installed executable path; command-line matches
+  no longer authorize a kill.
+
+- Preserve the last good MCP tool cache and approval pins when an aggregator
+  tool-list request fails instead of treating the failure as an empty catalog.
+
+- Replace the MCP tool cache through an owner-only atomic write, preventing
+  torn reads and writes through a planted cache-file symlink.
+
+- Keep guest exec audit streaming alive when auditd rotates or truncates its
+  log, including records split across the old and new files.
+
+- Bound MCP method telemetry labels to known protocol methods plus one
+  unknown label, preventing guest-selected strings from growing metric state.
+
+- Keep guest HTTP query values out of network and security-rule ledgers while
+  forwarding the original query upstream and evaluating policy on it.
+
+- Allocate a new KVM VirtioFS node ID after guest unlink and recreation, so
+  a cached inode cannot alias a different file at the same name.
+
+- Reject unsupported KVM VirtioFS `RENAME2` flags instead of executing a plain
+  rename that can overwrite or lose guest files.
+
+- Recheck KVM VirtioFS inode parent containment before `GETATTR`, refusing
+  attributes for an inode whose parent was replaced by an outside symlink.
+
+- Drop VLAN-tagged private-switch frames that could hide spoofed IPv4 sources,
+  and require ARP sender hardware addresses to match their assigned VM port.
+
+- Treat an empty plain-HTTP upstream port list as deny-all and preserve it
+  through active-policy compilation; malformed lists fail closed.
+
+- Reject invalid plain-HTTP upstream ports when loading user or corporate
+  settings, instead of silently dropping out-of-range entries.
+
+- Mint the inspect-ai loopback OCI registry's certificates with SHA-256 and
+  named-curve EC keys, and replace weak or damaged cached certificates.
+
+- Update Astro, Vitest, and the MCP server's transitive `ip-address` package
+  to patched versions for current CSS injection, mock registration, and
+  oversized address parsing advisories.
+
+- Write support bundles atomically with owner-only permissions, restrict their
+  directory, and record proxy configuration without embedding proxy URLs or credentials.
+
+- Ignore unsolicited guest file-content frames and accept exports only for an
+  active read job, preventing forged file-security ledger events.
+
+- Admit at most two concurrent model or MCP body evaluations per VM, with
+  bounded body sizes and deadlines, so guest traffic cannot multiply proxy
+  memory use across hundreds of connections.
+
+- Return a bounded JSON-RPC error for an oversized framed MCP result and end
+  the connection if its writer fails, instead of silently losing later replies.
+
+- Return a bounded MCP error for oversized aggregator results and keep the
+  connection available for later tool replies.
+
+- Cap guest exec, audit, and lifecycle vsock workers and bound initial exec
+  and lifecycle reads, preventing connection floods from exhausting the VM owner.
+
+- Limit the credential store to 1,024 entries and 4 KiB per secret so repeated
+  captures cannot grow its plaintext file or rewrite cost without bound.
+
+- Capture HTTP credentials only for provider-bound destinations and credential
+  fields, preventing arbitrary guest endpoints from filling the credential store.
+
+- Evaluate MCP argument rules against the full parsed request on framed and
+  HTTP transports while keeping stored request previews bounded.
+
+- Transfer guest environment values through a private one-use session file,
+  keeping API keys out of the VM owner process command line on start and resume.
+
+- Use an installed executable for the macOS VM owner sandbox attestation, so
+  VM startup succeeds while still checking that execution is denied.
+
+- Keep verified VM asset hash cache entries under the owner-only runtime
+  directory and read or replace them through no-follow directory descriptors.
+
+- Restrict the service runtime directory to the installing user before creating
+  sockets, logs, or credential-bearing runtime files, including existing installs.
+
+- Recopy binary update packages into a private directory after elevation and
+  verify their size and SHA-256 there before invoking the package manager.
+
+- Run macOS package writes under the installing user's identity, including
+  logs, binary staging, signing, and local manifest reads, so a user-controlled
+  home path cannot redirect a root write or read.
+
+- Run macOS installer shell-profile edits as the installing user, preventing
+  root from following a user-controlled profile symlink.
+
+- Route guest suspend requests through the service's lifecycle admission and
+  host-wide virtualization lock; reclaim cleanly stopped ephemeral sessions.
+
+- Prevent guest lifecycle messages from directly starting a VM suspend inside
+  capsem-process.
+
+- Bound KVM virtio-blk DISCARD payloads to the advertised segment limit before
+  allocating host memory.
+
+- Reject KVM vsock connections whose peer CID is not the owning VM's CID,
+  preventing one guest from reaching another guest's control listeners.
+
+- Validate KVM virtqueue ring geometry for every nonzero queue before device
+  activation, even when the guest leaves the ready flag clear.
+
+- Remove the unauthenticated gateway token endpoint. The desktop shell reads
+  its private token through IPC, and external app surfaces receive only a
+  single-use preview bootstrap.
+
+- Guest MCP port exposure now allocates its host loopback port; a guest cannot
+  select a fixed port already trusted by another host application.
+
+- Restrict gateway browser access to the app and gateway origins, and refuse
+  token requests from guest-published loopback pages.
+
+- Refuse to redeem stored OpenAI credentials for Ollama endpoints, including
+  guest-supplied broker references in proxy requests.
 
 - Refresh the Rust and Python trust stores after the emSign intermediate-key
   compromise, and update WebSocket TLS dependencies to the patched root cohort.
@@ -422,6 +587,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Official image rootfs inventories preserve Debian license evidence while
   normalizing SPDX spellings for strict validation, unblocking Claude Desktop
   ARM64 and the complete image catalog.
+- Restore KVM VirtioFS root attributes after containment checks while still
+  refusing a share root replaced by an outside symlink.
+
+- Launch `just dev ui` from the frontend workspace so Tauri starts its Astro
+  development server before opening the desktop window.
+
+- Keep Astro attached to the Tauri development session under agent runners,
+  so closing the app also tears down the frontend server.
+
+- Guest `shell` and `exec` commands now honor `--slow` when changed inputs
+  require rebuilding VM assets.
+
+- Concurrent asset downloads now use separate private temporary files, so one
+  hydrator cannot delete another's partially downloaded image.
+
+- Reattaching a running VM to its existing private network now keeps the live
+  cable and ready membership instead of attempting a second owner handshake.
+
+- Use an executable that exists on macOS and Linux for the gateway's sandbox
+  startup check, restoring gateway startup on hosts without `/bin/true`.
+
+- Runtime publication preserves the immutable version-and-commit revision selected
+  by release preflight instead of replacing it with a date-derived asset revision.
+
+- Official image publication canonicalizes cdxgen's lowercase SPDX identifiers,
+  allowing the Claude Desktop OBOM, image index, and catalog to publish.
 
 - OCI workspaces retain the workload's full UID/GID range while mapping stable
   VirtioFS metadata to the image user, so `chown` and archive extraction work.
@@ -528,6 +719,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   contract (`capsem.stream.v3`), with binary payloads, generated client types,
   and bounded records matching Capsem's other internal transports.
 
+- Separate MCP server installation, agent connection, and skill installation in
+  the agent file-analysis guide.
+
+- Document standalone proxy flags, lease control, provider routing and process
+  boundaries, with a tested OpenAI/Ollama guide that allows Paris responses
+  and blocks London responses.
+
+- Regenerate Python/TypeScript SDK and MCP tool references in docs CI, check
+  reference drift in pull requests, and rebuild docs when SDK/MCP source changes.
+
+- Refresh SDK API references from 0.7.1, document Python timeout recovery,
+  distinguish published packages from source installs, and render the Rust
+  onboarding example without doctest scaffolding.
 - Local and hosted qualification now reuse exact, validated private GHCR
   generations for network-open build helpers before the deterministic local
   fallback; a weekly publisher retains three generations per platform.
@@ -1159,6 +1363,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python SDK distributions use the 0.7.0 client version.
 
 ### Added
+
+- Add the agent-facing `use-capsem` skill and a static suspicious-file triage
+  guide with a harmless fixture and downloadable report helper.
 
 - TypeScript SDK connection and credential grant resources preserve explicit
   consent, typed refusal codes, ownership checks, deadlines and cancellation.

@@ -111,6 +111,7 @@ BOUNDARY_FILES = frozenset(
         "build_system/tests/image/test_kernel_defconfig.py",
         "build_system/tests/image/test_runtime_packages.py",
         "build_system/tests/packaging/test_deb_platform_support.py",
+        "build_system/tests/packaging/test_linux_maintainer_home_boundary.py",
         "build_system/tests/packaging/test_linux_packaging_boundary.py",
         "build_system/tests/packaging/test_macos_packaging_boundary.py",
         "build_system/tests/packaging/test_shared_packaging_boundary.py",

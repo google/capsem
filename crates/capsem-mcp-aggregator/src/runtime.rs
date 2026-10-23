@@ -34,6 +34,24 @@ use capsem_proto::mcp_contracts::McpServerDef;
 
 use crate::server_manager::McpServerManager;
 
+async fn write_bounded_response<W: tokio::io::AsyncWrite + Unpin>(
+    writer: &mut W,
+    response: &AggregatorResponse,
+) -> Result<()> {
+    match write_frame(writer, response).await {
+        Err(error) if error.downcast_ref::<AggregatorFrameTooLarge>().is_some() => {
+            let fallback = AggregatorResponse {
+                id: response.id,
+                body: AggregatorResult::Error {
+                    error: "MCP result exceeds the aggregator frame limit".to_string(),
+                },
+            };
+            write_frame(writer, &fallback).await
+        }
+        result => result,
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(name = "capsem-mcp-aggregator", version, about = "MCP aggregator subprocess")]
 struct Args {
@@ -115,7 +133,7 @@ pub async fn run(vm_id: String, trace_id: String) -> Result<()> {
 
     let writer_task = tokio::spawn(async move {
         while let Some(resp) = resp_rx.recv().await {
-            if let Err(e) = write_frame(&mut stdout, &resp).await {
+            if let Err(e) = write_bounded_response(&mut stdout, &resp).await {
                 error!(error = %e, "failed to write response frame");
                 break;
             }

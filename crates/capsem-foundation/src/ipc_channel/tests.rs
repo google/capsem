@@ -4,6 +4,20 @@ use std::os::unix::net::UnixStream;
 use std::sync::Arc;
 use std::time::Duration;
 
+#[test]
+fn a_file_record_has_named_keys_and_no_stream_header() {
+    use capsem_proto::guest_env::GuestEnvironment;
+    let record = GuestEnvironment {
+        values: vec![("TOKEN".into(), "secret=tail".into())],
+    };
+    let expected = b"\x81\xa6values\x91\x92\xa5TOKEN\xabsecret=tail";
+    assert_eq!(encode_record(&record, expected.len()).unwrap(), expected);
+    let decoded: GuestEnvironment = decode_record(expected, expected.len()).unwrap();
+    assert_eq!(decoded.values, record.values);
+    assert!(encode_record(&record, expected.len() - 1).is_err());
+    assert!(decode_record::<GuestEnvironment>(expected, expected.len() - 1).is_err());
+}
+
 #[tokio::test]
 async fn wire_is_one_bounded_big_endian_msgpack_frame() {
     let (channel, mut peer) = UnixStream::pair().unwrap();

@@ -166,6 +166,36 @@ fn bundle_does_not_export_unrelated_files_through_session_log_links() {
 }
 
 #[test]
+fn bundle_is_private_and_never_serializes_proxy_credentials() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _g = crate::lock_test_env();
+    let dir = fake_capsem_home();
+    let previous = std::env::var_os("HTTP_PROXY");
+    std::env::set_var("HTTP_PROXY", "http://user:bundle-secret@proxy.example:8080");
+    let result = crate::support_bundle::run(None, 0, false, false);
+    if let Some(value) = previous {
+        std::env::set_var("HTTP_PROXY", value);
+    } else {
+        std::env::remove_var("HTTP_PROXY");
+    }
+    let out = result.unwrap();
+    assert_eq!(
+        fs::metadata(dir.path().join("support")).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+    assert_eq!(fs::metadata(&out).unwrap().permissions().mode() & 0o777, 0o600);
+    let entries = read_tar_entries(&out);
+    let proxy = entries
+        .iter()
+        .find(|(name, _)| name.ends_with("system/proxy.json"))
+        .unwrap();
+    let contents = String::from_utf8_lossy(&proxy.1);
+    assert!(!contents.contains("bundle-secret"), "{contents}");
+    assert!(contents.contains("configured"), "{contents}");
+}
+
+#[test]
 fn bundle_redacts_secrets_in_settings_toml() {
     let _g = crate::lock_test_env();
     let _dir = fake_capsem_home();

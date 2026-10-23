@@ -1,6 +1,9 @@
 //! auditd log tailer: streams parsed execve records to the host audit port.
 
+use std::io::{BufReader, Seek, SeekFrom};
+use std::os::unix::fs::MetadataExt;
 use std::os::unix::io::RawFd;
+use std::path::Path;
 use std::thread;
 
 use nix::libc;
@@ -32,7 +35,6 @@ const AUDIT_PENDING_CAP: usize = 1000;
 /// its next write failed.
 pub(crate) fn audit_reader_loop() {
     use std::collections::HashMap;
-    use std::io::BufReader;
 
     const AUDIT_LOG: &str = "/var/log/audit/audit.log";
 
@@ -75,10 +77,39 @@ pub(crate) fn audit_reader_loop() {
         match tail_audit_log(&mut reader, &mut pending, &mut |frame| {
             write_all_fd(audit_fd, frame).is_ok()
         }) {
-            Ok(()) => thread::sleep(AUDIT_IDLE_POLL),
+            Ok(()) => match refresh_audit_log(&mut reader, Path::new(AUDIT_LOG)) {
+                Ok(true) => {
+                    eprintln!("[capsem-agent] audit: log rotated, following current file");
+                }
+                Ok(false) => thread::sleep(AUDIT_IDLE_POLL),
+                Err(error) => {
+                    eprintln!("[capsem-agent] audit: rotation check failed: {error}");
+                    thread::sleep(AUDIT_IDLE_POLL);
+                }
+            },
             Err(frame) => unsent = Some(frame),
         }
     }
+}
+
+/// Called only after draining the current fd to EOF. Follow auditd's renamed
+/// replacement, or rewind when a copytruncate-style rotation reused the fd.
+fn refresh_audit_log(reader: &mut BufReader<std::fs::File>, path: &Path) -> std::io::Result<bool> {
+    let named = match std::fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    let opened = reader.get_ref().metadata()?;
+    if (named.dev(), named.ino()) != (opened.dev(), opened.ino()) {
+        *reader = BufReader::new(std::fs::File::open(path)?);
+        return Ok(true);
+    }
+    if named.len() < reader.stream_position()? {
+        reader.seek(SeekFrom::Start(0))?;
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 /// Connect to the host audit port, retrying until it answers.

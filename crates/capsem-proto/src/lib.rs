@@ -17,6 +17,7 @@ mod file_path;
 pub use file_path::{validate_file_path, validate_file_path_safe};
 pub mod forensic;
 pub mod gateway_grant;
+pub mod guest_env;
 pub mod handshake;
 pub mod host_session;
 pub mod ipc;

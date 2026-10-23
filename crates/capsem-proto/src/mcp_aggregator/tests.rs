@@ -255,3 +255,14 @@ async fn frame_reader_rejects_oversized_truncated_and_invalid_payloads() {
         .to_string();
     assert!(error.contains("msgpack deserialize"), "unexpected error: {error}");
 }
+
+#[tokio::test]
+async fn oversized_aggregator_write_leaves_stream_ready_for_next_frame() {
+    let (mut writer, mut reader) = tokio::io::duplex(128);
+    let oversized = vec![0u8; MAX_FRAME_SIZE as usize];
+    let error = write_frame(&mut writer, &oversized).await.unwrap_err();
+    assert!(error.downcast_ref::<AggregatorFrameTooLarge>().is_some());
+    write_frame(&mut writer, &42u32).await.unwrap();
+    let next: Option<u32> = read_frame(&mut reader).await.unwrap();
+    assert_eq!(next, Some(42));
+}

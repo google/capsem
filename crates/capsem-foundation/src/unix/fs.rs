@@ -205,6 +205,32 @@ pub fn ensure_private_dir(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Create an owner-only directory or restrict an older, current-user-owned
+/// directory in place. Existing files survive the migration. The directory
+/// itself must not be a symlink; changes use its open descriptor.
+pub fn ensure_private_dir_restrict_existing(path: &Path) -> io::Result<()> {
+    let parent_path = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let name = path
+        .file_name()
+        .ok_or_else(|| refused(path, "it has no final directory name"))?;
+    std::fs::create_dir_all(parent_path)
+        .map_err(|error| context(error, "create private directory parent", parent_path))?;
+    let parent = super::contained::ContainedDir::open_root(parent_path)?;
+    let dir = parent.descend_or_create(name, PRIVATE_DIR_MODE)?;
+    let uid = super::process::current_uid();
+    let owner = dir.metadata()?.uid();
+    if owner != uid {
+        return Err(refused(path, &format!("it is owned by uid {owner}, not {uid}")));
+    }
+    if dir.mode()? & 0o777 != PRIVATE_DIR_MODE {
+        dir.set_relative_mode(Path::new(""), PRIVATE_DIR_MODE)?;
+    }
+    dir.validate_private()
+}
+
 /// Atomically replace `path` with owner-only `data`.
 ///
 /// Bytes are written and synced through a unique sibling opened with

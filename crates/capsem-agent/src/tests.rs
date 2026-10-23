@@ -941,19 +941,19 @@ fn execve_argv_passes_hex_encoded_arguments_through_unchanged() {
 }
 
 // -----------------------------------------------------------------------
-// Boot log env preview
+// Boot log env redaction
 // -----------------------------------------------------------------------
 
 #[test]
-fn env_preview_truncates_on_a_character_boundary() {
-    let straddling = format!("{}é-rest", "a".repeat(39));
-    assert_eq!(env_preview(&straddling), format!("{}é...", "a".repeat(39)));
-    let straddling_later = format!("{}日本語", "a".repeat(40));
-    assert_eq!(env_preview(&straddling_later), format!("{}...", "a".repeat(40)));
-    assert_eq!(env_preview("short"), "short");
-    assert_eq!(env_preview(&"x".repeat(40)), "x".repeat(40));
-    assert_eq!(env_preview(&"x".repeat(41)), format!("{}...", "x".repeat(40)));
-    assert_eq!(env_preview(""), "");
+fn boot_log_omits_injected_env_values() {
+    for secret in [
+        "short",
+        "a long credential that used to reach the boot log",
+        "日本語-secret",
+    ] {
+        let line = env_log_line("TEST_SECRET", secret);
+        assert!(line.contains("TEST_SECRET") && !line.contains(secret), "{line}");
+    }
 }
 
 // -----------------------------------------------------------------------

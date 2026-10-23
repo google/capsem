@@ -3,6 +3,17 @@ use crate::net::policy::NetworkMechanics;
 use crate::net::policy_config::{SecurityRuleAction, SecurityRuleProfile, SecurityRuleSet};
 
 #[test]
+fn semantic_body_admission_is_shared_and_releases_capacity() {
+    let budget = MitmProxyConfig::new_semantic_body_budget();
+    let first = Arc::clone(&budget).try_acquire_owned().unwrap();
+    let second = Arc::clone(&budget).try_acquire_owned().unwrap();
+    assert!(Arc::clone(&budget).try_acquire_owned().is_err());
+    drop(first);
+    assert!(Arc::clone(&budget).try_acquire_owned().is_ok());
+    drop(second);
+}
+
+#[test]
 fn standalone_target_uses_only_the_configured_provider_authority() {
     let profile = crate::net::policy_config::ProviderRuleProfile::parse_toml(
         r#"
@@ -384,6 +395,29 @@ fn observed_mcp_http_request_extracts_tool_name_past_large_arguments() {
 }
 
 #[test]
+fn http_mcp_request_arguments_survive_preview_truncation() {
+    let arguments = serde_json::json!({"padding": "x".repeat(5000), "marker": "deny-me"});
+    let body = serde_json::json!({"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {"name": "local__echo", "arguments": arguments}}).to_string();
+    let observed = observed_mcp_http_request_for_body(body.as_bytes(), "mcp.example.test", 443, "/mcp").unwrap();
+    assert!(observed.request_preview.as_ref().unwrap().len() <= mcp_frame::MCP_REQUEST_PREVIEW_BYTES);
+    let event = observed.security_event(None, None);
+    let profile = SecurityRuleProfile::parse_toml(
+        r#"[profiles.rules.block_marker]
+name = "block_marker"
+action = "block"
+match = 'mcp.request.arguments.contains("deny-me")'"#,
+    )
+    .unwrap();
+    let rules =
+        SecurityRuleSet::compile_profile(&profile, crate::net::policy_config::SecurityRuleSource::User).unwrap();
+    assert_eq!(
+        rules.evaluate(&event).unwrap().enforcement_rules()[0].rule_id,
+        "profiles.rules.block_marker"
+    );
+    assert_eq!(event.mcp.unwrap().request.unwrap().arguments, Some(arguments));
+}
+
+#[test]
 fn observed_mcp_http_request_preview_is_capped() {
     // A guest can send a valid MCP JSON-RPC request with a huge params blob (up
     // to MCP_BODY_CAPTURE_LIMIT). The stored preview must be bounded like the
@@ -490,15 +524,15 @@ fn http_upstream_port_gate_allows_listed_ports() {
 }
 
 #[test]
-fn http_upstream_port_gate_ignores_tls_and_empty_allowlist() {
+fn http_upstream_port_gate_ignores_tls_and_denies_empty_allowlist() {
     let policy = NetworkMechanics::default();
     // TLS terminates at 443 and is not gated by the plain-HTTP allowlist.
     assert!(http_upstream_port_allowed(&policy, Protocol::Tls, 22));
 
     let mut open = NetworkMechanics::default();
     open.http_upstream_ports.clear();
-    // Empty allowlist means "no restriction configured".
-    assert!(http_upstream_port_allowed(&open, Protocol::Http, 22));
+    assert!(!http_upstream_port_allowed(&open, Protocol::Http, 22));
+    assert!(http_upstream_port_allowed(&open, Protocol::Tls, 22));
 }
 
 // -- classification read deadline (slowloris) --

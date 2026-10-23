@@ -16,9 +16,9 @@
 //! system/{version.json,os.txt,proxy.json,dmesg.log,mitm-ca-fingerprint.txt}
 //! ```
 //!
-//! The MITM CA cert itself is NEVER bundled; we ship a SHA-256 of its
-//! bytes instead so a maintainer can confirm "yes this user is on the
-//! right CA" without seeing the cert.
+//! The MITM CA cert itself is never bundled; its XXH3-128 diagnostic
+//! fingerprint lets a maintainer compare the configured CA without
+//! exporting the certificate.
 //!
 //! Manifest schema is v1; bump `SCHEMA_VERSION` for breaking changes.
 
@@ -35,7 +35,9 @@ use tar::Builder as TarBuilder;
 use crate::support::redact;
 
 mod archive;
+mod contracts;
 use archive::{add_bytes, add_reader};
+use contracts::{runtime_boundary_debug_contract, supply_chain_debug_references};
 
 const SCHEMA_VERSION: u32 = 1;
 const MAX_LOG_TAIL_BYTES: u64 = 5 * 1024 * 1024;
@@ -93,15 +95,22 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
     let _max_session_bytes = max_session_bytes; // consumed in the session-include loop below
     let home = capsem_foundation::paths::capsem_home();
     let support_dir = home.join("support");
-    fs::create_dir_all(&support_dir).with_context(|| format!("create {}", support_dir.display()))?;
+    capsem_foundation::unix::fs::ensure_private_dir_restrict_existing(&support_dir)
+        .with_context(|| format!("secure {}", support_dir.display()))?;
 
     let timestamp = ts_filename();
     let host = host_label();
     let bundle_root = format!("capsem-support-{timestamp}-{host}");
     let output = output.unwrap_or_else(|| support_dir.join(format!("{bundle_root}.tar.gz")));
+    let output_path = if output.parent().is_some_and(|parent| !parent.as_os_str().is_empty()) {
+        output.clone()
+    } else {
+        Path::new(".").join(&output)
+    };
 
-    let file = fs::File::create(&output).with_context(|| format!("create {}", output.display()))?;
-    let gz = GzEncoder::new(file, Compression::default());
+    let mut sibling = capsem_foundation::unix::fs::create_private_sibling(&output_path)
+        .with_context(|| format!("create private bundle near {}", output.display()))?;
+    let gz = GzEncoder::new(sibling.file(), Compression::default());
     let mut tar = TarBuilder::new(gz);
 
     let mut sections: Vec<Section> = Vec::new();
@@ -557,8 +566,9 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
     }
     {
         let proxy = serde_json::json!({
-            "HTTP_PROXY":  std::env::var("HTTP_PROXY").unwrap_or_default(),
-            "HTTPS_PROXY": std::env::var("HTTPS_PROXY").unwrap_or_default(),
+            "HTTP_PROXY":  proxy_presence("HTTP_PROXY"),
+            "HTTPS_PROXY": proxy_presence("HTTPS_PROXY"),
+            "ALL_PROXY": proxy_presence("ALL_PROXY"),
             "NO_PROXY":    std::env::var("NO_PROXY").unwrap_or_default(),
             "gateway_port_file": run_dir.join("gateway.port").display().to_string(),
         });
@@ -710,6 +720,9 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
 
     let gz = tar.into_inner().context("finalize tar")?;
     gz.finish().context("finalize gzip")?;
+    sibling.file().sync_all().context("sync private support bundle")?;
+    capsem_foundation::unix::fs::rename_private_sibling(sibling, &output_path)
+        .with_context(|| format!("publish private support bundle {}", output.display()))?;
 
     // Print a one-line summary to stderr (not stdout -- stdout reserved
     // for scripts that wrap the command and pipe stdout).
@@ -723,6 +736,14 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
         missing,
     );
     Ok(output)
+}
+
+fn proxy_presence(name: &str) -> &'static str {
+    if std::env::var_os(name).is_some_and(|value| !value.is_empty()) {
+        "configured"
+    } else {
+        ""
+    }
 }
 
 fn read_tail(path: &Path, max_bytes: u64) -> Option<Vec<u8>> {
@@ -816,96 +837,6 @@ fn host_label() -> String {
         .chars()
         .take(32)
         .collect()
-}
-
-fn runtime_boundary_debug_contract() -> serde_json::Value {
-    let host_vsock_services: Vec<_> = capsem_proto::host_vsock_services()
-        .iter()
-        .map(|service| {
-            serde_json::json!({
-                "service": service.as_str(),
-                "port": service.port(),
-            })
-        })
-        .collect();
-
-    serde_json::json!({
-        "version": env!("CARGO_PKG_VERSION"),
-        "host_vsock_services": host_vsock_services,
-        "closed_raw_vsock_ports": [
-            {
-                "port": 5003,
-                "reason": "retired_mcp_raw_port",
-            },
-            {
-                "port": 11434,
-                "reason": "guest_tcp_ollama_must_use_mitm_redirect",
-            },
-            {
-                "port": 3128,
-                "reason": "guest_tcp_proxy_must_use_mitm_redirect",
-            },
-            {
-                "port": 8080,
-                "reason": "guest_tcp_proxy_must_use_mitm_redirect",
-            }
-        ],
-        "debug_routes": [
-            "/version",
-            "/status",
-            "/triage",
-            "/panics",
-            "/host-logs/{name}",
-            "/vms/{id}/status",
-            "/vms/{id}/info",
-            "/vms/{id}/logs",
-            "/vms/{id}/history",
-            "/vms/{id}/security/latest",
-            "/vms/{id}/security/status",
-            "/vms/{id}/detection/latest",
-            "/vms/{id}/detection/status",
-            "/vms/{id}/enforcement/latest",
-            "/vms/{id}/enforcement/status",
-            "/assets/status",
-            "/settings/info",
-            "/corp/info",
-            "/plugins/list",
-            "/plugins/{plugin_id}/info",
-            "/plugins/credential_broker/credentials/info",
-            "/mcp/info",
-            "/mcp/default/info",
-            "/mcp/servers/list"
-        ],
-    })
-}
-
-fn supply_chain_debug_references() -> serde_json::Value {
-    serde_json::json!({
-        "host_sbom": {
-            "format": "spdx_json_2_3",
-            "scope": "host_binaries",
-            "generator": "cargo-sbom",
-            "release_artifact": "capsem-sbom.spdx.json",
-            "attestation": "github_attestations",
-            "workflow": ".github/workflows/release.yaml",
-        },
-        "vm_obom": {
-            "format": "cyclonedx-obom.v1",
-            "scope": "base_image",
-            "generator": "cdxgen",
-            "descriptor_source": "release manifest",
-        },
-        "manifest": {
-            "hash": "blake3",
-            "runtime_status": "/status",
-            "runtime_update_status": "/update/status",
-            "runtime_update_status_field": "supply_chain",
-            "support_bundle_paths": [
-                "assets/manifest.json",
-                "assets/manifest-metadata.json",
-            ],
-        },
-    })
 }
 
 fn hostname() -> String {

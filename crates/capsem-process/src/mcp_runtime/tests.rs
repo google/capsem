@@ -19,6 +19,7 @@ fn guest_exposure_schema_requires_an_explicit_namespace_and_carries_no_control_c
         serde_json::json!(["guest_port", "target"])
     );
     assert_eq!(tool.input_schema["additionalProperties"], false);
+    assert_eq!(tool.input_schema["properties"]["host_port"]["maximum"], 0);
     let schema = tool.input_schema.to_string();
     for forbidden in ["token", "gateway", "socket", "vm_id", "vm_name"] {
         assert!(!schema.contains(forbidden), "guest tool schema exposed {forbidden}");
@@ -56,5 +57,20 @@ async fn guest_exposure_dispatches_against_the_injected_owner_publisher() {
     assert!(
         error.contains("publication security context missing"),
         "the fixture's injected publisher should own dispatch: {error:?}"
+    );
+}
+
+#[tokio::test]
+async fn guest_exposure_cannot_choose_a_host_port() {
+    let error = fixture()
+        .call_tool(
+            "capsem__expose_port",
+            serde_json::json!({"guest_port": 8080, "host_port": 11434, "target": "vm"}),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        error.contains("host_port must be zero"),
+        "guest port selection reached the publisher: {error}"
     );
 }

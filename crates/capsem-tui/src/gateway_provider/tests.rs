@@ -128,38 +128,30 @@ fn cost_projection_handles_missing_nonfinite_and_extreme_values() {
 
 #[tokio::test]
 async fn rotated_token_is_refetched_before_sdk_overview_retry() {
+    let dir = tempfile::tempdir().unwrap();
+    let token_path = dir.path().join("gateway.token");
+    std::fs::write(&token_path, "old").unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
+    let server_token_path = token_path.clone();
     let server = tokio::spawn(async move {
-        for (step, (path, expected_token)) in [
-            ("/token", None),
-            ("/status", Some("old")),
-            ("/status", Some("old")),
-            ("/token", None),
-            ("/status", Some("new")),
-        ]
-        .into_iter()
-        .enumerate()
-        {
+        for (step, expected_token) in ["old", "old", "new"].into_iter().enumerate() {
             let (mut stream, _) = listener.accept().await.unwrap();
             let request = read_http_request(&mut stream).await;
-            assert!(request.starts_with(&format!("GET {path} ")), "{request}");
-            if let Some(token) = expected_token {
-                assert!(request
-                    .to_ascii_lowercase()
-                    .contains(&format!("authorization: bearer {token}")));
-            }
-            match path {
-                "/token" => {
-                    let token = if step == 0 { "old" } else { "new" };
-                    write_json_response(&mut stream, &format!(r#"{{"token":"{token}"}}"#)).await;
-                }
-                _ if step == 2 => write_response(&mut stream, "401 Unauthorized", "expired").await,
-                _ => write_json_response(&mut stream, &overview("running", "Running")).await,
+            assert!(request.starts_with("GET /status "), "{request}");
+            assert!(request
+                .to_ascii_lowercase()
+                .contains(&format!("authorization: bearer {expected_token}")));
+            if step == 1 {
+                std::fs::write(&server_token_path, "new").unwrap();
+                write_response(&mut stream, "401 Unauthorized", "expired").await;
+            } else {
+                write_json_response(&mut stream, &overview("running", "Running")).await;
             }
         }
     });
-    let provider = GatewayProvider::new(url);
+    let mut provider = GatewayProvider::new(url);
+    provider.token_path = token_path;
     provider.load_async().await.unwrap();
     let refreshed = provider.load_async().await.unwrap();
     assert_eq!(refreshed.sessions[0].id, "vm");

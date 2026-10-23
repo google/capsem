@@ -50,7 +50,7 @@ pub(super) fn provider_label(provider: Option<ProviderKind>) -> &'static str {
 
 /// Whether a plain-HTTP request may reach `port` on the upstream.
 pub(super) fn http_upstream_port_allowed(policy: &NetworkMechanics, protocol: Protocol, port: u16) -> bool {
-    if protocol != Protocol::Http || policy.http_upstream_ports.is_empty() {
+    if protocol != Protocol::Http {
         return true;
     }
     policy.http_upstream_ports.contains(&port)

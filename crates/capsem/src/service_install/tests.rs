@@ -1,6 +1,56 @@
 use super::*;
 use std::path::Path;
 
+#[tokio::test]
+async fn retiring_installed_helpers_spares_command_line_lookalikes() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let bin = dir.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    let installed = bin.join("capsem-service");
+    std::fs::copy("/bin/sleep", &installed).unwrap();
+    std::fs::set_permissions(&installed, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut owned = tokio::process::Command::new(&installed).arg("30").spawn().unwrap();
+    let mut lookalike = tokio::process::Command::new("python3")
+        .args(["-c", "import time; time.sleep(30)", installed.to_str().unwrap()])
+        .spawn()
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+
+    let result = retire_installed_helpers(&bin).await;
+    let unsupported = result.as_ref().is_err_and(|error| {
+        error
+            .root_cause()
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|error| error.kind() == std::io::ErrorKind::Unsupported)
+    });
+    let owned_exited = if unsupported {
+        owned.try_wait().unwrap().is_some()
+    } else {
+        tokio::time::timeout(std::time::Duration::from_secs(2), owned.wait())
+            .await
+            .is_ok()
+    };
+    let lookalike_alive = lookalike.try_wait().unwrap().is_none();
+    let _ = owned.start_kill();
+    let _ = lookalike.start_kill();
+    let _ = owned.wait().await;
+    let _ = lookalike.wait().await;
+
+    if unsupported {
+        // macOS 14 lacks native PID-version guarded signaling. Refuse the
+        // orphan without falling back to a race-prone raw PID kill.
+        #[cfg(not(target_os = "macos"))]
+        panic!("orphan retirement is unsupported on this host");
+        #[cfg(target_os = "macos")]
+        assert!(!owned_exited, "an unsupported host signaled the orphan");
+    } else {
+        result.unwrap();
+        assert!(owned_exited, "the installed helper was not retired");
+    }
+    assert!(lookalike_alive, "a command-line lookalike was killed");
+}
+
 fn service_paths(bin_dir: &Path) -> paths::CapsemPaths {
     paths::CapsemPaths {
         service_bin: bin_dir.join("capsem-service"),

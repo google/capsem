@@ -58,8 +58,8 @@ async def test_build_and_stage_lifecycle_cache_and_admission_error(
     def fake_run(cmd: list[str], **kw: Any) -> subprocess.CompletedProcess[str]:
         if cmd and "openssl" in cmd[0]:
             return real_run(cmd, **kw)
-        if cmd[1:3] == ["context", "inspect"]:
-            return subprocess.CompletedProcess(cmd, 0, "unix:///var/run/docker.sock\n", "")
+        if "context" in cmd and "inspect" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, "unix:///tmp/capsem-docker.sock\n", "")
         calls.append((cmd, dict(kw.get("env") or {})))
         if fail_mode == "timeout":
             raise subprocess.TimeoutExpired(cmd, kw.get("timeout", 15.0))
@@ -108,8 +108,10 @@ async def test_build_and_stage_lifecycle_cache_and_admission_error(
     assert cfg.to_container_spec().build is not None
     ctrl = Scripted()
     assert await _init_sample_vm(ctrl, cfg, "task-build") == "vm-s" and len(calls) == 3
-    build_cmd, _ = calls[0]
+    build_cmd, build_env = calls[0]
     assert "--network" in build_cmd and build_cmd[build_cmd.index("--network") + 1] == "none"
+    assert build_env["DOCKER_HOST"] == "unix:///tmp/capsem-docker.sock"
+    assert "DOCKER_CONTEXT" not in build_env
     assert "--config" in build_cmd and build_cmd[build_cmd.index("--config") + 1] != str(
         Path.home() / ".docker"
     )

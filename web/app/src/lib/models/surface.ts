@@ -35,9 +35,10 @@ export function surfaceLauncherUrl(gatewayUrl: string, vmId: string): string {
 }
 
 export type SurfaceProfile = 'auto' | 'local' | 'remote';
+export interface SurfaceSession { url: string; bootstrap_token: string }
 
-export function surfaceEmbedUrl(gatewayUrl: string, vmId: string, parentOrigin: string, profile: SurfaceProfile = 'auto'): string {
-  const url = new URL(surfaceLauncherUrl(gatewayUrl, vmId));
+export function surfaceEmbedUrl(gatewayUrl: string, vmId: string, parentOrigin: string, session: SurfaceSession, profile: SurfaceProfile = 'auto'): string {
+  const url = new URL(surfaceLaunchUrl(gatewayUrl, vmId, session));
   url.searchParams.set('parent_origin', parentOrigin);
   url.searchParams.set('display_profile', profile);
   return url.href;
@@ -53,4 +54,14 @@ export function isSurfaceReconnectMessage(
   frame: Window | null | undefined,
 ): boolean {
   return frame != null && event.source === frame && event.data?.type === 'capsem:surface-reconnect';
+}
+
+/** Carry only a single-use preview bootstrap to the external browser. */
+export function surfaceLaunchUrl(
+  gatewayUrl: string,
+  vmId: string,
+  session: SurfaceSession,
+): string {
+  const fragment = encodeURIComponent(JSON.stringify(session));
+  return `${surfaceLauncherUrl(gatewayUrl, vmId)}#${fragment}`;
 }

@@ -99,6 +99,7 @@ pub(in crate::ipc) struct Dispatcher {
     events_tx: broadcast::Sender<ProcessToService>,
     pub(in crate::ipc) net_state: Arc<capsem_core::SandboxNetworkState>,
     pub(in crate::ipc) mcp_runtime: Arc<McpRuntime>,
+    fail_mcp_list_tools: Arc<AtomicBool>,
     runtime_source: RuntimePolicySource,
     pub(in crate::ipc) ready: Arc<AtomicBool>,
 }
@@ -139,6 +140,8 @@ impl Dispatcher {
             ),
         );
         let (aggregator, mut aggregator_rx) = AggregatorClient::channel(8);
+        let fail_mcp_list_tools = Arc::new(AtomicBool::new(false));
+        let fail_tools = Arc::clone(&fail_mcp_list_tools);
         tokio::spawn(async move {
             while let Some((request, response_tx)) = aggregator_rx.recv().await {
                 let body = match request.method {
@@ -155,6 +158,11 @@ impl Dispatcher {
                             prompt_count: 0,
                         }],
                     },
+                    capsem_proto::mcp_aggregator::AggregatorMethod::ListTools if fail_tools.load(Ordering::Relaxed) => {
+                        AggregatorResult::Error {
+                            error: "fixture discovery failed".to_string(),
+                        }
+                    }
                     capsem_proto::mcp_aggregator::AggregatorMethod::ListTools => AggregatorResult::Tools {
                         tools: vec![McpToolDef {
                             namespaced_name: "fixture__echo".to_string(),
@@ -210,6 +218,7 @@ impl Dispatcher {
                 events_tx,
                 net_state,
                 mcp_runtime,
+                fail_mcp_list_tools,
                 runtime_source: RuntimePolicySource::new(active_policy),
                 ready: Arc::new(AtomicBool::new(true)),
             },
@@ -627,6 +636,17 @@ async fn negotiated_dispatcher_covers_stream_jobs_queries_and_lifecycle() {
         ProcessToService::McpToolsResult { id: 16, tools }
             if tools.len() == 1 && tools[0].namespaced_name == "fixture__echo"
     ));
+    dispatcher.fail_mcp_list_tools.store(true, Ordering::Relaxed);
+    service_tx
+        .send(ServiceToProcess::McpListTools { id: 26 })
+        .await
+        .unwrap();
+    assert!(matches!(
+        service_rx.recv().await.unwrap(),
+        ProcessToService::McpToolsFailed { id: 26, error }
+            if error.contains("fixture discovery failed")
+    ));
+    dispatcher.fail_mcp_list_tools.store(false, Ordering::Relaxed);
     service_tx
         .send(ServiceToProcess::McpRefreshTools { id: 24 })
         .await

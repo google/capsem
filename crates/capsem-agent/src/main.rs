@@ -168,21 +168,14 @@ fn set_boot_traceparent(tp: &str) {
     let _ = BOOT_TRACEPARENT.set(tp.to_string());
 }
 
-/// Lower 16 hex chars of the W3C trace_id (matches the `CAPSEM_TRACE_ID`
-/// convention used elsewhere). Returns "" when no traceparent has been set.
-/// The first 40 characters of an env value for the boot log.
-///
-/// Truncating by byte index panicked when a multibyte character straddled
-/// byte 40. Values come from user settings and `--env`, and
-/// `validate_env_value` only rejects NUL and oversize, so `"a" * 39 + "é"`
-/// killed the agent before BootReady and the VM never became ready.
-fn env_preview(value: &str) -> String {
-    match value.char_indices().nth(40) {
-        Some((cut, _)) => format!("{}...", &value[..cut]),
-        None => value.to_string(),
-    }
+/// Environment values may be secrets, and this log lives on the host-visible
+/// workspace. Never write even a truncated value to boot diagnostics.
+fn env_log_line(key: &str, _value: &str) -> String {
+    format!("SetEnv {key}=[redacted]")
 }
 
+/// Lower 16 hex chars of the W3C trace_id (matches the `CAPSEM_TRACE_ID`
+/// convention used elsewhere). Returns "" when no traceparent has been set.
 fn current_boot_trace_id() -> String {
     let Some(tp) = BOOT_TRACEPARENT.get() else {
         return String::new();
@@ -324,7 +317,7 @@ fn main() {
                     continue;
                 }
 
-                blog_line(&mut blog, &format!("SetEnv {key}={}", env_preview(&value)));
+                blog_line(&mut blog, &env_log_line(&key, &value));
                 eprintln!("[capsem-agent] SetEnv {key}");
                 boot_env.push((key, value));
             }

@@ -814,11 +814,10 @@ pub(crate) async fn handle_ipc_connection(
                             );
                         }
                         Err(e) => {
+                            let error = format!("{e:#}");
                             capsem_core::try_send!(
                                 "ipc_mcp_tools_err",
-                                ipc_tx_out
-                                    .send(ProcessToService::McpToolsResult { id, tools: vec![] })
-                                    .await
+                                ipc_tx_out.send(ProcessToService::McpToolsFailed { id, error }).await
                             );
                             warn!(error = %e, "failed to list MCP tools");
                         }

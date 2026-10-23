@@ -11,6 +11,7 @@ permissions, outputs, and limits; use the guides for step-by-step tasks.
 | --- | --- |
 | Terminal commands | [CLI](/reference/cli/) |
 | Host and guest agent tools | [MCP](/reference/mcp/) |
+| VM-free model endpoint, providers, and lease control | [Proxy](/reference/proxy/) |
 | Settings, sources, and precedence | [Configuration](/reference/configuration/) |
 | Stored secrets, connections, and VM grants | [Credentials](/reference/credentials/) |
 | Rule files and decisions | [Enforcement rules](/reference/enforcement-rules/) |

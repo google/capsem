@@ -70,7 +70,7 @@ version = 1
 "crates/capsem-assets/src/asset_manager.rs" = "7953675136479e75f081172be8ad52f46feda0bbbd0807392b69a7bb78e1d5f0"
 "crates/capsem-assets/src/asset_manager/tests.rs" = "b907347423f3fa45d86c55652459117c46193a8bd22cffe866287687c01f3519"
 "crates/capsem-core/tests/vm_integration.rs" = "8ef7d72155eb053bc67da1073f77f81210acfd5439301b59f8abf22afee3cbb3"
-"crates/capsem/src/support_bundle.rs" = "4da3eb2d291eb51ef366ebee1e4fac5234b1042bbb6457c4f0142548b1da68b4"
+"crates/capsem/src/support_bundle.rs" = "e125287b7a60c20e2ba0c4bcc39c572bbbd7d5ac2cf5d682f0823224b35aa6b0"
 "crates/capsem/src/support_bundle/tests.rs" = "31d57aef806aeeae0df7a285e9b02c8e6ce6b413f21a074648d8360ad93907d8"
 "crates/capsem/src/tests.rs" = "fd86e7449a0c736a31dfaee12ab1899977cdbd5f62ad79d3f6e69b8992bd3d86"
 "crates/capsem/src/update/runtime_contract_tests.rs" = "f74fdf631cc90ae3084b5fe906e1e03cd4cee7e8d032ad2383b016d50fa92920"
@@ -113,3 +113,6 @@ version = 1
 "web/docs/src/content/docs/development/just-recipes.md" = "88cb252895a15df2adb7d1693614cfa0ed4e7cb5710875f3e4502c0b2595996f"
 "web/docs/src/content/docs/index.mdx" = "90580d12fbd0edace7745ba49a090bc882d32c9f7d6bfa1345df935f7a6816d3"
 "web/docs/src/content/docs/releases/0-14.md" = "2c6b4dc8475409c77fef80c71936f2345761374a2a2b9d0d4aed55b5e2d0d4f9"
+
+# S07-002 moves the same support-bundle member paths into their contracts module.
+"crates/capsem/src/support_bundle/contracts.rs" = "68e86f22e8068e0a3f0dac28fc30592fa4371263d2fd9b0c087c12f9824e2d77"

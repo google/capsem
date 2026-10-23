@@ -221,6 +221,11 @@ async fn a_forged_source_and_an_unknown_destination_go_nowhere_and_are_counted()
     // broadcast claiming it, which would draw B's traffic to A.
     a.write_all(&framed(&sent_by(tcp(B, B, b"as beta"), A))).await.unwrap();
     a.write_all(&framed(&sent_by(arp_request(B, A), A))).await.unwrap();
+    let mut tagged = vec![0, 0, 0x08, 0x00];
+    tagged.extend_from_slice(&tcp(B, A, b"tagged")[14..]);
+    a.write_all(&framed(&ethernet(mac_of(A), mac_of(A), 0x8100, &tagged)))
+        .await
+        .unwrap();
     a.write_all(&framed(&tcp(A, STRANGER, b"stranger"))).await.unwrap();
     let delivered = tcp(A, B, b"real");
     a.write_all(&framed(&delivered)).await.unwrap();
@@ -233,9 +238,9 @@ async fn a_forged_source_and_an_unknown_destination_go_nowhere_and_are_counted()
     let (closed, report) = switch.closed().await;
     assert_eq!(closed, port_a);
     assert_eq!(report.reason, CloseReason::Complete);
-    assert_eq!((report.frames_in, report.frames_out), (6, 1));
+    assert_eq!((report.frames_in, report.frames_out), (7, 1));
     assert_eq!(report.bytes_out, framed(&tcp(B, A, b"back")).len() as u64);
-    assert_eq!(report.dropped[DropReason::SourceMac as usize], 2);
+    assert_eq!(report.dropped[DropReason::SourceMac as usize], 3);
     assert_eq!(report.dropped[DropReason::SourceAddress as usize], 2);
     assert_eq!(report.dropped[DropReason::Unknown as usize], 1);
     switch.stop().await;

@@ -16,6 +16,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 capsem-sdk = { path = "../../sdk/rust" }
+capsem-foundation = { path = "../capsem-foundation" }
 clap.workspace = true
 crossterm.workspace = true
 futures.workspace = true
@@ -32,3 +33,4 @@ workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
+tempfile = "3"

@@ -621,6 +621,7 @@ impl ProxyRuntimeState {
             mcp_endpoint,
             upstream_resolver: capsem_core::net::upstream_address::UpstreamResolver::disabled(),
             upstream_grants: Some(upstream_grants),
+            semantic_body_budget: capsem_core::net::mitm_proxy::MitmProxyConfig::new_semantic_body_budget(),
         });
         self.http_config = Some(Arc::clone(&config));
         Ok(Some(config))

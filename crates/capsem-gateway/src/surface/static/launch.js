@@ -1,10 +1,6 @@
-// Open the Xpra surface of the session named in this page's path.
-//
-// The page is the gateway's own origin, so it reads the gateway token the way
-// the Capsem UI does, asks for a single-use preview bootstrap for the
-// session's surface, and POSTs it to the surface's preview origin. That origin
-// answers with the scoped client for an embed, or a session cookie for a
-// standalone preview. No token enters a URL.
+// The desktop mints a one-use preview capability. Its fragment is never sent
+// in the HTTP request; erase it before submitting the scoped bootstrap form.
+// This page never receives the gateway bearer.
 "use strict";
 
 (function () {
@@ -12,54 +8,40 @@
   const open = document.getElementById("open");
   const progress = document.getElementById("progress");
   const parentOrigin = document.body.dataset.parent;
-  const vm = decodeURIComponent(location.pathname.split("/")[2] || "");
+  let session;
+  try {
+    session = JSON.parse(decodeURIComponent(location.hash.slice(1)));
+  } catch {
+    session = null;
+  }
+  history.replaceState(null, "", location.pathname + location.search);
 
-  async function launch() {
+  function launch() {
     open.disabled = true;
     open.hidden = true;
     progress.hidden = false;
     status.textContent = "Opening the app...";
     try {
-      const tokenResponse = await fetch("/token", { cache: "no-store" });
-      if (!tokenResponse.ok) {
-        throw new Error(`the gateway did not answer (${tokenResponse.status})`);
+      if (!session || typeof session.bootstrap_token !== "string" || typeof session.url !== "string") {
+        throw new Error("open this app from Capsem");
       }
-      const { token } = await tokenResponse.json();
-      const request = () => fetch(`/vms/${encodeURIComponent(vm)}/surface/session`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-        cache: "no-store",
-      });
-      const deadline = Date.now() + 120_000;
-      let response = await request();
-      while (response.status === 404 && Date.now() < deadline) {
-        await new Promise(resolve => setTimeout(resolve, 500));
-        response = await request();
+      const url = new URL(session.url);
+      if (url.protocol !== "http:" || !url.hostname.endsWith(".localhost") || url.pathname !== "/_capsem/bootstrap") {
+        throw new Error("invalid preview destination");
       }
-      if (response.status === 404) {
-        throw new Error("this session has no app to open, or the app is not running yet");
-      }
-      if (!response.ok) {
-        throw new Error(`the gateway refused (${response.status})`);
-      }
-      const session = await response.json();
       const form = document.createElement("form");
       form.method = "POST";
-      form.action = session.url;
+      form.action = url.href;
       if (parentOrigin) {
-        const target = new URL(session.url);
-        target.pathname = "/_capsem/surface/index.html";
-        form.action = target.href;
-        const parent = document.createElement("input");
-        parent.type = "hidden";
-        parent.name = "parent_origin";
-        parent.value = parentOrigin;
-        form.append(parent);
-        const profile = document.createElement("input");
-        profile.type = "hidden";
-        profile.name = "display_profile";
-        profile.value = document.body.dataset.profile || "auto";
-        form.append(profile);
+        url.pathname = "/_capsem/surface/index.html";
+        form.action = url.href;
+        for (const [name, value] of [["parent_origin", parentOrigin], ["display_profile", document.body.dataset.profile || "auto"]]) {
+          const input = document.createElement("input");
+          input.type = "hidden";
+          input.name = name;
+          input.value = value;
+          form.append(input);
+        }
       }
       const input = document.createElement("input");
       input.type = "hidden";
@@ -77,9 +59,7 @@
   }
 
   open.addEventListener("click", launch);
-  // A page another site opened waits for a click: it can open this tab, but
-  // not open the app in it.
-  if (document.body.dataset.auto === "true") {
+  if (document.body.dataset.auto === "true" && session) {
     launch();
   } else {
     progress.hidden = true;

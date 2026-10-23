@@ -231,7 +231,7 @@ fn the_unused_vendor_wallpaper_is_a_public_empty_image() {
 #[test]
 fn embedded_page_binds_one_trusted_parent_without_inline_script_or_url_credentials() {
     let token = "b".repeat(64);
-    let parent = "http://127.0.0.1:5173";
+    let parent = "tauri://localhost";
     let (head, body) = split(&embedded_response(&token, ORIGIN, parent, super::super::DisplayProfile::Auto).unwrap());
     assert!(head.starts_with("HTTP/1.1 200 OK\r\n"));
     assert!(head.contains(&format!("frame-ancestors {parent};")));
@@ -270,7 +270,7 @@ fn embedded_profile_precedes_policy_and_preserves_remote_override() {
         &embedded_response(
             &"b".repeat(64),
             ORIGIN,
-            "http://127.0.0.1:5173",
+            "tauri://localhost",
             super::super::DisplayProfile::Remote,
         )
         .unwrap(),

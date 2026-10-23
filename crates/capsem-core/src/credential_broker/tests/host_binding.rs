@@ -44,6 +44,29 @@ const HOSTILE_OPENAI_HOSTS: &[&str] = &[
 const LEGITIMATE_OPENAI_HOSTS: &[&str] = &["openai.com", "api.openai.com", "api.openai.com.", "API.OPENAI.COM"];
 
 #[test]
+fn credential_capture_host_binding_refuses_unrelated_headers_and_bodies() {
+    let key = b"Bearer sk-test-long-enough-to-capture";
+    assert!(detect_http_credential("unrelated.example", "authorization", key).is_none());
+    assert!(detect_http_credential("api.openai.com.evil.example", "authorization", key).is_none());
+    assert!(detect_http_credential_with_provider(
+        "unrelated.example",
+        Some(ProviderKind::Unknown),
+        "authorization",
+        key
+    )
+    .is_none());
+    assert!(detect_http_credential("api.openai.com", "x-request-id", key).is_none());
+    assert_eq!(
+        detect_http_credential("api.openai.com", "authorization", key)
+            .unwrap()
+            .provider,
+        CredentialProvider::OpenAi
+    );
+    let body = br#"{"token":"sk-test-long-enough-to-capture"}"#;
+    assert!(detect_http_body_credentials("unrelated.example", "/", "request", body).is_empty());
+}
+
+#[test]
 fn host_is_or_under_matches_only_on_label_boundaries() {
     assert!(host_is_or_under("openai.com", "openai.com"));
     assert!(host_is_or_under("api.openai.com", "openai.com"));

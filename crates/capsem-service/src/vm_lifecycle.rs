@@ -1,5 +1,6 @@
 use super::*;
 
+mod guest_env;
 mod provision;
 mod resume;
 mod resume_process;

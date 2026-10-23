@@ -9,6 +9,7 @@ use nix::{
 use std::{
     io,
     os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd},
+    path::PathBuf,
     time::Instant,
 };
 
@@ -40,6 +41,21 @@ impl ProcessHandle {
 
     pub fn pid(&self) -> ProcessId {
         self.pid
+    }
+
+    /// The original process's executable, checked against this pinned pidfd
+    /// before and after the pathname lookup.
+    pub fn executable_path(&self) -> io::Result<PathBuf> {
+        if self.has_exited()? {
+            return Err(io::Error::new(io::ErrorKind::NotFound, "process exited"));
+        }
+        let path = std::fs::read_link(format!("/proc/{}/exe", self.pid.get()))?;
+        if self.has_exited()? {
+            return Err(io::Error::new(io::ErrorKind::NotFound, "process exited"));
+        }
+        // Linux annotates a still-running executable after package replacement.
+        let text = path.to_string_lossy();
+        Ok(text.strip_suffix(" (deleted)").map_or(path.clone(), PathBuf::from))
     }
 
     /// Signal the pinned process; a stale handle never targets its reused PID.

@@ -292,19 +292,24 @@ async fn answer_fake_process_connection(
 ) -> Option<(usize, ServiceToProcess)> {
     let mut stream = stream.into_std().unwrap();
     let negotiated = tokio::task::spawn_blocking(move || {
-        capsem_foundation::ipc_handshake::negotiate_responder(&mut stream, "capsem-process-test", "")?;
-        Ok::<_, capsem_proto::handshake::HandshakeError>(stream)
+        let peer = capsem_foundation::ipc_handshake::negotiate_responder(&mut stream, "capsem-process-test", "")?;
+        Ok::<_, capsem_proto::handshake::HandshakeError>((stream, peer))
     })
     .await
     .unwrap();
-    let stream = match negotiated {
-        Ok(stream) => stream,
+    let (stream, peer) = match negotiated {
+        Ok(pair) => pair,
         Err(error) => {
             eprintln!("fake owner rejected handshake: {error}");
             return None;
         }
     };
     let (tx, rx): (Sender<ProcessToService>, Receiver<ServiceToProcess>) = channel_from_std(stream).unwrap();
+    if peer.peer == "capsem-service-lifecycle" {
+        let _tx = tx;
+        let _ = rx.recv().await;
+        return None;
+    }
     let message = match rx.recv().await {
         Ok(message) => message,
         Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => return None,

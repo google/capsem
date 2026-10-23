@@ -528,7 +528,7 @@ pub fn send_boot_config(
             data: serde_json::to_string_pretty(&manifest)
                 .unwrap_or_else(|_| "{}".to_string())
                 .into_bytes(),
-            mode: 0o644,
+            mode: 0o600,
         },
     )?;
 

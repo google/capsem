@@ -279,10 +279,11 @@ fn tool_cache_path() -> Option<std::path::PathBuf> {
 pub fn save_tool_cache(entries: &[ToolCacheEntry]) -> Result<(), String> {
     let path = tool_cache_path().ok_or("HOME not set")?;
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("create dir: {e}"))?;
+        capsem_foundation::unix::fs::ensure_private_dir_restrict_existing(parent)
+            .map_err(|e| format!("prepare private cache directory: {e}"))?;
     }
     let json = serde_json::to_string_pretty(entries).map_err(|e| format!("serialize: {e}"))?;
-    std::fs::write(&path, json).map_err(|e| format!("write: {e}"))
+    capsem_foundation::unix::fs::atomic_write_private(&path, json.as_bytes()).map_err(|e| format!("write: {e}"))
 }
 
 /// Load tool cache from disk. Returns empty vec if file missing.

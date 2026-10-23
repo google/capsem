@@ -171,7 +171,8 @@ def test_a_workspace_unit_is_served_from_sccache_on_a_second_build(tmp_path: Pat
     if sccache is None or rustc.returncode:
         pytest.skip("needs sccache and rustc")
     compiler = Path(rustc.stdout.strip()) / "bin/rustc"
-    short = Path(tempfile.mkdtemp(prefix="sccache-", dir="/tmp"))  # a socket path is short
+    # The gate permits AF_UNIX sockets in its /tmp/capsem-* test namespace.
+    short = Path(tempfile.mkdtemp(prefix="capsem-sccache-", dir="/tmp"))
     with boundedlease.leased(["cargo", "build"], ROOT, os.environ):
         _check_native_cache_hit(tmp_path, short, sccache, compiler)
 

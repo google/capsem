@@ -284,6 +284,25 @@ fn tool_cache_missing_file_returns_empty() {
 }
 
 #[test]
+fn tool_cache_replacement_does_not_follow_a_planted_symlink() {
+    let _lock = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
+    let dir = tempfile::tempdir().unwrap();
+    let _home_guard = EnvVarGuard::set("CAPSEM_HOME", dir.path());
+    let outside = dir.path().join("outside");
+    std::fs::write(&outside, "keep this").unwrap();
+    let cache = dir.path().join("mcp_tool_cache.json");
+    std::os::unix::fs::symlink(&outside, &cache).unwrap();
+
+    save_tool_cache(&[]).unwrap();
+
+    assert_eq!(std::fs::read_to_string(&outside).unwrap(), "keep this");
+    assert!(!std::fs::symlink_metadata(&cache).unwrap().file_type().is_symlink());
+    assert_eq!(load_tool_cache(), Vec::<ToolCacheEntry>::new());
+    use std::os::unix::fs::PermissionsExt;
+    assert_eq!(std::fs::metadata(cache).unwrap().permissions().mode() & 0o777, 0o600);
+}
+
+#[test]
 fn mcp_config_rejects_raw_bearer_token_field() {
     let err = toml::from_str::<McpConfig>(
         r#"

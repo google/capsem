@@ -20,7 +20,7 @@ fn proxy_app(uds_path: &str) -> Router {
         status_cache: StatusCache::new(),
         auth_failures: crate::auth::AuthFailureTracker::new(),
         events_tx: tokio::sync::broadcast::channel(16).0,
-        previews: crate::preview::PreviewState::new(0),
+        previews: crate::preview::PreviewState::new(0, 19222),
     });
     Router::new()
         .route("/big", any(handle_proxy))
@@ -393,6 +393,28 @@ fn unsized_json_response_is_buffered_for_a_content_length() {
     let headers = HeaderMap::from_iter([(CONTENT_TYPE, HeaderValue::from_static("application/json"))]);
 
     assert!(should_buffer_json_response(true, &headers));
+}
+
+#[tokio::test]
+async fn oversized_unsized_json_response_is_rejected() {
+    let mock = Router::new().route(
+        "/big",
+        axum::routing::get(|| async {
+            let chunk = Bytes::from(vec![b'x'; 1024 * 1024]);
+            let stream = futures::stream::iter((0..33).map(move |_| Ok::<_, std::io::Error>(chunk.clone())));
+            axum::http::Response::builder()
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from_stream(stream))
+                .unwrap()
+        }),
+    );
+    let (path, server, _dir) = mock_uds(mock).await;
+    let response = proxy_app(&path)
+        .oneshot(axum::http::Request::builder().uri("/big").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+    server.abort();
 }
 
 #[tokio::test]

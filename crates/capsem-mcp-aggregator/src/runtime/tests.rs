@@ -4,6 +4,29 @@ use std::collections::HashMap;
 
 use super::*;
 
+#[tokio::test]
+async fn oversized_result_returns_error_then_preserves_next_reply() {
+    let (mut writer, mut reader) = tokio::io::duplex(256);
+    let oversized = AggregatorResponse {
+        id: 7,
+        body: AggregatorResult::CallResult {
+            result: serde_json::json!({"content": "x".repeat(16 * 1024 * 1024)}),
+        },
+    };
+    write_bounded_response(&mut writer, &oversized).await.unwrap();
+    let first: AggregatorResponse = read_frame(&mut reader).await.unwrap().unwrap();
+    assert_eq!(first.id, 7);
+    assert!(matches!(first.body, AggregatorResult::Error { .. }));
+    let next = AggregatorResponse {
+        id: 8,
+        body: AggregatorResult::Ok { ok: true },
+    };
+    write_bounded_response(&mut writer, &next).await.unwrap();
+    let second: AggregatorResponse = read_frame(&mut reader).await.unwrap().unwrap();
+    assert_eq!(second.id, 8);
+    assert!(matches!(second.body, AggregatorResult::Ok { ok: true }));
+}
+
 fn http_def(name: &str) -> McpServerDef {
     McpServerDef {
         name: name.to_string(),

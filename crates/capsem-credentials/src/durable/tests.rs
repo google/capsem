@@ -207,3 +207,31 @@ fn store_lock_file_is_owner_only_and_never_the_store_itself() {
         "secret-1"
     );
 }
+
+#[test]
+fn durable_store_refuses_new_entries_after_capacity() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("credential-store.json");
+    let mut entries = HashMap::new();
+    for index in 0..MAX_CAPTURED_CREDENTIALS {
+        entries.insert(format!("openai:ref-{index}"), "secret".to_string());
+    }
+    write_secret_file(&path, serde_json::to_string(&entries).unwrap().as_bytes()).unwrap();
+    assert!(disk_store_write(&path, CredentialProvider::OpenAi, "new-ref", "new-secret").is_err());
+    assert_eq!(disk_store_load(&path).unwrap().len(), MAX_CAPTURED_CREDENTIALS);
+    disk_store_write(&path, CredentialProvider::OpenAi, "ref-0", "secret").unwrap();
+}
+
+#[test]
+fn durable_store_refuses_oversized_secret() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("credential-store.json");
+    assert!(disk_store_write(
+        &path,
+        CredentialProvider::OpenAi,
+        "new-ref",
+        &"x".repeat(MAX_CREDENTIAL_BYTES + 1)
+    )
+    .is_err());
+    assert!(!path.exists());
+}

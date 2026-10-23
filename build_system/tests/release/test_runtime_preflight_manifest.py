@@ -78,6 +78,7 @@ def test_existing_channel_always_selects_its_public_manifest() -> None:
         "manifest_channel": "nightly",
         "manifest_url": "https://release.capsem.org/assets/nightly/manifest.json",
         "manifest_sha256": _manifest_digest("nightly"),
+        "runtime_present": False,
         "bootstrap": False,
         "retired": False,
     }
@@ -98,6 +99,7 @@ def test_absent_first_party_channel_uses_existing_donor_graph() -> None:
         "manifest_channel": "stable",
         "manifest_url": "https://release.capsem.org/assets/stable/manifest.json",
         "manifest_sha256": _manifest_digest("stable"),
+        "runtime_present": False,
         "bootstrap": True,
         "retired": False,
     }
@@ -139,9 +141,33 @@ def test_exact_configured_retired_graph_becomes_an_inactive_bootstrap() -> None:
         "manifest_channel": "stable",
         "manifest_url": "https://release.capsem.org/assets/stable/manifest.json",
         "manifest_sha256": digest,
+        "runtime_present": False,
         "bootstrap": True,
         "retired": True,
     }
+
+
+def test_existing_channel_reports_a_runtime_for_strict_graph_validation() -> None:
+    payload = json.dumps(
+        {
+            "channel": "stable",
+            "packages": [],
+            "runtime": {"revision": "0.7.1-0123456789ab"},
+            "status": "current",
+        },
+        sort_keys=True,
+    ).encode()
+    digest = hashlib.sha256(payload).hexdigest()
+
+    selection = SELECTOR.select_runtime_preflight_manifest(
+        _catalog("stable", sha256=digest),
+        release_site="https://release.capsem.org",
+        channel="stable",
+        bootstrap_missing_first_party=True,
+        read_manifest=lambda _url: payload,
+    )
+
+    assert selection["runtime_present"] is True
 
 
 def test_retired_catalog_digest_must_match_the_fetched_payload() -> None:

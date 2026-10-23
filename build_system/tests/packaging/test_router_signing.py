@@ -56,7 +56,7 @@ def test_confined_workers_are_signed_without_virtualization_authority(tmp_path):
     source = (ROOT / "build_system/packaging/macos/pkg-scripts/postinstall").read_text()
     signing = source[
         source.index("codesign_identifier_for_bin() {") : source.index(
-            'CAPSEM_INSTALL_PHASE="install_manifest_provenance"'
+            "\nCAPSEM_USER", source.index("codesign_identifier_for_bin() {")
         )
     ]
     subprocess.run(

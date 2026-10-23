@@ -11,7 +11,7 @@ check_page() {
 }
 for attempt in $(seq 1 "$ATTEMPTS"); do
     echo "Checking $SITE_URL (attempt $attempt of $ATTEMPTS)..."
-    if check_page "" "How Capsem works" &&
+    if check_page "" "Install Capsem" &&
        check_page "sdk/" "Getting started with the SDK" &&
        check_page "architecture/security/" "Security architecture" &&
        check_page "getting-started/installation/" "Installation"; then

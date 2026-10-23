@@ -10,6 +10,10 @@ pub(super) struct ManifestGenerateArgs {
     /// Binary version to record. Defaults to capsem-builder's project version.
     #[arg(long)]
     pub(super) version: Option<String>,
+    /// Exact immutable asset/runtime revision to record. Defaults to the next
+    /// date-derived development asset version.
+    #[arg(long)]
+    pub(super) asset_version: Option<String>,
     /// Restrict the manifest to these architecture directories (repeatable).
     #[arg(long = "arch", value_parser = ["arm64", "x86_64"])]
     pub(super) arches: Vec<String>,
@@ -23,6 +27,10 @@ pub(super) fn manifest_generate_command_report(args: &ManifestGenerateArgs) -> C
         Some(version) => format!("{version:?}"),
         None => "get_project_version(Path('.'))".to_string(),
     };
+    let asset_version_expr = match &args.asset_version {
+        Some(version) => format!("{version:?}"),
+        None => "None".to_string(),
+    };
     let selection = if args.arches.is_empty() {
         "None".to_owned()
     } else {
@@ -35,7 +43,7 @@ pub(super) fn manifest_generate_command_report(args: &ManifestGenerateArgs) -> C
         argv: builder_python_command([
             "-c".to_string(),
             format!(
-                "from pathlib import Path; from capsem_builder.image.docker import generate_checksums, get_project_version; v = {version_expr}; generate_checksums(Path({:?}), v, arches={selection}); print(f'manifest.json generated (v{{v}})')",
+                "from pathlib import Path; from capsem_builder.image.docker import generate_checksums, get_project_version; v = {version_expr}; generate_checksums(Path({:?}), v, arches={selection}, asset_version={asset_version_expr}); print(f'manifest.json generated (v{{v}})')",
                 args.assets_dir.display().to_string()
             ),
         ]),

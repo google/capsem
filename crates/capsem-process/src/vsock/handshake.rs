@@ -1,5 +1,6 @@
 //! Bounded guest boot handshakes and reconnect classification.
 use super::*;
+use std::os::fd::AsFd;
 
 /// Run the boot handshake on an already-accepted control fd.
 ///
@@ -67,6 +68,26 @@ pub(super) fn perform_handshake(
     Ok(())
 }
 
+pub(super) async fn perform_handshake_bounded(
+    mut fd: std::fs::File,
+    is_restore: bool,
+    env: Vec<(String, String)>,
+    conf: Option<capsem_core::net::policy_config::GuestConfig>,
+    timeout: std::time::Duration,
+) -> Result<()> {
+    let abort_fd =
+        capsem_foundation::unix::fd::duplicate(fd.as_fd()).context("duplicate control socket for deadline")?;
+    let task = tokio::task::spawn_blocking(move || perform_handshake(&mut fd, is_restore, &env, conf));
+    match tokio::time::timeout(timeout, task).await {
+        Ok(joined) => joined.context("handshake task panicked")?,
+        Err(_) => {
+            capsem_foundation::unix::fd::shutdown(abort_fd.as_fd(), capsem_foundation::unix::fd::SocketShutdown::Both)
+                .context("abort stalled control handshake")?;
+            anyhow::bail!("control handshake exceeded {} ms", timeout.as_millis())
+        }
+    }
+}
+
 /// Collect a terminal+control pair from the vsock accept stream.
 ///
 /// Auxiliary connections (MITM proxy, audit, DNS) that race ahead
@@ -86,7 +107,9 @@ pub(super) async fn collect_terminal_control_pair(
             proto::VSOCK_PORT_TERMINAL => terminal = Some(conn),
             proto::VSOCK_PORT_CONTROL => control = Some(conn),
             proto::VSOCK_PORT_SNI_PROXY | proto::VSOCK_PORT_AUDIT | proto::VSOCK_PORT_DNS_PROXY => {
-                deferred_conns.push(conn);
+                if deferred_conns.len() < super::MAX_DEFERRED_AUX_CONNECTIONS {
+                    deferred_conns.push(conn);
+                }
             }
             _ => {}
         }

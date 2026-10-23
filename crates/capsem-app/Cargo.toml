@@ -32,6 +32,7 @@ tracing-appender = { workspace = true }
 capsem-proto = { path = "../capsem-proto" }
 capsem-sdk = { path = "../../sdk/rust" }
 serde.workspace = true
+capsem-foundation = { path = "../capsem-foundation" }
 
 [lints]
 workspace = true

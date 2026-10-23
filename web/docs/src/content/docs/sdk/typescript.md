@@ -19,7 +19,7 @@ export declare class Hypervisor extends Client {
     readonly images: Images;
     readonly credentials: Credentials;
     readonly connections: Connections;
-    constructor(url: string, token: string, options?: TransportOptions);
+    constructor(url?: string, token?: string, options?: TransportOptions);
     info(options?: CallOptions): Promise<models.HypervisorInfo>;
     list(options?: CallOptions): Promise<models.ListResponse>;
     vm(selector: VmSelector): VM;
@@ -62,6 +62,7 @@ export declare class VM extends Client {
     delete(options?: CallOptions): Promise<models.VmActionResponse>;
     fork(name: string, options?: CallOptions & {
         description?: string;
+        labels?: Record<string, string>;
     }): Promise<VM>;
     log(options?: LogOptions): Promise<models.LogsResponse>;
     history(options?: HistoryOptions): Promise<models.HistoryResponse>;
@@ -115,6 +116,7 @@ export interface CreateOptions extends CallOptions {
     cpus?: number;
     memory?: number;
     env?: Record<string, string>;
+    labels?: Record<string, string>;
     networks?: readonly NetworkInfo[];
     image?: string;
     command?: readonly string[];
@@ -337,6 +339,25 @@ export declare class Images {
     list(options?: ImageListOptions): Promise<models.ImageListResponse>;
     pull(image: string, options?: ImagePullOptions): Promise<models.ImagePullResponse>;
 }
+```
+
+## local-browser
+
+```ts
+/** Browsers cannot read installed host credentials; callers connect explicitly. */
+export declare function localConnection(): [
+    string,
+    string
+];
+```
+
+## local-node
+
+```ts
+export declare function localConnection(): [
+    string,
+    string
+];
 ```
 
 ## registry
@@ -633,6 +654,12 @@ export declare const DnsEventSchema: z.ZodType<DnsEvent>;
 
 ```ts
 export declare const EnrollmentKindSchema: z.ZodType<EnrollmentKind>;
+```
+
+## validation/ErrorCode
+
+```ts
+export declare const ErrorCodeSchema: z.ZodType<ErrorCode>;
 ```
 
 ## validation/ErrorEvent
@@ -2139,6 +2166,35 @@ export declare enum EnrollmentKind {
 }
 ```
 
+## models/ErrorCode
+
+```ts
+export declare enum ErrorCode {
+    VM_NOT_FOUND = "vm_not_found",
+    CREATE_TIMEOUT = "create_timeout",
+    EXEC_TIMEOUT = "exec_timeout",
+    CONFIGURATION_REQUIRED = "configuration_required",
+    UNSUPPORTED_CAPABILITY = "unsupported_capability",
+    UNKNOWN_SCOPE_PROFILE = "unknown_scope_profile",
+    POLICY_DENIED = "policy_denied",
+    SCOPE_DENIED = "scope_denied",
+    CONNECTION_UNAVAILABLE = "connection_unavailable",
+    REAUTH_REQUIRED = "reauth_required",
+    STORAGE_UNAVAILABLE = "storage_unavailable",
+    STORAGE_COMMIT_FAILED = "storage_commit_failed",
+    TRANSACTION_EXPIRED = "transaction_expired",
+    TRANSACTION_CANCELLED = "transaction_cancelled",
+    INVALID_CALLBACK = "invalid_callback",
+    PROVIDER_REJECTED = "provider_rejected",
+    PROVIDER_TIMEOUT = "provider_timeout",
+    OWNER_CHANGED = "owner_changed",
+    SESSION_UNAVAILABLE = "session_unavailable",
+    GRANT_UNAVAILABLE = "grant_unavailable",
+    REQUEST_CONFLICT = "request_conflict",
+    REVOCATION_PENDING = "revocation_pending"
+}
+```
+
 ## models/ErrorEvent
 
 ```ts
@@ -2155,8 +2211,10 @@ export interface ErrorEvent {
 
 ```ts
 export interface ErrorResponse {
-    "code"?: string | null;
+    "code"?: null | ErrorCode;
     "error": string;
+    "timeout_secs"?: number | null;
+    "vm_id"?: string | null;
 }
 ```
 
@@ -2379,6 +2437,7 @@ export interface FileListResponse {
 ```ts
 export interface ForkRequest {
     "description"?: string | null;
+    "labels"?: Record<string, string> | null;
     "name": string;
 }
 ```
@@ -3208,6 +3267,7 @@ export interface ProvisionRequest {
     "cpus"?: number | null;
     "env"?: Record<string, string> | null;
     "from"?: string | null;
+    "labels"?: Record<string, string> | null;
     "managed"?: null | ManagedSessionCreate;
     "name"?: string | null;
     "networks"?: Array<string>;
@@ -3385,6 +3445,7 @@ export interface SandboxInfo {
     "files"?: null | VmFilesInfo;
     "forked_from"?: string | null;
     "id": string;
+    "labels"?: Record<string, string> | null;
     "last_error"?: string | null;
     "model_call_count"?: number | null;
     "name"?: string | null;

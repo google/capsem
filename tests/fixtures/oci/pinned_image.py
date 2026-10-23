@@ -147,21 +147,22 @@ def _token(client: _Registry, registry: str, name: str) -> str | None:
         {"service": fields.get("service", registry), "scope": f"repository:{name}:pull"}
     )
     token_url = f"{fields['realm']}?{query}"
+    realm = urllib.parse.urlsplit(fields.get("realm", ""))
+    # GHCR can issue an anonymous token for a private package, then 404 its manifest.
+    credential = (
+        github_token()
+        if registry == "ghcr.io" and realm == urllib.parse.urlsplit("https://ghcr.io/token")
+        else None
+    )
     try:
-        response = client.open(token_url)
+        response = client.open(
+            token_url, basic=("x-access-token", credential) if credential else None
+        )
     except urllib.error.HTTPError as error:
         with error:
-            realm = urllib.parse.urlsplit(fields.get("realm", ""))
-            if (
-                error.code not in (401, 403)
-                or registry != "ghcr.io"
-                or realm != urllib.parse.urlsplit("https://ghcr.io/token")
-            ):
+            if error.code not in (401, 403) or credential is None:
                 raise
-            credential = github_token()
-            if credential is None:
-                raise
-            response = client.open(token_url, basic=("x-access-token", credential))
+            response = client.open(token_url)
     with response:
         body = json.load(response)
     return body.get("token") or body["access_token"]

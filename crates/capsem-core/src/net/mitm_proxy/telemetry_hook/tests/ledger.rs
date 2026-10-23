@@ -6,6 +6,45 @@
 use super::*;
 
 #[tokio::test]
+async fn hook_keeps_query_values_out_of_the_network_ledger() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("session.db");
+    let capsem_home = dir.path().join("capsem-home");
+    let test_store = dir.path().join("credential-store.json");
+    let _guard = EnvGuard::install(
+        crate::credential_broker::TEST_ENV_LOCK.lock().await,
+        &capsem_home,
+        dir.path(),
+        &test_store,
+    );
+    let db = Arc::new(DbWriter::open(&db_path, 64).expect("test db"));
+    let hook = TelemetryHook::new(Arc::new(TelemetryDeps {
+        db: Arc::clone(&db),
+        credentials: Arc::new(crate::net::proxy_engine::LocalProxyCredentials),
+        pricing: Arc::new(PricingTable::load()),
+        trace_state: Arc::new(Mutex::new(TraceState::new())),
+    }));
+    let mut req_ctx = anthropic_req_ctx();
+    req_ctx.query = Some("key=AIza-harmless-marker&mode=demo".into());
+    let mut state = HookState::default();
+    let conn = any_conn();
+    *ctx_for(&mut state, &conn).state::<Option<TelemetryRequestContext>>(|| None) = Some(req_ctx);
+    complete_response(&hook, &mut state, &conn).await;
+
+    assert!(
+        wait_for_db(&db, &db_path, |conn| {
+            conn.query_row("SELECT query FROM net_events LIMIT 1", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .is_ok_and(|query| query == "[REDACTED]")
+        })
+        .await
+    );
+    db.shutdown_blocking();
+    assert!(!String::from_utf8_lossy(&std::fs::read(&db_path).unwrap()).contains("AIza-harmless-marker"));
+}
+
+#[tokio::test]
 async fn hook_writes_substitution_event_and_shared_credential_ref() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("session.db");

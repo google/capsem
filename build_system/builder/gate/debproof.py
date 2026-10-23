@@ -167,6 +167,7 @@ class DebProof:
         self._docker.shell(
             self._proof.container,
             f'dpkg -i "{container_deb}"',
+            env={self._config.environment.install.sudo_user: self._install.guest_user.name},
         )
         name = self._install.suite.package_name
         state = self._docker.capture(

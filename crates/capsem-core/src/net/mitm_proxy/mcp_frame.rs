@@ -19,9 +19,9 @@ use crate::net::dns::private::MCP_HOST;
 #[cfg(test)]
 use crate::net::policy_config::SecurityRuleSet;
 use crate::security_engine::{
-    emit_evaluated_security_rules, emit_security_write, evaluate_security_boundary, McpSecurityEvent,
-    ProcessSecurityEvent, RuntimeSecurityEventType, SecurityEnforcementAction, SecurityEnforcementDecision,
-    SecurityEvent,
+    emit_evaluated_security_rules, emit_security_write, evaluate_security_boundary, McpRequestSecurityEvent,
+    McpSecurityEvent, ProcessSecurityEvent, RuntimeSecurityEventType, SecurityEnforcementAction,
+    SecurityEnforcementDecision, SecurityEvent,
 };
 use capsem_proto::mcp_contracts::{parse_namespaced, parse_resource_uri, JsonRpcRequest, JsonRpcResponse};
 
@@ -236,16 +236,17 @@ where
     let (tx, mut rx) = tokio::sync::mpsc::channel::<OutboundFrame>(256);
     let streams = Arc::new(Mutex::new(StreamTracker::default()));
 
-    let writer_task = tokio::spawn(async move {
+    let mut writer_task = tokio::spawn(async move {
         while let Some(out) = rx.recv().await {
-            if let Err(e) = write_frame(&mut writer, &out).await {
-                debug!(error = %e, "framed MCP writer failed");
-                break;
-            }
+            write_frame(&mut writer, &out)
+                .await
+                .context("framed MCP writer failed")?;
         }
+        Ok::<(), anyhow::Error>(())
     });
 
-    let result: Result<()> = async {
+    let (result, writer_completed): (Result<()>, bool) = tokio::select! {
+        result = async {
         loop {
             let frame = match read_next_frame(&mut reader).await? {
                 FrameRead::Eof | FrameRead::End => return Ok(()),
@@ -462,11 +463,27 @@ where
                 }
             });
         }
-    }
-    .await;
+        } => (result, false),
+        writer_result = &mut writer_task => {
+            let result = match writer_result {
+                Ok(Ok(())) => Err(anyhow::anyhow!("framed MCP writer stopped before the reader")),
+                Ok(Err(error)) => Err(error),
+                Err(error) => Err(error.into()),
+            };
+            (result, true)
+        }
+    };
 
     drop(tx);
-    let _ = writer_task.await;
+    let result = if writer_completed {
+        result
+    } else {
+        match writer_task.await {
+            Ok(Ok(())) => result,
+            Ok(Err(error)) => Err(error),
+            Err(error) => Err(error.into()),
+        }
+    };
     match &result {
         Ok(()) => {
             ::metrics::counter!(
@@ -557,6 +574,7 @@ struct McpMethodSummary {
     server_name: Option<String>,
     tool_name: Option<String>,
     request_preview: Option<String>,
+    request_arguments: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -793,9 +811,12 @@ fn mcp_security_event_from_summary(
         server_name: summary.server_name.clone().or_else(|| Some(process_name.to_string())),
         tool_call_name: summary.tool_name.clone(),
         tool_list,
+        request: Some(McpRequestSecurityEvent {
+            arguments: summary.request_arguments.clone(),
+            ..Default::default()
+        }),
         ..Default::default()
     }
-    .with_request_preview(summary.request_preview.as_deref())
     .with_response_preview(response_preview.as_deref())
     .with_error_message(error_message);
     ensure_mcp_request_identity(&mut mcp, summary.request_id.clone(), Some(summary.method.clone()));

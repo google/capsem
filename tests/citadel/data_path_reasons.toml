@@ -52,12 +52,12 @@ json = { count = 47, reason = "http" }
 json = { count = 1, reason = "http" }
 
 [sources."crates/capsem/src/support_bundle.rs"]
-json = { count = 29, reason = "logging" }
+json = { count = 21, reason = "logging" }
 hash = { count = 1, reason = "hash-support" }
 
 [sources."crates/capsem/src/update/asset_install.rs"]
 json = { count = 67, reason = "release" }
-hash = { count = 6, reason = "hash-asset" }
+hash = { count = 5, reason = "hash-asset" }
 
 [sources."crates/capsem/src/update/candidate_audit.rs"]
 json = { count = 5, reason = "release" }
@@ -286,16 +286,16 @@ json = { count = 8, reason = "provider" }
 json = { count = 25, reason = "provider" }
 
 [sources."crates/capsem-core/src/net/mitm_proxy/mcp_frame/wire.rs"]
-json = { count = 6, reason = "provider" }
+json = { count = 7, reason = "mcp" }
 
 [sources."crates/capsem-core/src/net/mitm_proxy/mcp_frame.rs"]
-json = { count = 13, reason = "provider" }
+json = { count = 14, reason = "mcp" }
 
 [sources."crates/capsem-core/src/net/mitm_proxy/mcp_http.rs"]
 json = { count = 1, reason = "provider" }
 
 [sources."crates/capsem-core/src/net/mitm_proxy/mcp_observe.rs"]
-json = { count = 9, reason = "provider" }
+json = { count = 11, reason = "mcp" }
 
 [sources."crates/capsem-core/src/net/mitm_proxy/mod.rs"]
 json = { count = 2, reason = "provider" }
@@ -400,7 +400,7 @@ hash = { count = 1, reason = "hash-asset" }
 json = { count = 6, reason = "http" }
 
 [sources."crates/capsem-gateway/src/main.rs"]
-json = { count = 6, reason = "http" }
+json = { count = 2, reason = "http" }
 
 [sources."crates/capsem-gateway/src/preview.rs"]
 json = { count = 7, reason = "http" }
@@ -833,3 +833,11 @@ json = { count = 1, reason = "http" }
 
 [sources."sdk/rust/src/operations.rs"]
 json = { count = 2, reason = "http" }
+
+# S07-002: existing diagnostic JSON moved intact; release-image integrity is
+# now checked incrementally while streaming against the same trusted manifest.
+[sources."crates/capsem/src/support_bundle/contracts.rs"]
+json = { count = 8, reason = "logging" }
+
+[sources."crates/capsem/src/update/asset_install/http.rs"]
+hash = { count = 2, reason = "hash-asset" }

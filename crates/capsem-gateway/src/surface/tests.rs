@@ -97,7 +97,7 @@ fn state(service_path: &std::path::Path, preview_port: u16) -> Arc<AppState> {
         status_cache: StatusCache::new(),
         auth_failures: AuthFailureTracker::new(),
         events_tx: tokio::sync::broadcast::channel(4).0,
-        previews: crate::preview::PreviewState::new(preview_port),
+        previews: crate::preview::PreviewState::new(preview_port, 19222),
     })
 }
 
@@ -154,7 +154,8 @@ async fn the_launcher_is_served_without_a_token_and_holds_none() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(headers[http::header::CONTENT_TYPE], "text/javascript; charset=utf-8");
     assert!(script.contains("form.method = \"POST\"") && script.contains("bootstrap_token"));
-    assert!(!script.contains("?token") && !script.contains("location.search"));
+    assert!(script.contains("location.hash") && script.contains("history.replaceState"));
+    assert!(!script.contains("/token") && !script.contains("Authorization"));
 }
 
 #[tokio::test]
@@ -175,7 +176,7 @@ async fn an_embedded_launcher_binds_its_parent_without_bypassing_top_level_click
     let dir = tempfile::tempdir().unwrap();
     let state = state(&service(dir.path(), Arc::default()).await, 19444);
     let app = gateway(&state);
-    let path = "/vms/gui/surface/?parent_origin=http%3A%2F%2Flocalhost%3A5173";
+    let path = "/vms/gui/surface/?parent_origin=tauri%3A%2F%2Flocalhost";
     let (status, headers, page) = call(
         &app,
         "GET",
@@ -187,14 +188,14 @@ async fn an_embedded_launcher_binds_its_parent_without_bypassing_top_level_click
     assert!(headers[http::header::CONTENT_SECURITY_POLICY]
         .to_str()
         .unwrap()
-        .contains("frame-ancestors http://localhost:5173;"));
+        .contains("frame-ancestors tauri://localhost;"));
     assert!(!headers.contains_key(http::header::X_FRAME_OPTIONS));
     assert_eq!(
         headers[http::header::REFERRER_POLICY],
         "origin",
         "no-referrer makes the cross-origin form POST Origin null, defeating trusted-parent admission"
     );
-    assert!(page.contains("data-auto=\"true\"") && page.contains("data-parent=\"http://localhost:5173\""));
+    assert!(page.contains("data-auto=\"true\"") && page.contains("data-parent=\"tauri://localhost\""));
     let (_, _, page) = call(
         &app,
         "GET",

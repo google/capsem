@@ -512,6 +512,7 @@ command_sandbox_mode = "CAPSEM_GATE_COMMAND_SANDBOX_MODE"
 [environment.install]
 test_output_root = "CAPSEM_TEST_OUTPUT_ROOT"
 project_environment = "UV_PROJECT_ENVIRONMENT"
+sudo_user = "SUDO_USER"
 # pnpm asks before purging a `node_modules` it did not create, and refuses when
 # it cannot ask: `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`. The install
 # proof reaches that state legitimately now -- `/src/build_system/release_site` comes from
@@ -894,7 +895,7 @@ key = "version"
 # ---------------------------------------------------------------------------
 
 [lint]
-python_roots = ["build_system/builder", "build_system/sdist_command.py", "build_system/packaging", "build_system/scripts", "build_system/tests", "tests", "guest", "images"]
+python_roots = ["build_system/builder", "build_system/sdist_command.py", "build_system/packaging", "build_system/scripts", "build_system/tests", "tests", "guest", "images", "skills/use-capsem/scripts"]
 # Already passes every rule, and must keep doing so.
 strict_roots = ["build_system/builder", "build_system/sdist_command.py"]
 strict_ty_search_paths = []
@@ -1148,13 +1149,13 @@ must_stay_below_lines = 3000
 "crates/capsem-assets/src/asset_manager.rs" = 1210
 "crates/capsem-core/src/hypervisor/kvm/mod.rs" = 1038
 "crates/capsem-core/src/hypervisor/kvm/sys.rs" = 1895
-"crates/capsem-core/src/hypervisor/kvm/virtio_blk.rs" = 1768
-"crates/capsem-core/src/hypervisor/kvm/virtio_blk/tests.rs" = 1059
+"crates/capsem-core/src/hypervisor/kvm/virtio_blk.rs" = 1707
+"crates/capsem-core/src/hypervisor/kvm/virtio_blk/tests.rs" = 1018
 "crates/capsem-core/src/hypervisor/kvm/virtio_fs/tests.rs" = 2041
-"crates/capsem-core/src/net/mitm_proxy/mod.rs" = 2507
+"crates/capsem-core/src/net/mitm_proxy/mod.rs" = 2492
 "crates/capsem-core/src/net/policy_config/security_rule_profile/tests.rs" = 1549
 "crates/capsem-core/src/security_engine/mod.rs" = 2046
-"crates/capsem-core/tests/mitm_integration.rs" = 2087
+"crates/capsem-core/tests/mitm_integration.rs" = 2085
 "crates/capsem-logger/src/writer/tests.rs" = 1237
 "crates/capsem-mock-server/src/main.rs" = 1167
 "crates/capsem-proto/src/tests.rs" = 1322
@@ -1162,9 +1163,9 @@ must_stay_below_lines = 3000
 "crates/capsem-service/src/tests/lifecycle.rs" = 1232
 "crates/capsem/src/main.rs" = 1972
 "crates/capsem/src/tests.rs" = 1241
-"crates/capsem/src/update.rs" = 2142
-"crates/capsem/src/update/asset_install.rs" = 1062
-"crates/capsem/src/update/tests.rs" = 2198
+"crates/capsem/src/update.rs" = 2041
+"crates/capsem/src/update/asset_install.rs" = 1041
+"crates/capsem/src/update/tests.rs" = 2103
 
 # The benchmark collectors. Their whole contract is that they print raw
 # samples and compute nothing, so one growing past this ceiling means
@@ -3641,12 +3642,6 @@ digest = "a651a24dcdbf"
 where = "build_system/packaging/linux/deb-postinst.sh"
 subject = "su $TARGET_USER -c XDG_RUNTIME_DIR=$XDG_DIR journalctl --user-unit capsem.service --no-pager -n 100"
 reason = "diagnostics; there may be no journal yet on a first install"
-
-[[boundary.discarded_verdicts]]
-digest = "30e2e243eea1"
-where = "build_system/packaging/linux/deb-preinst.sh"
-subject = "chown -R $TARGET_USER:$(id -gn $TARGET_USER) $CAPSEM_DIR/logs"
-reason = "the log directory may not exist before the first run"
 
 [[boundary.discarded_verdicts]]
 digest = "d52766736735"

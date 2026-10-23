@@ -10,28 +10,38 @@ source "$(dirname "$0")/retire-cohort"
 USER=$(capsem_resolve_install_user "/var/run/capsem/install-user")
 
 INSTALL_RUN_ID=$(date -u '+%Y%m%dT%H%M%SZ')
-INSTALL_LOG="/tmp/capsem-install.log"
-INSTALL_RUN_LOG="/tmp/capsem-install-$INSTALL_RUN_ID.log"
-CAPSEM_DIR="/tmp"
+install -d -m 0700 /var/run/capsem
+INSTALL_LOG="/var/run/capsem/install.log"
+INSTALL_RUN_LOG="/var/run/capsem/install-$INSTALL_RUN_ID.log"
+CAPSEM_DIR="/var/run/capsem"
 if [ -n "${USER:-}" ] && [ "$USER" != "root" ]; then
     USER_HOME=$(eval echo "~$USER")
     CAPSEM_DIR="$USER_HOME/.capsem"
-    mkdir -p "$CAPSEM_DIR/logs"
+    su "$USER" -c "CAPSEM_INSTALL_RUN_ID=$INSTALL_RUN_ID /bin/bash -s" <<'CAPSEM_USER'
+set -euo pipefail
+mkdir -p "$HOME/.capsem/logs"
+touch "$HOME/.capsem/logs/install.log" "$HOME/.capsem/logs/install-$CAPSEM_INSTALL_RUN_ID.log"
+printf '%s\n' "$CAPSEM_INSTALL_RUN_ID" > "$HOME/.capsem/logs/install-current-run"
+ln -sf "install-$CAPSEM_INSTALL_RUN_ID.log" "$HOME/.capsem/logs/install-latest.log"
+CAPSEM_USER
     INSTALL_LOG="$CAPSEM_DIR/logs/install.log"
     INSTALL_RUN_LOG="$CAPSEM_DIR/logs/install-$INSTALL_RUN_ID.log"
-    INSTALL_RUN_FILE="$CAPSEM_DIR/logs/install-current-run"
-    touch "$INSTALL_LOG" "$INSTALL_RUN_LOG"
-    printf '%s\n' "$INSTALL_RUN_ID" > "$INSTALL_RUN_FILE"
-    ln -sf "$(basename "$INSTALL_RUN_LOG")" "$CAPSEM_DIR/logs/install-latest.log"
-    chown "$USER" "$INSTALL_LOG" "$INSTALL_RUN_LOG" "$INSTALL_RUN_FILE" "$CAPSEM_DIR/logs" 2>/dev/null || true
 fi
 CAPSEM_INSTALL_PHASE="initialize_log"
 CAPSEM_INSTALL_RUN_LOG="$INSTALL_RUN_LOG"
 CAPSEM_INSTALL_FAILURE_FILE="$CAPSEM_DIR/logs/install-failure.txt"
 CAPSEM_INSTALL_USER="${USER:-}"
+CAPSEM_INSTALL_FAILURE_AS_USER=1
 capsem_install_enable_failure_trap
-rm -f "$CAPSEM_INSTALL_FAILURE_FILE"
-exec > >(tee -a "$INSTALL_LOG" "$INSTALL_RUN_LOG") 2>&1
+if [ -n "${USER:-}" ] && [ "$USER" != "root" ]; then
+    # HOME expands after su changes identity.
+    # shellcheck disable=SC2016
+    su "$USER" -c 'rm -f "$HOME/.capsem/logs/install-failure.txt"'
+    exec > >(su "$USER" -c "tee -a \"\$HOME/.capsem/logs/install.log\" \"\$HOME/.capsem/logs/install-$INSTALL_RUN_ID.log\"") 2>&1
+else
+    rm -f "$CAPSEM_INSTALL_FAILURE_FILE"
+    exec > >(tee -a "$INSTALL_LOG" "$INSTALL_RUN_LOG") 2>&1
+fi
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=preinstall event=start user=${USER:-unknown} install_run_id=$INSTALL_RUN_ID install_run_log=$INSTALL_RUN_LOG"
 
 CAPSEM_INSTALL_PHASE="stop_existing_install"
@@ -51,7 +61,8 @@ pkill -9 -x capsem-app 2>/dev/null || true
 CAPSEM_INSTALL_PHASE="remove_app_payload"
 if [ -n "${USER_HOME:-}" ] && [ "$USER_HOME" != "/" ]; then
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=preinstall event=remove_user_app_payload path=$USER_HOME/Applications/Capsem.app"
-    rm -rf "$USER_HOME/Applications/Capsem.app"
+    # shellcheck disable=SC2016
+    su "$USER" -c 'rm -rf "$HOME/Applications/Capsem.app"'
 fi
 
 CAPSEM_INSTALL_PHASE="remove_package_payload"

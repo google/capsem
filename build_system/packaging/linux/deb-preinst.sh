@@ -22,15 +22,27 @@ if [ -n "${SUDO_USER:-}" ]; then
 elif [ -n "${USER:-}" ] && [ "$USER" != "root" ]; then
     TARGET_USER="$USER"
 else
-    TARGET_USER=$(getent passwd 1000 | cut -d: -f1 || true)
+    TARGET_USER=""
 fi
 
-if [ -z "${TARGET_USER:-}" ]; then
-    echo "capsem: could not determine installing user, skipping pre-install shutdown"
-    exit 0
+if [ -z "$TARGET_USER" ]; then
+    echo "capsem: no installing user supplied; run the package install with sudo from the target account" >&2
+    exit 1
+fi
+case "$TARGET_USER" in
+    root|*[!A-Za-z0-9._-]*) echo "capsem: invalid installing user" >&2; exit 1 ;;
+esac
+TARGET_UID=$(id -u "$TARGET_USER")
+if [ "$TARGET_UID" -eq 0 ]; then
+    echo "capsem: installing user must be non-root" >&2
+    exit 1
 fi
 
-USER_HOME=$(eval echo "~$TARGET_USER")
+USER_HOME=$(getent passwd "$TARGET_USER" | cut -d: -f6)
+case "$USER_HOME" in
+    /*) ;;
+    *) echo "capsem: installing user has no absolute home" >&2; exit 1 ;;
+esac
 CAPSEM_DIR="$USER_HOME/.capsem"
 INSTALL_RUN_ID=$(date -u '+%Y%m%dT%H%M%SZ')
 INSTALL_LOG="$CAPSEM_DIR/logs/install.log"
@@ -42,18 +54,20 @@ CAPSEM_INSTALL_RUN_LOG="$INSTALL_RUN_LOG"
 CAPSEM_INSTALL_FAILURE_FILE="$CAPSEM_DIR/logs/install-failure.txt"
 CAPSEM_INSTALL_USER="$TARGET_USER"
 CAPSEM_INSTALL_PRESENT_FAILURE=0
+CAPSEM_INSTALL_FAILURE_AS_USER=1
 capsem_install_enable_failure_trap
-rm -f "$CAPSEM_INSTALL_FAILURE_FILE"
-mkdir -p "$CAPSEM_DIR/logs"
-touch "$INSTALL_LOG" "$INSTALL_RUN_LOG"
-printf '%s\n' "$INSTALL_RUN_ID" > "$INSTALL_RUN_FILE"
-ln -sf "$(basename "$INSTALL_RUN_LOG")" "$CAPSEM_DIR/logs/install-latest.log"
-chown -R "$TARGET_USER:$(id -gn "$TARGET_USER")" "$CAPSEM_DIR/logs" 2>/dev/null || true
-exec > >(tee -a "$INSTALL_LOG" "$INSTALL_RUN_LOG") 2>&1
+su "$TARGET_USER" -c "CAPSEM_INSTALL_RUN_ID=$INSTALL_RUN_ID /bin/bash -s" <<'CAPSEM_USER'
+set -euo pipefail
+mkdir -p "$HOME/.capsem/logs"
+touch "$HOME/.capsem/logs/install.log" "$HOME/.capsem/logs/install-$CAPSEM_INSTALL_RUN_ID.log"
+printf '%s\n' "$CAPSEM_INSTALL_RUN_ID" > "$HOME/.capsem/logs/install-current-run"
+ln -sf "install-$CAPSEM_INSTALL_RUN_ID.log" "$HOME/.capsem/logs/install-latest.log"
+rm -f "$HOME/.capsem/logs/install-failure.txt"
+CAPSEM_USER
+exec > >(su "$TARGET_USER" -c "tee -a \"\$HOME/.capsem/logs/install.log\" \"\$HOME/.capsem/logs/install-$INSTALL_RUN_ID.log\"") 2>&1
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-preinst event=start user=$TARGET_USER install_run_id=$INSTALL_RUN_ID install_run_log=$INSTALL_RUN_LOG"
 
 CAPSEM_INSTALL_PHASE="stop_existing_install"
-TARGET_UID=$(id -u "$TARGET_USER")
 XDG_DIR="/run/user/$TARGET_UID"
 if capsem_install_runs_inside_service /proc/self/cgroup; then
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-preinst event=preserve_service_owned_update unit=capsem.service"
@@ -62,7 +76,7 @@ else
         echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-preinst event=stop_systemd_user_service unit=capsem.service"
         su "$TARGET_USER" -c "XDG_RUNTIME_DIR=$XDG_DIR systemctl --user stop capsem.service" 2>/dev/null || true
     fi
-    capsem_retire_native_cohort "$CAPSEM_DIR" "$TARGET_UID"
+    capsem_retire_native_cohort "$CAPSEM_DIR" "$TARGET_UID" "$TARGET_USER"
 fi
 
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-preinst event=complete"

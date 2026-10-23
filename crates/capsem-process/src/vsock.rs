@@ -1,7 +1,9 @@
 use anyhow::{Context, Result};
 use capsem_core::{read_control_msg, write_control_msg, VsockConnection};
 use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
-use capsem_proto::{self as proto, GuestToHost, HostToGuest, HostVsockService};
+#[cfg(test)]
+use capsem_proto::HostVsockService;
+use capsem_proto::{self as proto, GuestToHost, HostToGuest};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -13,23 +15,27 @@ use crate::helpers::clone_fd;
 use crate::job_store::{ActiveFileOp, JobResult, JobStore};
 
 mod audit;
-mod clone_state;
+mod aux;
+#[cfg(test)]
 use audit::serve_audit_records;
+use aux::{dispatch_aux_connection, AuxConnectionLimits, MAX_DEFERRED_AUX_CONNECTIONS};
+mod clone_state;
 #[cfg(test)]
 use audit::{handle_audit_frame, read_bounded_frame};
 mod handshake;
 mod streams;
 mod suspend;
 mod terminal;
-use handshake::{collect_terminal_control_pair, is_retryable_handshake_error, perform_handshake};
+use handshake::{collect_terminal_control_pair, is_retryable_handshake_error, perform_handshake_bounded};
 pub(crate) use suspend::Files as SuspendFiles;
 pub(crate) use terminal::TerminalBridge;
 mod guest_report;
-use guest_report::{ackable_id, ackable_response_id, is_guest_liveness_message};
+use guest_report::{ackable_id, ackable_response_id, is_guest_liveness_message, warn_unhandled_guest_msg};
 mod exec_completion;
 mod exec_dispatch;
 mod exec_input;
 mod exec_output;
+mod file_content;
 mod shutdown;
 
 use crate::ipc::file_boundary::{
@@ -129,18 +135,21 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
             let (terminal_conn, control_conn) =
                 collect_terminal_control_pair(&mut vsock_rx, &mut attempt_deferred).await?;
 
-            let mut initial_ctrl = control_conn
+            let initial_ctrl = control_conn
                 .try_clone_file()
                 .context("duplicate initial control vsock for handshake")?;
             let is_rest = is_restore;
             let cli_env_clone = cli_env.clone();
             let guest_config_clone = guest_config.clone();
 
-            let handshake_res = tokio::task::spawn_blocking(move || {
-                perform_handshake(&mut initial_ctrl, is_rest, &cli_env_clone, Some(guest_config_clone))
-            })
-            .await
-            .context("handshake task panicked")?;
+            let handshake_res = perform_handshake_bounded(
+                initial_ctrl,
+                is_rest,
+                cli_env_clone,
+                Some(guest_config_clone),
+                std::time::Duration::from_secs(60),
+            )
+            .await;
 
             match handshake_res {
                 Ok(()) => {
@@ -534,14 +543,12 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
     let vm_id_lifecycle = vm_id.clone();
     let job_store_vsock = Arc::clone(&job_store);
 
-    let mut current_is_restore = true; // Always true after initial handshake
-    let mut initial_handshake_done = true;
-
     tokio::spawn(async move {
-        let mut pending_aux = deferred_conns;
+        let aux_limits = AuxConnectionLimits::default();
+        let handshake_slot = Arc::new(tokio::sync::Semaphore::new(1));
 
-        // Immediately dispatch the deferred_conns from the initial collect
-        for conn in pending_aux.drain(..) {
+        // Immediately dispatch the auxiliary connections from the initial collect.
+        for conn in deferred_conns {
             dispatch_aux_connection(
                 conn,
                 &upstream_grants_loop,
@@ -551,6 +558,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                 &ipc_tx_lifecycle,
                 &ctrl_tx_lifecycle,
                 &vm_id_lifecycle,
+                &aux_limits,
             );
         }
 
@@ -558,52 +566,34 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
             match conn.port {
                 proto::VSOCK_PORT_CONTROL => {
                     info!("control port: connection accepted, performing handshake");
-                    let Some(mut fd) = clone_fd(&conn, "duplicate-control-vsock-handshake") else {
-                        pending_aux.clear();
+                    let Ok(permit) = Arc::clone(&handshake_slot).try_acquire_owned() else {
+                        warn!("control port: handshake already in progress; dropping reconnect");
                         continue;
                     };
-                    let is_rest = current_is_restore;
+                    let Some(fd) = clone_fd(&conn, "duplicate-control-vsock-handshake") else {
+                        continue;
+                    };
                     let cli_env_clone = cli_env.clone();
                     let guest_config_clone = guest_config.clone();
-                    let hs_res = tokio::task::spawn_blocking(move || {
-                        perform_handshake(&mut fd, is_rest, &cli_env_clone, Some(guest_config_clone))
-                    })
-                    .await;
-
-                    match hs_res {
-                        Ok(Ok(())) => {
-                            info!("control port: handshake successful, re-keying bridge");
-                            let conn_arc = Arc::new(conn);
-                            capsem_core::try_send!("control_rekey", control_rekey_tx.send(conn_arc).await);
-
-                            // Handshake succeeded: dispatch any auxiliary connections that arrived with it
-                            for aux_conn in pending_aux.drain(..) {
-                                dispatch_aux_connection(
-                                    aux_conn,
-                                    &upstream_grants_loop,
-                                    &security_rules_loop,
-                                    &job_store_vsock,
-                                    &db_for_audit,
-                                    &ipc_tx_lifecycle,
-                                    &ctrl_tx_lifecycle,
-                                    &vm_id_lifecycle,
-                                );
+                    let rekey_tx = control_rekey_tx.clone();
+                    tokio::spawn(async move {
+                        let _permit = permit;
+                        match perform_handshake_bounded(
+                            fd,
+                            true,
+                            cli_env_clone,
+                            Some(guest_config_clone),
+                            std::time::Duration::from_secs(10),
+                        )
+                        .await
+                        {
+                            Ok(()) => {
+                                info!("control port: handshake successful, re-keying bridge");
+                                capsem_core::try_send!("control_rekey", rekey_tx.send(Arc::new(conn)).await);
                             }
-
-                            if !initial_handshake_done {
-                                initial_handshake_done = true;
-                                current_is_restore = true; // Subsequent connections are always "restores"
-                            }
+                            Err(e) => error!(error = format!("{e:#}"), "control port: handshake failed"),
                         }
-                        Ok(Err(e)) => {
-                            error!(error = format!("{e:#}"), "control port: handshake failed");
-                            pending_aux.clear(); // Drop dead FDs
-                        }
-                        Err(e) => {
-                            error!(error = %e, "control port: handshake panicked");
-                            pending_aux.clear();
-                        }
-                    }
+                    });
                 }
                 proto::VSOCK_PORT_TERMINAL => {
                     info!("terminal port: connection accepted, re-keying bridge");
@@ -611,185 +601,23 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     capsem_core::try_send!("terminal_rekey", terminal_rekey_tx.send(conn_arc).await);
                 }
                 _ => {
-                    if initial_handshake_done {
-                        // After initial boot, buffer them until the next handshake succeeds
-                        // Actually, if we're mid-session and receive an aux conn, it might be legit.
-                        // But if it arrives *during* a reconnection storm, we should buffer.
-                        // To keep it simple: just dispatch them. The control port rekeying is the
-                        // only thing that requires a successful handshake lock-step.
-                        dispatch_aux_connection(
-                            conn,
-                            &upstream_grants_loop,
-                            &security_rules_loop,
-                            &job_store_vsock,
-                            &db_for_audit,
-                            &ipc_tx_lifecycle,
-                            &ctrl_tx_lifecycle,
-                            &vm_id_lifecycle,
-                        );
-                    } else {
-                        // Before initial boot, buffer them
-                        pending_aux.push(conn);
-                    }
+                    dispatch_aux_connection(
+                        conn,
+                        &upstream_grants_loop,
+                        &security_rules_loop,
+                        &job_store_vsock,
+                        &db_for_audit,
+                        &ipc_tx_lifecycle,
+                        &ctrl_tx_lifecycle,
+                        &vm_id_lifecycle,
+                        &aux_limits,
+                    );
                 }
             }
         }
     });
 
     Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-fn dispatch_aux_connection(
-    conn: VsockConnection,
-    upstream_grants: &Arc<capsem_core::net::upstream_grant::UpstreamGrantClient>,
-    security_rules: &Arc<std::sync::RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>>,
-    job_store: &Arc<JobStore>,
-    db: &Arc<capsem_logger::DbWriter>,
-    ipc_tx: &broadcast::Sender<ProcessToService>,
-    ctrl_tx: &mpsc::Sender<ServiceToProcess>,
-    vm_id: &str,
-) {
-    match HostVsockService::from_port(conn.port) {
-        Some(HostVsockService::Publication) => job_store.publisher.accept(conn),
-        Some(HostVsockService::Network) => streams::serve_network(conn, job_store, vm_id),
-        Some(HostVsockService::SniProxy) => surrender_proxy_traffic(
-            conn,
-            capsem_proto::upstream_grant::ProxyTrafficService::Http,
-            "HTTP",
-            upstream_grants,
-        ),
-        Some(HostVsockService::DnsProxy) => surrender_proxy_traffic(
-            conn,
-            capsem_proto::upstream_grant::ProxyTrafficService::Dns,
-            "DNS",
-            upstream_grants,
-        ),
-        Some(HostVsockService::Exec) => {
-            let js = Arc::clone(job_store);
-            std::thread::spawn(move || {
-                let Some(mut file) = clone_fd(&conn, "duplicate-exec-vsock") else {
-                    return;
-                };
-                if let Ok(GuestToHost::ExecStarted { id, output_protocol }) = read_control_msg(&mut file) {
-                    info!(id, ?output_protocol, "exec port: received ExecStarted");
-                    let (stream, input) = js
-                        .active_execs
-                        .lock()
-                        .unwrap()
-                        .get_mut(&id)
-                        .map(|active| (active.stream.clone(), active.input_rx.take()))
-                        .unwrap_or((None, None));
-                    let _input_handle = exec_input::spawn_for(&conn, id, input, stream.clone(), output_protocol);
-                    let capture = exec_output::read_protocol(&mut file, id, stream.as_ref(), output_protocol);
-                    let total_seen = capture.stdout_bytes.saturating_add(capture.stderr_bytes);
-                    let retained = capture.stdout.len().saturating_add(capture.stderr.len());
-                    if total_seen > retained as u64 {
-                        warn!(
-                            id,
-                            retained,
-                            total_bytes = total_seen,
-                            cap_per_lane = exec_output::EXEC_LEDGER_BODY_BYTES,
-                            "exec output exceeded the ledger cap; retaining each lane's prefix"
-                        );
-                    }
-                    // Deposit captured bytes and signal ExecDone it can
-                    // proceed. notify_one stores a permit if ExecDone is
-                    // not yet parked, so the common "deposit finishes
-                    // first" path wakes ExecDone immediately.
-                    let notify = exec_output::deposit(&js, id, capture);
-                    if let Some(n) = notify {
-                        n.notify_one();
-                    }
-                }
-                drop(conn);
-            });
-        }
-        Some(HostVsockService::Audit) => {
-            let db_clone = Arc::clone(db);
-            let security_rules = Arc::clone(security_rules);
-            std::thread::spawn(move || {
-                let Some(mut file) = clone_fd(&conn, "duplicate-audit-vsock") else {
-                    return;
-                };
-                info!("audit port: connected, reading audit records");
-                serve_audit_records(&mut file, &db_clone, &security_rules);
-                drop(conn);
-            });
-        }
-        Some(HostVsockService::Lifecycle) => {
-            let itx = ipc_tx.clone();
-            let ctx = ctrl_tx.clone();
-            let id = vm_id.to_string();
-            std::thread::spawn(move || {
-                let Some(mut f) = clone_fd(&conn, "duplicate-lifecycle-vsock") else {
-                    return;
-                };
-                match read_control_msg(&mut f) {
-                    Ok(GuestToHost::ShutdownRequest) => {
-                        info!("guest requested shutdown via lifecycle port");
-                        capsem_core::try_send!(
-                            "ipc_lifecycle_shutdown",
-                            itx.send(ProcessToService::ShutdownRequested { id })
-                        );
-                        capsem_core::try_send!(
-                            "ctrl_lifecycle_shutdown",
-                            ctx.blocking_send(ServiceToProcess::Shutdown)
-                        );
-                    }
-                    Ok(GuestToHost::SuspendRequest) => {
-                        info!("guest requested suspend via lifecycle port");
-                        capsem_core::try_send!(
-                            "ipc_lifecycle_suspend",
-                            itx.send(ProcessToService::SuspendRequested { id })
-                        );
-                        capsem_core::try_send!("ctrl_lifecycle_suspend", ctx.blocking_send(ServiceToProcess::Suspend));
-                    }
-                    other => {
-                        // W4: a lifecycle-port frame the host doesn't recognize
-                        // is exactly the bug pattern that wedged us today.
-                        warn!(target: "ipc", unhandled = ?other, "VSOCK_PORT_LIFECYCLE: unknown variant; this binary may be older than its peer");
-                    }
-                }
-                drop(conn);
-            });
-        }
-        Some(HostVsockService::Control | HostVsockService::Terminal) => {
-            warn!(
-                target: "ipc",
-                port = conn.port,
-                service = HostVsockService::from_port(conn.port).map(HostVsockService::as_str),
-                "vsock dispatch: control/terminal service reached auxiliary dispatcher; connection ignored"
-            );
-        }
-        other => {
-            warn!(
-                target: "ipc",
-                port = conn.port,
-                service = ?other.map(HostVsockService::as_str),
-                "vsock dispatch: unknown port; auxiliary connection ignored"
-            );
-        }
-    }
-}
-
-fn surrender_proxy_traffic(
-    conn: VsockConnection,
-    service: capsem_proto::upstream_grant::ProxyTrafficService,
-    label: &'static str,
-    upstream_grants: &Arc<capsem_core::net::upstream_grant::UpstreamGrantClient>,
-) {
-    match conn.try_clone_fd() {
-        Ok(descriptor) => {
-            let grants = Arc::clone(upstream_grants);
-            tokio::spawn(async move {
-                if let Err(error) = grants.attach_proxy_traffic(service, descriptor).await {
-                    warn!(%error, "{label} port: proxy worker refused the session descriptor");
-                }
-            });
-        }
-        Err(error) => warn!(%error, "{label} port: cannot duplicate the session descriptor"),
-    }
 }
 
 /// The message to fail an exec job with, or `None` when the command may run.
@@ -869,68 +697,26 @@ async fn handle_guest_msg(
                 exec_completion::complete(id, exit_code, js, db, security_rules).await;
             }
         }
-        GuestToHost::FileContent { id, path, data } => {
+        GuestToHost::FileContent { id, path: _, data } => {
             let context = {
                 let mut active_file_ops = js.active_file_ops.lock().unwrap();
-                active_file_ops.remove(&id)
-            };
-            let (path, action) = match context {
-                Some(ActiveFileOp::Read { path }) => (path, capsem_logger::FileAction::Exported),
-                Some(ActiveFileOp::Write { path, .. }) => (path, capsem_logger::FileAction::Read),
-                None => (path, capsem_logger::FileAction::Read),
-            };
-            let boundary = emit_explicit_file_security_event(
-                db,
-                security_rules,
-                plugin_policy,
-                FileSecurityBoundary {
-                    action,
-                    path,
-                    size: Some(data.len() as u64),
-                    content: Some(file_content_preview(&data)),
-                    mime_type: None,
-                },
-            )
-            .await;
-            // An export leaves the sandbox, so it is refused unless its ledger
-            // record was admitted and allowed -- like exec and file import. A
-            // record that failed to write or evaluate refuses it too (#203):
-            // an export nobody could audit must not happen.
-            let refusal = match &boundary {
-                Ok(Some(emission)) if emission.enforcement.is_allowed() => None,
-                Ok(Some(emission)) => Some(
-                    emission
-                        .enforcement
-                        .reason
-                        .clone()
-                        .unwrap_or_else(|| "blocked by policy".into()),
-                ),
-                Ok(None) => Some("its security event could not be recorded".into()),
-                Err(error) => Some(format!("its security event failed: {error}")),
-            };
-            if let Some(reason) = refusal {
-                if action != capsem_logger::FileAction::Exported {
-                    warn!(id, action = ?action, reason, "file boundary not allowed after data was already local");
+                if matches!(active_file_ops.get(&id), Some(ActiveFileOp::Read { .. })) {
+                    active_file_ops.remove(&id)
                 } else {
-                    let error = Some(format!("file export refused: {reason}"));
-                    if let Some(tx) = js.jobs.lock().unwrap().remove(&id) {
-                        capsem_core::try_send!(
-                            "job_result_read_file_blocked",
-                            tx.send(JobResult::ReadFile { data: None, error })
-                        );
-                    }
-                    return;
+                    None
                 }
-            }
-            if let Some(tx) = js.jobs.lock().unwrap().remove(&id) {
-                capsem_core::try_send!(
-                    "job_result_read_file",
-                    tx.send(JobResult::ReadFile {
-                        data: Some(data),
-                        error: None
-                    })
-                );
-            }
+            };
+            let Some(context) = context else {
+                warn!(id, "unsolicited file content ignored");
+                return;
+            };
+            let js = Arc::clone(js);
+            let db = Arc::clone(db);
+            let security_rules = Arc::clone(security_rules);
+            let plugin_policy = Arc::clone(plugin_policy);
+            tokio::spawn(async move {
+                file_content::complete(id, context, data, js, db, security_rules, plugin_policy).await;
+            });
         }
         GuestToHost::FileOpDone { id } => {
             let context = {
@@ -990,7 +776,7 @@ async fn handle_guest_msg(
             trace!(target: "ipc", message = ?other, "guest liveness reply");
         }
         other => {
-            warn!(target: "ipc", unhandled = ?other, "handle_guest_msg: unknown variant; this binary may be older than its peer");
+            warn_unhandled_guest_msg(&other);
         }
     }
 }

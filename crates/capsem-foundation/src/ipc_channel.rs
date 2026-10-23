@@ -138,16 +138,7 @@ where
         // Encode once into the final frame. Reject excess bytes during encode,
         // before socket I/O; neither preflight serialization nor a payload copy.
         let mut frame = vec![0; 4];
-        let mut writer = crate::limited_writer::LimitedWriter::new(&mut frame, MAX_IPC_FRAME_SIZE as usize);
-        let encoded = rmp_serde::encode::write_named(&mut writer, &message);
-        let exceeded = writer.exceeded();
-        encoded.map_err(|error| {
-            if exceeded {
-                invalid_data("IPC frame too large", MAX_IPC_FRAME_SIZE)
-            } else {
-                invalid_data("encode IPC frame", error)
-            }
-        })?;
+        append_record(&mut frame, message, MAX_IPC_FRAME_SIZE as usize)?;
         let len = (frame.len() - 4) as u32;
         frame[..4].copy_from_slice(&len.to_be_bytes());
         Ok(PreparedFrame {
@@ -169,8 +160,37 @@ where
     /// Receive and decode one complete bounded frame. Cancel-safe.
     pub async fn recv(&self) -> io::Result<T> {
         let payload = self.inner.lock().await.next_frame().await?;
-        rmp_serde::from_slice(&payload).map_err(|error| invalid_data("decode IPC frame", error))
+        decode_record(&payload, MAX_IPC_FRAME_SIZE as usize)
     }
+}
+
+/// Encode one typed, named record whose boundary is supplied by its atomic file.
+/// The same encoder writes stream payloads directly after their reserved header.
+pub fn encode_record<T: Serialize>(message: &T, limit: usize) -> io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    append_record(&mut bytes, message, limit)?;
+    Ok(bytes)
+}
+
+fn append_record<T: Serialize>(bytes: &mut Vec<u8>, message: &T, limit: usize) -> io::Result<()> {
+    let mut writer = crate::limited_writer::LimitedWriter::new(bytes, limit);
+    let encoded = rmp_serde::encode::write_named(&mut writer, message);
+    let exceeded = writer.exceeded();
+    encoded.map_err(|error| {
+        if exceeded {
+            invalid_data("MessagePack frame too large", limit)
+        } else {
+            invalid_data("encode MessagePack record", error)
+        }
+    })
+}
+
+/// Decode one bounded record without copying its encoded bytes.
+pub fn decode_record<T: DeserializeOwned>(bytes: &[u8], limit: usize) -> io::Result<T> {
+    if bytes.len() > limit {
+        return Err(invalid_data("MessagePack frame too large", limit));
+    }
+    rmp_serde::from_slice(bytes).map_err(|error| invalid_data("decode MessagePack record", error))
 }
 
 fn invalid_data(context: &str, error: impl fmt::Display) -> io::Error {

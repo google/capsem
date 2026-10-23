@@ -159,13 +159,13 @@ fn http_detector_detects_github_authorization_without_raw_leak() {
 }
 
 #[test]
-fn http_detector_detects_google_api_key_header_with_provider_hint() {
+fn http_detector_detects_google_api_key_header_on_google_host() {
     let obs = detect_http_credential(
-        "127.0.0.1",
+        "generativelanguage.googleapis.com",
         "x-goog-api-key",
         b"capsem_test_google_stream_key_0123456789abcdef",
     )
-    .expect("google API key header should be detected without provider hint");
+    .expect("Google API key header should be detected for a Google destination");
 
     assert_eq!(obs.provider, CredentialProvider::Google);
     assert_eq!(obs.raw_value, "capsem_test_google_stream_key_0123456789abcdef");
@@ -176,39 +176,31 @@ fn http_detector_detects_google_api_key_header_with_provider_hint() {
 }
 
 #[test]
-fn http_detector_brokers_unknown_openai_compatible_authorization() {
+fn http_detector_refuses_unknown_openai_compatible_authorization() {
     let obs = detect_http_credential_with_provider(
         "127.0.0.1",
         Some(ProviderKind::Unknown),
         "authorization",
         b"Bearer capsem_test_sdk_api_key_repeat_0123456789abcdef",
-    )
-    .expect("unknown OpenAI-compatible authorization header should be brokered");
-
-    assert_eq!(obs.provider, CredentialProvider::OpenAi);
-    assert_eq!(obs.raw_value, "capsem_test_sdk_api_key_repeat_0123456789abcdef");
-    assert_eq!(obs.source, "http.header.authorization");
-    let event = obs.redacted_event("captured");
-    assert!(is_broker_reference(&event.substitution_ref));
-    assert!(!event.context_json.unwrap().contains("capsem_test_sdk_api_key"));
+    );
+    assert!(
+        obs.is_none(),
+        "unknown destinations must not capture opaque credentials"
+    );
 }
 
 #[test]
-fn http_detector_brokers_unknown_anthropic_compatible_api_key() {
+fn http_detector_refuses_unknown_anthropic_compatible_api_key() {
     let obs = detect_http_credential_with_provider(
         "127.0.0.1",
         Some(ProviderKind::Unknown),
         "x-api-key",
         b"capsem_test_anthropic_stream_key_0123456789abcdef",
-    )
-    .expect("unknown Anthropic-compatible x-api-key header should be brokered");
-
-    assert_eq!(obs.provider, CredentialProvider::Anthropic);
-    assert_eq!(obs.raw_value, "capsem_test_anthropic_stream_key_0123456789abcdef");
-    assert_eq!(obs.source, "http.header.x-api-key");
-    let event = obs.redacted_event("captured");
-    assert!(is_broker_reference(&event.substitution_ref));
-    assert!(!event.context_json.unwrap().contains("capsem_test_anthropic_stream_key"));
+    );
+    assert!(
+        obs.is_none(),
+        "unknown destinations must not capture opaque credentials"
+    );
 }
 
 #[test]
@@ -283,13 +275,10 @@ fn http_body_detector_finds_local_oauth_fixture_response() {
 
 #[test]
 fn http_body_detector_finds_local_nested_credential_response() {
-    let body = br#"{"api_key":"sk-capsem_test_api_key_0123456789abcdef","oauth":{"access_token":"capsem_test_oauth_access_0123456789abcdef","refresh_token":"capsem_test_oauth_refresh_0123456789abcdef","id_token":"capsem_test_oauth_id_0123456789abcdef"}}"#;
+    let body = br#"{"oauth":{"access_token":"capsem_test_oauth_access_0123456789abcdef","refresh_token":"capsem_test_oauth_refresh_0123456789abcdef","id_token":"capsem_test_oauth_id_0123456789abcdef"}}"#;
     let found = detect_http_body_credentials("127.0.0.1", "/credential/response", "response", body);
 
-    assert_eq!(found.len(), 4);
-    assert!(found
-        .iter()
-        .any(|obs| obs.provider == CredentialProvider::OpenAi && obs.source == "http.body.response.$.api_key"));
+    assert_eq!(found.len(), 3);
     assert!(found
         .iter()
         .filter(|obs| obs.provider == CredentialProvider::Google)
@@ -302,7 +291,6 @@ fn http_body_detector_finds_local_nested_credential_response() {
 
     let redacted = String::from_utf8(redact_observed_credentials_in_bytes(body, &found)).unwrap();
     assert!(redacted.contains("credential:blake3:"));
-    assert!(!redacted.contains("sk-capsem_test_api_key_0123456789abcdef"));
     assert!(!redacted.contains("capsem_test_oauth_access_0123456789abcdef"));
     assert!(!redacted.contains("capsem_test_oauth_refresh_0123456789abcdef"));
     assert!(!redacted.contains("capsem_test_oauth_id_0123456789abcdef"));
@@ -376,6 +364,41 @@ fn brokered_reference_does_not_leak_secret_to_unbound_domain() {
         !auth.contains("sk-ant-secret-do-not-leak"),
         "raw secret must never be materialized into a request to an unbound domain"
     );
+}
+
+#[test]
+fn ollama_destination_cannot_redeem_openai_reference() {
+    let dir = tempfile::tempdir().unwrap();
+    let capsem_home = dir.path().join("capsem-home");
+    let test_store = dir.path().join("credential-store.json");
+    let _guard = EnvGuard::install(TEST_ENV_LOCK.blocking_lock(), &capsem_home, dir.path(), &test_store);
+
+    let obs = CredentialObservation {
+        provider: CredentialProvider::OpenAi,
+        raw_value: "sk-openai-secret-do-not-leak".to_string(),
+        source: "http.header.authorization".to_string(),
+        event_type: Some("http.request".to_string()),
+        trace_id: None,
+        context_json: None,
+    };
+    let reference = broker_observed_credential(&obs).unwrap().credential_ref;
+    let mut headers = http::HeaderMap::new();
+    headers.insert(
+        http::header::AUTHORIZATION,
+        http::HeaderValue::from_str(&format!("Bearer {reference}")).unwrap(),
+    );
+
+    let result = substitute_brokered_upstream_credentials("127.0.0.1", Some(ProviderKind::Ollama), &mut headers, None);
+    assert!(
+        result.is_err(),
+        "an Ollama endpoint must not redeem an OpenAI reference"
+    );
+    let auth = headers.get(http::header::AUTHORIZATION).unwrap().to_str().unwrap();
+    assert!(!auth.contains("sk-openai-secret-do-not-leak"));
+
+    substitute_brokered_upstream_credentials("api.openai.com", Some(ProviderKind::OpenAi), &mut headers, None).unwrap();
+    let auth = headers.get(http::header::AUTHORIZATION).unwrap().to_str().unwrap();
+    assert_eq!(auth, "Bearer sk-openai-secret-do-not-leak");
 }
 
 #[test]

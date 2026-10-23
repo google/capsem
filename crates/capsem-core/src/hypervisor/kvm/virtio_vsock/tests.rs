@@ -3,6 +3,24 @@ use super::checkpoint::VsockCheckpointState;
 use super::*;
 mod ring_bounds;
 
+#[test]
+fn accepted_vsock_peer_must_be_the_vm_that_owns_the_listener() {
+    let peer = |family, cid| SockaddrVm {
+        svm_family: family,
+        svm_reserved1: 0,
+        svm_port: 5000,
+        svm_cid: cid,
+        svm_flags: 0,
+        svm_zero: [0; 3],
+    };
+    let full = std::mem::size_of::<SockaddrVm>() as libc::socklen_t;
+    assert!(vsock_peer_matches_guest(&peer(AF_VSOCK as u16, 42), full, 42));
+    assert!(!vsock_peer_matches_guest(&peer(AF_VSOCK as u16, 43), full, 42));
+    assert!(!vsock_peer_matches_guest(&peer(AF_VSOCK as u16, 2), full, 42)); // host CID
+    assert!(!vsock_peer_matches_guest(&peer(libc::AF_INET as u16, 42), full, 42));
+    assert!(!vsock_peer_matches_guest(&peer(AF_VSOCK as u16, 42), full - 1, 42));
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum RecordedIoctl {
     Request(u64),

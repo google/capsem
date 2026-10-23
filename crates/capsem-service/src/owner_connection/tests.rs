@@ -161,3 +161,124 @@ async fn authenticated_suspend_accepts_its_original_childs_confirmation_and_exit
     assert!(result.unwrap().0.success);
     assert!(!state.instances.lock().unwrap().contains_key("owner"));
 }
+
+#[tokio::test]
+async fn guest_suspending_owner_child() {
+    let Some(path) = std::env::var_os("CAPSEM_GUEST_SUSPENDING_OWNER") else {
+        return;
+    };
+    use std::io::Write;
+    use std::os::fd::AsFd;
+    let listener = tokio::net::UnixListener::bind(path).unwrap();
+    let mut control =
+        std::os::unix::net::UnixStream::from(capsem_foundation::unix::fd::duplicate(std::io::stdin().as_fd()).unwrap());
+    control.write_all(b"ready").unwrap();
+
+    let (watch_socket, _) = listener.accept().await.unwrap();
+    let mut watch_socket = watch_socket.into_std().unwrap();
+    let watch_socket = tokio::task::spawn_blocking(move || {
+        capsem_foundation::ipc_handshake::negotiate_responder(&mut watch_socket, "capsem-process-test", "").unwrap();
+        watch_socket
+    })
+    .await
+    .unwrap();
+    let (watch_tx, _watch_rx) = channel_from_std::<ProcessToService, ServiceToProcess>(watch_socket).unwrap();
+    watch_tx
+        .send(ProcessToService::SuspendRequested { id: "owner".into() })
+        .await
+        .unwrap();
+    control.write_all(b"requested").unwrap();
+
+    let (action_socket, _) = listener.accept().await.unwrap();
+    let mut action_socket = action_socket.into_std().unwrap();
+    let action_socket = tokio::task::spawn_blocking(move || {
+        capsem_foundation::ipc_handshake::negotiate_responder(&mut action_socket, "capsem-process-test", "").unwrap();
+        action_socket
+    })
+    .await
+    .unwrap();
+    let (action_tx, action_rx) = channel_from_std::<ProcessToService, ServiceToProcess>(action_socket).unwrap();
+    assert!(matches!(action_rx.recv().await.unwrap(), ServiceToProcess::Suspend));
+    control.write_all(b"admitted").unwrap();
+    action_tx
+        .send(ProcessToService::StateChanged {
+            id: "owner".into(),
+            state: "Suspended".into(),
+            trigger: "guest".into(),
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn guest_suspend_waits_for_service_lifecycle_lock() {
+    use tokio::io::AsyncReadExt;
+    let (state, owner) = fixture();
+    let (control, child_control) = std::os::unix::net::UnixStream::pair().unwrap();
+    control.set_nonblocking(true).unwrap();
+    let mut control = tokio::net::UnixStream::from_std(control).unwrap();
+    let child = crate::tests::isolated_test_command(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "owner_connection::tests::guest_suspending_owner_child",
+            "--nocapture",
+        ])
+        .env("CAPSEM_GUEST_SUSPENDING_OWNER", &owner.uds_path)
+        .stdin(std::process::Stdio::from(std::os::fd::OwnedFd::from(child_control)))
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut ready = [0; 5];
+    tokio::time::timeout(std::time::Duration::from_secs(5), control.read_exact(&mut ready))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(&ready, b"ready");
+    let (generation, session_dir) = {
+        let mut instances = state.instances.lock().unwrap();
+        let instance = instances.get_mut("owner").unwrap();
+        instance.pid = child.id().unwrap();
+        instance.persistent = true;
+        let details = (instance.generation, instance.session_dir.clone());
+        drop(instances);
+        details
+    };
+    let retirement = state.retirements.register("owner", generation).unwrap();
+    let reaper = crate::instance_reaper::spawn_exit_reaper(
+        child,
+        "owner".into(),
+        "owner".into(),
+        Arc::clone(&state),
+        owner.uds_path,
+        session_dir,
+        retirement,
+    );
+    let lock = state.lifecycle.vz.write().await;
+    crate::guest_lifecycle::spawn_suspend_listener(Arc::clone(&state), "owner".into(), generation);
+    let mut requested = [0; 9];
+    tokio::time::timeout(std::time::Duration::from_secs(5), control.read_exact(&mut requested))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(&requested, b"requested");
+    let mut admitted = [0; 8];
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), control.read_exact(&mut admitted))
+            .await
+            .is_err(),
+        "guest suspend bypassed the service lifecycle lock"
+    );
+    drop(lock);
+    tokio::time::timeout(std::time::Duration::from_secs(10), control.read_exact(&mut admitted))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(&admitted, b"admitted");
+    tokio::time::timeout(std::time::Duration::from_secs(10), reaper)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!state.instances.lock().unwrap().contains_key("owner"));
+}

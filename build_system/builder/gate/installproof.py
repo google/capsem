@@ -129,7 +129,11 @@ class InstallProof:
     def install(self, package: str, *, expected: str, manifest: str | None = None) -> None:
         self._runner.note(f"Installing exact release package via dpkg: {package}")
         self.verify_package_dependencies(package)
-        self._docker.shell(self._container, f'dpkg -i "{package}"')
+        self._docker.shell(
+            self._container,
+            f'dpkg -i "{package}"',
+            env={self._config.environment.install.sudo_user: self._settings.guest_user.name},
+        )
         installed = self._docker.capture(
             self._container,
             ["dpkg-query", "-W", "-f=${Version}", self._suite.package_name],

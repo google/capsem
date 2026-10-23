@@ -18,11 +18,29 @@ pub(super) fn trusted_parent(head: &Head) -> anyhow::Result<&str> {
     Ok(origin)
 }
 
-pub(super) fn parent_from_form(body: &str, head: &Head) -> anyhow::Result<String> {
-    let initiator = trusted_parent(head)?;
+pub(super) fn trusted_initiator(head: &Head, gateway_port: u16) -> anyhow::Result<&str> {
+    let origin = head
+        .origin
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("bootstrap initiator missing"))?;
+    // Authority comes from our bound listener, never a caller-supplied Host
+    // or arbitrary guest-published loopback port. The recipient remains a
+    // separately validated Capsem parent, and receives only a scoped preview.
+    anyhow::ensure!(
+        origin == "tauri://localhost" || origin == format!("http://127.0.0.1:{gateway_port}"),
+        "untrusted bootstrap initiator"
+    );
+    Ok(origin)
+}
+
+pub(super) fn parent_from_form(body: &str, head: &Head, gateway_port: u16) -> anyhow::Result<String> {
+    trusted_initiator(head, gateway_port)?;
     let mut parents = url::form_urlencoded::parse(body.as_bytes())
         .filter_map(|(key, value)| (key == "parent_origin").then(|| value.into_owned()));
-    let parent = parents.next().unwrap_or_else(|| initiator.to_owned());
+    let parent = match parents.next() {
+        Some(parent) => parent,
+        None => trusted_parent(head)?.to_owned(),
+    };
     anyhow::ensure!(parents.next().is_none(), "duplicate embedded parent");
     anyhow::ensure!(
         crate::cors::is_allowed_origin(&http::HeaderValue::from_str(&parent)?),

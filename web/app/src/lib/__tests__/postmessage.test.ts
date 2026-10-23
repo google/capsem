@@ -39,6 +39,13 @@ describe('parseIframeMessage', () => {
     expect(parseIframeMessage({ title: 'x' })).toBeNull();
   });
 
+  it('accepts only bounded integer token request ids', () => {
+    expect(parseIframeMessage({ type: 'gateway-token-request', requestId: 7 }))
+      .toEqual({ type: 'gateway-token-request', requestId: 7 });
+    expect(parseIframeMessage({ type: 'gateway-token-request', requestId: -1 })).toBeNull();
+    expect(parseIframeMessage({ type: 'gateway-token-request', requestId: 1.5 })).toBeNull();
+  });
+
   // clipboard-request
   it('parses clipboard-request', () => {
     expect(parseIframeMessage({ type: 'clipboard-request' })).toEqual({ type: 'clipboard-request' });
@@ -134,6 +141,13 @@ describe('parseIframeMessage', () => {
 // -- parseParentMessage --
 
 describe('parseParentMessage', () => {
+  it('accepts only complete token replies', () => {
+    const token = 'a'.repeat(64);
+    expect(parseParentMessage({ type: 'gateway-token', requestId: 2, token }))
+      .toEqual({ type: 'gateway-token', requestId: 2, token });
+    expect(parseParentMessage({ type: 'gateway-token', requestId: 2, token: 'short' })).toBeNull();
+    expect(parseParentMessage({ type: 'gateway-token', requestId: -1, token })).toBeNull();
+  });
   it('rejects null', () => {
     expect(parseParentMessage(null)).toBeNull();
   });

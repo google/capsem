@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getBaseUrl } from '../../api';
+  import { createSurfaceSession, getBaseUrl } from '../../api';
   import { isSurfaceReconnectMessage, surfaceEmbedUrl, type SurfaceProfile } from '../../models/surface';
   import { vmStore } from '../../stores/vms.svelte';
   import { metricMs, metricSize, parseSurfaceMetrics, type SurfaceMetrics } from '../../models/surface-metrics';
@@ -8,10 +8,28 @@
   let frame: HTMLIFrameElement | undefined = $state();
   let metrics: SurfaceMetrics | null = $state(null);
   let reconnect = $state(0);
-  let src = $derived(surfaceEmbedUrl(getBaseUrl(), vmId, window.location.origin, profile));
+  let src: string | undefined = $state();
+  let failed = $state(false);
   // Keep the graphical connection across UI/Terminal/Stats switches. A VM
   // lifecycle transition starts a fresh bootstrap against the current owner.
   let status = $derived(vmStore.vms.find(vm => vm.id === vmId)?.status);
+
+  $effect(() => {
+    void status; void revision; void reconnect;
+    const id = vmId, selectedProfile = profile;
+    const controller = new AbortController();
+    let active = true;
+    const timeout = setTimeout(() => controller.abort(), 120_000);
+    src = undefined;
+    failed = false;
+    void createSurfaceSession(id, controller.signal)
+      .then(session => {
+        if (!controller.signal.aborted) src = surfaceEmbedUrl(getBaseUrl(), id, window.location.origin, session, selectedProfile);
+      })
+      .catch(() => { if (active) failed = true; })
+      .finally(() => clearTimeout(timeout));
+    return () => { active = false; clearTimeout(timeout); controller.abort(); };
+  });
 
   function sendDebug() {
     // No credential or authority is carried in this flag. The child accepts
@@ -32,7 +50,8 @@
   if (debug && event.data?.type === 'capsem:surface-metrics') metrics = parseSurfaceMetrics(event.data.metrics);
 }} />
 
-{#key `${status}:${revision}:${reconnect}:${profile}`}
+{#if src}
+{#key src}
   <iframe
     bind:this={frame}
     {src}
@@ -43,6 +62,15 @@
     onload={() => { metrics = null; sendDebug(); }}
   ></iframe>
 {/key}
+{:else}
+  <div class="grid h-full place-items-center">
+    {#if failed}
+      <button type="button" class="px-4 py-2 rounded-lg bg-primary text-primary-foreground" onclick={() => reconnect += 1}>Retry app</button>
+    {:else}
+      <progress aria-label="Opening app"></progress>
+    {/if}
+  </div>
+{/if}
 
 {#if debug}
   <aside aria-label="Display diagnostics" class="pointer-events-none absolute right-3 top-3 z-20 rounded-lg border border-line-2 bg-background/95 p-3 font-mono text-xs text-foreground shadow-lg">

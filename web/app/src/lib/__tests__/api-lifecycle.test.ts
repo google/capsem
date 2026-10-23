@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { VmLifecycleState, VmAction, type ProvisionResponse } from '@capsem/sdk';
 
 const mockFetch = vi.fn();
@@ -22,6 +22,7 @@ function provision(id: string): ProvisionResponse {
 // ---- VM lifecycle ----
 
 describe('VM lifecycle', () => {
+  afterEach(() => vi.stubGlobal('window', undefined));
   beforeEach(async () => {
     mockFetch.mockReset();
     mockFetch
@@ -43,6 +44,73 @@ describe('VM lifecycle', () => {
     const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
     expect(call[0]).toContain('/vms/create');
     expect(call[1].method).toBe('POST');
+  });
+
+  it('opens a surface with only its single-use preview bootstrap', async () => {
+    const open = vi.fn();
+    vi.stubGlobal('window', { open });
+    const session = {
+      url: 'http://preview.localhost:19444/_capsem/bootstrap',
+      bootstrap_token: 'single-use',
+    };
+    mockFetch.mockReturnValueOnce(jsonResponse(session));
+
+    await api.openSurface('vm-1');
+
+    const request = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+    expect(String(request[0])).toContain('/vms/vm-1/surface/session');
+    expect(request[1].method).toBe('POST');
+    const launch = new URL(open.mock.calls[0][0]);
+    expect(launch.pathname).toBe('/vms/vm-1/surface/');
+    expect(JSON.parse(decodeURIComponent(launch.hash.slice(1)))).toEqual(session);
+    expect(launch.href).not.toContain('Bearer tok');
+  });
+
+  it('waits for the exposure through authenticated requests before minting the viewer', async () => {
+    vi.useFakeTimers();
+    try {
+      const session = {url: 'http://preview.localhost:19444/_capsem/bootstrap', bootstrap_token: 'scoped'};
+      mockFetch.mockReturnValueOnce(textResponse('starting', 404)).mockReturnValueOnce(jsonResponse(session));
+      const start = mockFetch.mock.calls.length;
+      const pending = api.createSurfaceSession('vm-1', new AbortController().signal);
+      await vi.advanceTimersByTimeAsync(500);
+      expect(await pending).toEqual(session);
+      const requests = mockFetch.mock.calls.slice(start);
+      expect(requests).toHaveLength(2);
+      for (const [url, options] of requests) {
+        expect(url).toContain('/vms/vm-1/surface/session');
+        expect(options.headers.Authorization).toBe('Bearer tok');
+      }
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('cancels exposure polling when its viewer is replaced', async () => {
+    vi.useFakeTimers();
+    try {
+      mockFetch.mockReturnValueOnce(textResponse('starting', 404));
+      const start = mockFetch.mock.calls.length;
+      const controller = new AbortController();
+      const pending = api.createSurfaceSession('vm-1', controller.signal);
+      const rejected = expect(pending).rejects.toMatchObject({name: 'AbortError'});
+      await vi.advanceTimersByTimeAsync(0);
+      controller.abort();
+      await rejected;
+      await vi.advanceTimersByTimeAsync(500);
+      expect(mockFetch.mock.calls.slice(start)).toHaveLength(1);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('bounds an exposure that never becomes available', async () => {
+    vi.useFakeTimers();
+    try {
+      mockFetch.mockImplementation(() => textResponse('starting', 404));
+      const pending = api.createSurfaceSession('vm-1', new AbortController().signal);
+      const rejected = expect(pending).rejects.toMatchObject({status: 404});
+      await vi.advanceTimersByTimeAsync(0);
+      vi.setSystemTime(Date.now() + 120_000);
+      await vi.advanceTimersByTimeAsync(500);
+      await rejected;
+    } finally { vi.useRealTimers(); }
   });
 
   it('provisionVm leaves resource defaults to the service', async () => {

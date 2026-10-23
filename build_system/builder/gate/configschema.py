@@ -98,6 +98,7 @@ class InstallEnvironment(Strict):
 
     test_output_root: str
     project_environment: str
+    sudo_user: str
     ci: str
 
 

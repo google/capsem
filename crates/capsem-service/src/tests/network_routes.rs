@@ -6,6 +6,7 @@ use std::time::Duration;
 
 mod handoff;
 mod private_names;
+mod repeat_attach;
 
 fn app(state: &Arc<ServiceState>) -> axum::Router {
     build_service_router(Arc::clone(state))

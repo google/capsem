@@ -351,6 +351,8 @@ pub enum ProcessToService {
     McpServersResult { id: u64, servers: Vec<McpServerStatus> },
     /// Response to McpListTools.
     McpToolsResult { id: u64, tools: Vec<McpToolStatus> },
+    /// Tool discovery failed; an empty successful catalog means no tools.
+    McpToolsFailed { id: u64, error: String },
     /// Response to McpRefreshTools.
     McpRefreshResult {
         id: u64,
@@ -531,6 +533,7 @@ impl ProcessToService {
             | Self::CloneStateResult { id, .. }
             | Self::McpServersResult { id, .. }
             | Self::McpToolsResult { id, .. }
+            | Self::McpToolsFailed { id, .. }
             | Self::McpRefreshResult { id, .. }
             | Self::McpCallToolResult { id, .. }
             | Self::PortPublished { id, .. }

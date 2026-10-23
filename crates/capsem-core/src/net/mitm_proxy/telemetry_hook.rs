@@ -357,6 +357,10 @@ impl ChunkHook for TelemetryHook {
         let net_security_event = security_event_from_net_event(&net_event)
             .with_credential_observations(credential_observations.clone())
             .with_credential_injections(credential_injections.clone());
+        net_event.query = net_event
+            .query
+            .as_deref()
+            .map(crate::security_engine::redact_query_for_ledger);
         record_telemetry_stage(stage_started, "security_event_build");
 
         let stage_started = Instant::now();

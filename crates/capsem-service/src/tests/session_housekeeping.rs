@@ -7,6 +7,17 @@
 use super::*;
 use crate::session_housekeeping::{retention_days_from_resolved, DEFAULT_RETENTION_DAYS};
 
+#[test]
+fn both_vm_spawn_paths_pass_resolved_retention_to_owner() {
+    for source in [
+        include_str!("../vm_lifecycle/provision.rs"),
+        include_str!("../vm_lifecycle/resume_process.rs"),
+    ] {
+        assert!(source.contains(".arg(\"--retention-days\")"));
+        assert!(source.contains("session_housekeeping::retention_days()"));
+    }
+}
+
 // -----------------------------------------------------------------------
 // preserve_failed_session_dir + cull_failed_sessions
 //

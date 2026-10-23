@@ -143,6 +143,11 @@ def test_mcp_package_acceptance_prewarms_after_both_current_packages_build() -> 
     warmed = plan.step_named(label)
     assert Needs.NETWORK in warmed.needs
     assert "[outside kernel sandbox]" in warmed.actions[0].render()
+    config = gate_config.load(PROJECT_ROOT)
+    sdk_archives = config.path(config.sdk_typescript.build_output)
+    assert f"CAPSEM_SDK_PACKAGE_ARCHIVES={sdk_archives}" in warmed.actions[0].render(), (
+        "MCP acceptance must consume the SDK archive that publication validates, without repacking it"
+    )
     assert {"fast.sdk.typescript.build", "fast.mcp.typescript.build"} <= _ancestors(plan, label)
     assert label in _ancestors(plan, "fast.mcp.typescript.tests")
 

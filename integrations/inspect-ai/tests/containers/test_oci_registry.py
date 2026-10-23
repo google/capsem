@@ -24,6 +24,15 @@ _DOCKER_MT = "application/vnd.docker.distribution.manifest.v2+json"
 _INDEX_MT = "application/vnd.oci.image.index.v1+json"
 
 
+def test_invalid_cached_tls_material_is_rotated(tmp_path: Path) -> None:
+    cert, _, old_ca = reg_mod.ensure_localhost_tls(tmp_path)
+    cert.write_text("invalid certificate", encoding="utf-8")
+
+    new_cert, new_key, new_ca = reg_mod.ensure_localhost_tls(tmp_path)
+    assert new_ca != old_ca
+    ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(new_cert, new_key)
+
+
 def _make_oci_tar(
     tar_path: Path,
     *,
