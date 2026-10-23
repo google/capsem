@@ -5,6 +5,22 @@ description: In-VM diagnostics and test fixtures. Use when adding in-VM tests, d
 
 # In-VM Testing
 
+## Manual debug session lifetime
+
+A bounded command's `run-<pid>` scratch is reclaimed when its owner exits.
+`ServiceInstance.stop(cleanup=False)` does not retain that outer generation.
+Never promise to preserve a signed-in VM there across a runtime restart.
+
+For a long-lived manual session, ask `load_paths()` for the `test-temp` stage,
+create a separate managed `run-*` generation, and hold its policy lease through
+`cache.leases.retain_path`. Put the service home inside that generation and
+record its owner, lease, source and stopfile in Sprinty. Before a handoff, the
+replacement owner must acquire that same lease before the old owner releases
+it. Preserve the named VM through its public lifecycle API. Verify the home
+still exists after the old wrapper exits; only then claim it was retained.
+Keep one active manual runtime and stop superseded owners by exact stopfiles.
+Debug fixtures set `CAPSEM_TRAY_HEADLESS=1` to avoid extra menu-bar icons.
+
 ## capsem-doctor
 
 The diagnostic suite runs inside the guest VM via pytest. Tests live in `guest/artifacts/diagnostics/` and are baked into the rootfs.
