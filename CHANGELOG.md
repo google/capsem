@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Hide completed native browser handoffs from the session toolbar, retaining
+  a retry action when opening the browser fails.
+
 - Preserve the browser's native focus action when clicking graphical apps,
   while still preventing duplicate guest mouse events.
 
