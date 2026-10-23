@@ -22,12 +22,14 @@ const RESERVED_RANGE: std::ops::Range<usize> = VM_ID_RANGE.end..GATEWAY_GRANT_FR
 const OPEN_SERVICE: u8 = 1;
 const OPEN_OWNER_HANDOFF: u8 = 2;
 const ADOPTED: u8 = 3;
+const OPEN_METRICS: u8 = 4;
 const GRANTED: u8 = 101;
 const DENIED: u8 = 102;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GatewayGrantRequest {
     OpenService { request_id: u64 },
+    OpenMetrics { request_id: u64 },
     OpenOwnerHandoff { request_id: u64, vm_id: String },
     Adopted { request_id: u64 },
 }
@@ -36,6 +38,7 @@ impl GatewayGrantRequest {
     pub fn request_id(&self) -> u64 {
         match self {
             Self::OpenService { request_id }
+            | Self::OpenMetrics { request_id }
             | Self::OpenOwnerHandoff { request_id, .. }
             | Self::Adopted { request_id } => *request_id,
         }
@@ -45,6 +48,7 @@ impl GatewayGrantRequest {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GatewayGrantKind {
     Service,
+    Metrics,
     OwnerHandoff,
 }
 
@@ -52,6 +56,7 @@ impl GatewayGrantKind {
     fn code(self) -> u8 {
         match self {
             Self::Service => OPEN_SERVICE,
+            Self::Metrics => OPEN_METRICS,
             Self::OwnerHandoff => OPEN_OWNER_HANDOFF,
         }
     }
@@ -59,6 +64,7 @@ impl GatewayGrantKind {
     fn decode(code: u8) -> Result<Self> {
         match code {
             OPEN_SERVICE => Ok(Self::Service),
+            OPEN_METRICS => Ok(Self::Metrics),
             OPEN_OWNER_HANDOFF => Ok(Self::OwnerHandoff),
             _ => bail!("invalid gateway grant kind {code}"),
         }
@@ -117,6 +123,7 @@ impl GatewayGrantResponse {
 pub fn encode_gateway_grant_request(request: &GatewayGrantRequest) -> Result<[u8; GATEWAY_GRANT_FRAME_SIZE]> {
     let mut frame = base(match request {
         GatewayGrantRequest::OpenService { .. } => OPEN_SERVICE,
+        GatewayGrantRequest::OpenMetrics { .. } => OPEN_METRICS,
         GatewayGrantRequest::OpenOwnerHandoff { .. } => OPEN_OWNER_HANDOFF,
         GatewayGrantRequest::Adopted { .. } => ADOPTED,
     });
@@ -139,9 +146,14 @@ pub fn decode_gateway_grant_request(frame: &[u8; GATEWAY_GRANT_FRAME_SIZE]) -> R
     }
     let request_id = u64::from_be_bytes(frame[REQUEST_ID_RANGE].try_into().unwrap());
     match frame[KIND_OFFSET] {
-        OPEN_SERVICE if frame[VM_ID_LENGTH_OFFSET] == 0 => Ok(GatewayGrantRequest::OpenService { request_id }),
-        ADOPTED if frame[VM_ID_LENGTH_OFFSET] == 0 && frame[VM_ID_RANGE].iter().all(|byte| *byte == 0) => {
-            Ok(GatewayGrantRequest::Adopted { request_id })
+        kind @ (OPEN_SERVICE | OPEN_METRICS | ADOPTED)
+            if frame[VM_ID_LENGTH_OFFSET] == 0 && frame[VM_ID_RANGE].iter().all(|byte| *byte == 0) =>
+        {
+            Ok(match kind {
+                OPEN_SERVICE => GatewayGrantRequest::OpenService { request_id },
+                OPEN_METRICS => GatewayGrantRequest::OpenMetrics { request_id },
+                _ => GatewayGrantRequest::Adopted { request_id },
+            })
         }
         OPEN_OWNER_HANDOFF => {
             let length = usize::from(frame[VM_ID_LENGTH_OFFSET]);

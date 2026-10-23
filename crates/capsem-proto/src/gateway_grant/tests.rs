@@ -4,6 +4,7 @@ use super::*;
 fn requests_round_trip_with_bounded_identity() {
     for request in [
         GatewayGrantRequest::OpenService { request_id: 7 },
+        GatewayGrantRequest::OpenMetrics { request_id: 8 },
         GatewayGrantRequest::Adopted { request_id: 7 },
         GatewayGrantRequest::OpenOwnerHandoff {
             request_id: u64::MAX,
@@ -27,6 +28,10 @@ fn responses_round_trip_with_no_worker_chosen_path() {
             request_id: 9,
             kind: GatewayGrantKind::Service,
         },
+        GatewayGrantResponse::Granted {
+            request_id: 11,
+            kind: GatewayGrantKind::Metrics,
+        },
         GatewayGrantResponse::Denied {
             request_id: 10,
             reason: GatewayGrantDenial::Revoked,
@@ -35,6 +40,35 @@ fn responses_round_trip_with_no_worker_chosen_path() {
         let frame = encode_gateway_grant_response(response);
         assert_eq!(decode_gateway_grant_response(&frame).unwrap(), response);
     }
+}
+
+#[test]
+fn metric_grants_carry_no_chosen_session_or_destination_and_cannot_reverse_direction() {
+    for request in [
+        GatewayGrantRequest::OpenService { request_id: 1 },
+        GatewayGrantRequest::OpenMetrics { request_id: 2 },
+    ] {
+        let frame = encode_gateway_grant_request(&request).unwrap();
+        assert!(decode_gateway_grant_response(&frame).is_err());
+        for offset in [
+            VM_ID_LENGTH_OFFSET,
+            VM_ID_RANGE.start,
+            DETAIL_OFFSET,
+            RESERVED_RANGE.start,
+        ] {
+            let mut corrupt = frame;
+            corrupt[offset] = 1;
+            assert!(
+                decode_gateway_grant_request(&corrupt).is_err(),
+                "accepted payload at {offset}"
+            );
+        }
+    }
+    let response = encode_gateway_grant_response(GatewayGrantResponse::Granted {
+        request_id: 3,
+        kind: GatewayGrantKind::Metrics,
+    });
+    assert!(decode_gateway_grant_request(&response).is_err());
 }
 
 #[test]
