@@ -16,19 +16,27 @@ from pydantic import Field, PositiveFloat, PositiveInt, field_validator
 from .configschema import Strict
 
 
+class RouteCaseConfig(Strict):
+    """One successful HTTP method, template and distinct fixture case."""
+
+    method: Literal["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE"]
+    path: str
+    case: str
+
+
+class RouteDebtConfig(Strict):
+    """An uncovered operation names its existing fixture owner and gap."""
+
+    owner: str = Field(min_length=1)
+    reason: str = Field(min_length=20)
+
+
 class RouteCoverageConfig(Strict):
-    """Which HTTP routes the benchmark system measures.
+    """Exhaustive method-aware coverage; no path-only coverage claims."""
 
-    Three classes that must together account for every route the service
-    registers. `unmeasured` is debt, not an exemption list. `internal` maps the
-    tiny set of service-only control routes to mandatory reasons. A route in no
-    class fails `tests/citadel/test_bench_route_coverage.py` in the fast phase,
-    which makes a new route measured by default rather than invisible.
-    """
-
-    measured: tuple[str, ...]
-    unmeasured: tuple[str, ...]
-    internal: dict[str, str]
+    measured: tuple[RouteCaseConfig, ...]
+    unmeasured: dict[str, RouteDebtConfig]
+    internal: dict[str, RouteDebtConfig]
 
 
 class RouteLoadConfig(Strict):

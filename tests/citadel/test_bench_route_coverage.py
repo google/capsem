@@ -1,175 +1,90 @@
-"""A route the benchmark system does not measure has to say so.
-
-53 of the 101 service routes carried no timing signal of any kind -- every
-file I/O route, every snapshot and save route, every skills route, every
-settings and corp route, every update route, and every mutation route -- and
-nothing noticed, because coverage was a hand-maintained list of 27 route
-contracts inside a test file. A route added to the router simply never
-appeared in it.
-
-So coverage is derived from the router instead. Every registered route must be
-named by exactly one of `[benchmark.routes] measured`, `unmeasured`, or
-`internal`. `unmeasured` is debt; `internal` is the much smaller inventory of
-service-only control routes that cannot be user-facing benchmarks and must
-carry a reason. This file lives in Citadel so a route change fails before a
-hosted package build rather than nineteen minutes into binary qualification.
-"""
-
+"""A timed GET does not cover a POST on the same path; cases retain their owner."""
 from __future__ import annotations
 
-import tomllib
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).parents[2]
-SERVICE = PROJECT_ROOT / "crates" / "capsem-service" / "src" / "router_runtime.rs"
-GATEWAY = PROJECT_ROOT / "crates" / "capsem-gateway" / "src" / "main.rs"
-GATEWAY_OWNED = {"/vms/{id}/exposures/{exposure_id}/preview-session"}
+import pytest
+import tomllib
+from helpers.route_inventory import function_operations, route_operations
+
+ROOT = Path(__file__).parents[2]
+SERVICE = ROOT / "crates/capsem-service/src/router_runtime.rs"
+GATEWAY = ROOT / "crates/capsem-gateway/src/main.rs"
+RATIONALE = "[benchmark.routes] must name each HTTP method and successful fixture case; uncovered operations retain a concrete acceptance owner."
 
 
-def _route_literals(body: str) -> set[str]:
-    """Read the literal first argument of each Axum `.route(...)` call.
-
-    Route registration has one checked-in shape: a method call whose first
-    argument is an ordinary Rust string literal. A source regex used to encode
-    that shape invisibly. This scanner makes each delimiter explicit and
-    refuses a new shape instead of silently returning an incomplete inventory.
-    """
-    marker = ".route("
-    cursor = 0
-    found: set[str] = set()
-    while (call := body.find(marker, cursor)) != -1:
-        start = call + len(marker)
-        while start < len(body) and body[start].isspace():
-            start += 1
-        assert start < len(body) and body[start] == '"', (
-            "route registration must use a literal path as its first argument"
-        )
-        end = start + 1
-        while end < len(body) and body[end] != '"':
-            assert body[end] != "\\", "route paths must not hide behind Rust escapes"
-            end += 1
-        assert end < len(body), "unterminated route path literal"
-        found.add(body[start + 1 : end])
-        cursor = end + 1
-    return found
+def config() -> dict:
+    return tomllib.loads((ROOT / "config/gate.toml").read_text())["benchmark"]["routes"]
 
 
-def _routes(source: Path, function: str) -> set[str]:
-    """Every path registered inside one router-building function."""
-    text = source.read_text(encoding="utf-8")
-    start = text.index(function)
-    end = text.find("\nfn ", start + len(function))
-    body = text[start : end if end != -1 else len(text)]
-    found = _route_literals(body)
-    assert found, (
-        f"{function} in {source.name} registered no routes; the reader is wrong"
+def measured_operations(coverage: dict) -> set[str]:
+    cases = coverage["measured"]
+    keys = [(case["method"], case["path"], case["case"]) for case in cases]
+    assert len(keys) == len(set(keys)), RATIONALE
+    assert all(case["case"].strip() and "*" not in case["path"] for case in cases), RATIONALE
+    return {f'{case["method"]} {case["path"]}' for case in cases}
+
+
+def validate(registered: set[str], coverage: dict) -> None:
+    measured = measured_operations(coverage)
+    debt, internal = set(coverage["unmeasured"]), set(coverage["internal"])
+    assert not (measured & debt or measured & internal or debt & internal), RATIONALE
+    assert measured | debt | internal == registered, (
+        f"Missing: {sorted(registered - measured - debt - internal)}; "
+        f"stale: {sorted((measured | debt | internal) - registered)}. {RATIONALE}"
     )
-    return found
+    for group in ("unmeasured", "internal"):
+        for operation, entry in coverage[group].items():
+            assert "*" not in operation and entry["owner"].strip() and len(entry["reason"].strip()) >= 20, RATIONALE
+            if group == "unmeasured":
+                assert (ROOT / entry["owner"]).exists(), RATIONALE
 
 
-def _config() -> dict:
-    text = (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
-    return tomllib.loads(text)["benchmark"]["routes"]
+def registered_operations() -> set[str]:
+    service = function_operations(SERVICE, "fn build_service_router")
+    # Service and gateway have separately owned /status implementations.
+    extra = {"GET /", "GET /health", "GET /events"}
+    for filename in ("schema.rs", "surface.rs"):
+        extra |= function_operations(GATEWAY.parent / filename, "fn routes()")
+    return service | extra | {"POST /vms/{id}/exposures/{exposure_id}/preview-session"}
 
 
-def test_every_service_route_has_benchmark_ownership() -> None:
-    registered = _routes(SERVICE, "fn build_service_router")
-    coverage = _config()
-    accounted = (
-        set(coverage["measured"])
-        | set(coverage["unmeasured"])
-        | set(coverage["internal"])
-    )
-
-    missing = sorted(registered - accounted)
-    assert not missing, (
-        "these routes are registered but named by neither `measured`, "
-        "`unmeasured`, nor `internal` in [benchmark.routes], so nothing "
-        "measures them and "
-        "nothing records that:\n  " + "\n  ".join(missing)
-    )
+def test_every_operation_has_exact_benchmark_ownership() -> None:
+    validate(registered_operations(), config())
 
 
-def test_the_inventory_names_no_route_that_no_longer_exists() -> None:
-    registered = _routes(SERVICE, "fn build_service_router")
-    coverage = _config()
-    accounted = (
-        set(coverage["measured"])
-        | set(coverage["unmeasured"])
-        | set(coverage["internal"])
-    )
-
-    stale = sorted(accounted - registered)
-    assert not stale, (
-        "[benchmark.routes] names routes the service no longer registers; a "
-        "stale entry reads as coverage and is not:\n  " + "\n  ".join(stale)
-    )
+def test_gateway_method_topology_matches_service() -> None:
+    service = function_operations(SERVICE, "fn build_service_router")
+    proxied = function_operations(GATEWAY, "fn service_proxy_routes")
+    own = {"POST /vms/{id}/exposures/{exposure_id}/preview-session"}
+    assert proxied - service == own, RATIONALE
+    assert service - proxied == {"GET /status", *config()["internal"]}, RATIONALE
 
 
-def test_each_route_has_exactly_one_benchmark_classification() -> None:
-    coverage = _config()
-    classes = {
-        "measured": set(coverage["measured"]),
-        "unmeasured": set(coverage["unmeasured"]),
-        "internal": set(coverage["internal"]),
-    }
-    duplicates = {
-        route
-        for routes in classes.values()
-        for route in routes
-        if sum(route in other for other in classes.values()) != 1
-    }
-    assert not duplicates, f"listed in multiple classes: {sorted(duplicates)}"
+def test_unmeasured_operations_remain_explicit_debt() -> None:
+    assert len(config()["unmeasured"]) <= 96, RATIONALE
+    assert len(config()["internal"]) == 7, RATIONALE
 
 
-def test_internal_routes_carry_a_reason_and_are_a_tight_inventory() -> None:
-    internal = _config()["internal"]
-    assert all(reason.strip() for reason in internal.values())
-    # Seven real exceptions: doctor failure preservation, private-network
-    # resolution, the gateway's combined status snapshot, owner metric
-    # ingestion, and three preview admission exchanges.
-    assert len(internal) <= 7, (
-        "the internal service-only route inventory grew; prefer a public, "
-        "measured gateway route unless the control-plane exception is real"
-    )
+def test_parser_keeps_chained_methods_and_layered_handlers() -> None:
+    body = 'Router::new().route("/one", get(read).post(write)).route("/two", post(resolve).layer(limit(12)))'
+    assert route_operations(body) == {"GET /one", "POST /one", "POST /two"}
 
 
-def test_the_gateway_proxies_what_the_service_serves() -> None:
-    """A proxied route that the service does not serve cannot be measured."""
-    service = _routes(SERVICE, "fn build_service_router")
-    proxied = _routes(GATEWAY, "fn service_proxy_routes")
-
-    orphaned = sorted(proxied - service - GATEWAY_OWNED)
-    assert not orphaned, (
-        "the gateway proxies routes the service does not register:\n  "
-        + "\n  ".join(orphaned)
-    )
-    assert proxied >= GATEWAY_OWNED, "the gateway-owned preview route disappeared"
+@pytest.mark.parametrize("body", ['.route(path, get(read))', '.route("/x", any(handler))', '.route("/x", get(read)).route("/x", get(other))'])
+def test_parser_refuses_unclassified_or_duplicate_registration(body: str) -> None:
+    with pytest.raises(AssertionError):
+        route_operations(body)
 
 
-def test_every_service_only_route_is_explicitly_known() -> None:
-    """The gateway owns `/status`; internal control routes stay on the UDS."""
-    service = _routes(SERVICE, "fn build_service_router")
-    proxied = _routes(GATEWAY, "fn service_proxy_routes")
-    expected = {"/status", *_config()["internal"]}
-    assert service - proxied == expected
+def test_measured_get_does_not_cover_post_or_missing_case() -> None:
+    coverage = {"measured": [{"method": "GET", "path": "/x", "case": "read"}], "unmeasured": {}, "internal": {}}
+    with pytest.raises(AssertionError, match="POST /x"):
+        validate({"GET /x", "POST /x"}, coverage)
+    coverage["measured"].append(coverage["measured"][0])
+    with pytest.raises(AssertionError):
+        measured_operations(coverage)
 
 
-def test_the_debt_is_a_ratchet_that_can_only_shrink() -> None:
-    """Records where the inventory stands, so a regression is visible.
-
-    Not a target: the number is expected to fall to zero as the routes
-    collector covers each one. It may never rise -- a new route joins
-    `measured`, or it joins `unmeasured` and this count is lowered in the same
-    change with a reason.
-    """
-    coverage = _config()
-    unmeasured = len(coverage["unmeasured"])
-    # The reviewed provider and lifecycle mutations add six stateful paths.
-    # The combined #206 surface adds three supervised proxy lease paths;
-    # managed claim/close now have successful tombstone measurements. These
-    # changes leave exactly 76 stateful paths with named acceptance owners.
-    assert unmeasured <= 76, (
-        f"{unmeasured} routes are unmeasured, more than when this guard was "
-        "written. A new route should be measured, not added to the debt."
-    )
+def test_nested_handler_methods_do_not_invent_http_coverage() -> None:
+    assert route_operations('.route("/x", get(make().post(payload)).layer(trace()))') == {"GET /x"}

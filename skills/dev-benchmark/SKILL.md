@@ -198,20 +198,20 @@ performance gets a 10% envelope; separately authored health ceilings retain
 
 ## Route coverage
 
-53 of the 101 service routes had no timing signal, and nothing noticed, because
-coverage was a hand-maintained list inside a test file. It is derived from the
-router now: every registered route must be in `[benchmark.routes]` as
-`measured`, `unmeasured`, or in the reasoned `internal` map. The fast Citadel guard at
-`tests/citadel/test_bench_route_coverage.py` fails before build work on a route
-in no class, a duplicate classification, an unexplained internal route, or
-service/gateway topology drift. `unmeasured` is debt that may only shrink;
-`internal` is a one-entry ratchet, not an easy exemption for new routes.
+Coverage is method-aware: a measured GET never covers a POST on the same path.
+`[benchmark.routes]` names successful method/path/case fixtures and records each
+remaining operation with its existing fixture owner and reason. The source-only
+Citadel guard derives methods from service and gateway registrations, including
+chained Axum handlers, and rejects missing, stale or duplicate classifications.
+Gateway-only schema, health, event and surface operations remain explicit debt.
+A new route or method cannot silently inherit another method's coverage.
 
-For every route in `measured`, the `routes` collector records sequential warm
-and cold latency plus a 16-client kept-alive load window for both the service
-UDS and authenticated gateway. The load window emits raw concurrent latency,
-aggregate RPS, and CPU samples. Mutation and external-state routes remain in
-the explicit debt inventory until their owning fixture can replay them safely.
+For every measured case, the `routes` collector records warm and cold latency
+plus a 16-client kept-alive load window over service UDS and authenticated gateway.
+It retains raw concurrent latency, aggregate RPS and CPU samples. Managed claim
+and close measure repeatable closed tombstones, not initial lifecycle operations.
+Uncovered mutations require their real disposable lifecycle fixtures; successful
+read timing and functional acceptance are not proof of mutation performance.
 
 ## Benchmarks that are still pytest
 
