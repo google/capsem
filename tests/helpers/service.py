@@ -440,7 +440,7 @@ def _rotate_artifacts(root, keep, minimum, maximum_age_s, maximum_total_bytes):
 class ServiceInstance:
     """A running capsem-service instance on an isolated socket."""
 
-    def __init__(self, *, assets_dir: Path | None = None, sign_binaries: bool = True):
+    def __init__(self, *, assets_dir: Path | None = None, sign_binaries: bool = True, isolated_corp_config: bool = False):
         # Match the installed layout exactly: CAPSEM_HOME owns a run/
         # directory and sessions/host.db is its sibling.  Using the temporary
         # home itself as CAPSEM_RUN_DIR makes main_db_path_for_run_dir() resolve
@@ -450,6 +450,7 @@ class ServiceInstance:
         self.uds_path = self.tmp_dir / f"service-{uuid.uuid4().hex[:8]}.sock"
         self.assets_dir = assets_dir
         self.sign_binaries = sign_binaries
+        self.isolated_corp_config = isolated_corp_config
         self.gateway_port = 0
         self.proc = None
         self._log_file = None
@@ -474,6 +475,8 @@ class ServiceInstance:
             self.home_dir / "credential-store.json"
         )
         env["HOME"] = str(self.home_dir)
+        if self.isolated_corp_config:
+            env["CAPSEM_CORP_CONFIG"] = str(self.home_dir / "corp.toml")
 
         log_path = self.tmp_dir / "service.log"
         print(f"SERVICE LOG: {log_path}")
