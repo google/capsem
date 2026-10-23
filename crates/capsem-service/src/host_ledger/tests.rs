@@ -110,3 +110,16 @@ fn service_events_do_not_touch_session_totals() {
     });
     assert_eq!(stats.total_sessions, 0);
 }
+
+#[test]
+fn global_ai_requests_are_model_exchanges_not_http_requests() {
+    let mut counters = LedgerCounters::default();
+    counters.net.total = 73;
+    counters.model.total.calls = 3;
+    counters.model.total.output_tokens = 11;
+    let body: serde_json::Value = serde_json::from_slice(&render_stats(1, &counters, &[])).unwrap();
+    assert_eq!(body["global"]["total_ai_requests"], 3);
+    assert_eq!(body["global"]["total_requests"], 73);
+    assert_eq!(body["global"]["total_input_tokens"], 0);
+    assert_eq!(body["global"]["total_output_tokens"], 11);
+}

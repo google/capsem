@@ -337,6 +337,7 @@ fn render_stats(total_sessions: u64, totals: &LedgerCounters, listed: &[SessionS
     let body = json!({
         "global": {
             "total_sessions": total_sessions,
+            "total_ai_requests": totals.model.total.calls,
             "total_input_tokens": totals.model.total.input_tokens,
             "total_output_tokens": totals.model.total.output_tokens,
             "total_estimated_cost": usd(totals.model.total.cost_micro_usd),

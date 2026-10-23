@@ -34,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Report AI request totals from recorded model exchanges separately from HTTP
+  traffic in the cross-session usage response.
+
 - Start an app from one New session action, preparing missing downloads before
   launch while its icon reflects readiness.
 
