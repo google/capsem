@@ -359,10 +359,10 @@ async fn catalog_listing_schedules_native_compatible_cache_keys_without_waiting_
     let fixture = Fixture::default_policy();
     let (status, response) = fixture.list().await;
     assert_eq!(status, StatusCode::OK);
-    let mut expected = ['b', 'd']
+    let mut expected = ['a', 'b', 'd']
         .into_iter()
         .map(|pin| {
-            let name = if pin == 'b' { "codex-cli" } else { "redis" };
+            let name = if pin != 'd' { "codex-cli" } else { "redis" };
             capsem_assets::oci::CacheIdentity::new(
                 &format!("ghcr.io/google/capsem/{name}@{}", digest(pin)),
                 host(),
@@ -810,4 +810,56 @@ async fn a_catalog_read_from_another_source_is_never_served() {
     };
     *fx.catalog.lock().unwrap() = None;
     assert!(cache.get(source, &moved, parent.path(), false).await.is_none());
+}
+
+#[tokio::test]
+async fn image_update_requires_a_verified_earlier_compatible_image_and_missing_selected_bytes() {
+    use capsem_assets::oci::{CacheIdentity, CacheState};
+    let fx = Fixture::default_policy();
+    let pin = |value| format!("ghcr.io/google/capsem/codex-cli@{}", digest(value));
+    let key = |value| CacheIdentity::new(&pin(value), host(), RUNTIME_CONTRACT).unwrap().key();
+    for selected in [
+        CacheState::Unknown,
+        CacheState::Missing,
+        CacheState::Partial,
+        CacheState::Ready,
+    ] {
+        for previous in [
+            CacheState::Unknown,
+            CacheState::Missing,
+            CacheState::Partial,
+            CacheState::Ready,
+        ] {
+            fx.disk_states.lock().unwrap().insert(key('a'), previous);
+            fx.disk_states.lock().unwrap().insert(key('b'), selected);
+            fx.disk_states.lock().unwrap().insert(key('c'), CacheState::Ready);
+            let (status, body) = fx.list().await;
+            assert_eq!(status, StatusCode::OK);
+            let row = &body["images"][0];
+            let expected =
+                if matches!(selected, CacheState::Missing | CacheState::Partial) && previous == CacheState::Ready {
+                    json!(pin('a'))
+                } else {
+                    Value::Null
+                };
+            assert_eq!(
+                row["previous_image"], expected,
+                "selected={selected:?} previous={previous:?}"
+            );
+        }
+    }
+    assert!(fx
+        .observations
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|keys| keys.contains(&key('a'))));
+    assert!(
+        fx.observations
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|keys| !keys.contains(&key('c'))),
+        "future incompatible version must not be observed as an older version"
+    );
 }

@@ -459,7 +459,11 @@ pub(crate) async fn handle_list_images(
         .collect::<anyhow::Result<Vec<_>>>()
         .map_err(|error| ImageError::Failed(format!("cache identity: {error:#}")))?;
     let filesystems = loaded.rootfs_bindings(architecture);
-    for (image, key) in images.iter_mut().filter(|image| image.image.is_some()).zip(&keys) {
+    for (image, key) in images
+        .iter_mut()
+        .filter(|image| image.image.is_some())
+        .zip(keys.clone())
+    {
         image.progress = image
             .image
             .as_deref()
@@ -470,7 +474,7 @@ pub(crate) async fn handle_list_images(
             .resolve(&image.name, architecture, RUNTIME_CONTRACT)
             .map_err(|error| ImageError::Failed(format!("catalog image identity: {error:#}")))?;
         let required_root = root_binding(&filesystems, resolved.digest())?;
-        image.cached = match decision.setups.source.cache_state(key, required_root) {
+        image.cached = match decision.setups.source.cache_state(&key, required_root) {
             Ok(Some(CacheState::Missing)) => ImageCacheState::Missing,
             Ok(Some(CacheState::Partial)) => ImageCacheState::Partial,
             Ok(Some(CacheState::Ready)) => ImageCacheState::Ready,
@@ -480,6 +484,38 @@ pub(crate) async fn handle_list_images(
                 ImageCacheState::Unknown
             }
         };
+        if image.cached != ImageCacheState::Ready {
+            let entry = loaded.catalog.entry(&image.name).expect("listed catalog entry");
+            let selected = entry
+                .versions()
+                .iter()
+                .rposition(|version| version.image() == &resolved)
+                .expect("resolved catalog version");
+            for version in entry.versions()[..selected].iter().rev().filter(|version| {
+                version.contract() <= RUNTIME_CONTRACT
+                    && version.platforms().contains(&architecture)
+                    && version.image() != &resolved
+            }) {
+                let previous = version.image().to_string();
+                let previous_key =
+                    capsem_assets::oci::CacheIdentity::new(&previous, architecture.as_str(), RUNTIME_CONTRACT)
+                        .map_err(|error| ImageError::Failed(format!("cache identity: {error:#}")))?
+                        .key();
+                // Observation remains owned and asynchronous. A missing selected
+                // version alone says nothing about whether this is first use.
+                if matches!(image.cached, ImageCacheState::Missing | ImageCacheState::Partial)
+                    && image.previous_image.is_none()
+                    && decision
+                        .setups
+                        .source
+                        .cache_state(&previous_key, root_binding(&filesystems, version.image().digest())?)
+                        .is_ok_and(|state| state == Some(CacheState::Ready))
+                {
+                    image.previous_image = Some(previous);
+                }
+                keys.push(previous_key);
+            }
+        }
     }
     keys.extend(
         state
