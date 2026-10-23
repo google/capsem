@@ -25,10 +25,14 @@ def _schemas() -> dict[str, TypeAdapter]:
     sdk = str(Path(__file__).resolve().parents[2] / "sdk/python")
     sys.path.insert(0, sdk)
     try:
+        from capsem.models.asset_status import AssetStatus
         from capsem.models.container_status_response import ContainerStatusResponse
         from capsem.models.file_list_response import FileListResponse
         from capsem.models.history_response import HistoryResponse
         from capsem.models.host_logs_response import HostLogsResponse
+        from capsem.models.image_inventory_response import ImageInventoryResponse
+        from capsem.models.image_list_response import ImageListResponse
+        from capsem.models.image_pull_response import ImagePullResponse
         from capsem.models.logs_response import LogsResponse
         from capsem.models.mcp_default_permission_response import McpDefaultPermissionResponse
         from capsem.models.mcp_info_response import McpInfoResponse
@@ -41,6 +45,11 @@ def _schemas() -> dict[str, TypeAdapter]:
         from capsem.models.vm_stats_detail_response import VmStatsDetailResponse
         from capsem.models.vm_stats_summary_response import VmStatsSummaryResponse
         return {path: TypeAdapter(model) for path, model in {
+            "/images": ImageListResponse,
+            "/images/{name}/inventory": ImageInventoryResponse,
+            "/images/pull": ImagePullResponse,
+            "/assets/ensure": AssetStatus,
+            "/assets/status": AssetStatus,
             "/networks/{id}": NetworkInfo,
             "/vms/{id}/files/list": FileListResponse,
             "/vms/{id}/logs": LogsResponse,

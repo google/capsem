@@ -44,6 +44,7 @@ from benchmarks.helpers.route_fixtures import (
     seed_metadata,
 )
 from benchmarks.helpers.route_gateway import GATEWAY_RESPONSES
+from benchmarks.helpers.route_images import collect_images
 from benchmarks.helpers.route_measurements import Observations, route_metrics
 from benchmarks.helpers.route_requests import Target, request, request_input, route_load_config
 from benchmarks.helpers.route_validation import validate_snapshot, validate_wire
@@ -169,12 +170,14 @@ def main() -> int:
         )
         return 1
 
+    with redirect_stdout(sys.stderr):
+        metrics: dict[str, dict] = collect_images(args.quick)
+
     service = ServiceInstance()
     service.assets_dir = clone_benchmark_assets(
         ASSETS_DIR, service.home_dir / "benchmark-assets"
     )
 
-    metrics: dict[str, dict] = {}
     try:
         seed_stopped_workspace(service.tmp_dir, service.assets_dir, file_count=corpus_config()["workspace_files"])
         seed_metadata(service, corpus_config())

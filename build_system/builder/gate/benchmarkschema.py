@@ -13,6 +13,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field, PositiveFloat, PositiveInt, field_validator
 
+from .benchmarkimageschema import ImageRouteConfig
 from .benchmarkstreamschema import StreamConfig, StreamEndpointEvidence
 from .configschema import Strict
 
@@ -62,6 +63,7 @@ class RouteCoverageConfig(Strict):
 
     measured: tuple[RouteCaseConfig, ...]
     streaming: dict[str, StreamEndpointEvidence]
+    images: ImageRouteConfig
     unmeasured: dict[str, RouteDebtConfig]
     internal: dict[str, RouteDebtConfig]
     unmeasured_cases: dict[str, RouteDebtConfig]

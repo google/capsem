@@ -334,3 +334,6 @@ changing guest categories, storage/rootfs attribution, or protocol deltas.
 - the Criterion collector after touching MITM, SSE, JSON-RPC, DNS, the
   interpreters, or the logger's write path
 - the lifecycle and fork suites after boot, teardown, image or VirtioFS changes
+
+For finite image/catalogue and runtime preparation route cases, see
+[image route evidence](references/image-routes.md).

@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Measure finite hermetic image catalogue, installed package inventory, cold/warm
+  image preparation and local runtime asset materialization as separate cases.
+
 - Bind stream benchmarks to real terminal output, rotated transcript tails and
   gateway state-change delivery, with transport Ping/Pong reported separately.
 

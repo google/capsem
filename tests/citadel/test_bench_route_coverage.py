@@ -36,6 +36,12 @@ def validate(registered: set[str], coverage: dict) -> None:
         assert entry["cases"] and (ROOT / "benchmarks/collectors/stream").exists(), RATIONALE
         for case in entry["cases"].values():
             assert case["sample_key"] and case["metrics"], RATIONALE
+    finite = coverage.get("images", {}).get("endpoints", {})
+    assert not (measured & set(finite)), RATIONALE
+    for entry in finite.values():
+        assert entry["collector"] == "routes" and entry["target_scope"] == "both", RATIONALE
+        assert entry["cases"] and len(entry["reason"]) >= 20, RATIONALE
+    measured |= set(finite)
     debt, internal = set(coverage["unmeasured"]), set(coverage["internal"])
     assert not (measured & debt or measured & internal or debt & internal), RATIONALE
     assert measured | debt | internal == registered, (
@@ -77,7 +83,7 @@ def test_gateway_method_topology_matches_service() -> None:
 
 
 def test_unmeasured_operations_remain_explicit_debt() -> None:
-    assert len(config()["unmeasured"]) <= 54, RATIONALE
+    assert len(config()["unmeasured"]) <= 50, RATIONALE
     assert len(config()["internal"]) == 7, RATIONALE
 
 
@@ -144,4 +150,18 @@ def test_stream_evidence_cannot_overlap_polls_or_hide_missing_registered_method(
     coverage = copy.deepcopy(config())
     del coverage["streaming"][operation]
     with pytest.raises(AssertionError, match="Missing"):
+        validate(registered_operations(), coverage)
+
+
+def test_finite_image_evidence_keeps_exact_operations_and_rejects_poll_overlap() -> None:
+    import copy
+
+    coverage = copy.deepcopy(config())
+    assert set(coverage['images']['endpoints']) == {'GET /images', 'GET /images/{name}/inventory', 'POST /images/pull', 'POST /assets/ensure'}
+    coverage['measured'].append({'method': 'POST', 'path': '/images/pull', 'case': 'false-fast-poll'})
+    with pytest.raises(AssertionError):
+        validate(registered_operations(), coverage)
+    coverage = copy.deepcopy(config())
+    del coverage['images']['endpoints']['POST /images/pull']
+    with pytest.raises(AssertionError, match='Missing'):
         validate(registered_operations(), coverage)

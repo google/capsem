@@ -80,6 +80,7 @@ def test_fixture_diagnostics_do_not_corrupt_collector_json(
     original_process = collector.psutil.Process
     monkeypatch.setattr(collector.psutil, "Process", lambda _: None)
     monkeypatch.setattr(collector, "measured_cases", lambda: [collector.RouteCase("GET", "/status", "default")])
+    monkeypatch.setattr(collector, "collect_images", lambda *_: (print("IMAGE PREPARATION: untimed") or {}))
     monkeypatch.setattr(collector, "preflight", lambda *_: None)
     monkeypatch.setattr(collector, "seed_metadata", lambda *_: None)
     monkeypatch.setattr(collector, "seed_logs", lambda *_: None)
@@ -105,3 +106,15 @@ def test_fixture_diagnostics_do_not_corrupt_collector_json(
     assert len(payload["metrics"]) == 26
     assert "SERVICE LOG:" in captured.err
     assert stopped == ["service"]
+
+
+def test_missing_prepared_image_inputs_fail_before_product_children(monkeypatch) -> None:
+    created = []
+    def unavailable(*_):
+        raise ValueError('missing exact retained image input')
+    monkeypatch.setattr(collector, 'collect_images', unavailable)
+    monkeypatch.setattr(collector, 'ServiceInstance', lambda: created.append(True))
+    monkeypatch.setattr(sys, 'argv', ['routes', '--samples', '1'])
+    with pytest.raises(ValueError, match='retained image'):
+        collector.main()
+    assert created == []

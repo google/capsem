@@ -3192,6 +3192,48 @@ events_open_timeout_seconds = 15
 events_close_timeout_seconds = 5
 mutation_timeout_seconds = 60
 
+# Finite materialization cohorts: one genuinely empty service home per cycle.
+# Canonical image export/scan/repack and service startup are untimed setup.
+[benchmark.routes.images]
+cycles = 3
+quick_cycles = 1
+cached_samples = 8
+quick_cached_samples = 2
+refresh_samples = 2
+quick_refresh_samples = 1
+inventory_samples = 8
+quick_inventory_samples = 2
+warm_pulls = 2
+quick_warm_pulls = 1
+timeout_seconds = 900
+inspect_timeout_seconds = 15
+poll_seconds = 0.02
+max_response_bytes = 16777216
+
+[benchmark.routes.images.endpoints."GET /images"]
+collector = "routes"
+target_scope = "both"
+reason = "Exact local official catalogue: cached reads and actual hermetic refresh are distinct."
+cases = {catalog_cached = "cached_samples", catalog_refresh = "refresh_samples"}
+
+[benchmark.routes.images.endpoints."GET /images/{name}/inventory"]
+collector = "routes"
+target_scope = "both"
+reason = "Complete canonical producer package versions and OBOM bound to the selected local native pin."
+cases = {inventory_warm = "inventory_samples"}
+
+[benchmark.routes.images.endpoints."POST /images/pull"]
+collector = "routes"
+target_scope = "both"
+reason = "Fresh isolated service home plus actual registry blob receipts proves cold; warm reuse forbids blob transfer."
+cases = {pull_cold = "cycles", pull_warm = "warm_pulls"}
+
+[benchmark.routes.images.endpoints."POST /assets/ensure"]
+collector = "routes"
+target_scope = "both"
+reason = "Owned clone missing one real asset hydrates from the pinned local source; admission and ready completion remain separate."
+cases = {ensure_materialize = "cycles", ensure_ready = "cycles"}
+
 [benchmark.routes.unmeasured]
 "DELETE /connections/authorizations/{transaction_id}" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
 "DELETE /connections/{connection_id}" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
@@ -3203,8 +3245,6 @@ mutation_timeout_seconds = 60
 "DELETE /vms/{id}/exposures/{exposure_id}/preview-session" = { owner = "tests/ironbank/kingslanding/test_preview.py", reason = "Needs actual exposure ownership and single-use preview capability lifecycle, including revoke/delete cleanup." }
 "GET /connections/authorizations/{transaction_id}" = { owner = "crates/capsem-service/src/connection_routes.rs", reason = "Production Runtime constructs only disabled unconfigured agy-native profile; successful enrollment metadata needs an implemented provider contract, never fabricated authority." }
 "GET /connections/{connection_id}" = { owner = "crates/capsem-service/src/connection_routes.rs", reason = "Production Runtime constructs only disabled unconfigured agy-native profile; successful enrollment metadata needs an implemented provider contract, never fabricated authority." }
-"GET /images" = { owner = "tests/ironbank/kingslanding/test_image_catalog.py", reason = "Needs hermetic registry and installed inventory fixture; never time vendor downloads." }
-"GET /images/{name}/inventory" = { owner = "tests/ironbank/kingslanding/test_image_catalog.py", reason = "Needs hermetic registry and installed inventory fixture; never time vendor downloads." }
 "GET /networks/{id}/logs" = { owner = "tests/ironbank/test_managed_network_lifecycle.py", reason = "Fresh network metadata writes no transport events; populated timing requires actual recorded transport traffic." }
 "GET /panics" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
 "GET /triage" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
@@ -3212,12 +3252,10 @@ mutation_timeout_seconds = 60
 "PATCH /mcp/servers/{server_id}/tools/{tool_id}/edit" = { owner = "tests/ironbank/test_mcp_settings_ledger.py", reason = "Needs isolated MCP policy mutation and actual settings ledger evidence, with configuration restored." }
 "PATCH /plugins/{plugin_id}/edit" = { owner = "tests/ironbank/test_policy_mutation_routes.py", reason = "Needs isolated plugin policy mutation plus durable publication evidence and exact configuration restore." }
 "PATCH /settings/edit" = { owner = "crates/capsem-service/src/tests/settings_files.rs", reason = "Needs isolated policy files with exact restore and real validation/publication; repeated arbitrary mutations are not read latency." }
-"POST /assets/ensure" = { owner = "tests/ironbank/test_asset_readiness.py", reason = "Needs isolated pinned asset readiness/materialization fixture; external downloads are separate from local admission." }
 "POST /connections/google/authorize" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
 "POST /corp/reload" = { owner = "tests/ironbank/test_managed_policy.py", reason = "Needs real running-owner policy publication and acknowledgement, with isolated policy files restored afterwards." }
 "POST /corp/validate" = { owner = "crates/capsem-service/src/tests/settings_files.rs", reason = "Needs isolated policy files with exact restore and real validation/publication; repeated arbitrary mutations are not read latency." }
 "POST /credentials/inject" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
-"POST /images/pull" = { owner = "tests/ironbank/kingslanding/test_image_catalog.py", reason = "Needs hermetic registry and installed inventory fixture; never time vendor downloads." }
 "POST /mcp/servers/{server_id}/refresh" = { owner = "tests/ironbank/test_mcp_protocol_ledger.py", reason = "Needs configured MCP server lifecycle and bounded tool fixture; no live vendor calls." }
 "POST /mcp/servers/{server_id}/tools/{tool_id}/call" = { owner = "tests/ironbank/test_mcp_protocol_ledger.py", reason = "Needs configured MCP server lifecycle and bounded tool fixture; no live vendor calls." }
 "POST /networks" = { owner = "tests/ironbank/test_managed_network_lifecycle.py", reason = "Needs isolated network membership and bounded logs; mutations must measure completed ownership changes." }
