@@ -50,6 +50,15 @@ startup_timeout_seconds = 10
 worker_queue_capacity = 64
 builtin_peers_per_session = 1
 
+[approval]
+# Human decisions hold the original continuation, never a replayable request.
+timeout_seconds = 120
+pending_per_session = 16
+pending_total = 128
+context_bytes = 4096
+held_bytes_per_request = 1048576
+held_bytes_total = 16777216
+
 [cache]
 # Bounded runtime maps and freshness windows are product capacities. Keep
 # them here so every process sees the same policy and local literals cannot

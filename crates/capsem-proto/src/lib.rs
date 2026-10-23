@@ -9,6 +9,7 @@
 //! `HostToGuest`. This is enforced at the type level by having separate
 //! encode/decode function pairs.
 
+pub mod approval;
 pub mod browser;
 pub mod credential_injection;
 pub mod credential_reference;

@@ -6,6 +6,8 @@
 //! refuse each other. Serde attributes, field names, variants and framing
 //! constants remain in the token stream and change the hash.
 
+#[path = "build/approval_limits.rs"]
+mod approval_limits;
 #[path = "build/runtime_limits.rs"]
 mod runtime_limits;
 
@@ -34,6 +36,7 @@ fn main() {
         "router.rs",
         "exec_stream.rs",
         "credential_injection.rs",
+        "approval.rs",
     ];
     write_hash("schema_hash.txt", &files);
     write_hash("ledger_schema_hash.txt", &["ledger.rs", "ledger_control.rs"]);
