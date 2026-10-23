@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 pub mod client;
 pub(crate) mod enforcement;
-pub use enforcement::resolve_emission;
+pub use enforcement::{resolve_emission, resolve_emission_registered};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ApprovalBinding {

@@ -2,12 +2,23 @@
 use super::client::ApprovalCapability;
 use crate::security_engine::*;
 use capsem_proto::approval::{ApprovalOutcome, ApprovalRequest};
+use std::future::Future;
 
-pub async fn resolve_emission(
+pub fn resolve_emission<'a>(
+    db: &'a DbWriter,
+    capability: Option<&'a ApprovalCapability>,
+    emission: &'a mut SecurityRuleEmission,
+    held_bytes: usize,
+) -> impl Future<Output = Result<(), String>> + Send + 'a {
+    resolve_emission_registered(db, capability, emission, held_bytes, None)
+}
+
+pub async fn resolve_emission_registered(
     db: &DbWriter,
     capability: Option<&ApprovalCapability>,
     emission: &mut SecurityRuleEmission,
     held_bytes: usize,
+    registered: Option<tokio::sync::oneshot::Sender<capsem_proto::approval::ApprovalRegistration>>,
 ) -> Result<(), String> {
     if emission.enforcement.action != SecurityEnforcementAction::Ask {
         return Ok(());
@@ -15,12 +26,10 @@ pub async fn resolve_emission(
     let outcome = if let Some(capability) = capability {
         db.flush_checked().await?;
         capability
-            .decide(request(
-                &emission.enforcement,
-                &emission.event,
-                &emission.event_id,
-                held_bytes,
-            )?)
+            .decide_registered(
+                request(&emission.enforcement, &emission.event, &emission.event_id, held_bytes)?,
+                registered,
+            )
             .await
     } else {
         ApprovalOutcome::Unavailable
