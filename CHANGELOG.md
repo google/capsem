@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Simplify the dashboard to New session app rows and Existing sessions, removing
+  the generic New/Customize launcher and redundant page heading.
+
 - Update dashboard apps and usage automatically when returning to Capsem, and
   remove redundant Refresh controls while retaining retry for catalog failures.
 

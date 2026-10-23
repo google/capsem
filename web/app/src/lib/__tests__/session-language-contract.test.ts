@@ -43,7 +43,7 @@ const legacyVmPlural = legacyVmSingular + 's';
 
 describe('user-facing session language contract', () => {
   it('uses sessions on the dashboard instead of VM wording', () => {
-    expect(dashboard).toContain('Sessions');
+    expect(dashboard).toContain('Existing sessions');
     expect(dashboard).toContain('Loading sessions');
     expect(dashboard).toContain('No sessions');
     expect(dashboard).toContain('actionError = sessionActionError(error)');
@@ -55,24 +55,18 @@ describe('user-facing session language contract', () => {
     expect(dashboard).not.toContain('Failed to create VM');
   });
 
-  it('keeps one new-session launcher gated on VM asset readiness', () => {
-    expect(dashboard).toContain('New session');
-    expect(dashboard).toContain('Customize');
-    expect(dashboard).toContain('vmStore.openCreateModal()');
+  it('uses image rows as the dashboard launch entry point', () => {
+    expect(dashboard).toContain('<ImageCatalog {ready} {prepareRuntime} />');
     expect(dashboard).toContain('api.getAssetsStatus()');
     expect(dashboard).toContain('api.ensureAssets()');
-    expect(dashboard).toContain('let ready = $derived(assets?.ready === true)');
-    expect(dashboard).toContain('onclick={() => ready ? createSession() : downloadAssets()}');
-    expect(dashboard).toContain("title={ready ? 'New session' : assetText(assets)}");
-    expect(dashboard).toContain('<DownloadSimple');
-    expect(dashboard).toContain('Downloading');
-    expect(dashboard).toContain('role="progressbar"');
-    expect(dashboard).toContain('aria-valuenow={assetPercent(assets)}');
-    expect(dashboard).not.toContain('Customize Session...');
-    expect(dashboard).not.toContain('vmStore.showCreateModal = true');
-    expect(dashboard).not.toContain('getUpdateStatus');
-    expect(dashboard).not.toContain('Not published');
-    expect(dashboard).not.toContain('Start</span>');
+    expect(dashboard).not.toContain('New session');
+    expect(dashboard).not.toContain('<h2');
+    expect(dashboard).not.toContain('Customize');
+    const catalog = readFileSync(new URL('../components/shell/ImageCatalog.svelte', import.meta.url), 'utf8');
+    expect(catalog).toContain('>New session</h3>');
+    expect(catalog).not.toContain('>Apps</h3>');
+    expect(dashboard).not.toContain('createSession');
+    expect(dashboard).not.toContain('openCreateModal');
   });
 
   it('routes About Capsem to a top-level canonical status page', () => {
@@ -107,7 +101,7 @@ describe('user-facing session language contract', () => {
     expect(quickCreateSources).not.toContain('generatedVmName');
     expect(quickCreateSources).not.toContain('ram_mb');
     expect(quickCreateSources).not.toContain('cpus:');
-    expect(dashboard).toContain('vmStore.provision({ persistent: true })');
+    expect(dashboard).not.toContain('vmStore.provision');
     expect(appShell).toContain('vmStore.openCreateModal()');
   });
 

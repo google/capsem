@@ -104,7 +104,7 @@
 
 <section class="mb-6" aria-labelledby="image-catalog-title" aria-busy={loading}>
   <div class="flex items-center justify-between mb-3 gap-3">
-    <h3 id="image-catalog-title" class="text-lg font-medium text-foreground">Apps</h3>
+    <h3 id="image-catalog-title" class="text-lg font-medium text-foreground">New session</h3>
     {#if error}
       <button type="button" class="text-xs text-primary hover:underline disabled:opacity-50"
         disabled={loading} onclick={() => load(true)}>Retry</button>

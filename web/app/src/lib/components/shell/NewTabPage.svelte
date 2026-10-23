@@ -17,10 +17,7 @@
   import Pause from 'phosphor-svelte/lib/Pause';
   import Trash from 'phosphor-svelte/lib/Trash';
   import Play from 'phosphor-svelte/lib/Play';
-  import Plus from 'phosphor-svelte/lib/Plus';
-  import BracketsAngle from 'phosphor-svelte/lib/BracketsAngle';
   import CircleNotch from 'phosphor-svelte/lib/CircleNotch';
-  import DownloadSimple from 'phosphor-svelte/lib/DownloadSimple';
   import Warning from 'phosphor-svelte/lib/Warning';
   import X from 'phosphor-svelte/lib/X';
   import GitFork from 'phosphor-svelte/lib/GitFork';
@@ -41,11 +38,7 @@
   let initialLoading = $derived(!vmStore.polled);
 
   let assets = $state<AssetStatus | null>(null);
-  let assetsLoading = $state(true);
-  let assetsError = $state<string | null>(null);
-  let ensuring = $state(false);
   let ready = $derived(assets?.ready === true);
-  let downloading = $derived(ensuring || assets?.downloading === true);
 
   onMount(() => {
     void loadAssets();
@@ -152,26 +145,8 @@
     }
   }
 
-  let creatingVm = $state(false);
   let purging = $state(false);
   let actionError = $state<string | null>(null);
-
-  function assetText(status: AssetStatus | null): string {
-    if (!status) return 'Checking Capsem setup.';
-    if (status.downloading) return assetProgressText(status);
-    if (status.ready) return 'Start a terminal or customize a session.';
-    if (status.reconcile_error) return 'Setup download failed. Try again to continue.';
-    return 'Download Capsem setup once to launch any app.';
-  }
-
-  function assetPercent(status: AssetStatus | null): number {
-    if (!status?.bytes_total) return 0;
-    return Math.min(100, Math.floor(((status.bytes_done ?? 0) / status.bytes_total) * 100));
-  }
-
-  function assetProgressText(status: AssetStatus): string {
-    return status.bytes_total ? `Setting up Capsem: ${assetPercent(status)}%` : 'Setting up Capsem...';
-  }
 
   let assetsRefreshInFlight = false;
 
@@ -181,12 +156,10 @@
     const wasDownloading = assets?.downloading === true;
     try {
       assets = await api.getAssetsStatus();
-      assetsError = null;
       if (wasDownloading && !assets.downloading) await vmStore.refresh();
-    } catch (err) {
-      assetsError = parseApiError(err);
+    } catch {
+      assets = null;
     } finally {
-      assetsLoading = false;
       assetsRefreshInFlight = false;
     }
   }
@@ -217,50 +190,15 @@
     return stripped || msg;
   }
 
-  async function createSession() {
-    if (creatingVm) return;
-    actionError = null;
-    if (assets?.ready !== true) {
-      actionError = 'VM assets are not ready';
-      return;
-    }
-    creatingVm = true;
-    try {
-      const { id, name } = await vmStore.provision({ persistent: true });
-      console.log('[NewTabPage] provision OK id=%s name=%s', id, name);
-      tabStore.openVM(id, name);
-    } catch (e) {
-      console.error('[NewTabPage] provision FAIL:', e);
-      actionError = parseApiError(e);
-    } finally {
-      creatingVm = false;
-    }
-  }
-
   async function prepareRuntime() {
     if (ready) return;
-    actionError = null;
-    assetsError = null;
-    ensuring = true;
-    try {
-      assets = await api.ensureAssets();
-      const deadline = Date.now() + 900_000;
-      while (assets.downloading && Date.now() < deadline) {
-        await new Promise(resolve => window.setTimeout(resolve, 1000));
-        assets = await api.getAssetsStatus();
-      }
-      if (!assets.ready) throw new Error(assets.reconcile_error ?? 'Capsem setup has not finished. Try again.');
-    } finally {
-      ensuring = false;
+    assets = await api.ensureAssets();
+    const deadline = Date.now() + 900_000;
+    while (assets.downloading && Date.now() < deadline) {
+      await new Promise(resolve => window.setTimeout(resolve, 1000));
+      assets = await api.getAssetsStatus();
     }
-  }
-
-  async function downloadAssets() {
-    try {
-      await prepareRuntime();
-    } catch (err) {
-      assetsError = parseApiError(err);
-    }
+    if (!assets.ready) throw new Error(assets.reconcile_error ?? 'Capsem setup has not finished. Try again.');
   }
 
   async function handlePurgeBroken() {
@@ -360,73 +298,7 @@
 {/snippet}
 
 <div class="h-full overflow-y-auto p-6 max-w-5xl mx-auto">
-  <!-- Sessions header -->
-  <div class="flex items-center justify-between mb-6">
-    <h2 class="text-2xl font-bold text-foreground">Sessions</h2>
-  </div>
-
   <ImageCatalog {ready} {prepareRuntime} />
-
-  <!-- New session launcher -->
-  <div class="bg-card border border-card-line rounded-xl p-4 mb-6">
-    <div class="flex items-start gap-x-3">
-      <span class="size-10 shrink-0 inline-flex items-center justify-center rounded-lg bg-muted text-foreground" aria-hidden="true">
-        <BracketsAngle size={20} weight="bold" />
-      </span>
-      <div class="min-w-0 flex-1">
-        <p class="text-sm font-semibold text-foreground">New session</p>
-        <p class="text-xs text-muted-foreground-1 mt-1">{assetsLoading ? 'Checking Capsem setup.' : assetText(assets)}</p>
-        {#if !ready && (assetsError || assets?.reconcile_error)}
-          <details class="text-xs text-destructive mt-2 break-words"><summary class="cursor-pointer">Download details</summary>{assetsError ?? assets?.reconcile_error}</details>
-        {/if}
-        <div class="mt-3 flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            class="inline-flex items-center justify-center gap-x-2 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary-hover focus:outline-hidden focus:bg-primary-focus disabled:opacity-50 disabled:pointer-events-none"
-            onclick={() => ready ? createSession() : downloadAssets()}
-            disabled={creatingVm || assetsLoading || downloading}
-            title={ready ? 'New session' : assetText(assets)}
-          >
-            {#if ready}
-              <Plus size={14} weight="bold" />
-              New
-            {:else if assetsLoading}
-              <CircleNotch size={14} class="animate-spin" />
-              Checking
-            {:else if downloading}
-              <CircleNotch size={14} class="animate-spin" />
-              Downloading
-            {:else}
-              <DownloadSimple size={14} />
-              Download
-            {/if}
-          </button>
-          <button
-            type="button"
-            class="inline-flex items-center justify-center gap-x-2 rounded-lg bg-surface border border-line-2 px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted-hover focus:outline-hidden disabled:opacity-50 disabled:pointer-events-none"
-            onclick={() => vmStore.openCreateModal()}
-            disabled={creatingVm || !ready}
-            title="Customize session"
-          >
-            <Plus size={14} weight="bold" />
-            Customize
-          </button>
-        </div>
-        {#if assets?.downloading}
-          <div
-            role="progressbar"
-            aria-label="Downloading VM assets"
-            aria-valuemin="0"
-            aria-valuemax="100"
-            aria-valuenow={assetPercent(assets)}
-            class="mt-3 h-1.5 overflow-hidden rounded-full bg-muted"
-          >
-            <div class="h-full rounded-full bg-primary transition-[width]" style={`width: ${assetPercent(assets)}%`}></div>
-          </div>
-        {/if}
-      </div>
-    </div>
-  </div>
 
   <!-- Action error banner -->
   {#if actionError}
@@ -448,7 +320,7 @@
   {/if}
 
   <!-- Session list -->
-  <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider mb-3">Sessions</h3>
+  <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider mb-3">Existing sessions</h3>
   {#if initialLoading}
     <div class="bg-card border border-card-line rounded-xl p-12 flex items-center justify-center gap-x-3">
       <CircleNotch size={18} class="text-muted-foreground-1 animate-spin" />
