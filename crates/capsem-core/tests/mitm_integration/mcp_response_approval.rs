@@ -1,14 +1,7 @@
 //! The remote tool executes once; its original response remains gated.
+use super::approval_fixture::ApprovalFixture;
 use super::*;
-use capsem_core::security_engine::approval::client::{frame_limit, ApprovalCapability};
-use capsem_foundation::ipc_channel;
-use capsem_foundation::unix::router_channel::{DescriptorReceiver, DescriptorSender};
 use capsem_proto::approval::{ApprovalClientMessage, ApprovalOutcome, ApprovalServerMessage};
-use capsem_proto::upstream_grant::{
-    decode_upstream_grant_request, encode_upstream_grant_response, UpstreamGrantRequest, UpstreamGrantResponse,
-    UPSTREAM_GRANT_FRAME_SIZE, UPSTREAM_GRANT_MAX_FDS,
-};
-use std::os::fd::AsRawFd;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
@@ -47,44 +40,12 @@ async fn observed_mcp_response_security_holds_original_response() {
         "#
         ));
         let (config, db) = make_proxy_config_with_security_rules(rules, &[80, port]);
-        let (worker, coordinator) = std::os::unix::net::UnixStream::pair().unwrap();
-        let (grant_worker, grant_broker) = std::os::unix::net::UnixStream::pair().unwrap();
-        let grant_client = capsem_core::net::upstream_grant::UpstreamGrantClient::start(grant_worker).unwrap();
-        let grants = DescriptorReceiver::<UPSTREAM_GRANT_FRAME_SIZE, UPSTREAM_GRANT_MAX_FDS>::new(
-            grant_broker.try_clone().unwrap(),
-        )
-        .unwrap();
-        let responses =
-            DescriptorSender::<UPSTREAM_GRANT_FRAME_SIZE, UPSTREAM_GRANT_MAX_FDS>::new(grant_broker).unwrap();
-        let (grant_keep, grant_finish) = tokio::sync::oneshot::channel();
-        let grant_task = tokio::spawn(async move {
-            let request = grants.recv().await.unwrap();
-            assert!(request.fds.is_empty());
-            let UpstreamGrantRequest::OpenApproval { request_id } =
-                decode_upstream_grant_request(&request.bytes).unwrap()
-            else {
-                panic!("only the inherited approval capability may be opened")
-            };
-            responses
-                .send(
-                    &encode_upstream_grant_response(&UpstreamGrantResponse::ApprovalGranted { request_id }).unwrap(),
-                    &[worker.as_raw_fd()],
-                )
-                .await
-                .unwrap();
-            let _ = grant_finish.await;
-        });
-        let capability = ApprovalCapability::new(Arc::new(grant_client));
-        let (sender, receiver) =
-            ipc_channel::channel_from_std_with_limit::<ApprovalServerMessage, ApprovalClientMessage>(
-                coordinator,
-                frame_limit(),
-            )
-            .unwrap();
+        let fixture = ApprovalFixture::new();
+        let (sender, receiver) = (&fixture.sender, &fixture.receiver);
         let mut config = Arc::try_unwrap(config).ok().unwrap();
         config.engine = Arc::new(
             capsem_core::net::proxy_engine::ProxyEngine::local(config.engine.policy().clone(), Arc::clone(&db))
-                .with_approvals(Some(Arc::new(capability))),
+                .with_approvals(Some(Arc::clone(&fixture.capability))),
         );
         let (proxy, address) = spawn_proxy(Arc::new(config)).await;
         let body = br#"{"jsonrpc":"2.0","id":71,"method":"tools/call","params":{"name":"search_web","arguments":{}}}"#;
@@ -137,8 +98,7 @@ async fn observed_mcp_response_security_holds_original_response() {
                     "executed tool audit was lost on disconnect: {calls}"
                 );
                 assert_eq!(calls["rows"][0][0], receipt.unwrap().event_id);
-                grant_keep.send(()).unwrap();
-                grant_task.await.unwrap();
+                fixture.finish().await;
                 continue;
             }
             sender
@@ -175,7 +135,6 @@ async fn observed_mcp_response_security_holds_original_response() {
             calls["rows"][0][2], "profiles.rules.response_only",
             "later unmatched response erased original policy provenance"
         );
-        grant_keep.send(()).unwrap();
-        grant_task.await.unwrap();
+        fixture.finish().await;
     }
 }

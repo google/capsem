@@ -32,6 +32,21 @@ impl Tasks {
         context: Context,
         body: Bytes,
     ) -> Result<(Bytes, Outcome), crate::security_engine::SecurityActionError> {
+        self.run(move |cancellation| async move {
+            let mut body = body;
+            enforce(context, &mut body, &cancellation)
+                .await
+                .map(|outcome| (body, outcome))
+        })
+        .await
+    }
+
+    pub(super) async fn run<T, F, Fut>(&self, work: F) -> Result<T, crate::security_engine::SecurityActionError>
+    where
+        T: Send + 'static,
+        F: FnOnce(tokio_util::sync::CancellationToken) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = Result<T, crate::security_engine::SecurityActionError>> + Send + 'static,
+    {
         let cancellation = self.stopped.child_token();
         let _cancel_on_disconnect = cancellation.clone().drop_guard();
         let (sender, response) = tokio::sync::oneshot::channel();
@@ -41,10 +56,7 @@ impl Tasks {
             // a long-lived connection never retains their task slots.
             while jobs.try_join_next().is_some() {}
             jobs.spawn(async move {
-                let mut body = body;
-                let result = enforce(context, &mut body, &cancellation)
-                    .await
-                    .map(|outcome| (body, outcome));
+                let result = work(cancellation).await;
                 // The connection owns this task until its audit is drained,
                 // even when its original response receiver disconnects.
                 let _ = sender.send(result);

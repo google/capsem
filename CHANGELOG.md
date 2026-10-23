@@ -209,6 +209,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Show a compact toolbar notice when the service confirms a newer Capsem version,
   with a direct action to review its update status.
+- Retain the original internal HTTP MCP tool audit when a caller disconnects
+  while its response awaits approval; cancel and drain the owned operation.
+
 - Preserve the original HTTP approval identity in completed network telemetry,
   so request review and final security records describe the same operation.
 

@@ -243,6 +243,7 @@ pub(super) async fn dispatch_http_message(
     db: Arc<DbWriter>,
     payload: &[u8],
     process_name: &str,
+    cancellation: tokio_util::sync::CancellationToken,
 ) -> HttpMcpReply {
     let request = match parse_json_rpc_payload(payload) {
         Ok(request) => request,
@@ -250,7 +251,15 @@ pub(super) async fn dispatch_http_message(
         Err(error) => return HttpMcpReply::Invalid(JsonRpcResponse::err(error.id, error.code, error.message)),
     };
     let notification = request.id.is_none();
-    let logged = dispatch_logged_mcp_request(endpoint, db, request, process_name.to_string(), McpTransport::Http).await;
+    let logged = dispatch_cancellable_mcp_request(
+        endpoint,
+        db,
+        request,
+        process_name.to_string(),
+        McpTransport::Http,
+        cancellation,
+    )
+    .await;
     match logged {
         Some(logged) if !notification => HttpMcpReply::Answer(logged.response),
         _ => HttpMcpReply::Accepted,

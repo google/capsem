@@ -69,12 +69,13 @@ pub(super) fn internal_route(host: &str, port: u16, protocol: Protocol) -> Optio
 pub(super) async fn serve(
     req: hyper::Request<hyper::body::Incoming>,
     route: InternalRoute,
-    domain: &str,
-    port: u16,
+    target: (&str, u16),
     protocol: Protocol,
     config: &Arc<MitmProxyConfig>,
     process_name: &Option<String>,
+    tasks: &super::mcp_response::Tasks,
 ) -> hyper::Response<ProxyBoxBody> {
+    let (domain, port) = target;
     if route == InternalRoute::Refused {
         record_refusal(config, domain, port, protocol, process_name, &req).await;
         return reply(
@@ -108,11 +109,19 @@ pub(super) async fn serve(
             return reply(413, "text/plain", "capsem: MCP message too large or truncated\n");
         }
     };
-    let process_name = process_name.as_deref().unwrap_or("unknown");
-    match dispatch_http_message(Arc::clone(endpoint), Arc::clone(&config.db), &payload, process_name).await {
-        HttpMcpReply::Answer(response) => json_reply(200, &response),
-        HttpMcpReply::Accepted => reply(202, "text/plain", Bytes::new()),
-        HttpMcpReply::Invalid(response) => json_reply(400, &response),
+    let process_name = process_name.as_deref().unwrap_or("unknown").to_string();
+    let endpoint = Arc::clone(endpoint);
+    let db = Arc::clone(&config.db);
+    let result = tasks
+        .run(move |cancellation| async move {
+            Ok(dispatch_http_message(endpoint, db, &payload, &process_name, cancellation).await)
+        })
+        .await;
+    match result {
+        Err(_) => reply(503, "text/plain", "capsem: MCP request worker stopped\n"),
+        Ok(HttpMcpReply::Answer(response)) => json_reply(200, &response),
+        Ok(HttpMcpReply::Accepted) => reply(202, "text/plain", Bytes::new()),
+        Ok(HttpMcpReply::Invalid(response)) => json_reply(400, &response),
     }
 }
 
