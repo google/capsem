@@ -142,10 +142,13 @@ fn invalid() -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::InvalidData, "gateway metric capability rejected")
 }
 
-/// The confined gateway receives no collector credentials or ambient resource
-/// metadata. Only the trusted service reads OTEL configuration.
+/// Descriptor/argument authority is explicit. Inherit only diagnostics and
+/// coverage output, never ambient provider/collector credentials or settings.
 pub(crate) fn strip_collector_environment(command: &mut tokio::process::Command) {
-    for (key, _) in std::env::vars_os().filter(|(key, _)| key.to_str().is_some_and(|key| key.starts_with("OTEL_"))) {
-        command.env_remove(key);
+    command.env_clear();
+    for key in ["RUST_LOG", "RUST_BACKTRACE", "LLVM_PROFILE_FILE"] {
+        if let Some(value) = std::env::var_os(key) {
+            command.env(key, value);
+        }
     }
 }

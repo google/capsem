@@ -315,18 +315,53 @@ async fn owner_revocation_interrupts_an_inflight_collector_wait() {
 }
 
 #[tokio::test]
-async fn gateway_child_environment_excludes_even_unknown_otel_configuration_keys() {
+async fn gateway_child_environment_excludes_ambient_credentials_and_retains_diagnostics() {
     let _environment = SETTINGS_ENV_LOCK.lock().await;
-    let _header = EnvVarGuard::set("OTEL_EXPORTER_OTLP_HEADERS", "private-collector-header-canary");
-    let _unknown = EnvVarGuard::set("OTEL_FUTURE_CONFIG", "private-future-canary");
-    let mut command = tokio::process::Command::new("unused");
+    let _provider = EnvVarGuard::set("CAPSEM_TEST_PROVIDER_CREDENTIAL", "fake-provider-canary");
+    let _header = EnvVarGuard::set("OTEL_EXPORTER_OTLP_HEADERS", "fake-collector-canary");
+    let _unknown = EnvVarGuard::set("OTEL_FUTURE_CONFIG", "fake-future-canary");
+    let _log = EnvVarGuard::set("RUST_LOG", "capsem_gateway=debug");
+    let _backtrace = EnvVarGuard::set("RUST_BACKTRACE", "1");
+    let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
     strip_collector_environment(&mut command);
-    let removed: Vec<_> = command.as_std().get_envs().collect();
-    for key in ["OTEL_EXPORTER_OTLP_HEADERS", "OTEL_FUTURE_CONFIG"] {
-        assert!(removed
-            .iter()
-            .any(|(name, value)| *name == std::ffi::OsStr::new(key) && value.is_none()));
+    let expected_profile = std::env::var_os("LLVM_PROFILE_FILE");
+    assert_eq!(
+        command
+            .as_std()
+            .get_envs()
+            .find(|(key, _)| *key == std::ffi::OsStr::new("LLVM_PROFILE_FILE"))
+            .and_then(|(_, value)| value.map(std::ffi::OsStr::to_os_string)),
+        expected_profile
+    );
+    let output = command
+        .args([
+            "--exact",
+            "service_runtime::telemetry_export::gateway::tests::gateway_environment_child_probe",
+            "--nocapture",
+        ])
+        .env("CAPSEM_GATEWAY_ENV_PROBE", "1")
+        .output()
+        .await
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+}
+
+#[test]
+fn gateway_environment_child_probe() {
+    if std::env::var_os("CAPSEM_GATEWAY_ENV_PROBE").is_none() {
+        return;
     }
+    // Inspect only these synthetic canaries, never real provider credentials.
+    for key in [
+        "CAPSEM_TEST_PROVIDER_CREDENTIAL",
+        "OTEL_EXPORTER_OTLP_HEADERS",
+        "OTEL_FUTURE_CONFIG",
+    ] {
+        assert!(std::env::var_os(key).is_none(), "ambient canary inherited");
+    }
+    assert_eq!(std::env::var("RUST_LOG").unwrap(), "capsem_gateway=debug");
+    assert_eq!(std::env::var("RUST_BACKTRACE").unwrap(), "1");
 }
 
 #[tokio::test]
