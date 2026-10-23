@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Apply configured archive retention through trusted ledger maintenance after
+  session producers drain, keeping VM and proxy channels restricted.
+
 - Hide completed native browser handoffs from the session toolbar, retaining
   a retry action when opening the browser fails.
 

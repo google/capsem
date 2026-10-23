@@ -8,13 +8,17 @@ use super::*;
 use crate::session_housekeeping::{retention_days_from_resolved, DEFAULT_RETENTION_DAYS};
 
 #[test]
-fn both_vm_spawn_paths_pass_resolved_retention_to_owner() {
+fn retention_policy_belongs_to_the_trusted_ledger_lifecycle() {
+    let runtime = include_str!("../service_runtime.rs");
+    assert!(runtime.contains("Some(crate::session_housekeeping::retention_days)"));
     for source in [
         include_str!("../vm_lifecycle/provision.rs"),
         include_str!("../vm_lifecycle/resume_process.rs"),
     ] {
-        assert!(source.contains(".arg(\"--retention-days\")"));
-        assert!(source.contains("session_housekeeping::retention_days()"));
+        assert!(
+            !source.contains("--retention-days"),
+            "VM owners must not receive archive maintenance authority"
+        );
     }
 }
 

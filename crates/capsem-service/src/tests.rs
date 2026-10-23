@@ -100,9 +100,10 @@ pub(crate) fn test_state(
         instances: Mutex::new(HashMap::new()),
         proxy_workers: Mutex::new(HashMap::new()),
         standalone_proxies: tokio::sync::Mutex::new(HashMap::new()),
-        ledger_workers: Arc::new(ledger_worker::LedgerWorkers::new(PathBuf::from(
-            "/nonexistent/capsem-ledger",
-        ))),
+        ledger_workers: Arc::new(ledger_worker::LedgerWorkers::new(
+            PathBuf::from("/nonexistent/capsem-ledger"),
+            None,
+        )),
         retirements: Default::default(),
         session_db_handles: Mutex::new(HashMap::new()),
         persistent_registry: SharedRegistry::new(
@@ -155,6 +156,7 @@ pub(crate) fn make_test_state() -> Arc<ServiceState> {
 pub(crate) fn install_test_ledger_worker(state: &mut ServiceState, directory: &StdPath) {
     state.ledger_workers = Arc::new(crate::ledger_worker::LedgerWorkers::new(
         crate::ledger_worker::tests::fake_binary(directory, "normal"),
+        None,
     ));
 }
 

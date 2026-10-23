@@ -27,6 +27,8 @@ use capsem_proto::ledger_control::{
 use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, oneshot, watch};
 
+mod retention;
+
 #[cfg(not(test))]
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
 #[cfg(test)]
@@ -35,10 +37,7 @@ const STARTUP_TIMEOUT: Duration = Duration::from_secs(2);
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(5);
 #[cfg(test)]
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(2);
-#[cfg(not(test))]
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
-#[cfg(test)]
-const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(200);
 const COMMAND_QUEUE_CAPACITY: usize = 64;
 
 type ControlSender = DescriptorSender<LEDGER_CONTROL_FRAME_SIZE, LEDGER_CONTROL_MAX_FDS>;
@@ -53,13 +52,15 @@ struct LedgerSlot {
 /// Service-owned table that serializes each session's ledger lifetime.
 pub(crate) struct LedgerWorkers {
     binary: PathBuf,
+    retention_policy: Option<fn() -> u64>,
     slots: tokio::sync::Mutex<std::collections::HashMap<String, LedgerSlot>>,
 }
 
 impl LedgerWorkers {
-    pub(crate) fn new(binary: PathBuf) -> Self {
+    pub(crate) fn new(binary: PathBuf, retention_policy: Option<fn() -> u64>) -> Self {
         Self {
             binary,
+            retention_policy,
             slots: tokio::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
@@ -128,10 +129,29 @@ impl LedgerWorkers {
 
     /// Stop and reap the current generation before vacating its slot.
     pub(crate) async fn shutdown(&self, session_id: &str) -> Result<()> {
-        let Some(worker) = self.slots.lock().await.get(session_id).map(|slot| slot.worker.clone()) else {
+        let Some((worker, database)) = self
+            .slots
+            .lock()
+            .await
+            .get(session_id)
+            .map(|slot| (slot.worker.clone(), slot.database.clone()))
+        else {
             return Ok(());
         };
         let generation = worker.generation();
+        if let Some(policy) = self.retention_policy {
+            // Settings resolution may read files; it belongs off the runtime,
+            // and is resolved now so a live configuration change is honored.
+            let retained = match tokio::task::spawn_blocking(policy).await {
+                Ok(days) => retention::apply(&worker, &database, days).await,
+                Err(error) => Err(anyhow!(error)),
+            };
+            if let Err(error) = retained {
+                // A failed trim keeps too much data; still stop and reap the
+                // worker rather than abandoning its generation on an error.
+                tracing::warn!(session_id, %error, "session archive retention failed");
+            }
+        }
         let result = worker.shutdown().await;
         let mut slots = self.slots.lock().await;
         if slots
@@ -212,15 +232,21 @@ impl LedgerWorker {
         command.env_clear().stdout(stdout).stderr(stderr).kill_on_drop(true);
         #[cfg(test)]
         crate::tests::retain_coverage_profile(&mut command);
-        launch(command, database, generation, |command, generation, database| {
-            command
-                .arg("--parent-pid")
-                .arg(std::process::id().to_string())
-                .arg("--database")
-                .arg(database)
-                .arg("--generation")
-                .arg(generation_hex(generation));
-        })
+        launch(
+            command,
+            database,
+            generation,
+            SHUTDOWN_TIMEOUT,
+            |command, generation, database| {
+                command
+                    .arg("--parent-pid")
+                    .arg(std::process::id().to_string())
+                    .arg("--database")
+                    .arg(database)
+                    .arg("--generation")
+                    .arg(generation_hex(generation));
+            },
+        )
         .await
     }
 
@@ -276,12 +302,14 @@ struct WorkerProcess {
     control_events: mpsc::Receiver<io::Result<ControlFrame>>,
     control_reader: Option<tokio::task::JoinHandle<()>>,
     next_client_id: u64,
+    shutdown_timeout: Duration,
 }
 
 async fn launch(
     mut command: Command,
     database: &Path,
     generation: LedgerGeneration,
+    shutdown_timeout: Duration,
     configure: impl FnOnce(&mut Command, LedgerGeneration, &Path),
 ) -> Result<LedgerWorker> {
     if !database.is_absolute() || database.file_name().and_then(|name| name.to_str()) != Some("session.db") {
@@ -293,7 +321,7 @@ async fn launch(
     let child = command.spawn().context("spawn capsem-ledger")?;
     let control_tx = ControlSender::new(coordinator.try_clone()?).context("open ledger control sender")?;
     let control_rx = ControlReceiver::new(coordinator).context("open ledger control receiver")?;
-    let process = WorkerProcess::start(child, control_tx, control_rx, generation).await?;
+    let process = WorkerProcess::start(child, control_tx, control_rx, generation, shutdown_timeout).await?;
     let (commands, requests) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
     let (stopped_tx, stopped) = watch::channel(None);
     tokio::spawn(supervise(process, requests, stopped_tx));
@@ -310,6 +338,7 @@ impl WorkerProcess {
         control_tx: ControlSender,
         control_rx: ControlReceiver,
         generation: LedgerGeneration,
+        shutdown_timeout: Duration,
     ) -> Result<Self> {
         let mut pending = PendingWorker {
             child,
@@ -350,6 +379,7 @@ impl WorkerProcess {
             control_events,
             control_reader: Some(control_reader),
             next_client_id: 1,
+            shutdown_timeout,
         })
     }
 
@@ -398,7 +428,7 @@ impl WorkerProcess {
             )
             .await
             .context("send ledger shutdown")?;
-        let stopped = tokio::time::timeout(SHUTDOWN_TIMEOUT, async {
+        let stopped = tokio::time::timeout(self.shutdown_timeout, async {
             loop {
                 match self.recv_event().await? {
                     LedgerControlEvent::Stopped { generation } if generation == self.generation => break,

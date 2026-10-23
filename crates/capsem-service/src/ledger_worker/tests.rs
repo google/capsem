@@ -36,6 +36,17 @@ async fn fake_ledger_worker_child() {
     let control = UnixStream::from(capsem_foundation::unix::fd::duplicate(std::io::stdin().as_fd()).unwrap());
     let control_tx = Arc::new(ControlSender::new(control.try_clone().unwrap()).unwrap());
     let control_rx = ControlReceiver::new(control).unwrap();
+    // Lifecycle-only modes keep raw descriptors. Storage acceptance uses the
+    // real ledger protocol, role checks, writer and archive owner.
+    let storage = (mode == "storage").then(|| {
+        Arc::new(
+            capsem_logger::ledger_server::LedgerServer::open(&PathBuf::from(
+                std::env::var("CAPSEM_FAKE_LEDGER_DATABASE").unwrap(),
+            ))
+            .unwrap(),
+        )
+    });
+    let mut storage_clients = tokio::task::JoinSet::new();
     control_tx
         .send(
             &encode_ledger_control_event(LedgerControlEvent::Ready { generation: announced }),
@@ -66,7 +77,10 @@ async fn fake_ledger_worker_child() {
                     )
                     .await
                     .unwrap();
-                if mode == "close_clients" {
+                if let Some(server) = &storage {
+                    let server = Arc::clone(server);
+                    storage_clients.spawn(async move { server.serve_client(stream, grant).await.unwrap() });
+                } else if mode == "close_clients" {
                     drop(stream);
                     control_tx
                         .send(
@@ -87,6 +101,15 @@ async fn fake_ledger_worker_child() {
                 std::future::pending::<()>().await;
             }
             LedgerControlRequest::Shutdown { .. } => {
+                // Match the production coordinator: shutdown revokes client
+                // tasks, rather than waiting for every peer to close first.
+                storage_clients.abort_all();
+                while let Some(client) = storage_clients.join_next().await {
+                    if let Err(error) = client {
+                        assert!(error.is_cancelled(), "{error}");
+                    }
+                }
+                drop(storage);
                 control_tx
                     .send(
                         &encode_ledger_control_event(LedgerControlEvent::Stopped { generation }),
@@ -113,11 +136,19 @@ async fn fake(mode: &'static str) -> Result<LedgerWorker> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .kill_on_drop(true);
-    launch(command, &database, GENERATION, move |command, generation, _database| {
-        command
-            .env("CAPSEM_FAKE_LEDGER_WORKER", mode)
-            .env("CAPSEM_FAKE_LEDGER_GENERATION", generation_hex(generation));
-    })
+    // This fixture owns only the control protocol, not a real archive flush.
+    // Storage fixtures spawned through LedgerWorkers keep the production bound.
+    launch(
+        command,
+        &database,
+        GENERATION,
+        Duration::from_millis(200),
+        move |command, generation, _database| {
+            command
+                .env("CAPSEM_FAKE_LEDGER_WORKER", mode)
+                .env("CAPSEM_FAKE_LEDGER_GENERATION", generation_hex(generation));
+        },
+    )
     .await
 }
 
@@ -135,7 +166,7 @@ fn write_fake_binary(binary: &Path, mode: &str) {
     let test_executable = std::env::current_exe().unwrap();
     let generations = binary.with_extension("generations");
     let script = format!(
-        "#!/bin/sh\ngeneration=\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"--generation\" ]; then\n    shift\n    generation=$1\n  fi\n  shift\ndone\nprintf '%s\\n' \"$generation\" >> {}\nCAPSEM_FAKE_LEDGER_WORKER={} CAPSEM_FAKE_LEDGER_GENERATION=\"$generation\" exec {} --exact ledger_worker::tests::fake_ledger_worker_child --nocapture\n",
+        "#!/bin/sh\ngeneration=\ndatabase=\nwhile [ \"$#\" -gt 0 ]; do\n  case \"$1\" in\n    --generation) shift; generation=$1 ;;\n    --database) shift; database=$1 ;;\n  esac\n  shift\ndone\nprintf '%s\\n' \"$generation\" >> {}\nCAPSEM_FAKE_LEDGER_WORKER={} CAPSEM_FAKE_LEDGER_GENERATION=\"$generation\" CAPSEM_FAKE_LEDGER_DATABASE=\"$database\" exec {} --exact ledger_worker::tests::fake_ledger_worker_child --nocapture\n",
         shell_quote(&generations.to_string_lossy()),
         shell_quote(mode),
         shell_quote(&test_executable.to_string_lossy()),
@@ -191,6 +222,7 @@ async fn terminal_event_after_observed_child_exit_is_still_drained() {
     let (control, _control_peer) = UnixStream::pair().unwrap();
     let (events_tx, control_events) = mpsc::channel(1);
     let mut process = WorkerProcess {
+        shutdown_timeout: Duration::from_millis(200),
         generation: GENERATION,
         child,
         control_tx: ControlSender::new(control).unwrap(),
@@ -272,7 +304,7 @@ async fn stalled_shutdown_is_killed_and_reaped_within_the_bound() {
 async fn lifecycle_slot_serializes_concurrent_leases_and_replacement() {
     let directory = tempfile::tempdir().unwrap();
     let binary = fake_binary(directory.path(), "normal");
-    let workers = Arc::new(LedgerWorkers::new(binary));
+    let workers = Arc::new(LedgerWorkers::new(binary, None));
     let (database, log) = session_paths(directory.path(), "session-a");
 
     let (reader, maintainer) = tokio::join!(
@@ -309,7 +341,7 @@ async fn lifecycle_slot_serializes_concurrent_leases_and_replacement() {
 async fn stopping_one_session_leaves_an_unrelated_session_generation_alive() {
     let directory = tempfile::tempdir().unwrap();
     let binary = fake_binary(directory.path(), "normal");
-    let workers = Arc::new(LedgerWorkers::new(binary));
+    let workers = Arc::new(LedgerWorkers::new(binary, None));
     let (database_a, log_a) = session_paths(directory.path(), "session-a");
     let (database_b, log_b) = session_paths(directory.path(), "session-b");
     let client_a = workers
@@ -337,10 +369,93 @@ async fn stopping_one_session_leaves_an_unrelated_session_generation_alive() {
 }
 
 #[tokio::test]
+async fn shutdown_applies_retention_without_granting_producers_maintenance() {
+    for (policy, expires) in [(zero_days as fn() -> u64, true), (thirty_days as fn() -> u64, false)] {
+        retention_case(policy, expires).await;
+    }
+}
+
+fn zero_days() -> u64 {
+    0
+}
+
+fn thirty_days() -> u64 {
+    30
+}
+
+async fn retention_case(policy: fn() -> u64, expires: bool) {
+    let directory = tempfile::tempdir().unwrap();
+    let workers = Arc::new(LedgerWorkers::new(
+        fake_binary(directory.path(), "storage"),
+        Some(policy),
+    ));
+    let (database, log) = session_paths(directory.path(), "retained");
+    let (stream, grant) = workers
+        .acquire("retained", &database, &log, LedgerClientRole::VmOwner)
+        .await
+        .unwrap()
+        .into_parts();
+    let producer = capsem_logger::DbWriter::from_ledger_channel(stream, grant, &database, 16).unwrap();
+    producer
+        .write_checked(capsem_logger::WriteOp::SecurityRuleEvent(
+            capsem_logger::SecurityRuleEvent::new(
+                1_789_000_223_456,
+                "abcdef123450",
+                "model.call",
+                "profiles.rules.example",
+                r#"{"name":"example"}"#,
+                r#"{"from":"an old session"}"#,
+            ),
+        ))
+        .await
+        .unwrap();
+    producer.flush_checked().await.unwrap();
+    let denied = producer.retain_bodies_since("2999-01-01T00:00:00Z").await.unwrap_err();
+    assert!(denied.contains("UnauthorizedOperation"), "{denied}");
+
+    let (stream, grant) = workers
+        .acquire("retained", &database, &log, LedgerClientRole::Reader)
+        .await
+        .unwrap()
+        .into_parts();
+    let reader = capsem_logger::ledger_client::LedgerClient::connect(stream, grant, database.clone())
+        .await
+        .unwrap();
+    let expected =
+        capsem_proto::forensic::SecurityForensicEvent::from_json(r#"{"from":"an old session"}"#, "model.call")
+            .unwrap()
+            .encode()
+            .unwrap();
+    let bodies = reader.read_bodies("abcdef123450").await.unwrap();
+    assert_eq!(bodies.len(), 1);
+    assert_eq!(
+        bodies[0].bytes, expected,
+        "a denied producer must not remove archived bytes"
+    );
+    drop(reader);
+    tokio::task::spawn_blocking(move || producer.shutdown_blocking())
+        .await
+        .unwrap();
+
+    workers.shutdown("retained").await.unwrap();
+    let ledger = capsem_logger::DbHandle::open(&database).unwrap();
+    let bodies = ledger.read_bodies("abcdef123450").await.unwrap();
+    assert_eq!(
+        bodies.is_empty(),
+        expires,
+        "trusted shutdown applies its retention period after the producer drains"
+    );
+    if !expires {
+        assert_eq!(bodies.len(), 1);
+        assert_eq!(bodies[0].bytes, expected);
+    }
+}
+
+#[tokio::test]
 async fn crashed_slot_restarts_only_after_reap_with_a_fresh_generation() {
     let directory = tempfile::tempdir().unwrap();
     let binary = fake_binary(directory.path(), "die_with_attach_pending");
-    let workers = Arc::new(LedgerWorkers::new(binary.clone()));
+    let workers = Arc::new(LedgerWorkers::new(binary.clone(), None));
     let (database, log) = session_paths(directory.path(), "stopped-session");
 
     let error = workers
