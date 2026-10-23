@@ -45,6 +45,11 @@ impl std::str::FromStr for ExecTarget {
 /// Messages sent from capsem-service to capsem-process over the per-VM Unix Domain Socket.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ServiceToProcess {
+    /// Metadata-only success acknowledgement, after the host browser opened.
+    AcknowledgeBrowserRequest {
+        id: u64,
+        request_id: u64,
+    },
     /// Ping the process to check if it's alive and responsive.
     Ping,
     /// Send input bytes to the guest PTY.
@@ -279,7 +284,17 @@ pub enum ServiceToProcess {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ProcessToService {
     /// Latest ephemeral request, also replayed to metadata observers.
-    BrowserRequest { request: crate::browser::BrowserRequest },
+    BrowserRequest {
+        request: crate::browser::BrowserRequest,
+    },
+    /// Revision of the cleared pending browser request; no auth URL survives.
+    BrowserRequestCleared {
+        request_id: u64,
+    },
+    BrowserRequestAcknowledged {
+        id: u64,
+        acknowledged: bool,
+    },
     /// Response to Ping.
     Pong,
     /// Output bytes from the guest PTY.
@@ -288,11 +303,19 @@ pub enum ProcessToService {
         data: Vec<u8>,
     },
     /// Session-owned state, followed by its normalized render projection.
-    TerminalState { state: Box<crate::terminal::TerminalState> },
+    TerminalState {
+        state: Box<crate::terminal::TerminalState>,
+    },
     /// Low-volume terminal state for inventory and tray consumers.
-    TerminalSummary { summary: crate::terminal::TerminalSummary },
+    TerminalSummary {
+        summary: crate::terminal::TerminalSummary,
+    },
     /// State change notification (e.g. Booting -> Running).
-    StateChanged { id: String, state: String, trigger: String },
+    StateChanged {
+        id: String,
+        state: String,
+        trigger: String,
+    },
     /// Result of an Exec command.
     ExecResult {
         id: u64,
@@ -334,11 +357,17 @@ pub enum ProcessToService {
         error: Option<String>,
     },
     /// Guest requested shutdown (forwarded from capsem-sysutil via vsock:5004).
-    ShutdownRequested { id: String },
+    ShutdownRequested {
+        id: String,
+    },
     /// Guest requested suspend (forwarded from capsem-sysutil via vsock:5004).
-    SuspendRequested { id: String },
+    SuspendRequested {
+        id: String,
+    },
     /// The owner froze the guest and is waiting for the coordinator copy.
-    CloneStateReady { id: u64 },
+    CloneStateReady {
+        id: u64,
+    },
     /// Result of CloneState after the guest has been thawed.
     CloneStateResult {
         id: u64,
@@ -348,11 +377,20 @@ pub enum ProcessToService {
         error: Option<String>,
     },
     /// Response to McpListServers.
-    McpServersResult { id: u64, servers: Vec<McpServerStatus> },
+    McpServersResult {
+        id: u64,
+        servers: Vec<McpServerStatus>,
+    },
     /// Response to McpListTools.
-    McpToolsResult { id: u64, tools: Vec<McpToolStatus> },
+    McpToolsResult {
+        id: u64,
+        tools: Vec<McpToolStatus>,
+    },
     /// Tool discovery failed; an empty successful catalog means no tools.
-    McpToolsFailed { id: u64, error: String },
+    McpToolsFailed {
+        id: u64,
+        error: String,
+    },
     /// Response to McpRefreshTools.
     McpRefreshResult {
         id: u64,
@@ -372,11 +410,17 @@ pub enum ProcessToService {
     },
     /// Warm suspend failed and its owner cannot safely retain the running VM.
     /// Named MessagePack variants remain stable independently of source order.
-    SuspendFailed { id: String, error: String },
+    SuspendFailed {
+        id: String,
+        error: String,
+    },
     /// Suspend was rejected after rollback restored the running VM, guest
     /// filesystem, terminal transport and viewer authority. Retain this owner.
     /// A failed or timed-out rollback must use SuspendFailed instead.
-    SuspendRolledBack { id: String, error: String },
+    SuspendRolledBack {
+        id: String,
+        error: String,
+    },
     /// Live stdout or stderr for an ExecStream job. Each chunk is at most 8 KiB.
     ExecOutput {
         id: u64,
@@ -387,7 +431,9 @@ pub enum ProcessToService {
     /// One stdin frame of a streaming exec left the owner's queue for the
     /// guest; the service may send one more. See
     /// [`crate::exec_stream::EXEC_STDIN_WINDOW`].
-    ExecInputConsumed { id: u64 },
+    ExecInputConsumed {
+        id: u64,
+    },
     PortPublished {
         id: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -458,7 +504,9 @@ pub enum ProcessToService {
     },
     /// The terminal stream on this connection stopped; no more TerminalOutput
     /// follows. Sent instead of going silent when the client fell behind.
-    TerminalStreamEnded { reason: String },
+    TerminalStreamEnded {
+        reason: String,
+    },
     /// Result of `ReloadConfig`. On success `active_policy_digest` is the
     /// digest of the exact active-policy bytes now enforced; on failure the
     /// previous policy stays in force and `error` says why.
@@ -491,6 +539,7 @@ impl ServiceToProcess {
     pub fn request_id(&self) -> Option<u64> {
         match self {
             Self::Exec { id, .. }
+            | Self::AcknowledgeBrowserRequest { id, .. }
             | Self::ExecStream { id, .. }
             | Self::WriteFile { id, .. }
             | Self::ReadFile { id, .. }
@@ -527,6 +576,7 @@ impl ProcessToService {
     pub fn reply_id(&self) -> Option<u64> {
         match self {
             Self::ExecResult { id, .. }
+            | Self::BrowserRequestAcknowledged { id, .. }
             | Self::WriteFileResult { id, .. }
             | Self::ReadFileResult { id, .. }
             | Self::LogFileBoundaryResult { id, .. }

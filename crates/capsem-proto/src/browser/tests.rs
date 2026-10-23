@@ -25,6 +25,7 @@ fn browser_navigation_rejects_non_web_targets_and_credentials() {
 #[test]
 fn browser_request_is_named_messagepack_and_debug_redacts_auth_url() {
     let request = BrowserRequest {
+        owner_generation: Some("11111111-1111-4111-8111-111111111111".into()),
         id: 42,
         url: browser_url("https://example.org/?secret=challenge").unwrap(),
     };
@@ -35,4 +36,23 @@ fn browser_request_is_named_messagepack_and_debug_redacts_auth_url() {
         url: BrowserUrl(request.url),
     };
     assert!(!format!("{message:?}").contains("challenge"));
+}
+
+#[test]
+fn browser_ack_is_metadata_only_and_correlates_separately_from_browser_revision() {
+    let command = crate::ipc::ServiceToProcess::AcknowledgeBrowserRequest { id: 7, request_id: 42 };
+    let reply = crate::ipc::ProcessToService::BrowserRequestAcknowledged {
+        id: 7,
+        acknowledged: true,
+    };
+    assert_eq!(command.request_id(), Some(7));
+    assert_eq!(reply.reply_id(), Some(7));
+    assert!(!format!("{command:?}").contains("url"));
+    let bytes = rmp_serde::to_vec_named(&command).unwrap();
+    let decoded: crate::ipc::ServiceToProcess = rmp_serde::from_slice(&bytes).unwrap();
+    assert_eq!(decoded.request_id(), Some(7));
+    assert_eq!(
+        crate::ipc::ProcessToService::BrowserRequestCleared { request_id: 42 }.reply_id(),
+        None
+    );
 }

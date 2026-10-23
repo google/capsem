@@ -20,6 +20,10 @@ impl std::fmt::Debug for BrowserUrl {
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BrowserRequest {
+    /// Actual per-VM spawn UUID, stamped by its service observer. An owner
+    /// process supplies no epoch itself; legacy clients may receive none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_generation: Option<String>,
     pub id: u64,
     #[cfg_attr(feature = "schema", schema(max_length = 8192))]
     pub url: String,
