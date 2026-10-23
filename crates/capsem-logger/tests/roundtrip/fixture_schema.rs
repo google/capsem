@@ -47,3 +47,39 @@ fn fixture_schema_is_the_writers_schema() {
          missing or changed: {missing:?}\nno longer written: {stale:?}"
     );
 }
+
+#[test]
+fn fixture_model_counters_carry_current_writer_fields_and_price_coverage() {
+    let staging = tempfile::tempdir().unwrap();
+    let database = staging.path().join("session.db");
+    std::fs::copy(super::fixture_regen::fixture_path(), &database).unwrap();
+    let conn = rusqlite::Connection::open_with_flags(database, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let bytes: Vec<u8> = conn
+        .query_row("SELECT counters FROM ledger_counters", [], |row| row.get(0))
+        .unwrap();
+    // Inspect stored shape before serde defaults can hide a stale snapshot.
+    let stored: serde_json::Value = rmp_serde::from_slice(&bytes).unwrap();
+
+    let priced: u64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM model_calls WHERE estimated_cost_usd IS NOT NULL",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(priced > 0, "fixture must exercise explicit price coverage");
+    assert_eq!(stored["model"]["total"]["priced_calls"].as_u64(), Some(priced));
+    for (provider, models) in stored["model"]["by_model"].as_object().unwrap() {
+        for (model, usage) in models.as_object().unwrap() {
+            let expected: u64 = conn.query_row(
+                "SELECT COUNT(*) FROM model_calls WHERE provider = ?1 AND COALESCE(model, 'unknown') = ?2 AND estimated_cost_usd IS NOT NULL",
+                [provider, model], |row| row.get(0),
+            ).unwrap();
+            assert_eq!(
+                usage["priced_calls"].as_u64().unwrap_or(0),
+                expected,
+                "per-model explicit price coverage"
+            );
+        }
+    }
+}
