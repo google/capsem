@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Pack app-image EROFS with its declared tool platform when rebuilding AMD64
+  images on an ARM64 host.
+
 - Confirm successful desktop and web browser handoffs at the VM owner, with
   metadata-only retries that never reopen an already opened browser.
 

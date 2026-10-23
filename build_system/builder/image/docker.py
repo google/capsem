@@ -699,6 +699,7 @@ def create_erofs(
     tool_image: str,
     runtime_network: ContainerNetwork,
     id_offset: int | None = None,
+    tool_platform: str | None = None,
 ) -> None:
     """Create an EROFS image from a tar archive using a container.
 
@@ -731,7 +732,6 @@ def create_erofs(
     mkdir_output = "" if out_dir == "." else f"mkdir -p /assets/{out_dir} && "
     host_uid = os.getuid()
     host_gid = os.getgid()
-    host_platform = _native_linux_platform()
 
     run_cmd(
         [
@@ -743,7 +743,7 @@ def create_erofs(
             "--network",
             network_value,
             "--platform",
-            host_platform,
+            tool_platform or _native_linux_platform(),
             "-v",
             f"{common_dir}:/assets",
             tool_image,

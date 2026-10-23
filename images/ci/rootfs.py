@@ -122,6 +122,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             tool_image=tools,
             runtime_network=network,
             id_offset=WORKLOAD_ID_OFFSET,
+            tool_platform=platform,
         )
         (args.out / "rootfs.blake3").write_text("blake3:" + digest_file(args.out / "rootfs.erofs") + "\n")
     finally:
