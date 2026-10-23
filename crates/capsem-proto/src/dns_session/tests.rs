@@ -46,13 +46,17 @@ fn responses_reject_missing_and_zero_correlation_ids() {
         decision: &'static str,
         rcode: u16,
     }
+    #[derive(Serialize)]
+    enum InvalidMessage {
+        Answer(InvalidResponse),
+    }
     for id in [None, Some(0)] {
-        let payload = rmp_serde::to_vec_named(&InvalidResponse {
+        let payload = rmp_serde::to_vec_named(&InvalidMessage::Answer(InvalidResponse {
             id,
             raw: vec![1, 2],
             decision: "allowed",
             rcode: 0,
-        })
+        }))
         .unwrap();
         assert!(crate::decode_dns_response(&payload).is_err());
     }
@@ -63,6 +67,31 @@ fn responses_reject_missing_and_zero_correlation_ids() {
         rcode: 2
     })
     .is_err());
+}
+
+#[test]
+fn a_pending_receipt_is_bound_to_the_original_query_identity_and_expiry_not_an_answer() {
+    let registration = crate::approval::ApprovalRegistration {
+        ask_id: "abcdef012345".into(),
+        event_id: "012345abcdef".into(),
+        expires_at_unix_ms: 123456,
+    };
+    let frame = crate::encode_dns_pending(NonZeroU32::new(71).unwrap(), &registration).unwrap();
+    assert!(
+        matches!(crate::decode_dns_session_reply(&frame[4..]).unwrap(), DnsSessionReply::Pending {id,registration:receipt}
+        if id.get()==71 && receipt==registration)
+    );
+    assert!(
+        crate::decode_dns_response(&frame[4..]).is_err(),
+        "a receipt cannot release query bytes"
+    );
+    for expires_at_unix_ms in [0, -1] {
+        let invalid = crate::approval::ApprovalRegistration {
+            expires_at_unix_ms,
+            ..registration.clone()
+        };
+        assert!(crate::encode_dns_pending(NonZeroU32::new(71).unwrap(), &invalid).is_err());
+    }
 }
 
 #[test]

@@ -58,10 +58,38 @@ pub enum ApprovalClientMessage {
     Cancel { request_id: u64 },
 }
 
+/// Trusted publication receipt for the original admitted continuation. This
+/// conveys a finite wait, never permission to execute the operation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApprovalRegistration {
+    pub ask_id: String,
+    pub event_id: String,
+    pub expires_at_unix_ms: i64,
+}
+
+impl ApprovalRegistration {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        let valid_id =
+            |id: &str| id.len() == 12 && id.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+        if !valid_id(&self.ask_id) || !valid_id(&self.event_id) || self.expires_at_unix_ms <= 0 {
+            return Err("invalid approval registration identity or expiry");
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ApprovalServerMessage {
-    pub request_id: u64,
-    pub outcome: ApprovalOutcome,
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalServerMessage {
+    Registered {
+        request_id: u64,
+        registration: ApprovalRegistration,
+    },
+    Resolved {
+        request_id: u64,
+        outcome: ApprovalOutcome,
+    },
 }
 
 #[cfg(test)]

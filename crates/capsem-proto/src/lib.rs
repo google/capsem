@@ -639,54 +639,7 @@ pub fn decode_audit_record(payload: &[u8]) -> Result<AuditRecord> {
     rmp_serde::from_slice(payload).context("failed to decode AuditRecord")
 }
 
-/// One DNS query forwarded from the guest agent to the host DNS handler.
-///
-/// `raw` is the wire-format DNS query bytes -- the agent never parses
-/// them, so the host (which already speaks DNS via `hickory-proto`)
-/// stays the single decoder. `proto` lets the host distinguish UDP
-/// queries (datagram, single-shot) from TCP queries (length-prefixed
-/// stream, may carry larger answers like AXFR / TXT) so the response
-/// can match. `process_name` is reserved for T3.3 telemetry --
-/// looking up the source process for a UDP DNS query at agent time
-/// is racy (transient sockets), so we ship `None` for now and let the
-/// host fold it in later if `/proc/net/udp` correlation becomes
-/// reliable enough to bother.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct DnsRequest {
-    /// Correlation id chosen by the guest. The host echoes it in the
-    /// matching `DnsResponse` so many queries can be in flight on one
-    /// vsock connection and be answered out of order. Zero and missing IDs
-    /// are refused; every query must support scoped cancellation.
-    #[serde(deserialize_with = "dns_session::nonzero_id")]
-    pub id: u32,
-    #[serde(with = "serde_bytes")]
-    pub raw: Vec<u8>,
-    /// "udp" or "tcp" -- the source-side transport, NOT the path used
-    /// to reach the upstream nameserver (which is always UDP today).
-    pub proto: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub process_name: Option<String>,
-}
-
-/// One DNS answer flowing host -> guest agent over the DNS vsock port.
-///
-/// `raw` is the wire-format response (synthetic NXDOMAIN, synthetic
-/// SERVFAIL, or upstream-forwarded answer). `decision` mirrors
-/// `capsem_logger::events::Decision::as_str()` ("allowed", "denied",
-/// "error") so the agent can log the outcome without depending on the
-/// logger crate. `rcode` is the DNS response code (0 / 2 / 3) so a
-/// future agent-side metric can distinguish NXDOMAIN-on-block from
-/// NXDOMAIN-from-upstream without re-parsing the wire bytes.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct DnsResponse {
-    /// The `DnsRequest::id` this answers.
-    #[serde(deserialize_with = "dns_session::nonzero_id")]
-    pub id: u32,
-    #[serde(with = "serde_bytes")]
-    pub raw: Vec<u8>,
-    pub decision: String,
-    pub rcode: u16,
-}
+pub use dns_session::{DnsRequest, DnsResponse};
 
 /// Encode a `DnsRequest` into a length-prefixed RMP frame.
 pub fn encode_dns_request(req: &DnsRequest) -> Result<Vec<u8>> {
@@ -727,17 +680,38 @@ pub fn encode_dns_response(resp: &DnsResponse) -> Result<Vec<u8>> {
     if resp.id == 0 {
         bail!("DNS response ID must be nonzero");
     }
-    let payload = rmp_serde::to_vec_named(resp).context("failed to encode DnsResponse")?;
-    let len = payload.len() as u32;
-    let mut frame = Vec::with_capacity(4 + payload.len());
-    frame.extend_from_slice(&len.to_be_bytes());
-    frame.extend_from_slice(&payload);
-    Ok(frame)
+    length_prefixed(
+        rmp_serde::to_vec_named(&dns_session::DnsSessionReply::Answer(resp)).context("failed to encode DnsResponse")?,
+        "DNS response",
+    )
 }
 
 /// Decode a `DnsResponse` from an RMP payload (without the length prefix).
 pub fn decode_dns_response(payload: &[u8]) -> Result<DnsResponse> {
-    rmp_serde::from_slice(payload).context("failed to decode DnsResponse")
+    match decode_dns_session_reply(payload)? {
+        dns_session::DnsSessionReply::Answer(response) => Ok(response),
+        dns_session::DnsSessionReply::Pending { .. } => bail!("DNS pending receipt is not an answer"),
+    }
+}
+
+pub fn encode_dns_pending(id: std::num::NonZeroU32, registration: &approval::ApprovalRegistration) -> Result<Vec<u8>> {
+    registration.validate().map_err(anyhow::Error::msg)?;
+    let message = dns_session::DnsSessionReply::<&DnsResponse>::Pending {
+        id,
+        registration: registration.clone(),
+    };
+    length_prefixed(
+        rmp_serde::to_vec_named(&message).context("failed to encode DNS pending receipt")?,
+        "DNS pending receipt",
+    )
+}
+
+pub fn decode_dns_session_reply(payload: &[u8]) -> Result<dns_session::DnsSessionReply> {
+    let message: dns_session::DnsSessionReply = rmp_serde::from_slice(payload).context("failed to decode DNS reply")?;
+    if let dns_session::DnsSessionReply::Pending { registration, .. } = &message {
+        registration.validate().map_err(anyhow::Error::msg)?;
+    }
+    Ok(message)
 }
 
 /// Messages sent from guest to host over vsock:5000.
