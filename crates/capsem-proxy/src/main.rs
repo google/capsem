@@ -430,6 +430,7 @@ struct ProxyRuntimeState {
     credentials: Arc<dyn ProxyCredentials>,
     credentials_attached: bool,
     upstream_grants: Option<Arc<capsem_core::net::upstream_grant::UpstreamGrantClient>>,
+    approvals: Option<Arc<capsem_core::security_engine::approval::client::ApprovalCapability>>,
     private_names: Option<Arc<dyn capsem_core::net::dns::private::PrivateNames>>,
     dns_upstreams: Vec<std::net::SocketAddr>,
     mcp: capsem_core::mcp::policy::McpConfig,
@@ -464,6 +465,7 @@ impl ProxyRuntimeState {
             credentials: Arc::new(UnavailableCredentials),
             credentials_attached: false,
             upstream_grants: None,
+            approvals: None,
             private_names: None,
             dns_upstreams: Vec::new(),
             mcp: capsem_core::mcp::policy::McpConfig::default(),
@@ -486,11 +488,14 @@ impl ProxyRuntimeState {
         if let Some(engine) = &self.engine {
             engine.policy().replace(snapshot);
         } else {
-            self.engine = Some(Arc::new(ProxyEngine::new(
-                ProxyPolicyHandle::new(snapshot),
-                Arc::clone(&self.ledger),
-                Arc::clone(&self.credentials),
-            )));
+            self.engine = Some(Arc::new(
+                ProxyEngine::new(
+                    ProxyPolicyHandle::new(snapshot),
+                    Arc::clone(&self.ledger),
+                    Arc::clone(&self.credentials),
+                )
+                .with_approvals(self.approvals.clone()),
+            ));
         }
         self.dns_upstreams = dns_upstreams;
         self.mcp = mcp;
@@ -502,11 +507,14 @@ impl ProxyRuntimeState {
         self.ledger = ledger.clone();
         self.db = Some(ledger);
         if let Some(engine) = self.engine.take() {
-            self.engine = Some(Arc::new(ProxyEngine::new(
-                engine.policy().clone(),
-                Arc::clone(&self.ledger),
-                Arc::clone(&self.credentials),
-            )));
+            self.engine = Some(Arc::new(
+                ProxyEngine::new(
+                    engine.policy().clone(),
+                    Arc::clone(&self.ledger),
+                    Arc::clone(&self.credentials),
+                )
+                .with_approvals(self.approvals.clone()),
+            ));
         }
         self.http_config = None;
         self.dns_runtime = None;
@@ -516,16 +524,25 @@ impl ProxyRuntimeState {
         self.credentials = credentials;
         self.credentials_attached = true;
         if let Some(engine) = self.engine.take() {
-            self.engine = Some(Arc::new(ProxyEngine::new(
-                engine.policy().clone(),
-                Arc::clone(&self.ledger),
-                Arc::clone(&self.credentials),
-            )));
+            self.engine = Some(Arc::new(
+                ProxyEngine::new(
+                    engine.policy().clone(),
+                    Arc::clone(&self.ledger),
+                    Arc::clone(&self.credentials),
+                )
+                .with_approvals(self.approvals.clone()),
+            ));
         }
         self.http_config = None;
     }
 
     fn attach_upstream(&mut self, upstream: Arc<capsem_core::net::upstream_grant::UpstreamGrantClient>) {
+        self.approvals = Some(Arc::new(
+            capsem_core::security_engine::approval::client::ApprovalCapability::new(Arc::clone(&upstream)),
+        ));
+        if let Some(engine) = self.engine.take() {
+            self.engine = Some(Arc::new((*engine).clone().with_approvals(self.approvals.clone())));
+        }
         self.upstream_grants = Some(upstream);
         self.http_config = None;
         self.dns_runtime = None;
@@ -687,6 +704,9 @@ struct DnsRuntime {
 struct UnavailableLedger;
 
 impl ProxyLedger for UnavailableLedger {
+    fn flush(&self) -> ProxyCapabilityFuture<'_, std::result::Result<(), String>> {
+        Box::pin(async { Err("proxy ledger capability is not attached".into()) })
+    }
     fn write(&self, _op: WriteOp) -> ProxyCapabilityFuture<'_, std::result::Result<(), String>> {
         Box::pin(async { Err("proxy ledger capability is not attached".to_string()) })
     }
