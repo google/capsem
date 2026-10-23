@@ -32,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Redact injected environment values in guest boot diagnostics instead of
+  writing their first 40 characters to the host-visible workspace log.
+
 - Bind the Tauri development UI to one exact loopback address and fail if its
   port is occupied, so a different local page cannot become the token-capable
   WebView when Astro would otherwise choose another port.
