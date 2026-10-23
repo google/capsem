@@ -1,6 +1,6 @@
 # Google Gemini API Wire Format
 
-Source: `crates/capsem-core/src/net/ai_traffic/google.rs` (300+ lines)
+Source: `crates/capsem-core/src/net/interpreters/google_interpreter.rs`
 
 ## Endpoints
 
@@ -70,6 +70,7 @@ struct UsageMetadata {
     candidates_token_count: Option<u64>,
     cached_content_token_count: Option<u64>,
     thoughts_token_count: Option<u64>,
+    tool_use_prompt_token_count: Option<u64>,
 }
 ```
 
@@ -77,10 +78,13 @@ Note: all fields use `camelCase` on the wire (serde `rename_all`).
 
 ### Telemetry extraction
 - Model from `model_version` field or URL path (`/models/{model}:action`)
-- Input tokens: `prompt_token_count`
-- Output tokens: `candidates_token_count`
+- Input tokens: `prompt_token_count` + `tool_use_prompt_token_count`
+- Output tokens: `candidates_token_count` + `thoughts_token_count`
 - Cached tokens: `cached_content_token_count`
 - Thinking tokens: `thoughts_token_count`
+- Thinking is a detail of the total output above, not another count to add to
+  that total. Unlike Google, OpenAI's output/completion count already includes
+  its separately reported reasoning detail.
 - Finish reasons: `STOP`, `MAX_TOKENS`, `SAFETY`, `RECITATION`
 
 ## Request parsing
