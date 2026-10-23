@@ -8,6 +8,20 @@ fn async_stream(stream: UnixStream) -> tokio::net::UnixStream {
 }
 
 #[tokio::test]
+async fn registered_channel_retains_socket_until_drop() {
+    let (stream, mut peer) = UnixStream::pair().unwrap();
+    peer.set_nonblocking(true).unwrap();
+    let channel = Channel::new(stream).unwrap();
+    let mut byte = [0];
+    assert_eq!(
+        std::io::Read::read(&mut peer, &mut byte).unwrap_err().kind(),
+        ErrorKind::WouldBlock
+    );
+    drop(channel);
+    assert_eq!(std::io::Read::read(&mut peer, &mut byte).unwrap(), 0);
+}
+
+#[tokio::test]
 async fn larger_single_descriptor_records_reuse_the_hardened_channel() {
     type GrantSender = DescriptorSender<272, 1>;
     type GrantReceiver = DescriptorReceiver<272, 1>;
