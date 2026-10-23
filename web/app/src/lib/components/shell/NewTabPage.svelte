@@ -298,6 +298,25 @@
 {/snippet}
 
 <div class="h-full overflow-y-auto p-6 max-w-5xl mx-auto">
+  <dl class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6" aria-label="Usage summary" aria-busy={statsLoading}>
+    <div class="rounded-lg border border-card-line px-3 py-2">
+      <dt class="text-[11px] text-muted-foreground-1">Sessions</dt>
+      <dd class="text-lg font-semibold text-foreground tabular-nums">{globalStats?.total_sessions ?? '--'}</dd>
+    </div>
+    <div class="rounded-lg border border-card-line px-3 py-2">
+      <dt class="text-[11px] text-muted-foreground-1">AI requests</dt>
+      <dd class="text-lg font-semibold text-foreground tabular-nums">{globalStats?.total_ai_requests ?? '--'}</dd>
+    </div>
+    <div class="rounded-lg border border-card-line px-3 py-2">
+      <dt class="text-[11px] text-muted-foreground-1">Tokens</dt>
+      <dd class="text-lg font-semibold text-foreground tabular-nums">{globalStats ? formatTokens(globalStats.total_input_tokens + globalStats.total_output_tokens) : '--'}</dd>
+    </div>
+    <div class="rounded-lg border border-card-line px-3 py-2">
+      <dt class="text-[11px] text-muted-foreground-1">Estimated cost</dt>
+      <dd class="text-lg font-semibold text-foreground tabular-nums">{globalStats ? formatCost(globalStats.total_estimated_cost) : '--'}</dd>
+    </div>
+  </dl>
+
   <ImageCatalog {ready} {prepareRuntime} />
 
   <!-- Action error banner -->
@@ -354,33 +373,7 @@
     {/if}
   {/if}
 
-  <!-- Statistics -->
-  <h3 class="text-xs font-semibold text-foreground uppercase tracking-wider mt-8 mb-3">Statistics</h3>
-  {#if statsLoading}
-    <div class="flex items-center gap-x-2 py-3">
-      <CircleNotch size={14} class="text-muted-foreground-1 animate-spin" />
-      <span class="text-xs text-muted-foreground-1">Loading statistics...</span>
-    </div>
-  {:else}
-    <div class="grid grid-cols-4 gap-3">
-      <div class="bg-card border border-card-line rounded-lg p-3">
-        <div class="text-[11px] text-muted-foreground mb-0.5 uppercase tracking-wider">Sessions</div>
-        <div class="text-lg font-semibold text-foreground">{globalStats?.total_sessions ?? 0}</div>
-      </div>
-      <div class="bg-card border border-card-line rounded-lg p-3">
-        <div class="text-[11px] text-muted-foreground mb-0.5 uppercase tracking-wider">Total Tokens</div>
-        <div class="text-lg font-semibold text-foreground">{formatTokens((globalStats?.total_input_tokens ?? 0) + (globalStats?.total_output_tokens ?? 0))}</div>
-      </div>
-      <div class="bg-card border border-card-line rounded-lg p-3">
-        <div class="text-[11px] text-muted-foreground mb-0.5 uppercase tracking-wider">Total Cost</div>
-        <div class="text-lg font-semibold text-foreground">{formatCost(globalStats?.total_estimated_cost ?? 0)}</div>
-      </div>
-      <div class="bg-card border border-card-line rounded-lg p-3">
-        <div class="text-[11px] text-muted-foreground mb-0.5 uppercase tracking-wider">Requests</div>
-        <div class="text-lg font-semibold text-foreground">{globalStats?.total_requests ?? 0}</div>
-      </div>
-    </div>
-  {/if}
+
 </div>
 
 {#if credentialSession}

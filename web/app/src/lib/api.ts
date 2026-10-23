@@ -622,28 +622,17 @@ export async function pullImage(image: string): Promise<ImagePullResponse> {
 
 /** Fetch cross-session stats folded from the host ledger and live sessions. */
 export async function getStats(): Promise<StatsResponse> {
-  if (!_connected) return emptyStats();
+  if (!_connected) throw new Error('Usage is unavailable while the service is disconnected.');
   try {
     const resp = await _get('/stats');
     return await resp.json();
   } catch (err) {
     if (isNetworkError(err)) {
       _connected = false;
-      return emptyStats();
+      throw err;
     }
     throw err;
   }
-}
-
-function emptyStats(): StatsResponse {
-  return {
-    global: {
-      total_sessions: 0, total_input_tokens: 0, total_output_tokens: 0,
-      total_estimated_cost: 0, total_tool_calls: 0,
-      total_file_events: 0, total_requests: 0, total_allowed: 0, total_denied: 0,
-    },
-    sessions: [], top_providers: [], top_tools: [], top_mcp_tools: [],
-  };
 }
 
 // -- Real-time events (WebSocket /events) --

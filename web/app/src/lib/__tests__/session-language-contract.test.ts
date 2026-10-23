@@ -69,6 +69,14 @@ describe('user-facing session language contract', () => {
     expect(dashboard).not.toContain('openCreateModal');
   });
 
+  it('shows compact truthful usage totals before session launch', () => {
+    expect(dashboard.indexOf('aria-label="Usage summary"')).toBeLessThan(dashboard.indexOf('<ImageCatalog'));
+    for (const label of ['Sessions', 'AI requests', 'Tokens', 'Estimated cost']) expect(dashboard).toContain(`>${label}</dt>`);
+    expect(dashboard).toContain("globalStats?.total_ai_requests ?? '--'");
+    expect(dashboard).not.toContain('globalStats?.total_requests');
+    expect(dashboard).not.toContain('globalStats?.total_input_tokens ?? 0');
+  });
+
   it('opens official Help through the host browser opener', () => {
     expect(toolbar).toContain("await openUrl('https://docs.capsem.org/')");
     expect(toolbar).toContain('onclick={openHelp}');

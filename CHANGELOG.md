@@ -34,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep unavailable usage distinct from zero and show compact Sessions, AI requests,
+  Tokens and Estimated cost summaries above the dashboard.
+
 - Report AI request totals from recorded model exchanges separately from HTTP
   traffic in the cross-session usage response.
 

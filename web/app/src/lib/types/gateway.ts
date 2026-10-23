@@ -43,6 +43,7 @@ export interface StatsResponse {
 }
 
 export interface GlobalStats {
+  total_ai_requests?: number;
   total_sessions: number;
   total_input_tokens: number;
   total_output_tokens: number;

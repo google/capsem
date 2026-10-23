@@ -60,3 +60,9 @@ it('does not replay an update with a malformed success response', async () => {
   await expect(api.applyUpdate({ confirmed: true })).rejects.toThrow();
   expect(mockFetch).toHaveBeenCalledTimes(1);
 });
+
+it('does not fabricate zero usage when cross-session stats are unavailable', async () => {
+  mockFetch.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+  await expect(api.getStats()).rejects.toThrow();
+  await expect(api.getStats()).rejects.toThrow();
+});
