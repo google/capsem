@@ -23,6 +23,7 @@ pub(super) fn install(
     }
     let mut state = ActiveExec::new();
     state.stream = streaming.then(|| output.clone());
+    state.approval_progress = (!streaming).then(|| output.clone());
     if !streaming {
         state
             .input_tx

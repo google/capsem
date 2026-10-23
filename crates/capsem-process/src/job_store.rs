@@ -81,6 +81,8 @@ pub(crate) struct ActiveExec {
     pub(crate) input_rx: Option<tokio::sync::mpsc::Receiver<capsem_proto::ExecInputFrame>>,
     pub(crate) deposited: Arc<Notify>,
     pub(crate) stream: Option<tokio::sync::mpsc::Sender<capsem_proto::ipc::ProcessToService>>,
+    /// Only the original structured caller receives its verified wait phases.
+    pub(crate) approval_progress: Option<tokio::sync::mpsc::Sender<capsem_proto::ipc::ProcessToService>>,
     pub(crate) completion_started: bool,
     pub(crate) output_error: Option<String>,
 }
@@ -101,6 +103,7 @@ impl ActiveExec {
             input_rx: Some(input_rx),
             deposited: Arc::new(Notify::new()),
             stream: None,
+            approval_progress: None,
             completion_started: false,
             output_error: None,
         }

@@ -22,6 +22,115 @@ fn configure(dispatch: &mut ExecDispatch, peer: &crate::tests::ApprovalPeer) {
     );
 }
 
+fn registration(request: capsem_proto::approval::ApprovalRequest) -> capsem_proto::approval::ApprovalRegistration {
+    capsem_proto::approval::ApprovalRegistration {
+        ask_id: request.ask_id,
+        event_id: request.event_id,
+        expires_at_unix_ms: (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+            + 60_000) as i64,
+        remaining_ms: 60_000,
+    }
+}
+
+#[tokio::test]
+async fn registered_exec_reports_original_human_phase_before_any_guest_effect() {
+    use capsem_proto::ipc::{ExecApprovalProgress, ProcessToService};
+    let Bridge {
+        _dir: _directory,
+        mut dispatch,
+        mut guest,
+        ..
+    } = bridge();
+    let peer = crate::tests::ApprovalPeer::new().await;
+    configure(&mut dispatch, &peer);
+    let (output, mut progress) = tokio::sync::mpsc::channel(2);
+    let mut active = crate::job_store::ActiveExec::new();
+    active.approval_progress = Some(output);
+    dispatch.jobs.active_execs.lock().unwrap().insert(7, active);
+    let call = tokio::spawn(async move {
+        dispatch
+            .dispatch(7, "printf PRIVATE_EXEC_CANARY".into(), ExecTarget::Vm)
+            .await;
+    });
+    let ApprovalClientMessage::Begin { request_id, request } = peer.receiver.recv().await.unwrap() else {
+        panic!("original request")
+    };
+    let registration = registration(request);
+    peer.sender
+        .send(ApprovalServerMessage::Registered {
+            request_id,
+            registration: registration.clone(),
+        })
+        .await
+        .unwrap();
+    assert!(
+        matches!(progress.recv().await.unwrap(), ProcessToService::ExecApproval {
+        id: 7, progress: ExecApprovalProgress::Registered(value),
+    } if value == registration)
+    );
+    assert!(guest.try_recv().is_err());
+    peer.sender
+        .send(ApprovalServerMessage::Resolved {
+            request_id,
+            outcome: ApprovalOutcome::Approved,
+        })
+        .await
+        .unwrap();
+    assert!(
+        matches!(progress.recv().await.unwrap(), ProcessToService::ExecApproval {
+        id: 7, progress: ExecApprovalProgress::Resolved { ask_id, event_id },
+    } if ask_id == registration.ask_id && event_id == registration.event_id)
+    );
+    call.await.unwrap();
+    assert_eq!(dispatched(&mut guest).0, 7);
+    assert!(guest.try_recv().is_err(), "exactly one original dispatch");
+}
+
+#[tokio::test]
+async fn closed_progress_owner_cancels_registered_exec_without_guest_effect() {
+    let Bridge {
+        _dir: _directory,
+        mut dispatch,
+        mut guest,
+        ..
+    } = bridge();
+    let peer = crate::tests::ApprovalPeer::new().await;
+    configure(&mut dispatch, &peer);
+    let jobs = Arc::clone(&dispatch.jobs);
+    let (output, progress) = tokio::sync::mpsc::channel(1);
+    drop(progress);
+    let mut active = crate::job_store::ActiveExec::new();
+    active.approval_progress = Some(output);
+    jobs.active_execs.lock().unwrap().insert(7, active);
+    let call = tokio::spawn(async move {
+        dispatch
+            .dispatch(7, "printf PRIVATE_EXEC_CANARY".into(), ExecTarget::Vm)
+            .await;
+    });
+    let ApprovalClientMessage::Begin { request_id, request } = peer.receiver.recv().await.unwrap() else {
+        panic!("original request")
+    };
+    peer.sender
+        .send(ApprovalServerMessage::Registered {
+            request_id,
+            registration: registration(request),
+        })
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(2), call)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        matches!(peer.receiver.recv().await.unwrap(), ApprovalClientMessage::Cancel { request_id: id } if id == request_id)
+    );
+    assert!(guest.try_recv().is_err());
+    assert!(!jobs.active_execs.lock().unwrap().contains_key(&7));
+}
+
 #[tokio::test]
 async fn original_exec_waits_for_approval_and_only_approved_command_reaches_guest() {
     for outcome in [

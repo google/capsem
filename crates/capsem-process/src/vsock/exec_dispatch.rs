@@ -112,17 +112,9 @@ impl ExecDispatch {
         )
         .await;
         if let Ok(Some(emission)) = &mut boundary {
-            let resolution = capsem_core::security_engine::approval::resolve_emission(
-                &self.db,
-                self.approvals.as_deref(),
-                emission,
-                command.len().saturating_mul(4),
-            );
-            let result = tokio::select! {
-                biased;
-                _ = cancellation.cancelled() => Err("execution caller stopped while approval was pending".into()),
-                result = resolution => result,
-            };
+            let result = self
+                .resolve_approval(id, emission, command.len().saturating_mul(4), &cancellation)
+                .await;
             if let Err(error) = result {
                 boundary = Err(error);
             } else if !Arc::ptr_eq(&rules, &self.rules.read().unwrap())
@@ -175,6 +167,79 @@ impl ExecDispatch {
         }
     }
 
+    async fn resolve_approval(
+        &self,
+        id: u64,
+        emission: &mut capsem_core::security_engine::SecurityRuleEmission,
+        held_bytes: usize,
+        cancellation: &Arc<tokio_util::sync::CancellationToken>,
+    ) -> Result<(), String> {
+        use capsem_proto::ipc::{ExecApprovalProgress, ProcessToService};
+        if emission.enforcement.action != capsem_core::security_engine::SecurityEnforcementAction::Ask {
+            return Ok(());
+        }
+        let (registered, registration) = tokio::sync::oneshot::channel();
+        let resolution = capsem_core::security_engine::approval::resolve_emission_registered(
+            &self.db,
+            self.approvals.as_deref(),
+            emission,
+            held_bytes,
+            Some(registered),
+        );
+        tokio::pin!(resolution);
+        let registration = tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => return Err("execution caller stopped while approval was pending".into()),
+            result = &mut resolution => return result,
+            registration = registration => registration.ok(),
+        };
+        let output = self
+            .jobs
+            .active_execs
+            .lock()
+            .unwrap()
+            .get(&id)
+            .filter(|active| Arc::ptr_eq(&active.cancellation, cancellation))
+            .and_then(|active| active.approval_progress.clone());
+        let progress = if let (Some(registration), Some(output)) = (registration, output) {
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(registration.remaining_ms);
+            send_approval_progress(
+                &output,
+                ProcessToService::ExecApproval {
+                    id,
+                    progress: ExecApprovalProgress::Registered(registration.clone()),
+                },
+                cancellation,
+                deadline,
+            )
+            .await?;
+            Some((output, registration, deadline))
+        } else {
+            None
+        };
+        let result = tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => Err("execution caller stopped while approval was pending".into()),
+            result = &mut resolution => result,
+        };
+        if let Some((output, registration, deadline)) = progress {
+            send_approval_progress(
+                &output,
+                ProcessToService::ExecApproval {
+                    id,
+                    progress: ExecApprovalProgress::Resolved {
+                        ask_id: registration.ask_id,
+                        event_id: registration.event_id,
+                    },
+                },
+                cancellation,
+                deadline,
+            )
+            .await?;
+        }
+        result
+    }
+
     fn refuse(&self, id: u64, cancellation: &Arc<tokio_util::sync::CancellationToken>, message: String) {
         let reply = {
             let mut jobs = self.jobs.jobs.lock().unwrap();
@@ -196,6 +261,22 @@ impl ExecDispatch {
         if let Some(reply) = reply {
             capsem_core::try_send!("job_result_exec_blocked", reply.send(JobResult::Error { message }));
         }
+    }
+}
+
+async fn send_approval_progress(
+    output: &mpsc::Sender<capsem_proto::ipc::ProcessToService>,
+    message: capsem_proto::ipc::ProcessToService,
+    cancellation: &tokio_util::sync::CancellationToken,
+    deadline: tokio::time::Instant,
+) -> Result<(), String> {
+    tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => Err("execution caller stopped during approval progress".into()),
+        sent = tokio::time::timeout_at(deadline, output.send(message)) => match sent {
+            Ok(Ok(())) => Ok(()),
+            _ => Err("execution caller did not receive bounded approval progress".into()),
+        },
     }
 }
 
