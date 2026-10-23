@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Show a compact toolbar notice when the service confirms a newer Capsem version,
+  with a direct action to review its update status.
+
 - Show key-event counts, keyboard capture and focus in the opt-in graphical
   Debug overlay without recording input contents.
 

@@ -6,6 +6,7 @@
   import { gatewayStore } from '../../stores/gateway.svelte.ts';
   import Modal from './Modal.svelte';
   import BrowserRequest from './BrowserRequest.svelte';
+  import CapsemUpdateNotice from './CapsemUpdateNotice.svelte';
   import Stop from 'phosphor-svelte/lib/Stop';
   import Trash from 'phosphor-svelte/lib/Trash';
   import GitFork from 'phosphor-svelte/lib/GitFork';
@@ -359,6 +360,8 @@
       <span class="text-xs text-muted-foreground-1 truncate inline-block max-w-full">{active.subtitle}</span>
     {/if}
   </div>
+
+  <CapsemUpdateNotice />
 
   <!-- Right: active-session stats -->
   <div class="flex items-center gap-x-3 text-[11px] text-muted-foreground-1 tabular-nums">
