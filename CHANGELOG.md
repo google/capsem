@@ -32,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Remove unused Layerchart tooling and its vulnerable Zod 3 dependency.
+
 - Keep documentation tooling on patched Zod 4.6.7, including sitemap validation.
 
 - Update MCP validation to Zod 4.6.7 for GHSA-mrhx-c7xc-m3w5.
