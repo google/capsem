@@ -253,6 +253,7 @@ pub(crate) async fn run_dns_scenario(
                         status: 0,
                         size: 0,
                         latency_ms: 0.0,
+                        first_body_byte_ms: None,
                         attempts: 1,
                         error: Some(format!("dns bind: {error}")),
                         required_text_present: false,
@@ -289,6 +290,7 @@ pub(crate) async fn run_one_dns_query(
                 status: 0,
                 size: 0,
                 latency_ms: 0.0,
+                first_body_byte_ms: None,
                 attempts: 1,
                 error: Some(format!("dns query: {error}")),
                 required_text_present: false,
@@ -302,6 +304,7 @@ pub(crate) async fn run_one_dns_query(
             status: 0,
             size: 0,
             latency_ms: started.elapsed().as_secs_f64() * 1000.0,
+            first_body_byte_ms: None,
             attempts: 1,
             error: Some(format!("dns send: {error}")),
             required_text_present: false,
@@ -319,6 +322,7 @@ pub(crate) async fn run_one_dns_query(
                 status: rcode,
                 size: len,
                 latency_ms,
+                first_body_byte_ms: None,
                 attempts: 1,
                 error: (!id_matches).then(|| "dns id mismatch".to_string()),
                 required_text_present: true,
@@ -329,6 +333,7 @@ pub(crate) async fn run_one_dns_query(
             status: 0,
             size: 0,
             latency_ms: started.elapsed().as_secs_f64() * 1000.0,
+            first_body_byte_ms: None,
             attempts: 1,
             error: Some(format!("dns recv: {error}")),
             required_text_present: false,
@@ -338,6 +343,7 @@ pub(crate) async fn run_one_dns_query(
             status: 0,
             size: 0,
             latency_ms: started.elapsed().as_secs_f64() * 1000.0,
+            first_body_byte_ms: None,
             attempts: 1,
             error: Some("dns timeout".to_string()),
             required_text_present: false,
@@ -367,15 +373,16 @@ pub(crate) async fn run_one_request(
             }
         };
         match tokio::time::timeout(timeout, request.send()).await {
-            Ok(Ok(response)) => {
+            Ok(Ok(mut response)) => {
                 let status = response.status().as_u16();
-                return match response.bytes().await {
-                    Ok(body) => {
+                return match read_response_body(&mut response, started).await {
+                    Ok((body, first_body_byte_ms)) => {
                         let latency_ms = started.elapsed().as_secs_f64() * 1000.0;
                         RequestSample {
                             status,
                             size: body.len(),
                             latency_ms,
+                            first_body_byte_ms,
                             attempts: attempt,
                             error: None,
                             required_text_present: required_text_present(&body, scenario),
@@ -392,6 +399,7 @@ pub(crate) async fn run_one_request(
                             status,
                             size: 0,
                             latency_ms: started.elapsed().as_secs_f64() * 1000.0,
+                            first_body_byte_ms: None,
                             attempts: attempt,
                             error: last_request_error,
                             required_text_present: false,
@@ -412,6 +420,7 @@ pub(crate) async fn run_one_request(
                     status: 0,
                     size: 0,
                     latency_ms: started.elapsed().as_secs_f64() * 1000.0,
+                    first_body_byte_ms: None,
                     attempts: attempt,
                     error: Some("timeout".to_string()),
                     required_text_present: false,
@@ -424,11 +433,27 @@ pub(crate) async fn run_one_request(
         status: 0,
         size: 0,
         latency_ms: started.elapsed().as_secs_f64() * 1000.0,
+        first_body_byte_ms: None,
         attempts: HTTP_REQUEST_ATTEMPTS,
         error: Some(last_request_error.unwrap_or_else(|| "request failed".to_string())),
         required_text_present: false,
         secret_shaped_fixture_seen: false,
     }
+}
+
+async fn read_response_body(
+    response: &mut reqwest::Response,
+    started: Instant,
+) -> reqwest::Result<(Vec<u8>, Option<f64>)> {
+    let mut body = Vec::new();
+    let mut first_body_byte_ms = None;
+    while let Some(chunk) = response.chunk().await? {
+        if !chunk.is_empty() {
+            first_body_byte_ms.get_or_insert_with(|| started.elapsed().as_secs_f64() * 1000.0);
+            body.extend_from_slice(&chunk);
+        }
+    }
+    Ok((body, first_body_byte_ms))
 }
 
 pub(crate) async fn sleep_before_http_retry(attempt: usize) {
@@ -480,6 +505,7 @@ pub(crate) fn summarize(
         bytes_per_sec: round1(transfer_bytes as f64 / duration_s),
         latency_ms: latency_summary(samples.iter().map(|sample| sample.latency_ms).collect()),
         latency_samples: samples.iter().map(|sample| sample.latency_ms).collect(),
+        first_body_byte_samples: samples.iter().filter_map(|sample| sample.first_body_byte_ms).collect(),
         errors,
         secret_shaped_fixture_seen: secret_seen,
         raw_secret_stored_in_result: scenario.secret_shaped_fixture.then_some(false),

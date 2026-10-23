@@ -253,6 +253,9 @@ pub(crate) struct ScenarioResult {
     /// itself, so a collector that pre-summarizes hides the distribution.
     #[serde(skip)]
     pub(crate) latency_samples: Vec<f64>,
+    /// Raw arrival time of the first nonempty HTTP body chunk; DNS/empty bodies have none.
+    #[serde(skip)]
+    pub(crate) first_body_byte_samples: Vec<f64>,
     pub(crate) errors: BTreeMap<String, usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) secret_shaped_fixture_seen: Option<bool>,
@@ -275,6 +278,7 @@ pub(crate) struct RequestSample {
     pub(crate) status: u16,
     pub(crate) size: usize,
     pub(crate) latency_ms: f64,
+    pub(crate) first_body_byte_ms: Option<f64>,
     pub(crate) attempts: usize,
     pub(crate) error: Option<String>,
     pub(crate) required_text_present: bool,

@@ -52,6 +52,7 @@ fn result_ok_checks_status_size_and_required_text() {
             status: 200,
             size: 24,
             latency_ms: 1.0,
+            first_body_byte_ms: None,
             attempts: 1,
             error: None,
             required_text_present: true,
@@ -64,6 +65,7 @@ fn result_ok_checks_status_size_and_required_text() {
             status: 200,
             size: 23,
             latency_ms: 1.0,
+            first_body_byte_ms: None,
             attempts: 1,
             error: None,
             required_text_present: true,
@@ -108,6 +110,7 @@ fn delta_computes_abstraction_cost() {
             p99: 1.5,
         },
         latency_samples: Vec::new(),
+        first_body_byte_samples: Vec::new(),
         errors: BTreeMap::new(),
         secret_shaped_fixture_seen: None,
         raw_secret_stored_in_result: None,
@@ -122,6 +125,7 @@ fn delta_computes_abstraction_cost() {
             ..host.latency_ms.clone()
         },
         latency_samples: Vec::new(),
+        first_body_byte_samples: Vec::new(),
         ..host.clone()
     };
     let host_values = [host];
@@ -159,6 +163,7 @@ fn failed_scenarios_are_poisoned_benchmark_numbers() {
             p99: 1.5,
         },
         latency_samples: Vec::new(),
+        first_body_byte_samples: Vec::new(),
         errors: BTreeMap::from([("request:connection refused".to_string(), 100)]),
         secret_shaped_fixture_seen: None,
         raw_secret_stored_in_result: None,
@@ -327,6 +332,7 @@ fn build_delta_report_keeps_inline_artifact_identity() {
             p99: 1.5,
         },
         latency_samples: Vec::new(),
+        first_body_byte_samples: Vec::new(),
         errors: BTreeMap::new(),
         secret_shaped_fixture_seen: None,
         raw_secret_stored_in_result: None,
@@ -360,6 +366,7 @@ fn build_delta_report_keeps_inline_artifact_identity() {
                     ..row.latency_ms.clone()
                 },
                 latency_samples: Vec::new(),
+                first_body_byte_samples: Vec::new(),
                 ..row
             }],
             ..host.mock_server_protocol.clone()
@@ -497,4 +504,46 @@ fn round3_keeps_three_decimals_without_drifting() {
     assert_eq!(round3(1.0), 1.0);
     assert_eq!(round3(0.0005), 0.001);
     assert_eq!(round3(-1.23456), -1.235);
+}
+
+#[tokio::test]
+async fn first_body_byte_precedes_delayed_response_completion() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (first_sent, first_received) = tokio::sync::oneshot::channel();
+    let (finish, may_finish) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut request = [0_u8; 1024];
+        let read = stream.read(&mut request).await.unwrap();
+        assert!(read > 0);
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 24\r\nconnection: close\r\n\r\nfirst-")
+            .await
+            .unwrap();
+        first_sent.send(()).unwrap();
+        may_finish.await.unwrap();
+        stream.write_all(b"remaining18bytes!!").await.unwrap();
+    });
+    let clients = HttpClients::build(1, Duration::from_secs(2)).unwrap();
+    let scenario = *SCENARIOS.iter().find(|scenario| scenario.name == "tiny_http").unwrap();
+    let request = tokio::spawn(async move {
+        run_one_request(
+            &clients,
+            &format!("http://{address}/tiny"),
+            scenario,
+            Duration::from_secs(2),
+        )
+        .await
+    });
+    first_received.await.unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    finish.send(()).unwrap();
+    let sample = request.await.unwrap();
+    server.await.unwrap();
+    assert!(result_ok(&sample, scenario), "{sample:?}");
+    let first = sample
+        .first_body_byte_ms
+        .expect("nonempty HTTP body has a first-byte sample");
+    assert!(sample.latency_ms - first >= 50.0, "{sample:?}");
 }

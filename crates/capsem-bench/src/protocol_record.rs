@@ -24,6 +24,7 @@ pub(crate) fn build(artifact: &Artifact, channel: &str, commit: &str, strays: Ve
             }
         };
         push("latency_ms", schema::Unit::Milliseconds, &scenario.latency_samples);
+        push("first_body_byte_ms", schema::Unit::Milliseconds, &scenario.first_body_byte_samples);
         push(
             "requests_per_sec",
             schema::Unit::RequestsPerSecond,

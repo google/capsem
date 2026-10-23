@@ -63,6 +63,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Carry committed price coverage through session, per-model and global service
   totals without deriving price completeness from a zero cost.
+- Record raw first-body-byte latency alongside full HTTP completion in the
+  canonical traffic benchmark, exposing buffering and streaming delay.
+
 - Brand all six supported images with bundled official product/publisher icons,
   owner names and canonical product links, with recorded asset provenance.
 
