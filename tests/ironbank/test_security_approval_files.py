@@ -8,13 +8,12 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 from helpers.service import exec_output_text
 from helpers.settings_policy import apply_settings_rule
-
-from tests.ironbank.approval_fixture import (
+from ironbank.approval_fixture import (
     assert_original_cancelled,
     pending_original_operation,
     resolve_original_operation,
 )
-from tests.ironbank.approval_native import assert_approval_audit, native_approval_session
+from ironbank.approval_native import assert_approval_audit, native_approval_session
 
 pytestmark = pytest.mark.integration
 NAME = "approval-boundary.txt"
