@@ -14,31 +14,64 @@ from helpers.gateway import TcpHttpClient
 T = TypeVar("T")
 
 
+def pending_original_operation(gateway, session_id, original, *, timeout=10):
+    deadline = time.monotonic() + timeout
+    while True:
+        status, listing = gateway.call_json("GET", f"/vms/{session_id}/security/asks", timeout=3)
+        assert status == 200, (status, listing)
+        pending = [row for row in listing["requests"] if row["status"] == "pending"]
+        if pending:
+            assert len(pending) == listing["pending_count"] == 1, listing
+            assert not original.done(), "pending operation already completed"
+            return listing
+        assert not original.done(), "original operation returned before human resolution"
+        assert time.monotonic() < deadline, "original operation never became reviewable"
+        time.sleep(0.05)
+
+
+def assert_original_cancelled(gateway, session_id, listing):
+    route = f"/vms/{session_id}/security/asks"
+    ask = next(row for row in listing["requests"] if row["status"] == "pending")
+    deadline = time.monotonic() + 5
+    while True:
+        final = gateway.get(route, timeout=2)
+        if final["pending_count"] == 0:
+            break
+        assert time.monotonic() < deadline, "disconnected original retained a live waiter"
+        time.sleep(0.05)
+    row = next(row for row in final["requests"] if row["ask_id"] == ask["ask_id"])
+    assert row["status"] == "cancelled", row
+    assert row["resolution_reason"] == "request_cancelled", row
+    status, _ = gateway.call_json(
+        "POST",
+        f"{route}/{row['ask_id']}/resolve",
+        {
+            "generation": listing["generation"],
+            "decision": "approve",
+        },
+    )
+    assert status == 409, "cancelled original was approved late"
+    return row
+
+
 def resolve_original_operation(
     operation: Callable[[], T],
     gateway: TcpHttpClient,
     session_id: str,
     decision: str,
     before_resolution: Callable[[], None],
-    private_marker: str,
+    private_marker: str | None,
 ) -> tuple[T, dict]:
     """No retries/replay: one operation, one pending identity, one decision."""
     route = f"/vms/{session_id}/security/asks"
     with ThreadPoolExecutor(max_workers=1) as executor:
         original = executor.submit(operation)
-        deadline = time.monotonic() + 10
-        while True:
-            status, listing = gateway.call_json("GET", route, timeout=3)
-            assert status == 200, (status, listing)
-            pending = [row for row in listing["requests"] if row["status"] == "pending"]
-            if pending:
-                break
-            assert not original.done(), "original operation returned before human resolution"
-            assert time.monotonic() < deadline, "original operation never became reviewable"
-            time.sleep(0.05)
-        assert len(pending) == listing["pending_count"] == 1, listing
-        assert private_marker not in json.dumps(listing), "review projection exposed private input"
-        assert not original.done(), "pending operation already completed"
+        listing = pending_original_operation(gateway, session_id, original)
+        pending = [row for row in listing["requests"] if row["status"] == "pending"]
+        if private_marker is not None:
+            assert private_marker not in json.dumps(listing), (
+                "review projection exposed private input"
+            )
         before_resolution()
         ask = pending[0]
         resolve = f"{route}/{ask['ask_id']}/resolve"

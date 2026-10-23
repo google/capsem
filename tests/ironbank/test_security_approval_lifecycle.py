@@ -3,28 +3,21 @@
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
 import textwrap
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import closing, suppress
-from pathlib import Path
+from contextlib import closing
 
 import pytest
-from helpers.constants import ASSETS_DIR, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
-from helpers.gateway import GatewayInstance, TcpHttpClient
-from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
 from helpers.service import (
-    ServiceInstance,
     exec_output_text,
-    vm_name,
     vm_session_db_path,
-    wait_exec_ready,
 )
 from helpers.session_ledger import open_session_ledger
 from ironbank.approval_fixture import resolve_original_operation
+from ironbank.approval_native import native_approval_session, upstream_records
 
 pytestmark = pytest.mark.integration
 
@@ -32,74 +25,18 @@ pytestmark = pytest.mark.integration
 @pytest.fixture
 def approval_vm():
     """Existing local native assets and fake upstream; no vendor account/image pull."""
-    assert ASSETS_DIR.exists() and MOCK_SERVER_BINARY.exists()
-    service = ServiceInstance()
-    gateway = None
-    mock = None
-    client = None
-    session_id = None
-    old_corp = os.environ.get("CAPSEM_CORP_CONFIG")
-    try:
-        mock, ready = start_mock_server(request_log=service.tmp_dir / "approval-upstream.jsonl")
-        corp = service.tmp_dir / "corp.toml"
-        corp.write_text(
-            textwrap.dedent("""
-            refresh_policy = "24h"
-            [settings."security.web.http_upstream_ports"]
-            value = [80, 3713, 8080]
-            modified = "2026-06-14T00:00:00Z"
+    with native_approval_session("""
             [corp.rules.ask_native_echo]
             name = "ask_native_echo"
             action = "ask"
             priority = -100
             match = 'http.host == "127.0.0.1" && tcp.port == "3713" && http.path == "/echo"'
-        """).strip()
-            + "\n"
-        )
-        os.environ["CAPSEM_CORP_CONFIG"] = str(corp)
-        service.start()
-        client = service.client()
-        gateway = GatewayInstance(uds_path=service.uds_path)
-        gateway.start()
-        api = TcpHttpClient(gateway.base_url, gateway.token)
-        created = client.post(
-            "/vms/create",
-            {
-                "name": vm_name("ironbank-approval"),
-                "ram_mb": DEFAULT_RAM_MB,
-                "cpus": DEFAULT_CPUS,
-                "env": {"CAPSEM_MOCK_SERVER_BASE_URL": ready["base_url"]},
-            },
-            timeout=90,
-        )
-        session_id = created["id"]
-        assert wait_exec_ready(client, session_id, timeout=EXEC_READY_TIMEOUT)
-        yield service, client, api, session_id, ready
-    finally:
-        if client is not None and session_id is not None:
-            with suppress(Exception):
-                client.delete(f"/vms/{session_id}/delete", timeout=60)
-        if gateway is not None:
-            gateway.stop()
-        service.stop()
-        stop_process(mock)
-        if old_corp is None:
-            os.environ.pop("CAPSEM_CORP_CONFIG", None)
-        else:
-            os.environ["CAPSEM_CORP_CONFIG"] = old_corp
+        """) as session:
+        yield session
 
 
 def _echo_rows(ready: dict) -> list[dict]:
-    path = Path(ready["request_log"])
-    return (
-        [
-            json.loads(row)
-            for row in path.read_text().splitlines()
-            if row.strip() and json.loads(row)["path"] == "/echo"
-        ]
-        if path.exists()
-        else []
-    )
+    return [row for row in upstream_records(ready) if row.get("path") == "/echo"]
 
 
 @pytest.mark.parametrize("decision", ["approve", "deny"])
