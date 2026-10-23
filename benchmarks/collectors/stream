@@ -99,10 +99,13 @@ def read_until(stream: ClientConnection, marker: bytes | tuple[bytes, ...], time
     total = 0
     while not any(candidate in seen for candidate in markers):
         try:
-            channel, payload = next_frame(stream, max(deadline - time.monotonic(), 0.001))
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("terminal marker deadline exceeded")
+            channel, payload = next_frame(stream, remaining)
         except TimeoutError as error:
             raise TimeoutError(
-                f"terminal lacks {marker!r}; last output: {seen[-500:]!r}"
+                f"terminal receive deadline: lacks {marker!r}; last output: {seen[-500:]!r}"
             ) from error
         if channel == STATUS:
             if isinstance(payload, dict) and payload.get("type") == "terminal":
@@ -192,12 +195,18 @@ def exec_output(gateway: Gateway, vm: str) -> tuple[float, float]:
     ) as stream:
         started = time.monotonic()
         received = 0
+        deadline = started + 300
         while True:
-            channel, payload = next_frame(stream, timeout=300)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("exec output deadline exceeded")
+            channel, payload = next_frame(stream, timeout=remaining)
             if channel == STATUS:
                 break
             assert isinstance(payload, bytes)
             received += len(payload)
+            if received > EXEC_BYTES:
+                raise RuntimeError("exec output exceeded expected byte budget")
         elapsed = time.monotonic() - started
         if payload != {"type": "exit", "code": 0, "truncated": False} or received != EXEC_BYTES:
             raise RuntimeError(
@@ -225,6 +234,7 @@ def main() -> int:
     try:
         service.start()
         gateway = service_gateway(service)
+        assert service.proc is not None, "service must be running before measurement"
         root = psutil.Process(service.proc.pid)
         name = f"bench-stream-{uuid.uuid4().hex[:8]}"
         with image_session(service, service.tmp_dir / "benchmark-image", name) as vm:

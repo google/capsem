@@ -262,6 +262,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Suggest TUI session and fork names from existing human names, avoiding collisions
   and keeping fork suffixes within the public name limit.
+- Enforce total receive deadlines and exact output byte budgets in stream
+  benchmarks, including peers that keep sending nonmatching frames.
 
 - Keep the native app and embedded terminals on the selected local gateway,
   including isolated runtime ports.
