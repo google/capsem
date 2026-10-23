@@ -10149,6 +10149,12 @@
               "null"
             ]
           },
+          "pending_approval_count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Actionable original operations awaiting a human decision in this boot.",
+            "minimum": 0
+          },
           "persistent": {
             "type": "boolean"
           },

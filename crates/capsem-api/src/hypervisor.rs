@@ -29,6 +29,9 @@ pub struct VmSummary {
     /// Source app metadata captured for this session's immutable image.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub app: Option<crate::ImageApp>,
+    /// Actionable original operations awaiting a human decision in this boot.
+    #[serde(default)]
+    pub pending_approval_count: u32,
     /// Latest ephemeral guest request for the client's browser.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub browser_request: Option<crate::BrowserRequest>,
