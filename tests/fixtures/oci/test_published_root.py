@@ -1,5 +1,6 @@
 """Prepared fixture roots retain their image subject and verified bytes."""
 
+import io
 import json
 
 import pytest
@@ -101,7 +102,10 @@ def test_the_registry_serves_the_catalog_and_subject_bound_root(tmp_path):
         home = tmp_path / "home"
         home.mkdir()
         grant_exact(
-            home, image, catalog=f"{authority}/library/catalog:stable", certificate=certificate
+            home,
+            image,
+            catalog=f"{authority}/library/catalog:stable",
+            certificate=certificate,
         )
         import tomllib
 
@@ -168,6 +172,9 @@ def test_prefetch_does_not_fall_back_after_authentication_or_server_failure(
 
     layout, subject, _ = _layout(tmp_path)
     calls = []
+    response = urllib.error.HTTPError(
+        "https://registry.example/referrers", status, "refused", Message(), io.BytesIO()
+    )
 
     class Client:
         def __init__(self, context):
@@ -175,12 +182,13 @@ def test_prefetch_does_not_fall_back_after_authentication_or_server_failure(
 
         def open(self, url, token):
             calls.append(url)
-            raise urllib.error.HTTPError(url, status, "refused", Message(), None)
+            raise response
 
     monkeypatch.setattr(pinned_image, "_Registry", Client)
     monkeypatch.setattr(pinned_image, "_token", lambda *args: None)
     with pytest.raises(urllib.error.HTTPError) as error:
         published_root.prepare(layout, "registry.example/fixture")
     assert error.value.code == status
+    assert error.value.closed, "a refused response must not retain its socket"
     assert calls == [f"https://registry.example/v2/fixture/referrers/{subject}"]
     assert not (layout / "rootfs-v2").exists()

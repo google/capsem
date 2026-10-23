@@ -138,10 +138,10 @@ def _token(client: _Registry, registry: str, name: str) -> str | None:
         client.open(f"https://{registry}/v2/").close()
         return None
     except urllib.error.HTTPError as error:
+        error.close()
         if error.code != 401:
             raise
         challenge = error.headers.get("WWW-Authenticate", "")
-        error.close()
     fields = dict(re.findall(r'(\w+)="([^"]*)"', challenge))
     query = urllib.parse.urlencode(
         {"service": fields.get("service", registry), "scope": f"repository:{name}:pull"}

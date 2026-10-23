@@ -19,6 +19,25 @@ from tests.fixtures.oci.registry import serve
 MANIFEST = "application/vnd.oci.image.manifest.v1+json"
 
 
+@pytest.mark.parametrize("status", [403, 500])
+def test_registry_challenge_failure_releases_error_response(status):
+    response = urllib.error.HTTPError(
+        "https://registry.example/v2/", status, "refused", Message(), io.BytesIO()
+    )
+
+    class Client(pinned_image._Registry):
+        def __init__(self):
+            pass
+
+        def open(self, *_args, **_kwargs):
+            raise response
+
+    with pytest.raises(urllib.error.HTTPError) as error:
+        pinned_image._token(Client(), "registry.example", "fixture")
+    assert error.value is response and error.value.code == status
+    assert response.closed, "a failed challenge must not retain its socket"
+
+
 def test_direct_launcher_can_import_repository_fixtures(tmp_path):
     script = Path(__file__).with_name("pinned_image.py")
     probe = (
