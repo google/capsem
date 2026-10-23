@@ -48,6 +48,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Carry committed price coverage through session, per-model and global service
   totals without deriving price completeness from a zero cost.
+- Preserve all concatenated gzip members during bounded complete-body decoding
+  and reject malformed trailing bytes instead of silently losing content.
+
 - Count recorded plugin-only decisions even when no CEL rule matches, without
   duplicating execution and detection totals for the same event.
 

@@ -21,7 +21,9 @@ pub(crate) const MAX_DECOMPRESSED_BODY: usize = 256 * 1024 * 1024;
 /// callers parse). The `+1` byte lets us distinguish "exactly at the cap" from
 /// "over the cap" without unbounded reads.
 pub(crate) fn decompress_gzip_capped(body: &[u8], cap: usize) -> anyhow::Result<Vec<u8>> {
-    let mut decoder = flate2::read::GzDecoder::new(body).take(cap as u64 + 1);
+    // RFC 1952 bodies may concatenate members. GzDecoder stops after the first
+    // and silently lost later application bytes before semantic inspection.
+    let mut decoder = flate2::read::MultiGzDecoder::new(body).take(cap as u64 + 1);
     let mut out = Vec::new();
     decoder.read_to_end(&mut out)?;
     if out.len() > cap {
