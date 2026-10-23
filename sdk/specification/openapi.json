@@ -5563,6 +5563,72 @@
           }
         }
       },
+      "ImageApp": {
+        "type": "object",
+        "description": "Application identity and evidence captured from one catalog version.\nDescriptive metadata grants no execution, network or filesystem authority.",
+        "required": [
+          "catalog_name",
+          "image",
+          "display_name",
+          "description",
+          "architecture"
+        ],
+        "properties": {
+          "architecture": {
+            "type": "string"
+          },
+          "catalog_name": {
+            "type": "string"
+          },
+          "category": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImageEvidence"
+            },
+            "description": "Only actually published artifact references for this version/platform."
+          },
+          "icon": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "image": {
+            "type": "string"
+          },
+          "interfaces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImageInterface"
+            },
+            "description": "Descriptive capabilities are independent of the execution surface."
+          },
+          "publisher": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "ImageCacheState": {
         "type": "string",
         "description": "The service cache owner's current observation of the selected image's\nlocal bytes. This does not grant execution or describe registry freshness.",
@@ -5608,6 +5674,35 @@
           }
         }
       },
+      "ImageEvidence": {
+        "type": "object",
+        "required": [
+          "kind",
+          "reference",
+          "media_type"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/ImageEvidenceKind"
+          },
+          "media_type": {
+            "type": "string"
+          },
+          "reference": {
+            "type": "string",
+            "description": "Immutable registry reference. A reference is not a browser download URL."
+          }
+        }
+      },
+      "ImageEvidenceKind": {
+        "type": "string",
+        "enum": [
+          "obom",
+          "sbom",
+          "abom",
+          "package_inventory"
+        ]
+      },
       "ImageInfo": {
         "type": "object",
         "description": "One catalog entry.",
@@ -5618,6 +5713,17 @@
           "cached"
         ],
         "properties": {
+          "app": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImageApp",
+                "description": "Canonical metadata for this selected immutable image; absent on older services."
+              }
+            ]
+          },
           "architectures": {
             "type": "array",
             "items": {
@@ -5672,6 +5778,15 @@
             ]
           }
         }
+      },
+      "ImageInterface": {
+        "type": "string",
+        "enum": [
+          "terminal",
+          "graphical",
+          "web",
+          "api"
+        ]
       },
       "ImageListResponse": {
         "type": "object",

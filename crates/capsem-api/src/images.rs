@@ -55,12 +55,66 @@ pub struct ImageInfo {
     /// unknown observations, or an already-ready selected version.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub previous_image: Option<String>,
+    /// Canonical metadata for this selected immutable image; absent on older services.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app: Option<ImageApp>,
     /// The image's declared interface. Older catalogs may omit it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surface: Option<ImageSurface>,
     /// Active request-owned preparation progress; absent once the request ends.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub progress: Option<ImageDownloadProgress>,
+}
+
+/// Application identity and evidence captured from one catalog version.
+/// Descriptive metadata grants no execution, network or filesystem authority.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, ToSchema)]
+pub struct ImageApp {
+    pub catalog_name: String,
+    pub image: String,
+    pub display_name: String,
+    pub description: String,
+    pub architecture: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub publisher: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    /// Descriptive capabilities are independent of the execution surface.
+    #[serde(default)]
+    pub interfaces: Vec<ImageInterface>,
+    /// Only actually published artifact references for this version/platform.
+    #[serde(default)]
+    pub evidence: Vec<ImageEvidence>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageInterface {
+    Terminal,
+    Graphical,
+    Web,
+    Api,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, ToSchema)]
+pub struct ImageEvidence {
+    pub kind: ImageEvidenceKind,
+    /// Immutable registry reference. A reference is not a browser download URL.
+    pub reference: String,
+    pub media_type: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageEvidenceKind {
+    Obom,
+    Sbom,
+    Abom,
+    PackageInventory,
 }
 
 /// Bytes made available by an app download, including verified cache reuse.

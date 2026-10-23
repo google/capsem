@@ -2,11 +2,13 @@
 
 import {z} from "zod";
 import type {ImageInfo} from "../models/ImageInfo.js";
+import {ImageAppSchema} from "./ImageApp.js";
 import {ImageCacheStateSchema} from "./ImageCacheState.js";
 import {ImageDownloadProgressSchema} from "./ImageDownloadProgress.js";
 import {ImageSurfaceSchema} from "./ImageSurface.js";
 
 export const ImageInfoSchema: z.ZodType<ImageInfo> = z.object({
+  "app": z.union([z.null(), z.lazy(() => ImageAppSchema)]).exactOptional(),
   "architectures": z.array(z.string()),
   "cached": z.lazy(() => ImageCacheStateSchema),
   "description": z.string(),

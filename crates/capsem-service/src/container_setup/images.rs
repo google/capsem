@@ -441,6 +441,7 @@ pub(crate) async fn handle_list_images(
                 .map(|image| image.to_string()),
             cached: ImageCacheState::Unknown,
             previous_image: None,
+            app: None,
             progress: None,
             surface: match entry.surface() {
                 Some("terminal") => Some(capsem_api::ImageSurface::Terminal),

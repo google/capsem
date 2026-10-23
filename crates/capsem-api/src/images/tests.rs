@@ -56,6 +56,7 @@ fn an_image_entry_carries_its_pin_and_an_unanswered_cache_state() {
         image: Some(format!("ghcr.io/google/capsem/codex-cli@sha256:{}", "a".repeat(64))),
         cached: ImageCacheState::Unknown,
         previous_image: None,
+        app: None,
         surface: None,
         progress: None,
     };
@@ -100,4 +101,14 @@ fn prior_image_is_optional_and_preserves_a_verified_previous_pin() {
         serde_json::to_value(updated).unwrap()["previous_image"],
         row["previous_image"]
     );
+}
+
+#[test]
+fn image_app_metadata_preserves_exact_identity_and_explicitly_absent_artifacts() {
+    let row = json!({"name":"dev","description":"Tools","architectures":["arm64"],"cached":"missing",
+        "app":{"catalog_name":"dev","image":format!("registry.example/dev@sha256:{}", "a".repeat(64)),
+        "display_name":"Development","description":"An agentless environment with development tools.",
+        "architecture":"arm64","interfaces":["terminal"],"evidence":[]}});
+    let parsed: ImageInfo = serde_json::from_value(row.clone()).unwrap();
+    assert_eq!(serde_json::to_value(parsed).unwrap()["app"], row["app"]);
 }

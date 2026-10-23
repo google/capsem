@@ -91,10 +91,14 @@ from .host_logs_response import HostLogsResponse as HostLogsResponse
 from .host_triage_response import HostTriageResponse as HostTriageResponse
 from .http_event import HttpEvent as HttpEvent
 from .hypervisor_info import HypervisorInfo as HypervisorInfo
+from .image_app import ImageApp as ImageApp
 from .image_cache_state import ImageCacheState as ImageCacheState
 from .image_download_phase import ImageDownloadPhase as ImageDownloadPhase
 from .image_download_progress import ImageDownloadProgress as ImageDownloadProgress
+from .image_evidence import ImageEvidence as ImageEvidence
+from .image_evidence_kind import ImageEvidenceKind as ImageEvidenceKind
 from .image_info import ImageInfo as ImageInfo
+from .image_interface import ImageInterface as ImageInterface
 from .image_list_response import ImageListResponse as ImageListResponse
 from .image_pull_request import ImagePullRequest as ImagePullRequest
 from .image_pull_response import ImagePullResponse as ImagePullResponse
