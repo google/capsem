@@ -103,3 +103,33 @@ def test_guest_stimuli_remain_valid_python_for_binary_gzip_and_chunked_cases():
             {"headers": {"x-leaked-token": "synthetic"}},
         ):
             ast.parse(request_script(body, **options))
+
+
+def test_applied_receipts_include_rule_backed_events_once(monkeypatch):
+    import sqlite3
+
+    from helpers import content_filter_session as fixture
+
+    conn = sqlite3.connect(":memory:")
+    conn.executescript("""
+        CREATE TABLE security_decision_events(event_id TEXT, actor TEXT);
+        INSERT INTO security_decision_events VALUES
+            ('clean-dns', 'security.plugins'),
+            ('applied-http', 'corp.rules.allow_content_fixture'),
+            ('applied-http', 'profiles.rules.ai_google_content_broker_binding');
+    """)
+    seen = []
+
+    def read_payload(db, event, table):
+        assert db is conn and table == "security_decision_events"
+        seen.append(event)
+        return {"plugin_executions": [{"plugin_id": "pii_filter", "applied": event == "applied-http"}]}
+
+    monkeypatch.setattr(fixture, "security_payload", read_payload)
+    try:
+        payloads = fixture.plugin_execution_payloads(conn)
+        assert set(payloads) == {"clean-dns", "applied-http"}
+        assert len(seen) == 2
+        assert sum(row["applied"] for payload in payloads.values() for row in payload["plugin_executions"]) == 1
+    finally:
+        conn.close()

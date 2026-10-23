@@ -10,6 +10,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
+from helpers.body_archive import security_payload
 from helpers.gateway import GatewayInstance, TcpHttpClient
 from helpers.image_session import WORKSPACE, image_session, workload_exec
 from helpers.mock_server import start_mock_server, stop_process
@@ -39,6 +40,16 @@ def upstream_records(text: str, *, required_hosts=(FIXTURE_HOST,)) -> list[dict]
     observed = {row["qname"].rstrip(".") for row in dns}
     assert set(required_hosts) <= observed, "native requests did not traverse required hermetic DNS hosts"
     return http
+
+
+def plugin_execution_payloads(conn) -> dict:
+    """One forensic payload per event, including events attached to CEL rules."""
+    return {
+        row[0]: security_payload(conn, row[0], "security_decision_events")
+        for row in conn.execute(
+            "SELECT DISTINCT event_id FROM main.security_decision_events"
+        )
+    }
 
 
 def fixture_config(ready: dict) -> str:

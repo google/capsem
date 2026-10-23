@@ -11,8 +11,13 @@ import sqlite3
 from contextlib import closing
 
 import pytest
-from helpers.body_archive import archived_bodies, security_payload
-from helpers.content_filter_session import FIXTURE_HOST, OAUTH_HOST, filter_session
+from helpers.body_archive import archived_bodies
+from helpers.content_filter_session import (
+    FIXTURE_HOST,
+    OAUTH_HOST,
+    filter_session,
+    plugin_execution_payloads,
+)
 from helpers.session_ledger import open_session_ledger
 from ironbank.test_http_protocol_ledger import EXPECTED_NET_COLUMNS
 
@@ -69,20 +74,13 @@ def assert_private_ledger(
             for value in row.values():
                 for raw in forbidden:
                     assert raw.decode(errors="backslashreplace") not in str(value)
-        payloads = {
-            row[0]: security_payload(conn, row[0], "security_decision_events")
-            for row in conn.execute(
-                "SELECT event.event_id FROM main.security_decision_events AS event "
-                "LEFT JOIN security_decision_runs AS run ON run.id = event.run_id "
-                "WHERE COALESCE(event.actor, run.actor) = 'security.plugins'"
-            )
-        }
+        payloads = plugin_execution_payloads(conn)
         matched_events = {
             event_id
             for event_id, payload in payloads.items()
             if any(
                 execution["plugin_id"] == plugin and execution["applied"]
-                for execution in payload["plugin_executions"]
+                for execution in payload.get("plugin_executions", [])
             )
         }
         executions = [
