@@ -96,13 +96,18 @@ def test_prepared_producer_uses_immutable_tools_without_building(monkeypatch, tm
     monkeypatch.setattr(rootfs, "asset_tools", forbidden)
     calls = []
     monkeypatch.setattr(rootfs.docker, "export_container_fs", lambda _, selected, __, target: (calls.append(selected), target.write_bytes(b"export")))
-    monkeypatch.setattr(rootfs, "from_rootfs", lambda _, subject, architecture: {"subject": subject, "architecture": architecture})
+    toolkit_checks = []
+    def inventory(_, subject, architecture, *, shared_toolkit):
+        toolkit_checks.append(shared_toolkit)
+        return {"subject": subject, "architecture": architecture}
+    monkeypatch.setattr(rootfs, "from_rootfs", inventory)
     monkeypatch.setattr(rootfs.docker, "generate_cyclonedx_obom", lambda _, target, **kwargs: (calls.append(kwargs["tool_image"]), target.write_text('{}')))
     monkeypatch.setattr(rootfs.docker, "experimental_erofs_build_config", lambda *_: (0, "none", 0, 0))
     monkeypatch.setattr(rootfs.docker, "create_erofs", lambda _, __, target, *args, **kwargs: (calls.append(kwargs["tool_image"]), target.write_bytes(b"filesystem")))
     output = tmp_path / "producer"
     rootfs.main(["--image", identity, "--arch", "arm64", "--repository", "127.0.0.1:12345/library/dev", "--digest", "sha256:" + "3" * 64, "--out", str(output)], prepared_tools=tools)
     assert calls == [identity, tools, tools]
+    assert toolkit_checks == [True]
     assert (output / "packages.json").is_file() and (output / "obom.cdx.json").is_file()
     assert not (output / "rootfs.tar").exists()
 
