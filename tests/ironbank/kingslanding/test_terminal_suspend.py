@@ -157,6 +157,7 @@ try:
     Path('terminal-suspend-fd').write_bytes(b'original-open-file')
     directory = os.open('.', os.O_RDONLY | os.O_DIRECTORY)
     held = os.open('terminal-suspend-fd', os.O_RDWR)
+    os.fsync(held)
     image = os.open('/etc/os-release', os.O_RDONLY)
     identity = lambda fd: (os.fstat(fd).st_dev, os.fstat(fd).st_ino)
     original_file = identity(held)
@@ -185,6 +186,7 @@ try:
     check('fresh-image-read', lambda: Path('/etc/os-release').read_bytes(), image_bytes)
     assert not failures, ('warm original descriptor probes', failures)
     os.write(held, b'-resumed')
+    os.fsync(held)
     relative = os.open('terminal-suspend-fd', os.O_RDONLY, dir_fd=directory)
     try:
         assert os.read(relative, 4096) == b'original-open-file-resumed', 'original directory FD lookup is stale'
