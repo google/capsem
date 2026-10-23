@@ -192,7 +192,7 @@ async fn async_vsock_large_transfer() {
     assert_eq!(received, data);
 }
 
-// AsyncFd::new closes the fd it was handed when registration fails, and the
+// A registration error converted to io::Error closes its owned fd, and the
 // caller closed it again. On a runtime with other connections in flight the
 // number can already belong to someone else, so the second close severed a
 // stranger's socket. A stopped reactor rejects registration on both epoll and
