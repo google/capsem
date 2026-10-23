@@ -102,7 +102,7 @@ def test_dns_tcp_original_query_resolves_once(decision):
         assert reply["rcode"] == (0 if decision == "approve" else 3), reply
         assert reply["answers"] == (1 if decision == "approve" else 0), reply
         assert len(dns_rows(ready)) == (1 if decision == "approve" else 0)
-        assert_approval_audit(service, client, vm_id, receipt, table="dns_queries")
+        assert_approval_audit(service, client, vm_id, receipt, table="dns_events")
 
 
 def test_dns_tcp_disconnect_cancels_original_query():

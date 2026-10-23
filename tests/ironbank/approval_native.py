@@ -101,7 +101,7 @@ def assert_approval_audit(service, client, session_id, receipt, *, cancelled=Fal
         assert rows[1]["resolver"] == "authenticated_client"
         assert rows[1]["reason"] == ("request_cancelled" if cancelled else "human_decision")
         if table is not None:
-            assert table in {"dns_queries", "tool_calls", "exec_events", "fs_events"}
+            assert table in {"dns_events", "tool_calls", "exec_events", "fs_events"}
             count = conn.execute(
                 f"SELECT COUNT(*) FROM {table} WHERE event_id=?", (receipt["event_id"],)
             ).fetchone()[0]
