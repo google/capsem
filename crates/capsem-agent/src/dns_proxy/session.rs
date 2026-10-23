@@ -25,7 +25,9 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::vsock_io::AsyncVsock;
 use super::wire::{parse_question, Question};
-use capsem_proto::{decode_dns_response, encode_dns_request, DnsRequest, DnsResponse, MAX_FRAME_SIZE};
+use capsem_proto::approval::ApprovalRegistration;
+use capsem_proto::dns_session::DnsSessionReply;
+use capsem_proto::{decode_dns_session_reply, encode_dns_request, DnsRequest, DnsResponse, MAX_FRAME_SIZE};
 
 /// Sessions per forwarder. Two keep the guest resolving while one
 /// reconnects, and give the host two independent frame streams.
@@ -87,6 +89,12 @@ struct Pending {
     /// with empty bytes and nothing can be checked.
     expected: Option<Question>,
     reply: oneshot::Sender<io::Result<DnsResponse>>,
+    registered: Option<oneshot::Sender<ApprovalRegistration>>,
+}
+
+enum QueryProgress {
+    Answer(io::Result<DnsResponse>),
+    Registered(ApprovalRegistration),
 }
 
 pub(crate) struct DnsSession {
@@ -158,9 +166,11 @@ impl DnsSession {
         proto: &'static str,
         deadline: Duration,
     ) -> io::Result<DnsResponse> {
+        let started = tokio::time::Instant::now();
         let expected = parse_question(&raw);
         let id = self.alloc_id();
-        let (reply, answer) = oneshot::channel();
+        let (reply, mut answer) = oneshot::channel();
+        let (registered, mut registration) = oneshot::channel();
         {
             let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
             if pending.len() >= DNS_SESSION_MAX_IN_FLIGHT {
@@ -176,6 +186,7 @@ impl DnsSession {
                     sent: false,
                     expected,
                     reply,
+                    registered: Some(registered),
                 },
             );
         }
@@ -188,17 +199,39 @@ impl DnsSession {
         };
         let frame =
             encode_dns_request(&request).map_err(|error| io::Error::other(format!("encode_dns_request: {error:#}")))?;
-        tokio::time::timeout(deadline, async {
+        drop(request);
+        let progress = tokio::time::timeout(deadline, async {
             self.frames
                 .send((id, frame))
                 .await
                 .map_err(|_| io::Error::other("dns session writer stopped"))?;
-            answer
-                .await
-                .map_err(|_| io::Error::other("dns session dropped the query"))?
+            tokio::select! {
+                biased;
+                result = &mut answer => result.map(QueryProgress::Answer).map_err(|_|io::Error::other("dns session dropped the query")),
+                registered = &mut registration => match registered {
+                    Ok(registered) => Ok(QueryProgress::Registered(registered)),
+                    Err(_) => (&mut answer).await.map(QueryProgress::Answer).map_err(|_|io::Error::other("dns session dropped the query")),
+                },
+            }
         })
         .await
-        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "dns query deadline passed"))?
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "dns query deadline passed"))??;
+        match progress {
+            QueryProgress::Answer(answer) => answer,
+            QueryProgress::Registered(registration) => {
+                registration.validate().map_err(io::Error::other)?;
+                // Guest wall clocks may differ from the coordinator's. Use its
+                // actual remaining monotonic budget, capped at the original
+                // operation's product maximum. A receipt never resets this cap.
+                let maximum = started + Duration::from_secs(capsem_proto::APPROVAL_TIMEOUT_SECONDS as u64);
+                let expires =
+                    (tokio::time::Instant::now() + Duration::from_millis(registration.remaining_ms)).min(maximum);
+                tokio::time::timeout_at(expires, answer)
+                    .await
+                    .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "DNS human approval expired"))?
+                    .map_err(|_| io::Error::other("dns session dropped the query"))?
+            }
+        }
     }
 
     fn take_pending(&self, id: u32) -> Option<Pending> {
@@ -208,8 +241,20 @@ impl DnsSession {
     /// Route one decoded frame to the query that owns its id, after the
     /// answer has been checked against that query's question.
     pub(crate) fn deliver(&self, payload: &[u8]) {
-        let response = match decode_dns_response(payload) {
-            Ok(response) => response,
+        let response = match decode_dns_session_reply(payload) {
+            Ok(DnsSessionReply::Answer(response)) => response,
+            Ok(DnsSessionReply::Pending { id, registration }) => {
+                let registered = self
+                    .pending
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get_mut(&id.get())
+                    .and_then(|pending| pending.registered.take());
+                if let Some(registered) = registered {
+                    let _ = registered.send(registration);
+                }
+                return;
+            }
             Err(error) => {
                 eprintln!(
                     "[capsem-dns-proxy] session {}: undecodable response frame: {error:#}",

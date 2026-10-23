@@ -20,6 +20,88 @@ fn idle_session(capacity: usize) -> (DnsSession, mpsc::Receiver<(u32, Vec<u8>)>)
 }
 
 #[tokio::test]
+async fn registered_human_wait_preserves_original_query_beyond_network_budget_with_clock_skew() {
+    for expires_at_unix_ms in [1, i64::MAX / 2] {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let executed = Arc::clone(&calls);
+        let connect = fake_host(move |mut host| {
+            let original = read_frame(&mut host).unwrap();
+            executed.fetch_add(1, Ordering::SeqCst);
+            let registration = capsem_proto::approval::ApprovalRegistration {
+                ask_id: "0123456789ab".into(),
+                event_id: "abcdef012345".into(),
+                expires_at_unix_ms,
+                remaining_ms: 500,
+            };
+            host.write_all(
+                &capsem_proto::encode_dns_pending(std::num::NonZeroU32::new(original.id).unwrap(), &registration)
+                    .unwrap(),
+            )
+            .unwrap();
+            std::thread::sleep(Duration::from_millis(80));
+            write_response(&mut host, &answered(&original));
+        });
+        let forwarder = DnsForwarder::new(1, connect);
+        let raw = query(17, "held.example");
+        let answer = forwarder.sessions[0]
+            .forward_query_within(raw.clone(), "tcp", Duration::from_millis(20))
+            .await
+            .expect("registered human wait must outlive the ordinary network budget");
+        assert_eq!(answer.raw, answer_to(&raw));
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "held query must never be replayed");
+    }
+}
+
+#[tokio::test]
+async fn repeated_pending_receipts_cannot_extend_the_original_monotonic_human_deadline() {
+    let (cancelled, cancellation) = oneshot::channel();
+    let cancelled = Arc::new(Mutex::new(Some(cancelled)));
+    let connect = fake_host(move |mut host| {
+        host.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let original = read_frame(&mut host).unwrap();
+        let mut registration = capsem_proto::approval::ApprovalRegistration {
+            ask_id: "0123456789ab".into(),
+            event_id: "abcdef012345".into(),
+            expires_at_unix_ms: 1,
+            remaining_ms: 40,
+        };
+        let id = std::num::NonZeroU32::new(original.id).unwrap();
+        host.write_all(&capsem_proto::encode_dns_pending(id, &registration).unwrap())
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(20));
+        registration.remaining_ms = 1000;
+        host.write_all(&capsem_proto::encode_dns_pending(id, &registration).unwrap())
+            .unwrap();
+        let mut length = [0; 4];
+        host.read_exact(&mut length).unwrap();
+        let mut payload = vec![0; u32::from_be_bytes(length) as usize];
+        host.read_exact(&mut payload).unwrap();
+        assert!(
+            matches!(capsem_proto::dns_session::decode_dns_session_message(&payload).unwrap(),
+            capsem_proto::dns_session::DnsSessionMessage::Cancel(cancel) if cancel.cancel_query_id == id)
+        );
+        cancelled.lock().unwrap().take().unwrap().send(()).unwrap();
+    });
+    let forwarder = DnsForwarder::new(1, connect);
+    let started = tokio::time::Instant::now();
+    let error = forwarder.sessions[0]
+        .forward_query_within(query(19, "held.example"), "tcp", Duration::from_millis(20))
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+    assert!(started.elapsed() >= Duration::from_millis(40));
+    assert!(
+        started.elapsed() < Duration::from_millis(500),
+        "duplicate receipt extended the original wait"
+    );
+    tokio::time::timeout(Duration::from_secs(1), cancellation)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(forwarder.sessions[0].in_flight(), 0);
+}
+
+#[tokio::test]
 async fn cancelling_a_written_query_notifies_host_without_closing_other_queries() {
     let (mut host, guest) = UnixStream::pair().unwrap();
     host.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
@@ -294,6 +376,7 @@ fn an_unknown_reply_cannot_complete_identical_pending_questions() {
         session.pending.lock().unwrap().insert(
             id,
             Pending {
+                registered: None,
                 sent: false,
                 expected: parse_question(&raw),
                 reply,

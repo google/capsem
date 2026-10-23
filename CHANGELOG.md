@@ -212,6 +212,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Show a compact toolbar notice when the service confirms a newer Capsem version,
   with a direct action to review its update status.
+- Keep original DNS requests waiting for registered security approval within the
+  broker's bounded lifetime, including clients that half-close their write side.
+
 - Notify the host when an original guest DNS query expires or its owner cancels
   it, with fail-closed handling when its bounded cancellation queue is full.
 
