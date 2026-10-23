@@ -21,7 +21,7 @@ from .vm_network_info import VmNetworkInfo
 
 
 class SandboxInfo(Model):
-    nonnullable_optional = frozenset(['can_resume', 'persistent'])
+    nonnullable_optional = frozenset(['can_resume', 'pending_approval_count', 'persistent'])
     ai: VmAiInfo | None = None
     allowed_requests: Annotated[StrictInt, Field(ge=0)] | None = None
     app: ImageApp | None = None
@@ -41,6 +41,7 @@ class SandboxInfo(Model):
     model_call_count: Annotated[StrictInt, Field(ge=0)] | None = None
     name: StrictStr | None = None
     network: VmNetworkInfo | None = None
+    pending_approval_count: Annotated[StrictInt, Field(ge=0)] | None = None
     persistent: StrictBool | None = None
     pid: Annotated[StrictInt, Field(ge=0)]
     ram_mb: Annotated[StrictInt, Field(ge=0)] | None = None

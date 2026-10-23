@@ -13,13 +13,14 @@ from .vm_lifecycle_state import VmLifecycleState
 
 
 class VmStatusResponse(Model):
-    nonnullable_optional = frozenset(['can_resume', 'persistent'])
+    nonnullable_optional = frozenset(['can_resume', 'pending_approval_count', 'persistent'])
     available_actions: list[VmAction]
     can_resume: StrictBool | None = None
     created_at: StrictStr | None = None
     id: StrictStr
     last_error: StrictStr | None = None
     name: StrictStr
+    pending_approval_count: Annotated[StrictInt, Field(ge=0)] | None = None
     persistent: StrictBool | None = None
     pid: Annotated[StrictInt, Field(ge=0)] | None = None
     resume_blocked_reason: StrictStr | None = None
