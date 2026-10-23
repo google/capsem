@@ -20,7 +20,7 @@
   "dependencies": {
     "@capsem/sdk": "workspace:0.7.1",
     "@modelcontextprotocol/sdk": "1.32.0",
-    "zod": "4.6.1"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

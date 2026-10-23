@@ -32,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Update MCP validation to Zod 4.6.7 for GHSA-mrhx-c7xc-m3w5.
+
 - Update TypeScript SDK validation to Zod 4.6.7 for GHSA-mrhx-c7xc-m3w5.
 
 - Update Tokio to 1.53.3 for RUSTSEC-2026-0386 and explicitly preserve socket
