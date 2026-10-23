@@ -180,6 +180,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Refuse scratch imports whose source size changes during copying, keeping
+  individual files within their checked limit and leaving originals intact.
+
 - Keep unavailable usage distinct from zero and show compact Sessions, AI requests,
   Tokens and Estimated cost summaries above the dashboard.
 

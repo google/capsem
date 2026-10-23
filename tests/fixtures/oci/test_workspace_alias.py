@@ -102,6 +102,21 @@ def test_copy_uses_current_user_without_changing_destination_ownership(tmp_path)
     assert (destination / "poem").stat().st_uid == os.geteuid()
 
 
+def test_import_refuses_a_source_growing_after_the_size_check(tmp_path, monkeypatch):
+    source = tmp_path / "source"
+    source.write_bytes(b"x")
+    target = tmp_path / "target"
+    target.mkdir()
+    owner = module()
+    with source.open("rb") as handle, owner["directory"](None, target) as destination:
+        actual_read = os.read
+        reads = iter([b"xx", b""])
+        monkeypatch.setattr(os, "read", lambda fd, count: next(reads) if fd == handle.fileno() else actual_read(fd, count))
+        with pytest.raises(ValueError, match="changed"):
+            owner["copy_file"](handle.fileno(), destination, "poem", owner["Budget"](100), None)
+    assert source.read_bytes() == b"x"
+
+
 @pytest.mark.parametrize(
     "attack", ["source_parent", "source_leaf", "destination_leaf", "receipt"]
 )

@@ -147,7 +147,11 @@ def copy_file(source, destination, name, budget, owner):
             if owner is not None:
                 os.fchown(output, *owner)
             os.lseek(source, 0, os.SEEK_SET)
+            copied = 0
             while chunk := os.read(source, 65536):
+                copied += len(chunk)
+                if copied > size:
+                    raise ValueError("scratch import source changed during copy")
                 budget.consume(len(chunk))
                 view = memoryview(chunk)
                 while view:
@@ -155,6 +159,8 @@ def copy_file(source, destination, name, budget, owner):
                     if count == 0:
                         raise OSError("scratch import made no write progress")
                     view = view[count:]
+            if copied != size:
+                raise ValueError("scratch import source changed during copy")
             os.fsync(output)
         finally:
             # Even on failure, never unlink or replace a concurrent guest entry.
