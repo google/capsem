@@ -12,7 +12,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 PYTHON_OWNER = "build_system/builder/crypto.py"
 NODE_OWNER = "sdk/typescript/tools/crypto.mjs"
-PROVIDERS = {"hashlib", "blake3", "hmac", "secrets", "cryptography", "Crypto"}
+PROVIDERS = {"hashlib", "blake3", "xxhash", "hmac", "secrets", "cryptography", "Crypto"}
 BINDINGS_RATIONALE = (
     "Provider selection belongs to capsem-crypto for Rust and the owned native "
     "bindings for build/package tooling. Bootstrap cannot import first-party "
@@ -42,7 +42,7 @@ def node_provider(source: str) -> bool:
 
 def test_native_bindings_own_first_party_tooling_providers():
     paths = subprocess.run(
-        ["git", "ls-files", "--", "build_system", "images/ci", "sdk", "mcp", "web"],
+        ["git", "ls-files", "--", "build_system", "images/ci", "sdk", "mcp", "web", "tests/helpers"],
         cwd=ROOT,
         check=True,
         text=True,
@@ -64,6 +64,11 @@ def test_native_bindings_own_first_party_tooling_providers():
             if providers:
                 violations.append(f"{name}: {sorted(providers)}")
         if (
+            name.startswith("tests/helpers/") and path.suffix == ".py"
+            and "xxhash" in python_providers(path.read_text())
+        ):
+            violations.append(f"{name}: xxhash outside canonical owner")
+        if (
             path.suffix in {".ts", ".js", ".mjs", ".svelte", ".astro"}
             and name != NODE_OWNER
             and node_provider(path.read_text())
@@ -75,6 +80,8 @@ def test_native_bindings_own_first_party_tooling_providers():
 @pytest.mark.parametrize(
     "source",
     [
+        "import xxhash as fast",
+        "def f():\n from xxhash import xxh3_128_intdigest",
         "import hashlib as fast",
         "from hashlib import sha256 as fast",
         "import cryptography.hazmat.primitives.hashes",

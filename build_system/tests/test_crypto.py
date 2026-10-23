@@ -8,13 +8,14 @@ import pytest
 from capsem_builder import crypto
 
 
-def test_sha256_works_without_site_packages_and_blake3_fails_explicitly():
+@pytest.mark.parametrize("backend", ["blake3", "xxh3_128"])
+def test_sha256_works_without_site_packages_and_optional_binding_fails_explicitly(backend):
     code = (
         "import importlib.util, sys; "
         "spec = importlib.util.spec_from_file_location('crypto', sys.argv[1]); "
         "owner = importlib.util.module_from_spec(spec); spec.loader.exec_module(owner); "
         "print(owner.sha256(b'abc').hexdigest()); "
-        "owner.blake3(b'abc')"
+        f"owner.{backend}(b'abc')"
     )
     result = subprocess.run(
         [sys.executable, "-S", "-c", code, crypto.__file__],
@@ -22,7 +23,8 @@ def test_sha256_works_without_site_packages_and_blake3_fails_explicitly():
     )
     assert result.stdout.strip() == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
     assert result.returncode == 1
-    assert "ModuleNotFoundError: No module named 'blake3'" in result.stderr
+    module = "blake3" if backend == "blake3" else "xxhash"
+    assert f"ModuleNotFoundError: No module named '{module}'" in result.stderr
 
 
 @pytest.mark.parametrize(
@@ -56,3 +58,13 @@ def test_bounds_and_malformed_descriptors_fail_before_unbounded_reads():
     ]:
         with pytest.raises(ValueError):
             crypto.verify_reader(io.BytesIO(b"abc"), digest, size)
+
+
+@pytest.mark.parametrize("data", [b"", bytearray(), memoryview(b"")])
+def test_xxh3_128_reference_vector_and_explicit_wire_order(data):
+    # XXH3's published empty-input vector; archive v4 stores the integer LE.
+    value = crypto.xxh3_128(data)
+    assert value == 0x99AA06D3014798D86001C324468D497F
+    assert value.to_bytes(16, "little").hex() == "7f498d4624c30160d8984701d306aa99"
+    with pytest.raises(ValueError, match="invalid content integrity digest"):
+        crypto.verify_reader(io.BytesIO(b""), f"xxh3-128:{value:032x}", 0)

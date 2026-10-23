@@ -1,7 +1,7 @@
 """Owned Python cryptographic bindings used by verification and build tooling.
 
 OpenSSL implements hashlib SHA; the blake3 package dispatches its Rust SIMD
-backend. Algorithms required by wire formats stay explicit at the call site.
+backend; the test-only xxhash binding dispatches native XXH3 SIMD. Algorithms required by wire formats stay explicit at the call site.
 Guest EROFS verification calls the Rust owner through capsem-sysutil instead.
 """
 
@@ -44,6 +44,17 @@ def blake3(*args: Any, **kwargs: Any) -> Blake3:
     from blake3 import blake3 as constructor
 
     return constructor(*args, **kwargs)
+
+
+def xxh3_128(data: bytes | bytearray | memoryview) -> int:
+    """Non-security archive checksum; callers specify hex identity or LE wire bytes.
+
+    The independent test reader uses this native binding instead of spawning a
+    Rust process per segment or adding another FFI/staging architecture.
+    """
+    from xxhash import xxh3_128_intdigest
+
+    return int(xxh3_128_intdigest(data))
 
 
 def digest_file(path: Path, *, algorithm: str = "blake3") -> str:

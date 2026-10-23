@@ -60,7 +60,11 @@ command; its lightweight build enables BLAKE3 without host TLS dependencies.
 
 Python tooling uses `capsem_builder.crypto`: OpenSSL hashlib for protocol
 hashes, SIMD BLAKE3 for content, native constant-time comparison and OS-seeded
-entropy. Node SDK/package acceptance tools use
+entropy. Its pinned test-only `xxhash` native SIMD binding supplies independent
+archive-v4 XXH3-128 verification; the reader explicitly encodes checksums as
+16 little-endian bytes and identities as 32 hex digits. This avoids a subprocess
+per segment or a new FFI/staging layer. It does not admit XXH3 as a trusted
+content-verification algorithm. Node SDK/package acceptance tools use
 `sdk/typescript/tools/crypto.mjs`, backed by native Node crypto. Neither
 binding changes existing SHA or BLAKE2 identities. Source guards reject raw
 provider imports in these production/tooling surfaces.

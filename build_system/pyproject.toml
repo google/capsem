@@ -122,4 +122,5 @@ dev = [
     "watchdog>=6.0.0",
     "websockets>=16.0",
     "msgpack>=1.2.3",
+    "xxhash==3.6.0",
 ]
