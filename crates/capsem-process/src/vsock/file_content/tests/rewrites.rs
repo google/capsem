@@ -19,6 +19,7 @@ async fn export(data: Vec<u8>, plugin: &str) -> JobResult {
     let plugins = Arc::new(RwLock::new(Arc::new(std::collections::BTreeMap::from([(
         plugin.into(),
         SecurityPluginConfig {
+            content: Default::default(),
             mode: SecurityPluginMode::Rewrite,
             detection_level: DetectionLevel::High,
         },

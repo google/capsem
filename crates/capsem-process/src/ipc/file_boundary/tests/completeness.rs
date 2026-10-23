@@ -10,6 +10,7 @@ async fn rewrite_reply(data: Vec<u8>, size: u64) -> ProcessToService {
     *dispatcher.mcp_runtime.plugin_policy.write().unwrap() = Arc::new(BTreeMap::from([(
         "dummy_pre_eicar".into(),
         SecurityPluginConfig {
+            content: Default::default(),
             mode: SecurityPluginMode::Rewrite,
             detection_level: DetectionLevel::High,
         },
