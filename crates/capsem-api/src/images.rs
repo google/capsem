@@ -50,6 +50,11 @@ pub struct ImageInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<String>,
     pub cached: ImageCacheState,
+    /// A verified retained earlier compatible catalog version, only while the
+    /// selected version is known missing or partial. Absent for first download,
+    /// unknown observations, or an already-ready selected version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_image: Option<String>,
     /// The image's declared interface. Older catalogs may omit it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surface: Option<ImageSurface>,

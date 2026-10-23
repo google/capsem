@@ -55,6 +55,7 @@ fn an_image_entry_carries_its_pin_and_an_unanswered_cache_state() {
         architectures: vec!["amd64".into(), "arm64".into()],
         image: Some(format!("ghcr.io/google/capsem/codex-cli@sha256:{}", "a".repeat(64))),
         cached: ImageCacheState::Unknown,
+        previous_image: None,
         surface: None,
         progress: None,
     };
@@ -86,4 +87,17 @@ fn a_pull_request_never_shows_its_registry_secret() {
 fn the_list_query_reads_the_cached_catalog_unless_asked() {
     let query: ImageListQuery = serde_json::from_value(json!({})).unwrap();
     assert!(!query.refresh);
+}
+
+#[test]
+fn prior_image_is_optional_and_preserves_a_verified_previous_pin() {
+    let mut row = json!({"name":"app","description":"App","architectures":["arm64"],"cached":"missing"});
+    let old: ImageInfo = serde_json::from_value(row.clone()).unwrap();
+    assert!(serde_json::to_value(old).unwrap().get("previous_image").is_none());
+    row["previous_image"] = json!(format!("registry.example/app@sha256:{}", "a".repeat(64)));
+    let updated: ImageInfo = serde_json::from_value(row.clone()).unwrap();
+    assert_eq!(
+        serde_json::to_value(updated).unwrap()["previous_image"],
+        row["previous_image"]
+    );
 }

@@ -16,5 +16,6 @@ class ImageInfo(Model):
     description: StrictStr
     image: StrictStr | None = None
     name: StrictStr
+    previous_image: StrictStr | None = None
     progress: ImageDownloadProgress | None = None
     surface: ImageSurface | None = None

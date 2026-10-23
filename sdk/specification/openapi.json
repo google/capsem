@@ -5642,6 +5642,13 @@
             "type": "string",
             "description": "The catalog name, as `capsem create --image` and `POST /images/pull` take it."
           },
+          "previous_image": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A verified retained earlier compatible catalog version, only while the\nselected version is known missing or partial. Absent for first download,\nunknown observations, or an already-ready selected version."
+          },
           "progress": {
             "oneOf": [
               {

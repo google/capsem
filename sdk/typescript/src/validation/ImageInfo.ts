@@ -12,6 +12,7 @@ export const ImageInfoSchema: z.ZodType<ImageInfo> = z.object({
   "description": z.string(),
   "image": z.string().nullable().exactOptional(),
   "name": z.string(),
+  "previous_image": z.string().nullable().exactOptional(),
   "progress": z.union([z.null(), z.lazy(() => ImageDownloadProgressSchema)]).exactOptional(),
   "surface": z.union([z.null(), z.lazy(() => ImageSurfaceSchema)]).exactOptional(),
 });

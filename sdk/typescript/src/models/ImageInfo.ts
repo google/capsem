@@ -10,6 +10,7 @@ export interface ImageInfo {
   "description": string;
   "image"?: string | null;
   "name": string;
+  "previous_image"?: string | null;
   "progress"?: null | ImageDownloadProgress;
   "surface"?: null | ImageSurface;
 }
