@@ -2800,7 +2800,9 @@ network_reason = "No mid-run fetch. This is the rule the whole profile exists fo
 cargo_offline_probe = ["cargo", "fetch", "--locked", "--offline"]
 socket_reason = "`(deny network*)` covers AF_UNIX too, so these come back explicitly."
 self_confinement_reason = "Seatbelt cannot be nested. These trusted children replace the inherited gate profile with their stricter worker profile before handling data; ordinary test children retain the gate network denial."
-self_confined_executables = ["capsem-ledger", "capsem-proxy", "capsem-router", "capsem-router-confinement-test"]
+# Native MCP workers attest their descriptor-only role confinement before
+# readiness. External MCP commands continue inheriting their worker sandbox.
+self_confined_executables = ["capsem-ledger", "capsem-mcp-aggregator", "capsem-mcp-builtin", "capsem-proxy", "capsem-router", "capsem-router-confinement-test"]
 
 # Absolute or `~`-relative. Denying the Docker socket makes a running daemon
 # look absent -- `permission denied ... docker.sock` -- which is how the first
