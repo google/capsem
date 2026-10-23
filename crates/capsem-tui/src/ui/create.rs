@@ -1,87 +1,113 @@
 use super::*;
 use crate::app::{CreateField, ImageCatalog};
+use capsem_sdk::models::{ImageCacheState, ImageInfo};
+use ratatui::widgets::{Row, Table, TableState};
 
-pub(super) fn create_lines(draft: Option<&CreateDraft>) -> Vec<Line<'static>> {
-    let mut lines = vec![logo_line(), overlay_title("new session")];
-    let Some(draft) = draft else { return lines };
-    let pair = |field, label, value: &str| {
-        if draft.field == field {
-            focus_pair(label, value)
-        } else {
-            overlay_pair(label, value)
-        }
+pub(super) fn render(frame: &mut Frame<'_>, area: Rect, draft: Option<&CreateDraft>, message: Option<&str>) {
+    let Some(draft) = draft else { return };
+    let rows = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(2),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(3),
+    ])
+    .split(area);
+    let name = if draft.field == CreateField::Name {
+        focus_pair("Name", &draft.name)
+    } else {
+        overlay_pair("Name", &draft.name)
     };
-    lines.push(pair(
-        CreateField::Name,
-        "name",
-        if draft.name.is_empty() { " " } else { &draft.name },
-    ));
-    lines.push(pair(
-        CreateField::Image,
-        "image",
-        draft.image_name.as_deref().unwrap_or("Choose a terminal app"),
-    ));
+    frame.render_widget(Paragraph::new(name), rows[0]);
+    frame.render_widget(Paragraph::new(overlay_title("Image list")), rows[2]);
     match &draft.catalog {
-        ImageCatalog::Loading => lines.push(overlay_line("loading image catalog")),
-        ImageCatalog::Failed(error) => lines.push(overlay_line(&truncate(error, 160))),
-        ImageCatalog::Loaded(images) if images.is_empty() => {
-            lines.push(overlay_line("no terminal catalog images available"))
+        ImageCatalog::Loading => {
+            frame.render_widget(Paragraph::new("Loading image catalog…").style(muted_style()), rows[3])
         }
+        ImageCatalog::Failed(error) => {
+            frame.render_widget(Paragraph::new(truncate(error, 512)).style(bad_style()), rows[3])
+        }
+        ImageCatalog::Loaded(images) if images.is_empty() => frame.render_widget(
+            Paragraph::new("No terminal apps available").style(muted_style()),
+            rows[3],
+        ),
         ImageCatalog::Loaded(images) => {
-            for image in images.iter().take(8) {
-                let name = image
-                    .app
-                    .as_ref()
-                    .map_or(image.name.as_str(), |app| app.display_name.as_str());
-                let label = format!(
-                    "{} {}{}",
-                    if draft.image_name.as_deref() == Some(&image.name) {
-                        ">"
-                    } else {
-                        " "
-                    },
-                    name,
-                    if image.image.is_none() { " (incompatible)" } else { "" }
-                );
-                lines.push(overlay_line(&label));
-            }
-            if let Some(image) = draft.selected_image() {
-                lines.push(overlay_line(&truncate(&image.description, 120)));
-                lines.push(overlay_pair(
-                    "compatibility",
-                    if image.image.is_some() {
-                        "compatible"
-                    } else {
-                        "incompatible architecture/runtime"
-                    },
-                ));
-                lines.push(overlay_pair(
-                    "cache",
-                    match image.cached {
-                        capsem_sdk::models::ImageCacheState::Unknown => "unknown",
-                        capsem_sdk::models::ImageCacheState::Missing => "missing",
-                        capsem_sdk::models::ImageCacheState::Partial => "partial",
-                        capsem_sdk::models::ImageCacheState::Ready => "ready",
-                    },
-                ));
-                if let Some(pin) = &image.image {
-                    lines.push(overlay_pair("image pin", &truncate(pin, 120)));
-                }
-            } else {
-                lines.push(overlay_line("Choose a terminal app with Tab then Up/Down"));
-            }
+            let items = images.iter().map(|image| {
+                Row::new(vec![
+                    truncate(
+                        image
+                            .app
+                            .as_ref()
+                            .and_then(|app| app.publisher.as_deref())
+                            .unwrap_or("Not provided"),
+                        80,
+                    ),
+                    truncate(&image.name, 80),
+                    status(image).into(),
+                    truncate(&image.description, 512),
+                ])
+                .style(if image.image.is_some() {
+                    status_base_style()
+                } else {
+                    muted_style()
+                })
+            });
+            let table = Table::new(
+                items,
+                [
+                    Constraint::Percentage(16),
+                    Constraint::Percentage(24),
+                    Constraint::Percentage(22),
+                    Constraint::Percentage(38),
+                ],
+            )
+            .header(
+                Row::new(["Owner", "Image", "Status", "Description"]).style(muted_style().add_modifier(Modifier::BOLD)),
+            )
+            .row_highlight_style(Style::default().fg(ACTIVE).bg(SELECTED_BG).add_modifier(Modifier::BOLD))
+            .highlight_symbol("> ");
+            let selected = draft
+                .selected_image()
+                .and_then(|selected| images.iter().position(|image| image.name == selected.name));
+            frame.render_stateful_widget(table, rows[3], &mut TableState::default().with_selected(selected));
         }
     }
-    if draft.caching {
-        lines.push(overlay_line(
-            "caching image; the first download can take several minutes",
-        ));
+    let detail = message.map(str::to_owned).unwrap_or_else(|| {
+        if draft.caching {
+            "Preparing image…".into()
+        } else if let Some(image) = draft.selected_image() {
+            format!("{} · {}", image.name, status(image))
+        } else {
+            "Choose a compatible terminal app".into()
+        }
+    });
+    frame.render_widget(Paragraph::new(truncate(&detail, 512)).style(muted_style()), rows[4]);
+    let legend = vec![
+        overlay_line("↑/↓ choose image · Tab name/image · Esc cancel"),
+        overlay_line("Enter creates · missing images prepare automatically"),
+        overlay_line("Ctrl-P prepare only · Ctrl-R retry catalog"),
+    ];
+    frame.render_widget(Paragraph::new(legend), rows[6]);
+}
+
+fn status(image: &ImageInfo) -> &'static str {
+    if image.image.is_none() {
+        return "Unavailable";
     }
-    lines.push(overlay_line("Tab changes field; Up/Down chooses an image"));
-    lines.push(overlay_line(
-        "Ctrl-P caches the selected image; Ctrl-R refreshes the catalog",
-    ));
-    lines.push(overlay_line("active input: name; type to edit; Backspace deletes"));
-    lines.push(overlay_line("Enter creates; Esc cancels"));
-    lines
+    if image.progress.is_some() {
+        return "Preparing";
+    }
+    if image.cached == ImageCacheState::Ready {
+        return "Cached";
+    }
+    if image.previous_image.is_some() {
+        return "Update available";
+    }
+    match image.cached {
+        ImageCacheState::Unknown => "Checking",
+        ImageCacheState::Missing | ImageCacheState::Partial => "Needs download",
+        ImageCacheState::Ready => "Cached",
+    }
 }

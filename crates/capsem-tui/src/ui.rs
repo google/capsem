@@ -4,7 +4,6 @@ mod tests;
 use snapshots::buffer_to_svg;
 mod create;
 mod manager;
-use create::create_lines;
 use manager::home_lines;
 
 use anyhow::Result;
@@ -33,15 +32,6 @@ const ACTIVE: Color = Color::Rgb(137, 180, 250);
 const ATTENTION: Color = Color::Rgb(249, 226, 175);
 const BAD: Color = Color::Rgb(243, 139, 168);
 const SELECTED_BG: Color = Color::Rgb(49, 50, 68);
-const LOGO_GRADIENT: [Color; 6] = [
-    Color::Rgb(137, 220, 235),
-    Color::Rgb(116, 199, 236),
-    Color::Rgb(137, 180, 250),
-    Color::Rgb(203, 166, 247),
-    Color::Rgb(245, 194, 231),
-    Color::Rgb(249, 226, 175),
-];
-
 pub fn render(frame: &mut Frame<'_>, state: &AppState) {
     render_with_terminal(frame, state, None);
 }
@@ -164,16 +154,9 @@ pub(crate) fn render_app_test_buffer(app: &App, width: u16, height: u16) -> Resu
 
 fn render_status_bar(frame: &mut Frame<'_>, state: &AppState, area: Rect) {
     let service = &state.service;
-    let active_index = state
-        .sessions
-        .iter()
-        .position(|session| session.id == state.active_session_id)
-        .unwrap_or_default();
     let base = status_base_style();
     frame.render_widget(Paragraph::new("").style(base), area);
-
-    let mut left = vec![
-        Span::styled("Manager: Alt+M  Help: Alt+? ", base),
+    let left = vec![
         Span::styled(format!("{:>4}ms", service.latency.as_millis()), base),
         Span::styled(
             service_dot(service.status),
@@ -181,61 +164,68 @@ fn render_status_bar(frame: &mut Frame<'_>, state: &AppState, area: Rect) {
         ),
         Span::styled("  ", base),
     ];
-    if let Some(attempt) = service.reconnect_attempt {
-        left.push(Span::styled(format!(" reconnect {attempt}"), muted_style()));
-    }
-    if state
+    let pending_browser = state
         .active_session()
         .and_then(|session| session.browser_request.as_ref())
-        .is_some()
-    {
-        left.push(Span::styled(" Alt+b browser", base));
-    }
-    if let Some(message) = &service.control_message {
-        left.push(Span::styled(format!(" {}", truncate(message, 28)), muted_style()));
-    }
-    if let Some(notice) = state.update_notice.as_ref().filter(|notice| match &notice.kind {
+        .is_some();
+    let full = format!(
+        "Manager: Alt+M  {}Help: Alt+?",
+        if pending_browser { "Alt+b browser  " } else { "" }
+    );
+    let shortcuts = if area.width as usize >= full.chars().count() + spans_width(&left) {
+        full
+    } else {
+        format!("Alt+M {}Alt+?", if pending_browser { "Alt+b " } else { "" })
+    };
+    let right = vec![Span::styled(shortcuts, base)];
+    let left_width = spans_width(&left).min(area.width as usize) as u16;
+    let right_width = spans_width(&right).min(area.width.saturating_sub(left_width) as usize) as u16;
+    let center_width = area.width.saturating_sub(left_width + right_width);
+    let active_index = state
+        .sessions
+        .iter()
+        .position(|session| session.id == state.active_session_id)
+        .unwrap_or_default();
+    let available_update = state.update_notice.as_ref().filter(|notice| match &notice.kind {
         UpdateNoticeKind::Available(tracks) => !tracks.is_empty(),
         UpdateNoticeKind::AvailableWithBlocked { available, .. } => !available.is_empty(),
         _ => false,
-    }) {
-        left.push(Span::styled(
-            format!(" {} (Alt+U)", update_notice_label(notice)),
+    });
+    let mut middle = if let Some(message) = &service.control_message {
+        vec![Span::styled(truncate(message, center_width as usize), muted_style())]
+    } else if let Some(notice) = available_update {
+        vec![Span::styled(
+            format!("{} (Alt+U)", update_notice_label(notice)),
             update_notice_style(notice),
-        ));
-    }
-
-    let right = state
+        )]
+    } else {
+        tab_spans(state, active_index, center_width as usize)
+    };
+    let stats = state
         .active_session()
         .map(active_stats_spans)
         .unwrap_or_else(no_session_stats_spans);
-
-    let left_width = spans_width(&left).min(area.width as usize) as u16;
-    let right_width = spans_width(&right).min(area.width as usize) as u16;
-    let center_x = area.x.saturating_add(left_width);
-    let reserved_width = left_width.saturating_add(right_width);
-    let center_width = area.width.saturating_sub(reserved_width);
-    let center = Rect::new(center_x, area.y, center_width, area.height);
-
+    if spans_width(&middle) + spans_width(&stats) <= center_width as usize {
+        middle.extend(stats);
+    }
     frame.render_widget(
         Paragraph::new(Line::from(left)).style(base),
         Rect::new(area.x, area.y, left_width, area.height),
     );
-
-    if center_width > 0 {
-        let tabs = tab_spans(state, active_index, center_width as usize);
-        frame.render_widget(
-            Paragraph::new(Line::from(tabs))
-                .style(base)
-                .alignment(Alignment::Center),
-            center,
-        );
-    }
-
-    let right_x = area.x.saturating_add(area.width.saturating_sub(right_width));
+    frame.render_widget(
+        Paragraph::new(Line::from(middle))
+            .style(base)
+            .alignment(Alignment::Center),
+        Rect::new(area.x + left_width, area.y, center_width, area.height),
+    );
     frame.render_widget(
         Paragraph::new(Line::from(right)).style(base),
-        Rect::new(right_x, area.y, right_width, area.height),
+        Rect::new(
+            area.x + area.width.saturating_sub(right_width),
+            area.y,
+            right_width,
+            area.height,
+        ),
     );
 }
 
@@ -480,13 +470,18 @@ fn render_overlay(
     if overlay == AppOverlay::None {
         return;
     }
-    let popup = centered_rect(area, 72, overlay_height(state, overlay));
+    let height = if overlay == AppOverlay::Create {
+        area.height.saturating_sub(2).max(12)
+    } else {
+        overlay_height(state, overlay)
+    };
+    let popup = centered_rect(area, 86, height);
     frame.render_widget(Clear, popup);
     let title = match overlay {
         AppOverlay::Help => " help ",
         AppOverlay::Stats => " session info ",
         AppOverlay::Home => " agent manager ",
-        AppOverlay::Create => " new session ",
+        AppOverlay::Create => "",
         AppOverlay::Fork => " fork session ",
         AppOverlay::Confirm => " confirm ",
         AppOverlay::None => "",
@@ -498,11 +493,21 @@ fn render_overlay(
         .style(status_base_style())
         .padding(Padding::horizontal(1));
     frame.render_widget(block, popup);
+    let inner = Rect::new(
+        popup.x.saturating_add(2),
+        popup.y.saturating_add(1),
+        popup.width.saturating_sub(4),
+        popup.height.saturating_sub(2),
+    );
+    if overlay == AppOverlay::Create {
+        create::render(frame, inner, create_draft, state.service.control_message.as_deref());
+        return;
+    }
     let mut lines = match overlay {
         AppOverlay::Help => help_lines(),
         AppOverlay::Stats => stats_lines(state),
         AppOverlay::Home => home_lines(state),
-        AppOverlay::Create => create_lines(create_draft),
+        AppOverlay::Create => Vec::new(),
         AppOverlay::Fork => fork_lines(state, fork_draft),
         AppOverlay::Confirm => confirm_lines(pending_action),
         AppOverlay::None => Vec::new(),
@@ -624,20 +629,6 @@ fn overlay_title(title: &'static str) -> Line<'static> {
         format!(" {title}"),
         Style::default().fg(ACTIVE).bg(BAR_BG).add_modifier(Modifier::BOLD),
     ))
-}
-
-fn logo_line() -> Line<'static> {
-    let mut spans = vec![Span::styled("        ", status_base_style())];
-    for (index, ch) in "CAPSEM".chars().enumerate() {
-        spans.push(Span::styled(
-            ch.to_string(),
-            Style::default()
-                .fg(LOGO_GRADIENT[index])
-                .bg(BAR_BG)
-                .add_modifier(Modifier::BOLD),
-        ));
-    }
-    Line::from(spans)
 }
 
 fn overlay_line(text: &str) -> Line<'static> {

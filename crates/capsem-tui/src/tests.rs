@@ -168,7 +168,7 @@ fn degraded_empty_state_asks_to_start_service_instead_of_create() {
 }
 
 #[test]
-fn empty_state_opens_new_session_modal_with_gradient_logo() {
+fn empty_state_opens_spaced_image_list_without_branding() {
     let mut state = fixture_state();
     state.active_session_id.clear();
     state.sessions.clear();
@@ -178,19 +178,13 @@ fn empty_state_opens_new_session_modal_with_gradient_logo() {
     assert_eq!(app.overlay(), AppOverlay::Create);
     assert_eq!(app.create_draft().expect("create draft").name, "vm-1");
     let snapshot = render_app_snapshot(&app, 100, 24).expect("render empty create modal");
-    assert!(snapshot.contains("CAPSEM"));
-    assert!(snapshot.contains("new session"));
-
-    let buffer = render_app_test_buffer(&app, 100, 24).expect("render logo buffer");
-    let (logo_x, logo_y) = find_cell(&buffer, "CAPSEM");
-    let first = buffer_cell(&buffer, logo_x, logo_y);
-    let last = buffer_cell(&buffer, logo_x + 5, logo_y);
-    assert_ne!(
-        first.fg, last.fg,
-        "logo letters should use a visible gradient, not one flat color"
-    );
-    assert!(first.modifier.contains(Modifier::BOLD));
-    assert!(last.modifier.contains(Modifier::BOLD));
+    assert!(!snapshot.contains("CAPSEM"));
+    assert!(!snapshot.contains("new session"));
+    let buffer = render_app_test_buffer(&app, 100, 24).expect("render image list");
+    let (heading_x, heading_y) = find_cell(&buffer, "Image list");
+    assert!(buffer_cell(&buffer, heading_x, heading_y)
+        .modifier
+        .contains(Modifier::BOLD));
 }
 
 #[tokio::test]
@@ -371,10 +365,9 @@ fn create_overlay_edits_prefilled_name() {
         AppAction::Consumed
     );
     let snapshot = render_app_snapshot(&app, 100, 24).expect("render create dialog");
-    assert!(snapshot.contains("new session"));
-    assert!(snapshot.contains("name"));
-    assert!(snapshot.contains("active input"));
-    assert!(snapshot.contains("Enter creates; Esc cancels"));
+    assert!(snapshot.contains("Image list"));
+    assert!(snapshot.contains("Name"));
+    assert!(snapshot.contains("Enter creates"));
     assert!(!snapshot.to_ascii_lowercase().contains("profile"));
 
     let focused = render_app_test_buffer(&app, 100, 24).expect("render focused create dialog");
@@ -472,7 +465,6 @@ fn fork_overlay_asks_for_name_and_invokes_fork_action() {
     assert!(snapshot.contains("source"));
     assert!(snapshot.contains("Session V2"));
     assert!(snapshot.contains("vm-2-fork"));
-    assert!(snapshot.contains("active input"));
 
     for ch in ['-', 'c', 'o', 'p', 'y'] {
         assert_eq!(

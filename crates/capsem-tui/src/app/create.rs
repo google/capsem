@@ -35,9 +35,10 @@ impl CreateDraft {
         let ImageCatalog::Loaded(images) = &self.catalog else {
             return None;
         };
-        images
-            .iter()
-            .find(|image| Some(&image.name) == self.image_name.as_ref())
+        match &self.image_name {
+            Some(name) => images.iter().find(|image| &image.name == name),
+            None => images.iter().find(|image| image.image.is_some()),
+        }
     }
 }
 
@@ -192,7 +193,8 @@ impl App {
                     CreateField::Image => CreateField::Name,
                 };
             }
-            KeyCode::Up | KeyCode::Down if draft.field == CreateField::Image => {
+            KeyCode::Up | KeyCode::Down => {
+                draft.field = CreateField::Image;
                 if let ImageCatalog::Loaded(images) = &draft.catalog {
                     let count = images.len();
                     if count == 0 {
@@ -201,12 +203,12 @@ impl App {
                     let selection = draft
                         .image_name
                         .as_ref()
-                        .and_then(|name| images.iter().position(|image| &image.name == name))
-                        .unwrap_or(count - 1);
-                    let selection = if key.code == KeyCode::Down {
-                        (selection + 1) % count
-                    } else {
-                        (selection + count - 1) % count
+                        .and_then(|name| images.iter().position(|image| &image.name == name));
+                    let selection = match (selection, key.code) {
+                        (None, KeyCode::Down) => 0,
+                        (None, _) => count - 1,
+                        (Some(index), KeyCode::Down) => (index + 1) % count,
+                        (Some(index), _) => (index + count - 1) % count,
                     };
                     draft.image_name = Some(images[selection].name.clone());
                 }

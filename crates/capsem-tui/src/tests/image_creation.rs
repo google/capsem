@@ -210,7 +210,7 @@ fn create_dialog_offers_an_explicit_image_choice() {
     let snapshot = render_app_snapshot(&app, 100, 30).unwrap();
     assert!(snapshot.contains("image"));
     assert!(!snapshot.contains("Plain VM"));
-    assert!(snapshot.contains("loading image catalog"));
+    assert!(snapshot.contains("Loading image catalog"));
 }
 
 pub(super) fn catalog() -> capsem_sdk::models::ImageListResponse {
@@ -254,12 +254,12 @@ fn image_selection_blocks_incompatible_entries_and_preserves_failed_drafts() {
     app.handle_key(key(KeyCode::Tab, KeyModifiers::NONE));
     app.handle_key(key(KeyCode::Down, KeyModifiers::NONE));
     let snapshot = render_app_snapshot(&app, 100, 30).unwrap();
-    for text in ["code", "compatible", "cache", "unknown", "Development tools"] {
+    for text in ["code", "Checking", "Owner", "Status", "Development tools"] {
         assert!(snapshot.contains(text), "{text}");
     }
     app.handle_key(key(KeyCode::Down, KeyModifiers::NONE));
     let snapshot = render_app_snapshot(&app, 100, 30).unwrap();
-    assert!(snapshot.contains("incompatible architecture/runtime"));
+    assert!(snapshot.contains("Unavailable"));
     assert_eq!(
         app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
         AppAction::Consumed

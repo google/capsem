@@ -1,6 +1,44 @@
 use super::*;
 
 #[test]
+fn footer_anchors_latency_left_and_shortcuts_right_without_overlap() {
+    for width in [150, 80, 40] {
+        let screen = render_snapshot(&fixture_state(), width, 24).unwrap();
+        let footer = screen.lines().last().unwrap();
+        assert!(footer.starts_with("  18ms●"));
+        assert!(footer.ends_with("Help: Alt+?"));
+    }
+}
+
+#[test]
+fn chooser_has_spaced_table_and_bottom_legend_and_direct_arrow_navigation() {
+    for (width, height) in [(150, 42), (80, 24)] {
+        let mut app = App::new(fixture_state());
+        app.handle_key(key(KeyCode::Char('n'), KeyModifiers::ALT));
+        let request = app.take_catalog_request().unwrap();
+        app.apply_image_catalog(request, Ok(image_creation::catalog()));
+        app.handle_key(key(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.create_draft().unwrap().selected_image().unwrap().name, "code");
+        let buffer = render_app_test_buffer(&app, width, height).unwrap();
+        let (_, name_y) = find_cell(&buffer, "Name");
+        let (_, heading_y) = find_cell(&buffer, "Image list");
+        let (_, legend_y) = find_cell(&buffer, "Enter creates");
+        assert!(heading_y >= name_y + 2);
+        assert!(legend_y >= height - 7);
+        let screen = render_app_snapshot(&app, width, height).unwrap();
+        assert!(!screen.contains("CAPSEM"));
+        assert!(!screen.contains("new session"));
+        for column in ["Owner", "Image", "Status", "Description"] {
+            assert!(screen.contains(column));
+        }
+        assert!(matches!(
+            app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
+            AppAction::Invoke(ControlAction::CreateSession { image: Some(_), .. })
+        ));
+    }
+}
+
+#[test]
 fn manager_shortcuts_new_session_and_context_actions_are_explicit() {
     for shortcut in ['m', '0'] {
         let mut app = App::new(fixture_state());
