@@ -14,7 +14,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from . import namespaces
-from .leases import exclusive_path, mutation_locks, release_path
+from .leases import exclusive_path, lease_key, mutation_locks, release_path
 from .measure import measure
 from .models import AdmissionEvent, ApplyResult, PruneAction, PrunePlan
 from .paths import CachePaths
@@ -78,6 +78,16 @@ def apply_prune(paths: CachePaths, plan: PrunePlan, *, reason: str) -> ApplyResu
         namespaces.contained(paths, action.stage_id, action.key, action.path)
         for action in plan.actions
     )
+    # Reject an old or forged plan that classified a control inode as a
+    # generation before taking its invented second-order lock. Validate the
+    # whole plan before any deletion, including a mismatched member lease.
+    for action, target in zip(plan.actions, targets, strict=True):
+        template = paths.policy.stages[action.stage_id].lease_template
+        if template is not None:
+            key = action.key.rsplit("/", 1)[-1]
+            member_key = lease_key(template, target.name)
+            if lease_key(template, key) is not None or (member_key is not None and member_key != key):
+                raise ValueError(f"refusing cache lease control as generation: {target}")
     generations: dict[tuple[str, str], list[Path]] = {}
     for action, target in zip(plan.actions, targets, strict=True):
         generations.setdefault((action.stage_id, action.key), []).append(target)

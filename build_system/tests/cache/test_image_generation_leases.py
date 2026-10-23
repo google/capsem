@@ -5,6 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from capsem_builder.cache.api import CacheOperation, CacheRequest
 from capsem_builder.cache.config import load_policy
 from capsem_builder.cache.inventory import scan_inventory
@@ -16,10 +17,13 @@ from .test_inventory import policy
 ROOT = Path(__file__).resolve().parents[3]
 
 
-def test_real_image_lease_and_payload_survive_prune_and_clean_until_foreign_owner_exits(tmp_path):
+@pytest.mark.parametrize("patterns", [None, ("*",), (".*", "*")])
+def test_real_image_lease_and_payload_survive_prune_and_clean_until_foreign_owner_exits(tmp_path, patterns):
     stage = load_policy(ROOT).stages["test-images"].model_copy(update={
         "warm_size_bytes": 0, "max_size_bytes": 1, "maximum_count": 1,
     })
+    if patterns is not None:
+        stage = stage.model_copy(update={"managed_globs": patterns})
     configured = policy().model_copy(update={"stages": {"test-images": stage}})
     paths = CachePaths(repository_root=tmp_path, policy=configured)
     generation = paths.stage("test-images") / "dev-exact-digest"
