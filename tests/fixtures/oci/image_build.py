@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from tests.fixtures.oci.pinned_image import ROOT, _publish, verify
+from .pinned_image import ROOT, _publish, verify
 
 
 def build(image, selected: str | None = None) -> str:
@@ -53,7 +53,8 @@ def build(image, selected: str | None = None) -> str:
     tag = f"{settings.name}:{arch}"
     subprocess.run([*common, "--load", "--tag", tag, context], check=True, timeout=3600)
     from images.ci.rootfs import main as build_rootfs
-    from tests.fixtures.oci.published_root import stage
+
+    from .published_root import stage
 
     with tempfile.TemporaryDirectory(dir=image.stage(), prefix=".filesystem-") as temporary:
         output = Path(temporary)
@@ -69,6 +70,7 @@ def build(image, selected: str | None = None) -> str:
                 digest,
                 "--out",
                 str(output),
+                *(["--without-shared-toolkit"] if image.section == "debug_image" else []),
             ]
         )
         stage(layout, output)

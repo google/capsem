@@ -85,6 +85,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--repository", required=True)
     parser.add_argument("--digest", required=True, help="the pushed per-arch manifest digest")
     parser.add_argument("--out", required=True, type=Path)
+    parser.add_argument("--without-shared-toolkit", action="store_true",
+                        help="standalone fixture not derived from the shared toolkit base")
     args = parser.parse_args(argv)
 
     build = build_config()
@@ -96,7 +98,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     tar = args.out / "rootfs.tar"
     docker.export_container_fs(RUNTIME, args.image, platform, tar)
     try:
-        inventory = from_rootfs(tar, f"{args.repository}@{args.digest}", args.arch)
+        inventory = from_rootfs(tar, f"{args.repository}@{args.digest}", args.arch,
+                                shared_toolkit=not args.without_shared_toolkit)
         (args.out / "packages.json").write_text(json.dumps(inventory, indent=2) + "\n")
         docker.generate_cyclonedx_obom(
             tar,

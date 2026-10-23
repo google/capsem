@@ -38,19 +38,24 @@ def _packages(status: str) -> list[dict[str, str]]:
     return sorted(packages, key=lambda entry: (entry["name"], entry["architecture"]))
 
 
-def from_rootfs(source: Path, subject: str, architecture: str) -> dict[str, Any]:
+def from_rootfs(
+    source: Path, subject: str, architecture: str, *, shared_toolkit: bool = True,
+) -> dict[str, Any]:
     if not re.fullmatch(r"[^@\s]+@sha256:[0-9a-f]{64}", subject):
         raise ValueError("inventory subject must be an exact image digest")
     if architecture not in {"arm64", "amd64"}:
         raise ValueError("unsupported inventory architecture")
     with tarfile.open(source) as image:
         packages = _packages(_read(image, "var/lib/dpkg/status", 32 * 1024 * 1024).decode())
-        toolkit = json.loads(_read(image, "usr/local/share/capsem/toolkit-inventory.json", 1024 * 1024))
-        if toolkit["architecture"] != architecture:
-            raise ValueError("toolkit architecture differs from image")
-        for tool in toolkit["tools"]:
-            binary = _read(image, tool["binary_path"], 256 * 1024 * 1024)
-            if sha256(binary).hexdigest() != tool["binary_sha256"]:
-                raise ValueError(f"{tool['name']}: inventoried binary changed in descendant image")
+        tools = []
+        if shared_toolkit:
+            toolkit = json.loads(_read(image, "usr/local/share/capsem/toolkit-inventory.json", 1024 * 1024))
+            if toolkit["architecture"] != architecture:
+                raise ValueError("toolkit architecture differs from image")
+            tools = toolkit["tools"]
+            for tool in tools:
+                binary = _read(image, tool["binary_path"], 256 * 1024 * 1024)
+                if sha256(binary).hexdigest() != tool["binary_sha256"]:
+                    raise ValueError(f"{tool['name']}: inventoried binary changed in descendant image")
     return {"schema": "capsem.package_inventory.v1", "subject": subject,
-            "architecture": architecture, "packages": packages, "tools": toolkit["tools"]}
+            "architecture": architecture, "packages": packages, "tools": tools}

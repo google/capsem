@@ -92,3 +92,17 @@ def test_publication_attaches_inventory_to_platform_subject_and_keys_its_produce
     assert '"$SUBJECT" packages.json:application/vnd.capsem.package-inventory.v1+json' in attach["run"]
     key = next(step for step in steps if step.get("id") == "published")
     assert "build_system/builder/release/package_inventory.py" in key["run"]
+
+
+def test_standalone_fixture_inventory_requires_real_packages_but_not_shared_toolkit(tmp_path: Path) -> None:
+    source = tmp_path / "rootfs.tar"
+    image_tar(source, {"var/lib/dpkg/status": b"Package: git\nStatus: install ok installed\nVersion: 2.39.5\nArchitecture: arm64\n"})
+    with pytest.raises(ValueError, match="toolkit-inventory"):
+        inventory.from_rootfs(source, SUBJECT, "arm64")
+    result = inventory.from_rootfs(source, SUBJECT, "arm64", shared_toolkit=False)
+    assert result["packages"] == [{"name": "git", "version": "2.39.5", "architecture": "arm64"}]
+    assert result["tools"] == []
+    assert result["subject"] == SUBJECT
+    image_tar(source, {})
+    with pytest.raises(ValueError, match="regular inventory file"):
+        inventory.from_rootfs(source, SUBJECT, "arm64", shared_toolkit=False)
