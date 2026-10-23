@@ -20,6 +20,7 @@ fn record() -> Record {
             load_before: 0.1,
         },
         quick: false,
+        measurement: None,
         metrics: vec![Metric {
             key: "gateway./vms/list.cpu_s".to_string(),
             unit: Unit::Seconds,

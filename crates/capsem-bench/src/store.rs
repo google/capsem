@@ -23,7 +23,7 @@ use crate::schema::{Dimension, Metric, Record, Unit};
 use crate::stats::Summary;
 
 /// Bumped when a reader must change; checked on open.
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 
 const CREATE: &str = "
 CREATE TABLE IF NOT EXISTS meta (
@@ -75,6 +75,10 @@ CREATE TABLE IF NOT EXISTS metrics (
 -- The two questions asked of this data: one metric over time, and one run's
 -- metrics. Both are covered rather than scanned.
 CREATE INDEX IF NOT EXISTS metrics_by_key ON metrics(key);
+CREATE TABLE IF NOT EXISTS measurements (
+    run_id INTEGER PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
+    payload BLOB NOT NULL
+);
 CREATE INDEX IF NOT EXISTS runs_by_subject
     ON runs(dimension, arch, quick, recorded_at);
 ";
@@ -98,6 +102,13 @@ pub fn open(path: &Path) -> Result<Connection> {
         None => {
             connection.execute(
                 "INSERT INTO meta(key, value) VALUES('schema_version', ?1)",
+                params![SCHEMA_VERSION.to_string()],
+            )?;
+        }
+        Some(2) => {
+            // Old summaries remain readable observations, with no invented fitness.
+            connection.execute(
+                "UPDATE meta SET value = ?1 WHERE key = 'schema_version'",
                 params![SCHEMA_VERSION.to_string()],
             )?;
         }
@@ -141,6 +152,12 @@ pub fn insert(connection: &mut Connection, record: &Record) -> Result<i64> {
         ],
     )?;
     let run_id = transaction.last_insert_rowid();
+    if let Some(measurement) = &record.measurement {
+        transaction.execute(
+            "INSERT INTO measurements(run_id, payload) VALUES (?1,?2)",
+            params![run_id, rmp_serde::to_vec_named(measurement)?],
+        )?;
+    }
 
     {
         let mut insert = transaction.prepare(
@@ -216,6 +233,7 @@ pub fn latest_many(connection: &Connection, dimension: Dimension, arch: &str, co
                         load_before: row.get(9)?,
                     },
                     quick: false,
+                    measurement: None,
                     metrics: Vec::new(),
                     sidecar: row.get(10)?,
                 },
@@ -225,6 +243,15 @@ pub fn latest_many(connection: &Connection, dimension: Dimension, arch: &str, co
     let mut records = Vec::new();
     for row in rows {
         let (run_id, mut record) = row?;
+        use rusqlite::OptionalExtension;
+        let payload: Option<Vec<u8>> = connection
+            .query_row(
+                "SELECT payload FROM measurements WHERE run_id = ?1",
+                params![run_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        record.measurement = payload.map(|bytes| rmp_serde::from_slice(&bytes)).transpose()?;
         record.metrics = metrics_of(connection, run_id)?;
         records.push(record);
     }

@@ -63,6 +63,9 @@ pub(crate) struct ReportArgs {
 #[cfg(feature = "host")]
 #[derive(Parser, Debug)]
 pub(crate) struct RunArgs {
+    /// Exact benchmark configuration retained for cohort compatibility.
+    #[arg(long, default_value = "config/gate.toml")]
+    pub(crate) cohort_config: PathBuf,
     /// Dimensions to measure. Every one when omitted.
     pub(crate) dimensions: Vec<String>,
     /// Directory holding one executable per dimension.
@@ -114,6 +117,9 @@ pub(crate) struct CompareArgs {
 #[cfg(feature = "host")]
 #[derive(Parser, Debug)]
 pub(crate) struct VerifyArgs {
+    /// Required complete authoritative repeats on each side.
+    #[arg(long, default_value_t = 2)]
+    pub(crate) runs: usize,
     #[arg(long, default_value = "cache/target/tests/benchmarks/benchmarks.db")]
     pub(crate) records: PathBuf,
     #[arg(long)]

@@ -49,6 +49,8 @@ pub(crate) fn build(artifact: &Artifact, channel: &str, commit: &str, strays: Ve
         },
         host: fitness.host,
         quick: false,
+        // This entrypoint has no pre-workload fitness receipt: diagnostic only.
+        measurement: None,
         metrics,
         sidecar: None,
     }

@@ -4,7 +4,7 @@ use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 
-use crate::{schema, stats, store, Thresholds};
+use crate::{evidence, schema, stats, store, Thresholds};
 
 /// Compare one subject in two stores, metric by metric.
 pub(crate) fn compare(
@@ -22,6 +22,9 @@ pub(crate) fn compare(
     let current_store = store::open(current_db)?;
     let baseline_runs = store::latest_many(&baseline_store, dimension, arch, runs)?;
     let current_runs = store::latest_many(&current_store, dimension, arch, runs)?;
+    evidence::repeats(&baseline_runs, runs)?;
+    evidence::repeats(&current_runs, runs)?;
+    evidence::compatible(&baseline_runs[0], &current_runs[0])?;
     let baseline =
         aggregate(&baseline_runs).with_context(|| format!("no {} evidence for {arch}", dimension.as_str()))?;
     let current = aggregate(&current_runs).with_context(|| format!("no {} run for {arch}", dimension.as_str()))?;
@@ -55,7 +58,7 @@ fn aggregate(records: &[schema::Record]) -> Option<schema::Record> {
 }
 
 /// Ratchet this run against evidence without granting noise release authority.
-pub(crate) fn verify(records: &Path, evidence_dir: &Path, thresholds: Thresholds) -> Result<()> {
+pub(crate) fn verify(records: &Path, evidence_dir: &Path, runs: usize, thresholds: Thresholds) -> Result<()> {
     let evidence = store::open(evidence_dir)?;
     let measured = store::open(records)?;
     let subjects = store::subjects(&measured)?;
@@ -65,13 +68,17 @@ pub(crate) fn verify(records: &Path, evidence_dir: &Path, thresholds: Thresholds
 
     let mut significant = 0usize;
     for (dimension, arch) in subjects {
-        let Some(record) = store::latest(&measured, dimension, &arch)? else {
-            continue;
-        };
-        let Some(baseline) = store::latest(&evidence, dimension, &arch)? else {
+        let current_runs = store::latest_many(&measured, dimension, &arch, runs)?;
+        evidence::repeats(&current_runs, runs)?;
+        let baseline_runs = store::latest_many(&evidence, dimension, &arch, runs)?;
+        if baseline_runs.is_empty() {
             println!("{}: no evidence yet for {arch} -- seeding", dimension.as_str());
             continue;
-        };
+        }
+        evidence::repeats(&baseline_runs, runs)?;
+        evidence::compatible(&baseline_runs[0], &current_runs[0])?;
+        let record = aggregate(&current_runs).context("current repeats")?;
+        let baseline = aggregate(&baseline_runs).context("baseline repeats")?;
         let verdicts = judge(&baseline, &record, thresholds);
         significant += verdicts.iter().filter(|verdict| verdict.significant).count();
         report(&baseline, &verdicts);

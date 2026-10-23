@@ -21,6 +21,7 @@ fn record(dimension: Dimension, arch: &str, at: &str, value: f64) -> Record {
             load_before: 0.1,
         },
         quick: false,
+        measurement: None,
         metrics: vec![Metric {
             key: "gateway./vms/list.cpu_s".to_string(),
             unit: Unit::Seconds,
@@ -61,6 +62,23 @@ fn opening_twice_is_safe() {
     let path = dir.path().join("bench.db");
     open(&path).expect("creates");
     open(&path).expect("reopens");
+}
+
+#[test]
+fn historical_v2_observations_migrate_without_inventing_fitness() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    {
+        let mut db = open(&path).unwrap();
+        insert(&mut db, &base()).unwrap();
+        db.execute_batch("DROP TABLE measurements; UPDATE meta SET value = '2' WHERE key = 'schema_version';")
+            .unwrap();
+    }
+    let db = open(&path).unwrap();
+    let row = latest(&db, Dimension::Routes, "x86_64").unwrap().unwrap();
+    assert_eq!(row.metrics[0].summary.median, 0.14);
+    assert!(row.measurement.is_none());
+    assert!(crate::evidence::eligible(&row).is_err());
 }
 
 #[test]

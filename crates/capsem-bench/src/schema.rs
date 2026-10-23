@@ -190,6 +190,16 @@ pub struct Host {
 /// One dimension's measurements, as written to disk.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct Measurement {
+    pub before: crate::machine::Fitness,
+    pub after: crate::machine::Fitness,
+    /// Exact config bytes, not a digest or a claimed profile name.
+    pub profile: String,
+}
+
+/// One dimension's measurements, as written to disk.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Record {
     pub schema: String,
     pub dimension: Dimension,
@@ -199,6 +209,9 @@ pub struct Record {
     pub host: Host,
     /// Reduced-sample dev-loop run. Never promotable to evidence.
     pub quick: bool,
+    /// Missing on historical observations; never fabricated during migration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub measurement: Option<Measurement>,
     pub metrics: Vec<Metric>,
     /// Bulk output kept beside the record rather than inside it. The parallel
     /// benchmark embedded 80 KB of captured stdout in its artifact.

@@ -1,5 +1,132 @@
 use super::*;
 
+const SHA: &str = "0123456789012345678901234567890123456789";
+
+fn fitness(fit: bool) -> machine::Fitness {
+    machine::Fitness {
+        host: schema::Host {
+            arch: "x86_64".into(),
+            os: "linux".into(),
+            cpu_count: 8,
+            kvm: true,
+            governor: None,
+            load_before: 0.0,
+        },
+        objections: if fit {
+            vec![]
+        } else {
+            vec![machine::Objection {
+                what: "load".into(),
+                detail: "busy".into(),
+            }]
+        },
+    }
+}
+
+fn workload(root: &Path, name: &str) {
+    std::fs::write(
+        root.join(name),
+        format!(
+            "touch '{}'; echo '{{\"metrics\":{{\"value\":{{\"unit\":\"count\",\"samples\":[1]}}}}}}'",
+            root.join("ran").display()
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
+fn unfit_admission_never_launches_the_workload() {
+    let root = tempfile::tempdir().unwrap();
+    workload(root.path(), "routes");
+    let result = run_with_probe(
+        &[schema::Dimension::Routes],
+        root.path(),
+        &root.path().join("store.db"),
+        Duration::from_secs(2),
+        Some("/bin/sh"),
+        false,
+        "test",
+        SHA,
+        "config",
+        || Ok(fitness(false)),
+    );
+    assert!(result.unwrap_err().to_string().contains("unfit before"));
+    assert!(!root.path().join("ran").exists());
+}
+
+#[test]
+fn contaminated_observations_are_retained_but_never_authority() {
+    let root = tempfile::tempdir().unwrap();
+    workload(root.path(), "routes");
+    let path = root.path().join("store.db");
+    let mut checks = [fitness(true), fitness(false)].into_iter();
+    let result = run_with_probe(
+        &[schema::Dimension::Routes],
+        root.path(),
+        &path,
+        Duration::from_secs(2),
+        Some("/bin/sh"),
+        false,
+        "test",
+        SHA,
+        "config",
+        || Ok(checks.next().unwrap()),
+    );
+    assert!(result.unwrap_err().to_string().contains("diagnostic"));
+    let db = store::open(&path).unwrap();
+    let record = store::latest(&db, schema::Dimension::Routes, "x86_64")
+        .unwrap()
+        .unwrap();
+    assert_eq!(record.metrics[0].summary.n, 1);
+    assert!(crate::evidence::eligible(&record).is_err());
+}
+
+#[test]
+fn each_dimension_receives_fresh_checks_after_child_cleanup() {
+    let root = tempfile::tempdir().unwrap();
+    workload(root.path(), "routes");
+    workload(root.path(), "stream");
+    let mut calls = 0;
+    run_with_probe(
+        &[schema::Dimension::Routes, schema::Dimension::Stream],
+        root.path(),
+        &root.path().join("store.db"),
+        Duration::from_secs(2),
+        Some("/bin/sh"),
+        false,
+        "test",
+        SHA,
+        "config",
+        || {
+            calls += 1;
+            Ok(fitness(true))
+        },
+    )
+    .unwrap();
+    assert_eq!(calls, 4);
+}
+
+#[test]
+fn quick_run_is_diagnostic_even_on_a_busy_machine() {
+    let root = tempfile::tempdir().unwrap();
+    workload(root.path(), "routes");
+    run_with_probe(
+        &[schema::Dimension::Routes, schema::Dimension::Stream],
+        root.path(),
+        &root.path().join("store.db"),
+        Duration::from_secs(2),
+        Some("/bin/sh"),
+        true,
+        "test",
+        "unknown",
+        "config",
+        || Ok(fitness(false)),
+    )
+    .unwrap();
+    let db = store::open(&root.path().join("store.db")).unwrap();
+    assert!(store::subjects(&db).unwrap().is_empty());
+}
+
 #[test]
 fn missing_requested_collector_fails_before_any_child_or_store() {
     let root = tempfile::tempdir().unwrap();
@@ -22,7 +149,7 @@ fn missing_requested_collector_fails_before_any_child_or_store() {
         false,
         "test",
         "head",
-        Vec::new(),
+        "profile",
     );
     let error = result.unwrap_err().to_string();
     assert!(error.contains("stream"), "{error}");
@@ -42,7 +169,7 @@ fn default_dimension_inventory_names_missing_collectors() {
         false,
         "test",
         "head",
-        Vec::new(),
+        "profile",
     )
     .unwrap_err()
     .to_string();

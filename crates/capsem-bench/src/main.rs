@@ -6,6 +6,8 @@ mod commands;
 #[cfg(feature = "host")]
 mod comparison;
 mod dns_load;
+#[cfg(feature = "host")]
+mod evidence;
 mod http_load;
 #[cfg(feature = "host")]
 mod machine;
@@ -123,7 +125,7 @@ async fn main() -> Result<()> {
             );
         }
         #[cfg(feature = "host")]
-        Command::Verify(args) => return comparison::verify(&args.records, &args.evidence, args.thresholds),
+        Command::Verify(args) => return comparison::verify(&args.records, &args.evidence, args.runs, args.thresholds),
         #[cfg(feature = "host")]
         Command::Run(args) => {
             let wanted = commands::select_dimensions(&args.dimensions)?;
@@ -136,7 +138,7 @@ async fn main() -> Result<()> {
                 args.quick,
                 &args.channel,
                 &args.commit,
-                machine::running_capsem_processes()?,
+                &std::fs::read_to_string(&args.cohort_config)?,
             );
         }
     }

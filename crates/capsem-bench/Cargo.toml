@@ -11,7 +11,7 @@ authors.workspace = true
 
 [features]
 default = ["host"]
-host = ["dep:capsem-foundation", "capsem-foundation/runtime", "dep:rusqlite"]
+host = ["dep:capsem-foundation", "capsem-foundation/runtime", "dep:rusqlite", "dep:rmp-serde"]
 guest = []
 
 [[bin]]
@@ -27,6 +27,7 @@ clap.workspace = true
 futures.workspace = true
 reqwest.workspace = true
 rusqlite = { workspace = true, optional = true }
+rmp-serde = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 socket2.workspace = true

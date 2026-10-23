@@ -89,7 +89,41 @@ pub(crate) fn run_dimensions(
     quick: bool,
     channel: &str,
     commit: &str,
-    strays: Vec<String>,
+    profile: &str,
+) -> Result<()> {
+    run_with_probe(
+        wanted,
+        collectors,
+        out,
+        timeout,
+        interpreter,
+        quick,
+        channel,
+        commit,
+        profile,
+        || {
+            Ok(machine::examine(
+                machine::Judgement::Measurement,
+                std::env::consts::ARCH,
+                std::env::consts::OS,
+                &machine::running_capsem_processes()?,
+            ))
+        },
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_with_probe(
+    wanted: &[schema::Dimension],
+    collectors: &Path,
+    out: &Path,
+    timeout: Duration,
+    interpreter: Option<&str>,
+    quick: bool,
+    channel: &str,
+    commit: &str,
+    profile: &str,
+    mut probe: impl FnMut() -> Result<machine::Fitness>,
 ) -> Result<()> {
     let missing = wanted
         .iter()
@@ -100,12 +134,9 @@ pub(crate) fn run_dimensions(
     if !missing.is_empty() {
         bail!("requested benchmark collectors are missing: {}", missing.join(", "));
     }
-    let fitness = machine::examine(
-        machine::Judgement::Measurement,
-        std::env::consts::ARCH,
-        std::env::consts::OS,
-        &strays,
-    );
+    if !quick && (profile.is_empty() || commit.len() != 40 || !commit.bytes().all(|b| b.is_ascii_hexdigit())) {
+        bail!("authoritative recording requires an exact source SHA and nonempty configuration");
+    }
     let mut connection = store::open(out)?;
     let mut ran = 0usize;
 
@@ -117,6 +148,14 @@ pub(crate) fn run_dimensions(
             continue;
         }
         let program = collectors.join(dimension.as_str());
+        let before = probe()?;
+        if !quick && !before.fit() {
+            bail!(
+                "machine is unfit before {}: {:?}",
+                dimension.as_str(),
+                before.objections
+            );
+        }
 
         // An interpreter prefix runs the collector as an argument to it, so a
         // collector needing the project's Python gets that environment rather
@@ -135,6 +174,7 @@ pub(crate) fn run_dimensions(
             args.push("--quick".to_string());
         }
         let collected = collector::run(&program, &args, timeout)?;
+        let after = probe()?;
 
         let metrics = collected
             .metrics
@@ -157,11 +197,17 @@ pub(crate) fn run_dimensions(
                 channel: channel.to_string(),
                 commit: commit.to_string(),
             },
-            host: fitness.host.clone(),
+            host: before.host.clone(),
             quick,
+            measurement: Some(schema::Measurement {
+                before,
+                after,
+                profile: profile.to_string(),
+            }),
             metrics,
             sidecar: collected.sidecar,
         };
+        let authoritative = crate::evidence::eligible(&record).is_ok();
         let run_id = store::insert(&mut connection, &record)?;
         println!(
             "{}: {} metrics recorded as run {run_id}",
@@ -169,6 +215,12 @@ pub(crate) fn run_dimensions(
             record.metrics.len()
         );
         ran += 1;
+        if !quick && !authoritative {
+            bail!(
+                "machine became unfit after {}; stored diagnostic observations only",
+                dimension.as_str()
+            );
+        }
     }
 
     if ran == 0 {
