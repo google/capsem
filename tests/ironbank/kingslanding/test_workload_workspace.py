@@ -51,12 +51,18 @@ def test_new_image_clone_imports_scratch_without_changing_original_home(service,
             assert run(client, copy_id, "id -u").strip() == "1000"
             assert run(client, copy_id, "stat -c %u /workspace").strip() == "1000"
             assert run(client, copy_id, "cat /workspace/poem.md") == "workspace-wins"
+            # Preserve the first read before stat can refresh caller-owned
+            # VirtioFS inode metadata. Diagnostics must not make the read pass.
+            imported_read = client.post(f"/vms/{copy_id}/exec", {
+                "command": "cat /workspace/poem.md.imported-1", "timeout_secs": 5,
+            }, timeout=20)
             imported_owner = run(
                 client, copy_id,
                 "stat -c '%u:%g:%a' /workspace/poem.md.imported-1",
             ).strip()
+            assert imported_read["exit_code"] == 0, (imported_owner, imported_read)
             assert imported_owner == "1000:1000:600", imported_owner
-            assert run(client, copy_id, "cat /workspace/poem.md.imported-1") == "scratch-original"
+            assert exec_output_text(imported_read) == "scratch-original"
             assert run(client, copy_id, f"cat {HOME}/private-sibling") == "synthetic-private-sibling"
             assert run(client, copy_id, "test ! -e /workspace/private-sibling && echo isolated").strip() == "isolated"
             assert run(client, copy_id, f"test ! -r {SCRATCH}/.capsem-image/launch.py && echo masked").strip() == "masked"
