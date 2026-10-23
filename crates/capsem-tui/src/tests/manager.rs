@@ -1,6 +1,54 @@
 use super::*;
 
 #[test]
+fn empty_creation_dismissal_survives_polls_and_explicit_creation_still_works() {
+    let mut state = fixture_state();
+    state.sessions.clear();
+    state.active_session_id.clear();
+    let mut app = App::new(state.clone());
+    assert_eq!(app.overlay(), AppOverlay::Create);
+    app.handle_key(key(KeyCode::Esc, KeyModifiers::NONE));
+    app.replace_state(state.clone());
+    app.replace_state(state);
+    assert_eq!(app.overlay(), AppOverlay::None);
+    app.handle_key(key(KeyCode::Char('n'), KeyModifiers::ALT));
+    assert_eq!(app.overlay(), AppOverlay::Create);
+}
+
+#[test]
+fn global_navigation_leaves_a_gui_only_catalogue_without_launching_it() {
+    for (shortcut, expected) in [
+        ('m', AppOverlay::Home),
+        ('0', AppOverlay::Home),
+        ('?', AppOverlay::Help),
+    ] {
+        let mut state = fixture_state();
+        state.sessions.clear();
+        state.active_session_id.clear();
+        let mut app = App::new(state.clone());
+        let request = app.take_catalog_request().unwrap();
+        let mut catalog = image_creation::catalog();
+        for image in &mut catalog.images {
+            image.surface = Some(capsem_sdk::models::ImageSurface::Xpra);
+        }
+        app.apply_image_catalog(request, Ok(catalog));
+        assert!(app.create_draft().unwrap().selected_image().is_none());
+        assert_eq!(
+            app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
+            AppAction::Consumed
+        );
+        assert_eq!(
+            app.handle_key(key(KeyCode::Char(shortcut), KeyModifiers::ALT)),
+            AppAction::Consumed
+        );
+        assert_eq!(app.overlay(), expected);
+        assert!(app.create_draft().is_none());
+        app.replace_state(state);
+        assert_eq!(app.overlay(), expected);
+    }
+}
+
+#[test]
 fn footer_anchors_latency_left_and_shortcuts_right_without_overlap() {
     for width in [150, 80, 40] {
         let screen = render_snapshot(&fixture_state(), width, 24).unwrap();

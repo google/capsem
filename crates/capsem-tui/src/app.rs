@@ -162,6 +162,7 @@ pub struct App {
     pending_create: Option<CreateDraft>,
     catalog_generation: u64,
     catalog_request: Option<ImageCatalogRequest>,
+    empty_state_prompted: bool,
     fork_draft: Option<ForkDraft>,
     handled_browser: std::collections::BTreeMap<String, capsem_sdk::models::BrowserRequest>,
     approval_view: Option<ApprovalView>,
@@ -192,6 +193,7 @@ impl App {
             pending_create: None,
             catalog_generation: 0,
             catalog_request: None,
+            empty_state_prompted: false,
             fork_draft: None,
             handled_browser: Default::default(),
             approval_view: None,
@@ -297,6 +299,9 @@ impl App {
         if is_exit_key(key) {
             return AppAction::Exit;
         }
+        if self.handle_overlay_key(key) {
+            return AppAction::Consumed;
+        }
         if self.overlay == AppOverlay::Approvals {
             return self.handle_approval_key(key);
         }
@@ -312,9 +317,6 @@ impl App {
         }
         if self.overlay == AppOverlay::Fork {
             return self.handle_fork_key(key);
-        }
-        if self.handle_overlay_key(key) {
-            return AppAction::Consumed;
         }
         if self.overlay == AppOverlay::Home {
             match key.code {
@@ -508,6 +510,9 @@ impl App {
     }
 
     fn sync_empty_state_prompt(&mut self) {
+        if !self.state.sessions.is_empty() {
+            self.empty_state_prompted = false;
+        }
         if service_needs_start(self.state.service.status) {
             self.create_draft = None;
             self.fork_draft = None;
@@ -519,7 +524,12 @@ impl App {
             self.pending_action = None;
             self.overlay = AppOverlay::None;
         }
-        if self.state.sessions.is_empty() && self.overlay == AppOverlay::None && self.pending_focus_session.is_none() {
+        if self.state.sessions.is_empty()
+            && !self.empty_state_prompted
+            && self.overlay == AppOverlay::None
+            && self.pending_focus_session.is_none()
+        {
+            self.empty_state_prompted = true;
             self.open_create();
         }
     }
