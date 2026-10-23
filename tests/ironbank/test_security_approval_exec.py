@@ -1,6 +1,7 @@
 """Native public exec waits before any guest command effect."""
 
 import shlex
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
@@ -47,10 +48,24 @@ def effects(client, vm_id):
 
 @pytest.mark.parametrize("decision", ["approve", "deny"])
 def test_exec_original_command_resolves_once(decision):
+    resolve_exec(decision, hold_seconds=0)
+
+
+@pytest.mark.parametrize("decision", ["approve", "deny"])
+def test_exec_original_survives_human_review_beyond_execution_budget(decision):
+    resolve_exec(decision, hold_seconds=31)
+
+
+def resolve_exec(decision, *, hold_seconds):
     with native_approval_session(POLICY) as (service, client, api, vm_id, _):
         nonce = uuid.uuid4().hex
+        review_started = False
 
         def no_effect():
+            nonlocal review_started
+            if not review_started:
+                review_started = True
+                time.sleep(hold_seconds)
             assert effects(client, vm_id) == [], "held command already executed"
 
         result, receipt = resolve_original_operation(
@@ -61,7 +76,7 @@ def test_exec_original_command_resolves_once(decision):
                     "target": "vm",
                     "timeout_secs": 30,
                 },
-                timeout=40,
+                timeout=90 if hold_seconds else 40,
             ),
             api,
             vm_id,
