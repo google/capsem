@@ -7,6 +7,7 @@
   import { sessionActionError } from '../../models/session-action-error';
   import { imageNeedsDownload, imageLaunchRequest, imageInterfaceLabel, retainImageActionFailure, type ImageActionFailure } from '../../models/image-launch';
   import { imageDownloadView } from '../../models/image-download';
+  import { watchVisibleRefresh } from '../../models/visible-refresh';
   import CircleNotch from 'phosphor-svelte/lib/CircleNotch';
   import DownloadSimple from 'phosphor-svelte/lib/DownloadSimple';
   import Play from 'phosphor-svelte/lib/Play';
@@ -76,7 +77,7 @@
         // result without repeatedly fetching the registry or hiding the cards.
       }
     } catch (e) {
-      if (!request.signal.aborted && (!quiet || images.length === 0)) error = sessionActionError(e);
+      if (!request.signal.aborted) error = sessionActionError(e);
     } finally {
       if (!request.signal.aborted) {
         loading = false;
@@ -90,7 +91,11 @@
 
   onMount(() => {
     void load();
+    const stopRefreshing = watchVisibleRefresh(async () => {
+      if (!loading && !caching && !images.some(image => image.progress || image.cached === ImageCacheState.UNKNOWN)) await load(false, true);
+    }, 30_000);
     return () => {
+      stopRefreshing();
       controller?.abort();
       if (observationTimer) clearTimeout(observationTimer);
     };
@@ -100,17 +105,17 @@
 <section class="mb-6" aria-labelledby="image-catalog-title" aria-busy={loading}>
   <div class="flex items-center justify-between mb-3 gap-3">
     <h3 id="image-catalog-title" class="text-lg font-medium text-foreground">Apps</h3>
-    <button type="button" class="text-xs text-primary hover:underline disabled:opacity-50"
-      disabled={loading} onclick={() => load(true)}>
-      {error ? 'Retry' : 'Refresh'}
-    </button>
+    {#if error}
+      <button type="button" class="text-xs text-primary hover:underline disabled:opacity-50"
+        disabled={loading} onclick={() => load(true)}>Retry</button>
+    {/if}
   </div>
   {#if loading}
     <p class="text-sm text-muted-foreground-1" role="status">Loading image catalog...</p>
   {:else if error}
     <p class="text-sm text-destructive break-words" role="alert">{error}</p>
   {:else if availableImages.length === 0}
-    <p class="text-sm text-muted-foreground-1">No apps are available for this computer. Try refreshing.</p>
+    <p class="text-sm text-muted-foreground-1">No apps are available for this computer.</p>
   {:else}
     <div class="border border-card-line rounded-xl divide-y divide-card-line overflow-hidden">
       {#each availableImages as image (image.name)}

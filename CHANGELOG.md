@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Update dashboard apps and usage automatically when returning to Capsem, and
+  remove redundant Refresh controls while retaining retry for catalog failures.
+
 - Sort dashboard sessions correctly by total tokens and estimated cost, and
   expose the active sort direction to assistive technology. Include output-only
   token usage in the displayed total.

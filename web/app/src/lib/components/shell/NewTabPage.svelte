@@ -10,6 +10,7 @@
   import { canOpenSession, hasVmAction, startAction, startLabel } from '../../vm-actions';
   import { sessionActionError } from '../../models/session-action-error';
   import { compareSessions, sessionTokens, type SessionSortKey, type SessionSortDirection } from '../../models/session-sort';
+  import { watchVisibleRefresh } from '../../models/visible-refresh';
   import Modal from './Modal.svelte';
   import SessionCredentials from './SessionCredentials.svelte';
   import ImageCatalog from './ImageCatalog.svelte';
@@ -48,14 +49,14 @@
 
   onMount(() => {
     void loadAssets();
-    void api.getStats()
-      .then(stats => { globalStats = stats.global; })
-      .catch(() => { globalStats = null; })
-      .finally(() => { statsLoading = false; });
+    void loadStats();
+    const stopRefreshing = watchVisibleRefresh(async () => {
+      await Promise.all([loadAssets(), loadStats()]);
+    }, 30_000);
     const progressPoll = window.setInterval(() => {
       if (!document.hidden && assets?.downloading) void loadAssets();
     }, 1000);
-    return () => window.clearInterval(progressPoll);
+    return () => { stopRefreshing(); window.clearInterval(progressPoll); };
   });
 
   let sortKey = $state<SessionSortKey>('name');
@@ -190,16 +191,14 @@
     }
   }
 
-  async function refreshDashboard() {
-    statsLoading = true;
-    await Promise.all([
-      vmStore.refresh(),
-      loadAssets(),
-      api.getStats()
-        .then(stats => { globalStats = stats.global; })
-        .catch(() => { globalStats = null; }),
-    ]);
-    statsLoading = false;
+  async function loadStats() {
+    try {
+      globalStats = (await api.getStats()).global;
+    } catch {
+      globalStats = null;
+    } finally {
+      statsLoading = false;
+    }
   }
 
   function parseApiError(e: unknown): string {
@@ -364,15 +363,6 @@
   <!-- Sessions header -->
   <div class="flex items-center justify-between mb-6">
     <h2 class="text-2xl font-bold text-foreground">Sessions</h2>
-    <button
-      type="button"
-      class="inline-flex items-center justify-center gap-x-2 rounded-lg bg-surface border border-line-2 px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted-hover focus:outline-hidden disabled:opacity-50 disabled:pointer-events-none"
-      onclick={refreshDashboard}
-      disabled={assetsLoading || statsLoading || vmStore.acting}
-      title="Refresh dashboard"
-    >
-      Refresh
-    </button>
   </div>
 
   <ImageCatalog {ready} {prepareRuntime} />
