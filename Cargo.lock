@@ -1428,6 +1428,7 @@ dependencies = [
  "opentelemetry_sdk",
  "prost",
  "reqwest 0.12.28",
+ "tokio",
  "tower",
  "tracing",
  "tracing-subscriber",

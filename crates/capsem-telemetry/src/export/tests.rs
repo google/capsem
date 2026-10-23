@@ -166,7 +166,7 @@ fn contains(haystack: &[u8], needle: &str) -> bool {
 }
 
 #[derive(Clone, Debug, Default)]
-struct CapturingHttpClient(Arc<Mutex<Vec<http::Request<bytes::Bytes>>>>);
+pub(super) struct CapturingHttpClient(pub(super) Arc<Mutex<Vec<http::Request<bytes::Bytes>>>>);
 
 #[async_trait::async_trait]
 impl opentelemetry_http::HttpClient for CapturingHttpClient {

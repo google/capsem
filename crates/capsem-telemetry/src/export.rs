@@ -17,6 +17,7 @@
 //! confined worker can supply a local broker transport instead.
 
 pub mod http_admission;
+pub mod relay;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
