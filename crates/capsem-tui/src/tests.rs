@@ -127,7 +127,7 @@ fn status_bar_shows_current_update_state() {
 
     let snapshot = render_snapshot(&state, 120, 24).expect("render current update snapshot");
 
-    assert!(snapshot.contains("updates: current"));
+    assert!(!snapshot.contains("updates:"));
     assert!(snapshot.contains("Help: Alt+?"));
 }
 

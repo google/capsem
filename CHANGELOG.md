@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Keep the TUI footer quiet when update status is unknown or no update is
+  available; show the update shortcut only for confirmed available updates.
+
 - Strip terminal control characters from TUI metadata and status labels while
   preserving the parsed guest terminal stream.
 

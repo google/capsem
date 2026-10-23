@@ -194,9 +194,13 @@ fn render_status_bar(frame: &mut Frame<'_>, state: &AppState, area: Rect) {
     if let Some(message) = &service.control_message {
         left.push(Span::styled(format!(" {}", truncate(message, 28)), muted_style()));
     }
-    if let Some(notice) = &state.update_notice {
+    if let Some(notice) = state.update_notice.as_ref().filter(|notice| match &notice.kind {
+        UpdateNoticeKind::Available(tracks) => !tracks.is_empty(),
+        UpdateNoticeKind::AvailableWithBlocked { available, .. } => !available.is_empty(),
+        _ => false,
+    }) {
         left.push(Span::styled(
-            format!(" {}", update_notice_label(notice)),
+            format!(" {} (Alt+U)", update_notice_label(notice)),
             update_notice_style(notice),
         ));
     }
@@ -594,7 +598,7 @@ fn stats_lines(state: &AppState) -> Vec<Line<'static>> {
     let Some(session) = state.active_session() else {
         return vec![overlay_title("session info"), overlay_line("no active session")];
     };
-    vec![
+    let mut lines = vec![
         overlay_title("session info"),
         table_header(&["Field", "Value", "Note", ""]),
         info_row("session", &session.title, &session.id),
@@ -608,7 +612,11 @@ fn stats_lines(state: &AppState) -> Vec<Line<'static>> {
         ),
         info_row("events", &session.stats.events.to_string(), ""),
         info_row("jobs", &session.stats.jobs.to_string(), ""),
-    ]
+    ];
+    if let Some(notice) = &state.update_notice {
+        lines.push(overlay_line(&update_notice_label(notice)));
+    }
+    lines
 }
 
 fn overlay_title(title: &'static str) -> Line<'static> {

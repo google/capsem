@@ -1,6 +1,24 @@
 use super::*;
 
 #[test]
+fn normal_footer_shows_only_confirmed_available_updates() {
+    for kind in [
+        UpdateNoticeKind::Current,
+        UpdateNoticeKind::Unavailable,
+        UpdateNoticeKind::Stale,
+        UpdateNoticeKind::Blocked(vec![UpdateTrack::Images]),
+    ] {
+        let mut state = fixture_state();
+        state.update_notice = Some(crate::model::UpdateNotice {
+            kind,
+            channel_url: None,
+        });
+        let screen = render_snapshot(&state, 140, 40).unwrap();
+        assert!(!screen.contains("updates:"));
+    }
+}
+
+#[test]
 fn gateway_update_status_json_maps_to_tui_notice() {
     let state = state_from_status_and_update_json_for_test(
         gateway_empty_status_body(),
@@ -45,7 +63,7 @@ fn gateway_blocked_update_status_maps_to_tui_notice() {
     let notice = state.update_notice.as_ref().expect("blocked update notice");
     assert_eq!(notice.kind, UpdateNoticeKind::Blocked(vec![UpdateTrack::Images]));
     let snapshot = render_snapshot(&state, 120, 24).expect("render blocked update notice");
-    assert!(snapshot.contains("updates blocked: images"));
+    assert!(!snapshot.contains("updates"));
 }
 
 #[test]
@@ -60,7 +78,7 @@ fn gateway_blocked_asset_update_status_maps_to_tui_notice() {
     let notice = state.update_notice.as_ref().expect("blocked asset update notice");
     assert_eq!(notice.kind, UpdateNoticeKind::Blocked(vec![UpdateTrack::VmAssets]));
     let snapshot = render_snapshot(&state, 120, 24).expect("render blocked asset update notice");
-    assert!(snapshot.contains("updates blocked: assets"));
+    assert!(!snapshot.contains("updates"));
 }
 
 #[test]
@@ -128,7 +146,12 @@ fn tui_update_smoke_matrix_covers_release_states_and_atomic_action() {
         .unwrap_or_else(|error| panic!("{name} update status should parse: {error}"));
         let snapshot = render_snapshot(&state, 120, 24)
             .unwrap_or_else(|error| panic!("{name} TUI snapshot should render: {error}"));
-        assert!(snapshot.contains(expected), "{name} missing {expected}");
+        if matches!(name, "no-update" | "channel-error") {
+            assert!(!snapshot.contains("updates:"), "{name} pollutes the normal footer");
+        } else {
+            assert!(snapshot.contains(expected), "{name} missing {expected}");
+            assert!(snapshot.contains("Alt+U"));
+        }
         assert!(snapshot.contains("Help: Alt+?"), "{name} lost help hint");
     }
 
