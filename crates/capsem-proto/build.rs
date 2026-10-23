@@ -36,6 +36,7 @@ fn main() {
         "router.rs",
         "exec_stream.rs",
         "credential_injection.rs",
+        "dns_session.rs",
         "approval.rs",
     ];
     write_hash("schema_hash.txt", &files);

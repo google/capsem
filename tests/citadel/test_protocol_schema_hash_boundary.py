@@ -22,6 +22,7 @@ REQUIRED_INPUTS = {
     "router.rs",
     "exec_stream.rs",
     "credential_injection.rs",
+    "dns_session.rs",
 }
 
 

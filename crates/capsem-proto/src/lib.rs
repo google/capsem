@@ -13,6 +13,7 @@ pub mod approval;
 pub mod browser;
 pub mod credential_injection;
 pub mod credential_reference;
+pub mod dns_session;
 mod exec_stream;
 mod file_path;
 pub use file_path::{validate_file_path, validate_file_path_safe};
