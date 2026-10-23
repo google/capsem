@@ -1,4 +1,5 @@
 // Shared formatting utilities for stats, dashboard, and views.
+import type { CostCoverage } from '@capsem/sdk';
 
 /** Format milliseconds as human-readable duration (e.g., "500ms", "1.5s"). */
 export function formatDuration(ms: number): string {
@@ -34,6 +35,25 @@ export function formatCost(usd: number): string {
   if (usd > 0 && usd < 0.01) return `$${usd.toFixed(6).replace(/0+$/, '')}`;
   return `$${usd.toFixed(2)}`;
 }
+
+/** A plus marks a known subtotal; absent coverage cannot establish free usage. */
+export function formatEstimatedCost(usd: number | null | undefined, coverage?: CostCoverage | null): string {
+  if (usd == null || !Number.isFinite(usd) || usd < 0) return '--';
+  const incomplete = !coverage || coverage.unpriced_calls > 0 || coverage.unknown_calls > 0;
+  if (incomplete) return usd > 0 ? `${formatCost(usd)}+` : 'Unknown';
+  return formatCost(usd);
+}
+
+export function mergeCostCoverage(rows: (CostCoverage | null | undefined)[]): CostCoverage | undefined {
+  if (rows.some(row => !row)) return undefined;
+  return rows.reduce<CostCoverage>((sum, row) => ({
+    priced_calls: sum.priced_calls + row!.priced_calls,
+    unpriced_calls: sum.unpriced_calls + row!.unpriced_calls,
+    unknown_calls: sum.unknown_calls + row!.unknown_calls,
+  }), { priced_calls: 0, unpriced_calls: 0, unknown_calls: 0 });
+}
+
+export const estimatedCostHelp = 'Known price estimate. + means some calls have no known price; Unknown means price coverage is unavailable. Historical calls may predate coverage tracking.';
 
 /** Format token count as compact number (e.g., "500", "1.2K", "3.5M"). */
 export function formatTokens(n: number): string {

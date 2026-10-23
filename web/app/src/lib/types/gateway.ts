@@ -1,5 +1,5 @@
 // Gateway wire types come from the SDK as their consumers migrate.
-import type { HypervisorInfo } from '@capsem/sdk';
+import type { HypervisorInfo, CostCoverage } from '@capsem/sdk';
 export type { SandboxInfo, VmSummary, ResourceSummary, ListResponse,
   VmStatsSummaryResponse as VmStatsSummary } from '@capsem/sdk';
 export { VmAction, VmLifecycleState } from '@capsem/sdk';
@@ -43,6 +43,7 @@ export interface StatsResponse {
 }
 
 export interface GlobalStats {
+  cost_coverage?: CostCoverage;
   total_ai_requests?: number;
   total_sessions: number;
   total_input_tokens: number;
@@ -56,6 +57,7 @@ export interface GlobalStats {
 }
 
 export interface SessionRecord {
+  cost_coverage?: CostCoverage;
   id: string;
   mode: string;
   command: string | null;
@@ -80,6 +82,7 @@ export interface SessionRecord {
 }
 
 export interface ProviderSummary {
+  cost_coverage?: CostCoverage;
   provider: string;
   call_count: number;
   input_tokens: number;

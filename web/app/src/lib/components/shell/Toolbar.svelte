@@ -23,7 +23,7 @@
   import HardDrives from 'phosphor-svelte/lib/HardDrives';
   import AppWindow from 'phosphor-svelte/lib/AppWindow';
   import ArrowClockwise from 'phosphor-svelte/lib/ArrowClockwise';
-  import { formatTokens, formatCost } from '../../format';
+  import { formatTokens, formatEstimatedCost, estimatedCostHelp } from '../../format';
   import { hasVmAction, startAction, startLabel } from '../../vm-actions';
   import { sessionActionError } from '../../models/session-action-error';
   import { getContainerStatus, openUrl } from '../../api';
@@ -386,7 +386,7 @@
     {#if isVM && activeVm && activeStats}
       <span title="Tokens: input / thinking / output">{formatTokens(activeTokenStats.input)} in / {formatTokens(activeTokenStats.thinking)} think / {formatTokens(activeTokenStats.output)} out</span>
       <span title="Tool calls">{activeStats.total_tool_calls} calls</span>
-      <span title="Cost">{formatCost(activeStats.total_estimated_cost)}</span>
+      <span title={estimatedCostHelp}>{formatEstimatedCost(activeStats.total_estimated_cost, activeStats.cost_coverage)}</span>
     {/if}
   </div>
 </div>

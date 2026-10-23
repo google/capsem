@@ -6,7 +6,7 @@
   import * as api from '../../api';
   import type { VmSummary } from '../../types/gateway';
   import type { GlobalStats } from '../../types/gateway';
-  import { formatUptime, formatTokens, formatCost } from '../../format';
+  import { formatUptime, formatTokens, formatEstimatedCost, estimatedCostHelp } from '../../format';
   import { canOpenSession, hasVmAction, startAction, startLabel } from '../../vm-actions';
   import { sessionActionError } from '../../models/session-action-error';
   import { compareSessions, sessionTokens, type SessionSortKey, type SessionSortDirection } from '../../models/session-sort';
@@ -264,7 +264,7 @@
               </td>
               <td class="p-3 whitespace-nowrap text-sm text-muted-foreground-1 tabular-nums">{vm.uptime_secs != null ? formatUptime(vm.uptime_secs) : '--'}</td>
               <td class="p-3 whitespace-nowrap text-sm text-muted-foreground-1 tabular-nums">{tokens != null ? formatTokens(tokens) : '--'}</td>
-              <td class="p-3 whitespace-nowrap text-sm text-muted-foreground-1 tabular-nums">{vm.total_estimated_cost != null ? formatCost(vm.total_estimated_cost) : '--'}</td>
+              <td class="p-3 whitespace-nowrap text-sm text-muted-foreground-1 tabular-nums" title={estimatedCostHelp}>{formatEstimatedCost(vm.total_estimated_cost, vm.cost_coverage)}</td>
               <td class="p-3 whitespace-nowrap text-end">
                 <div class="inline-flex items-center gap-x-1">
                   {#if vm.status === 'Running' || vm.persistent}
@@ -321,7 +321,7 @@
     </div>
     <div class="rounded-lg border border-card-line px-3 py-2">
       <dt class="text-[11px] text-muted-foreground-1">Estimated cost</dt>
-      <dd class="text-lg font-semibold text-foreground tabular-nums">{globalStats ? formatCost(globalStats.total_estimated_cost) : '--'}</dd>
+      <dd class="text-lg font-semibold text-foreground tabular-nums" title={estimatedCostHelp}>{globalStats ? formatEstimatedCost(globalStats.total_estimated_cost, globalStats.cost_coverage) : '--'}</dd>
     </div>
   </dl>
 

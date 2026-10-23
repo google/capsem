@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import type { EventBody, InteractionReport, ModelUsage, ToolEvent } from '@capsem/sdk';
   import * as api from '../../api';
-  import { formatBytes, formatDuration, formatTime } from '../../format';
+  import { formatBytes, formatDuration, formatTime, formatEstimatedCost, mergeCostCoverage, estimatedCostHelp } from '../../format';
   import { getShikiHighlighter, resolveShikiTheme, ensureShikiLang, ensureShikiTheme, type ShikiHighlighter } from '../../shiki.ts';
   import { createDetailLoader } from '../../event-bodies';
   import {
@@ -172,6 +172,7 @@
   const modelInput = $derived(modelStats.reduce((sum, row) => sum + number(row.input_tokens), 0));
   const modelOutput = $derived(modelStats.reduce((sum, row) => sum + number(row.output_tokens), 0));
   const modelCost = $derived(modelStats.reduce((sum, row) => sum + number(row.estimated_cost_usd), 0));
+  const modelCoverage = $derived(mergeCostCoverage(modelStats.map(row => row.cost_coverage)));
 
   const MODEL_TOOL_ORIGINS = ['native', 'builtin', 'local'];
   const PROTOCOL_TOOL_ORIGINS = ['mcp', 'mcp_proxy'];
@@ -281,7 +282,7 @@
           <MetricCard label="Calls" value={modelCalls.toLocaleString()} />
           <MetricCard label="Input Tokens" value={modelInput.toLocaleString()} />
           <MetricCard label="Output Tokens" value={modelOutput.toLocaleString()} />
-          <MetricCard label="Est. Cost" value={`$${modelCost.toFixed(2)}`} />
+          <MetricCard label="Est. Cost" value={formatEstimatedCost(modelCost, modelCoverage)} />
         </div>
         <StatsTable columns={['Provider', 'Model', 'Calls', 'Input', 'Output', 'Cost']} rows={modelStats}>
           {#snippet children(row: any)}
@@ -290,7 +291,7 @@
             <td class="px-4 py-2 text-right text-foreground">{number(row.call_count).toLocaleString()}</td>
             <td class="px-4 py-2 text-right text-foreground">{number(row.input_tokens).toLocaleString()}</td>
             <td class="px-4 py-2 text-right text-foreground">{number(row.output_tokens).toLocaleString()}</td>
-            <td class="px-4 py-2 text-right text-foreground">${number(row.estimated_cost_usd).toFixed(2)}</td>
+            <td class="px-4 py-2 text-right text-foreground" title={estimatedCostHelp}>{formatEstimatedCost(row.estimated_cost_usd, row.cost_coverage)}</td>
           {/snippet}
         </StatsTable>
         <InteractionViewer title="Model and Tool Interactions" report={interactions} scope="model" />
