@@ -13,6 +13,8 @@ from capsem_builder.image.tools.bootstrap import linux_workspace as provisioner
 from pydantic import ValidationError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+
 def test_linux_workspace_prerequisites_are_one_validated_config_value() -> None:
     config = gate_config.load(PROJECT_ROOT)
     linux = config.toolchain.linux
@@ -201,9 +203,34 @@ def test_provisioner_installs_configured_packages_then_proves_pkg_config(
             "gcc-x86-64-linux-gnu",
             "g++-x86-64-linux-gnu",
         )
+        bounds = gate_config.load(PROJECT_ROOT)
+        snapshot = bounds.apt_snapshot
+
+        def apt_command(seconds: int, *arguments: str) -> tuple[str, ...]:
+            return (
+                "timeout",
+                "--signal=TERM",
+                f"--kill-after={bounds.execution.cancellation_grace_seconds}s",
+                f"{seconds}s",
+                "apt-get",
+                "-o",
+                f"Acquire::http::Timeout={snapshot.request_timeout_seconds}",
+                "-o",
+                f"Acquire::https::Timeout={snapshot.request_timeout_seconds}",
+                "-o",
+                f"Acquire::Retries={snapshot.retries}",
+                *arguments,
+            )
+
         assert calls[:2] == [
-            ("apt-get", "update"),
-            ("apt-get", "install", "-y", "--no-install-recommends", *packages),
+            apt_command(snapshot.update_timeout_seconds, "update"),
+            apt_command(
+                snapshot.install_timeout_seconds,
+                "install",
+                "-y",
+                "--no-install-recommends",
+                *packages,
+            ),
         ]
         assert "x86_64-linux-gnu-gcc" in probed
     else:
@@ -214,9 +241,15 @@ def test_provisioner_installs_configured_packages_then_proves_pkg_config(
 def test_ci_and_host_builder_consume_the_same_prerequisite_authority() -> None:
     ci = (PROJECT_ROOT / ".github/workflows/ci.yaml").read_text(encoding="utf-8")
     fast = (PROJECT_ROOT / ".github/workflows/fast-gate.yaml").read_text(encoding="utf-8")
-    host_builder = (PROJECT_ROOT / "build_system/docker/Dockerfile.host-builder").read_text(encoding="utf-8")
-    hostimage = (PROJECT_ROOT / "build_system/builder/gate/hostimage.py").read_text(encoding="utf-8")
-    invocation = "sudo python3 build_system/scripts/bootstrap/provision-linux-workspace.py --install apt"
+    host_builder = (PROJECT_ROOT / "build_system/docker/Dockerfile.host-builder").read_text(
+        encoding="utf-8"
+    )
+    hostimage = (PROJECT_ROOT / "build_system/builder/gate/hostimage.py").read_text(
+        encoding="utf-8"
+    )
+    invocation = (
+        "sudo python3 build_system/scripts/bootstrap/provision-linux-workspace.py --install apt"
+    )
 
     assert invocation in ci
     assert invocation in fast
