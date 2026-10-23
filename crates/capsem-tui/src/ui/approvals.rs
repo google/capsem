@@ -3,7 +3,30 @@ use ratatui::widgets::{List, ListItem, ListState, Wrap};
 
 pub(super) fn render(frame: &mut Frame<'_>, area: Rect, view: Option<&crate::app::ApprovalView>) {
     let Some(view) = view else { return };
-    let rows = Layout::vertical([Constraint::Length(2), Constraint::Min(1), Constraint::Length(3)]).split(area);
+    let hints = vec![
+        overlay_line("↑/↓ choose   A approve once   D deny"),
+        overlay_line("R check current state   Esc close"),
+    ];
+    let (hints, hint_height) = if hints.iter().any(|line| line.width() > usize::from(area.width)) {
+        (
+            vec![
+                overlay_line("↑/↓ choose"),
+                overlay_line("A approve once"),
+                overlay_line("D deny"),
+                overlay_line("R refresh"),
+                overlay_line("Esc close"),
+            ],
+            5,
+        )
+    } else {
+        (hints, 2)
+    };
+    let rows = Layout::vertical([
+        Constraint::Length(2),
+        Constraint::Min(1),
+        Constraint::Length(hint_height),
+    ])
+    .split(area);
     let message = view.error.as_deref().unwrap_or(if view.resolving {
         "Recording one decision…"
     } else if view.loading {
@@ -53,11 +76,5 @@ pub(super) fn render(frame: &mut Frame<'_>, area: Rect, view: Option<&crate::app
             &mut selection,
         );
     }
-    frame.render_widget(
-        Paragraph::new(vec![
-            overlay_line("↑/↓ choose   A approve once   D deny"),
-            overlay_line("R check current state   Esc close"),
-        ]),
-        rows[2],
-    );
+    frame.render_widget(Paragraph::new(hints), rows[2]);
 }

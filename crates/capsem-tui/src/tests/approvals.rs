@@ -65,6 +65,25 @@ fn list(vm_id: &str) -> SecurityAskListResponse {
 }
 
 #[test]
+fn narrow_approval_panel_keeps_all_decision_and_navigation_hints_visible() {
+    let mut app = App::new(fixture_state());
+    let vm_id = app.state().active_session_id.clone();
+    app.handle_key(key(KeyCode::Char('a'), KeyModifiers::ALT));
+    app.apply_approval_list(&vm_id, Ok(list(&vm_id)));
+    for width in [100, 40, 32] {
+        let screen = render_app_snapshot(&app, width, 24).unwrap();
+        let refresh = if width == 100 {
+            "R check current state"
+        } else {
+            "R refresh"
+        };
+        for hint in ["A approve once", "D deny", refresh, "Esc close", "↑/↓ choose"] {
+            assert!(screen.contains(hint), "missing {hint} at {width}:\n{screen}");
+        }
+    }
+}
+
+#[test]
 fn approval_overlay_lists_safe_facts_and_decides_once_for_the_observed_generation() {
     let mut app = App::new(fixture_state());
     let vm_id = app.state().active_session_id.clone();

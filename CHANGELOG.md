@@ -280,6 +280,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep approval, denial, refresh and close shortcuts readable in narrow TUI
+  approval panels.
+
 - Restore ARM64 debug-image preparation with the qualified published image and
   its verified prepared root and package evidence.
 
