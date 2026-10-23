@@ -24,6 +24,7 @@ mod mcp_endpoint;
 mod mcp_frame;
 mod mcp_http;
 mod mcp_observe;
+mod mcp_response;
 pub mod pipeline;
 mod pipeline_factory;
 pub mod protocol;
@@ -609,6 +610,8 @@ async fn serve_pipeline<IO>(
     // avoids re-establishing TCP[+TLS] for every request on the
     // same connection.
     let cached_upstream: Arc<UpstreamCache> = Arc::default();
+    let mcp_responses = Arc::new(mcp_response::Tasks::default());
+    let request_mcp_responses = Arc::clone(&mcp_responses);
 
     let svc = hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
         let upstream_tls = Arc::clone(&upstream_tls);
@@ -616,6 +619,7 @@ async fn serve_pipeline<IO>(
         let config_arc = Arc::clone(&config_arc);
         let process_name = Arc::clone(&process_name);
         let cached_upstream = Arc::clone(&cached_upstream);
+        let mcp_responses = Arc::clone(&request_mcp_responses);
 
         async move {
             let (request_domain, upstream_port, protocol, upstream_protocol, authoritative_host, fixed_identity) =
@@ -676,6 +680,7 @@ async fn serve_pipeline<IO>(
                 ai_identity.protocol,
                 &cached_upstream,
                 policy_snapshot,
+                &mcp_responses,
             )
             .await
         }
@@ -696,6 +701,7 @@ async fn serve_pipeline<IO>(
             warn!(error = %e, "hyper serve error");
         }
     }
+    mcp_responses.drain().await;
 }
 
 /// Handle a single HTTP request within a MITM-proxied connection
@@ -731,6 +737,7 @@ async fn handle_request(
     ai_protocol: Option<ModelProtocol>,
     cached_upstream: &UpstreamCache,
     policy_snapshot: Arc<crate::net::proxy_engine::ProxyPolicySnapshot>,
+    mcp_responses: &mcp_response::Tasks,
 ) -> Result<hyper::Response<ProxyBoxBody>, anyhow::Error> {
     use http_body_util::BodyExt;
 
@@ -2092,7 +2099,7 @@ async fn handle_request(
     let mut effective_security_decision = request_security_decision.clone();
     let mut effective_matched_rule = effective_security_decision.matched_rule(matched_rule.clone());
 
-    let resp_status = resp_parts.status.as_u16();
+    let mut resp_status = resp_parts.status.as_u16();
     tracing::Span::current().record("status", resp_status);
 
     // Replay decoded bytes without stale gzip/length headers. Complete-body
@@ -2335,61 +2342,53 @@ async fn handle_request(
             }
         }
         if let Some(observed) = observed_mcp_request.as_ref() {
-            let response_preview = Some(String::from_utf8_lossy(&response_body).to_string());
-            let tool_list = if observed.method == "tools/list" {
-                response_preview.clone()
-            } else {
-                None
-            };
-            let security_event = security_event_with_transport(
-                observed
-                    .security_event(tool_list, response_preview.as_deref())
-                    .with_http(HttpSecurityEvent {
-                        host: Some(domain.to_string()),
-                        method: Some(method.clone()),
-                        path: Some(path.clone()),
-                        query: query.clone(),
-                        status: Some(resp_status.to_string()),
-                        body: observed.request_preview.clone(),
-                    }),
-                upstream_ip,
-                upstream_port,
-            );
-            let call = McpCall {
-                event_id: mcp_request_security_decision.approval_event_id.clone(),
-                timestamp: SystemTime::now(),
-                server_name: observed.server_name.clone(),
-                method: observed.method.clone(),
-                tool_name: observed.tool_name.clone(),
-                request_id: observed.request_id.clone(),
-                request_preview: observed.request_preview.clone(),
-                response_preview,
-                decision: "allowed".to_string(),
-                duration_ms: start_time.elapsed().as_millis() as u64,
-                error_message: None,
-                process_name: process_name.clone(),
-                bytes_sent: observed.bytes_sent,
-                bytes_received: response_body.len() as u64,
-                transport: "http".to_string(),
-                policy_mode: mcp_request_security_decision.policy_mode.clone(),
-                policy_action: mcp_request_security_decision.policy_action.clone(),
-                policy_rule: mcp_request_security_decision.policy_rule.clone(),
-                policy_reason: mcp_request_security_decision.policy_reason.clone(),
-                trace_id: capsem_foundation::telemetry::ambient_capsem_trace_id(),
-                credential_ref: credential_ref.clone(),
-            };
-            if let Some(event_id) = emit_security_write(&config.db, WriteOp::McpCall(call)).await {
-                emit_evaluated_security_rules(
-                    Arc::clone(&config.db),
-                    event_id,
-                    observed.event_type(),
-                    Arc::clone(&rules),
-                    std::collections::BTreeMap::new().into(),
-                    security_event,
-                    current_unix_ms(),
-                    "mcp_over_http",
+            let outcome = mcp_responses
+                .enforce(
+                    mcp_response::Context {
+                        config: Arc::clone(config),
+                        policy: Arc::clone(&policy_snapshot),
+                        observed: observed.clone(),
+                        http: HttpSecurityEvent {
+                            host: Some(domain.to_string()),
+                            method: Some(method.clone()),
+                            path: Some(path.clone()),
+                            query: query.clone(),
+                            status: Some(resp_status.to_string()),
+                            body: observed.request_preview.clone(),
+                        },
+                        upstream_ip,
+                        upstream_port,
+                        process_name: process_name.clone(),
+                        credential_ref: credential_ref.clone(),
+                        duration_ms: start_time.elapsed().as_millis() as u64,
+                        decision: mcp_request_security_decision,
+                    },
+                    response_body,
                 )
                 .await;
+            match outcome {
+                Ok((body, outcome)) => {
+                    response_body = body;
+                    effective_security_decision = outcome.decision;
+                    if outcome.denied {
+                        resp_status = 403;
+                        resp_parts.status = http::StatusCode::FORBIDDEN;
+                        resp_parts
+                            .headers
+                            .insert(http::header::CONTENT_TYPE, http::HeaderValue::from_static("text/plain"));
+                    }
+                }
+                Err(error) => {
+                    return Ok(make_502(
+                        &error,
+                        &method,
+                        &path,
+                        &query,
+                        &req_hdrs,
+                        start_time,
+                        &effective_security_decision,
+                    ))
+                }
             }
         }
         materialize_collected_response_headers(&mut resp_parts.headers, response_body.len(), is_gzip);
@@ -2414,7 +2413,7 @@ async fn handle_request(
         path,
         query,
         status_code: Some(resp_status),
-        decision: Decision::Allowed,
+        decision: effective_security_decision.network_decision(),
         matched_rule: Some(effective_security_decision.matched_rule(effective_matched_rule)),
         request_headers: Some(req_hdrs),
         response_headers: Some(resp_hdrs),

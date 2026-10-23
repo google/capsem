@@ -10,6 +10,13 @@ pub(super) struct SecurityBoundaryDecisionFields {
 }
 
 impl SecurityBoundaryDecisionFields {
+    pub(super) fn network_decision(&self) -> capsem_logger::Decision {
+        match self.policy_action.as_deref() {
+            Some("block") => capsem_logger::Decision::Denied,
+            _ => capsem_logger::Decision::Allowed,
+        }
+    }
+
     pub(super) fn from_enforcement(decision: &SecurityEnforcementDecision) -> Self {
         Self {
             policy_mode: Some("enforce".to_string()),

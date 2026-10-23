@@ -422,6 +422,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Enforce remote MCP response rules before guest delivery and preserve executed tool audits on disconnect.
+
 - Keep MCP approval decisions linked to the original tool call in the session ledger.
 
 - Keep DNS approval decisions linked to the original query in the session ledger.
