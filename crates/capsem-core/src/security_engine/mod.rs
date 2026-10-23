@@ -34,10 +34,17 @@ use forensics::{
     trace_security_rule_match,
 };
 pub use network::NetworkSecurityEvent;
+mod http_materialization;
 mod plugins;
+pub(crate) use http_materialization::materialize_http_request_for_upstream_with_credentials;
+pub use http_materialization::{
+    materialize_http_request_for_upstream, materialize_http_request_for_upstream_after_enforcement,
+    HttpRequestSecurityEvent, MaterializedHttpRequest,
+};
 mod rule_decision;
 mod rule_emission;
 pub(crate) use plugins::redact_query_for_ledger;
+pub(crate) use plugins::sensitive_metadata;
 use plugins::{CredentialBrokerPlugin, DummyPostAllowPlugin, DummyPreEicarPlugin, LogSanitizerPlugin};
 use rule_decision::*;
 pub use rule_emission::*;
@@ -1013,6 +1020,9 @@ pub struct SecurityPluginExecution {
 /// transport should hang off `SecurityEventEmitter`, not protocol-owned writes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SecurityEvent {
+    /// Normalized byte validation fact from a bounded HTTP text body. Invalid
+    /// bytes themselves never enter string previews or the forensic ledger.
+    pub http_body_utf8_valid: Option<bool>,
     pub container: Option<ContainerSecurityEvent>,
     pub network: Option<NetworkSecurityEvent>,
     pub event_type: RuntimeSecurityEventType,
@@ -1090,6 +1100,7 @@ impl From<&SecurityEvent> for SerializableSecurityEvent {
 impl SecurityEvent {
     pub fn new(event_type: RuntimeSecurityEventType) -> Self {
         Self {
+            http_body_utf8_valid: None,
             container: None,
             network: None,
             event_type,
@@ -1677,92 +1688,6 @@ fn borrowed_string(value: Option<&str>) -> Option<PolicySubjectValue<'_>> {
 
 fn json_string(value: Option<&serde_json::Value>) -> Option<PolicySubjectValue<'_>> {
     value.map(|value| PolicySubjectValue::String(Cow::Owned(value.to_string())))
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HttpRequestSecurityEvent {
-    pub domain: String,
-    pub ai_provider: Option<ProviderKind>,
-    pub headers: http::HeaderMap,
-    pub query: Option<String>,
-}
-
-impl HttpRequestSecurityEvent {
-    pub fn new(
-        domain: impl Into<String>,
-        ai_provider: Option<ProviderKind>,
-        headers: http::HeaderMap,
-        query: Option<String>,
-    ) -> Self {
-        Self {
-            domain: domain.into(),
-            ai_provider,
-            headers,
-            query,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MaterializedHttpRequest {
-    pub headers: http::HeaderMap,
-    pub query: Option<String>,
-    pub credential_ref: Option<String>,
-}
-
-pub fn materialize_http_request_for_upstream(
-    event: &SecurityEvent,
-) -> Result<MaterializedHttpRequest, SecurityActionError> {
-    materialize_http_request_for_upstream_with_credentials(event, &crate::net::proxy_engine::LocalProxyCredentials)
-}
-
-pub(crate) fn materialize_http_request_for_upstream_with_credentials(
-    event: &SecurityEvent,
-    credentials: &dyn crate::net::proxy_engine::ProxyCredentials,
-) -> Result<MaterializedHttpRequest, SecurityActionError> {
-    let Some(request) = event.http_request.as_ref() else {
-        return Err(SecurityActionError::new(
-            "security event does not carry an HTTP request",
-        ));
-    };
-
-    if !event.action_trace.contains(&PolicyActionId::CredentialBrokerSubstitute) {
-        return Ok(MaterializedHttpRequest {
-            headers: request.headers.clone(),
-            query: request.query.clone(),
-            credential_ref: event.credential_ref.clone(),
-        });
-    }
-
-    let mut headers = request.headers.clone();
-    let BrokeredUpstreamCredentials { credential_ref, query } = credentials
-        .substitute_upstream(
-            &request.domain,
-            request.ai_provider,
-            &mut headers,
-            request.query.as_deref(),
-        )
-        .map_err(SecurityActionError::new)?;
-
-    Ok(MaterializedHttpRequest {
-        headers,
-        query,
-        credential_ref: event.credential_ref.clone().or(credential_ref),
-    })
-}
-
-pub fn materialize_http_request_for_upstream_after_enforcement(
-    event: &SecurityEvent,
-    decision: &SecurityEnforcementDecision,
-) -> Result<MaterializedHttpRequest, SecurityActionError> {
-    if !decision.is_allowed() {
-        return Err(SecurityActionError::new(format!(
-            "security rule '{}' requires '{}' before HTTP materialization",
-            decision.rule_id.as_deref().unwrap_or("unknown"),
-            decision.action.as_str()
-        )));
-    }
-    materialize_http_request_for_upstream(event)
 }
 
 impl SecurityEnforcementAction {

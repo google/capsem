@@ -26,6 +26,7 @@ match = "has(file.export.path)"
         SecurityPluginConfig {
             mode,
             detection_level: crate::net::policy_config::DetectionLevel::High,
+            content: Default::default(),
         },
     );
     let event = SecurityEvent::new(RuntimeSecurityEventType::FileExport).with_file(FileSecurityEvent {
@@ -102,6 +103,7 @@ match = "has(file.export.path)"
         SecurityPluginConfig {
             mode: SecurityPluginMode::Ask,
             detection_level: crate::net::policy_config::DetectionLevel::High,
+            content: Default::default(),
         },
     );
     let event = SecurityEvent::new(RuntimeSecurityEventType::FileExport).with_file(FileSecurityEvent {
@@ -287,6 +289,7 @@ async fn process_exec_boundary_honors_a_blocking_plugin() {
         SecurityPluginConfig {
             mode: SecurityPluginMode::Block,
             detection_level: crate::net::policy_config::DetectionLevel::Critical,
+            content: Default::default(),
         },
     );
 
@@ -327,6 +330,7 @@ fn blocking_plugin_policy() -> BTreeMap<String, SecurityPluginConfig> {
         SecurityPluginConfig {
             mode: SecurityPluginMode::Block,
             detection_level: crate::net::policy_config::DetectionLevel::Critical,
+            content: Default::default(),
         },
     );
     policy
@@ -406,6 +410,7 @@ async fn plugin_aware_emitter_leaves_an_allowing_plugin_alone() {
         SecurityPluginConfig {
             mode: SecurityPluginMode::Allow,
             detection_level: crate::net::policy_config::DetectionLevel::Informational,
+            content: Default::default(),
         },
     );
 

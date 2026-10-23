@@ -39,6 +39,7 @@ fn rewrite_informational() -> SecurityPluginConfig {
     SecurityPluginConfig {
         mode: SecurityPluginMode::Disable,
         detection_level: DetectionLevel::High,
+        content: Default::default(),
     }
 }
 

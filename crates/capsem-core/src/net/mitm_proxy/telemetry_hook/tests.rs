@@ -128,6 +128,7 @@ impl Drop for TraceEnvGuard {
 /// Returns a generic request context for an allowed Anthropic POST.
 fn anthropic_req_ctx() -> TelemetryRequestContext {
     TelemetryRequestContext {
+        content_evidence: None,
         policy_snapshot: policy_snapshot(SecurityRuleSet::new(Vec::new())),
         domain: "api.anthropic.com".into(),
         process_name: Some("agent".into()),

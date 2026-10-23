@@ -3,6 +3,7 @@
 //! `read_http11_request`) through `super::*`.
 use super::*;
 
+mod content_filters;
 mod deadlines;
 mod host_normalization;
 mod mcp_gateway_route;

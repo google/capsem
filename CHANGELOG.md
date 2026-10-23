@@ -48,6 +48,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Carry committed price coverage through session, per-model and global service
   totals without deriving price completeness from a zero cost.
+- Add separate opt-in HTTP PII, secret-exfiltration and UTF-8 text plugins with
+  typed direction/entity controls, bounded complete-body enforcement and
+  payload-free audit counts. Enabled inspection buffers text streams; unsupported
+  encodings, upgraded tunnels and MCP-over-HTTP are explicitly refused.
+- Keep semantic response-body admission until buffered bytes are consumed or
+  discarded so slow readers cannot multiply complete response buffers.
+
 - Preserve all concatenated gzip members during bounded complete-body decoding
   and reject malformed trailing bytes instead of silently losing content.
 

@@ -7,6 +7,9 @@
 //! "block"` for every blocked request (google/capsem#203).
 use super::*;
 
+#[cfg(test)]
+mod tests;
+
 /// Whether the caller enforces the rule's decision on this event.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RuleRowDecision {
@@ -121,6 +124,11 @@ async fn emit_rule_rows(
     let mut decision_state = enriched_event.decision.clone();
     let mut rule_events = Vec::new();
     let mut writes = Vec::new();
+    if evaluation.matched_rules().is_empty() {
+        if let Some(write) = plugin_execution_write(event_id.clone(), event_type, &enriched_event, timestamp_unix_ms)? {
+            writes.push(write);
+        }
+    }
     if let Some(rule) = selected_rule {
         let decision_event = security_decision_event(
             event_id.clone(),
@@ -188,6 +196,12 @@ fn emit_rule_rows_blocking(
     let mut enforcement = security_enforcement_decision(selected_rule, &mut enriched_event);
     let mut decision_state = enriched_event.decision.clone();
     let mut rule_events = Vec::new();
+    if evaluation.matched_rules().is_empty() {
+        if let Some(write) = plugin_execution_write(event_id.clone(), event_type, &enriched_event, timestamp_unix_ms)? {
+            emit_security_write_blocking(db, write)
+                .ok_or_else(|| "ledger refused plugin execution evidence".to_string())?;
+        }
+    }
     if let Some(rule) = selected_rule {
         emit_security_decision_transition_blocking(
             db,
@@ -231,4 +245,46 @@ fn emit_rule_rows_blocking(
         event: enriched_event,
         rule_events,
     })
+}
+
+/// Plugin evidence must not depend on an unrelated CEL rule matching. Reuse the
+/// existing decision ledger, carrying a snapshot (not an invented transition).
+fn plugin_execution_write(
+    event_id: SecurityEventId,
+    event_type: RuntimeSecurityEventType,
+    event: &SecurityEvent,
+    timestamp_unix_ms: i64,
+) -> Result<Option<WriteOp>, String> {
+    let Some(execution) = event.plugin_executions.first() else {
+        return Ok(None);
+    };
+    // This row adds execution accounting, not another payload archive. Borrow
+    // only its typed evidence instead of building a forensic JSON body copy.
+    #[derive(Serialize)]
+    struct Evidence<'a> {
+        plugin_executions: &'a [SecurityPluginExecution],
+        detections: &'a [SecurityDetectionEvent],
+    }
+    let evidence = Evidence {
+        plugin_executions: &event.plugin_executions,
+        detections: &event.detections,
+    };
+    let decision = event.decision.effective.into();
+    Ok(Some(WriteOp::SecurityDecisionEvent(SecurityDecisionEvent {
+        timestamp_unix_ms,
+        event_id: event_id.as_str().into(),
+        event_type: event_type.as_str().into(),
+        stage: capsem_logger::SecurityDecisionStage::Preprocess,
+        actor: "security.plugins".into(),
+        rule_id: None,
+        plugin_id: Some(execution.plugin_id.clone()),
+        previous_decision: decision,
+        requested_decision: decision,
+        effective_decision: decision,
+        reason: Some("completed plugin execution snapshot".into()),
+        event_json: serde_json::to_string(&evidence).map_err(|_| "serialize plugin execution evidence".to_string())?,
+        trace_id: event.trace_id(),
+        turn_id: event.trace_id(),
+        credential_ref: event.credential_ref.clone(),
+    })))
 }

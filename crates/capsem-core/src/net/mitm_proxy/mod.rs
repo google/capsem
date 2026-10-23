@@ -25,7 +25,13 @@ mod mcp_observe;
 pub mod pipeline;
 mod pipeline_factory;
 pub mod protocol;
+mod request_security;
 mod semantic_body;
+use request_security::{
+    ai_identity_for_target_or_path, ai_protocol_for_body_preview, body_capture_limit, collected_request_body_stats,
+    http_request_security_event, response_body_capture_limit, should_sniff_unknown_model_body,
+    HttpRequestSecurityEventInput, RequestBodySource, SecurityBoundaryDecisionFields,
+};
 pub mod spans;
 pub mod sse_parser_hook;
 pub mod telemetry_hook;
@@ -215,146 +221,6 @@ impl StandaloneModelTarget {
 
     pub const fn model_protocol(&self) -> ModelProtocol {
         self.model_protocol
-    }
-}
-
-fn ai_identity_for_target_or_path(
-    registry: &crate::net::policy_config::ModelEndpointRegistry,
-    domain: &str,
-    upstream_port: u16,
-    path: &str,
-) -> ModelTrafficIdentity {
-    let path_protocol = route_provider(path).map(|(protocol, _)| protocol);
-    let endpoint_provider = registry.provider_for_target(domain, upstream_port);
-    let endpoint_protocol = registry.protocol_for_target(domain, upstream_port);
-    ModelTrafficIdentity {
-        provider: endpoint_provider.or_else(|| path_protocol.map(|_| ProviderKind::Unknown)),
-        protocol: path_protocol.or(endpoint_protocol),
-    }
-}
-
-fn ai_provider_for_target_or_path(
-    registry: &crate::net::policy_config::ModelEndpointRegistry,
-    domain: &str,
-    upstream_port: u16,
-    path: &str,
-) -> Option<ProviderKind> {
-    ai_identity_for_target_or_path(registry, domain, upstream_port, path).provider
-}
-
-fn ai_protocol_for_body_preview(body: &[u8]) -> Option<ModelProtocol> {
-    if body.len() > AI_BODY_CAPTURE_LIMIT {
-        return None;
-    }
-    let json: serde_json::Value = serde_json::from_slice(body).ok()?;
-    let obj = json.as_object()?;
-    let model = obj.get("model").and_then(|value| value.as_str());
-    let has_messages = obj.get("messages").and_then(|value| value.as_array()).is_some();
-    let has_google_contents = obj.get("contents").and_then(|value| value.as_array()).is_some()
-        || obj.contains_key("generationConfig")
-        || obj.contains_key("safetySettings");
-
-    if has_google_contents || model.is_some_and(is_google_model_name) {
-        return Some(ModelProtocol::Google);
-    }
-    if model.is_some_and(is_anthropic_model_name) || (has_messages && obj.contains_key("max_tokens")) {
-        return Some(ModelProtocol::Anthropic);
-    }
-    if model.is_some_and(is_openai_model_name)
-        || obj.contains_key("input")
-        || obj.contains_key("response_format")
-        || obj.contains_key("stream_options")
-        || (has_messages && obj.contains_key("tools"))
-    {
-        return Some(ModelProtocol::OpenAi);
-    }
-    None
-}
-
-fn should_sniff_unknown_model_body(
-    ai_provider: Option<ProviderKind>,
-    method: &http::Method,
-    headers: &http::HeaderMap,
-) -> bool {
-    if ai_provider.is_some() {
-        return false;
-    }
-    if !matches!(*method, http::Method::POST | http::Method::PUT | http::Method::PATCH) {
-        return false;
-    }
-    let is_json = headers
-        .get(http::header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .map(|value| value.to_ascii_lowercase().contains("json"))
-        .unwrap_or(false);
-    if !is_json {
-        return false;
-    }
-    let Some(len) = headers
-        .get(http::header::CONTENT_LENGTH)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.parse::<usize>().ok())
-    else {
-        return false;
-    };
-    len <= AI_BODY_CAPTURE_LIMIT
-}
-
-fn body_capture_limit(
-    ai_provider: Option<ProviderKind>,
-    domain: &str,
-    path: &str,
-    log_bodies: bool,
-    max_body: usize,
-) -> usize {
-    if ai_provider.is_some() {
-        return AI_BODY_CAPTURE_LIMIT.max(max_body);
-    }
-    if log_bodies {
-        return max_body;
-    }
-    if crate::credential_broker::is_http_body_credential_candidate(domain, path) {
-        return CREDENTIAL_BODY_CAPTURE_LIMIT;
-    }
-    0
-}
-
-fn response_body_capture_limit(
-    ai_provider: Option<ProviderKind>,
-    domain: &str,
-    path: &str,
-    log_bodies: bool,
-    max_body: usize,
-    credential_ref: Option<&str>,
-) -> usize {
-    let cap = body_capture_limit(ai_provider, domain, path, log_bodies, max_body);
-    if credential_ref.is_some() {
-        cap.max(CREDENTIAL_BODY_CAPTURE_LIMIT)
-    } else {
-        cap
-    }
-}
-
-#[derive(Clone, Debug, Default)]
-struct SecurityBoundaryDecisionFields {
-    policy_mode: Option<String>,
-    policy_action: Option<String>,
-    policy_rule: Option<String>,
-    policy_reason: Option<String>,
-}
-
-impl SecurityBoundaryDecisionFields {
-    fn from_enforcement(decision: &crate::security_engine::SecurityEnforcementDecision) -> Self {
-        Self {
-            policy_mode: Some("enforce".to_string()),
-            policy_action: Some(decision.action.as_str().to_string()),
-            policy_rule: decision.rule_id.clone(),
-            policy_reason: decision.reason.clone(),
-        }
-    }
-
-    fn matched_rule(&self, fallback: String) -> String {
-        self.policy_rule.clone().unwrap_or(fallback)
     }
 }
 
@@ -843,40 +709,6 @@ async fn serve_pipeline<IO>(
     }
 }
 
-struct HttpRequestSecurityEventInput<'a> {
-    domain: &'a str,
-    upstream_ip: Option<IpAddr>,
-    upstream_port: u16,
-    method: &'a str,
-    path: &'a str,
-    query: Option<String>,
-    ai_provider: Option<ProviderKind>,
-    headers: http::HeaderMap,
-    body: Option<&'a Bytes>,
-}
-
-fn http_request_security_event(input: HttpRequestSecurityEventInput<'_>) -> SecurityEvent {
-    let body = input
-        .body
-        .and_then(|body| std::str::from_utf8(body).ok().map(ToOwned::to_owned));
-    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
-        .with_http(HttpSecurityEvent {
-            host: Some(input.domain.to_string()),
-            method: Some(input.method.to_string()),
-            path: Some(input.path.to_string()),
-            query: input.query.clone(),
-            status: None,
-            body,
-        })
-        .with_http_request(crate::security_engine::HttpRequestSecurityEvent::new(
-            input.domain,
-            input.ai_provider,
-            input.headers,
-            input.query,
-        ));
-    security_event_with_transport(event, input.upstream_ip, input.upstream_port)
-}
-
 /// Handle a single HTTP request within a MITM-proxied connection
 /// (TLS or plain HTTP).
 ///
@@ -983,7 +815,7 @@ async fn handle_request(
     }
 
     let method = parts.method.to_string();
-    let (path, query) = split_path_query(&parts.uri);
+    let (mut path, query) = split_path_query(&parts.uri);
     let formatted_req_headers = format_headers_for_domain(domain, ai_provider, &parts.headers);
     let req_hdrs = formatted_req_headers.formatted;
     let credential_observations = formatted_req_headers.observations;
@@ -1024,42 +856,6 @@ async fn handle_request(
         dispatched.boxed()
     };
 
-    if is_upgrade {
-        // Boxed: the tunnel branch is large and rarely taken, and it must not
-        // widen the future of every plain request on the connection task.
-        return Box::pin(upgrade::handle_upgrade(
-            upgrade::UpgradeRequest {
-                parts: &parts,
-                client_upgrade: client_upgrade.expect("websocket upgrade captured before split"),
-                domain,
-                target: &target,
-                protocol: upstream_protocol,
-                upstream_port,
-                upstream_tls,
-                config,
-                process_name,
-                policy_snapshot: &policy_snapshot,
-                ai_provider,
-                ai_protocol,
-                method: method.clone(),
-                path: path.clone(),
-                query: query.clone(),
-                req_hdrs: req_hdrs.clone(),
-                matched_rule: matched_rule.clone(),
-                start_time,
-                conn_type,
-                credential_ref: credential_ref.clone(),
-                credential_observations: credential_observations.clone(),
-            },
-            &seal_with_telemetry,
-        ))
-        .await;
-    }
-
-    // Save original request headers.
-    let mut original_headers = parts.headers.clone();
-    let original_method = parts.method.clone();
-
     // Helper: build a 502 Bad Gateway response with telemetry so upstream
     // errors don't kill keep-alive connections (returns Ok, not Err).
     let make_502 = |error: &dyn std::fmt::Display,
@@ -1070,9 +866,19 @@ async fn handle_request(
                     start: Instant,
                     policy_fields: &SecurityBoundaryDecisionFields|
      -> hyper::Response<ProxyBoxBody> {
+        // Collection/decode failures precede a complete inspection. Omit
+        // uninspected request metadata rather than archive possible matches.
+        let protected = semantic_body::inspection_enabled(&policy_snapshot, false)
+            || semantic_body::inspection_enabled(&policy_snapshot, true);
+        let (path, query, req_hdrs) = if protected {
+            ("[CONTENT FILTERED]", &None, "[CONTENT FILTERED]")
+        } else {
+            (path, query, req_hdrs)
+        };
         warn!(domain, method, path, error = %error, "MITM proxy: upstream error");
         let body_text = format!("Capsem: upstream error ({error})\n");
         let req_ctx = TelemetryRequestContext {
+            content_evidence: None,
             policy_snapshot: Arc::clone(&policy_snapshot),
             domain: domain.to_string(),
             process_name: process_name.clone(),
@@ -1109,23 +915,75 @@ async fn handle_request(
             .unwrap()
     };
 
-    enum RequestBodySource {
-        Incoming(hyper::body::Incoming),
-        Collected(Bytes),
+    let inspect_outbound = semantic_body::inspection_enabled(&policy_snapshot, false)
+        || semantic_body::utf8_enabled(&policy_snapshot, false, &parts.headers);
+    let inspect_inbound = semantic_body::inspection_enabled(&policy_snapshot, true);
+    // This permit precedes body collection, bounding concurrent plugin buffers.
+    let mut _content_body_permit = if inspect_outbound || inspect_inbound {
+        match Arc::clone(&config.semantic_body_budget).try_acquire_owned() {
+            Ok(permit) => Some(permit),
+            Err(error) => {
+                return Ok(make_502(
+                    &error,
+                    &method,
+                    &path,
+                    &query,
+                    &req_hdrs,
+                    start_time,
+                    &request_security_decision,
+                ))
+            }
+        }
+    } else {
+        None
+    };
+    if is_upgrade && (inspect_outbound || inspect_inbound) {
+        return Ok(make_502(
+            &anyhow::anyhow!("content inspection does not support upgraded tunnels"),
+            &method,
+            &path,
+            &query,
+            &req_hdrs,
+            start_time,
+            &request_security_decision,
+        ));
     }
 
-    fn collected_request_body_stats(
-        request_body_source: &RequestBodySource,
-        max_body_capture: usize,
-    ) -> Arc<Mutex<BodyStats>> {
-        let mut stats = BodyStats::new(max_body_capture);
-        if let RequestBodySource::Collected(body) = request_body_source {
-            stats.bytes = body.len() as u64;
-            let to_copy = max_body_capture.min(body.len());
-            stats.preview.extend_from_slice(&body[..to_copy]);
-        }
-        Arc::new(Mutex::new(stats))
+    if is_upgrade {
+        // Boxed: the tunnel branch is large and rarely taken, and it must not
+        // widen the future of every plain request on the connection task.
+        return Box::pin(upgrade::handle_upgrade(
+            upgrade::UpgradeRequest {
+                parts: &parts,
+                client_upgrade: client_upgrade.expect("websocket upgrade captured before split"),
+                domain,
+                target: &target,
+                protocol: upstream_protocol,
+                upstream_port,
+                upstream_tls,
+                config,
+                process_name,
+                policy_snapshot: &policy_snapshot,
+                ai_provider,
+                ai_protocol,
+                method: method.clone(),
+                path: path.clone(),
+                query: query.clone(),
+                req_hdrs: req_hdrs.clone(),
+                matched_rule: matched_rule.clone(),
+                start_time,
+                conn_type,
+                credential_ref: credential_ref.clone(),
+                credential_observations: credential_observations.clone(),
+            },
+            &seal_with_telemetry,
+        ))
+        .await;
     }
+
+    // Save original request headers.
+    let mut original_headers = parts.headers.clone();
+    let original_method = parts.method.clone();
 
     let mut effective_ai_provider = ai_provider;
     let mut effective_ai_protocol = ai_protocol;
@@ -1136,7 +994,7 @@ async fn handle_request(
     let should_sniff_model =
         should_sniff_unknown_model_body(effective_ai_provider, &original_method, &original_headers);
     let should_sniff_mcp = should_sniff_mcp_http_body(&original_method, &original_headers);
-    if should_sniff_model || should_sniff_mcp {
+    if should_sniff_model || should_sniff_mcp || inspect_outbound {
         let sniff_span = tracing::debug_span!(
             target: "capsem.mitm",
             "mitm_unknown_semantic_body_sniff",
@@ -1153,14 +1011,19 @@ async fn handle_request(
             } else {
                 MCP_BODY_CAPTURE_LIMIT
             };
-            let collected = match http_body_util::Limited::new(body, preview_limit)
-                .collect()
-                .instrument(sniff_span.clone())
-                .await
-            {
-                Ok(collected) => collected,
+            let collected = if inspect_outbound {
+                semantic_body::collect(body, sniff_span.clone()).await
+            } else {
+                http_body_util::Limited::new(body, preview_limit)
+                    .collect()
+                    .instrument(sniff_span.clone())
+                    .await
+                    .map(|body| body.to_bytes())
+                    .map_err(|error| error.to_string())
+            };
+            let body_bytes = match collected {
+                Ok(body) => body,
                 Err(error) => {
-                    sniff_span.record("status", "error");
                     return Ok(make_502(
                         &error,
                         &method,
@@ -1169,10 +1032,36 @@ async fn handle_request(
                         &req_hdrs,
                         start_time,
                         &request_security_decision,
-                    ));
+                    ))
                 }
             };
-            let body_bytes = collected.to_bytes();
+            let body_bytes = if inspect_outbound {
+                match semantic_body::inspection_body(
+                    body_bytes,
+                    &original_headers,
+                    semantic_body::inspection_enabled(&policy_snapshot, false),
+                )
+                .await
+                {
+                    Ok(body) => {
+                        semantic_body::replay_headers(&mut original_headers, body.len());
+                        body
+                    }
+                    Err(error) => {
+                        return Ok(make_502(
+                            &error,
+                            &method,
+                            &path,
+                            &query,
+                            &req_hdrs,
+                            start_time,
+                            &request_security_decision,
+                        ))
+                    }
+                }
+            } else {
+                body_bytes
+            };
             let mut sniff_matched = false;
             if should_sniff_model {
                 if let Some(protocol) = ai_protocol_for_body_preview(&body_bytes) {
@@ -1220,6 +1109,23 @@ async fn handle_request(
         }
     }
 
+    // MCP has separate argument/result ledger materialization. Until that rail
+    // can carry filtered facts without retaining its original previews, fail
+    // closed rather than claiming HTTP masking protects the duplicate payload.
+    if observed_mcp_request.is_some()
+        && (semantic_body::inspection_enabled(&policy_snapshot, false)
+            || semantic_body::inspection_enabled(&policy_snapshot, true))
+    {
+        return Ok(make_502(
+            &"content filtering does not yet support MCP-over-HTTP payloads",
+            &method,
+            "[CONTENT FILTERED]",
+            &None,
+            "[CONTENT FILTERED]",
+            start_time,
+            &request_security_decision,
+        ));
+    }
     let mut http_security_event = http_request_security_event(HttpRequestSecurityEventInput {
         domain,
         upstream_ip,
@@ -1269,6 +1175,8 @@ async fn handle_request(
             ));
         }
     };
+    let mut content_evidence = None;
+    semantic_body::record_content_evidence(&mut content_evidence, &http_evaluation.event);
     let credential_observations = {
         let mut observations = credential_observations.clone();
         observations.extend(http_evaluation.event.credential_observations.clone());
@@ -1289,6 +1197,7 @@ async fn handle_request(
             format!("capsem: HTTP request blocked by security rule: {rule_id}\n")
         };
         let req_ctx = TelemetryRequestContext {
+            content_evidence: content_evidence.take(),
             policy_snapshot: Arc::clone(&policy_snapshot),
             domain: domain.to_string(),
             process_name: process_name.clone(),
@@ -1324,6 +1233,18 @@ async fn handle_request(
             .body(seal_with_telemetry(deny_body, req_ctx, ai_provider, ai_protocol))
             .unwrap());
     }
+    if inspect_outbound {
+        if let Some(updated) = http_evaluation.event.http.as_ref().and_then(|http| http.path.as_ref()) {
+            path.clone_from(updated);
+        }
+        if let Some(body) = http_evaluation.event.http.as_ref().and_then(|http| http.body.as_ref()) {
+            if let RequestBodySource::Collected(original) = &request_body_source {
+                if body.as_bytes() != original.as_ref() {
+                    request_body_source = RequestBodySource::Collected(Bytes::from(body.clone()));
+                }
+            }
+        }
+    }
     // Host-side plain-HTTP port allowlist. The port came from the guest's Host
     // header; enforce it before any upstream dial so a guest reaching the proxy
     // directly cannot make the host connect to an arbitrary port.
@@ -1333,6 +1254,7 @@ async fn handle_request(
         let matched = "security.web.http_upstream_ports";
         let body_text = format!("capsem: HTTP upstream port {upstream_port} blocked by {matched}\n");
         let req_ctx = TelemetryRequestContext {
+            content_evidence: content_evidence.take(),
             policy_snapshot: Arc::clone(&policy_snapshot),
             domain: domain.to_string(),
             process_name: process_name.clone(),
@@ -1505,6 +1427,7 @@ async fn handle_request(
             let mut scrubbed_stats = BodyStats::new(0);
             scrubbed_stats.bytes = observed.bytes_sent;
             let req_ctx = TelemetryRequestContext {
+                content_evidence: content_evidence.take(),
                 policy_snapshot: Arc::clone(&policy_snapshot),
                 domain: domain.to_string(),
                 process_name: process_name.clone(),
@@ -1564,24 +1487,25 @@ async fn handle_request(
     // A connected client is much cheaper than a semantic body. Keep the
     // body permit through both request and response evaluation, and refuse
     // excess work before collecting an attacker-controlled upload.
-    let _semantic_body_permit = if should_evaluate_model_request || observed_mcp_request.is_some() {
-        match Arc::clone(&config.semantic_body_budget).try_acquire_owned() {
-            Ok(permit) => Some(permit),
-            Err(error) => {
-                return Ok(make_502(
-                    &error,
-                    &method,
-                    &path,
-                    &query,
-                    &req_hdrs,
-                    start_time,
-                    &request_security_decision,
-                ));
+    let mut _semantic_body_permit =
+        if _content_body_permit.is_none() && (should_evaluate_model_request || observed_mcp_request.is_some()) {
+            match Arc::clone(&config.semantic_body_budget).try_acquire_owned() {
+                Ok(permit) => Some(permit),
+                Err(error) => {
+                    return Ok(make_502(
+                        &error,
+                        &method,
+                        &path,
+                        &query,
+                        &req_hdrs,
+                        start_time,
+                        &request_security_decision,
+                    ));
+                }
             }
-        }
-    } else {
-        None
-    };
+        } else {
+            None
+        };
     let upstream_req_body: UpstreamRequestBody = if should_evaluate_model_request {
         let model_request_span = tracing::debug_span!(
             target: "capsem.mitm",
@@ -1666,6 +1590,7 @@ async fn handle_request(
                 let mut scrubbed_stats = BodyStats::new(0);
                 scrubbed_stats.bytes = body_bytes.len() as u64;
                 let req_ctx = TelemetryRequestContext {
+                    content_evidence: content_evidence.take(),
                     policy_snapshot: Arc::clone(&policy_snapshot),
                     domain: domain.to_string(),
                     process_name: process_name.clone(),
@@ -2183,6 +2108,27 @@ async fn handle_request(
     // is just three field accesses on the parts struct and stays
     // inline here -- moving it to an async Hook would re-introduce
     // the kind of plumbing the slice removed.
+    let inspect_inbound = inspect_inbound || semantic_body::utf8_enabled(&policy_snapshot, true, &resp_parts.headers);
+    let mut _response_content_permit =
+        if inspect_inbound && _content_body_permit.is_none() && _semantic_body_permit.is_none() {
+            match Arc::clone(&config.semantic_body_budget).try_acquire_owned() {
+                Ok(permit) => Some(permit),
+                Err(error) => {
+                    return Ok(make_502(
+                        &error,
+                        &method,
+                        &path,
+                        &query,
+                        &req_hdrs,
+                        start_time,
+                        &effective_security_decision,
+                    ))
+                }
+            }
+        } else {
+            None
+        };
+    let inspection_encoding_headers = inspect_inbound.then(|| resp_parts.headers.clone());
     let is_gzip = resp_parts
         .headers
         .get("content-encoding")
@@ -2214,7 +2160,8 @@ async fn handle_request(
 
     let should_evaluate_model_response =
         sniffed_model_request || effective_ai_protocol.is_some_and(|protocol| is_llm_api_path(protocol, &path));
-    let should_collect_semantic_response = should_evaluate_model_response || observed_mcp_request.is_some();
+    let should_collect_semantic_response =
+        should_evaluate_model_response || observed_mcp_request.is_some() || inspect_inbound;
 
     let resp_body: ProxyBoxBody = if should_collect_semantic_response {
         let model_response_span = tracing::debug_span!(
@@ -2243,7 +2190,17 @@ async fn handle_request(
                 ));
             }
         };
-        let mut response_body = match semantic_body::decompress_gzip(collected, is_gzip) {
+        let decoded = if let Some(headers) = inspection_encoding_headers.as_ref() {
+            semantic_body::inspection_body(
+                collected,
+                headers,
+                semantic_body::inspection_enabled(&policy_snapshot, true),
+            )
+            .await
+        } else {
+            semantic_body::decompress_gzip(collected, is_gzip)
+        };
+        let mut response_body = match decoded {
             Ok(body) => body,
             Err(error) => {
                 model_response_span.record("decision", "error");
@@ -2261,28 +2218,45 @@ async fn handle_request(
             }
         };
 
-        if let (Some(provider), Some(model_protocol)) = (effective_ai_provider, effective_ai_protocol) {
-            let request_preview = {
-                let st = req_stats.lock().expect("req body stats lock");
-                st.preview.clone()
+        if should_evaluate_model_response || inspect_inbound {
+            let model_event = if let (true, Some(provider), Some(model_protocol)) = (
+                should_evaluate_model_response,
+                effective_ai_provider,
+                effective_ai_protocol,
+            ) {
+                let request_preview = {
+                    let st = req_stats.lock().expect("req body stats lock");
+                    st.preview.clone()
+                };
+                let request_meta =
+                    crate::net::ai_traffic::request_parser::parse_request(model_protocol, &request_preview);
+                model_security_event(
+                    RuntimeSecurityEventType::ModelCall,
+                    provider,
+                    request_meta.model,
+                    Some(&request_preview),
+                    Some(&response_body),
+                )
+                .with_http(HttpSecurityEvent {
+                    host: Some(domain.to_string()),
+                    method: Some(method.clone()),
+                    path: Some(path.clone()),
+                    query: query.clone(),
+                    status: Some(resp_status.to_string()),
+                    body: Some(String::from_utf8_lossy(&response_body).to_string()),
+                })
+            } else {
+                SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+                    host: Some(domain.to_string()),
+                    method: Some(method.clone()),
+                    path: Some(path.clone()),
+                    query: query.clone(),
+                    status: Some(resp_status.to_string()),
+                    body: Some(String::from_utf8_lossy(&response_body).into_owned()),
+                })
             };
-            let request_meta = crate::net::ai_traffic::request_parser::parse_request(model_protocol, &request_preview);
-            let model_event = model_security_event(
-                RuntimeSecurityEventType::ModelCall,
-                provider,
-                request_meta.model,
-                Some(&request_preview),
-                Some(&response_body),
-            )
-            .with_http(HttpSecurityEvent {
-                host: Some(domain.to_string()),
-                method: Some(method.clone()),
-                path: Some(path.clone()),
-                query: query.clone(),
-                status: Some(resp_status.to_string()),
-                body: Some(String::from_utf8_lossy(&response_body).to_string()),
-            });
-            let model_event = security_event_with_transport(model_event, upstream_ip, upstream_port);
+            let mut model_event = security_event_with_transport(model_event, upstream_ip, upstream_port);
+            model_event.http_body_utf8_valid = inspect_inbound.then(|| std::str::from_utf8(&response_body).is_ok());
             let model_evaluation = match config.engine.evaluate(&policy_snapshot, model_event).await {
                 Ok(evaluation) => evaluation,
                 Err(error) => {
@@ -2300,6 +2274,7 @@ async fn handle_request(
                     ));
                 }
             };
+            semantic_body::record_content_evidence(&mut content_evidence, &model_evaluation.event);
             effective_security_decision =
                 SecurityBoundaryDecisionFields::from_enforcement(&model_evaluation.enforcement);
             effective_matched_rule = effective_security_decision.matched_rule(matched_rule.clone());
@@ -2311,6 +2286,7 @@ async fn handle_request(
                     model_evaluation.enforcement.rule_id.as_deref().unwrap_or("unknown")
                 );
                 let req_ctx = TelemetryRequestContext {
+                    content_evidence: content_evidence.take(),
                     policy_snapshot: Arc::clone(&policy_snapshot),
                     domain: domain.to_string(),
                     process_name: process_name.clone(),
@@ -2353,8 +2329,14 @@ async fn handle_request(
             }
             model_response_span.record("decision", "allow");
             model_response_span.record("status", "ok");
-            if let Some(model) = model_evaluation.event.model.as_ref() {
-                if let Some(updated_body) = model.response_body.as_ref() {
+            {
+                if let Some(updated_body) = model_evaluation
+                    .event
+                    .model
+                    .as_ref()
+                    .and_then(|model| model.response_body.as_ref())
+                    .or_else(|| model_evaluation.event.http.as_ref().and_then(|http| http.body.as_ref()))
+                {
                     if updated_body.as_bytes() != response_body.as_ref() {
                         response_body = Bytes::from(updated_body.clone());
                     }
@@ -2430,6 +2412,7 @@ async fn handle_request(
     };
 
     let req_ctx = TelemetryRequestContext {
+        content_evidence: content_evidence.take(),
         policy_snapshot: Arc::clone(&policy_snapshot),
         domain: domain.to_string(),
         process_name: process_name.clone(),
@@ -2478,6 +2461,18 @@ async fn handle_request(
     )
     .seed::<decompression_hook::DecompressionConfig>(decompression_hook::DecompressionConfig { gzip: is_gzip })
     .seed::<Option<TelemetryRequestContext>>(Some(req_ctx));
+    // Retain admission until the buffered response is consumed or dropped.
+    // Releasing at handler return lets slow readers accumulate complete bodies.
+    let chunk_dispatched = semantic_body::retain_admission(
+        chunk_dispatched,
+        _content_body_permit
+            .take()
+            .or(_semantic_body_permit.take())
+            .or(_response_content_permit.take()),
+    );
+    drop(_content_body_permit);
+    drop(_semantic_body_permit);
+    drop(_response_content_permit);
     let chunk_dispatched = if is_gzip {
         chunk_dispatched.without_size_hint()
     } else {

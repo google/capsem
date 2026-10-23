@@ -53,6 +53,8 @@ use capsem_telemetry::mitm as m;
 /// the request head and upstream response head have been observed,
 /// before the body wrapper begins iterating chunks.
 pub struct TelemetryRequestContext {
+    /// Payload-free evidence from actual content enforcement, before forwarding.
+    pub content_evidence: Option<Box<SecurityEvent>>,
     /// The exact active-policy revision that admitted this request.
     pub policy_snapshot: Arc<ProxyPolicySnapshot>,
     pub domain: String,
@@ -317,7 +319,7 @@ impl ChunkHook for TelemetryHook {
             &self.deps.pricing,
             &self.deps.trace_state,
         );
-        let (model_call, trace_hints) = match model_call {
+        let (mut model_call, trace_hints) = match model_call {
             Some((model_call, paths)) => {
                 let trace_hints = self
                     .trace_hint_sink
@@ -330,6 +332,55 @@ impl ChunkHook for TelemetryHook {
             None => (None, None),
         };
         record_telemetry_stage(stage_started, "model_call_build");
+
+        // A detection may include content the caller chose only to observe.
+        // Keep counters/usage but do not persist its raw payload or derived text.
+        // Drop these owned buffers rather than copy/scan them a second time.
+        if super::semantic_body::has_content_match(req_ctx.content_evidence.as_deref()) {
+            req_ctx
+                .request_body_stats
+                .lock()
+                .expect("req body stats lock")
+                .preview
+                .clear();
+            resp_stats.preview.clear();
+            req_ctx.request_headers = None;
+            req_ctx.response_headers = None;
+            req_ctx.query = None;
+            if crate::security_engine::sensitive_metadata(&req_ctx.path) {
+                req_ctx.path = "[CONTENT FILTERED]".into();
+            }
+            if let Some(call) = model_call.as_mut() {
+                call.request_body = None;
+                call.response_body = None;
+                call.system_prompt_preview = None;
+                call.text_content = None;
+                call.thinking_content = None;
+                if call
+                    .model
+                    .as_deref()
+                    .is_some_and(crate::security_engine::sensitive_metadata)
+                {
+                    call.model = None;
+                }
+                call.path = req_ctx.path.clone();
+                for tool in &mut call.tool_calls {
+                    tool.arguments = None;
+                    if crate::security_engine::sensitive_metadata(&tool.tool_name) {
+                        tool.tool_name = "[CONTENT FILTERED]".into();
+                    }
+                    if crate::security_engine::sensitive_metadata(&tool.call_id) {
+                        tool.call_id = "[CONTENT FILTERED]".into();
+                    }
+                }
+                for tool in &mut call.tool_responses {
+                    tool.content_preview = None;
+                    if crate::security_engine::sensitive_metadata(&tool.call_id) {
+                        tool.call_id = "[CONTENT FILTERED]".into();
+                    }
+                }
+            }
+        }
 
         let stage_started = Instant::now();
         let mut net_event = build_net_event(&req_ctx, &resp_stats);
@@ -354,9 +405,14 @@ impl ChunkHook for TelemetryHook {
         record_telemetry_stage(stage_started, "ledger_deps_clone");
 
         let stage_started = Instant::now();
-        let net_security_event = security_event_from_net_event(&net_event)
+        let mut net_security_event = security_event_from_net_event(&net_event)
             .with_credential_observations(credential_observations.clone())
             .with_credential_injections(credential_injections.clone());
+        if let Some(evidence) = req_ctx.content_evidence.take() {
+            net_security_event.detections.extend(evidence.detections);
+            net_security_event.plugin_executions.extend(evidence.plugin_executions);
+            net_security_event.request_decision(evidence.decision.effective);
+        }
         net_event.query = net_event
             .query
             .as_deref()

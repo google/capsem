@@ -12,7 +12,7 @@ fn every_call_returns_the_same_built_in_plugin_set() {
     let second = SecurityActionRegistry::with_builtin_actions();
     let ids = |registry: &SecurityActionRegistry| registry.plugins.keys().cloned().collect::<Vec<_>>();
     assert_eq!(ids(&first), ids(&second));
-    assert_eq!(first.plugins.len(), 4);
+    assert_eq!(first.plugins.len(), 7);
     for (id, plugin) in first.plugins.iter() {
         assert!(
             Arc::ptr_eq(plugin, &second.plugins[id]),

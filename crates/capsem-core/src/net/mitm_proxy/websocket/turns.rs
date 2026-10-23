@@ -210,6 +210,7 @@ impl Turn {
         let policy_snapshot = ctx.engine.policy().snapshot();
         let mut state = HookState::default();
         state.set::<Option<TelemetryRequestContext>>(Some(TelemetryRequestContext {
+            content_evidence: None,
             policy_snapshot: Arc::clone(&policy_snapshot),
             domain: ctx.conn.domain.clone(),
             process_name: ctx.conn.process_name.clone(),

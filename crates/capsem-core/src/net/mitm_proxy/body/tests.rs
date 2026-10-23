@@ -10,6 +10,32 @@ use crate::net::mitm_proxy::{
     pipeline::Pipeline,
 };
 
+#[tokio::test]
+async fn buffered_body_owns_admission_until_consumption_or_drop() {
+    let budget = Arc::new(tokio::sync::Semaphore::new(1));
+    let body = ChunkDispatchBody::new(
+        Full::new(Bytes::from_static(b"buffered")),
+        Arc::new(Pipeline::builder().build()),
+        ConnMeta::default(),
+        None,
+    )
+    .seed(Arc::clone(&budget).try_acquire_owned().unwrap());
+    assert!(Arc::clone(&budget).try_acquire_owned().is_err());
+    let bytes = body.collect().await.unwrap().to_bytes();
+    assert_eq!(bytes, "buffered");
+    assert_eq!(budget.available_permits(), 1);
+    let body = ChunkDispatchBody::new(
+        Full::new(Bytes::from_static(b"discarded")),
+        Arc::new(Pipeline::builder().build()),
+        ConnMeta::default(),
+        None,
+    )
+    .seed(Arc::clone(&budget).try_acquire_owned().unwrap());
+    assert_eq!(budget.available_permits(), 0);
+    drop(body);
+    assert_eq!(budget.available_permits(), 1);
+}
+
 struct AsyncEndHook {
     completed: Arc<AtomicBool>,
 }

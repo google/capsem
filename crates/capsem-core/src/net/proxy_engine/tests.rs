@@ -47,6 +47,7 @@ fn credential_revision() -> ProxyPolicySnapshot {
             SecurityPluginConfig {
                 mode: SecurityPluginMode::Rewrite,
                 detection_level: DetectionLevel::Informational,
+                content: Default::default(),
             },
         )]),
         ModelEndpointRegistry::default(),

@@ -199,6 +199,7 @@ fn network_authorization_retains_plugin_escalation_and_default_deny() {
             SecurityPluginConfig {
                 mode,
                 detection_level: DetectionLevel::High,
+                content: Default::default(),
             },
         )]);
         let event = SecurityEvent::new(RuntimeSecurityEventType::NetworkConnect)

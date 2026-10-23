@@ -114,7 +114,11 @@ fn security_rule_set(input: &str) -> SecurityRuleSet {
 }
 
 fn plugin_config(mode: SecurityPluginMode, detection_level: DetectionLevel) -> SecurityPluginConfig {
-    SecurityPluginConfig { mode, detection_level }
+    SecurityPluginConfig {
+        mode,
+        detection_level,
+        content: Default::default(),
+    }
 }
 
 struct RecordingEmitter {

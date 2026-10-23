@@ -587,7 +587,10 @@ fn collect_query_brokered_references(
     }
 }
 
-fn credential_provider_for_request(domain: &str, ai_provider: Option<ProviderKind>) -> Option<CredentialProvider> {
+pub(crate) fn credential_provider_for_request(
+    domain: &str,
+    ai_provider: Option<ProviderKind>,
+) -> Option<CredentialProvider> {
     match ai_provider {
         Some(ProviderKind::Anthropic) => Some(CredentialProvider::Anthropic),
         Some(ProviderKind::Google) => Some(CredentialProvider::Google),

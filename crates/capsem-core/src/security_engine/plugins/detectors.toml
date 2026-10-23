@@ -1,0 +1,70 @@
+# Reviewed subset; see DETECTOR_SOURCES.md. No runtime downloads.
+[[detectors]]
+id = "email"
+pattern = "\\b((([!#$%&'*+\\-/=?^_`{|}~\\w])|([!#$%&'*+\\-/=?^_`{|}~\\w][!#$%&'*+\\-/=?^_`{|}~\\.\\w]{0,}[!#$%&'*+\\-/=?^_`{|}~\\w]))[@]\\w+(?:-+\\w+)*(?:\\.\\w+(?:-+\\w+)*)+)\\b"
+entropy = 0.0
+
+[[detectors]]
+id = "ssn"
+pattern = "\\b([0-9]{3})[- .]([0-9]{2})[- .]([0-9]{4})\\b"
+entropy = 0.0
+
+[[detectors]]
+id = "card"
+pattern = "\\b[13456][0-9]{3}(?:[- ]?[0-9]){9,15}\\b"
+entropy = 0.0
+
+[[detectors]]
+id = "phone"
+pattern = "\\b(?:1[- .]?)?[2-9][0-9]{2}[- .][2-9][0-9]{2}[- .][0-9]{4}\\b"
+entropy = 0.0
+
+[[detectors]]
+id = "anthropic-api-key"
+pattern = "\\b(sk-ant-api03-[a-zA-Z0-9_\\-]{93}AA)(?:[\\x60'\"\\s;]|\\\\[nr]|$)"
+entropy = 0.0
+
+[[detectors]]
+id = "aws-access-token"
+pattern = "\\b((?:A3T[A-Z0-9]|AKIA|ASIA|ABIA|ACCA)[A-Z2-7]{16})\\b"
+entropy = 3.0
+
+[[detectors]]
+id = "github-app-token"
+pattern = "(?:ghu|ghs)_[0-9a-zA-Z]{36}"
+entropy = 3.0
+
+[[detectors]]
+id = "github-fine-grained-pat"
+pattern = "github_pat_\\w{82}"
+entropy = 3.0
+
+[[detectors]]
+id = "github-oauth"
+pattern = "gho_[0-9a-zA-Z]{36}"
+entropy = 3.0
+
+[[detectors]]
+id = "github-pat"
+pattern = "ghp_[0-9a-zA-Z]{36}"
+entropy = 3.0
+
+[[detectors]]
+id = "openai-api-key"
+pattern = "\\b(sk-(?:proj|svcacct|admin)-(?:[A-Za-z0-9_-]{74}|[A-Za-z0-9_-]{58})T3BlbkFJ(?:[A-Za-z0-9_-]{74}|[A-Za-z0-9_-]{58})\\b|sk-[a-zA-Z0-9]{20}T3BlbkFJ[a-zA-Z0-9]{20})(?:[\\x60'\"\\s;]|\\\\[nr]|$)"
+entropy = 3.0
+
+[[detectors]]
+id = "private-key"
+pattern = "(?i)-----BEGIN[ A-Z0-9_-]{0,100}PRIVATE KEY(?: BLOCK)?-----[\\s\\S-]{64,}?KEY(?: BLOCK)?-----"
+entropy = 0.0
+
+[[detectors]]
+id = "slack-bot-token"
+pattern = "xoxb-[0-9]{10,13}-[0-9]{10,13}[a-zA-Z0-9-]*"
+entropy = 3.0
+
+[[detectors]]
+id = "broker-reference"
+pattern = "credential:blake3:[0-9a-fA-F]{64}"
+entropy = 0.0

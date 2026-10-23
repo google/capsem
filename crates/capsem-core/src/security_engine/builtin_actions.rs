@@ -23,6 +23,9 @@ pub(super) fn registry() -> &'static SecurityActionRegistry {
             .and_then(|registry| registry.register_plugin(DummyPreEicarPlugin))
             .and_then(|registry| registry.register_plugin(DummyPostAllowPlugin))
             .and_then(|registry| registry.register_plugin(LogSanitizerPlugin))
+            .and_then(|registry| registry.register_plugin(super::plugins::PiiFilterPlugin))
+            .and_then(|registry| registry.register_plugin(super::plugins::SecretExfiltrationPlugin))
+            .and_then(|registry| registry.register_plugin(super::plugins::Utf8GuardPlugin))
             .expect("built-in security plugin ids are unique")
     })
 }

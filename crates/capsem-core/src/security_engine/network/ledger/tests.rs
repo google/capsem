@@ -57,6 +57,7 @@ match = 'network.mode == "private"'
         SecurityPluginConfig {
             mode: SecurityPluginMode::Block,
             detection_level: DetectionLevel::High,
+            content: Default::default(),
         },
     )]);
     let engine = NetworkSecurity {

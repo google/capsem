@@ -363,6 +363,7 @@ fn registry_for_plugin(plugin: &str) -> SecurityActionRegistry {
         SecurityPluginConfig {
             mode: SecurityPluginMode::Rewrite,
             detection_level: DetectionLevel::Informational,
+            content: Default::default(),
         },
     );
     SecurityActionRegistry::with_builtin_actions().with_plugin_policy(policy)
@@ -426,7 +427,8 @@ criterion_group!(
     bench_action_chain,
     bench_broker_substitute,
     bench_mcp_brokered_auth,
-    bench_runtime_event_handoff
+    bench_runtime_event_handoff,
+    bench_content_inspection
 );
 criterion_main!(benches);
 
@@ -434,4 +436,56 @@ fn bench_builtin_registry(c: &mut Criterion) {
     c.bench_function("security_registry_builtin_clone", |b| {
         b.iter(|| black_box(SecurityActionRegistry::with_builtin_actions()));
     });
+}
+
+fn bench_content_inspection(c: &mut Criterion) {
+    let plain = "ordinary text without sensitive values ".repeat(1725);
+    for (label, plugin, mode, body) in [
+        ("disabled", "pii_filter", SecurityPluginMode::Disable, plain.as_str()),
+        ("pii_no_match", "pii_filter", SecurityPluginMode::Block, plain.as_str()),
+        (
+            "pii_rewrite",
+            "pii_filter",
+            SecurityPluginMode::Rewrite,
+            "email user@example.com",
+        ),
+        (
+            "secret_no_match",
+            "secret_exfiltration",
+            SecurityPluginMode::Block,
+            plain.as_str(),
+        ),
+        (
+            "secret_block",
+            "secret_exfiltration",
+            SecurityPluginMode::Block,
+            "ghp_0123456789abcdefghijklmnopqrstuvwxyz",
+        ),
+    ] {
+        let registry = SecurityActionRegistry::with_builtin_actions().with_plugin_policy(BTreeMap::from([(
+            plugin.to_string(),
+            SecurityPluginConfig {
+                mode,
+                ..Default::default()
+            },
+        )]));
+        c.bench_function(&format!("content_filter/{label}"), |b| {
+            b.iter_batched(
+                || {
+                    SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+                        body: Some(body.to_owned()),
+                        ..Default::default()
+                    })
+                },
+                |event| {
+                    black_box(
+                        registry
+                            .apply_security_plugins(SecurityPluginStage::Preprocess, event)
+                            .unwrap(),
+                    )
+                },
+                criterion::BatchSize::SmallInput,
+            );
+        });
+    }
 }

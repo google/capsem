@@ -28,6 +28,7 @@ fn engine(action: &str, plugin_block: bool) -> Arc<NetworkSecurity> {
             SecurityPluginConfig {
                 mode: SecurityPluginMode::Block,
                 detection_level: DetectionLevel::High,
+                content: Default::default(),
             },
         );
     }

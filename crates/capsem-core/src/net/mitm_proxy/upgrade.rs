@@ -84,6 +84,7 @@ pub(super) async fn handle_upgrade(
     let make_error = |status: http::StatusCode, error: &dyn std::fmt::Display| -> hyper::Response<ProxyBoxBody> {
         let body_text = format!("Capsem: websocket error ({error})\n");
         let req_ctx = TelemetryRequestContext {
+            content_evidence: None,
             policy_snapshot: Arc::clone(policy_snapshot),
             domain: domain.to_string(),
             process_name: process_name.clone(),
@@ -145,6 +146,7 @@ pub(super) async fn handle_upgrade(
                   decision: &SecurityBoundaryDecisionFields|
      -> hyper::Response<ProxyBoxBody> {
         let req_ctx = TelemetryRequestContext {
+            content_evidence: None,
             policy_snapshot: Arc::clone(policy_snapshot),
             domain: domain.to_string(),
             process_name: process_name.clone(),
@@ -374,6 +376,7 @@ pub(super) async fn handle_upgrade(
     }
 
     let req_ctx = TelemetryRequestContext {
+        content_evidence: None,
         policy_snapshot: Arc::clone(policy_snapshot),
         domain: domain.to_string(),
         process_name: process_name.clone(),

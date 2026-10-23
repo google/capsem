@@ -1,6 +1,32 @@
 use super::*;
 
 #[test]
+fn pii_and_secret_plugins_are_separate_and_enforce_real_http_facts() {
+    for (id, body) in [
+        ("pii_filter", "person@example.com"),
+        ("secret_exfiltration", "ghp_0123456789abcdefghijklmnopqrstuvwxyz"),
+    ] {
+        let registry = SecurityActionRegistry::with_builtin_actions().with_plugin_policy(BTreeMap::from([(
+            id.to_string(),
+            plugin_config(SecurityPluginMode::Block, DetectionLevel::High),
+        )]));
+        let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+            host: Some("untrusted.example".into()),
+            body: Some(body.into()),
+            ..Default::default()
+        });
+        let result = registry
+            .apply_security_plugins(SecurityPluginStage::Preprocess, event)
+            .expect("plugin is registered");
+        assert_eq!(result.decision.effective, SecurityDecisionKind::Block);
+        assert!(
+            !format!("{:?}", result.detections).contains(body),
+            "matches must not become audit payloads"
+        );
+    }
+}
+
+#[test]
 fn logging_plugin_redacts_query_even_without_credential_observations() {
     let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
         .with_http(HttpSecurityEvent {

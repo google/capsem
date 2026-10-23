@@ -23,6 +23,7 @@ fn replacing_plugin_policy_snapshot_is_visible_to_later_readers() {
         SecurityPluginConfig {
             mode: SecurityPluginMode::Rewrite,
             detection_level: DetectionLevel::High,
+            content: Default::default(),
         },
     );
 

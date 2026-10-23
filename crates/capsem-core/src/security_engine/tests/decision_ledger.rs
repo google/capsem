@@ -77,6 +77,7 @@ match = 'network.destination.vm_name == "redis"'
             SecurityPluginConfig {
                 mode: SecurityPluginMode::Allow,
                 detection_level: DetectionLevel::Informational,
+                content: Default::default(),
             },
         ),
         (
@@ -84,6 +85,7 @@ match = 'network.destination.vm_name == "redis"'
             SecurityPluginConfig {
                 mode: SecurityPluginMode::Rewrite,
                 detection_level: DetectionLevel::Informational,
+                content: Default::default(),
             },
         ),
     ]);

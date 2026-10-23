@@ -12,9 +12,15 @@ fn complete_body_decoder_preserves_every_gzip_member() {
     let mut members = gzip(b"first ");
     members.extend(gzip(b"second"));
     assert_eq!(decompress_gzip_capped(&members, 100).unwrap(), b"first second");
-    assert!(decompress_gzip_capped(&members, 8).is_err(), "one cap applies across members");
+    assert!(
+        decompress_gzip_capped(&members, 8).is_err(),
+        "one cap applies across members"
+    );
     members.push(0xff);
-    assert!(decompress_gzip_capped(&members, 100).is_err(), "a malformed tail is not silently dropped");
+    assert!(
+        decompress_gzip_capped(&members, 100).is_err(),
+        "a malformed tail is not silently dropped"
+    );
 }
 
 #[test]
