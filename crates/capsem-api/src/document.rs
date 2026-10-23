@@ -37,6 +37,14 @@ pub fn openapi() -> OpenApi {
     doc.post::<PersistRequest, PersistResponse>("/vms/{id}/save", "persistVm");
     doc.get::<SandboxInfo>("/vms/{id}/info", "getVmInfo");
     doc.get::<VmStatusResponse>("/vms/{id}/status", "getVmStatus");
+    let asks = doc
+        .operation::<SecurityAskListResponse>("/vms/{id}/security/asks", "listSecurityAsks")
+        .parameters(Some(SecurityAskListQuery::into_params(|| Some(ParameterIn::Query))));
+    doc.add("/vms/{id}/security/asks", HttpMethod::Get, asks);
+    doc.post::<SecurityAskResolveRequest, SecurityAskRequest>(
+        "/vms/{id}/security/asks/{ask_id}/resolve",
+        "resolveSecurityAsk",
+    );
     doc.get::<ContainerStatusResponse>("/vms/{id}/container", "getVmContainer");
     doc.images();
     doc.post::<CredentialInjectRequest, CredentialInjectResponse>("/credentials/inject", "injectCredential");

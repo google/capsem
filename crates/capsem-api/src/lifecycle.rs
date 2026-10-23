@@ -202,6 +202,9 @@ pub struct SandboxInfo {
     /// Source app metadata captured for this session's immutable image.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub app: Option<crate::ImageApp>,
+    /// Actionable approvals for the live generation; never a historical count.
+    #[serde(default)]
+    pub pending_approval_count: u32,
     /// Latest browser navigation requested by the live guest. Ephemeral and
     /// opened only by an explicit action on the attached client.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -299,6 +302,7 @@ impl SandboxInfo {
         Self {
             app: None,
             terminal: None,
+            pending_approval_count: 0,
             browser_request: None,
             id,
             name: None,
@@ -344,6 +348,8 @@ impl SandboxInfo {
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct VmStatusResponse {
+    #[serde(default)]
+    pub pending_approval_count: u32,
     pub id: String,
     pub name: String,
     pub status: VmLifecycleState,

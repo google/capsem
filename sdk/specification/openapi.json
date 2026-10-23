@@ -3064,6 +3064,118 @@
         }
       }
     },
+    "/vms/{id}/security/asks": {
+      "get": {
+        "operationId": "listSecurityAsks",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecurityAskListResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vms/{id}/security/asks/{ask_id}/resolve": {
+      "post": {
+        "operationId": "resolveSecurityAsk",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ask_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SecurityAskResolveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecurityAskRequest"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/vms/{id}/start": {
       "post": {
         "operationId": "startVm",
@@ -7966,6 +8078,12 @@
               }
             ]
           },
+          "pending_approval_count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Actionable approvals for the live generation; never a historical count.",
+            "minimum": 0
+          },
           "persistent": {
             "type": "boolean"
           },
@@ -8144,6 +8262,128 @@
           }
         },
         "additionalProperties": false
+      },
+      "SecurityAskDecision": {
+        "type": "string",
+        "enum": [
+          "approve",
+          "deny"
+        ]
+      },
+      "SecurityAskListResponse": {
+        "type": "object",
+        "required": [
+          "vm_id",
+          "generation",
+          "pending_count",
+          "requests"
+        ],
+        "properties": {
+          "generation": {
+            "type": "string"
+          },
+          "pending_count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Actionable live requests only; historical pending rows never count.",
+            "minimum": 0
+          },
+          "requests": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SecurityAskRequest"
+            }
+          },
+          "vm_id": {
+            "type": "string"
+          }
+        }
+      },
+      "SecurityAskRequest": {
+        "type": "object",
+        "required": [
+          "ask_id",
+          "event_id",
+          "event_type",
+          "rule_id",
+          "rule_name",
+          "summary",
+          "status",
+          "created_at_unix_ms",
+          "expires_at_unix_ms"
+        ],
+        "properties": {
+          "ask_id": {
+            "type": "string"
+          },
+          "created_at_unix_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "event_type": {
+            "type": "string"
+          },
+          "expires_at_unix_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "resolution_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resolved_at_unix_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "rule_id": {
+            "type": "string"
+          },
+          "rule_name": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SecurityAskStatus"
+          },
+          "summary": {
+            "type": "string",
+            "description": "Bounded safe action facts, without request payloads or credentials."
+          }
+        }
+      },
+      "SecurityAskResolveRequest": {
+        "type": "object",
+        "required": [
+          "generation",
+          "decision"
+        ],
+        "properties": {
+          "decision": {
+            "$ref": "#/components/schemas/SecurityAskDecision"
+          },
+          "generation": {
+            "type": "string",
+            "description": "Exact boot generation returned by the list, never a display name."
+          }
+        },
+        "additionalProperties": false
+      },
+      "SecurityAskStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "approved",
+          "denied",
+          "expired",
+          "cancelled"
+        ]
       },
       "ServiceAvailability": {
         "type": "string",
@@ -9773,6 +10013,11 @@
           },
           "name": {
             "type": "string"
+          },
+          "pending_approval_count": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           },
           "persistent": {
             "type": "boolean"

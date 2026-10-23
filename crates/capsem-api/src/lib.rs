@@ -1,7 +1,9 @@
 //! HTTP wire contracts shared by the gateway and service.
 //! No VM runtime, filesystem, or service dependencies belong here.
 
+mod approvals;
 mod credentials;
+pub use approvals::*;
 mod document;
 pub use credentials::*;
 mod connections;
