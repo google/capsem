@@ -86,7 +86,7 @@ approved = [
 ]
 
 [http]
-count = 114
+count = 115
 approved = [
   # All nine connection/grant routes approved by the user on 2026-10-14.
   "GET /connections",
@@ -148,6 +148,7 @@ approved = [
   "GET /vms/{id}/security/latest",
   # P0 #172 explicit maintainer approval flow authorization, 2026-10-23.
   "GET /vms/{id}/security/asks",
+  "POST /vms/{id}/browser/acknowledge",
   "POST /vms/{id}/security/asks/{ask_id}/resolve",
   "GET /vms/{id}/security/status",
   "GET /vms/{id}/stats/detail",
