@@ -12,6 +12,7 @@ ENV CAPSEM_GUI_APP=/opt/antigravity/antigravity
 LABEL org.capsem.contract="1" \
       org.capsem.surface="xpra" \
       org.capsem.surface.port="14500" \
+      org.capsem.workspace.policy="antigravity-scratch-v1" \
       org.capsem.memory.min="2048"
 VOLUME /home/capsem
 CMD ["/usr/local/bin/capsem-gui"]

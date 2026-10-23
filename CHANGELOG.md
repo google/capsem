@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Declare the canonical workspace policy in new Antigravity Desktop image builds.
+
 - Support Antigravity's image-declared scratch workspace alias with bounded,
   conflict-safe imports that retain original files and leave credential siblings alone.
 
