@@ -4,12 +4,13 @@ import json
 import subprocess
 from pathlib import Path
 
+from helpers.constants import host_bin_root
 from helpers.mock_server import start_mock_server, stop_process
 
 from build_system.scripts.release.release_test_binary import ensure_host_test_binary
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-BENCH_BINARY = PROJECT_ROOT / "cache" / "target" / "cargo" / "debug" / "capsem-bench-rs"
+BENCH_BINARY = host_bin_root() / "capsem-bench-rs"
 
 
 def _ensure_bench_binary() -> None:
@@ -126,9 +127,7 @@ def test_rust_capsem_bench_protocol_and_delta_contract(tmp_path: Path) -> None:
         assert delta["benchmark"] == "capsem-bench-rs-delta"
         assert delta["abstraction_delta"]["host_lane"] == "host_direct"
         assert delta["abstraction_delta"]["guest_lane"] == "guest_capsem"
-        delta_rows = {
-            row["name"]: row for row in delta["abstraction_delta"]["scenarios"]
-        }
+        delta_rows = {row["name"]: row for row in delta["abstraction_delta"]["scenarios"]}
         assert set(delta_rows) == {
             "tiny_http",
             "model_json_response",

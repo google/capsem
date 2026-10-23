@@ -18,9 +18,16 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 
 from capsem_builder import crypto
+from capsem_builder.gate import cargotarget
+from capsem_builder.gate import config as gate_config
+
+from build_system.scripts.release.release_test_binary_provenance import (
+    COHORT_VARIABLE,
+    verify_frozen_binary,
+)
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
-RECEIPT_SCHEMA = "capsem.local-test-binary.v1"
+RECEIPT_SCHEMA = "capsem.local-test-binary.v2"
 
 
 def _digest_file(path: Path) -> str:
@@ -69,6 +76,7 @@ def _receipt_matches(receipt: Path, binary: Path, source_digest: str) -> bool:
         return False
     return (
         payload.get("schema") == RECEIPT_SCHEMA
+        and payload.get("build_output") == str(binary.resolve())
         and payload.get("source_digest") == source_digest
         and payload.get("binary_digest") == _digest_file(binary)
     )
@@ -77,6 +85,7 @@ def _receipt_matches(receipt: Path, binary: Path, source_digest: str) -> bool:
 def _write_receipt(receipt: Path, binary: Path, source_digest: str) -> None:
     payload = {
         "schema": RECEIPT_SCHEMA,
+        "build_output": str(binary.resolve()),
         "source_digest": source_digest,
         "binary_digest": _digest_file(binary),
     }
@@ -100,21 +109,38 @@ def ensure_host_test_binary(
     env: Mapping[str, str] = os.environ,
     runner: Runner = subprocess.run,
     timeout: int = 120,
+    build_output: Path | None = None,
 ) -> None:
     """Make one test executable available without crossing release ownership."""
     release_inputs = env.get("CAPSEM_RELEASE_INPUT_DIR", "").strip()
+    cohort = env.get(COHORT_VARIABLE, "").strip()
+    if release_inputs and cohort:
+        raise RuntimeError("local frozen provenance cannot be mixed with release inputs")
     if release_inputs:
         if not binary.is_file():
             raise FileNotFoundError(
-                "manifest-selected package lacks required functional-test binary: "
-                f"{binary}"
+                f"manifest-selected package lacks required functional-test binary: {binary}"
             )
         if not os.access(binary, os.X_OK):
-            raise PermissionError(
-                "manifest-selected package binary is not executable: "
-                f"{binary}"
-            )
+            raise PermissionError(f"manifest-selected package binary is not executable: {binary}")
         return
+
+    if cohort:
+        verify_frozen_binary(binary, Path(cohort), project_root)
+        return
+
+    # The wrapper writes to the canonical shared Cargo target, even when the
+    # test selected an immutable custom directory. Never attest an unrelated
+    # file merely because that build succeeded. Nonstandard build owners may
+    # explicitly bind their actual output instead of this debug Cargo default.
+    output = (
+        build_output or cargotarget.path(gate_config.load(project_root)) / "debug" / binary.name
+    )
+    if binary.resolve() != output.resolve():
+        raise RuntimeError(
+            f"custom test binary lacks frozen source provenance: {binary}; "
+            f"provide {COHORT_VARIABLE}, not a rebuild of {output}"
+        )
 
     sources = tuple(Path(path) for path in source_paths)
     source_digest = _source_digest(
@@ -134,8 +160,14 @@ def ensure_host_test_binary(
         # The wrapper's child timeout starts after its kernel-lease wait. An outer
         # runner timeout would spend that wait and abandon the owning wrapper.
         runner(
-            (sys.executable, str(project_root / "build_system/scripts/ci/run-bounded-command.py"),
-             "--timeout-seconds", str(timeout), "--", *build_command),
+            (
+                sys.executable,
+                str(project_root / "build_system/scripts/ci/run-bounded-command.py"),
+                "--timeout-seconds",
+                str(timeout),
+                "--",
+                *build_command,
+            ),
             cwd=project_root,
             check=True,
         )
