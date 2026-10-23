@@ -53,7 +53,7 @@ def test_workload_browser_request_reaches_shared_inventory_without_a_viewer(serv
         first_ack = {"owner_generation": generation, "request_id": 1}
         assert second.call_json("POST", route, first_ack)[0] == 200
         wait_for(lambda: request() is None, "acknowledged browser request cleared", timeout=10)
-        assert service.client().get(f"/vms/{vm_id}/info")["browser_request"] is None
+        assert service.client().get(f"/vms/{vm_id}/info").get("browser_request") is None
         assert second.call_json("POST", route, first_ack)[0] == 200
 
         # An already-handled retry must not erase a newer pending URL.
