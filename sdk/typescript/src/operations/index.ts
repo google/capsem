@@ -1,5 +1,6 @@
 // Generated from Capsem OpenAPI. Do not edit.
 
+export {acknowledgeBrowserRequest} from "./acknowledgeBrowserRequest.js";
 export {attachNetworkMember} from "./attachNetworkMember.js";
 export {authorizeGoogleConnection} from "./authorizeGoogleConnection.js";
 export {callMcpTool} from "./callMcpTool.js";

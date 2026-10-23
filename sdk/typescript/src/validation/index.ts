@@ -11,6 +11,8 @@ export {AuthorizationTransactionSchema} from "./AuthorizationTransaction.js";
 export {AuthorizeGoogleRequestSchema} from "./AuthorizeGoogleRequest.js";
 export {AuthorizeGoogleResponseSchema} from "./AuthorizeGoogleResponse.js";
 export {BodyEncodingSchema} from "./BodyEncoding.js";
+export {BrowserAcknowledgeRequestSchema} from "./BrowserAcknowledgeRequest.js";
+export {BrowserAcknowledgeResponseSchema} from "./BrowserAcknowledgeResponse.js";
 export {BrowserRequestSchema} from "./BrowserRequest.js";
 export {CapabilitySummarySchema} from "./CapabilitySummary.js";
 export {CaptureStatusSchema} from "./CaptureStatus.js";
