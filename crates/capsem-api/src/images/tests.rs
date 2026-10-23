@@ -2,6 +2,22 @@ use super::*;
 use serde_json::json;
 
 #[test]
+fn inventory_contract_keeps_unavailable_separate_from_empty_or_broken_data() {
+    let query: ImageInventoryQuery = serde_json::from_value(json!({"image":"registry.example/app@sha256:a"})).unwrap();
+    assert!(!query.image.is_empty());
+    let unavailable = json!({"image":query.image,"architecture":"arm64"});
+    let parsed: ImageInventoryResponse = serde_json::from_value(unavailable.clone()).unwrap();
+    assert!(parsed.inventory.is_none());
+    assert_eq!(serde_json::to_value(parsed).unwrap(), unavailable);
+    let document = crate::openapi().to_json().unwrap();
+    let document: serde_json::Value = serde_json::from_str(&document).unwrap();
+    assert_eq!(
+        document["paths"]["/images/{name}/inventory"]["get"]["operationId"],
+        "getImageInventory"
+    );
+}
+
+#[test]
 fn image_download_progress_survives_the_wire_without_inventing_an_unknown_total() {
     let mut row = json!({"name":"app","description":"App","architectures":["arm64"],"cached":"missing", "progress":{"phase":"downloading","completed_bytes":128}});
     let parsed: ImageInfo = serde_json::from_value(row.clone()).unwrap();

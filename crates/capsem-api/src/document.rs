@@ -243,6 +243,11 @@ impl Document {
     }
 
     fn images(&mut self) {
+        let path = "/images/{name}/inventory";
+        let inventory = self
+            .operation::<ImageInventoryResponse>(path, "getImageInventory")
+            .parameters(Some(ImageInventoryQuery::into_params(|| Some(ParameterIn::Query))));
+        self.add(path, HttpMethod::Get, inventory);
         let list = self
             .operation::<ImageListResponse>("/images", "listImages")
             .parameters(Some(ImageListQuery::into_params(|| Some(ParameterIn::Query))));

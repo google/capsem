@@ -12,6 +12,48 @@ pub const IMAGE_PULL_TIMEOUT_SECS: u64 = 15 * 60;
 /// HTTP budget for image pulls, including the gateway's ordinary request budget.
 pub const IMAGE_PULL_REQUEST_TIMEOUT_MS: u64 = (IMAGE_PULL_TIMEOUT_SECS + 120) * 1000;
 
+/// The exact selected catalog pin the Info panel is displaying.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, IntoParams, ToSchema)]
+pub struct ImageInventoryQuery {
+    pub image: String,
+}
+
+/// On-demand evidence, separate from the frequently polled image catalog.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, ToSchema)]
+pub struct ImageInventoryResponse {
+    pub image: String,
+    pub architecture: String,
+    /// Absent only when the selected catalog version declares no inventory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_reference: Option<String>,
+    /// Failed or invalid artifacts are HTTP errors, never a fabricated empty list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inventory: Option<ImagePackageInventory>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, ToSchema)]
+pub struct ImagePackageInventory {
+    pub schema: String,
+    /// Exact native-platform image manifest, which may differ from the catalog index.
+    pub subject: String,
+    pub architecture: String,
+    pub packages: Vec<ImagePackage>,
+    pub tools: Vec<ImageTool>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, ToSchema)]
+pub struct ImagePackage {
+    pub name: String,
+    pub version: String,
+    pub architecture: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, ToSchema)]
+pub struct ImageTool {
+    pub name: String,
+    pub version: String,
+}
+
 /// `GET /images`: the catalog entries the current image policy permits.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, ToSchema)]
 pub struct ImageListResponse {

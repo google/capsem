@@ -504,6 +504,56 @@
         "x-capsem-request-timeout-ms": 1020000
       }
     },
+    "/images/{name}/inventory": {
+      "get": {
+        "operationId": "getImageInventory",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "image",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageInventoryResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/mcp/default/info": {
       "get": {
         "operationId": "getMcpDefault",
@@ -5788,6 +5838,40 @@
           "api"
         ]
       },
+      "ImageInventoryResponse": {
+        "type": "object",
+        "description": "On-demand evidence, separate from the frequently polled image catalog.",
+        "required": [
+          "image",
+          "architecture"
+        ],
+        "properties": {
+          "architecture": {
+            "type": "string"
+          },
+          "artifact_reference": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Absent only when the selected catalog version declares no inventory."
+          },
+          "image": {
+            "type": "string"
+          },
+          "inventory": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImagePackageInventory",
+                "description": "Failed or invalid artifacts are HTTP errors, never a fabricated empty list."
+              }
+            ]
+          }
+        }
+      },
       "ImageListResponse": {
         "type": "object",
         "description": "`GET /images`: the catalog entries the current image policy permits.",
@@ -5812,6 +5896,59 @@
               "$ref": "#/components/schemas/ImageInfo"
             },
             "description": "Entries in name order."
+          }
+        }
+      },
+      "ImagePackage": {
+        "type": "object",
+        "required": [
+          "name",
+          "version",
+          "architecture"
+        ],
+        "properties": {
+          "architecture": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "ImagePackageInventory": {
+        "type": "object",
+        "required": [
+          "schema",
+          "subject",
+          "architecture",
+          "packages",
+          "tools"
+        ],
+        "properties": {
+          "architecture": {
+            "type": "string"
+          },
+          "packages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImagePackage"
+            }
+          },
+          "schema": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "string",
+            "description": "Exact native-platform image manifest, which may differ from the catalog index."
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImageTool"
+            }
           }
         }
       },
@@ -5869,6 +6006,21 @@
           "terminal",
           "xpra"
         ]
+      },
+      "ImageTool": {
+        "type": "object",
+        "required": [
+          "name",
+          "version"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
       },
       "Interaction": {
         "type": "object",

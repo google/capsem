@@ -51,6 +51,8 @@ mod get_hypervisor_info;
 pub use get_hypervisor_info::get_hypervisor_info;
 mod get_hypervisor_logs;
 pub use get_hypervisor_logs::{get_hypervisor_logs, GetHypervisorLogsParams};
+mod get_image_inventory;
+pub use get_image_inventory::{get_image_inventory, GetImageInventoryParams};
 mod get_mcp_default;
 pub use get_mcp_default::get_mcp_default;
 mod get_mcp_info;

@@ -36,6 +36,7 @@ from .get_connection_authorization import (
 )
 from .get_hypervisor_info import get_hypervisor_info as get_hypervisor_info
 from .get_hypervisor_logs import get_hypervisor_logs as get_hypervisor_logs
+from .get_image_inventory import get_image_inventory as get_image_inventory
 from .get_mcp_default import get_mcp_default as get_mcp_default
 from .get_mcp_info import get_mcp_info as get_mcp_info
 from .get_network import get_network as get_network

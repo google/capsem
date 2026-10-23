@@ -99,10 +99,14 @@ from .image_evidence import ImageEvidence as ImageEvidence
 from .image_evidence_kind import ImageEvidenceKind as ImageEvidenceKind
 from .image_info import ImageInfo as ImageInfo
 from .image_interface import ImageInterface as ImageInterface
+from .image_inventory_response import ImageInventoryResponse as ImageInventoryResponse
 from .image_list_response import ImageListResponse as ImageListResponse
+from .image_package import ImagePackage as ImagePackage
+from .image_package_inventory import ImagePackageInventory as ImagePackageInventory
 from .image_pull_request import ImagePullRequest as ImagePullRequest
 from .image_pull_response import ImagePullResponse as ImagePullResponse
 from .image_surface import ImageSurface as ImageSurface
+from .image_tool import ImageTool as ImageTool
 from .interaction import Interaction as Interaction
 from .interaction_block import InteractionBlock as InteractionBlock
 from .interaction_block_kind import InteractionBlockKind as InteractionBlockKind
