@@ -32,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Update build tooling to setuptools 84.1.0 for GHSA-xmj3-9gf7-h52w.
+
 - Patch MCP HTTP body parsing to reject compressed request tails safely (GHSA-27r3-jxmh-p828).
 
 - Remove unused Layerchart tooling and its vulnerable Zod 3 dependency.
