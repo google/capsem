@@ -37,6 +37,10 @@ pub fn openapi() -> OpenApi {
     doc.post::<PersistRequest, PersistResponse>("/vms/{id}/save", "persistVm");
     doc.get::<SandboxInfo>("/vms/{id}/info", "getVmInfo");
     doc.get::<VmStatusResponse>("/vms/{id}/status", "getVmStatus");
+    doc.post::<BrowserAcknowledgeRequest, BrowserAcknowledgeResponse>(
+        "/vms/{id}/browser/acknowledge",
+        "acknowledgeBrowserRequest",
+    );
     let asks = doc
         .operation::<SecurityAskListResponse>("/vms/{id}/security/asks", "listSecurityAsks")
         .parameters(Some(SecurityAskListQuery::into_params(|| Some(ParameterIn::Query))));

@@ -2,6 +2,8 @@
 //! No VM runtime, filesystem, or service dependencies belong here.
 
 mod approvals;
+mod browser;
+pub use browser::*;
 mod credentials;
 pub use approvals::*;
 mod document;

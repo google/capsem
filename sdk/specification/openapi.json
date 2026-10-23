@@ -1974,6 +1974,58 @@
         }
       }
     },
+    "/vms/{id}/browser/acknowledge": {
+      "post": {
+        "operationId": "acknowledgeBrowserRequest",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BrowserAcknowledgeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrowserAcknowledgeResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/vms/{id}/container": {
       "get": {
         "operationId": "getVmContainer",
@@ -4014,6 +4066,45 @@
           "base64"
         ]
       },
+      "BrowserAcknowledgeRequest": {
+        "type": "object",
+        "required": [
+          "owner_generation",
+          "request_id"
+        ],
+        "properties": {
+          "owner_generation": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "BrowserAcknowledgeResponse": {
+        "type": "object",
+        "required": [
+          "vm_id",
+          "owner_generation",
+          "request_id"
+        ],
+        "properties": {
+          "owner_generation": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "vm_id": {
+            "type": "string"
+          }
+        }
+      },
       "BrowserRequest": {
         "type": "object",
         "required": [
@@ -4025,6 +4116,13 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          },
+          "owner_generation": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Actual per-VM spawn UUID, stamped by its service observer. An owner\nprocess supplies no epoch itself; legacy clients may receive none."
           },
           "url": {
             "type": "string",
