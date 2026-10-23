@@ -5,6 +5,31 @@ use super::*;
 mod yaml_migration;
 
 #[test]
+fn native_approval_user_fixture_compiles_with_the_real_priority_boundary() {
+    let fixture = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/fixtures/config/security-rule-profile/native-approval.toml"
+    ));
+    let profile = SecurityRuleProfile::parse_toml(fixture).expect("native fixture parses");
+    let compiled = profile
+        .compile(SecurityRuleSource::User)
+        .expect("native user rules admitted");
+    assert_eq!(compiled.len(), 3);
+    assert!(compiled.iter().all(|rule| rule.priority == USER_PRIORITY_MIN));
+    assert!(CORP_PRIORITY_MAX < compiled[0].priority && compiled[0].priority < DEFAULT_RULE_PRIORITY);
+    for invalid in [-100, 0, USER_PRIORITY_MIN - 1] {
+        let mut rejected = profile.clone();
+        rejected
+            .profiles
+            .rules
+            .get_mut("ask_native_file_import")
+            .unwrap()
+            .priority = Some(SecurityRulePriority::Explicit(invalid));
+        assert!(rejected.compile(SecurityRuleSource::User).is_err());
+    }
+}
+
+#[test]
 fn sigma_sequence_alternatives_still_require_every_selection_field() {
     let profile = SecurityRuleProfile::parse_sigma_yaml(
         "title: Grouped Rule\nlogsource:\n  product: capsem\n  service: security_event\ndetection:\n  selection:\n    http.host: approved.example\n    http.method: [GET, POST]\n  condition: selection\nlevel: high\n",

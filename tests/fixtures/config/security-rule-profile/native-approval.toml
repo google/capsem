@@ -1,0 +1,18 @@
+# Native acceptance uses these exact user rules; the product compiler tests them.
+[profiles.rules.ask_native_file_import]
+name = "ask_native_file_import"
+action = "ask"
+priority = 10
+match = 'file.import.path.endsWith("approval-boundary.txt")'
+
+[profiles.rules.ask_native_file_export]
+name = "ask_native_file_export"
+action = "ask"
+priority = 10
+match = 'file.export.path.endsWith("approval-boundary.txt")'
+
+[profiles.rules.cancel_original_dns]
+name = "cancel_original_dns"
+action = "block"
+priority = 10
+match = 'dns.qname == "unrelated-never-requested.example"'
