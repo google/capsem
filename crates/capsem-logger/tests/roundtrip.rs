@@ -110,7 +110,7 @@ fn sample_model_call(provider: &str) -> ModelCall {
         usage_details: std::collections::BTreeMap::new(),
         duration_ms: 1500,
         response_bytes: 4096,
-        estimated_cost_usd: 0.001,
+        estimated_cost_usd: Some(0.001),
         trace_id: None,
         credential_ref: None,
         tool_calls: vec![ToolCallEntry {

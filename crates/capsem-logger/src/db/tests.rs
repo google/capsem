@@ -75,7 +75,7 @@ fn make_model_call() -> ModelCall {
         usage_details: Default::default(),
         duration_ms: 1200,
         response_bytes: 2048,
-        estimated_cost_usd: 0.003,
+        estimated_cost_usd: Some(0.003),
         trace_id: Some("trace_abc".into()),
         credential_ref: None,
         tool_calls: vec![ToolCallEntry {

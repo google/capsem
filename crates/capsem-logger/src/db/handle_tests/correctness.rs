@@ -74,7 +74,7 @@ pub(super) fn make_correctness_tool_emit_model_call(credential_ref: &str) -> Mod
         usage_details,
         duration_ms: 44,
         response_bytes: 456,
-        estimated_cost_usd: 0.00012,
+        estimated_cost_usd: Some(0.00012),
         trace_id: Some("trace-correctness-1".into()),
         credential_ref: Some(credential_ref.to_string()),
         tool_calls: vec![ToolCallEntry {
@@ -120,7 +120,7 @@ pub(super) fn make_correctness_tool_response_model_call(credential_ref: &str) ->
         usage_details: BTreeMap::new(),
         duration_ms: 55,
         response_bytes: 333,
-        estimated_cost_usd: 0.00014,
+        estimated_cost_usd: Some(0.00014),
         trace_id: Some("trace-correctness-1".into()),
         credential_ref: Some(credential_ref.to_string()),
         tool_calls: Vec::new(),

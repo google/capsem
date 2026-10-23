@@ -105,7 +105,9 @@ impl LedgerTally {
                     input_tokens: call.input_tokens.unwrap_or(0),
                     output_tokens: call.output_tokens.unwrap_or(0),
                     duration_ms: call.duration_ms,
-                    cost_micro_usd: cost_micro_usd(call.estimated_cost_usd),
+                    cost_micro_usd: cost_micro_usd(call.estimated_cost_usd.unwrap_or(0.0)),
+                    priced_calls: u64::from(call.estimated_cost_usd.is_some()),
+                    unpriced_calls: u64::from(call.estimated_cost_usd.is_none()),
                 };
                 let model = &mut counters.model;
                 add_usage(&mut model.total, &usage);
@@ -367,6 +369,8 @@ fn add_usage(total: &mut ModelUsage, usage: &ModelUsage) {
     total.output_tokens = total.output_tokens.saturating_add(usage.output_tokens);
     total.duration_ms = total.duration_ms.saturating_add(usage.duration_ms);
     total.cost_micro_usd = total.cost_micro_usd.saturating_add(usage.cost_micro_usd);
+    total.priced_calls = total.priced_calls.saturating_add(usage.priced_calls);
+    total.unpriced_calls = total.unpriced_calls.saturating_add(usage.unpriced_calls);
 }
 
 /// One call's estimated cost in whole micro-USD. Rounded per call, so the

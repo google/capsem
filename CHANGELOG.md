@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Preserve unpriced model calls as unknown in the ledger and track price
+  coverage separately from known cost totals.
+
 - Browse verified shared-tool and Debian package versions in app Info, with
   bounded search results, cancellation and retry for inventory failures.
 

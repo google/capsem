@@ -60,7 +60,7 @@ fn model_tool_rows_preserve_websocket_and_existing_http_transports() {
             usage_details: Default::default(),
             duration_ms: 1,
             response_bytes: 0,
-            estimated_cost_usd: 0.0,
+            estimated_cost_usd: Some(0.0),
             trace_id: Some(format!("trace_{index}")),
             credential_ref: None,
             tool_responses: vec![],

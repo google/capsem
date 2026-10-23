@@ -85,7 +85,7 @@ pub(super) fn minimal_model_call(trace_id: &str) -> WriteOp {
         usage_details: std::collections::BTreeMap::new(),
         duration_ms: 1,
         response_bytes: 16,
-        estimated_cost_usd: 0.0,
+        estimated_cost_usd: Some(0.0),
         trace_id: Some(trace_id.to_string()),
         credential_ref: None,
         tool_calls: vec![],

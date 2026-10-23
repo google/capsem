@@ -64,7 +64,8 @@ pub(crate) async fn counters_from_rows(db: &DbHandle) -> LedgerCounters {
         &format!(
             "SELECT provider, COALESCE(model, 'unknown'), COUNT(*),
                     COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
-                    COALESCE(SUM(duration_ms), 0), COALESCE(SUM({MICROS}), 0)
+                    COALESCE(SUM(duration_ms), 0), COALESCE(SUM({MICROS}), 0),
+                    COUNT(estimated_cost_usd), SUM(estimated_cost_usd IS NULL)
              FROM model_calls GROUP BY provider, COALESCE(model, 'unknown')"
         ),
     )
@@ -82,12 +83,16 @@ pub(crate) async fn counters_from_rows(db: &DbHandle) -> LedgerCounters {
         usage.output_tokens = u(&row[4]);
         usage.duration_ms = u(&row[5]);
         usage.cost_micro_usd = u(&row[6]);
+        usage.priced_calls = u(&row[7]);
+        usage.unpriced_calls = u(&row[8]);
         let total = &mut counters.model.total;
         total.calls += usage.calls;
         total.input_tokens += usage.input_tokens;
         total.output_tokens += usage.output_tokens;
         total.duration_ms += usage.duration_ms;
         total.cost_micro_usd += usage.cost_micro_usd;
+        total.priced_calls += usage.priced_calls;
+        total.unpriced_calls += usage.unpriced_calls;
     }
     for row in rows(
         db,

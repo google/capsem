@@ -503,7 +503,7 @@ async fn unicode_strings() {
         usage_details: std::collections::BTreeMap::new(),
         duration_ms: 100,
         response_bytes: 50,
-        estimated_cost_usd: 0.0,
+        estimated_cost_usd: Some(0.0),
         trace_id: None,
         credential_ref: None,
         tool_calls: Vec::new(),

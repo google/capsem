@@ -140,7 +140,7 @@ fn read_model_call_row(row: &Row<'_>) -> rusqlite::Result<(i64, ModelCall)> {
                 .unwrap_or_default(),
             duration_ms: row.get::<_, i64>(22)? as u64,
             response_bytes: row.get::<_, i64>(23)? as u64,
-            estimated_cost_usd: row.get::<_, f64>(24).unwrap_or(0.0),
+            estimated_cost_usd: row.get::<_, Option<f64>>(24)?,
             trace_id: row.get(25)?,
             credential_ref: row.get(26)?,
             tool_calls: Vec::new(),

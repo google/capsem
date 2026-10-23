@@ -432,7 +432,7 @@ fn replay_model_calls(conn: &Connection, writer: &DbWriter, bodies: &SourceBodie
                         .unwrap_or_default(),
                     duration_ms: opt::<i64>(row, "duration_ms").unwrap_or_default() as u64,
                     response_bytes: opt::<i64>(row, "response_bytes").unwrap_or_default() as u64,
-                    estimated_cost_usd: opt::<f64>(row, "estimated_cost_usd").unwrap_or_default(),
+                    estimated_cost_usd: opt::<f64>(row, "estimated_cost_usd"),
                     trace_id: opt(row, "trace_id"),
                     credential_ref: opt(row, "credential_ref"),
                     tool_calls: Vec::new(),

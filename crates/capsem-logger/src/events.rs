@@ -771,7 +771,7 @@ pub struct ModelCall {
     pub duration_ms: u64,
     pub response_bytes: u64,
     // Cost estimate
-    pub estimated_cost_usd: f64,
+    pub estimated_cost_usd: Option<f64>,
     // Trace grouping
     pub trace_id: Option<String>,
     #[serde(default)]

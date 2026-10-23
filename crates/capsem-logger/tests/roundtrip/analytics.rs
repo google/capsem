@@ -1,6 +1,40 @@
 use super::*;
 
 #[tokio::test]
+async fn price_coverage_keeps_unknown_distinct_from_measured_zero_and_commits_with_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("session.db");
+    let writer = DbWriter::open(&path, 64).unwrap();
+    for cost in [None, Some(0.0), Some(0.00438)] {
+        let mut call = sample_model_call("google");
+        call.estimated_cost_usd = cost;
+        writer.write(WriteOp::ModelCall(call)).await;
+    }
+    writer.flush().await;
+    let counters = ledger_counters(&path).await;
+    assert_eq!(
+        (
+            counters.model.total.calls,
+            counters.model.total.priced_calls,
+            counters.model.total.unpriced_calls,
+            counters.model.total.cost_micro_usd
+        ),
+        (3, 2, 1, 4380)
+    );
+    drop(writer);
+    let reader = DbReader::open(&path).unwrap();
+    let calls = reader.recent_model_calls(10).unwrap();
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|(_, call)| call.estimated_cost_usd.is_none())
+            .count(),
+        1
+    );
+    assert!(calls.iter().any(|(_, call)| call.estimated_cost_usd == Some(0.0)));
+}
+
+#[tokio::test]
 async fn ledger_counters_empty_db() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("session.db");
@@ -54,7 +88,7 @@ async fn ledger_counters_null_tokens() {
     let mut call = sample_model_call("anthropic");
     call.input_tokens = None;
     call.output_tokens = None;
-    call.estimated_cost_usd = 0.0;
+    call.estimated_cost_usd = Some(0.0);
     writer.write(WriteOp::ModelCall(call)).await;
     drop(writer);
 
@@ -156,7 +190,7 @@ async fn model_usage_counted_by_provider() {
     let mut google_call = sample_model_call("google");
     google_call.input_tokens = Some(100);
     google_call.output_tokens = Some(50);
-    google_call.estimated_cost_usd = 0.005;
+    google_call.estimated_cost_usd = Some(0.005);
     writer.write(WriteOp::ModelCall(google_call)).await;
     drop(writer);
 
@@ -235,14 +269,14 @@ async fn estimated_cost_roundtrip() {
     let writer = DbWriter::open(&path, 64).unwrap();
 
     let mut call = sample_model_call("anthropic");
-    call.estimated_cost_usd = 0.0042;
+    call.estimated_cost_usd = Some(0.0042);
     writer.write(WriteOp::ModelCall(call)).await;
     drop(writer);
 
     let reader = capsem_logger::DbReader::open(&path).unwrap();
     let calls = reader.recent_model_calls(1).unwrap();
     assert_eq!(calls.len(), 1);
-    assert!((calls[0].1.estimated_cost_usd - 0.0042).abs() < 1e-10);
+    assert!((calls[0].1.estimated_cost_usd.unwrap() - 0.0042).abs() < 1e-10);
 
     let counters = ledger_counters(&path).await;
     assert_eq!(counters.model.total.cost_micro_usd, 4_200);
