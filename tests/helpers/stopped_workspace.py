@@ -33,7 +33,7 @@ def manifest_asset_pins(assets_dir: Path) -> dict[str, dict[str, str]]:
     }
 
 
-def seed_stopped_workspace(run_dir: Path, assets_dir: Path) -> None:
+def seed_stopped_workspace(run_dir: Path, assets_dir: Path, *, file_count: int = 64) -> None:
     """Seed the registry, workspace and session ledger of one stopped
     persistent VM pinned to the manifest's current assets."""
     registry = run_dir / "persistent_registry.json"
@@ -44,16 +44,16 @@ def seed_stopped_workspace(run_dir: Path, assets_dir: Path) -> None:
     session = run_dir / "persistent" / VM_ID
     workspace = session / "guest" / "workspace"
     workspace.mkdir(parents=True)
-    for index in range(64):
+    for index in range(file_count):
         (workspace / f"unchanged-{index:03}.txt").write_text("unchanged\n" * 32)
     (workspace / "modified.txt").write_text("after\n")
     (workspace / "created.txt").write_text("created\n")
     fixture = Path(__file__).resolve().parents[1] / "fixtures" / "session"
-    database = shutil.copy2(fixture / "test.db", session / "session.db")
+    database = Path(shutil.copy2(fixture / "test.db", session / "session.db"))
     database.chmod(0o600)
-    archive_lock = shutil.copy2(
+    archive_lock = Path(shutil.copy2(
         fixture / "test.db-archive.lock", session / "session.db-archive.lock"
-    )
+    ))
     archive_lock.chmod(0o600)
     bodies = shutil.copytree(fixture / "test.bodies", session / "session.bodies")
     bodies.chmod(0o700)

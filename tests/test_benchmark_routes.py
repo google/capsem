@@ -2,13 +2,13 @@
 
 import json
 import sys
-import tomllib
 from importlib.machinery import SourceFileLoader
 from importlib.util import module_from_spec, spec_from_loader
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import tomllib
 from helpers.stopped_workspace import BODY_ROUTE, BODY_URL, VM_ID
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -73,12 +73,14 @@ def test_fixture_diagnostics_do_not_corrupt_collector_json(
     )
     monkeypatch.setattr(collector, "ServiceInstance", lambda: service)
     monkeypatch.setattr(collector, "service_gateway", lambda _: gateway)
-    monkeypatch.setattr(collector, "seed_stopped_workspace", lambda *_: None)
+    monkeypatch.setattr(collector, "seed_stopped_workspace", lambda *_, **__: None)
     monkeypatch.setattr(collector, "clone_benchmark_assets", lambda *_: tmp_path / "benchmark-assets")
     original_process = collector.psutil.Process
     monkeypatch.setattr(collector.psutil, "Process", lambda _: None)
     monkeypatch.setattr(collector, "measured_cases", lambda: [collector.RouteCase("GET", "/status", "default")])
     monkeypatch.setattr(collector, "preflight", lambda *_: None)
+    monkeypatch.setattr(collector, "seed_metadata", lambda *_: None)
+    monkeypatch.setattr(collector, "seed_logs", lambda *_: None)
     monkeypatch.setattr(
         collector, "sample_warm_route",
         lambda target, *_: ([0.1], dict.fromkeys(target.cpu_processes, 0.0)),

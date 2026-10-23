@@ -19,11 +19,12 @@ import json
 import sys
 import threading
 import time
-import tomllib
 from collections.abc import Callable
 from contextlib import ExitStack, redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
+
+import tomllib
 
 # Match pytest's roots for helpers that import `helpers.*` and `scripts.*`.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
@@ -43,6 +44,7 @@ from helpers.stopped_workspace import (
 )
 
 from benchmarks.helpers.route_cases import RouteCase, measured_cases
+from benchmarks.helpers.route_fixtures import corpus_config, seed_logs, seed_metadata
 from benchmarks.helpers.route_measurements import route_metrics
 from benchmarks.helpers.route_validation import validate_snapshot, validate_wire
 from benchmarks.helpers.stream_measurements import service_gateway
@@ -74,10 +76,10 @@ class Target:
     cpu_processes: dict[str, psutil.Process]
 
 
-def request(transport: Transport, target: Target, path: str) -> bytes:
+def request(transport: Transport, target: Target, path: str, response: str = "json") -> bytes:
     """Require one successful JSON response."""
     method, request_body = request_input(path)
-    headers = dict(target.headers)
+    headers = {**target.headers, "Accept": "application/json"}
     if request_body is not None:
         headers["Content-Type"] = "application/json"
     status, _, body = transport.request(
@@ -87,6 +89,9 @@ def request(transport: Transport, target: Target, path: str) -> bytes:
         raise RuntimeError(
             f"{target.label} {path} returned HTTP {status}: {body[:500]!r}"
         )
+    if response == "text":
+        assert body.decode("utf-8"), "empty text response"
+        return body
     try:
         payload = json.loads(body)
     except json.JSONDecodeError as error:
@@ -107,20 +112,20 @@ def preflight(target: Target, cases: list[RouteCase], live_id: str | None) -> No
             path = case.resolve(live_id)
             if request_input(path)[0] != case.method:
                 raise ValueError(f"case method differs from its request: {case.metric_key}")
-            payloads[case.path] = validate_wire(case, request(transport, target, path), live_id)
+            payloads[case.path] = validate_wire(case, request(transport, target, path, case.response), live_id)
         validate_snapshot(payloads)
     finally:
         transport.close()
 
 
 def sample_warm_route(
-    target: Target, path: str, samples: int
+    target: Target, path: str, samples: int, response: str = "json"
 ) -> tuple[list[float], dict[str, float]]:
     """Raw kept-alive latency and every participating process's CPU."""
     transport = target.transport_factory()
     try:
         for _ in range(WARMUP):
-            request(transport, target, path)
+            request(transport, target, path, response)
         before = {
             name: process_cpu_seconds(proc)
             for name, proc in target.cpu_processes.items()
@@ -128,7 +133,7 @@ def sample_warm_route(
         latencies = []
         for _ in range(samples):
             started = time.perf_counter()
-            request(transport, target, path)
+            request(transport, target, path, response)
             latencies.append((time.perf_counter() - started) * 1000.0)
         cpu = {
             name: float(process_cpu_seconds(proc) - before[name])
@@ -139,14 +144,14 @@ def sample_warm_route(
         transport.close()
 
 
-def sample_cold_route(target: Target, path: str, samples: int) -> list[float]:
+def sample_cold_route(target: Target, path: str, samples: int, response: str = "json") -> list[float]:
     """Raw latency including a new socket and HTTP connection."""
     latencies = []
     for _ in range(samples):
         transport = target.transport_factory()
         try:
             started = time.perf_counter()
-            request(transport, target, path)
+            request(transport, target, path, response)
             latencies.append((time.perf_counter() - started) * 1000.0)
         finally:
             transport.close()
@@ -154,7 +159,7 @@ def sample_cold_route(target: Target, path: str, samples: int) -> list[float]:
 
 
 def sample_concurrent_route(
-    target: Target, path: str, samples: int, concurrency: int
+    target: Target, path: str, samples: int, concurrency: int, response: str = "json"
 ) -> tuple[list[float], dict[str, float], float]:
     """Raw latency, CPU and RPS with one kept-alive connection per worker."""
     workers = min(samples, concurrency)
@@ -163,12 +168,12 @@ def sample_concurrent_route(
     def worker(count: int) -> list[float]:
         transport = target.transport_factory()
         try:
-            request(transport, target, path)
+            request(transport, target, path, response)
             barrier.wait(timeout=30)
             measured = []
             for _ in range(count):
                 started = time.perf_counter()
-                request(transport, target, path)
+                request(transport, target, path, response)
                 measured.append((time.perf_counter() - started) * 1000.0)
             return measured
         finally:
@@ -220,7 +225,8 @@ def main() -> int:
 
     metrics: dict[str, dict] = {}
     try:
-        seed_stopped_workspace(service.tmp_dir, service.assets_dir)
+        seed_stopped_workspace(service.tmp_dir, service.assets_dir, file_count=corpus_config()["workspace_files"])
+        seed_metadata(service, corpus_config())
         with redirect_stdout(sys.stderr):
             service.start()
         gateway = service_gateway(service)
@@ -252,6 +258,7 @@ def main() -> int:
                 live_id = fixtures.enter_context(
                     image_session(service, service.home_dir / "route-registry", "route-live-owner")
                 )
+            seed_logs(service, corpus_config())
             for target in targets:
                 preflight(target, cases, live_id)
             for case in cases:
@@ -259,11 +266,11 @@ def main() -> int:
                 path = case.metric_key
                 for target in targets:
                     print(f"{target.label} {path}", file=sys.stderr)
-                    latencies, cpu = sample_warm_route(target, concrete_path, samples)
-                    cold_latencies = sample_cold_route(target, concrete_path, samples)
+                    latencies, cpu = sample_warm_route(target, concrete_path, samples, case.response)
+                    cold_latencies = sample_cold_route(target, concrete_path, samples, case.response)
                     metrics.update(route_metrics(target.label, path, latencies, cold_latencies, cpu))
                     concurrent_latencies, concurrent_cpu, rps = sample_concurrent_route(
-                        target, concrete_path, load_samples, concurrency
+                        target, concrete_path, load_samples, concurrency, case.response
                     )
                     metrics.update(route_metrics(target.label, path, concurrent_latencies, None, concurrent_cpu, rps))
     finally:

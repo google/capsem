@@ -3131,6 +3131,12 @@ measured = [
     { method = "GET", path = "/mcp/default/info", case = "local-config" },
     { method = "GET", path = "/vms/{id}/container", case = "live-image" },
     { method = "GET", path = "/vms/{id}/security/asks", case = "idle" },
+    { method = "GET", path = "/vms/{id}/files/list", case = "seeded-workspace", query = { depth = 1 } },
+    { method = "GET", path = "/vms/{id}/logs", case = "recorded-tail", query = { tail = 16, max_bytes = 102400, grep = "CAPSEM-ROUTE-CORPUS" } },
+    { method = "GET", path = "/host-logs/{name}", case = "mcp-tail", parameters = { name = "mcp" }, query = { tail = 16, max_bytes = 102400, grep = "CAPSEM-ROUTE-CORPUS" } },
+    { method = "GET", path = "/host-logs/{name}", case = "service-tail", parameters = { name = "service" }, query = { tail = 16, max_bytes = 102400, grep = "CAPSEM-ROUTE-CORPUS" } },
+    { method = "GET", path = "/service-logs", case = "retained-text", response = "text" },
+    { method = "GET", path = "/mcp/servers/{server_id}/tools/list", case = "local-cache", parameters = { server_id = "local" } },
 ]
 
 [benchmark.routes.unmeasured]
@@ -3147,21 +3153,16 @@ measured = [
 "GET /connections/{connection_id}" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
 "GET /events" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
 "GET /health" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
-"GET /host-logs/{name}" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
 "GET /images" = { owner = "tests/ironbank/kingslanding/test_image_catalog.py", reason = "Needs hermetic registry and installed inventory fixture; never time vendor downloads." }
 "GET /images/{name}/inventory" = { owner = "tests/ironbank/kingslanding/test_image_catalog.py", reason = "Needs hermetic registry and installed inventory fixture; never time vendor downloads." }
-"GET /mcp/servers/{server_id}/tools/list" = { owner = "tests/ironbank/test_mcp_protocol_ledger.py", reason = "Needs configured MCP server lifecycle and bounded tool fixture; no live vendor calls." }
 "GET /networks/{id}" = { owner = "tests/ironbank/test_managed_network_lifecycle.py", reason = "Needs isolated network membership and bounded logs; mutations must measure completed ownership changes." }
 "GET /networks/{id}/logs" = { owner = "tests/ironbank/test_managed_network_lifecycle.py", reason = "Needs isolated network membership and bounded logs; mutations must measure completed ownership changes." }
 "GET /openapi.json" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
 "GET /panics" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
-"GET /service-logs" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
 "GET /triage" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
 "GET /vms/{id}/bodies/export.warc.gz" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
 "GET /vms/{id}/files/content" = { owner = "tests/ironbank/test_files_process_ledger.py", reason = "Needs real guest-owned file and bounded content/forensic ledger proof; uploads mutate state and require isolated cleanup." }
-"GET /vms/{id}/files/list" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
 "GET /vms/{id}/history/transcript" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
-"GET /vms/{id}/logs" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
 "GET /vms/{id}/stream" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
 "GET /vms/{id}/surface/" = { owner = "tests/ironbank/kingslanding/test_workload_browser.py", reason = "Needs real UI exposure and single-use browser capability lifecycle fixture." }
 "GET /vms/{id}/surface/launch.js" = { owner = "tests/ironbank/kingslanding/test_workload_browser.py", reason = "Needs real UI exposure and single-use browser capability lifecycle fixture." }
@@ -3219,6 +3220,15 @@ measured = [
 "POST /internal/vms/{id}/metrics" = { owner = "service-control-plane", reason = "An authenticated VM owner submits its OTLP metrics to the service over the local UDS for host export; the gateway must never expose this ingestion route" }
 "POST /networks/private/resolve" = { owner = "service-control-plane", reason = "VM owners ask the service what a private name or pool address is, for their VM's networks only, over the local service UDS; never a gateway route" }
 "POST /vms/{id}/preserve-failure" = { owner = "service-control-plane", reason = "CLI-only doctor failure preservation mutates and stops a one-shot VM over the local service UDS" }
+
+[benchmark.routes.corpus]
+workspace_files = 64
+file_depth = 1
+log_bytes = 1048576
+log_line_bytes = 128
+log_tail = 16
+log_read_bytes = 102400
+mcp_tools = ["fetch_http"]
 
 # Concurrent kept-alive clients exercise the same measured read-only routes as
 # the latency lane. This catches cache lock and single-flight contention while

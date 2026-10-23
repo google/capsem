@@ -13,10 +13,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "sdk/python"))
 
 from capsem.models.container_status_response import ContainerStatusResponse
+from capsem.models.file_list_response import FileListResponse
 from capsem.models.history_response import HistoryResponse
+from capsem.models.host_logs_response import HostLogsResponse
+from capsem.models.logs_response import LogsResponse
 from capsem.models.mcp_default_permission_response import McpDefaultPermissionResponse
 from capsem.models.mcp_info_response import McpInfoResponse
 from capsem.models.mcp_servers_list_response import McpServersListResponse
+from capsem.models.mcp_tools_list_response import McpToolsListResponse
 from capsem.models.sandbox_info import SandboxInfo
 from capsem.models.security_ask_list_response import SecurityAskListResponse
 from capsem.models.timeline_response import TimelineResponse
@@ -26,10 +30,15 @@ from helpers.stopped_workspace import VM_ID
 from pydantic import TypeAdapter
 
 from .route_cases import RouteCase
+from .route_fixtures import MARKER, corpus_config
 
 # Private UI routes are intentionally not all in selected OpenAPI. Their
 # explicit field/counter contracts below come from the service DTOs.
 SCHEMAS = {path: TypeAdapter(model) for path, model in {
+    "/vms/{id}/files/list": FileListResponse,
+    "/vms/{id}/logs": LogsResponse,
+    "/host-logs/{name}": HostLogsResponse,
+    "/mcp/servers/{server_id}/tools/list": McpToolsListResponse,
     "/vms/{id}/info": SandboxInfo,
     "/vms/{id}/stats/summary": VmStatsSummaryResponse,
     "/vms/{id}/stats/detail": VmStatsDetailResponse,
@@ -71,7 +80,24 @@ def plugin_info(payload: dict, expected: str | None = None) -> None:
 def validate_case(case: RouteCase, payload, live_id: str | None) -> None:
     """Reject a fast empty/error response before any timed request."""
     path = case.path
-    if path == "/vms/{id}/info":
+    if path == "/vms/{id}/files/list":
+        cfg = corpus_config()
+        names = {f"unchanged-{index:03}.txt" for index in range(cfg["workspace_files"])} | {"modified.txt", "created.txt"}
+        assert {entry["path"] for entry in payload["entries"]} == names
+        assert len(payload["entries"]) == len(names)
+        assert all(entry["type"] == "file" and entry["size"] > 0 for entry in payload["entries"])
+    elif path == "/vms/{id}/logs":
+        assert payload["logs"] == payload["serial_logs"]
+        for key in ("serial_logs", "process_logs"):
+            validate_log(payload[key], tail=True)
+    elif path == "/host-logs/{name}":
+        assert payload["source"] == case.parameters["name"]
+        validate_log(payload["text"], tail=True)
+    elif path == "/mcp/servers/{server_id}/tools/list":
+        names = corpus_config()["mcp_tools"]
+        assert [tool["original_name"] for tool in payload] == names
+        assert all(tool["server_name"] == "local" and tool["namespaced_name"] == "local__" + tool["original_name"] for tool in payload)
+    elif path == "/vms/{id}/info":
         assert payload["id"] == VM_ID and payload["persistent"] is True
         assert payload["session_db"]["ready"] is True
         assert count(payload["total_requests"]) > 0
@@ -139,7 +165,23 @@ def validate_case(case: RouteCase, payload, live_id: str | None) -> None:
         assert count(payload["pending_count"]) == 0 and payload["requests"] == []
 
 
+def validate_log(text: str, *, tail: bool) -> None:
+    cfg = corpus_config()
+    assert isinstance(text, str) and len(text.encode()) <= cfg["log_read_bytes"]
+    lines = text.splitlines()
+    matches = [line for line in lines if line.startswith(MARKER)]
+    assert len(matches) >= cfg["log_tail"]
+    if tail:
+        assert len(matches) == len(lines) == cfg["log_tail"]
+    assert len(set(matches)) == len(matches)
+
+
 def validate_wire(case: RouteCase, body: bytes, live_id: str | None) -> object:
+    if case.response == "text":
+        assert case.path == "/service-logs", "unreviewed text contract"
+        text = body.decode("utf-8")
+        validate_log(text, tail=False)
+        return text
     if schema := SCHEMAS.get(case.path):
         schema.validate_json(body)
     payload = json.loads(body)

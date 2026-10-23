@@ -1,10 +1,11 @@
 """Configured method/path cases against the existing stopped and live fixtures."""
 from __future__ import annotations
 
-import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlencode
 
+import tomllib
 from helpers.stopped_workspace import BODY_ROUTE, BODY_URL, VM_ID
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -21,6 +22,9 @@ class RouteCase:
     method: str
     path: str
     case: str
+    parameters: dict[str, str] = field(default_factory=dict)
+    query: dict[str, str | int] = field(default_factory=dict)
+    response: str = "json"
 
     @property
     def live(self) -> bool:
@@ -41,9 +45,11 @@ class RouteCase:
         path = path.replace("{request_id}", MANAGED_REQUEST_ID)
         if "{plugin_id}" in path and self.case in PLUGIN_CASES:
             path = path.replace("{plugin_id}", self.case)
+        for name, value in self.parameters.items():
+            path = path.replace("{" + name + "}", value)
         if "{" in path or "}" in path:
             raise ValueError(f"case has no successful fixture: {self.metric_key}")
-        return path
+        return path + ("?" + urlencode(self.query) if self.query else "")
 
 
 def measured_cases() -> list[RouteCase]:

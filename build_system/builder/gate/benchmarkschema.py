@@ -22,6 +22,9 @@ class RouteCaseConfig(Strict):
     method: Literal["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE"]
     path: str
     case: str
+    parameters: dict[str, str] = Field(default_factory=dict)
+    query: dict[str, str | int] = Field(default_factory=dict)
+    response: Literal["json", "text"] = "json"
 
 
 class RouteDebtConfig(Strict):
@@ -31,6 +34,18 @@ class RouteDebtConfig(Strict):
     reason: str = Field(min_length=20)
 
 
+class RouteCorpusConfig(Strict):
+    """Exact bounded read corpus, retained in the benchmark config cohort."""
+
+    workspace_files: PositiveInt
+    log_bytes: PositiveInt
+    log_line_bytes: PositiveInt
+    log_tail: PositiveInt
+    log_read_bytes: PositiveInt
+    file_depth: PositiveInt
+    mcp_tools: tuple[str, ...]
+
+
 class RouteCoverageConfig(Strict):
     """Exhaustive method-aware coverage; no path-only coverage claims."""
 
@@ -38,6 +53,7 @@ class RouteCoverageConfig(Strict):
     unmeasured: dict[str, RouteDebtConfig]
     internal: dict[str, RouteDebtConfig]
     unmeasured_cases: dict[str, RouteDebtConfig]
+    corpus: RouteCorpusConfig
 
 
 class RouteLoadConfig(Strict):

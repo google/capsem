@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Keep TUI Manager and Help reachable from an empty image picker, and preserve
   its dismissal across session refreshes.
+- Add bounded route benchmark cases for seeded workspace listings, real VM and host
+  log tails, plain-text service logs and cached local MCP tool metadata.
 
 - Bind embedded app HTTP, event streams and terminal frames to the same private
   local gateway connection, rejecting cross-origin authority refreshes.

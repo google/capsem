@@ -115,7 +115,7 @@ def test_routes_reuse_owned_gateway_and_default_product_fixture(monkeypatch, tmp
         calls.append("product image")
         yield "live-id"
 
-    def warm(target, path, samples):
+    def warm(target, path, samples, response):
         assert path == "/vms/live-id/exposures"
         if target.label == "gateway":
             assert target.headers == {"Authorization": "Bearer private-token"}
@@ -129,7 +129,9 @@ def test_routes_reuse_owned_gateway_and_default_product_fixture(monkeypatch, tmp
         "GatewayInstance": extra_gateway,
         "image_session": image_session,
         "psutil": SimpleNamespace(Process=lambda pid: pid),
-        "seed_stopped_workspace": lambda *_: None,
+        "seed_stopped_workspace": lambda *_, **__: None,
+        "seed_metadata": lambda *_: None,
+        "seed_logs": lambda *_: None,
         "clone_benchmark_assets": lambda *args: tmp_path,
         "measured_cases": lambda: [module["RouteCase"]("GET", "/vms/{id}/exposures", "default")],
         "preflight": lambda *_: None,
