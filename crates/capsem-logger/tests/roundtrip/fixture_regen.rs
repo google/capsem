@@ -68,6 +68,9 @@ use super::*;
 #[path = "fixture_regen/tests.rs"]
 mod tests;
 
+#[path = "fixture_regen/facts.rs"]
+mod facts;
+
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -824,6 +827,7 @@ fn regenerate_session_fixture() {
         }
     }
 
+    facts::regenerate();
     assert_recorded_digests(&[
         fixture,
         fixture_bodies.join(fixture_generation_id().file_name()),
