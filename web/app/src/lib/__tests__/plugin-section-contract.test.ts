@@ -15,9 +15,8 @@ describe('PluginSection route contract', () => {
     expect(settingsPage).toContain('<PluginSection />');
     expect(source).toContain('await listPlugins()');
     expect(source).toContain('await updatePlugin(plugin.id, { mode })');
-    expect(source).toContain('await getCredentialBrokerInfo()');
-    expect(source).toContain('await reloadCredentialBrokerStore()');
-    expect(source).toContain('credentialBrokerInfo?.grants.enabled');
+    expect(source).toContain('<CredentialInventory />');
+    expect(source).not.toContain('reloadCredentialBrokerStore');
     expect(source).not.toContain('$props');
     expect(source).not.toContain('scope');
   });
@@ -38,17 +37,10 @@ describe('PluginSection route contract', () => {
     expect(source).toContain("label: 'Disabled'");
   });
 
-  it('renders plugin-owned capabilities including broker providers and sources', () => {
+  it('renders other plugin-owned event families while credential details are read-only', () => {
     expect(source).toContain('plugin.capabilities.event_families');
-    expect(source).toContain('Supported providers');
-    expect(source).toContain('plugin.capabilities.credential_providers.join');
-    expect(source).toContain('Credential sources');
-    expect(source).toContain('plugin.capabilities.credential_sources.join');
-  });
-
-  it('does not make raw credential references the broker inventory identity', () => {
-    expect(source).toContain("credential.provider ?? 'Unknown provider'");
-    expect(source).toContain("Last seen {credential.last_seen ?? 'never'}");
-    expect(source).not.toContain('{credential.credential_ref}');
+    expect(source).toContain("{#if plugin.id === 'credential_broker'}");
+    expect(source).not.toContain('CredentialInjectionForm');
+    expect(source).not.toContain('ConnectionSection');
   });
 });

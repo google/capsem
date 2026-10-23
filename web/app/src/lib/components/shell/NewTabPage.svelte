@@ -12,7 +12,6 @@
   import { compareSessions, sessionTokens, type SessionSortKey, type SessionSortDirection } from '../../models/session-sort';
   import { watchVisibleRefresh } from '../../models/visible-refresh';
   import Modal from './Modal.svelte';
-  import SessionCredentials from './SessionCredentials.svelte';
   import ImageCatalog from './ImageCatalog.svelte';
   import AppIcon from './AppIcon.svelte';
   import Pause from 'phosphor-svelte/lib/Pause';
@@ -33,7 +32,6 @@
   ] satisfies { key: SessionSortKey; label: string }[];
 
   let globalStats = $state<GlobalStats | null>(null);
-  let credentialSession = $state<VmSummary | null>(null);
   let statsLoading = $state(true);
 
   let initialLoading = $derived(!vmStore.polled);
@@ -267,9 +265,6 @@
               <td class="p-3 whitespace-nowrap text-sm text-muted-foreground-1 tabular-nums" title={estimatedCostHelp}>{formatEstimatedCost(vm.total_estimated_cost, vm.cost_coverage)}</td>
               <td class="p-3 whitespace-nowrap text-end">
                 <div class="inline-flex items-center gap-x-1">
-                  {#if vm.status === 'Running' || vm.persistent}
-                    <button type="button" class="py-1 px-2 text-xs rounded-lg text-muted-foreground-1 hover:text-foreground hover:bg-surface" onclick={(e: MouseEvent) => { e.stopPropagation(); credentialSession = vm; }}>Credentials</button>
-                  {/if}
                   {#if hasVmAction(vm, VmAction.PAUSE)}
                     <button type="button" class="size-7 inline-flex items-center justify-center rounded-lg text-muted-foreground-1 hover:text-foreground hover:bg-surface" onclick={(e: MouseEvent) => handlePause(e, vm)} aria-label="Pause" title="Pause">
                       <Pause size={16} />
@@ -384,11 +379,7 @@
 
 </div>
 
-{#if credentialSession}
-  {#key credentialSession.id}
-    <SessionCredentials session={{id: credentialSession.id, name: credentialSession.name ?? undefined, running: credentialSession.status === 'Running'}} onclose={() => { credentialSession = null; }} />
-  {/key}
-{/if}
+
 
 <Modal
   open={dashModalKind === 'stop'}

@@ -1,10 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import CredentialInjectionForm from './CredentialInjectionForm.svelte';
-  import ConnectionSection from './ConnectionSection.svelte';
-  import { getCredentialBrokerInfo, listPlugins, reloadCredentialBrokerStore, updatePlugin } from '../../api';
+  import CredentialInventory from './CredentialInventory.svelte';
+  import { listPlugins, updatePlugin } from '../../api';
   import type {
-    CredentialBrokerInfo,
     PluginDetectionLevel,
     PluginInfo,
     PluginListResponse,
@@ -81,12 +79,9 @@
   }
 
   let response = $state<PluginListResponse | null>(null);
-  let credentialBrokerInfo = $state<CredentialBrokerInfo | null>(null);
   let loading = $state(true);
-  let brokerLoading = $state(false);
   let saving = $state<Record<string, boolean>>({});
   let error = $state<string | null>(null);
-  let brokerError = $state<string | null>(null);
 
   onMount(() => {
     void load();
@@ -95,42 +90,12 @@
   async function load() {
     loading = true;
     error = null;
-    brokerError = null;
     try {
       response = await listPlugins();
-      const broker = response.plugins.find((plugin) => plugin.id === 'credential_broker');
-      if (broker?.detail_routes.some((route) => route.kind === 'credential_broker')) {
-        await loadCredentialBrokerInfo();
-      }
     } catch (err) {
       error = String(err instanceof Error ? err.message : err);
     } finally {
       loading = false;
-    }
-  }
-
-  async function loadCredentialBrokerInfo() {
-    brokerLoading = true;
-    brokerError = null;
-    try {
-      credentialBrokerInfo = await getCredentialBrokerInfo();
-    } catch (err) {
-      credentialBrokerInfo = null;
-      brokerError = String(err instanceof Error ? err.message : err);
-    } finally {
-      brokerLoading = false;
-    }
-  }
-
-  async function retryCredentialBrokerStore() {
-    brokerLoading = true;
-    brokerError = null;
-    try {
-      credentialBrokerInfo = await reloadCredentialBrokerStore();
-    } catch (err) {
-      brokerError = String(err instanceof Error ? err.message : err);
-    } finally {
-      brokerLoading = false;
     }
   }
 
@@ -147,9 +112,6 @@
     error = null;
     try {
       replacePlugin(await updatePlugin(plugin.id, { mode }));
-      if (plugin.id === 'credential_broker') {
-        await loadCredentialBrokerInfo();
-      }
     } catch (err) {
       error = String(err instanceof Error ? err.message : err);
     } finally {
@@ -189,6 +151,9 @@
 
   <div class="bg-card border border-card-line rounded-xl divide-y divide-card-divider">
     {#each response.plugins as plugin (plugin.id)}
+      {#if plugin.id === 'credential_broker'}
+        <div class="p-4"><CredentialInventory /></div>
+      {:else}
       {@const modeMeta = pluginModeMeta(plugin.config.mode)}
       <div class="p-4 {plugin.config.mode === 'disable' ? 'bg-muted/20 opacity-70' : ''}">
         <div class="grid grid-cols-[minmax(0,1fr)_minmax(10rem,14rem)_10rem_12rem] items-center gap-x-4">
@@ -257,113 +222,9 @@
           </select>
         </div>
 
-        {#if plugin.id === 'credential_broker' && plugin.detail_routes.some((route) => route.kind === 'credential_broker')}
-          <div class="mt-4 border border-card-line rounded-lg bg-layer p-4">
-            <div class="flex items-start justify-between gap-x-4">
-              <div>
-                <p class="text-sm font-medium text-foreground">{plugin.name}</p>
-                <p class="text-xs text-muted-foreground-1 mt-0.5">
-                  {credentialBrokerInfo?.inventory.length ?? 0} observed credentials · {credentialBrokerInfo?.grants.enabled ? 'enabled' : 'disabled'}
-                </p>
-              </div>
-              <button
-                type="button"
-                class="py-1.5 px-3 text-xs font-medium rounded-md bg-muted text-foreground hover:bg-muted-hover disabled:opacity-60"
-                disabled={brokerLoading}
-                onclick={loadCredentialBrokerInfo}
-              >
-                Refresh
-              </button>
-              <button
-                type="button"
-                class="py-1.5 px-3 text-xs font-medium rounded-md bg-primary text-primary-foreground hover:bg-primary-hover disabled:opacity-60"
-                disabled={brokerLoading}
-                onclick={retryCredentialBrokerStore}
-              >
-                Retry store
-              </button>
-            </div>
 
-            {#if brokerError}
-              <p class="mt-3 text-xs text-destructive-text">{brokerError}</p>
-            {:else if brokerLoading && !credentialBrokerInfo}
-              <p class="mt-3 text-xs text-muted-foreground-1">Loading broker details...</p>
-            {:else if credentialBrokerInfo}
-              <div class="grid grid-cols-2 gap-3 mt-4">
-                <div class="rounded-md border border-line-2 p-3">
-                  <p class="text-[11px] uppercase tracking-wide text-muted-foreground-2">Store</p>
-                  <p class="mt-2 text-xs text-foreground">
-                    {credentialBrokerInfo.store.status} · {credentialBrokerInfo.store.backend} · {credentialBrokerInfo.store.cached_count} cached
-                  </p>
-                  {#if credentialBrokerInfo.store.last_error}
-                    <p class="mt-1 text-xs text-destructive-text">{credentialBrokerInfo.store.last_error}</p>
-                  {/if}
-                </div>
-                <div class="rounded-md border border-line-2 p-3">
-                  <p class="text-[11px] uppercase tracking-wide text-muted-foreground-2">Supported providers</p>
-                  <p class="mt-2 text-xs text-foreground">
-                    {plugin.capabilities.credential_providers.join(', ') || 'none'}
-                  </p>
-                </div>
-              </div>
-
-              <div class="grid grid-cols-2 gap-3 mt-4">
-                <div class="rounded-md border border-line-2 p-3">
-                  <p class="text-[11px] uppercase tracking-wide text-muted-foreground-2">Credential sources</p>
-                  <p class="mt-2 text-xs text-foreground">
-                    {plugin.capabilities.credential_sources.join(', ') || 'none'}
-                  </p>
-                </div>
-              </div>
-
-              <div class="grid grid-cols-3 gap-3 mt-4">
-                <div class="rounded-md border border-line-2 p-3">
-                  <p class="text-[11px] uppercase tracking-wide text-muted-foreground-2">Inventory</p>
-                  <p class="text-lg font-semibold text-foreground">{credentialBrokerInfo.inventory.length}</p>
-                </div>
-                <div class="rounded-md border border-line-2 p-3">
-                  <p class="text-[11px] uppercase tracking-wide text-muted-foreground-2">VM grants</p>
-                  <p class="text-lg font-semibold text-foreground">{credentialBrokerInfo.grants.vm_grants.length}</p>
-                </div>
-                <div class="rounded-md border border-line-2 p-3">
-                  <p class="text-[11px] uppercase tracking-wide text-muted-foreground-2">Corp constraints</p>
-                  <p class="text-lg font-semibold text-foreground">{credentialBrokerInfo.corp_constraints.length}</p>
-                </div>
-              </div>
-
-              {#if credentialBrokerInfo.inventory.length > 0}
-                <ul class="mt-4 divide-y divide-card-divider border border-line-2 rounded-md">
-                  {#each credentialBrokerInfo.inventory as credential, index (`${credential.provider ?? 'unknown'}:${credential.last_seen ?? 'never'}:${index}`)}
-                    <li class="grid grid-cols-[minmax(0,1fr)_6rem_6rem] gap-x-3 p-3 text-xs">
-                      <div class="min-w-0">
-                        <p class="font-medium text-foreground truncate">{credential.provider ?? 'Unknown provider'}</p>
-                        <p class="text-muted-foreground-2 truncate">Last seen {credential.last_seen ?? 'never'}</p>
-                      </div>
-                      <p class="text-muted-foreground-1">{credential.observed_count} seen</p>
-                      <p class="text-muted-foreground-1">{credential.injected_count} used</p>
-                    </li>
-                  {/each}
-                </ul>
-              {:else}
-                <p class="mt-4 text-xs text-muted-foreground-1">No credential activity recorded.</p>
-              {/if}
-
-              {#if credentialBrokerInfo.corp_constraints.length > 0}
-                <ul class="mt-4 space-y-2">
-                  {#each credentialBrokerInfo.corp_constraints as constraint (constraint.id)}
-                    <li class="text-xs text-muted-foreground-1">
-                      <span class="font-medium text-foreground">{constraint.id}</span>
-                      {constraint.description}
-                    </li>
-                  {/each}
-                </ul>
-              {/if}
-            {/if}
-            <CredentialInjectionForm onadded={() => { void loadCredentialBrokerInfo(); }} />
-            <ConnectionSection />
-          </div>
-        {/if}
       </div>
+      {/if}
     {/each}
   </div>
 {/if}

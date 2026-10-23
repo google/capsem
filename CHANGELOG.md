@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Simplify Credentials to a read-only list of observed provider, source and
+  last-use metadata by VM; remove enrollment, injection and grant controls.
+
 - Associate observed credential metadata with its session in the broker's
   existing inventory response, without treating shared storage as VM access.
 

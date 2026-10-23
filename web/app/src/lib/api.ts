@@ -75,6 +75,7 @@ export interface PluginConfig {
 }
 
 export interface BrokeredCredentialStatus {
+  source?: string | null;
   provider: string | null;
   credential_ref: string;
   observed_count: number;
@@ -158,6 +159,7 @@ export interface CredentialStoreStatus {
 }
 
 export interface CredentialBrokerInfo {
+  sessions?: { vm_id: string; inventory: BrokeredCredentialStatus[] }[];
   plugin_id: 'credential_broker';
   store: CredentialStoreStatus;
   inventory: BrokeredCredentialStatus[];
