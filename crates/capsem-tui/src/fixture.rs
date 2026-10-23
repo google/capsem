@@ -27,6 +27,7 @@ pub fn fixture_state() -> AppState {
         update_notice: None,
         sessions: vec![
             SessionSummary {
+                terminal: None,
                 browser_request: None,
                 id: "vm-2".to_string(),
                 title: "Session V2".to_string(),
@@ -52,6 +53,7 @@ pub fn fixture_state() -> AppState {
                 },
             },
             SessionSummary {
+                terminal: None,
                 browser_request: None,
                 id: "linux-os".to_string(),
                 title: "Linux OS".to_string(),

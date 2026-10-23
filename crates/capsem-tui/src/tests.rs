@@ -1,6 +1,7 @@
 mod gateway_fixtures;
 mod image_creation;
 mod lifecycle;
+mod manager;
 mod terminal_cursor;
 mod updates;
 use gateway_fixtures::*;
@@ -18,6 +19,13 @@ use crate::gateway_provider::{
 };
 use crate::model::{Attention, ServiceStatus, SessionLifecycle, UpdateNoticeKind, UpdateTrack};
 use crate::ui::{render_app_snapshot, render_app_test_buffer, render_snapshot, render_test_buffer};
+
+fn choose_test_image(app: &mut App) {
+    let request = app.take_catalog_request().unwrap();
+    app.apply_image_catalog(request, Ok(image_creation::catalog()));
+    app.handle_key(key(KeyCode::Tab, KeyModifiers::NONE));
+    app.handle_key(key(KeyCode::Down, KeyModifiers::NONE));
+}
 
 #[test]
 fn browser_request_uses_explicit_local_action_without_stealing_guest_keys() {
@@ -72,7 +80,7 @@ fn snapshot_contains_light_bar_tabs_and_active_desktop() {
     assert!(snapshot.contains("  18ms●"));
     assert!(snapshot.contains("1  Session V2"));
     assert!(snapshot.contains("2  Linux OS!"));
-    assert!(snapshot.contains("◷ 47m | # 38.4k | $ 0.21 | help: alt+?"));
+    assert!(snapshot.contains("◷ 47m | # 38.4k | $ 0.21"));
     assert!(
         !snapshot.contains("github.com/google/capsem"),
         "repo metadata belongs in a popup or future status segment, not the empty terminal surface"
@@ -92,7 +100,7 @@ fn no_session_status_bar_keeps_help_hint_on_the_right() {
 
     let snapshot = render_snapshot(&state, 100, 24).expect("render empty snapshot");
 
-    assert!(snapshot.contains("no session | help: alt+?"));
+    assert!(snapshot.contains("no session"));
 }
 
 #[test]
@@ -106,7 +114,7 @@ fn status_bar_shows_update_notice_without_hiding_session_stats() {
     let snapshot = render_snapshot(&state, 120, 24).expect("render update snapshot");
 
     assert!(snapshot.contains("updates: binary, assets"));
-    assert!(snapshot.contains("help: alt+?"));
+    assert!(snapshot.contains("Help: Alt+?"));
 }
 
 #[test]
@@ -120,7 +128,7 @@ fn status_bar_shows_current_update_state() {
     let snapshot = render_snapshot(&state, 120, 24).expect("render current update snapshot");
 
     assert!(snapshot.contains("updates: current"));
-    assert!(snapshot.contains("help: alt+?"));
+    assert!(snapshot.contains("Help: Alt+?"));
 }
 
 #[test]
@@ -379,11 +387,12 @@ fn create_overlay_edits_prefilled_name() {
         );
     }
 
+    choose_test_image(&mut app);
     assert_eq!(
         app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
         AppAction::Invoke(ControlAction::CreateSession {
             name: Some("vm-1-proof".to_string()),
-            image: None,
+            image: image_creation::catalog().images[0].image.clone(),
         })
     );
 }
@@ -412,11 +421,12 @@ fn create_overlay_default_name_lets_service_assign_id() {
         app.handle_key(key(KeyCode::Char('n'), KeyModifiers::ALT)),
         AppAction::Consumed
     );
+    choose_test_image(&mut app);
     assert_eq!(
         app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
         AppAction::Invoke(ControlAction::CreateSession {
             name: None,
-            image: None
+            image: image_creation::catalog().images[0].image.clone()
         })
     );
 }
@@ -436,8 +446,8 @@ fn help_lists_save_sessions_status_and_fork_shortcuts() {
     assert!(snapshot.contains("suspend"));
     assert!(snapshot.contains("Alt+c"));
     assert!(snapshot.contains("checkpoint"));
-    assert!(snapshot.contains("Alt+l"));
-    assert!(snapshot.contains("sessions"));
+    assert!(snapshot.contains("Alt+M"));
+    assert!(snapshot.contains("terminal sessions"));
     assert!(snapshot.contains("Alt+i"));
     assert!(snapshot.contains("session info"));
     assert!(snapshot.contains("Alt+f fork"));
@@ -494,9 +504,7 @@ fn alt_l_lists_sessions_as_table_with_key_fields() {
     assert!(snapshot.contains("Name"));
     assert!(!snapshot.contains("Profile"));
     assert!(snapshot.contains("State"));
-    assert!(snapshot.contains("Time"));
-    assert!(snapshot.contains("Tokens"));
-    assert!(snapshot.contains("Cost"));
+    assert!(snapshot.contains("Latest terminal activity"));
     assert!(snapshot.contains("Session V2"));
     assert!(snapshot.contains("Linux OS"));
 }
@@ -680,10 +688,10 @@ fn stats_overlay_renders_on_demand_without_persistent_help() {
     assert!(snapshot.contains("vm-2"));
     assert!(snapshot.contains("tokens"));
     assert!(
-        !render_snapshot(&fixture_state(), 100, 24)
+        render_snapshot(&fixture_state(), 100, 24)
             .expect("render base snapshot")
             .contains("Alt+?"),
-        "help is hidden until requested"
+        "help shortcut remains visible"
     );
 }
 

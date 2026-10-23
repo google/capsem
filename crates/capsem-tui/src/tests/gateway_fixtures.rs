@@ -7,6 +7,7 @@ pub(super) fn gateway_status_body() -> &'static str {
         "vms": [
             {
                 "id": "vm-1",
+"app":{"catalog_name":"dev","image":"r@sha256:abc","architecture":"arm64","display_name":"Development","description":"Tools","interfaces":["terminal"]},
                 "name": "main-session",
                 "status": "Running",
                 "persistent": true,
@@ -21,6 +22,7 @@ pub(super) fn gateway_status_body() -> &'static str {
             },
             {
                 "id": "vm-2",
+"app":{"catalog_name":"dev","image":"r@sha256:abc","architecture":"arm64","display_name":"Development","description":"Tools","interfaces":["terminal"]},
                 "status": "Suspended",
                 "persistent": true,
                 "available_actions": [],

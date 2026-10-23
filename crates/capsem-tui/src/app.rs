@@ -259,6 +259,41 @@ impl App {
         if self.handle_overlay_key(key) {
             return AppAction::Consumed;
         }
+        if self.overlay == AppOverlay::Home {
+            match key.code {
+                KeyCode::Char('n' | 'N') => {
+                    self.open_create();
+                    return AppAction::Consumed;
+                }
+                KeyCode::Up | KeyCode::Down => {
+                    let count = self.state.sessions.len();
+                    if count > 0 {
+                        self.active_index = if key.code == KeyCode::Down {
+                            (self.active_index + 1) % count
+                        } else {
+                            (self.active_index + count - 1) % count
+                        };
+                        self.sync_active_session();
+                    }
+                    return AppAction::Consumed;
+                }
+                KeyCode::Enter => {
+                    self.overlay = AppOverlay::None;
+                    return AppAction::Consumed;
+                }
+                _ if is_fork_key(key) => {
+                    self.open_fork();
+                    return AppAction::Consumed;
+                }
+                _ => {
+                    if let Some(action) = self.control_action_for_key(key) {
+                        self.pending_action = Some(action);
+                        self.overlay = AppOverlay::Confirm;
+                        return AppAction::Consumed;
+                    }
+                }
+            }
+        }
         if self.overlay != AppOverlay::None {
             if key.code == KeyCode::Esc {
                 self.overlay = AppOverlay::None;
@@ -436,7 +471,7 @@ impl App {
         let next = match key.code {
             KeyCode::Char('?' | '/') => AppOverlay::Help,
             KeyCode::Char('i' | 'I') => AppOverlay::Stats,
-            KeyCode::Char('l' | 'L' | 'o' | 'O') => AppOverlay::Home,
+            KeyCode::Char('m' | 'M' | '0' | 'l' | 'L' | 'o' | 'O') => AppOverlay::Home,
             _ => return false,
         };
         self.overlay = if self.overlay == next { AppOverlay::None } else { next };

@@ -1,7 +1,9 @@
 mod snapshots;
 use snapshots::buffer_to_svg;
 mod create;
+mod manager;
 use create::create_lines;
+use manager::home_lines;
 
 use anyhow::Result;
 use ratatui::backend::TestBackend;
@@ -169,6 +171,7 @@ fn render_status_bar(frame: &mut Frame<'_>, state: &AppState, area: Rect) {
     frame.render_widget(Paragraph::new("").style(base), area);
 
     let mut left = vec![
+        Span::styled("Manager: Alt+M  Help: Alt+? ", base),
         Span::styled(format!("{:>4}ms", service.latency.as_millis()), base),
         Span::styled(
             service_dot(service.status),
@@ -470,7 +473,7 @@ fn render_overlay(
     let title = match overlay {
         AppOverlay::Help => " help ",
         AppOverlay::Stats => " session info ",
-        AppOverlay::Home => " sessions ",
+        AppOverlay::Home => " agent manager ",
         AppOverlay::Create => " new session ",
         AppOverlay::Fork => " fork session ",
         AppOverlay::Confirm => " confirm ",
@@ -483,7 +486,7 @@ fn render_overlay(
         .style(status_base_style())
         .padding(Padding::horizontal(1));
     frame.render_widget(block, popup);
-    let lines = match overlay {
+    let mut lines = match overlay {
         AppOverlay::Help => help_lines(),
         AppOverlay::Stats => stats_lines(state),
         AppOverlay::Home => home_lines(state),
@@ -492,6 +495,9 @@ fn render_overlay(
         AppOverlay::Confirm => confirm_lines(pending_action),
         AppOverlay::None => Vec::new(),
     };
+    if let Some(message) = &state.service.control_message {
+        lines.insert(1, overlay_line(&truncate(message, 100)));
+    }
     let inner = Rect::new(
         popup.x.saturating_add(2),
         popup.y.saturating_add(1),
@@ -516,8 +522,8 @@ fn overlay_height(state: &AppState, overlay: AppOverlay) -> u16 {
     match overlay {
         AppOverlay::Help => 21,
         AppOverlay::Stats => 12,
-        AppOverlay::Home => (state.sessions.len() as u16).saturating_add(5).clamp(7, 16),
-        AppOverlay::Create => 13,
+        AppOverlay::Home => (state.sessions.len() as u16).saturating_add(11).clamp(12, 24),
+        AppOverlay::Create => 24,
         AppOverlay::Fork => 8,
         AppOverlay::Confirm => 6,
         AppOverlay::None => 0,
@@ -532,11 +538,10 @@ fn help_lines() -> Vec<Line<'static>> {
         help_row("Alt+Left", "previous", "global", "switch session"),
         help_row("Alt+Right", "next", "global", "switch session"),
         help_row("Alt+1..9", "jump", "global", "select by tab number"),
-        help_row("Alt+l", "sessions", "global", "list sessions and status"),
+        help_row("Alt+M / Alt+0", "manager", "global", "terminal sessions and activity"),
         help_row("Alt+i", "session info", "session", "active session details"),
         help_row("Alt+n", "new", "global", "create a session"),
         help_row("Alt+f", "fork", "session", "fork active session"),
-        help_row("Alt+b", "browser", "session", "open guest link on this device"),
         help_row("Alt+s", "suspend", "session", "warm stop active session"),
         help_row("Alt+c", "checkpoint", "session", "save/checkpoint session"),
         help_row("Alt+r", "resume", "session", "resume inactive session"),
@@ -596,37 +601,6 @@ fn stats_lines(state: &AppState) -> Vec<Line<'static>> {
         info_row("events", &session.stats.events.to_string(), ""),
         info_row("jobs", &session.stats.jobs.to_string(), ""),
     ]
-}
-
-fn home_lines(state: &AppState) -> Vec<Line<'static>> {
-    let mut lines = vec![overlay_title("sessions")];
-    if state.sessions.is_empty() {
-        lines.push(overlay_line("no sessions"));
-        return lines;
-    }
-    lines.push(table_header(&["#", "Name", "State", "Time", "Tokens", "Cost"]));
-    for (index, session) in state.sessions.iter().take(10).enumerate() {
-        let active = if session.id == state.active_session_id {
-            "▶"
-        } else {
-            " "
-        };
-        let row = format!(
-            "{active} {:<2} {:<18} {:<10} {:>6} {:>7} ${:<5}",
-            index + 1,
-            truncate(&session.title, 18),
-            session.lifecycle.label(),
-            format_duration(session.stats.duration),
-            format_tokens(session.stats.tokens),
-            format_cost_amount(session.stats.cost_micros),
-        );
-        if session.id == state.active_session_id {
-            lines.push(focus_line(&row));
-        } else {
-            lines.push(overlay_line(&row));
-        }
-    }
-    lines
 }
 
 fn overlay_title(title: &'static str) -> Line<'static> {
@@ -901,7 +875,6 @@ fn active_stats_spans(session: &SessionSummary) -> Vec<Span<'static>> {
         Span::styled(format_tokens(session.stats.tokens), stats_style()),
         Span::styled(" | $ ", muted_style()),
         Span::styled(format_cost_amount(session.stats.cost_micros), stats_style()),
-        Span::styled(" | help: alt+?", muted_style()),
         Span::styled(" ", stats_style()),
     ]
 }
@@ -909,7 +882,6 @@ fn active_stats_spans(session: &SessionSummary) -> Vec<Span<'static>> {
 fn no_session_stats_spans() -> Vec<Span<'static>> {
     vec![
         Span::styled(" no session", muted_style()),
-        Span::styled(" | help: alt+?", muted_style()),
         Span::styled(" ", stats_style()),
     ]
 }

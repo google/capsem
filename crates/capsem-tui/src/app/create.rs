@@ -94,7 +94,13 @@ impl App {
             .filter(|draft| draft.generation == request.generation)
         {
             draft.catalog = match result {
-                Ok(response) => ImageCatalog::Loaded(response.images),
+                Ok(response) => ImageCatalog::Loaded(
+                    response
+                        .images
+                        .into_iter()
+                        .filter(|image| image.surface == Some(capsem_sdk::models::ImageSurface::Terminal))
+                        .collect(),
+                ),
                 Err(error) => ImageCatalog::Failed(error),
             };
         }
@@ -188,18 +194,21 @@ impl App {
             }
             KeyCode::Up | KeyCode::Down if draft.field == CreateField::Image => {
                 if let ImageCatalog::Loaded(images) = &draft.catalog {
-                    let count = images.len() + 1;
+                    let count = images.len();
+                    if count == 0 {
+                        return AppAction::Consumed;
+                    }
                     let selection = draft
                         .image_name
                         .as_ref()
                         .and_then(|name| images.iter().position(|image| &image.name == name))
-                        .map_or(0, |index| index + 1);
+                        .unwrap_or(count - 1);
                     let selection = if key.code == KeyCode::Down {
                         (selection + 1) % count
                     } else {
                         (selection + count - 1) % count
                     };
-                    draft.image_name = selection.checked_sub(1).map(|index| images[index].name.clone());
+                    draft.image_name = Some(images[selection].name.clone());
                 }
             }
             KeyCode::Enter => {
@@ -207,11 +216,9 @@ impl App {
                 if name.is_empty() {
                     return AppAction::Consumed;
                 }
-                let image = if draft.image_name.is_none() {
-                    None
-                } else {
+                let image = {
                     let Some(image) = draft.selected_image().filter(|image| image.image.is_some()) else {
-                        self.set_control_message("this image is incompatible with the host architecture or runtime");
+                        self.set_control_message("choose a compatible terminal image; Tab then Up/Down");
                         return AppAction::Consumed;
                     };
                     // Use the advertised immutable pin. The service rechecks admission.

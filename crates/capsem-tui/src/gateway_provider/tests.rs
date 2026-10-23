@@ -1,12 +1,44 @@
 use super::*;
 use crate::tests::{read_http_request, write_json_response, write_response};
 
+#[test]
+fn overview_refuses_graphical_and_unknown_presentation_without_name_guesses() {
+    let mut value: serde_json::Value = serde_json::from_str(&overview("running", "Running")).unwrap();
+    value["vms"][0]["name"] = serde_json::json!("terminal-looking-name");
+    value["vms"][0]["app"] = serde_json::json!({"catalog_name":"anything","image":"r@sha256:abc","architecture":"arm64","display_name":"Development","description":"Tools","interfaces":["graphical"],"evidence":[]});
+    assert!(state_from_status_json_for_test(&value.to_string(), Duration::ZERO)
+        .unwrap()
+        .sessions
+        .is_empty());
+    value["vms"][0]["app"] = serde_json::Value::Null;
+    assert!(state_from_status_json_for_test(&value.to_string(), Duration::ZERO)
+        .unwrap()
+        .sessions
+        .is_empty());
+}
+
+#[test]
+fn overview_keeps_structured_terminal_activity_without_inferring_work() {
+    let mut value: serde_json::Value = serde_json::from_str(&overview("running", "Running")).unwrap();
+    value["vms"][0]["terminal"] = serde_json::json!({"revision":9,"title":"Editing workspace","bell_count":2,
+        "last_notification":{"id":"n","title":"Review requested","body":"Please review the change"}});
+    let state = state_from_status_json_for_test(&value.to_string(), Duration::ZERO).unwrap();
+    let terminal = state.sessions[0].terminal.as_ref().unwrap();
+    assert_eq!(terminal.title, "Editing workspace");
+    assert_eq!(
+        terminal.last_notification.as_ref().unwrap().body,
+        "Please review the change"
+    );
+    assert_eq!(state.sessions[0].lifecycle.label(), "running");
+}
+
 fn overview(service: &str, lifecycle: &str) -> String {
     serde_json::json!({
         "service": service, "gateway_version": "test", "vm_count": 1,
         "resource_summary": null,
         "vms": [{
             "id": "vm", "name": null, "persistent": true,
+            "app": {"catalog_name":"dev","image":"r@sha256:abc","architecture":"arm64","display_name":"Development","description":"Tools","interfaces":["terminal"],"evidence":[]},
             "status": lifecycle, "available_actions": [], "can_resume": false,
             "resume_blocked_reason": "session overlay is missing",
             "total_input_tokens": u64::MAX, "total_output_tokens": 1,

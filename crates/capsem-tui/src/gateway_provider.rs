@@ -251,7 +251,12 @@ fn status_response_to_state(status: HypervisorInfo, latency: Duration) -> AppSta
         ServiceAvailability::Running => ServiceStatus::Online,
         ServiceAvailability::Unavailable => ServiceStatus::Degraded,
     };
-    let sessions = status.vms.into_iter().map(vm_response_to_summary).collect::<Vec<_>>();
+    let sessions = status
+        .vms
+        .into_iter()
+        .filter(terminal_vm)
+        .map(vm_response_to_summary)
+        .collect::<Vec<_>>();
     let active_session_id = sessions.first().map(|session| session.id.clone()).unwrap_or_default();
     AppState {
         service: ServiceState {
@@ -268,6 +273,15 @@ fn status_response_to_state(status: HypervisorInfo, latency: Duration) -> AppSta
             channel_url: None,
         })),
     }
+}
+
+fn terminal_vm(vm: &VmSummary) -> bool {
+    use capsem_sdk::models::ImageInterface;
+    vm.app.as_ref().is_some_and(|app| {
+        app.interfaces.contains(&ImageInterface::Terminal)
+            && !app.interfaces.contains(&ImageInterface::Graphical)
+            && !app.interfaces.contains(&ImageInterface::Web)
+    })
 }
 
 fn update_response_to_notice(status: UpdateStatusResponse) -> UpdateNotice {
@@ -326,6 +340,7 @@ fn vm_response_to_summary(vm: VmSummary) -> SessionSummary {
         .unwrap_or_default()
         .saturating_add(vm.total_output_tokens.unwrap_or_default());
     SessionSummary {
+        terminal: vm.terminal,
         browser_request: vm.browser_request,
         id,
         title,

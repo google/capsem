@@ -12,6 +12,13 @@ use capsem_tui::terminal::TerminalEvent;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
 #[test]
+fn terminal_dimensions_reserve_only_the_footer_at_each_window_size() {
+    for (height, rows) in [(40, 39), (42, 41), (24, 23), (1, 1), (0, 1)] {
+        assert_eq!(super::terminal_rows(height), rows);
+    }
+}
+
+#[test]
 fn fixture_creation_does_not_leave_an_outstanding_create() {
     let mut app = App::new(capsem_tui::fixture::fixture_state());
     super::handle_terminal_event(

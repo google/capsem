@@ -282,11 +282,12 @@ fn tui_story_suite_covers_create_stop_resume_navigation_help_latency_and_human_l
         app.handle_key(key(KeyCode::Char('n'), KeyModifiers::ALT)),
         AppAction::Consumed
     );
+    choose_test_image(&mut app);
     assert_eq!(
         app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
         AppAction::Invoke(ControlAction::CreateSession {
             name: None,
-            image: None
+            image: image_creation::catalog().images[0].image.clone()
         })
     );
 
@@ -312,7 +313,7 @@ fn gateway_status_can_resume_false_blocks_tui_resume() {
             "vm_count": 1,
             "resource_summary": null,
             "vms": [{
-                "id": "stale-vm",
+                "id": "stale-vm","app":{"catalog_name":"dev","image":"r@sha256:abc","architecture":"arm64","display_name":"Development","description":"Tools","interfaces":["terminal"]},
                 "name": "Stale VM",
                 "status": "Stopped",
                 "persistent": true,

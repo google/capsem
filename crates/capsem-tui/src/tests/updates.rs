@@ -129,7 +129,7 @@ fn tui_update_smoke_matrix_covers_release_states_and_atomic_action() {
         let snapshot = render_snapshot(&state, 120, 24)
             .unwrap_or_else(|error| panic!("{name} TUI snapshot should render: {error}"));
         assert!(snapshot.contains(expected), "{name} missing {expected}");
-        assert!(snapshot.contains("help: alt+?"), "{name} lost help hint");
+        assert!(snapshot.contains("Help: Alt+?"), "{name} lost help hint");
     }
 
     let mut app = App::new(fixture_state());

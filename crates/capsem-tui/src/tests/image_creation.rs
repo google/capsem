@@ -1,6 +1,28 @@
 use super::*;
 
 #[test]
+fn image_picker_excludes_graphical_and_unknown_surfaces_and_refuses_default_create() {
+    let mut app = App::new(fixture_state());
+    app.handle_key(key(KeyCode::Char('n'), KeyModifiers::ALT));
+    assert_eq!(
+        app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
+        AppAction::Consumed
+    );
+    let generation = app.take_catalog_request().unwrap();
+    let mut response = catalog();
+    response.images[0].surface = Some(capsem_sdk::models::ImageSurface::Xpra);
+    response.images[1].surface = None;
+    app.apply_image_catalog(generation, Ok(response));
+    assert!(
+        matches!(&app.create_draft().unwrap().catalog, crate::app::ImageCatalog::Loaded(images) if images.is_empty())
+    );
+    assert_eq!(
+        app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
+        AppAction::Consumed
+    );
+}
+
+#[test]
 fn periodic_state_refresh_follows_pending_image_verification() {
     let mut app = App::new(fixture_state());
     app.handle_key(key(KeyCode::Char('n'), KeyModifiers::ALT));
@@ -187,11 +209,11 @@ fn create_dialog_offers_an_explicit_image_choice() {
     app.handle_key(key(KeyCode::Char('n'), KeyModifiers::ALT));
     let snapshot = render_app_snapshot(&app, 100, 30).unwrap();
     assert!(snapshot.contains("image"));
-    assert!(snapshot.contains("Plain VM"));
+    assert!(!snapshot.contains("Plain VM"));
     assert!(snapshot.contains("loading image catalog"));
 }
 
-fn catalog() -> capsem_sdk::models::ImageListResponse {
+pub(super) fn catalog() -> capsem_sdk::models::ImageListResponse {
     use capsem_sdk::models::{ImageCacheState, ImageInfo, ImageListResponse};
     ImageListResponse {
         catalog: None,
@@ -204,7 +226,7 @@ fn catalog() -> capsem_sdk::models::ImageListResponse {
                 cached: ImageCacheState::Unknown,
                 previous_image: None,
                 app: None,
-                surface: None,
+                surface: Some(capsem_sdk::models::ImageSurface::Terminal),
                 progress: None,
             },
             ImageInfo {
@@ -215,7 +237,7 @@ fn catalog() -> capsem_sdk::models::ImageListResponse {
                 cached: ImageCacheState::Unknown,
                 previous_image: None,
                 app: None,
-                surface: None,
+                surface: Some(capsem_sdk::models::ImageSurface::Terminal),
                 progress: None,
             },
         ],
@@ -279,13 +301,9 @@ fn catalog_failures_and_late_results_never_replace_a_new_dialog() {
     assert_eq!(app.state().service.status, ServiceStatus::Online);
     assert_eq!(
         app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
-        AppAction::Invoke(ControlAction::CreateSession {
-            name: None,
-            image: None
-        })
+        AppAction::Consumed
     );
-    app.complete_create(true);
-    assert!(app.create_draft().is_none());
+    assert!(app.create_draft().is_some());
 }
 
 #[test]
@@ -293,6 +311,9 @@ fn pending_create_keeps_its_catalog_result_and_prevents_duplicate_dialogs() {
     let mut app = App::new(fixture_state());
     app.handle_key(key(KeyCode::Char('n'), KeyModifiers::ALT));
     let generation = app.take_catalog_request().unwrap();
+    app.apply_image_catalog(generation, Ok(catalog()));
+    app.handle_key(key(KeyCode::Tab, KeyModifiers::NONE));
+    app.handle_key(key(KeyCode::Down, KeyModifiers::NONE));
     assert!(matches!(
         app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
         AppAction::Invoke(_)

@@ -19,13 +19,32 @@ pub(super) fn create_lines(draft: Option<&CreateDraft>) -> Vec<Line<'static>> {
     lines.push(pair(
         CreateField::Image,
         "image",
-        draft.image_name.as_deref().unwrap_or("Plain VM"),
+        draft.image_name.as_deref().unwrap_or("Choose a terminal app"),
     ));
     match &draft.catalog {
         ImageCatalog::Loading => lines.push(overlay_line("loading image catalog")),
         ImageCatalog::Failed(error) => lines.push(overlay_line(&truncate(error, 160))),
-        ImageCatalog::Loaded(images) if images.is_empty() => lines.push(overlay_line("no catalog images available")),
-        ImageCatalog::Loaded(_) => {
+        ImageCatalog::Loaded(images) if images.is_empty() => {
+            lines.push(overlay_line("no terminal catalog images available"))
+        }
+        ImageCatalog::Loaded(images) => {
+            for image in images.iter().take(8) {
+                let name = image
+                    .app
+                    .as_ref()
+                    .map_or(image.name.as_str(), |app| app.display_name.as_str());
+                let label = format!(
+                    "{} {}{}",
+                    if draft.image_name.as_deref() == Some(&image.name) {
+                        ">"
+                    } else {
+                        " "
+                    },
+                    name,
+                    if image.image.is_none() { " (incompatible)" } else { "" }
+                );
+                lines.push(overlay_line(&label));
+            }
             if let Some(image) = draft.selected_image() {
                 lines.push(overlay_line(&truncate(&image.description, 120)));
                 lines.push(overlay_pair(
@@ -49,7 +68,7 @@ pub(super) fn create_lines(draft: Option<&CreateDraft>) -> Vec<Line<'static>> {
                     lines.push(overlay_pair("image pin", &truncate(pin, 120)));
                 }
             } else {
-                lines.push(overlay_line("Plain VM uses the service's default environment"));
+                lines.push(overlay_line("Choose a terminal app with Tab then Up/Down"));
             }
         }
     }

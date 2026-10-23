@@ -86,6 +86,7 @@ impl ServiceStatus {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SessionSummary {
+    pub terminal: Option<capsem_sdk::models::TerminalSummary>,
     pub browser_request: Option<capsem_sdk::models::BrowserRequest>,
     pub id: String,
     pub title: String,
@@ -114,7 +115,7 @@ impl SessionLifecycle {
         match self {
             Self::Idle => "idle",
             Self::Suspended => "suspended",
-            Self::Working => "working",
+            Self::Working => "running",
             Self::WaitingForInput => "waiting",
             Self::Failed => "failed",
         }
