@@ -83,6 +83,70 @@ async fn dns_handler_blocks_query_through_security_event_rules() {
 }
 
 #[tokio::test]
+async fn dns_ask_holds_original_datagram_before_any_upstream_lookup() {
+    use crate::security_engine::approval::client::{frame_limit, ApprovalCapability, ApprovalClient};
+    use capsem_foundation::ipc_channel;
+    use capsem_proto::approval::{ApprovalClientMessage, ApprovalOutcome, ApprovalServerMessage};
+    for outcome in [
+        ApprovalOutcome::Approved,
+        ApprovalOutcome::Denied,
+        ApprovalOutcome::Expired,
+    ] {
+        let (upstream, seen) =
+            counting_upstream(hickory_proto::op::ResponseCode::NoError, std::time::Duration::ZERO).await;
+        let policy = proxy_policy(
+            r#"
+            [profiles.rules.ask_dns]
+            name = "ask_dns"
+            action = "ask"
+            match = 'dns.qname == "held.example.com"'
+        "#,
+        );
+        let db = Arc::new(capsem_logger::DbWriter::open_in_memory(16).unwrap());
+        let (worker, service) = std::os::unix::net::UnixStream::pair().unwrap();
+        let capability = ApprovalCapability::connected(ApprovalClient::from_stream(worker).unwrap());
+        let engine = Arc::new(
+            crate::net::proxy_engine::ProxyEngine::local(policy.clone(), db).with_approvals(Some(Arc::new(capability))),
+        );
+        let handler =
+            DnsHandler::new(policy, Arc::new(DnsResolver::with_upstreams(vec![upstream]))).with_engine(engine);
+        let query = build_query_bytes("held.example.com.", RecordType::A, 0xCAFE);
+        let query_len = query.len();
+        let original = tokio::spawn(async move { handler.handle(&query).await });
+        let (sender, receiver) =
+            ipc_channel::channel_from_std_with_limit::<ApprovalServerMessage, ApprovalClientMessage>(
+                service,
+                frame_limit(),
+            )
+            .unwrap();
+        let ApprovalClientMessage::Begin { request_id, request } =
+            tokio::time::timeout(std::time::Duration::from_secs(2), receiver.recv())
+                .await
+                .unwrap()
+                .unwrap()
+        else {
+            panic!("begin")
+        };
+        assert_eq!(request.event_type, "dns.query");
+        assert!(request.held_bytes >= query_len as u64);
+        assert_eq!(seen.load(Ordering::SeqCst), 0, "no lookup before approval");
+        sender
+            .send(ApprovalServerMessage { request_id, outcome })
+            .await
+            .unwrap();
+        let result = original.await.unwrap();
+        assert_eq!(
+            result.decision == Decision::Allowed,
+            outcome == ApprovalOutcome::Approved
+        );
+        assert_eq!(
+            seen.load(Ordering::SeqCst),
+            usize::from(outcome == ApprovalOutcome::Approved)
+        );
+    }
+}
+
+#[tokio::test]
 async fn dns_handler_returns_local_nxdomain_for_capsem_bogus_without_upstream() {
     let handler = DnsHandler::new(proxy_policy(""), Arc::new(DnsResolver::with_upstreams(Vec::new())));
 

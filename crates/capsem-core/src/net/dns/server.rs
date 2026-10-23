@@ -188,6 +188,7 @@ pub struct DnsHandler {
     in_flight: Arc<super::coalesce::InFlightLookups>,
     /// Who answers `capsem.internal`; without one the zone is empty.
     private_names: Option<Arc<dyn super::private::PrivateNames>>,
+    engine: Option<Arc<crate::net::proxy_engine::ProxyEngine>>,
 }
 
 impl DnsHandler {
@@ -201,6 +202,7 @@ impl DnsHandler {
             cache: None,
             in_flight: Arc::default(),
             private_names: None,
+            engine: None,
         }
     }
 
@@ -212,6 +214,7 @@ impl DnsHandler {
             cache: Some(cache),
             in_flight: Arc::default(),
             private_names: None,
+            engine: None,
         }
     }
 
@@ -229,6 +232,13 @@ impl DnsHandler {
     /// Answer the private zone through `names`.
     pub fn with_private_names(mut self, names: Arc<dyn super::private::PrivateNames>) -> Self {
         self.private_names = Some(names);
+        self
+    }
+
+    /// Production queries use the same approval and ledger capability as HTTP.
+    pub fn with_engine(mut self, engine: Arc<crate::net::proxy_engine::ProxyEngine>) -> Self {
+        self.policy = engine.policy().clone();
+        self.engine = Some(engine);
         self
     }
 
@@ -355,11 +365,18 @@ impl DnsHandler {
             qtype: Some(query.qtype.to_string()),
         });
         let policy = self.policy.snapshot();
-        let dns_evaluation = match evaluate_security_boundary(
-            policy.security_rules(),
-            Arc::clone(policy.plugins()),
-            dns_security_event,
-        ) {
+        let evaluation = if let Some(engine) = &self.engine {
+            engine
+                .evaluate_with_held_bytes(&policy, dns_security_event, query_bytes.len().saturating_mul(2))
+                .await
+        } else {
+            evaluate_security_boundary(
+                policy.security_rules(),
+                Arc::clone(policy.plugins()),
+                dns_security_event,
+            )
+        };
+        let dns_evaluation = match evaluation {
             Ok(evaluation) => evaluation,
             Err(error) => {
                 warn!(error = %error, qname = %query.qname, "dns handler: security engine failed");

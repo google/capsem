@@ -128,10 +128,20 @@ impl ProxyEngine {
         self.ledger.write(op).await
     }
 
-    pub async fn evaluate(
+    pub fn evaluate<'a>(
+        &'a self,
+        snapshot: &'a ProxyPolicySnapshot,
+        event: SecurityEvent,
+    ) -> impl Future<Output = Result<SecurityBoundaryEvaluation, SecurityActionError>> + Send + 'a {
+        self.evaluate_with_held_bytes(snapshot, event, 0)
+    }
+
+    /// Include caller-owned wire buffers retained beside the semantic event.
+    pub async fn evaluate_with_held_bytes(
         &self,
         snapshot: &ProxyPolicySnapshot,
         event: SecurityEvent,
+        retained_bytes: usize,
     ) -> Result<SecurityBoundaryEvaluation, SecurityActionError> {
         let rules = Arc::clone(snapshot.security_rules());
         let plugins = Arc::clone(snapshot.plugins());
@@ -141,7 +151,8 @@ impl ProxyEngine {
         })
         .await??;
         if evaluation.enforcement.action == crate::security_engine::SecurityEnforcementAction::Ask {
-            let held_bytes = crate::security_engine::approval::enforcement::held_bytes(&evaluation.event);
+            let held_bytes = crate::security_engine::approval::enforcement::held_bytes(&evaluation.event)
+                .saturating_add(retained_bytes);
             crate::security_engine::approval::enforcement::resolve_proxy(
                 self.ledger.as_ref(),
                 self.approvals.as_deref(),

@@ -36,6 +36,15 @@ pub struct ApprovalCapability {
 }
 
 impl ApprovalCapability {
+    #[cfg(test)]
+    pub(crate) fn connected(client: ApprovalClient) -> Self {
+        let (_, receiver) = tokio::sync::watch::channel(Some(Ok(client)));
+        Self {
+            client: receiver,
+            setup: tokio::spawn(async {}),
+        }
+    }
+
     pub fn new(upstream: Arc<crate::net::upstream_grant::UpstreamGrantClient>) -> Self {
         let (sender, client) = tokio::sync::watch::channel(None);
         let setup = tokio::spawn(async move {

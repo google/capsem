@@ -152,6 +152,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Show a compact toolbar notice when the service confirms a newer Capsem version,
   with a direct action to review its update status.
+- Hold original DNS queries for security Ask decisions before any upstream lookup.
+
 - Connect confined HTTP/model proxy workers to their inherited approval capability.
 
 - Provide session-generation-scoped Ask review and resolution with audit barriers,
