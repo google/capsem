@@ -8,6 +8,7 @@ use crate::net::mitm_proxy::ScopedMcpTools;
 use super::*;
 
 mod approval;
+mod fragmentation;
 
 fn request(method: &str, params: serde_json::Value) -> JsonRpcRequest {
     JsonRpcRequest {

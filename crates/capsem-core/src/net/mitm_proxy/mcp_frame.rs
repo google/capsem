@@ -301,13 +301,20 @@ where
     let (mut result, writer_completed): (Result<()>, bool) = tokio::select! {
         result = async {
         loop {
-            let frame = tokio::select! {
-                biased;
-                completed = workers.join_next(), if !workers.is_empty() => {
-                    if let Some(completed) = completed { completed??; }
-                    continue;
+            let frame = {
+                // A frame parser owns consumed bytes and its body deadline.
+                // Reaping another call must never replace that live future.
+                let frame = read_next_frame(&mut reader);
+                tokio::pin!(frame);
+                loop {
+                    tokio::select! {
+                        biased;
+                        completed = workers.join_next(), if !workers.is_empty() => {
+                            if let Some(completed) = completed { completed??; }
+                        }
+                        frame = &mut frame => break frame?,
+                    }
                 }
-                frame = read_next_frame(&mut reader) => frame?,
             };
             let frame = match frame {
                 FrameRead::Eof => return Ok(()),

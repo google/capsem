@@ -234,6 +234,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Sort dashboard sessions correctly by total tokens and estimated cost, and
   expose the active sort direction to assistive technology. Include output-only
   token usage in the displayed total.
+- Preserve a partially received MCP frame and its existing body deadline when
+  another tool call completes on the same connection.
+
 - Bound retained approval requests before coordinator setup completes, returning
   capacity when an original caller cancels.
 
