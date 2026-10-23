@@ -3367,6 +3367,12 @@ timeout_secs = 1800
 # dimensions that need no guest and finish in seconds; the ceiling is the
 # promise, not an estimate.
 quick_timeout_secs = 60
+# Earlier VM work contributes to the one-minute load average after it stops.
+# Wait for the unchanged doctor predicate, retaining every observation; permanent
+# objections still fail immediately and a continuously busy host fails boundedly.
+fitness_timeout_secs = 120
+fitness_poll_interval_secs = 1.0
+doctor_timeout_secs = 15
 
 [benchmark.protocol]
 # Raw samples need enough p99 tail observations to expose drift while keeping
