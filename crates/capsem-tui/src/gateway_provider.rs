@@ -251,11 +251,18 @@ fn status_response_to_state(status: HypervisorInfo, latency: Duration) -> AppSta
         ServiceAvailability::Running => ServiceStatus::Online,
         ServiceAvailability::Unavailable => ServiceStatus::Degraded,
     };
+    let mut reserved_names = Vec::new();
     let sessions = status
         .vms
         .into_iter()
-        .filter(terminal_vm)
-        .map(vm_response_to_summary)
+        .filter_map(|vm| {
+            if terminal_vm(&vm) {
+                Some(vm_response_to_summary(vm))
+            } else {
+                reserved_names.extend(vm.name);
+                None
+            }
+        })
         .collect::<Vec<_>>();
     let active_session_id = sessions.first().map(|session| session.id.clone()).unwrap_or_default();
     AppState {
@@ -268,6 +275,7 @@ fn status_response_to_state(status: HypervisorInfo, latency: Duration) -> AppSta
         },
         active_session_id,
         sessions,
+        reserved_names,
         update_notice: Some(status.updates.map(update_response_to_notice).unwrap_or(UpdateNotice {
             kind: UpdateNoticeKind::Unavailable,
             channel_url: None,

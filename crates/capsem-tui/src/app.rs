@@ -829,13 +829,9 @@ fn visible_session_indices(state: &AppState) -> Vec<usize> {
 
 /// The first free `vm-N` session name, the service's own spelling.
 fn next_session_name(state: &AppState) -> String {
-    for index in 1..=state.sessions.len() + 1 {
+    for index in 1..=state.sessions.len() + state.reserved_names.len() + 1 {
         let candidate = format!("vm-{index}");
-        if state
-            .sessions
-            .iter()
-            .all(|session| !session.title.eq_ignore_ascii_case(&candidate))
-        {
+        if !session_name_reserved(state, &candidate) {
             return candidate;
         }
     }
@@ -845,7 +841,7 @@ fn next_session_name(state: &AppState) -> String {
 fn next_fork_name(state: &AppState, source_id: &str) -> String {
     let source = state.sessions.iter().find(|session| session.id == source_id);
     let title = source.map_or(source_id, |session| session.title.as_str());
-    for index in 1..=state.sessions.len() + 1 {
+    for index in 1..=state.sessions.len() + state.reserved_names.len() + 1 {
         let suffix = if index == 1 {
             "-fork".to_string()
         } else {
@@ -861,15 +857,20 @@ fn next_fork_name(state: &AppState, source_id: &str) -> String {
                 prefix = "session".to_string();
             }
         };
-        if state
-            .sessions
-            .iter()
-            .all(|session| !session.title.eq_ignore_ascii_case(&candidate))
-        {
+        if !session_name_reserved(state, &candidate) {
             return candidate;
         }
     }
     unreachable!("a finite session list leaves a free fork name")
+}
+
+fn session_name_reserved(state: &AppState, candidate: &str) -> bool {
+    state
+        .sessions
+        .iter()
+        .map(|session| session.title.as_str())
+        .chain(state.reserved_names.iter().map(String::as_str))
+        .any(|name| name.eq_ignore_ascii_case(candidate))
 }
 
 fn select_index(key: KeyEvent) -> Option<usize> {

@@ -390,3 +390,46 @@ fn fork_name_suffix_keeps_long_names_within_the_public_contract() {
     assert!(name.ends_with("-fork-2"));
     assert!(capsem_sdk::models::validate_name("VM name", name).is_ok());
 }
+
+fn mixed_session_names(terminal_name: &str, graphical_name: &str) -> crate::model::AppState {
+    let mut status: serde_json::Value = serde_json::from_str(gateway_status_body()).unwrap();
+    status["vms"][0]["id"] = "00000000-0000-4000-8000-000000000001".into();
+    status["vms"][0]["name"] = terminal_name.into();
+    status["vms"][0]["available_actions"] = serde_json::json!(["fork"]);
+    status["vms"][1]["id"] = "00000000-0000-4000-8000-000000000002".into();
+    status["vms"][1]["name"] = graphical_name.into();
+    status["vms"][1]["app"]["interfaces"] = serde_json::json!(["graphical"]);
+    state_from_status_json_for_test(&status.to_string(), std::time::Duration::ZERO).unwrap()
+}
+
+#[test]
+fn creation_reserves_hidden_graphical_names_without_exposing_sessions() {
+    let state = mixed_session_names("cli", "vm-1");
+    assert_eq!(state.sessions.len(), 1);
+    assert_eq!(state.sessions[0].title, "cli");
+    let mut app = App::new(state);
+    app.handle_key(key(KeyCode::Char('m'), KeyModifiers::ALT));
+    let manager = render_app_snapshot(&app, 100, 24).unwrap();
+    assert!(!manager.contains("vm-1"));
+    app.handle_key(key(KeyCode::Char('n'), KeyModifiers::ALT));
+    assert_eq!(app.create_draft().unwrap().name, "vm-2");
+}
+
+#[test]
+fn fork_reserves_hidden_graphical_names_and_keeps_terminal_source() {
+    let mut app = App::new(mixed_session_names("vm-1", "vm-1-fork"));
+    app.handle_key(key(KeyCode::Char('f'), KeyModifiers::ALT));
+    let draft = app.fork_draft().unwrap();
+    assert_eq!(draft.source_id, "00000000-0000-4000-8000-000000000001");
+    assert_eq!(draft.name, "vm-1-fork-2");
+}
+
+#[test]
+fn name_search_accounts_for_all_hidden_reservations_case_insensitively() {
+    let mut state = mixed_session_names("cli", "VM-1");
+    state.reserved_names.extend((2..=20).map(|index| format!("vm-{index}")));
+    let mut app = App::new(state);
+    app.handle_key(key(KeyCode::Char('n'), KeyModifiers::ALT));
+    assert_eq!(app.create_draft().unwrap().name, "vm-21");
+    assert_eq!(app.state().sessions.len(), 1);
+}

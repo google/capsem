@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Reserve graphical session names when suggesting TUI session and fork names,
+  while keeping graphical sessions outside the terminal Manager.
+
 ### Added
 
 - Record route benchmark headers, first observed body byte and completion from

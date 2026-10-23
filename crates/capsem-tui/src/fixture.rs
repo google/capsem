@@ -25,6 +25,7 @@ pub fn fixture_state() -> AppState {
         },
         active_session_id: "vm-2".to_string(),
         update_notice: None,
+        reserved_names: Vec::new(),
         sessions: vec![
             SessionSummary {
                 terminal: None,
@@ -93,6 +94,7 @@ pub fn offline_state() -> AppState {
         },
         active_session_id: String::new(),
         update_notice: None,
+        reserved_names: Vec::new(),
         sessions: Vec::new(),
     }
 }

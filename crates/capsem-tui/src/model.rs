@@ -5,6 +5,7 @@ pub struct AppState {
     pub service: ServiceState,
     pub active_session_id: String,
     pub sessions: Vec<SessionSummary>,
+    pub(crate) reserved_names: Vec<String>,
     pub update_notice: Option<UpdateNotice>,
 }
 
