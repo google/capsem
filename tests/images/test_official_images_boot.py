@@ -79,6 +79,15 @@ def test_codex_uses_the_managed_image_update_policy(service, tmp_path):
     )], "managed updates; MCP configured")
 
 
+def test_antigravity_leaves_window_controls_to_capsem(service, tmp_path):
+    _run_in_image(service, tmp_path, "antigravity-desktop", ["python3", "-c", (
+        "import json,pathlib; "
+        "config = json.loads(pathlib.Path('/home/capsem/.config/Antigravity IDE/User/settings.json').read_text()); "
+        "assert config['window.controlsStyle'] == 'hidden'; "
+        "print('window controls owned by Capsem')"
+    )], "window controls owned by Capsem")
+
+
 CHROMIUM_PROCESSES = (
     # Each Chromium process: its pid, its pid in every PID namespace it is in
     # (NSpid, readable without ptrace access to a non-dumpable renderer), and

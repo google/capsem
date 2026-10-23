@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Hide Antigravity IDE's own minimize, maximize and close buttons through its
+  supported window setting, leaving session window controls to Capsem.
+
 - Restore graphical keyboard focus when clicking back into the app after
   using Capsem's toolbar or returning from the browser.
 
