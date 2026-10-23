@@ -132,9 +132,13 @@ def test_pii_rewrite_uses_actual_bytes_and_never_archives_matches(
     with filter_session(
         tmp_path, "pii_filter", "rewrite", content={"direction": direction}
     ) as env:
+        # Match beyond the configured 8 KiB capture window as well as the
+        # short compressed-response case: enforcement must inspect wire bytes.
+        prefix = b"safe-prefix " * 800 if direction == "outbound" else b""
+        body = prefix + EMAIL
         result = env.python(
             request_script(
-                EMAIL,
+                body,
                 query="?gzip=1" if direction == "inbound" else "",
                 chunked=chunked,
                 compress=compressed,
@@ -142,14 +146,16 @@ def test_pii_rewrite_uses_actual_bytes_and_never_archives_matches(
         )
         assert result == {
             "status": 200,
-            "body": base64.b64encode(b"*" * len(EMAIL)).decode(),
+            "body": base64.b64encode(prefix + b"*" * len(EMAIL)).decode(),
         }
         upstream = [row for row in env.upstream() if row["path"] == "/content/echo"]
         assert len(upstream) == 1, upstream
         assert upstream[0]["request_body"] == (
-            EMAIL.decode() if direction == "inbound" else "*" * len(EMAIL)
+            body.decode()
+            if direction == "inbound"
+            else prefix.decode() + "*" * len(EMAIL)
         )
-        assert upstream[0]["request_bytes"] == len(EMAIL)
+        assert upstream[0]["request_bytes"] == len(body)
         if compressed:
             assert "content-encoding" not in upstream[0]["headers"]
         assert_private_ledger(env, "pii_filter", forbidden=(EMAIL,), detections=1)

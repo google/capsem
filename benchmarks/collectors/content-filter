@@ -124,7 +124,7 @@ def main() -> int:
         "--quick", action="store_true", help="unused; requires native VMs"
     )
     parser.parse_args()
-    metrics, reports = {}, {}
+    metrics, reports, policies = {}, {}, {}
     with tempfile.TemporaryDirectory(prefix="capsem-filter-bench-") as root:
         for profile in SETTINGS.profiles:
             with filter_session(
@@ -133,6 +133,7 @@ def main() -> int:
                 profile.mode,
                 capture_requests=False,
             ) as env:
+                policies[profile.name] = env.corp_config.read_text()
                 for size in SETTINGS.body_bytes:
                     for concurrency in SETTINGS.concurrency:
                         prefix = f"{profile.name}.bytes_{size}.clients_{concurrency}"
@@ -160,6 +161,7 @@ def main() -> int:
                     {
                         "settings": SETTINGS.model_dump(),
                         "reference_image": reference_image.pinned(),
+                        "fixture_policy": policies,
                         "profiles": reports,
                         "streaming": "enabled text inspection buffers complete bounded SSE bodies before forwarding",
                     }

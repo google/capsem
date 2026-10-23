@@ -64,6 +64,7 @@ class FilterSession:
     transcript: Path
     mock: dict
     mock_process: subprocess.Popen[str]
+    corp_config: Path
 
     def python(self, script: str) -> dict:
         name = f"content-proof-{uuid.uuid4().hex[:8]}.py"
@@ -125,7 +126,9 @@ def filter_session(
         with image_session(
             service, workdir / "image", f"content-proof-{uuid.uuid4().hex[:8]}"
         ) as vm_id:
-            yield FilterSession(service, client, public, vm_id, transcript, ready, mock)
+            yield FilterSession(
+                service, client, public, vm_id, transcript, ready, mock, corp
+            )
     finally:
         if gateway is not None:
             gateway.stop()
