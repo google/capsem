@@ -12,6 +12,34 @@ fn request() -> ApprovalRequest {
     }
 }
 
+#[tokio::test]
+async fn setup_waiters_are_bounded_before_any_coordinator_reply() {
+    let (_sender, receiver) = tokio::sync::watch::channel(None);
+    let capability = ApprovalCapability::with_setup(receiver, tokio::spawn(std::future::pending()));
+    let mut pending = Vec::new();
+    for _ in 0..capsem_proto::APPROVAL_PENDING_PER_SESSION {
+        let mut value = request();
+        value.held_bytes = capsem_proto::APPROVAL_HELD_BYTES_PER_REQUEST as u64;
+        let mut operation = Box::pin(capability.decide(value));
+        assert!(futures::poll!(&mut operation).is_pending());
+        pending.push(operation);
+    }
+    let mut overflow = Box::pin(capability.decide(request()));
+    assert!(
+        matches!(
+            futures::poll!(&mut overflow),
+            std::task::Poll::Ready(ApprovalOutcome::Unavailable)
+        ),
+        "setup cannot retain an unbounded number of original bodies"
+    );
+    drop(pending);
+    let mut replacement = Box::pin(capability.decide(request()));
+    assert!(
+        futures::poll!(&mut replacement).is_pending(),
+        "cancelled setup returns its capacity"
+    );
+}
+
 #[tokio::test(start_paused = true)]
 async fn setup_and_human_wait_share_one_operation_deadline() {
     let (commands, mut inbox) = mpsc::channel(capsem_proto::APPROVAL_PENDING_PER_SESSION);
@@ -25,10 +53,7 @@ async fn setup_and_human_wait_share_one_operation_deadline() {
         tokio::time::sleep(deadline().checked_sub(Duration::from_secs(1)).unwrap()).await;
         sender.send_replace(Some(Ok(client)));
     });
-    let capability = ApprovalCapability {
-        client: receiver,
-        setup,
-    };
+    let capability = ApprovalCapability::with_setup(receiver, setup);
     let started = tokio::time::Instant::now();
     assert_eq!(capability.decide(request()).await, ApprovalOutcome::Expired);
     assert_eq!(

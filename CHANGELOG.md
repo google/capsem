@@ -205,6 +205,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Sort dashboard sessions correctly by total tokens and estimated cost, and
   expose the active sort direction to assistive technology. Include output-only
   token usage in the displayed total.
+- Bound retained approval requests before coordinator setup completes, returning
+  capacity when an original caller cancels.
+
 - Stop post-operation security telemetry from creating unresolvable Ask requests.
 
 - Keep actionable approvals visible ahead of bounded historical request pages.

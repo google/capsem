@@ -33,16 +33,15 @@ pub struct ApprovalClient {
 pub struct ApprovalCapability {
     client: tokio::sync::watch::Receiver<Option<Result<ApprovalClient, String>>>,
     setup: tokio::task::JoinHandle<()>,
+    pending: Arc<tokio::sync::Semaphore>,
+    held_bytes: Arc<tokio::sync::Semaphore>,
 }
 
 impl ApprovalCapability {
     #[cfg(test)]
     pub(crate) fn connected(client: ApprovalClient) -> Self {
         let (_, receiver) = tokio::sync::watch::channel(Some(Ok(client)));
-        Self {
-            client: receiver,
-            setup: tokio::spawn(async {}),
-        }
+        Self::with_setup(receiver, tokio::spawn(async {}))
     }
 
     pub fn new(upstream: Arc<crate::net::upstream_grant::UpstreamGrantClient>) -> Self {
@@ -54,10 +53,36 @@ impl ApprovalCapability {
             };
             sender.send_replace(Some(result));
         });
-        Self { client, setup }
+        Self::with_setup(client, setup)
+    }
+
+    fn with_setup(
+        client: tokio::sync::watch::Receiver<Option<Result<ApprovalClient, String>>>,
+        setup: tokio::task::JoinHandle<()>,
+    ) -> Self {
+        Self {
+            client,
+            setup,
+            pending: Arc::new(tokio::sync::Semaphore::new(capsem_proto::APPROVAL_PENDING_PER_SESSION)),
+            held_bytes: Arc::new(tokio::sync::Semaphore::new(capsem_proto::APPROVAL_HELD_BYTES_TOTAL)),
+        }
     }
 
     pub async fn decide(&self, request: ApprovalRequest) -> ApprovalOutcome {
+        if request.validate().is_err() {
+            return ApprovalOutcome::Unavailable;
+        }
+        // Reserve before waiting for descriptor setup: each caller retains
+        // its original body while even an unavailable coordinator is pending.
+        let Ok(_pending) = Arc::clone(&self.pending).try_acquire_owned() else {
+            return ApprovalOutcome::Unavailable;
+        };
+        let Ok(bytes) = u32::try_from(request.held_bytes) else {
+            return ApprovalOutcome::Unavailable;
+        };
+        let Ok(_bytes) = Arc::clone(&self.held_bytes).try_acquire_many_owned(bytes) else {
+            return ApprovalOutcome::Unavailable;
+        };
         tokio::time::timeout(deadline(), async {
             let mut receiver = self.client.clone();
             let client = match receiver.wait_for(Option::is_some).await {
