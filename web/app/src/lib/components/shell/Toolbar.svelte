@@ -4,6 +4,7 @@
   import type { TabView } from '../../stores/tabs.svelte.ts';
   import { vmStore } from '../../stores/vms.svelte.ts';
   import { gatewayStore } from '../../stores/gateway.svelte.ts';
+  import { developerStore } from '../../stores/developer.svelte';
   import Modal from './Modal.svelte';
   import BrowserRequest from './BrowserRequest.svelte';
   import CapsemUpdateNotice from './CapsemUpdateNotice.svelte';
@@ -27,6 +28,8 @@
   import { sessionActionError } from '../../models/session-action-error';
   import { getContainerStatus, openUrl } from '../../api';
   import { defaultSessionView, hasOpenableSurface, surfaceMayAppear } from '../../models/surface';
+
+  $effect(() => { tabStore.applyDeveloperMode(developerStore.enabled); });
 
   let active = $derived(tabStore.active);
   let isVM = $derived(active?.vmId != null);
@@ -85,7 +88,7 @@
 
   let vmViewButtons: { view: TabView; label: string; icon: typeof Terminal }[] = $derived([
     ...(active?.surface ? [{ view: 'ui' as const, label: 'UI', icon: AppWindow }] : []),
-    { view: 'terminal', label: 'Terminal', icon: Terminal },
+    ...(!active?.surface || developerStore.enabled ? [{ view: 'terminal' as const, label: 'Terminal', icon: Terminal }] : []),
     { view: 'stats', label: 'Stats', icon: ChartBar },
     { view: 'files', label: 'Files', icon: FolderSimple },
   ]);
@@ -343,7 +346,7 @@
         </button>
       {/each}
     </div>
-    {#if active?.view === 'ui'}
+    {#if active?.view === 'ui' && developerStore.enabled}
       <select aria-label="Display profile" title="Auto uses RGB on this machine; Remote uses JPEG/WebP. Override for forwarded connections."
         class="rounded-md border border-line-2 bg-layer px-2 py-1 text-xs text-foreground"
         value={active.surfaceProfile ?? 'auto'}

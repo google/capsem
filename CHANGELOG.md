@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add Developer mode in Settings for display diagnostics, profile overrides and
+  graphical-app terminal access, with direct Dark, Light and Auto theme choices.
+
 - Distinguish app-image updates from first downloads using verified retained
   earlier compatible catalog versions.
 

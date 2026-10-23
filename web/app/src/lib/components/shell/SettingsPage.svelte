@@ -3,6 +3,7 @@
   import { themeStore, ACCENT_THEMES, FONT_SIZES, FONT_FAMILIES, UI_FONT_SIZES } from '../../stores/theme.svelte.ts';
   import { settingsStore } from '../../stores/settings.svelte.ts';
   import { THEME_FAMILIES, getTheme, resolveThemeKey } from '../../terminal/themes';
+  import { developerStore } from '../../stores/developer.svelte';
   import SettingsSection from '../settings/SettingsSection.svelte';
   import PluginSection from '../settings/PluginSection.svelte';
   import McpSection from '../settings/McpSection.svelte';
@@ -20,7 +21,7 @@
   let previewTheme = $derived(getTheme(resolveThemeKey(themeStore.terminalTheme, themeStore.mode)));
 
   // Active section (panel-per-section, not scrollspy)
-  let activeSection = $state('appearance');
+  let activeSection = $state('general');
 
   // Dynamic sections from settings tree (UI/app preferences only).
   let dynamicSections = $derived.by(() => {
@@ -44,6 +45,7 @@
   // Build full nav list from settings-owned sections.
   let navItems = $derived.by(() => {
     const items: { key: string; label: string; icon: any }[] = [
+      { key: 'general', label: 'General', icon: GearSix },
       { key: 'appearance', label: 'Appearance', icon: Palette },
       { key: 'plugins', label: 'Plugins', icon: PuzzlePiece },
       { key: 'mcp', label: 'MCP', icon: Plugs },
@@ -118,11 +120,11 @@
 
   <!-- Content (one panel per section) -->
   <main class="flex-1 overflow-y-auto relative">
-    {#if settingsStore.loading && !settingsStore.model}
+    {#if activeSection !== 'general' && settingsStore.loading && !settingsStore.model}
       <div class="flex items-center justify-center h-full">
         <div class="animate-spin size-6 border-2 border-primary border-t-transparent rounded-full"></div>
       </div>
-    {:else if settingsStore.error && !settingsStore.model}
+    {:else if activeSection !== 'general' && settingsStore.error && !settingsStore.model}
       <div class="flex flex-col items-center justify-center h-full gap-y-4">
         <p class="text-sm text-destructive-text">{settingsStore.error}</p>
         <button
@@ -136,7 +138,35 @@
     {:else}
     <div class="py-6 px-8">
 
-      {#if activeSection === 'appearance'}
+      {#if activeSection === 'general'}
+        <h2 class="text-xl font-medium text-foreground mb-6">General</h2>
+        <div class="bg-card border border-card-line rounded-xl divide-y divide-card-divider">
+          <div class="flex items-center justify-between gap-4 px-4 py-3">
+            <label for="developer-mode" class="min-w-0">
+              <span class="block text-sm font-medium text-foreground">Developer mode</span>
+              <span class="block text-xs text-muted-foreground-1 mt-1">Show display diagnostics and terminal access for graphical apps.</span>
+            </label>
+            <input id="developer-mode" type="checkbox" role="switch" class="shrink-0 accent-primary"
+              checked={developerStore.enabled} onchange={event => developerStore.setEnabled(event.currentTarget.checked)} />
+          </div>
+          <div class="flex flex-wrap items-center justify-between gap-4 px-4 py-3">
+            <p class="text-sm font-medium text-foreground">Theme</p>
+            <div class="flex items-center gap-1" role="group" aria-label="Theme">
+              {#each ['dark', 'light', 'auto'] as mode}
+                <button type="button" aria-pressed={themeStore.modePref === mode}
+                  class="rounded-md border border-line-2 px-3 py-1.5 text-xs text-foreground hover:bg-muted-hover"
+                  class:bg-muted={themeStore.modePref === mode}
+                  onclick={() => themeStore.setMode(mode as 'dark' | 'light' | 'auto')}>
+                  {mode === 'dark' ? 'Dark' : mode === 'light' ? 'Light' : 'Auto'}
+                </button>
+              {/each}
+            </div>
+            <button type="button" class="text-xs text-primary hover:underline" onclick={() => activeSection = 'appearance'}>
+              More appearance <span aria-hidden="true">→</span>
+            </button>
+          </div>
+        </div>
+      {:else if activeSection === 'appearance'}
         <!-- ===== Appearance (custom, not from backend tree) ===== -->
         <h2 class="text-xl font-medium text-foreground mb-6">Appearance</h2>
 

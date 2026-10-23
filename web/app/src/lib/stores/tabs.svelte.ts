@@ -122,6 +122,15 @@ class TabStore {
     }
   }
 
+  applyDeveloperMode(enabled: boolean) {
+    if (enabled) return;
+    for (const tab of this.tabs) {
+      tab.surfaceDebug = false;
+      tab.surfaceProfile = 'auto';
+      if (tab.surface && tab.view === 'terminal') this.updateView(tab.id, 'ui');
+    }
+  }
+
   reloadSurface(id: string) {
     const tab = this.tabs.find(tab => tab.id === id);
     if (tab) tab.surfaceRevision = (tab.surfaceRevision ?? 0) + 1;

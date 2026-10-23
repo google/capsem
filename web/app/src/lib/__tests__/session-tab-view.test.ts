@@ -54,3 +54,21 @@ describe('session tab presentation',()=>{
     expect(tabStore.active?.view).toBe('stats');
   });
 });
+
+it('normal presentation hides graphical terminals and resets debug-only viewer controls', () => {
+  tabStore.openVM('gui','Desktop','ui');
+  const gui=tabStore.active!;
+  tabStore.updateView(gui.id,'terminal');
+  tabStore.toggleSurfaceDebug(gui.id);
+  tabStore.setSurfaceProfile(gui.id,'remote');
+  tabStore.openVM('shell','Shell','terminal');
+  const shell=tabStore.active!;
+  tabStore.applyDeveloperMode(false);
+  expect(gui.view).toBe('ui');
+  expect(gui.surfaceDebug).toBe(false);
+  expect(gui.surfaceProfile).toBe('auto');
+  expect(shell.view).toBe('terminal');
+  tabStore.updateView(gui.id,'terminal');
+  tabStore.applyDeveloperMode(true);
+  expect(gui.view).toBe('terminal');
+});
