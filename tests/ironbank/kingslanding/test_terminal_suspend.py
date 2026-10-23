@@ -153,10 +153,44 @@ before = termios.tcgetattr(0)
 try:
     tty.setraw(0)
     Path('/workspace/terminal-suspend-pid').write_text(str(os.getpid()))
+    os.chdir('/workspace')
+    Path('terminal-suspend-fd').write_bytes(b'original-open-file')
+    directory = os.open('.', os.O_RDONLY | os.O_DIRECTORY)
+    held = os.open('terminal-suspend-fd', os.O_RDWR)
+    image = os.open('/etc/os-release', os.O_RDONLY)
+    identity = lambda fd: (os.fstat(fd).st_dev, os.fstat(fd).st_ino)
+    original_file = identity(held)
+    original_directory = identity(directory)
+    image_bytes = os.read(image, 4096)
     os.write(1, b'\x1b[0m\x1b[2J\x1b[HPRIMARY-DISPLAY\x1b[4;6H\x1b7')
     os.write(1, b'\x1b[?1049h\x1b[2J\x1b[H\x1b[38;2;23;89;144mALTERNATE-DISPLAY\x1b[4;8H\x1b7')
     os.write(1, b'\x1b[?1h\x1b[?2004h\x07\x1b]777;notify;Suspend;Retained\x07\x1b]0;Persisted terminal\x07\x1b[38;2;10;')
     assert os.read(0, 1) == b'c'
+    # These are the original foreground's cwd and file descriptions, not
+    # newly opened replacements after a bind-mount repair.
+    failures = []
+    def check(name, operation, expected):
+        try:
+            actual = operation()
+            if actual != expected:
+                failures.append((name, 'unexpected synthetic fixture result'))
+        except OSError as error:
+            failures.append((name, error.errno))
+    check('cwd', os.getcwd, '/workspace')
+    check('held-file-read', lambda: os.read(held, 4096), b'original-open-file')
+    check('held-file-identity', lambda: identity(held), original_file)
+    check('held-directory-identity', lambda: identity(directory), original_directory)
+    check('image-seek', lambda: os.lseek(image, 0, os.SEEK_SET), 0)
+    check('held-image-read', lambda: os.read(image, 4096), image_bytes)
+    check('fresh-image-read', lambda: Path('/etc/os-release').read_bytes(), image_bytes)
+    assert not failures, ('warm original descriptor probes', failures)
+    os.write(held, b'-resumed')
+    relative = os.open('terminal-suspend-fd', os.O_RDONLY, dir_fd=directory)
+    try:
+        assert os.read(relative, 4096) == b'original-open-file-resumed', 'original directory FD lookup is stale'
+    finally:
+        os.close(relative)
+    assert Path('terminal-suspend-fd').read_bytes() == b'original-open-file-resumed', 'relative cwd read is stale'
     os.write(1, b'20;30mTAIL\x1b8X\x1b]2;Alternate restored\x07')
     assert os.read(0, 1) == b'p'
     os.write(1, b'\x1b[?1049l\x1b8Y\x1b]2;Primary restored\x07')
@@ -185,10 +219,6 @@ finally:
         status, resumed = client.call_json("POST", f"/vms/{vm_id}/resume", {}, timeout=90)
         assert status == 200, (status, resumed)
         assert resumed["id"] == vm_id, resumed
-        # The first public exec proves the resumed workload is usable. Its
-        # foreground PID plus subsequent key-driven stages rule out cold boot.
-        alive = workload_exec(client, vm_id, "pid=$(cat /workspace/terminal-suspend-pid); kill -0 $pid; printf '%s' \"$pid\"")
-        assert alive["exit_code"] == 0 and alive["stdout_text"] == foreground["stdout_text"], alive
         assert client.get(f"/vms/{vm_id}/info")["pid"] != original["pid"]
         retained = terminal_summary(client, vm_id, "Persisted terminal")
         for field in ["title", "bell_count", "last_notification"]:
@@ -204,6 +234,12 @@ finally:
             alternate = next_state(socket, lambda state: state["title"] == "Alternate restored")
             assert (alternate["cursor"]["row"], alternate["cursor"]["col"]) == (3, 8), alternate
             assert b"38;2;10;20;30" in display(socket, b"AIL")
+            # Only after the original foreground proves retained cwd/FDs do
+            # we start the first public exec. Both rails must survive warm
+            # restore; neither a new exec nor a replacement mount proves the
+            # existing foreground's file descriptions still work.
+            alive = workload_exec(client, vm_id, "pid=$(cat /workspace/terminal-suspend-pid); kill -0 $pid; printf '%s' \"$pid\"")
+            assert alive["exit_code"] == 0 and alive["stdout_text"] == foreground["stdout_text"], alive
             send(socket, b"p")
             primary = next_state(socket, lambda state: state["title"] == "Primary restored")
             assert primary["modes"]["alternate_screen"] is False
