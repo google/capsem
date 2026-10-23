@@ -7,6 +7,7 @@
   import SettingsSection from '../settings/SettingsSection.svelte';
   import PluginSection from '../settings/PluginSection.svelte';
   import McpSection from '../settings/McpSection.svelte';
+  import Switch from '../settings/widgets/Switch.svelte';
   import Plugs from 'phosphor-svelte/lib/Plugs';
   import PuzzlePiece from 'phosphor-svelte/lib/PuzzlePiece';
   import Palette from 'phosphor-svelte/lib/Palette';
@@ -146,8 +147,8 @@
               <span class="block text-sm font-medium text-foreground">Developer mode</span>
               <span class="block text-xs text-muted-foreground-1 mt-1">Show display diagnostics and terminal access for graphical apps.</span>
             </label>
-            <input id="developer-mode" type="checkbox" role="switch" class="shrink-0 accent-primary"
-              checked={developerStore.enabled} onchange={event => developerStore.setEnabled(event.currentTarget.checked)} />
+            <Switch id="developer-mode" label="Developer mode" checked={developerStore.enabled}
+              onchange={checked=>developerStore.setEnabled(checked)}/>
           </div>
           <div class="flex flex-wrap items-center justify-between gap-4 px-4 py-3">
             <p class="text-sm font-medium text-foreground">Theme</p>

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Present Developer mode with the shared accessible settings switch.
+
 - Produce per-platform package inventories from exact application image files,
   verify toolkit binaries, and publish immutable inventory references in catalogs.
 
