@@ -191,11 +191,13 @@ id = "20260810T000000Z"
 configure_script = "build_system/scripts/build/configure-apt-snapshot.sh"
 # Snapshot requests occasionally return a transient 5xx. Every image
 # materializer uses these finite request and operation bounds with persistent
-# BuildKit caches, so a retry resumes downloaded archives.
+# BuildKit caches. The host builder prefetches authenticated archives in bounded
+# parallel batches before a no-download install within the same operation bound.
 update_timeout_seconds = 300
 install_timeout_seconds = 1800
 request_timeout_seconds = 15
 retries = 3
+download_concurrency = 4
 
 [private_images]
 # Network-open dependency helpers are private build inputs, never release
@@ -2126,6 +2128,7 @@ source_contract = [
     "build_system/tests/gate/test_gate_hostimage_composition.py",
     "build_system/tests/gate/test_linux_workspace_prerequisites.py",
     "build_system/tests/gate/test_host_builder_materializer.py",
+    "build_system/tests/gate/test_host_apt_prefetch.py",
     "build_system/tests/image/test_image_build_backend.py",
     "build_system/tests/image/test_image_module_boundary.py",
     "build_system/tests/gate/test_gate_install_container.py",
