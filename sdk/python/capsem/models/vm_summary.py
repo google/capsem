@@ -16,7 +16,7 @@ from .vm_lifecycle_state import VmLifecycleState
 
 
 class VmSummary(Model):
-    nonnullable_optional = frozenset(['can_resume'])
+    nonnullable_optional = frozenset(['can_resume', 'pending_approval_count'])
     allowed_requests: Annotated[StrictInt, Field(ge=0)] | None = None
     app: ImageApp | None = None
     available_actions: list[VmAction]
@@ -28,6 +28,7 @@ class VmSummary(Model):
     last_error: StrictStr | None = None
     model_call_count: Annotated[StrictInt, Field(ge=0)] | None = None
     name: StrictStr | None = None
+    pending_approval_count: Annotated[StrictInt, Field(ge=0)] | None = None
     persistent: StrictBool
     resume_blocked_reason: StrictStr | None = None
     status: VmLifecycleState
