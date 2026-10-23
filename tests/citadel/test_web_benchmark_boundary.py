@@ -6,15 +6,18 @@ import hashlib
 import json
 import re
 import subprocess
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pytest
+import tomllib
 
 from tests.citadel.source_enum_literals import contract_enums, reference_source
-from tests.citadel.vendor_documents import RUST_VENDOR_ROOT, pinned_rust_vendor_documents
+from tests.citadel.vendor_documents import (
+    RUST_VENDOR_ROOT,
+    pinned_rust_vendor_documents,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 POLICY = Path(__file__).with_name("web_benchmark_boundary_debt.toml")
@@ -54,7 +57,7 @@ ABSOLUTE_WEB_URL = re.compile(r"(?<![\w./-])https?://[^\s<>\"'`]+", re.IGNORECAS
 
 
 STATIC_LITERAL = re.compile(
-    r"['\"](/[^'\"?#]+[.](?:png|svg|ico|wasm|ttf|woff2?))(?:[?#][^'\"]*)?['\"]"
+    r"['\"](/(?!/)[^'\"?#]+[.](?:png|svg|ico|wasm|ttf|woff2?))(?:[?#][^'\"]*)?['\"]"
 )
 
 
@@ -232,6 +235,10 @@ def _static_asset_problems(
             None,
         )
         if project is None or "/src/" not in path:
+            continue
+        # Test modules deliberately exercise rejected and nonexistent URLs.
+        # They remain in legacy-reference checks, but do not deploy assets.
+        if "/__tests__/" in path or re.search(r"[.](?:test|spec)[.][cm]?[jt]sx?$", path):
             continue
         for route in STATIC_LITERAL.findall(text):
             asset = f"{project}/public/{route.lstrip('/')}"
@@ -560,3 +567,26 @@ def test_only_unchanged_upstream_markdown_is_outside_first_party_paths(tmp_path)
     assert _text_sources((relative,), tmp_path, pins) == {}
     readme.write_text("locally changed ./docs/features.md")
     assert relative in _text_sources((relative,), tmp_path, pins)
+
+
+@pytest.mark.parametrize("path", [
+    "web/app/src/lib/models/__tests__/image-metadata.test.ts",
+    "web/app/src/lib/models/image-metadata.test.ts",
+    "web/docs/src/icons.spec.tsx",
+])
+def test_asset_existence_does_not_interpret_explicit_test_module_fixtures(path: str) -> None:
+    source = '"/icons/missing.svg"; "/icons/../secret.svg"; "//example.com/icon.svg"'
+    assert _static_asset_problems({path: source}, frozenset()) == []
+    # Test classification is narrow: these same literals in deployed modules
+    # still require real assets; traversal is never resolved outside ownership.
+    production = path.replace("/__tests__", "").replace(".test.ts", ".ts").replace(".spec.tsx", ".tsx")
+    problems = _static_asset_problems({production: source}, frozenset())
+    assert len(problems) == 2, problems
+    assert any("/icons/missing.svg" in problem for problem in problems)
+    assert any("/icons/../secret.svg" in problem for problem in problems)
+
+
+def test_network_relative_urls_are_not_bundled_local_static_assets() -> None:
+    assert not _static_asset_problems({
+        "web/app/src/lib/Card.svelte": '<img src="//cdn.example.test/icon.svg">',
+    }, frozenset())
