@@ -148,6 +148,7 @@ match = 'file.import.content == "CAPSEM_REWRITTEN_EICAR"'
         SecurityPluginConfig {
             mode: SecurityPluginMode::Rewrite,
             detection_level: DetectionLevel::High,
+            content: Default::default(),
         },
     )]));
     let (request, response, handler) = channel(&dispatcher).await;
