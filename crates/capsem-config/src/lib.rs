@@ -5,6 +5,7 @@
 //! transports.
 
 mod condition;
+mod content_filter;
 mod lint;
 mod managed_sessions;
 pub mod mcp;
@@ -19,6 +20,7 @@ mod tree;
 mod types;
 mod validation;
 
+pub use content_filter::{ContentDirection, ContentFilterConfig};
 pub use lint::*;
 pub use managed_sessions::ManagedSessionPolicy;
 pub use private_pool::{PrivatePool, NETWORK_PREFIX_LEN};

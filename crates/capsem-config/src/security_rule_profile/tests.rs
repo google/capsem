@@ -114,3 +114,14 @@ level: high
 
     assert!(SecurityRuleProfile::parse_sigma_yaml(&input).is_err());
 }
+#[test]
+fn content_plugin_options_are_typed_and_reject_unknown_entities() {
+    let config: super::SecurityPluginConfig = toml::from_str(
+        "mode = 'rewrite'\n[content]\ndirection = 'outbound'\nemail = true\nphone = false\ncard = true\nssn = false\n",
+    )
+    .expect("content filter configuration is supported");
+    let encoded = toml::to_string(&config).unwrap();
+    assert!(encoded.contains("outbound"));
+    assert!(encoded.contains("phone = false"));
+    assert!(toml::from_str::<super::SecurityPluginConfig>("mode='block'\n[content]\npassport=true").is_err());
+}

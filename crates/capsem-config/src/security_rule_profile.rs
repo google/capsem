@@ -289,6 +289,18 @@ pub struct SecurityPluginConfig {
     pub mode: SecurityPluginMode,
     #[serde(default = "default_plugin_detection_level")]
     pub detection_level: DetectionLevel,
+    #[serde(default, skip_serializing_if = "crate::ContentFilterConfig::is_default")]
+    pub content: crate::ContentFilterConfig,
+}
+
+impl Default for SecurityPluginConfig {
+    fn default() -> Self {
+        Self {
+            mode: SecurityPluginMode::Disable,
+            detection_level: default_plugin_detection_level(),
+            content: Default::default(),
+        }
+    }
 }
 
 impl SecurityPluginConfig {
