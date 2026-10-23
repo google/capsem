@@ -134,6 +134,7 @@ impl ScopedMcpTools for GuestExposureTools {
 /// enters through the MITM framed endpoint on vsock:5002; this state is only
 /// the in-process holder for aggregator access and live policy reload.
 pub(crate) struct McpRuntime {
+    pub(crate) approvals: Option<Arc<capsem_core::security_engine::approval::client::ApprovalCapability>>,
     pub(crate) aggregator: AggregatorClient,
     pub(crate) endpoint: Arc<McpEndpointState>,
     pub(crate) db: Arc<DbWriter>,

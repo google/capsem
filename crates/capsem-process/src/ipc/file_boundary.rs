@@ -1,17 +1,24 @@
 use crate::mcp_runtime::McpRuntime;
+use capsem_core::security_engine::approval::client::ApprovalCapability;
 use capsem_proto::ipc::{FileBoundaryAction, ProcessToService, ServiceToProcess};
 use std::sync::{Arc, RwLock};
 use tokio::sync::mpsc::Sender;
+use tokio::sync::Semaphore;
+use tokio::task::JoinSet;
+use tokio_util::sync::CancellationToken;
 
 pub(crate) type SecurityRulesHandle = Arc<RwLock<Arc<capsem_core::net::policy_config::SecurityRuleSet>>>;
 pub(crate) type PluginPolicyHandle = capsem_core::net::policy_config::SharedPluginPolicy;
 
 /// Evaluate and record a host file operation independently of guest readiness.
-pub(super) fn spawn(
+pub(super) async fn spawn(
     state: &Arc<capsem_core::SandboxNetworkState>,
     runtime: &Arc<McpRuntime>,
     output: &Sender<ProcessToService>,
     request: ServiceToProcess,
+    capacity: &Arc<Semaphore>,
+    calls: &mut JoinSet<()>,
+    cancellation: &CancellationToken,
 ) {
     let ServiceToProcess::LogFileBoundary {
         id,
@@ -24,13 +31,34 @@ pub(super) fn spawn(
     else {
         unreachable!("file boundary handler received another request")
     };
+    let permit = match Arc::clone(capacity).try_acquire_owned() {
+        Ok(permit) => permit,
+        Err(_) => {
+            let _ = output
+                .send(ProcessToService::LogFileBoundaryResult {
+                    id,
+                    success: false,
+                    data: None,
+                    error: Some("file boundary capacity exceeded".into()),
+                })
+                .await;
+            return;
+        }
+    };
     let (db, rules, plugins, output) = (
         Arc::clone(&state.db),
         Arc::clone(&runtime.security_rules),
         Arc::clone(&runtime.plugin_policy),
         output.clone(),
     );
-    tokio::spawn(async move {
+    let approvals = runtime.approvals.clone();
+    let cancellation = cancellation.clone();
+    calls.spawn(async move {
+        let _permit = permit;
+        let held_bytes = usize::try_from(size)
+            .unwrap_or(usize::MAX)
+            .max(data.len())
+            .saturating_mul(4);
         let boundary = emit_explicit_file_security_event(
             &db,
             &rules,
@@ -45,8 +73,14 @@ pub(super) fn spawn(
                 content: Some(file_content_preview(&data)),
                 mime_type,
             },
+            approvals.as_deref(),
+            held_bytes,
         );
-        let result = tokio::time::timeout(std::time::Duration::from_secs(30), boundary).await;
+        let result = tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => return,
+            result = tokio::time::timeout(std::time::Duration::from_secs(30), boundary) => result,
+        };
         let (success, data, error) = match result {
             Ok(Ok(Some(emission))) if emission.enforcement.is_allowed() => {
                 (true, rewritten_file_content(&data, size, &emission.event), None)
@@ -98,13 +132,15 @@ pub(crate) async fn emit_explicit_file_security_event(
     security_rules: &SecurityRulesHandle,
     plugin_policy: &PluginPolicyHandle,
     boundary: FileSecurityBoundary,
+    approvals: Option<&ApprovalCapability>,
+    held_bytes: usize,
 ) -> Result<Option<capsem_core::security_engine::SecurityRuleEmission>, String> {
     let rules = security_rules.read().unwrap().clone();
     let plugins = plugin_policy.read().unwrap().clone();
-    capsem_core::security_engine::emit_explicit_file_security_write_and_rules_with_plugins(
+    let Some(mut emission) = capsem_core::security_engine::emit_explicit_file_security_write_and_rules_with_plugins(
         db,
         &rules,
-        plugins,
+        Arc::clone(&plugins),
         capsem_core::security_engine::ExplicitFileSecurityEvent {
             action: boundary.action,
             path: boundary.path,
@@ -115,7 +151,15 @@ pub(crate) async fn emit_explicit_file_security_event(
             credential_ref: None,
         },
     )
-    .await
+    .await?
+    else {
+        return Ok(None);
+    };
+    capsem_core::security_engine::approval::resolve_emission(db, approvals, &mut emission, held_bytes).await?;
+    if !Arc::ptr_eq(&rules, &security_rules.read().unwrap()) || !Arc::ptr_eq(&plugins, &plugin_policy.read().unwrap()) {
+        return Err("file security policy changed while operation was held".into());
+    }
+    Ok(Some(emission))
 }
 
 pub(crate) fn rewritten_file_content(

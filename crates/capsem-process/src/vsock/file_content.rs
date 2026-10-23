@@ -32,6 +32,8 @@ pub(super) async fn complete(
             content: Some(file_content_preview(&data)),
             mime_type: None,
         },
+        None,
+        data.len().saturating_mul(4),
     )
     .await;
     // Exported bytes are delivered only after their ledger event is admitted

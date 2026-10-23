@@ -1,6 +1,8 @@
 use crate::ipc::{tests::Dispatcher, *};
 use std::collections::BTreeMap;
 
+mod approval;
+
 async fn channel(
     dispatcher: &Dispatcher,
 ) -> (

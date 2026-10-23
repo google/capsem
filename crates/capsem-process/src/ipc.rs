@@ -691,7 +691,16 @@ pub(crate) async fn handle_ipc_connection(
                 });
             }
             message @ ServiceToProcess::LogFileBoundary { .. } => {
-                file_boundary::spawn(&net_state, &mcp_runtime, &ipc_tx_out, message);
+                file_boundary::spawn(
+                    &net_state,
+                    &mcp_runtime,
+                    &ipc_tx_out,
+                    message,
+                    &mcp_capacity,
+                    &mut mcp_calls,
+                    &cancellation,
+                )
+                .await;
             }
             ServiceToProcess::CloneState { id } => {
                 let job_store = job_store.clone();

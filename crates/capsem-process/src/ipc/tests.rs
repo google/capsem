@@ -199,6 +199,7 @@ impl Dispatcher {
             .with_builtin_ledger(Arc::clone(&db), std::collections::BTreeSet::new()),
         );
         let mcp_runtime = Arc::new(McpRuntime {
+            approvals: None,
             aggregator,
             endpoint,
             db: Arc::clone(&db),

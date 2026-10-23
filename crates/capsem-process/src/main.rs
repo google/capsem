@@ -764,6 +764,7 @@ async fn run_async_main_loop(
         .with_scoped_tools(Arc::clone(&scoped_tools)),
     );
     let mcp_runtime = Arc::new(McpRuntime {
+        approvals: Some(Arc::clone(&approvals)),
         aggregator: aggregator_client.clone(),
         endpoint: Arc::clone(&mcp_endpoint),
         db: Arc::clone(&db),

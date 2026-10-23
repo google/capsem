@@ -177,6 +177,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Show a compact toolbar notice when the service confirms a newer Capsem version,
   with a direct action to review its update status.
+- Hold original host file imports and exports for scoped security approval,
+  cancelling on caller disconnect and refusing stale policy or oversized waits.
+
 - Connect confined MCP proxy requests to the shared approval capability.
 
 - Connect VM-owned MCP requests to the inherited session approval capability.
