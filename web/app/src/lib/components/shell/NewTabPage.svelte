@@ -9,6 +9,7 @@
   import { formatUptime, formatTokens, formatCost } from '../../format';
   import { canOpenSession, hasVmAction, startAction, startLabel } from '../../vm-actions';
   import { sessionActionError } from '../../models/session-action-error';
+  import { compareSessions, sessionTokens, type SessionSortKey, type SessionSortDirection } from '../../models/session-sort';
   import Modal from './Modal.svelte';
   import SessionCredentials from './SessionCredentials.svelte';
   import ImageCatalog from './ImageCatalog.svelte';
@@ -24,8 +25,13 @@
   import GitFork from 'phosphor-svelte/lib/GitFork';
   import Stop from 'phosphor-svelte/lib/Stop';
 
-  type SortKey = 'name' | 'status' | 'uptime';
-  type SortDir = 'asc' | 'desc';
+  const sessionColumns = [
+    { key: 'name', label: 'Name' },
+    { key: 'status', label: 'Status' },
+    { key: 'uptime', label: 'Uptime' },
+    { key: 'tokens', label: 'Tokens' },
+    { key: 'cost', label: 'Cost' },
+  ] satisfies { key: SessionSortKey; label: string }[];
 
   let globalStats = $state<GlobalStats | null>(null);
   let credentialSession = $state<VmSummary | null>(null);
@@ -52,10 +58,10 @@
     return () => window.clearInterval(progressPoll);
   });
 
-  let sortKey = $state<SortKey>('name');
-  let sortDir = $state<SortDir>('asc');
+  let sortKey = $state<SessionSortKey>('name');
+  let sortDir = $state<SessionSortDirection>('asc');
 
-  function toggleSort(key: SortKey) {
+  function toggleSort(key: SessionSortKey) {
     if (sortKey === key) {
       sortDir = sortDir === 'asc' ? 'desc' : 'asc';
     } else {
@@ -64,19 +70,7 @@
     }
   }
 
-  function sortVms(list: VmSummary[]): VmSummary[] {
-    return [...list].sort((a, b) => {
-      let cmp = 0;
-      switch (sortKey) {
-        case 'name': cmp = (a.name ?? a.id).localeCompare(b.name ?? b.id); break;
-        case 'status': cmp = a.status.localeCompare(b.status); break;
-        case 'uptime': cmp = (a.uptime_secs ?? 0) - (b.uptime_secs ?? 0); break;
-      }
-      return sortDir === 'asc' ? cmp : -cmp;
-    });
-  }
-
-  let allVms = $derived(sortVms(vmStore.vms));
+  let allVms = $derived([...vmStore.vms].sort((a, b) => compareSessions(a, b, sortKey, sortDir)));
   let healthySessions = $derived(allVms.filter(vm => !isBrokenSession(vm)));
   let brokenSessions = $derived(allVms.filter(isBrokenSession));
 
@@ -293,18 +287,12 @@
       <table class="min-w-full">
         <thead class="border-b border-table-line">
           <tr>
-            {#each [
-              { key: 'name', label: 'Name' },
-              { key: 'status', label: 'Status' },
-              { key: 'uptime', label: 'Uptime' },
-              { key: 'tokens', label: 'Tokens' },
-              { key: 'cost', label: 'Cost' },
-            ] as col (col.key)}
-              <th scope="col" class="py-1 group text-start font-normal focus:outline-hidden">
+            {#each sessionColumns as col (col.key)}
+              <th scope="col" class="py-1 group text-start font-normal focus:outline-hidden" aria-sort={sortKey === col.key ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}>
                 <button
                   type="button"
                   class="py-1 px-2.5 inline-flex items-center border border-transparent text-sm text-muted-foreground-1 rounded-md hover:border-line-2"
-                  onclick={() => toggleSort(col.key as SortKey)}
+                  onclick={() => toggleSort(col.key)}
                 >
                   {col.label}
                   <svg class="size-3.5 ms-1 -me-0.5 text-muted-foreground" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -320,6 +308,7 @@
 
         <tbody class="divide-y divide-table-line">
           {#each vms as vm (vm.id)}
+            {@const tokens = sessionTokens(vm)}
             <tr
               class="{canOpenSession(vm) ? 'hover:bg-muted-hover cursor-pointer' : 'opacity-60 cursor-default'}"
               onclick={() => { if (canOpenSession(vm)) tabStore.openVM(vm.id, vm.name ?? vm.id); }}
@@ -329,7 +318,7 @@
                 <span class="text-xs px-2 py-0.5 rounded-full {statusBadge(vm.status)}">{vm.status}</span>
               </td>
               <td class="p-3 whitespace-nowrap text-sm text-muted-foreground-1 tabular-nums">{vm.uptime_secs != null ? formatUptime(vm.uptime_secs) : '--'}</td>
-              <td class="p-3 whitespace-nowrap text-sm text-muted-foreground-1 tabular-nums">{vm.total_input_tokens != null ? formatTokens((vm.total_input_tokens ?? 0) + (vm.total_output_tokens ?? 0)) : '--'}</td>
+              <td class="p-3 whitespace-nowrap text-sm text-muted-foreground-1 tabular-nums">{tokens != null ? formatTokens(tokens) : '--'}</td>
               <td class="p-3 whitespace-nowrap text-sm text-muted-foreground-1 tabular-nums">{vm.total_estimated_cost != null ? formatCost(vm.total_estimated_cost) : '--'}</td>
               <td class="p-3 whitespace-nowrap text-end">
                 <div class="inline-flex items-center gap-x-1">
