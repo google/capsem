@@ -56,3 +56,17 @@ def test_exec_deadline_is_total_not_per_frame(monkeypatch) -> None:
     monkeypatch.setitem(module["exec_output"].__globals__, "next_frame", forbidden)
     with pytest.raises(TimeoutError, match="deadline"):
         module["exec_output"](None, "vm")
+
+
+def test_marker_at_start_of_large_bounded_frame_is_not_lost(monkeypatch) -> None:
+    module = collector()
+    frames = iter((("stdout", b"done" + b"x" * 8192),))
+    monkeypatch.setitem(module["read_until"].__globals__, "next_frame", lambda *_, **__: next(frames))
+    assert module["read_until"](None, b"done", 1) == 8196
+
+
+def test_split_marker_across_frames_survives_bounded_tail(monkeypatch) -> None:
+    module = collector()
+    frames = iter((("stdout", b"x" * 8192 + b"do"), ("stdout", b"ne" + b"x" * 8192)))
+    monkeypatch.setitem(module["read_until"].__globals__, "next_frame", lambda *_, **__: next(frames))
+    assert module["read_until"](None, b"done", 1) == 16388

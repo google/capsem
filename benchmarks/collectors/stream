@@ -123,7 +123,10 @@ def read_until(stream: ClientConnection, marker: bytes | tuple[bytes, ...], time
             raise RuntimeError(f"stream ended while waiting for {marker!r}: {payload}")
         assert isinstance(payload, bytes)
         total += len(payload)
-        seen = (seen + payload)[-4096:]
+        combined = seen + payload
+        if any(candidate in combined for candidate in markers):
+            return total
+        seen = combined[-4096:]
     return total
 
 

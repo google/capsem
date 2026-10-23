@@ -265,6 +265,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Suggest TUI session and fork names from existing human names, avoiding collisions
   and keeping fork suffixes within the public name limit.
+- Preserve terminal completion markers at the start of large stream frames
+  and across frame boundaries before retaining the bounded receive tail.
+
 - Enforce total receive deadlines and exact output byte budgets in stream
   benchmarks, including peers that keep sending nonmatching frames.
 
