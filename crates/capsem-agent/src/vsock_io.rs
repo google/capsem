@@ -328,7 +328,7 @@ pub struct AsyncVsock {
 impl AsyncVsock {
     /// Take ownership of `fd`. On every path, including an error, the fd
     /// belongs to this function afterwards: `from_raw_fd` owns it and
-    /// `AsyncFd::new` drops (closes) the stream when registration fails.
+    /// Converting a registration error to io::Error drops (closes) the stream.
     /// The caller must not close it again; a second close on a multi-threaded
     /// runtime can hit a number another connection has just been handed.
     pub fn new(fd: RawFd) -> io::Result<Self> {
@@ -337,7 +337,9 @@ impl AsyncVsock {
         let std_stream = unsafe { std::os::unix::net::UnixStream::from_raw_fd(fd) };
         capsem_foundation::unix::fd::set_nonblocking(std_stream.as_fd(), true)?;
         Ok(Self {
-            inner: AsyncFd::new(std_stream)?,
+            // SAFETY: AsyncVsock exclusively owns this stream and never replaces
+            // or closes its descriptor before AsyncFd deregisters it on drop.
+            inner: unsafe { AsyncFd::register(std_stream) }?,
             fd,
         })
     }
