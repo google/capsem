@@ -391,7 +391,9 @@ var offscreen_handle = canvas.transferControlToOffscreen();
   register_canvas_mouse_events(canvas) {
     // Hook up the events we want to receive:
     jQuery(canvas).mousedown((e) => {
-      return this.mouse_down_cb(e, this);
+      // Keep the browser's default iframe focus action. Returning false
+      // through jQuery would also cancel it, leaving WebKit unable to type.
+      if (this.mouse_down_cb(e, this) === false) e.stopPropagation();
     });
     jQuery(canvas).mouseup((e) => {
       return this.mouse_up_cb(e, this);

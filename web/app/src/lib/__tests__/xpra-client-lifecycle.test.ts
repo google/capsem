@@ -9,7 +9,25 @@ const client = readFileSync(new URL(root + 'vendor/xpra-html5/www/js/Client.js',
 const policy = readFileSync(new URL(root + 'src/surface/static/capsem-surface.js', import.meta.url), 'utf8');
 const windowSource = readFileSync(new URL(root + 'vendor/xpra-html5/www/js/Window.js', import.meta.url), 'utf8');
 
-it.each(['mousedown', 'mouseup', 'mousemove'])('preserves the canvas %s callback propagation decision', event => {
+it('stops duplicate guest mouse presses without cancelling native iframe focus', () => {
+  let handler: (event: Event) => unknown = () => {};
+  const context = vm.createContext({jQuery: () => ({
+    mousedown: (callback: typeof handler) => { handler = callback; },
+    mouseup() {}, mousemove() {},
+  })});
+  vm.runInContext(windowSource, context);
+  vm.runInContext(`const win = Object.create(XpraWindow.prototype);
+    win.mouse_down_cb = () => false;
+    win.register_canvas_mouse_events({});`, context);
+  const event = new Event('mousedown', {cancelable:true, bubbles:true});
+  // jQuery translates a false handler result into BOTH preventDefault and
+  // stopPropagation. The former prevents WebKit from focusing the iframe.
+  if (handler(event) === false) { event.preventDefault(); event.stopPropagation(); }
+  expect(event.defaultPrevented).toBe(false);
+  expect(event.cancelBubble).toBe(true);
+});
+
+it.each(['mouseup', 'mousemove'])('preserves the canvas %s callback propagation decision', event => {
   const handlers = new Map<string, (event: object) => unknown>();
   const context = vm.createContext({
     jQuery: () => Object.fromEntries(['mousedown', 'mouseup', 'mousemove'].map(name =>

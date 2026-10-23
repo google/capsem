@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve the browser's native focus action when clicking graphical apps,
+  while still preventing duplicate guest mouse events.
+
 - Reconnect graphical apps through a fresh scoped preview after idle or sleep,
   instead of retrying an expired connection indefinitely.
 
