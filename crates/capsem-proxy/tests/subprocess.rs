@@ -2,6 +2,7 @@ use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::net::UnixStream;
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
+use tokio::sync::Mutex;
 
 use capsem_foundation::ipc_channel;
 use capsem_foundation::unix::router_channel::{DescriptorReceiver, DescriptorSender};
@@ -19,6 +20,7 @@ type ControlSender = DescriptorSender<PROXY_CONTROL_FRAME_SIZE, PROXY_CONTROL_MA
 type ControlReceiver = DescriptorReceiver<PROXY_CONTROL_FRAME_SIZE, PROXY_CONTROL_MAX_FDS>;
 
 const GENERATION: ProxyGeneration = ProxyGeneration::new([7; 16]);
+static SUBPROCESS_TEST_LOCK: Mutex<()> = Mutex::const_new(());
 
 struct ChildGuard(Option<Child>);
 
@@ -46,6 +48,21 @@ async fn event(receiver: &ControlReceiver) -> ProxyControlEvent {
     decode_proxy_control_event(&frame.bytes).expect("valid proxy control event")
 }
 
+async fn event_after_prior_grants_close(receiver: &ControlReceiver, grant_id: u64) -> ProxyControlEvent {
+    // A capability may finish as soon as it is adopted. Its Closed event can
+    // arrive before the Adopted event for the next grant.
+    for _ in 0..=5 {
+        let next = event(receiver).await;
+        if matches!(next, ProxyControlEvent::Closed { generation, grant_id: closed, .. }
+            if generation == GENERATION && closed < grant_id)
+        {
+            continue;
+        }
+        return next;
+    }
+    panic!("prior grants emitted more than one close event each")
+}
+
 fn spawn() -> (ChildGuard, ControlSender, ControlReceiver) {
     spawn_with_stderr(Stdio::inherit())
 }
@@ -70,6 +87,7 @@ fn spawn_with_stderr(stderr: Stdio) -> (ChildGuard, ControlSender, ControlReceiv
 
 #[tokio::test]
 async fn worker_rejects_http_traffic_until_runtime_is_ready() {
+    let _serial = SUBPROCESS_TEST_LOCK.lock().await;
     let (mut child, requests, events) = spawn();
     assert_eq!(
         event(&events).await,
@@ -126,6 +144,7 @@ async fn worker_rejects_http_traffic_until_runtime_is_ready() {
 
 #[tokio::test]
 async fn worker_confines_before_ready_and_adopts_scoped_descriptors() {
+    let _serial = SUBPROCESS_TEST_LOCK.lock().await;
     let (mut child, requests, events) = spawn();
     assert_eq!(
         event(&events).await,
@@ -180,7 +199,7 @@ async fn worker_confines_before_ready_and_adopts_scoped_descriptors() {
             .unwrap();
         drop(granted);
         assert_eq!(
-            event(&events).await,
+            event_after_prior_grants_close(&events, grant_id).await,
             ProxyControlEvent::Adopted {
                 generation: GENERATION,
                 grant_id,
@@ -199,7 +218,7 @@ async fn worker_confines_before_ready_and_adopts_scoped_descriptors() {
         .unwrap();
     drop(duplicate);
     assert_eq!(
-        event(&events).await,
+        event_after_prior_grants_close(&events, 10).await,
         ProxyControlEvent::Rejected {
             generation: GENERATION,
             grant_id: 10,
@@ -216,7 +235,7 @@ async fn worker_confines_before_ready_and_adopts_scoped_descriptors() {
         .await
         .unwrap();
     assert_eq!(
-        event(&events).await,
+        event_after_prior_grants_close(&events, 11).await,
         ProxyControlEvent::Stopped { generation: GENERATION }
     );
     drop(peers);
@@ -236,6 +255,7 @@ async fn worker_confines_before_ready_and_adopts_scoped_descriptors() {
 
 #[tokio::test]
 async fn ledger_grant_is_authenticated_before_adoption() {
+    let _serial = SUBPROCESS_TEST_LOCK.lock().await;
     let (mut child, requests, events) = spawn();
     assert_eq!(
         event(&events).await,
@@ -341,6 +361,7 @@ async fn ledger_grant_is_authenticated_before_adoption() {
 
 #[tokio::test]
 async fn stale_generation_terminates_worker_and_releases_grants() {
+    let _serial = SUBPROCESS_TEST_LOCK.lock().await;
     let (mut child, requests, events) = spawn_with_stderr(Stdio::piped());
     assert_eq!(
         event(&events).await,
@@ -374,6 +395,7 @@ async fn stale_generation_terminates_worker_and_releases_grants() {
 
 #[tokio::test]
 async fn policy_capability_compiles_exact_bytes_and_rejects_bad_revisions() {
+    let _serial = SUBPROCESS_TEST_LOCK.lock().await;
     let (mut child, requests, events) = spawn();
     assert_eq!(
         event(&events).await,
@@ -411,10 +433,15 @@ match = 'http.host == "worker.example"'
 [mcp.server_enabled]
 local = false
 "#;
-    policy_tx
+    if let Err(error) = policy_tx
         .send(ProxyPolicyRequest::apply(1, active_policy.to_vec()))
         .await
-        .unwrap();
+    {
+        panic!(
+            "policy channel send failed: {error}; next event: {:?}",
+            event(&events).await
+        );
+    }
     assert_eq!(
         policy_rx.recv().await.unwrap(),
         ProxyPolicyResponse::Applied {
