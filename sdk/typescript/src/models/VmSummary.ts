@@ -19,6 +19,7 @@ export interface VmSummary {
   "last_error"?: string | null;
   "model_call_count"?: number | null;
   "name"?: string | null;
+  "pending_approval_count"?: number;
   "persistent": boolean;
   "resume_blocked_reason"?: string | null;
   "status": VmLifecycleState;
