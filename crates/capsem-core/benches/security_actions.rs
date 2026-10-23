@@ -181,7 +181,7 @@ fn model_write() -> WriteOp {
         duration_ms: 12,
         response_bytes: 128,
         response_body: None,
-        estimated_cost_usd: 0.0001,
+        estimated_cost_usd: Some(0.0001),
         trace_id: Some("bench-trace".to_string()),
         credential_ref: None,
         tool_calls: Vec::new(),

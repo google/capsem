@@ -214,7 +214,7 @@ fn model_write(credential_ref: Option<&str>) -> WriteOp {
         usage_details: BTreeMap::new(),
         duration_ms: 1,
         response_bytes: 2,
-        estimated_cost_usd: 0.0,
+        estimated_cost_usd: Some(0.0),
         trace_id: Some("trace".to_string()),
         credential_ref: credential_ref.map(str::to_string),
         tool_calls: Vec::new(),

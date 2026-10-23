@@ -6,7 +6,7 @@
 /// SSE stream format: Anthropic uses `event:` lines to distinguish event types.
 /// Content blocks are interleaved (text, tool_use, thinking) with index-based
 /// tracking.
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 use crate::net::ai_traffic::events::{LlmEvent, ProviderStreamParser, StopReason};
 use crate::net::ai_traffic::provider::{ModelProtocol, Provider};
@@ -98,6 +98,34 @@ mod wire {
         pub input_tokens: Option<u64>,
         pub output_tokens: Option<u64>,
         pub cache_read_input_tokens: Option<u64>,
+        pub cache_creation_input_tokens: Option<u64>,
+        pub cache_creation: Option<CacheCreation>,
+    }
+    #[derive(Deserialize)]
+    pub struct CacheCreation {
+        pub ephemeral_1h_input_tokens: Option<u64>,
+    }
+    impl Usage {
+        pub fn total_input_tokens(&self) -> Option<u64> {
+            crate::net::ai_traffic::events::anthropic_input_tokens(
+                self.input_tokens,
+                self.cache_read_input_tokens,
+                self.cache_creation_input_tokens,
+            )
+        }
+        pub fn details(&self) -> std::collections::BTreeMap<String, u64> {
+            [
+                ("cache_read", self.cache_read_input_tokens),
+                ("cache_write", self.cache_creation_input_tokens),
+                (
+                    "cache_write_1h",
+                    self.cache_creation.as_ref().and_then(|c| c.ephemeral_1h_input_tokens),
+                ),
+            ]
+            .into_iter()
+            .filter_map(|(key, value)| value.map(|n| (key.into(), n)))
+            .collect()
+        }
     }
 }
 
@@ -154,12 +182,9 @@ impl ProviderStreamParser for AnthropicStreamParser {
                     model: msg.and_then(|m| m.model.clone()),
                 });
                 if let Some(usage) = msg.and_then(|m| m.usage.as_ref()) {
-                    let mut details = BTreeMap::new();
-                    if let Some(crt) = usage.cache_read_input_tokens {
-                        details.insert("cache_read".into(), crt);
-                    }
+                    let details = usage.details();
                     events.push(LlmEvent::Usage {
-                        input_tokens: usage.input_tokens,
+                        input_tokens: usage.total_input_tokens(),
                         output_tokens: usage.output_tokens,
                         details,
                     });
@@ -252,12 +277,9 @@ impl ProviderStreamParser for AnthropicStreamParser {
                 };
                 let mut events = Vec::with_capacity(2);
                 if let Some(usage) = payload.usage {
-                    let mut details = BTreeMap::new();
-                    if let Some(crt) = usage.cache_read_input_tokens {
-                        details.insert("cache_read".into(), crt);
-                    }
+                    let details = usage.details();
                     events.push(LlmEvent::Usage {
-                        input_tokens: usage.input_tokens,
+                        input_tokens: usage.total_input_tokens(),
                         output_tokens: usage.output_tokens,
                         details,
                     });
@@ -333,12 +355,9 @@ impl ProviderStreamParser for AnthropicStreamParserWithState {
             if let Ok(payload) = serde_json::from_str::<wire::MessageDelta>(&sse.data) {
                 let mut events = Vec::with_capacity(2);
                 if let Some(usage) = payload.usage {
-                    let mut details = BTreeMap::new();
-                    if let Some(crt) = usage.cache_read_input_tokens {
-                        details.insert("cache_read".into(), crt);
-                    }
+                    let details = usage.details();
                     events.push(LlmEvent::Usage {
-                        input_tokens: usage.input_tokens,
+                        input_tokens: usage.total_input_tokens(),
                         output_tokens: usage.output_tokens,
                         details,
                     });

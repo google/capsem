@@ -143,7 +143,7 @@ fn stream_code_assist_response_envelope_preserves_tool_id_args_and_usage() {
     assert_eq!(args["WaitMsBeforeAsync"], 1000);
     assert_eq!(summary.stop_reason, Some(StopReason::EndTurn));
     assert_eq!(summary.input_tokens, Some(31));
-    assert_eq!(summary.output_tokens, Some(17));
+    assert_eq!(summary.output_tokens, Some(19));
     assert_eq!(summary.usage_details.get("thinking"), Some(&2));
 }
 
@@ -241,6 +241,7 @@ data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Answer.\"}],\"role\"
     assert_eq!(summary.thinking, "Let me think.");
     assert_eq!(summary.text, "Answer.");
     assert_eq!(summary.usage_details.get("thinking"), Some(&200));
+    assert_eq!(summary.output_tokens, Some(215));
 }
 
 // ── Adversarial: malformed JSON ─────────────────────────────────

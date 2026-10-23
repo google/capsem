@@ -6,6 +6,19 @@
 
 use std::collections::BTreeMap;
 
+/// Combine disjoint provider token components, preserving an absent report.
+pub(crate) fn sum_token_components(a: Option<u64>, b: Option<u64>) -> Option<u64> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(a.saturating_add(b)),
+        (Some(n), None) | (None, Some(n)) => Some(n),
+        (None, None) => None,
+    }
+}
+
+pub(crate) fn anthropic_input_tokens(input: Option<u64>, read: Option<u64>, write: Option<u64>) -> Option<u64> {
+    input.map(|n| n.saturating_add(read.unwrap_or(0)).saturating_add(write.unwrap_or(0)))
+}
+
 use crate::net::parsers::sse_parser::SseEvent;
 
 /// Why the model stopped generating.
@@ -227,10 +240,20 @@ pub fn parse_non_streaming_usage(
             let json = google_response_envelope(&json);
             let model = json.get("modelVersion").and_then(|v| v.as_str()).map(|s| s.to_string());
             let usage = json.get("usageMetadata");
-            let input = usage.and_then(|u| u.get("promptTokenCount")).and_then(|v| v.as_u64());
-            let output = usage
+            let prompt = usage.and_then(|u| u.get("promptTokenCount")).and_then(|v| v.as_u64());
+            let input = sum_token_components(
+                prompt,
+                usage
+                    .and_then(|u| u.get("toolUsePromptTokenCount"))
+                    .and_then(|v| v.as_u64()),
+            );
+            let candidates = usage
                 .and_then(|u| u.get("candidatesTokenCount"))
                 .and_then(|v| v.as_u64());
+            let output = sum_token_components(
+                candidates,
+                usage.and_then(|u| u.get("thoughtsTokenCount")).and_then(|v| v.as_u64()),
+            );
             let mut details = BTreeMap::new();
             if let Some(v) = usage
                 .and_then(|u| u.get("cachedContentTokenCount"))
@@ -255,6 +278,24 @@ pub fn parse_non_streaming_usage(
             {
                 details.insert("cache_read".into(), v);
             }
+            if let Some(v) = usage
+                .and_then(|u| u.get("cache_creation_input_tokens"))
+                .and_then(|v| v.as_u64())
+            {
+                details.insert("cache_write".into(), v);
+            }
+            if let Some(v) = usage
+                .and_then(|u| u.get("cache_creation"))
+                .and_then(|u| u.get("ephemeral_1h_input_tokens"))
+                .and_then(|v| v.as_u64())
+            {
+                details.insert("cache_write_1h".into(), v);
+            }
+            let input = anthropic_input_tokens(
+                input,
+                details.get("cache_read").copied(),
+                details.get("cache_write").copied(),
+            );
             (model, input, output, details)
         }
         super::provider::ModelProtocol::OpenAi => {

@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Keep unknown model prices and unsupported usage unpriced, account for
+  published cache rates, and include disjoint Google thinking and Anthropic
+  cache token components without double-counting OpenAI reasoning.
+
 - Show subcent AI estimates to micro-dollar precision instead of rounding them
   to $0.00, and reject invalid monetary values.
 

@@ -1,5 +1,18 @@
 use super::*;
 
+#[test]
+fn nonstream_totals_combine_disjoint_provider_usage_without_double_counting_reasoning() {
+    use crate::net::ai_traffic::provider::ModelProtocol;
+    let (_,input,output,details)=parse_non_streaming_usage(ModelProtocol::Google,br#"{"usageMetadata":{"promptTokenCount":100,"toolUsePromptTokenCount":5,"candidatesTokenCount":10,"thoughtsTokenCount":20}}"#);
+    assert_eq!((input, output), (Some(105), Some(30)));
+    assert_eq!(details["thinking"], 20);
+    let (_,input,output,details)=parse_non_streaming_usage(ModelProtocol::Anthropic,br#"{"usage":{"input_tokens":50,"output_tokens":10,"cache_read_input_tokens":100,"cache_creation_input_tokens":25}}"#);
+    assert_eq!((input, output), (Some(175), Some(10)));
+    assert_eq!(details["cache_write"], 25);
+    let (_,_,output,_)=parse_non_streaming_usage(ModelProtocol::OpenAi,br#"{"usage":{"prompt_tokens":100,"completion_tokens":30,"completion_tokens_details":{"reasoning_tokens":20}}}"#);
+    assert_eq!(output, Some(30));
+}
+
 // ── collect_summary: text-only stream ───────────────────────────
 
 #[test]
@@ -370,7 +383,7 @@ fn non_streaming_google_usage() {
     let (model, input, output, details) = parse_non_streaming_usage(ModelProtocol::Google, body);
     assert_eq!(model.as_deref(), Some("gemini-2.5-flash-preview-05-20"));
     assert_eq!(input, Some(100));
-    assert_eq!(output, Some(50));
+    assert_eq!(output, Some(70));
     assert_eq!(details.get("thinking"), Some(&20));
 }
 
@@ -394,7 +407,7 @@ fn non_streaming_google_code_assist_usage_unwraps_response_envelope() {
 
     assert_eq!(model.as_deref(), Some("gemini-3.5-flash-low"));
     assert_eq!(input, Some(31));
-    assert_eq!(output, Some(17));
+    assert_eq!(output, Some(19));
     assert_eq!(details.get("thinking"), Some(&2));
 }
 
@@ -474,7 +487,7 @@ fn non_streaming_anthropic_usage() {
     }"#;
     let (model, input, output, details) = parse_non_streaming_usage(ModelProtocol::Anthropic, body);
     assert_eq!(model.as_deref(), Some("claude-sonnet-4-20250514"));
-    assert_eq!(input, Some(200));
+    assert_eq!(input, Some(350));
     assert_eq!(output, Some(80));
     assert_eq!(details.get("cache_read"), Some(&150));
 }

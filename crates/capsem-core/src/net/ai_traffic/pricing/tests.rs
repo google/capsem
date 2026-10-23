@@ -28,21 +28,21 @@ fn estimate_cost_known_anthropic_model() {
         Some(500),
         &no_details(),
     );
-    assert!(cost > 0.0, "cost should be positive for known model");
+    assert!(cost.unwrap() > 0.0, "cost should be positive for known model");
 }
 
 #[test]
 fn estimate_cost_known_google_model() {
     let table = PricingTable::load();
     let cost = table.estimate_cost("google", Some("gemini-2.0-flash"), Some(1000), Some(500), &no_details());
-    assert!(cost > 0.0, "cost should be positive for known model");
+    assert!(cost.unwrap() > 0.0, "cost should be positive for known model");
 }
 
 #[test]
 fn estimate_cost_known_openai_model() {
     let table = PricingTable::load();
     let cost = table.estimate_cost("openai", Some("gpt-4o"), Some(1000), Some(500), &no_details());
-    assert!(cost > 0.0, "cost should be positive for known model");
+    assert!(cost.unwrap() > 0.0, "cost should be positive for known model");
 }
 
 #[test]
@@ -55,14 +55,14 @@ fn estimate_cost_unknown_model() {
         Some(500),
         &no_details(),
     );
-    assert_eq!(cost, 0.0, "unknown model should return 0");
+    assert_eq!(cost, None, "unknown model must remain unpriced");
 }
 
 #[test]
 fn estimate_cost_unknown_provider() {
     let table = PricingTable::load();
     let cost = table.estimate_cost("azure", Some("gpt-4o"), Some(1000), Some(500), &no_details());
-    assert_eq!(cost, 0.0, "unknown provider should return 0");
+    assert_eq!(cost, None, "unknown provider must remain unpriced");
 }
 
 #[test]
@@ -70,11 +70,11 @@ fn estimate_cost_no_model() {
     let table = PricingTable::load();
     assert_eq!(
         table.estimate_cost("anthropic", None, Some(1000), Some(500), &no_details()),
-        0.0
+        None
     );
     assert_eq!(
         table.estimate_cost("anthropic", Some(""), Some(1000), Some(500), &no_details()),
-        0.0
+        None
     );
 }
 
@@ -89,11 +89,11 @@ fn estimate_cost_zero_tokens() {
             Some(0),
             &no_details()
         ),
-        0.0
+        Some(0.0)
     );
     assert_eq!(
         table.estimate_cost("anthropic", Some("claude-sonnet-4-20250514"), None, None, &no_details()),
-        0.0
+        None
     );
 }
 
@@ -152,7 +152,7 @@ fn tiered_price_uses_base_rate() {
         Some(500),
         &no_details(),
     );
-    assert!(cost > 0.0, "tiered model should still return positive cost");
+    assert!(cost.unwrap() > 0.0, "tiered model should still return positive cost");
 }
 
 #[test]
@@ -166,9 +166,9 @@ fn uses_upstream_match_without_suffix_guessing() {
         Some(250),
         &no_details(),
     );
-    assert!(exact > 0.0, "exact match should have a cost");
+    assert!(exact.unwrap() > 0.0, "exact match should have a cost");
     assert_eq!(
-        guessed, 0.0,
+        guessed, None,
         "unknown suffixed variants must not inherit pricing by guesswork"
     );
 }
@@ -183,11 +183,11 @@ fn unknown_model_does_not_prefix_match() {
         Some(500),
         &no_details(),
     );
-    assert_eq!(cost, 0.0, "unrelated model should not fuzzy-match (prefix too short)");
+    assert_eq!(cost, None, "unrelated model should not fuzzy-match (prefix too short)");
 }
 
 #[test]
-fn unknown_deep_suffix_model_is_zero() {
+fn unknown_deep_suffix_model_has_no_estimate() {
     let table = PricingTable::load();
     let cost = table.estimate_cost(
         "openai",
@@ -197,7 +197,7 @@ fn unknown_deep_suffix_model_is_zero() {
         &no_details(),
     );
     assert_eq!(
-        cost, 0.0,
+        cost, None,
         "too many segments should exhaust strip budget and prefix too short"
     );
 }
@@ -219,16 +219,16 @@ fn cache_read_tokens_reduce_cost() {
         Some(500),
         &cache_details(800), // 800 of 1000 input tokens are cached
     );
-    assert!(full_cost > 0.0, "full cost should be positive");
+    assert!(full_cost.unwrap() > 0.0, "full cost should be positive");
     assert!(cached_cost < full_cost, "cached cost should be lower than full cost");
     assert!(
-        cached_cost > 0.0,
+        cached_cost.unwrap() > 0.0,
         "cached cost should still be positive (output tokens)"
     );
 }
 
 #[test]
-fn cache_read_tokens_all_cached_zero_input_cost() {
+fn cache_read_tokens_use_the_published_cache_rate() {
     let table = PricingTable::load();
     let cost = table.estimate_cost(
         "anthropic",
@@ -237,7 +237,10 @@ fn cache_read_tokens_all_cached_zero_input_cost() {
         Some(0),
         &cache_details(1000),
     );
-    assert_eq!(cost, 0.0, "fully cached with no output should be free");
+    assert!(
+        (cost.unwrap() - 0.0003).abs() < 1e-12,
+        "cached tokens use the bundled cache rate"
+    );
 }
 
 #[test]
@@ -245,5 +248,67 @@ fn oversized_model_string_rejected() {
     let table = PricingTable::load();
     let huge = "claude-sonnet-4-".to_string() + &"x".repeat(8192);
     let cost = table.estimate_cost("anthropic", Some(&huge), Some(1000), Some(500), &no_details());
-    assert_eq!(cost, 0.0, "oversized model string should be rejected");
+    assert_eq!(cost, None, "oversized model string should be rejected");
+}
+
+#[test]
+fn live_unknown_trial_model_is_not_free_and_output_only_usage_is_retained() {
+    let table = PricingTable::load();
+    assert_eq!(
+        table.estimate_cost(
+            "google",
+            Some("gemini-4-argon-trial"),
+            Some(34298),
+            Some(250),
+            &no_details()
+        ),
+        None
+    );
+    assert!(
+        table
+            .estimate_cost(
+                "google",
+                Some("gemini-3.5-flash-lite"),
+                Some(0),
+                Some(56),
+                &no_details()
+            )
+            .unwrap()
+            > 0.0
+    );
+}
+
+#[test]
+fn missing_rates_never_turn_cached_or_partial_usage_into_free_calls() {
+    let model: ModelData =
+        serde_json::from_str(r#"{"id":"known","match":{"equals":"known"},"prices":{"input_mtok":2,"output_mtok":4}}"#)
+            .unwrap();
+    let table = PricingTable {
+        providers: vec![ProviderData {
+            id: "test".into(),
+            models: vec![model],
+        }],
+    };
+    assert_eq!(
+        table.estimate_cost("test", Some("known"), Some(100), Some(0), &cache_details(100)),
+        None
+    );
+    assert_eq!(
+        table.estimate_cost("test", Some("known"), None, Some(100), &no_details()),
+        None
+    );
+    assert_eq!(
+        table.estimate_cost("test", Some("known"), Some(0), Some(0), &no_details()),
+        Some(0.0)
+    );
+    assert_eq!(
+        table.estimate_cost(
+            "test",
+            Some("known"),
+            Some(100),
+            Some(1),
+            &BTreeMap::from([("cache_write_1h".into(), 100)])
+        ),
+        None
+    );
 }

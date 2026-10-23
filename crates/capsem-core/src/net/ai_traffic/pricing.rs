@@ -76,6 +76,10 @@ struct ModelPrice {
     input_mtok: PriceValue,
     #[serde(default)]
     output_mtok: PriceValue,
+    #[serde(default)]
+    cache_read_mtok: PriceValue,
+    #[serde(default)]
+    cache_write_mtok: PriceValue,
 }
 
 /// A price per million tokens: either a flat f64 or tiered with a base rate.
@@ -93,12 +97,13 @@ enum PriceValue {
 }
 
 impl PriceValue {
-    fn rate(&self) -> f64 {
-        match self {
-            PriceValue::Flat(v) => *v,
-            PriceValue::Tiered { base } => *base,
-            PriceValue::Missing => 0.0,
-        }
+    fn rate(&self) -> Option<f64> {
+        let value = match self {
+            Self::Flat(v) => *v,
+            Self::Tiered { base } => *base,
+            Self::Missing => return None,
+        };
+        (value.is_finite() && value >= 0.0).then_some(value)
     }
 }
 
@@ -129,7 +134,7 @@ impl PricingTable {
     }
 
     /// Estimate the cost in USD for a single API call.
-    /// Returns 0.0 if the provider/model is unknown.
+    /// Unknown models, missing usage and unsupported cache rates remain unknown.
     ///
     /// Uses only the upstream `match` clauses from pydantic/genai-prices. If
     /// the bundled ledger does not claim the model, Capsem does not guess.
@@ -140,48 +145,38 @@ impl PricingTable {
         input_tokens: Option<u64>,
         output_tokens: Option<u64>,
         usage_details: &std::collections::BTreeMap<String, u64>,
-    ) -> f64 {
-        // Reject oversized model strings. Real model names are well under
-        // 128 bytes; anything larger is garbage or an attempted DoS.
+    ) -> Option<f64> {
         const MAX_MODEL_LEN: usize = 128;
-
-        let model_str = match model {
-            Some(m) if !m.is_empty() && m.len() <= MAX_MODEL_LEN => m,
-            _ => return 0.0,
-        };
-
-        // Subtract cached tokens from input: cached tokens are typically
-        // priced much lower (10-25% of input price). We conservatively
-        // exclude them from input cost entirely (underestimates slightly).
-        let raw_input = input_tokens.unwrap_or(0);
-        let cache_read = usage_details.get("cache_read").copied().unwrap_or(0);
-        let effective_input = raw_input.saturating_sub(cache_read) as f64;
-        let output = output_tokens.unwrap_or(0) as f64;
-
-        if effective_input == 0.0 && output == 0.0 {
-            return 0.0;
+        let model = model.filter(|m| !m.is_empty() && m.len() <= MAX_MODEL_LEN)?;
+        let input = input_tokens?;
+        let output = output_tokens?;
+        let read = usage_details.get("cache_read").copied().unwrap_or(0);
+        let write = usage_details.get("cache_write").copied().unwrap_or(0);
+        // The bundled table has no duration-specific write rate. Never guess it.
+        if usage_details.get("cache_write_1h").copied().unwrap_or(0) > 0 {
+            return None;
         }
-
-        let prov = match self.providers.iter().find(|p| p.id == provider) {
-            Some(p) => p,
-            None => return 0.0,
-        };
-
-        Self::try_match(prov, model_str, effective_input, output).unwrap_or(0.0)
-    }
-
-    /// Match against all upstream model rules in a provider.
-    fn try_match(prov: &ProviderData, model: &str, input: f64, output: f64) -> Option<f64> {
-        for m in &prov.models {
-            if m.match_rule.matches(model) {
-                if let Some(price) = m.prices.price() {
-                    let input_rate = price.input_mtok.rate();
-                    let output_rate = price.output_mtok.rate();
-                    return Some(input * input_rate / 1_000_000.0 + output * output_rate / 1_000_000.0);
-                }
+        let provider = self.providers.iter().find(|p| p.id == provider)?;
+        let price = provider
+            .models
+            .iter()
+            .find(|m| m.match_rule.matches(model))?
+            .prices
+            .price()?;
+        let base = input.checked_sub(read)?.checked_sub(write)?;
+        let component = |tokens: u64, rate: &PriceValue| -> Option<f64> {
+            if tokens == 0 {
+                Some(0.0)
+            } else {
+                Some(tokens as f64 * rate.rate()? / 1_000_000.0)
             }
-        }
-        None
+        };
+        Some(
+            component(base, &price.input_mtok)?
+                + component(output, &price.output_mtok)?
+                + component(read, &price.cache_read_mtok)?
+                + component(write, &price.cache_write_mtok)?,
+        )
     }
 }
 

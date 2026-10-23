@@ -10,7 +10,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::net::ai_traffic::events::{LlmEvent, ProviderStreamParser, StopReason};
+use crate::net::ai_traffic::events::{sum_token_components, LlmEvent, ProviderStreamParser, StopReason};
 use crate::net::ai_traffic::provider::{ModelProtocol, Provider};
 use crate::net::parsers::sse_parser::SseEvent;
 
@@ -89,6 +89,7 @@ mod wire {
     #[serde(rename_all = "camelCase")]
     pub struct UsageMetadata {
         pub prompt_token_count: Option<u64>,
+        pub tool_use_prompt_token_count: Option<u64>,
         pub candidates_token_count: Option<u64>,
         pub cached_content_token_count: Option<u64>,
         pub thoughts_token_count: Option<u64>,
@@ -233,8 +234,8 @@ impl ProviderStreamParser for GoogleStreamParser {
                 details.insert("thinking".into(), tt);
             }
             events.push(LlmEvent::Usage {
-                input_tokens: usage.prompt_token_count,
-                output_tokens: usage.candidates_token_count,
+                input_tokens: sum_token_components(usage.prompt_token_count, usage.tool_use_prompt_token_count),
+                output_tokens: sum_token_components(usage.candidates_token_count, usage.thoughts_token_count),
                 details,
             });
         }

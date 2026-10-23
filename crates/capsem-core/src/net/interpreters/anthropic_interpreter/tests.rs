@@ -251,7 +251,7 @@ data: {\"type\":\"message_stop\"}\n\
     }
 
     let summary = collect_summary(&llm_events);
-    assert_eq!(summary.input_tokens, Some(500));
+    assert_eq!(summary.input_tokens, Some(900));
     assert_eq!(summary.usage_details.get("cache_read"), Some(&400));
     assert_eq!(summary.text, "Cached!");
 }
