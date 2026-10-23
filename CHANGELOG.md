@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Preserve active image generations and their lease-control inodes during
+  cache retention, including permissive policies and stale prune plans.
+
 - Use webpki roots for Rust SDK WebSocket TLS, matching its HTTP transport
   without loading the macOS keychain trust stack.
 
