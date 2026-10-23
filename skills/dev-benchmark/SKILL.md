@@ -246,6 +246,23 @@ collector. Ordinary functional HTTP requests retain their retry contract. The
 strict receipt/config cohort differs from older completion samples which also
 included JSON validation; do not present them as identical measurements.
 
+Binary/archive route cases keep the same strict receipt and raw-store owners.
+New file profiles declare 4KiB/1MiB original binary bodies and bounded per-case
+sample/load/concurrency counts; older read profiles keep their defaults and an
+explicit `--samples` still controls warm/cold samples. A real workload writes the
+files. Each download goes through current file admission; final fixture stop
+drains the producer before public security-rule and file-export counter checks.
+The WARC profile checks every gzip member/footer, opening/final summary, all
+record identities, counts, omissions and exact original bytes through `warcio`.
+The WARC case serializes each session, respecting its one-active-export permit;
+it does not claim multi-session export concurrency coverage.
+Its independent bounded MessagePack oracle belongs to the logger session fixture
+regenerator and standing parity test, not to the collector or exporter. Complete
+event-body reads likewise compare original bytes and distinguish capture from
+transport truncation. Response validation runs after receipt clocks; throughput
+includes client validation work. CPU series still name service/gateway components,
+not total VM policy CPU. Source readiness is not an executed native measurement.
+
 ## Benchmarks that are still pytest
 
 Not yet migrated; they remain the gate for their paths.

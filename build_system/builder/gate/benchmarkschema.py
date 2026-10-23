@@ -24,7 +24,10 @@ class RouteCaseConfig(Strict):
     case: str
     parameters: dict[str, str] = Field(default_factory=dict)
     query: dict[str, str | int] = Field(default_factory=dict)
-    response: Literal["json", "text"] = "json"
+    response: Literal["json", "text", "binary", "warc"] = "json"
+    samples: PositiveInt | None = None
+    load_requests: PositiveInt | None = None
+    concurrency: PositiveInt | None = None
 
 
 class RouteDebtConfig(Strict):
@@ -37,6 +40,11 @@ class RouteDebtConfig(Strict):
 class RouteCorpusConfig(Strict):
     """Exact bounded read corpus, retained in the benchmark config cohort."""
 
+    file_sizes: tuple[PositiveInt, ...]
+    archive_facts_max_bytes: PositiveInt
+    archive_inflated_max_bytes: PositiveInt
+    archive_max_records: PositiveInt
+    warc_info_max_bytes: PositiveInt
     workspace_files: PositiveInt
     log_bytes: PositiveInt
     log_line_bytes: PositiveInt

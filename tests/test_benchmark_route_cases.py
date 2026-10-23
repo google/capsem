@@ -10,9 +10,9 @@ from benchmarks.helpers.route_validation import validate_case, validate_snapshot
 
 def test_slice_one_and_two_are_successful_cases_not_method_wildcards() -> None:
     cases = measured_cases()
-    assert len(cases) == 56
+    assert len(cases) == 60
     assert len({case.metric_key for case in cases}) == len(cases)
-    assert len({case.path for case in cases}) == 52
+    assert len({case.path for case in cases}) == 54
     assert {case.case for case in cases if "{plugin_id}" in case.path} == {
         "credential_broker", "pii_filter", "secret_exfiltration", "utf8_guard",
     }
@@ -74,10 +74,9 @@ def test_canonical_sdk_schema_rejects_wrong_wire_types_before_timing() -> None:
 
 
 def test_current_plugin_dto_mode_and_runtime_counters_are_accepted() -> None:
-    payload = {
+    payload: dict = {
         "id": "pii_filter", "name": "PII Filter", "description": "bounded inspection",
         "config": {"mode": "disable"},
-        "runtime": dict.fromkeys(("event_count", "execution_count", "applied_count", "skipped_count", "total_duration_us", "max_duration_us", "detection_count", "block_count", "rewrite_count"), 0),
+        "runtime": {**dict.fromkeys(("event_count", "execution_count", "applied_count", "skipped_count", "total_duration_us", "max_duration_us", "detection_count", "block_count", "rewrite_count"), 0), "enabled": False, "brokered_credentials": []},
     }
-    payload["runtime"].update(enabled=False, brokered_credentials=[])
     validate_case(RouteCase("GET", "/plugins/{plugin_id}/info", "pii_filter"), payload, None)

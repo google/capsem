@@ -13,8 +13,10 @@ from pathlib import Path
 from helpers.stopped_workspace import VM_ID
 from pydantic import TypeAdapter
 
+from .route_binary import validate_full_event
 from .route_cases import RouteCase
 from .route_fixtures import MARKER, corpus_config
+
 
 # Private UI routes are intentionally not all in selected OpenAPI. Their
 # explicit field/counter contracts below come from the service DTOs.
@@ -90,7 +92,9 @@ def plugin_info(payload: dict, expected: str | None = None) -> None:
 def validate_case(case: RouteCase, payload, live_id: str | None, network_id: str | None = None) -> None:
     """Reject a fast empty/error response before any timed request."""
     path = case.path
-    if path == "/networks/{id}":
+    if path == "/vms/{id}/bodies/{event_id}" and case.case == "complete-recorded-body":
+        validate_full_event(payload)
+    elif path == "/networks/{id}":
         assert network_id is not None and payload["id"] == network_id
         assert payload["name"] == corpus_config()["network_name"] and payload["members"] == []
         assert count(payload["created_unix_ms"]) > 0 and IPv4Network(payload["subnet"]).is_private

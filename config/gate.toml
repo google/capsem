@@ -3087,6 +3087,10 @@ measured = [
     { method = "GET", path = "/connections", case = "default" },
     { method = "GET", path = "/vms/{id}/credential-grants", case = "default" },
     { method = "GET", path = "/vms/{id}/bodies/{event_id}", case = "default" },
+    { method = "GET", path = "/vms/{id}/bodies/{event_id}", case = "complete-recorded-body", query = { max_bytes = 1048576 } },
+    { method = "GET", path = "/vms/{id}/files/content", case = "binary-4KiB", query = { path = "route-4096.bin" }, response = "binary", samples = 8, load_requests = 16, concurrency = 2 },
+    { method = "GET", path = "/vms/{id}/files/content", case = "binary-1MiB", query = { path = "route-1048576.bin" }, response = "binary", samples = 8, load_requests = 16, concurrency = 2 },
+    { method = "GET", path = "/vms/{id}/bodies/export.warc.gz", case = "complete-recorded-archive", response = "warc", samples = 8, load_requests = 16, concurrency = 1 },
     { method = "GET", path = "/vms/{id}/status", case = "default" },
     { method = "GET", path = "/vms/{id}/exposures", case = "default" },
     { method = "GET", path = "/vms/{id}/security/status", case = "default" },
@@ -3160,8 +3164,6 @@ measured = [
 "GET /openapi.json" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
 "GET /panics" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
 "GET /triage" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
-"GET /vms/{id}/bodies/export.warc.gz" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
-"GET /vms/{id}/files/content" = { owner = "tests/ironbank/test_files_process_ledger.py", reason = "Needs real guest-owned file and bounded content/forensic ledger proof; uploads mutate state and require isolated cleanup." }
 "GET /vms/{id}/history/transcript" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
 "GET /vms/{id}/stream" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
 "GET /vms/{id}/surface/" = { owner = "tests/ironbank/kingslanding/test_workload_browser.py", reason = "Needs real UI exposure and single-use browser capability lifecycle fixture." }
@@ -3222,6 +3224,11 @@ measured = [
 "POST /vms/{id}/preserve-failure" = { owner = "service-control-plane", reason = "CLI-only doctor failure preservation mutates and stops a one-shot VM over the local service UDS" }
 
 [benchmark.routes.corpus]
+file_sizes = [4096, 1048576]
+archive_facts_max_bytes = 11534336
+archive_inflated_max_bytes = 1048576
+archive_max_records = 1024
+warc_info_max_bytes = 4096
 workspace_files = 64
 file_depth = 1
 log_bytes = 1048576

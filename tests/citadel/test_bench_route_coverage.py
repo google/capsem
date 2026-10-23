@@ -68,7 +68,7 @@ def test_gateway_method_topology_matches_service() -> None:
 
 
 def test_unmeasured_operations_remain_explicit_debt() -> None:
-    assert len(config()["unmeasured"]) <= 64, RATIONALE
+    assert len(config()["unmeasured"]) <= 62, RATIONALE
     assert len(config()["internal"]) == 7, RATIONALE
 
 

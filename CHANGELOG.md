@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add bounded route benchmark profiles for live workload binary downloads, full
+  archived event bodies and completed WARC exports, checking original bytes and
+  real file-policy/ledger completion against independent fixture facts.
+
 - Record route benchmark headers, first observed body byte and completion from
   bounded single-attempt HTTP reads; reject hidden retries, partial framing and
   slow trickles past the configured total deadline.

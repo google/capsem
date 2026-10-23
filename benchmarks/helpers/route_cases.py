@@ -11,7 +11,7 @@ from helpers.stopped_workspace import BODY_ROUTE, BODY_URL, VM_ID
 ROOT = Path(__file__).resolve().parents[2]
 LIVE_ROUTES = {
     "/vms/{id}/exposures", "/vms/{id}/security/status",
-    "/vms/{id}/container", "/vms/{id}/security/asks",
+    "/vms/{id}/container", "/vms/{id}/security/asks", "/vms/{id}/files/content",
 }
 PLUGIN_CASES = {"credential_broker", "pii_filter", "secret_exfiltration", "utf8_guard"}
 MANAGED_REQUEST_ID = "fc120782-2272-4b3d-a2e6-a26ee2f8ab61"
@@ -25,6 +25,13 @@ class RouteCase:
     parameters: dict[str, str] = field(default_factory=dict)
     query: dict[str, str | int] = field(default_factory=dict)
     response: str = "json"
+    samples: int | None = None
+    load_requests: int | None = None
+    concurrency: int | None = None
+
+    def counts(self, samples: int, load_requests: int, concurrency: int, override: int | None = None) -> tuple[int, int, int]:
+        return (override if override is not None else self.samples or samples,
+                self.load_requests or load_requests, self.concurrency or concurrency)
 
     @property
     def live(self) -> bool:
@@ -38,7 +45,7 @@ class RouteCase:
         if self.live and live_id is None:
             raise ValueError(f"case requires a live owner fixture: {self.metric_key}")
         if self.path == BODY_ROUTE:
-            return BODY_URL
+            return BODY_URL if not self.query else BODY_URL.split("?", 1)[0] + "?" + urlencode(self.query)
         if self.path.startswith("/networks/{id}") and network_id is None:
             raise ValueError("case requires a real network fixture")
         subject = network_id if self.path.startswith("/networks/{id}") else live_id if self.live else VM_ID
