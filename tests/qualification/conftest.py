@@ -8,6 +8,9 @@ the qualification (a skip never qualifies an image).
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 import pytest
 from helpers.constants import DEFAULT_RAM_MB
 from helpers.image_session import session_of
@@ -17,6 +20,17 @@ from tests.qualification.candidate import Candidate, resolve, selected_capabilit
 from tests.qualification.test_agent import model_service
 
 __all__ = ["model_service", "runtime_service"]
+
+
+def pytest_configure(config):
+    from capsem_builder.gate import config as gate_config
+
+    from tests.qualification.native_report import NativeReport
+
+    settings = gate_config.load(Path(__file__).resolve().parents[2])
+    destination = os.environ.get(settings.functional.native_images.report_variable)
+    if destination:
+        config.pluginmanager.register(NativeReport(settings, Path(destination)))
 
 
 @pytest.fixture

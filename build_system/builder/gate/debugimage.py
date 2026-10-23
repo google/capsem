@@ -12,6 +12,8 @@ pushes.
 
 from __future__ import annotations
 
+import argparse
+
 from .actions import Script
 from .command import GateCommand
 from .config import GateConfig
@@ -19,7 +21,7 @@ from .execution import Kind, Needs, Speed, step
 from .plan import Plan
 
 
-def _build(name: str, config: GateConfig, section: str) -> Plan:
+def _build(name: str, config: GateConfig, section: str, *, receipt: bool = False) -> Plan:
     """The one build step both commands plan, for their `[functional.<section>]`."""
     plan = Plan(name)
     plan.add(
@@ -32,6 +34,7 @@ def _build(name: str, config: GateConfig, section: str) -> Plan:
                 "build",
                 "--platform",
                 config.host_arch().docker_platform,
+                *(["--receipt"] if receipt else []),
                 outside_sandbox=True,
             ),
             contends=(config.exclusive("docker_daemon"),),
@@ -52,8 +55,21 @@ class DebugImageCommand(
     # may be using.
     exclusive = True
 
+    @classmethod
+    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument(
+            "--candidate-receipt",
+            action="store_true",
+            help="record CI-only exact producer evidence",
+        )
+
     def plan(self) -> Plan:
-        return _build(self.name, self._config, "debug_image")
+        return _build(
+            self.name,
+            self._config,
+            "debug_image",
+            receipt=getattr(self._args, "candidate_receipt", False),
+        )
 
 
 class ReferenceImageCommand(
@@ -63,5 +79,12 @@ class ReferenceImageCommand(
 ):
     exclusive = True
 
+    add_arguments = DebugImageCommand.add_arguments
+
     def plan(self) -> Plan:
-        return _build(self.name, self._config, "reference_image")
+        return _build(
+            self.name,
+            self._config,
+            "reference_image",
+            receipt=getattr(self._args, "candidate_receipt", False),
+        )

@@ -619,6 +619,55 @@ jobs:
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
         run: uv run --project build_system --frozen capsem-gate test-kingslanding --slow
 
+      # Candidate construction and native KVM qualification are top-level gate
+      # calls, never nested plan actions. This job cannot publish registry bytes.
+      - name: Build native debug candidate
+        id: build_debug_candidate
+        run: uv run --project build_system --frozen capsem-gate debug-image --candidate-receipt
+
+      - name: Select exact debug candidate receipt
+        id: select_debug_candidate
+        run: uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff select debug_image
+
+      - name: Qualify exact native debug candidate
+        id: qualify_debug_candidate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+        run: uv run --project build_system --frozen capsem-gate image-qualify --image capsem-debug --layout "${{ steps.select_debug_candidate.outputs.layout }}" --native-report
+
+      - name: Build native development candidate
+        id: build_dev_candidate
+        run: uv run --project build_system --frozen capsem-gate reference-image --candidate-receipt
+
+      - name: Select exact development candidate receipt
+        id: select_dev_candidate
+        run: uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff select reference_image
+
+      - name: Qualify exact native development candidate
+        id: qualify_dev_candidate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+        run: uv run --project build_system --frozen capsem-gate image-qualify --image dev --layout "${{ steps.select_dev_candidate.outputs.layout }}" --native-report
+
+      - name: Stage both completed native candidates
+        id: stage_native_candidates
+        run: uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff stage
+
+      - name: Upload qualified native image candidates
+        id: upload_native_candidates
+        if: ${{ success() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-image-candidates-amd64-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: cache/target/tests/evidence/qualified-native-images
+          retention-days: 7
+          if-no-files-found: error
+          compression-level: 0
+
       - name: Upload install and glow-up evidence on failure
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

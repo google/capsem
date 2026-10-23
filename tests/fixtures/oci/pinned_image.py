@@ -1,5 +1,4 @@
 """Images the suites serve by pinned digest: verified, pulled, or built.
-
 `config/gate.toml [functional.<section>]` pins one OCI image manifest per
 platform for each image the harness serves:
 
@@ -7,16 +6,8 @@ platform for each image the harness serves:
 - `reference_image`: the official `dev` image, the product stand-in every
   runtime test boots.
 
-Each layout lives in the shared cache stage its section names, one directory
-per digest, so a local build and a registry pull of the same digest are the
-same entry, and every checkout and gate prefix reuses it.
-
-    pinned_image.py <section> prepare [--platform P]   verify the pin; pull it by digest if absent
-    pinned_image.py <section> build [--platform P]     build it into the stage; print its digest
-
-Both are host-only: `prepare` reaches the registry and `build` drives Docker,
-so the gate runs them outside its network sandbox, before any suite. The
-suites call `ready()`, which only verifies.
+Layouts share the configured cache stage. Both actions are host-only; suites
+call ready(), which verifies without fetching; --receipt is CI evidence only.
 """
 
 from __future__ import annotations
@@ -339,9 +330,18 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("section", choices=sorted(SECTIONS))
     parser.add_argument("action", choices=("prepare", "build"))
     parser.add_argument("--platform", help="linux/<arch>; this host's by default")
+    parser.add_argument('--receipt', action='store_true')
     args = parser.parse_args(argv)
     image = SECTIONS[args.section]
-    (image.prepare if args.action == "prepare" else image.build)(args.platform)
+    if args.receipt:
+        if args.action != 'build':
+            parser.error('--receipt is only valid for build')
+        from tests.fixtures.oci import native_candidates
+        original = native_candidates.source(ROOT)
+        digest = image.build(args.platform)
+        native_candidates.record(_config(), image, digest, image.platform_name(args.platform), original)
+    else:
+        (image.prepare if args.action == "prepare" else image.build)(args.platform)
 
 
 if __name__ == "__main__":

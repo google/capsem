@@ -17,6 +17,7 @@ from ..cache.tools import CachedToolPolicy
 from .configschema import SafeToken, Strict
 from .functionalschema import GreyjoyConfig as GreyjoyConfig
 from .functionalschema import KingslandingConfig as KingslandingConfig
+from .functionalschema import NativeImagesConfig as NativeImagesConfig
 from .functionalschema import PinnedImageConfig as PinnedImageConfig
 from .functionalschema import QualificationConfig as QualificationConfig
 from .releaseschema import ReleasePairingEnvironment, TransitionSettings
@@ -76,6 +77,7 @@ class FunctionalConfig(Strict):
     debug_image: PinnedImageConfig
     reference_image: PinnedImageConfig
     qualification: QualificationConfig
+    native_images: NativeImagesConfig
     injection_script: str
     integration_script: str
     binary: str

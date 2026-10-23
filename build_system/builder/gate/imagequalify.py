@@ -5,8 +5,8 @@ The same harness the main gate runs on the reference image
 image passes, plus the groups its `images/<name>/qualify.toml` capabilities add.
 `--image NAME --layout PATH` names a candidate -- an OCI layout as it was
 built or pulled by digest, never repacked; without them it qualifies the
-reference image. Locally and in the image workflow it is the same command, so
-a publication is never the first time an image boots under Capsem.
+reference image. Local and native install CI use this same command before
+candidate publication; --native-report adds only CI transfer evidence.
 """
 
 from __future__ import annotations
@@ -37,6 +37,11 @@ class ImageQualifyModule(
     def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("--image", help="the candidate's catalog name (with --layout)")
         parser.add_argument("--layout", type=Path, help="the candidate's OCI layout (with --image)")
+        parser.add_argument(
+            "--native-report",
+            action="store_true",
+            help="retain strict CI-only native test outcome receipt",
+        )
 
     def resources(self, runner: Runner) -> tuple[Resource, ...]:
         resources = super().resources(runner)
@@ -58,8 +63,14 @@ class ImageQualifyModule(
             raise GateError("image-qualify takes --image and --layout together, or neither")
         settings = self._config.functional.qualification
         plan = Plan(self.name)
-        ready = () if self.qualification.pulled else (
-            runtimeprepare.prepare(plan, self._config, permission=self.rebuild_permission).ready,
+        ready = (
+            ()
+            if self.qualification.pulled
+            else (
+                runtimeprepare.prepare(
+                    plan, self._config, permission=self.rebuild_permission
+                ).ready,
+            )
         )
         phase = plan.phase("qualification")
         if image is None or layout is None:
@@ -70,6 +81,13 @@ class ImageQualifyModule(
                 (settings.image_variable, image),
                 (settings.layout_variable, str(Path(layout).resolve())),
             )
+            if getattr(self._args, "native_report", False):
+                native = self._config.functional.native_images
+                variables += (
+                    (native.report_variable, str(Path(layout).resolve() / native.report_name)),
+                )
+        if getattr(self._args, "native_report", False) and image is None:
+            raise GateError("--native-report requires an explicit candidate")
         phase.add(
             pytestsuite.Suite(
                 label="pytest.qualification",

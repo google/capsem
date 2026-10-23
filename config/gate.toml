@@ -2378,6 +2378,24 @@ suite_path = "tests/qualification"
 image_variable = "CAPSEM_QUALIFY_IMAGE"
 layout_variable = "CAPSEM_QUALIFY_LAYOUT"
 
+# Nonpublishing transfer evidence from existing native test-install; not a
+# release/channel authority or a substitute for the final local source gate.
+[functional.native_images]
+module = "tests.fixtures.oci.native_handoff"
+receipt_dir = "cache/target/tests/evidence/native-image-builds"
+artifact_dir = "cache/target/tests/evidence/qualified-native-images"
+report_name = "native-qualification.json"
+report_variable = "CAPSEM_NATIVE_IMAGE_REPORT"
+layout_output = "layout"
+platform = "linux/amd64"
+system = "Linux"
+machine = "x86_64"
+receipt_max_bytes = 1048576
+journal_max_bytes = 16777216
+journal_max_runs = 128
+artifact_max_bytes = 17179869184
+artifact_max_files = 512
+
 # The chaos suite shares kingslanding's fixture and runs after it.
 [functional.greyjoy]
 suite_path = "tests/ironbank/greyjoy"

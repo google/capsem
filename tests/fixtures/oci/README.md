@@ -1,5 +1,41 @@
 # OCI containers in Capsem
 
+## Native amd64 CI candidate handoff
+
+The existing `ci.yaml` `test-install` job retains its install/isolation checks,
+native KVM/vhost-vsock requirements, runner, timeout and read-only permissions.
+It then runs `debug-image --candidate-receipt` and
+`reference-image --candidate-receipt` at top level. These opt-in receipts come
+directly from the existing producer result and bind clean source commit/tree,
+native platform, immutable OCI subject/config and original prepared root.
+No mutable Docker tag or human-readable build output selects qualification.
+
+The fixed-section `native_handoff.py select` helper validates the receipt and
+original evidence and supplies its typed layout output to the ordinary
+`image-qualify --image ... --layout ... --native-report` command. Qualification
+retains actual collected testcase/phase outcomes and mandatory/capability group
+counts; skips, partial work and failures cannot certify a candidate.
+`native_handoff.py stage` requires **both** completed native producer and
+qualification journals for the same source/subjects. It revalidates original
+bytes, copies only the descriptor closure and bounded evidence, and publishes
+the artifact directory atomically. Paths and byte/file/journal limits live in
+`[functional.native_images]`; originals remain in the leased image cache.
+
+Only after all preceding job checks succeed does the pinned artifact action
+upload `native-image-candidates-amd64-<source>-<run>-<attempt>` without overwrite.
+The payload contains each original OCI layout/rootfs-v2/producer-evidence,
+build receipt, actual testcase report and completed journals. It contains no
+service homes, credential stores, ambient environment dump or stdout logs.
+Failure evidence remains a separately named diagnostic artifact and never a
+qualified candidate upload.
+
+A maintainer must download the exact artifact ID/digest/run, verify source and
+subjects with the existing validators and review native proof before using the
+existing exact-byte `oras cp` publication instructions below. CI does not push,
+move pins, authorize publication or create a package repository. ARM needs its
+own native proof, and final release integration still requires the complete
+exact-source local `just test`; these CI artifacts do not replace that gate.
+
 Capsem runs an OCI image as a VM's workload, with loopback TCP publishing:
 
 ```sh

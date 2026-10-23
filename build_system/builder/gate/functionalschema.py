@@ -7,9 +7,10 @@ products the gate builds and ships.
 
 from __future__ import annotations
 
+from pathlib import PurePosixPath
 from typing import Annotated
 
-from pydantic import PositiveInt, StringConstraints, model_validator
+from pydantic import PositiveInt, StringConstraints, field_validator, model_validator
 
 from .configschema import SafeToken, Strict
 
@@ -36,6 +37,33 @@ class QualificationConfig(Strict):
     suite_path: str
     image_variable: str
     layout_variable: str
+
+
+class NativeImagesConfig(Strict):
+    """CI evidence only; fixed native platform and bounded owned artifacts."""
+
+    module: SafeToken
+    receipt_dir: str
+    artifact_dir: str
+    report_name: str
+    report_variable: str
+    layout_output: str
+    platform: Platform
+    system: SafeToken
+    machine: SafeToken
+    receipt_max_bytes: PositiveInt
+    journal_max_bytes: PositiveInt
+    journal_max_runs: PositiveInt
+    artifact_max_bytes: PositiveInt
+    artifact_max_files: PositiveInt
+
+    @field_validator("receipt_dir", "artifact_dir", "report_name")
+    @classmethod
+    def owned_relative_path(cls, value: str) -> str:
+        path = PurePosixPath(value)
+        if path.is_absolute() or ".." in path.parts or not path.parts:
+            raise ValueError("native evidence paths must stay relative and contained")
+        return value
 
 
 class PinnedImageConfig(Strict):
