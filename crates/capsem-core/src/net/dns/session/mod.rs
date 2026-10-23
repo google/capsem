@@ -83,9 +83,16 @@ pub async fn serve_dns_session(
     });
     let in_flight = Arc::new(Semaphore::new(DNS_SESSION_MAX_IN_FLIGHT));
     let mut queries = JoinSet::new();
+    let mut query_cancellations = std::collections::HashMap::<u32, CancellationToken>::new();
 
     loop {
-        while queries.try_join_next().is_some() {}
+        while let Some(completed) = queries.try_join_next() {
+            if let Ok(id) = completed {
+                query_cancellations.remove(&id);
+            } else {
+                cancellation.cancel();
+            }
+        }
         let read = tokio::select! {
             biased;
             _ = cancellation.cancelled() => break,
@@ -99,13 +106,24 @@ pub async fn serve_dns_session(
                 break;
             }
         };
-        let request = match capsem_proto::decode_dns_request(&payload) {
-            Ok(request) => request,
+        let request = match capsem_proto::dns_session::decode_dns_session_message(&payload) {
+            Ok(capsem_proto::dns_session::DnsSessionMessage::Query(request)) => request,
+            Ok(capsem_proto::dns_session::DnsSessionMessage::Cancel(cancel)) => {
+                // This stream owns this ID. Cancellation neither opens an
+                // approval capability nor affects another stream's queries.
+                if let Some(token) = query_cancellations.get(&cancel.cancel_query_id.get()) {
+                    token.cancel();
+                }
+                continue;
+            }
             Err(error) => {
                 debug!(error = %error, "DNS port: decode_dns_request failed");
                 break;
             }
         };
+        if query_cancellations.contains_key(&request.id) {
+            break;
+        }
         let Ok(permit) = Arc::clone(&in_flight).try_acquire_owned() else {
             break;
         };
@@ -113,7 +131,9 @@ pub async fn serve_dns_session(
         let handler = Arc::clone(&handler);
         let db = Arc::clone(&db);
         let policy = policy.clone();
-        let cancellation = cancellation.clone();
+        let cancellation = cancellation.child_token();
+        let id = request.id;
+        query_cancellations.insert(id, cancellation.clone());
         queries.spawn(async move {
             let frame = answer_one(request, &handler, &db, &policy, &cancellation).await;
             if let Some(frame) = frame {
@@ -125,6 +145,7 @@ pub async fn serve_dns_session(
                 }
             }
             drop(permit);
+            id
         });
     }
 

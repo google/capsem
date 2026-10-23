@@ -209,6 +209,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Show a compact toolbar notice when the service confirms a newer Capsem version,
   with a direct action to review its update status.
+- Recognize scoped DNS query cancellation without closing independent lookups
+  on the same connection or discarding the original security audit.
+
 - Retain the original internal HTTP MCP tool audit when a caller disconnects
   while its response awaits approval; cancel and drain the owned operation.
 
