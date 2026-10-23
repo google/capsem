@@ -32,6 +32,8 @@ from helpers.service import (
 from helpers.session_ledger import open_session_ledger
 from log_streams import assert_service_log_evidence, read_log_stream
 
+from tests.ironbank.approval_fixture import resolve_original_operation
+
 pytestmark = pytest.mark.integration
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -1713,10 +1715,19 @@ def test_asked_http_request_pays_full_ledger_debt_blackbox() -> None:
         assert upload is not None
         assert upload["success"] is True
 
-        exec_resp = client.post(
-            f"/vms/{session_id}/exec",
-            {"command": "python3 /root/ironbank-http-ask.py", "timeout_secs": 120},
-            timeout=150,
+        request_log_path = Path(ready["request_log"])
+
+        def no_upstream_effect() -> None:
+            records = request_log_path.read_text() if request_log_path.exists() else ""
+            assert not any(json.loads(line)["path"] == "/ask-target" for line in records.splitlines())
+
+        exec_resp, resolution = resolve_original_operation(
+            lambda: client.post(
+                f"/vms/{session_id}/exec",
+                {"command": "python3 /root/ironbank-http-ask.py", "timeout_secs": 120},
+                timeout=150,
+            ),
+            gateway_client, session_id, "deny", no_upstream_effect, nonce,
         )
         assert exec_resp is not None
         assert exec_resp["exit_code"] == 0, exec_resp
@@ -1724,7 +1735,7 @@ def test_asked_http_request_pays_full_ledger_debt_blackbox() -> None:
         assert result["status"] == 403
         assert (
             result["body"]
-            == "capsem: HTTP request requires approval by security rule: corp.rules.ask_ironbank_mock_http\n"
+            == "capsem: HTTP request blocked by security rule: corp.rules.ask_ironbank_mock_http\n"
         )
         assert result["nonce"] == nonce
         assert nonce in result["request_body"]
@@ -1761,7 +1772,7 @@ def test_asked_http_request_pays_full_ledger_debt_blackbox() -> None:
             assert isinstance(net["duration_ms"], int)
             assert net["duration_ms"] >= 0
             assert net["matched_rule"] == "corp.rules.ask_ironbank_mock_http"
-            assert net["policy_action"] == "ask"
+            assert net["policy_action"] == "block"
             assert net["policy_rule"] == "corp.rules.ask_ironbank_mock_http"
             assert net["credential_ref"] is None
             assert net["conn_type"] == "http-mitm"
@@ -1811,9 +1822,12 @@ def test_asked_http_request_pays_full_ledger_debt_blackbox() -> None:
                 """,
                 (event_id,),
             ).fetchall()
-            assert len(ask_rows) == 1, [dict(row) for row in ask_rows]
+            assert [row["status"] for row in ask_rows] == ["pending", "denied"], [dict(row) for row in ask_rows]
+            assert ask_rows[-1]["resolver"] == "authenticated_client"
+            assert ask_rows[-1]["reason"] == "human_decision"
             ask_row = dict(ask_rows[0])
             ask_id = _event_id(ask_row["ask_id"])
+            assert ask_id == resolution["ask_id"]
             assert ask_row["event_id"] == event_id
             assert ask_row["event_type"] == "http.request"
             assert ask_row["rule_name"] == "ask_ironbank_mock_http"
@@ -1843,7 +1857,7 @@ def test_asked_http_request_pays_full_ledger_debt_blackbox() -> None:
         )
         assert len(uds_net_rows) == 1
         assert uds_net_rows[0]["decision"] == "denied"
-        assert uds_net_rows[0]["policy_action"] == "ask"
+        assert uds_net_rows[0]["policy_action"] == "block"
         assert uds_net_rows[0]["request_body_preview"] == result["request_body"]
         assert uds_net_rows[0]["response_body_preview"] == result["body"]
 
@@ -1854,6 +1868,7 @@ def test_asked_http_request_pays_full_ledger_debt_blackbox() -> None:
             SELECT ask_id, event_id, event_type, rule_id, status, trace_id
             FROM security_ask_events
             WHERE ask_id = '{ask_id}'
+            ORDER BY id
             """,
         )
         assert uds_ask_rows == [
@@ -1864,7 +1879,15 @@ def test_asked_http_request_pays_full_ledger_debt_blackbox() -> None:
                 "rule_id": "corp.rules.ask_ironbank_mock_http",
                 "status": "pending",
                 "trace_id": net["trace_id"],
-            }
+            },
+            {
+                "ask_id": ask_id,
+                "event_id": event_id,
+                "event_type": "http.request",
+                "rule_id": "corp.rules.ask_ironbank_mock_http",
+                "status": "denied",
+                "trace_id": net["trace_id"],
+            },
         ]
 
         security_latest = client.get(f"/vms/{session_id}/security/latest?limit=2000", timeout=30)
