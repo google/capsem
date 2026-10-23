@@ -3383,6 +3383,9 @@ linux = 400
 python3 = 100
 
 [benchmark.run]
+max_collector_bytes = 67108864
+max_samples_per_metric = 1000000
+max_samples_per_run = 4000000
 # What `just bench` invokes. The binary computes every derived number; a
 # collector under `collectors` prints raw samples and nothing else, which is
 # what makes `p99` mean the same thing in all eighteen dimensions.

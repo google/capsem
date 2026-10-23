@@ -115,6 +115,9 @@ class BenchmarkRunConfig(Strict):
     """
 
     crate: str
+    max_collector_bytes: PositiveInt
+    max_samples_per_metric: PositiveInt
+    max_samples_per_run: PositiveInt
     bin_name: str
     binary: str
     collectors: str
