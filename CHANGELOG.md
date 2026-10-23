@@ -209,6 +209,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Show a compact toolbar notice when the service confirms a newer Capsem version,
   with a direct action to review its update status.
+- Notify the host when an original guest DNS query expires or its owner cancels
+  it, with fail-closed handling when its bounded cancellation queue is full.
+
 - Recognize scoped DNS query cancellation without closing independent lookups
   on the same connection or discarding the original security audit.
 

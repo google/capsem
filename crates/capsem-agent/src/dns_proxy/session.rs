@@ -82,6 +82,7 @@ impl Drop for DnsForwarder {
 }
 
 struct Pending {
+    sent: bool,
     /// `None` when the query itself did not parse; the host answers those
     /// with empty bytes and nothing can be checked.
     expected: Option<Question>,
@@ -93,6 +94,7 @@ pub(crate) struct DnsSession {
     frames: mpsc::Sender<(u32, Vec<u8>)>,
     pending: Mutex<HashMap<u32, Pending>>,
     next_id: AtomicU32,
+    reset: tokio::sync::Notify,
 }
 
 /// Cancellation owns the same cleanup as a reply, error, or timeout.
@@ -103,7 +105,18 @@ struct PendingQuery<'a> {
 
 impl Drop for PendingQuery<'_> {
     fn drop(&mut self) {
-        self.session.take_pending(self.id);
+        if self.session.take_pending(self.id).is_some_and(|pending| pending.sent) {
+            let cancellation = capsem_proto::dns_session::DnsQueryCancellation {
+                cancel_query_id: std::num::NonZeroU32::new(self.id).expect("allocated DNS query ID is nonzero"),
+            };
+            let frame = capsem_proto::dns_session::encode_dns_cancellation(&cancellation)
+                .expect("bounded DNS cancellation encodes");
+            // Zero is an internal writer marker, never a query ID. A full
+            // queue cannot silently lose cancellation: close this stream.
+            if self.session.frames.try_send((0, frame)).is_err() {
+                self.session.reset.notify_one();
+            }
+        }
     }
 }
 
@@ -115,6 +128,7 @@ impl DnsSession {
             frames,
             pending: Mutex::new(HashMap::new()),
             next_id: AtomicU32::new(1),
+            reset: tokio::sync::Notify::new(),
         });
         let worker = tokio::spawn(Arc::clone(&session).run(frames_rx, connect));
         (session, worker)
@@ -156,7 +170,14 @@ impl DnsSession {
                     pending.len()
                 )));
             }
-            pending.insert(id, Pending { expected, reply });
+            pending.insert(
+                id,
+                Pending {
+                    sent: false,
+                    expected,
+                    reply,
+                },
+            );
         }
         let _pending = PendingQuery { session: self, id };
         let request = DnsRequest {
@@ -198,25 +219,7 @@ impl DnsSession {
             }
         };
         let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
-        // Pre-multiplexing hosts omit the correlation id. Preserve their
-        // DNS wire identity checks, and never guess between duplicate queries.
-        let id = if response.id == 0 {
-            let mut matches = pending.iter().filter(|(_, entry)| {
-                entry
-                    .expected
-                    .as_ref()
-                    .is_some_and(|question| question.is_answered_by(&response.raw))
-            });
-            let Some((&id, _)) = matches.next() else {
-                return;
-            };
-            if matches.next().is_some() {
-                return;
-            }
-            id
-        } else {
-            response.id
-        };
+        let id = response.id;
         let Some(entry) = pending.get(&id) else {
             eprintln!(
                 "[capsem-dns-proxy] session {}: answer for unknown query id {}; discarded",
@@ -325,8 +328,11 @@ impl DnsSession {
         let (mut reader, mut writer) = tokio::io::split(stream);
         let write_side = async {
             while let Some((id, frame)) = frames.recv().await {
-                if !self.pending.lock().unwrap_or_else(|e| e.into_inner()).contains_key(&id) {
-                    continue;
+                if id != 0 {
+                    let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
+                    let Some(query) = pending.get_mut(&id) else { continue };
+                    query.sent = true;
+                    drop(pending);
                 }
                 writer.write_all(&frame).await?;
             }
@@ -349,6 +355,7 @@ impl DnsSession {
             }
         };
         tokio::select! {
+            _ = self.reset.notified() => io::Error::other("DNS cancellation queue overflow"),
             result = write_side => result.unwrap_err(),
             result = read_side => result.unwrap_err(),
         }

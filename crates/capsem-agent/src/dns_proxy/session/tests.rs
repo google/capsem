@@ -13,9 +13,61 @@ fn idle_session(capacity: usize) -> (DnsSession, mpsc::Receiver<(u32, Vec<u8>)>)
             frames,
             pending: Mutex::new(HashMap::new()),
             next_id: AtomicU32::new(1),
+            reset: tokio::sync::Notify::new(),
         },
         receiver,
     )
+}
+
+#[tokio::test]
+async fn cancelling_a_written_query_notifies_host_without_closing_other_queries() {
+    let (mut host, guest) = UnixStream::pair().unwrap();
+    host.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    let guest = Arc::new(Mutex::new(Some(guest)));
+    let connect: Connect = Arc::new(move || {
+        guest
+            .lock()
+            .unwrap()
+            .take()
+            .map(IntoRawFd::into_raw_fd)
+            .ok_or_else(|| io::Error::other("one connection only"))
+    });
+    let forwarder = Arc::new(DnsForwarder::new(1, connect));
+    let (seen, started) = oneshot::channel();
+    let (cancelled, cancellation) = oneshot::channel();
+    let host = tokio::task::spawn_blocking(move || {
+        let original = read_frame(&mut host).unwrap();
+        seen.send(()).unwrap();
+        let mut length = [0; 4];
+        host.read_exact(&mut length)
+            .expect("written query must send cancellation");
+        let mut payload = vec![0; u32::from_be_bytes(length) as usize];
+        host.read_exact(&mut payload).unwrap();
+        assert!(
+            matches!(capsem_proto::dns_session::decode_dns_session_message(&payload).unwrap(),
+            capsem_proto::dns_session::DnsSessionMessage::Cancel(value) if value.cancel_query_id.get() == original.id)
+        );
+        cancelled.send(()).unwrap();
+        let independent = read_frame(&mut host).unwrap();
+        write_response(&mut host, &answered(&independent));
+    });
+    let original = {
+        let forwarder = Arc::clone(&forwarder);
+        tokio::spawn(async move { forwarder.forward_query(query(1, "held.example"), "tcp").await })
+    };
+    started.await.unwrap();
+    original.abort();
+    assert!(original.await.unwrap_err().is_cancelled());
+    tokio::time::timeout(Duration::from_secs(3), cancellation)
+        .await
+        .unwrap()
+        .unwrap();
+    let independent = query(2, "independent.example");
+    assert_eq!(
+        forwarder.forward_query(independent.clone(), "udp").await.unwrap().raw,
+        answer_to(&independent)
+    );
+    host.await.unwrap();
 }
 
 #[tokio::test]
@@ -232,26 +284,8 @@ async fn answers_for_unknown_ids_or_other_questions_are_discarded_and_the_query_
     assert_eq!(response.raw, answer_to(&q));
 }
 
-#[tokio::test]
-async fn legacy_host_answers_without_correlation_ids_still_resolve() {
-    let connect = fake_host(|mut host| {
-        while let Some(request) = read_frame(&mut host) {
-            let mut response = answered(&request);
-            response.id = 0; // Older hosts omit the field; serde defaults it.
-            write_response(&mut host, &response);
-        }
-    });
-    let forwarder = DnsForwarder::new(1, connect);
-    let (first, second) = tokio::join!(
-        forwarder.forward_query(query(11, "first.example"), "udp"),
-        forwarder.forward_query(query(12, "second.example"), "udp"),
-    );
-    assert_eq!(first.unwrap().raw, answer_to(&query(11, "first.example")));
-    assert_eq!(second.unwrap().raw, answer_to(&query(12, "second.example")));
-}
-
 #[test]
-fn legacy_reply_cannot_choose_between_identical_pending_questions() {
+fn an_unknown_reply_cannot_complete_identical_pending_questions() {
     let (session, _frames) = idle_session(4);
     let raw = query(11, "same.example");
     let mut receivers = Vec::new();
@@ -260,6 +294,7 @@ fn legacy_reply_cannot_choose_between_identical_pending_questions() {
         session.pending.lock().unwrap().insert(
             id,
             Pending {
+                sent: false,
                 expected: parse_question(&raw),
                 reply,
             },
@@ -267,7 +302,7 @@ fn legacy_reply_cannot_choose_between_identical_pending_questions() {
         receivers.push(receiver);
     }
     let response = DnsResponse {
-        id: 0,
+        id: 999,
         raw: answer_to(&raw),
         decision: "allowed".into(),
         rcode: 0,
@@ -277,35 +312,6 @@ fn legacy_reply_cannot_choose_between_identical_pending_questions() {
     for receiver in &mut receivers {
         assert!(matches!(receiver.try_recv(), Err(oneshot::error::TryRecvError::Empty)));
     }
-}
-
-#[test]
-fn legacy_reply_must_match_the_only_pending_question() {
-    let (session, _frames) = idle_session(4);
-    let raw = query(11, "victim.example");
-    let (reply, mut receiver) = oneshot::channel();
-    session.pending.lock().unwrap().insert(
-        1,
-        Pending {
-            expected: parse_question(&raw),
-            reply,
-        },
-    );
-    for wrong in [
-        Vec::new(),
-        answer_to(&query(11, "attacker.example")),
-        answer_to(&query(12, "victim.example")),
-    ] {
-        let response = DnsResponse {
-            id: 0,
-            raw: wrong,
-            decision: "allowed".into(),
-            rcode: 0,
-        };
-        session.deliver(&capsem_proto::encode_dns_response(&response).unwrap()[4..]);
-        assert!(matches!(receiver.try_recv(), Err(oneshot::error::TryRecvError::Empty)));
-    }
-    assert_eq!(session.in_flight(), 1);
 }
 
 #[tokio::test]
@@ -471,7 +477,11 @@ async fn correlation_ids_are_never_zero() {
     let (session, worker) = DnsSession::spawn(0, echo_host());
     session.next_id.store(u32::MAX, Ordering::Relaxed);
     assert_eq!(session.alloc_id(), u32::MAX);
-    assert_eq!(session.alloc_id(), 1, "zero is the legacy 'no id' value and is skipped");
+    assert_eq!(
+        session.alloc_id(),
+        1,
+        "zero is not a cancellable query ID and is skipped"
+    );
     worker.abort();
 }
 
