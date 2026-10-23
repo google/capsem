@@ -1,4 +1,4 @@
-"""Read archived bodies out of a session's v3 generation from a test.
+"""Read archived bodies out of a session's v4 generation from a test.
 
 Bodies left SQLite for a block archive beside it: ``event_body_blobs`` says
 which block a body is in and where inside that block it starts, and the block
@@ -15,23 +15,23 @@ exist -- ``tests/citadel/test_body_archive_format_is_one_place.py`` allowlists e
 this path, for exactly that reason, so that a third parser cannot appear
 quietly.
 
-The layout, from that file (version 3)::
+The layout, from that file (version 4)::
 
-    file header (80 bytes):  magic "CAPSEMBL"  u16 version=3  u16 flags=0
-                             u32 header_len=80  archive_id[16]
-                             generation_id[16]  blake3(bytes[0:48])[32]
+    file header (64 bytes):  magic "CAPSEMBL"  u16 version=4  u16 flags=0
+                             u32 header_len=64  archive_id[16]
+                             generation_id[16]  xxh3-128(bytes[0:48])[16] LE
     block header (8 bytes):  magic "BLK2"  u8 codec (1 = raw deflate, 2 = zstd)
                              u8 flags  u16 pad
     segment (repeated):      magic "SGMT"  u8 flags (bit 0 FINAL)  u8[3] pad
                              u32 raw_start  u32 raw_len  u32 comp_len
-                             blake3(segment raw)[32]  compressed bytes
+                             xxh3-128(segment raw)[16] LE  compressed bytes
 
 A block is one codec stream cut at flush points into segments; one decoder
 runs across them, and the last segment of a closed block ends the stream. A
 block that is still being written simply has no FINAL segment yet.
 
-Every read verifies each segment's blake3 against its header and the body's
-own blake3 against the index row that named it, exactly as the product reader
+Every read verifies each segment's XXH3-128 against its header and the body's
+own XXH3-128 against the index row that named it, exactly as the product reader
 does: bytes that do not match what named them are a broken ledger, not a
 body, and a test must not quietly assert on them. Every length is bounded
 before anything is allocated or inflated, because it comes off disk.
@@ -49,19 +49,20 @@ from pathlib import Path
 from typing import Any, BinaryIO, Self
 
 import pyzstd
+from capsem_builder.crypto import xxh3_128
 
 FILE_MAGIC = b"CAPSEMBL"
-FILE_VERSION = 3
+FILE_VERSION = 4
 # The ledger's own format (`archive_state.format_version`). It moved to 4 when
-# the ledger began carrying its counter snapshot; the body file did not change.
+# the ledger began carrying its counter snapshot; its version is independent.
 LEDGER_FORMAT_VERSION = 4
-FILE_HEADER_BYTES = 80
+FILE_HEADER_BYTES = 64
 BLOCK_MAGIC = b"BLK2"
 BLOCK_HEADER_BYTES = 8
 CODEC_DEFLATE = 1
 CODEC_ZSTD = 2
 SEGMENT_MAGIC = b"SGMT"
-SEGMENT_HEADER_BYTES = 52
+SEGMENT_HEADER_BYTES = 36
 SEGMENT_FINAL = 0x01
 SYNC_FLUSH_TAIL = b"\x00\x00\xff\xff"
 MAX_BLOCK_RAW_BYTES = 16 * 1024 * 1024
@@ -79,16 +80,6 @@ SECURITY_PAYLOAD_TABLES = frozenset(
 def archive_path_for_db(db_path: Path | str) -> Path:
     """The private ``session.bodies`` generation directory beside the DB."""
     return Path(db_path).with_suffix(".bodies")
-
-
-def _blake3(data: bytes) -> str:
-    try:
-        module = importlib.import_module("blake3")
-    except ModuleNotFoundError as error:  # pragma: no cover - environment-dependent
-        raise AssertionError(
-            "reading an archived body verifies its blake3 hash; install the blake3 package"
-        ) from error
-    return str(module.blake3(data).hexdigest())
 
 
 def _archive_state(db_path: Path) -> tuple[bytes, bytes, int]:
@@ -117,7 +108,7 @@ def _archive_state(db_path: Path) -> tuple[bytes, bytes, int]:
         or generation_id[6] >> 4 != 4
         or generation_id[8] >> 6 != 2
     ):
-        raise AssertionError(f"{db_path} has an invalid v3 archive_state singleton")
+        raise AssertionError(f"{db_path} has an invalid v4 archive_state singleton")
     return archive_id, generation_id, committed_end
 
 
@@ -234,7 +225,7 @@ class SessionArchive:
             # state; nothing may read from it again.
             self._cursor = None
             raise
-        got = f"blake3:{_blake3(body)}"
+        got = f"xxh3-128:{xxh3_128(body):032x}"
         if got != body_hash:
             raise AssertionError(
                 f"archived body of {event_id} does not match the row that named it: "
@@ -271,11 +262,11 @@ class SessionArchive:
             or int.from_bytes(header[12:16], "little") != FILE_HEADER_BYTES
             or header[16:32] != self._expected_archive_id
             or header[32:48] != self._expected_generation_id
-            or _blake3(header[:48]) != header[48:80].hex()
+            or xxh3_128(header[:48]).to_bytes(16, "little") != header[48:64]
             or self.generation_path.stat().st_size < self.committed_end
         ):
             raise AssertionError(
-                f"{self.generation_path} is not the selected v3 archive generation"
+                f"{self.generation_path} is not the selected v4 archive generation"
             )
 
     def _span(
@@ -395,11 +386,12 @@ class SessionArchive:
             raise AssertionError(
                 f"{where} did not inflate to the {raw_len} bytes it declares"
             )
-        expected_hash = header[20:SEGMENT_HEADER_BYTES].hex()
-        if _blake3(raw) != expected_hash:
+        expected_hash = int.from_bytes(header[20:SEGMENT_HEADER_BYTES], "little")
+        actual_hash = xxh3_128(raw)
+        if actual_hash != expected_hash:
             raise AssertionError(
-                f"{where} does not match its own hash: header says {expected_hash}, "
-                f"bytes hash to {_blake3(raw)}"
+                f"{where} does not match its own hash: header says {expected_hash:032x}, "
+                f"bytes hash to {actual_hash:032x}"
             )
         cursor.raw += raw
         cursor.next_segment_at = at + SEGMENT_HEADER_BYTES + comp_len

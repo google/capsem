@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 import pyzstd
-from blake3 import blake3
+from capsem_builder.crypto import xxh3_128
 from helpers.body_archive import (
     BLOCK_MAGIC,
     CODEC_ZSTD,
@@ -110,7 +110,7 @@ def test_zstd_segments_share_one_bounded_decoder_stream(tmp_path: Path) -> None:
                 start.to_bytes(4, "little"),
                 len(body).to_bytes(4, "little"),
                 len(encoded).to_bytes(4, "little"),
-                blake3(body).digest(),
+                xxh3_128(body).to_bytes(16, "little"),
                 encoded,
             )
         )
@@ -197,3 +197,35 @@ def test_the_strict_security_payload_reader_rejects_an_unindexed_body() -> None:
     client = _BodyClient({"event_id": "abcdef123456", "bodies": []})
     with pytest.raises(AssertionError, match="has no served payload"):
         served_security_payload(client, "vm-id", "abcdef123456")
+
+
+@pytest.mark.parametrize("offset", [8, 48, 63])
+def test_rust_fixture_rejects_legacy_version_or_torn_header(tmp_path, offset):
+    db = _ledger(tmp_path)
+    generation = next(db.with_suffix(".bodies").iterdir())
+    data = bytearray(generation.read_bytes())
+    data[offset] = 3 if offset == 8 else data[offset] ^ 1
+    generation.write_bytes(data)
+    with pytest.raises(AssertionError, match="selected v4 archive"):
+        archived_bodies(db)
+
+
+def test_rust_fixture_rejects_corrupt_segment_checksum(tmp_path):
+    db = _ledger(tmp_path)
+    with closing(sqlite3.connect(db)) as conn:
+        block = conn.execute("SELECT block_offset FROM body_blocks LIMIT 1").fetchone()[0]
+    generation = next(db.with_suffix(".bodies").iterdir())
+    data = bytearray(generation.read_bytes())
+    data[block + 8 + 20] ^= 1
+    generation.write_bytes(data)
+    with pytest.raises(AssertionError, match="own hash"):
+        archived_bodies(db)
+
+
+def test_rust_fixture_rejects_mismatched_index_identity(tmp_path):
+    db = _ledger(tmp_path)
+    with closing(sqlite3.connect(db)) as conn:
+        conn.execute("UPDATE event_body_blobs SET body_hash = ?", ("xxh3-128:" + "0" * 32,))
+        conn.commit()
+    with pytest.raises(AssertionError, match="row that named it"):
+        archived_bodies(db)

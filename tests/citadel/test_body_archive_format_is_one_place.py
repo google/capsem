@@ -1,17 +1,9 @@
 """Citadel guard: the body archive's on-disk format is written down once.
 
 `capsem-archive/src/format.rs` is the whole description of a `.bodies` file:
-the magic `CAPSEMBL`, the 16-byte file header, the per-block magic `BLK2`, and
-the 44-byte block header that carries `raw_len`, `comp_len` and the blake3 of
-the raw bytes.
-
-A second copy of any of those four facts is not a duplicated constant, it is a
-second specification. They drift in one direction only -- the writer is
-changed, the copy is not -- and the file that results is one both halves think
-they can read. There is no version negotiation to catch it either: a block
-header is 44 bytes because `format.rs` says so, and a reader that believes 40
-reads a hash out of the middle of someone's request body and reports
-corruption in the wrong place.
+the generation magic, version, header widths, codec identifiers and size bounds.
+The independent Python proof must track those facts explicitly. A format change
+without its test-reader update fails before expensive native acceptance.
 
 The one allowed second copy is `tests/helpers/body_archive.py`, and it is
 allowed because of what it is for: a black-box proof that parses the file
@@ -60,8 +52,8 @@ The body archive's format is defined in crates/capsem-archive/src/format.rs.
 
 CAPSEMBL, BLK2, FILE_HEADER_BYTES and BLOCK_HEADER_BYTES describe the bytes on
 disk. A second copy is a second specification, and the two drift the moment
-one side is changed: the writer emits a 44-byte block header, the stale reader
-believes 40, and it reads a blake3 hash out of the middle of a request body
+one side is changed: the writer changes its checksums and header widths, the stale reader
+reads a checksum out of the middle of a request body
 and calls the archive corrupt.
 
 Import them from capsem-archive. The one exception is
@@ -172,3 +164,21 @@ fn first_block(bytes: &[u8]) -> &[u8] {
     assert format_copies(Path("crates/capsem-service/src/body_routes.rs"), caller) == []
     assert format_copies(Path("tests/ironbank/test_stats_detail_contract.py"),
                          "ARCHIVE_FIRST_BLOCK_OFFSET = FILE_HEADER_BYTES\n") == []
+
+
+def test_independent_reader_tracks_current_rust_format_constants() -> None:
+    from helpers import body_archive
+
+    source = (PROJECT_ROOT / FORMAT).read_text()
+    for name in (
+        "FILE_VERSION", "FILE_HEADER_BYTES", "BLOCK_HEADER_BYTES",
+        "SEGMENT_HEADER_BYTES", "CODEC_DEFLATE", "CODEC_ZSTD", "SEGMENT_FINAL",
+        "MAX_BLOCK_RAW_BYTES", "MAX_SEGMENT_EXPANSION",
+    ):
+        match = re.search(rf"pub const {name}: \w+ = ([0-9xA-Fa-f_* ]+);", source)
+        assert match, f"extract {name} from the actual Rust format declaration"
+        # Only Rust integer literals and multiplication, never arbitrary eval.
+        value = 1
+        for literal in match[1].split("*"):
+            value *= int(literal.strip().replace("_", ""), 0)
+        assert getattr(body_archive, name) == value, f"stale independent reader: {name}"

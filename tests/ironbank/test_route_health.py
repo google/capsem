@@ -23,6 +23,7 @@ from typing import Any
 
 import psutil
 import pytest
+from capsem_builder.crypto import xxh3_128
 from helpers.constants import (
     DEFAULT_CPUS,
     DEFAULT_RAM_MB,
@@ -424,7 +425,7 @@ def _assert_archived_exec_body(client: Any, vm_id: str, event_id: str) -> None:
     assert body["original_bytes"] == body["stored_bytes"] == len(body["content"])
     assert body["truncated"] is False
     assert body["truncated_for_transport"] is False
-    assert body["body_hash"].startswith("blake3:")
+    assert body["body_hash"] == f"xxh3-128:{xxh3_128(body['content'].encode()):032x}"
 
 
 def _service_route_contracts() -> list[RouteContract]:
