@@ -4,6 +4,8 @@
 //! service connection, or name a VM whose current owner handoff endpoint the
 //! coordinator derives and authenticates from its registry.
 
+pub mod metrics;
+
 use anyhow::{bail, Result};
 
 pub const GATEWAY_GRANT_FRAME_SIZE: usize = 80;
