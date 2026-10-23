@@ -51,6 +51,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Carry committed price coverage through session, per-model and global service
   totals without deriving price completeness from a zero cost.
+- Brand all six supported images with bundled official product/publisher icons,
+  owner names and canonical product links, with recorded asset provenance.
+
 - Reject malformed inbound UTF-8 before constructing readable HTTP or model
   text when the text guard is enabled.
 

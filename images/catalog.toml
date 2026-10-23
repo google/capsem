@@ -5,6 +5,9 @@
 
 [images.dev]
 display_name = "Development"
+publisher = "Capsem"
+url = "https://capsem.org"
+icon = "/icons/products/capsem.svg"
 category = "development"
 interfaces = ["terminal"]
 surface = "terminal"
@@ -12,6 +15,9 @@ description = "An agentless environment with development tools."
 
 [images.codex-cli]
 display_name = "Codex CLI"
+publisher = "OpenAI"
+url = "https://developers.openai.com/codex/cli"
+icon = "/icons/products/openai.svg"
 category = "terminal_agents"
 interfaces = ["terminal"]
 surface = "terminal"
@@ -19,6 +25,9 @@ description = "OpenAI Codex CLI on the Capsem base."
 
 [images.claude-code]
 display_name = "Claude Code"
+publisher = "Anthropic"
+url = "https://code.claude.com/docs/en/overview"
+icon = "/icons/products/claude.png"
 category = "terminal_agents"
 interfaces = ["terminal"]
 surface = "terminal"
@@ -26,6 +35,9 @@ description = "Claude Code on the Capsem base."
 
 [images.agy]
 display_name = "Antigravity CLI"
+publisher = "Google"
+url = "https://antigravity.google/product/antigravity-cli"
+icon = "/icons/products/antigravity.svg"
 category = "terminal_agents"
 interfaces = ["terminal"]
 surface = "terminal"
@@ -35,6 +47,7 @@ description = "Antigravity CLI (agy) on the Capsem base."
 display_name = "Claude Desktop"
 publisher = "Anthropic"
 url = "https://claude.ai/download"
+icon = "/icons/products/claude.png"
 category = "desktop_apps"
 interfaces = ["graphical"]
 surface = "xpra"
@@ -42,6 +55,9 @@ description = "Claude Desktop on the Capsem base, streamed as a single-applicati
 
 [images.antigravity-desktop]
 display_name = "Antigravity App 2"
+publisher = "Google"
+url = "https://antigravity.google/product/antigravity-2"
+icon = "/icons/products/antigravity.svg"
 category = "desktop_apps"
 interfaces = ["graphical"]
 surface = "xpra"
