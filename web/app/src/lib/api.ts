@@ -614,6 +614,11 @@ export async function getImages(signal?: AbortSignal, refresh = false): Promise<
   return _sdk.call(transport => gateway.listImages(transport, { refresh }, { signal }));
 }
 
+/** Catalog-authorized exact-image evidence, fetched only when Info is opened. */
+export async function getImageInventory(name:string,image:string,signal:AbortSignal) {
+  return _sdk.call(transport=>gateway.getImageInventory(transport,{name,image},{signal,timeoutMs:35_000}));
+}
+
 export async function pullImage(image: string): Promise<ImagePullResponse> {
   return _sdk.call(transport => gateway.pullImage(transport, { body: { image } }));
 }

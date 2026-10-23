@@ -1,7 +1,7 @@
 import {expect,it,vi} from 'vitest';
 import {render} from 'svelte/server';
 import {ImageCacheState,type ImageInfo} from '@capsem/sdk';
-vi.mock('../api',()=>({openUrl:vi.fn()}));
+vi.mock('../api',()=>({openUrl:vi.fn(),getImageInventory:vi.fn()}));
 import Panel from '../components/shell/ImageInfoPanel.svelte';
 const image:ImageInfo={name:'dev',description:'Tools',architectures:['arm64'],cached:ImageCacheState.MISSING,image:'registry.example/dev@sha256:a'};
 it('does not call unknown older-service artifact metadata unpublished',()=>{

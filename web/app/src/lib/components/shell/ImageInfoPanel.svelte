@@ -4,6 +4,7 @@
   import {imageDisplayName,safeProductUrl} from '../../models/image-metadata';
   import {openUrl} from '../../api';
   import AppIcon from './AppIcon.svelte';
+  import PackageInventory from './PackageInventory.svelte';
   import X from 'phosphor-svelte/lib/X';
   let {image,onclose}:{image:ImageInfo;onclose:()=>void}=$props();
   let dialog:HTMLDialogElement;
@@ -41,6 +42,7 @@
           {#if evidence}
             <p class="mt-1 break-all text-xs font-mono text-muted-foreground-1">{evidence.reference}</p>
             <button type="button" class="mt-2 text-xs text-primary hover:underline" onclick={()=>copy(evidence.reference)}>{copied===evidence.reference?'Copied':'Copy artifact reference'}</button>
+            {#if artifact.kind===ImageEvidenceKind.PACKAGE_INVENTORY}<PackageInventory {image}/>{/if}
           {:else}<p class="mt-1 text-xs text-muted-foreground-1">{image.app ? 'Not published for this image.' : 'Not provided by this service.'}</p>{/if}
         </div>
       {/each}

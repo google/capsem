@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Browse verified shared-tool and Debian package versions in app Info, with
+  bounded search results, cancellation and retry for inventory failures.
+
 - Read package inventory through catalog-selected image policy, rejecting changed
   pins and foreign artifacts while preserving verification errors.
 
