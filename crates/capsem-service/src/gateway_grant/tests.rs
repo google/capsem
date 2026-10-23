@@ -149,3 +149,114 @@ async fn missing_adoption_times_out_and_releases_original() {
     assert_eq!(sent.await.unwrap().unwrap_err().kind(), std::io::ErrorKind::TimedOut);
     assert_eq!(peer.read(&mut [0]).await.unwrap(), 0);
 }
+
+#[tokio::test]
+async fn metrics_grant_is_one_per_control_epoch_and_revokes_on_control_disconnect() {
+    use crate::tests::{install_empty_settings_env, EnvVarGuard, SETTINGS_ENV_LOCK};
+    use capsem_proto::gateway_grant::metrics::{
+        GatewayMetricMessage, GatewayMetricRequest, MAX_GATEWAY_METRIC_FRAME_BYTES,
+    };
+    let _environment = SETTINGS_ENV_LOCK.lock().await;
+    let directory = tempfile::tempdir().unwrap();
+    let (_settings, _, corp_path) = install_empty_settings_env(&directory);
+    let _base = EnvVarGuard::set("OTEL_EXPORTER_OTLP_ENDPOINT", "");
+    let _signal = EnvVarGuard::set("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "");
+    let _headers = EnvVarGuard::set("OTEL_EXPORTER_OTLP_METRICS_HEADERS", "");
+    let _protocol = EnvVarGuard::set("OTEL_EXPORTER_OTLP_METRICS_PROTOCOL", "http/protobuf");
+    let _compression = EnvVarGuard::set("OTEL_EXPORTER_OTLP_METRICS_COMPRESSION", "");
+    let mut corp = capsem_core::net::policy_config::SettingsFile::default();
+    corp.corp_rule_files.open_telemetry = Some("http://127.0.0.1:1".into());
+    capsem_core::net::policy_config::write_settings_file(&corp_path, &corp).unwrap();
+    let state = crate::tests::make_test_state();
+    std::fs::create_dir_all(state.service_socket.parent().unwrap()).unwrap();
+    let listener = tokio::net::UnixListener::bind(&state.service_socket).unwrap();
+    let (server, client) = std::os::unix::net::UnixStream::pair().unwrap();
+    let broker = tokio::spawn(serve(server, state));
+    let requests = WireSender::new(client.try_clone().unwrap()).unwrap();
+    let responses = WireReceiver::new(client).unwrap();
+    requests
+        .send(
+            &encode_gateway_grant_request(&GatewayGrantRequest::OpenMetrics { request_id: 1 }).unwrap(),
+            &[],
+        )
+        .await
+        .unwrap();
+    let response = responses.recv().await.unwrap();
+    assert_eq!(
+        decode_gateway_grant_response(&response.bytes).unwrap(),
+        GatewayGrantResponse::Granted {
+            request_id: 1,
+            kind: GatewayGrantKind::Metrics
+        }
+    );
+    let socket = std::os::unix::net::UnixStream::from(response.fds.into_iter().next().unwrap());
+    let (_metrics_requests, metrics_responses) = capsem_foundation::ipc_channel::channel_from_std_with_limit::<
+        GatewayMetricRequest,
+        GatewayMetricMessage,
+    >(socket, MAX_GATEWAY_METRIC_FRAME_BYTES)
+    .unwrap();
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(20), metrics_responses.recv())
+            .await
+            .is_err(),
+        "metric channel activated before descriptor adoption"
+    );
+    requests
+        .send(
+            &encode_gateway_grant_request(&GatewayGrantRequest::Adopted { request_id: 1 }).unwrap(),
+            &[],
+        )
+        .await
+        .unwrap();
+    assert!(
+        matches!(metrics_responses.recv().await.unwrap(), GatewayMetricMessage::Hello { generation } if generation != [0;16])
+    );
+    requests
+        .send(
+            &encode_gateway_grant_request(&GatewayGrantRequest::OpenMetrics { request_id: 2 }).unwrap(),
+            &[],
+        )
+        .await
+        .unwrap();
+    let response = responses.recv().await.unwrap();
+    assert!(response.fds.is_empty());
+    assert_eq!(
+        decode_gateway_grant_response(&response.bytes).unwrap(),
+        GatewayGrantResponse::Denied {
+            request_id: 2,
+            reason: GatewayGrantDenial::Revoked
+        }
+    );
+    // Optional metric refusal never prevents an ordinary service descriptor.
+    requests
+        .send(
+            &encode_gateway_grant_request(&GatewayGrantRequest::OpenService { request_id: 3 }).unwrap(),
+            &[],
+        )
+        .await
+        .unwrap();
+    let response = responses.recv().await.unwrap();
+    assert_eq!(
+        decode_gateway_grant_response(&response.bytes).unwrap(),
+        GatewayGrantResponse::Granted {
+            request_id: 3,
+            kind: GatewayGrantKind::Service
+        }
+    );
+    requests
+        .send(
+            &encode_gateway_grant_request(&GatewayGrantRequest::Adopted { request_id: 3 }).unwrap(),
+            &[],
+        )
+        .await
+        .unwrap();
+    let _service = listener.accept().await.unwrap();
+    drop((requests, responses));
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_secs(2), metrics_responses.recv())
+            .await
+            .unwrap()
+            .is_err()
+    );
+    assert!(broker.await.unwrap().is_err());
+}

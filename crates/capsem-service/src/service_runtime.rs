@@ -700,7 +700,8 @@ pub(super) async fn spawn_companions(
     info!(binary = %gateway_bin.display(), "spawning capsem-gateway");
 
     let mut gw_cmd = tokio::process::Command::new(&gateway_bin);
-    let (grant_server, grant_client) = match std::os::unix::net::UnixStream::pair() {
+    telemetry_export::gateway::strip_collector_environment(&mut gw_cmd);
+    let (grant_server, grant_client) = match capsem_foundation::unix::fd::connected_unix_pair() {
         Ok(pair) => pair,
         Err(error) => {
             warn!(%error, "failed to create gateway descriptor grant channel");

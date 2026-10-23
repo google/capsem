@@ -26,7 +26,6 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, RwLock};
 use tokio::net::UnixListener;
 use tokio::process::Command;
-use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn, Instrument};
 mod active_policy;
 mod approval_routes;

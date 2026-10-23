@@ -15,6 +15,9 @@ const ADOPTION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 pub(super) async fn serve(socket: std::os::unix::net::UnixStream, state: Arc<ServiceState>) -> std::io::Result<()> {
     let requests = WireReceiver::new(socket.try_clone()?)?;
     let responses = WireSender::new(socket)?;
+    let authority = crate::instance::WorkerAuthority::default();
+    let mut metrics_issued = false;
+    let mut expected_id = 1_u64;
     loop {
         let frame = requests.recv().await?;
         if !frame.fds.is_empty() {
@@ -25,9 +28,35 @@ pub(super) async fn serve(socket: std::os::unix::net::UnixStream, state: Arc<Ser
         }
         let request = decode_gateway_grant_request(&frame.bytes).map_err(std::io::Error::other)?;
         let request_id = request.request_id();
-        match open(&state, request).await {
+        if request_id != expected_id {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "gateway grant request identity mismatch",
+            ));
+        }
+        expected_id = expected_id
+            .checked_add(1)
+            .ok_or_else(|| std::io::Error::other("gateway grant request identity exhausted"))?;
+        let mut activate = None;
+        let opened = match request {
+            GatewayGrantRequest::OpenMetrics { .. } if metrics_issued => Err(GatewayGrantDenial::Revoked),
+            GatewayGrantRequest::OpenMetrics { .. } => {
+                let opened =
+                    crate::service_runtime::telemetry_export::gateway::prepare(&state, authority.grant()).await;
+                metrics_issued = opened.is_ok();
+                opened.map(|prepared| {
+                    activate = Some(prepared.activate);
+                    (GatewayGrantKind::Metrics, prepared.descriptor)
+                })
+            }
+            request => open(&state, request).await,
+        };
+        match opened {
             Ok((kind, descriptor)) => {
                 send_grant(&responses, &requests, request_id, kind, descriptor).await?;
+                if let Some(activate) = activate {
+                    let _ = activate.send(());
+                }
             }
             Err(reason) => {
                 let response = encode_gateway_grant_response(GatewayGrantResponse::Denied { request_id, reason });
@@ -71,7 +100,9 @@ async fn open(
     request: GatewayGrantRequest,
 ) -> Result<(GatewayGrantKind, std::os::unix::net::UnixStream), GatewayGrantDenial> {
     match request {
-        GatewayGrantRequest::Adopted { .. } => Err(GatewayGrantDenial::InvalidRequest),
+        GatewayGrantRequest::Adopted { .. } | GatewayGrantRequest::OpenMetrics { .. } => {
+            Err(GatewayGrantDenial::InvalidRequest)
+        }
         GatewayGrantRequest::OpenService { .. } => tokio::net::UnixStream::connect(&state.service_socket)
             .await
             .and_then(|socket| socket.into_std())

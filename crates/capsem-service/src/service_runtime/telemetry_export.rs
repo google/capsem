@@ -8,6 +8,8 @@
 //! read that. Attributes are exactly `session.id` and
 //! `persistent`.
 
+pub(crate) mod gateway;
+
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
 

@@ -2,6 +2,7 @@
 import re
 from pathlib import Path
 
+import pytest
 from helpers.route_inventory import function_operations, route_operations
 
 ROOT = Path(__file__).parents[2]
@@ -16,5 +17,19 @@ def test_metric_route_labels_match_real_service_and_gateway_topology() -> None:
         operations |= function_operations(gateway.parent / filename, "fn routes()")
     source = (ROOT / "crates/capsem-telemetry/src/http/operations.rs").read_text()
     admitted = re.findall(r'^    "([^"\n]+)",$', source, re.M)
+    validate(admitted, operations)
+
+
+def validate(admitted: list[str], operations: set[str]) -> None:
     assert admitted == sorted(set(admitted)), RATIONALE
     assert set(admitted) == {entry.split(" ", 1)[1] for entry in operations}, RATIONALE
+
+
+@pytest.mark.parametrize("labels", [[], ["/vms/private-id/info"], ["/vms/{id}/info", "/vms/{id}/info"], ["/extra", "/vms/{id}/info"]])
+def test_missing_concrete_duplicate_or_unregistered_labels_fail(labels: list[str]) -> None:
+    with pytest.raises(AssertionError, match="finite catalogue"):
+        validate(labels, {"GET /vms/{id}/info"})
+
+
+def test_method_additions_reuse_the_same_finite_template() -> None:
+    validate(["/vms/{id}/info"], {"GET /vms/{id}/info", "HEAD /vms/{id}/info"})

@@ -196,10 +196,13 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
         // Accept what the gateway forwards; axum's implicit 2 MiB default
         // refused file uploads the API documents.
         .layer(axum::extract::DefaultBodyLimit::max(capsem_api::MAX_REQUEST_BODY_BYTES))
-        .layer(TraceLayer::new_for_http().on_request(()).on_response(()))
         .layer(axum::middleware::from_fn_with_state(
             Arc::clone(&state),
             service_peer::restrict_owner_routes,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            capsem_telemetry::http::Component::Service,
+            capsem_telemetry::http::observe,
         ))
         .with_state(state)
 }
