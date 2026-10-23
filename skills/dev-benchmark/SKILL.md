@@ -12,15 +12,19 @@ replaced had ten producers each computing its own `p99`.
 ## Quick start
 
 ```bash
-just bench-quick                 # dev loop: no guest, bounded, records like any run
-just bench                       # every dimension that has a collector
-just bench routes criterion      # only these
-just bench-slow routes           # same harness, rebuilding intentionally stale VM assets
+just bench-quick routes          # diagnostic dev loop; no guest
 just bench-report                # what each subject reads, and how it has moved
+source_commit=$(git rev-parse HEAD)
+uv run --project build_system --frozen capsem-gate bench --commit "$source_commit" "routes criterion"
 ```
 
-`capsem-bench-rs doctor` first if a number surprises you. Every measurement
-this repo took before it existed was taken on an unqualified machine.
+Authoritative runs need an explicit exact source SHA and matching host/guest/image
+receipts. The gate's ordinary `just bench` defaults to `unknown`; use its explicit
+`--commit` interface above for evidence, adding `--slow` only when stale assets
+intentionally need rebuilding. An omitted dimension list requests ALL declarations
+and fails if any collector is missing; it never silently skips unfinished work.
+Use an explicit complete set. Keep frozen-cohort binary invocations under the
+bounded command owner and retain source/config/asset identity.
 
 ## The binary
 
@@ -31,8 +35,8 @@ this repo took before it existed was taken on an unqualified machine.
 | `list` | every dimension and whether the quick lane covers it |
 | `run [dim...]` | measure, then record into the store |
 | `doctor` | is this machine fit to measure -- load, governor, KVM, strays |
-| `compare A B <dim>` | two stores, metric by metric; combines the latest two authoritative runs by default |
-| `verify` | ratchet a run against evidence; refuses on an unfit machine |
+| `compare A B <dim>` | requires complete fit compatible repeats on both sides; two by default |
+| `verify` | ratchet compatible repeats; refuses diagnostic or missing-fitness observations |
 | `report` | every subject and its trend |
 | `protocol`, `protocol-delta`, `delta` | the scenario engine: host-direct vs guest-through-Capsem |
 | `http-load` | duration-driven async HTTP load with pooled keep-alive connections and cold/warm latency |
@@ -49,16 +53,29 @@ list with stable dotted keys (`gateway./vms/list.cpu_s`). Per metric: `n`,
 `min`, `max`, `mean`, `median`, `p90`, `p95`, `p99`, `p999`, `stddev`, `cv`,
 `mad`, rounded to two decimals.
 
-It lives in SQLite -- `cache/target/tests/benchmarks/benchmarks.db`, two tables,
+It lives in SQLite -- `cache/target/tests/benchmarks/benchmarks.db`,
 keyed by dimension and architecture. The scheme before it was a file per
 dimension per release per architecture in ten incompatible shapes, one of them 80 KB of captured stdout;
 asking "is `/vms/list` slower than three releases ago" meant globbing filenames
 and knowing which shape each match used. It is now a query.
 
+Store schema v4 retains original samples as little-endian f64 blobs beside each
+summary in the same transaction. Record JSON deliberately excludes these arrays;
+do not expand raw samples into JSON for storage. Pre/post machine-fitness receipts
+and exact config text are MessagePack metadata. Historical v2/v3 summaries remain
+readable observations without fabricated fitness or raw data. Their already
+computed summaries are not invalidated, but they cannot become new evidence.
+
 `quick` runs are recorded and never selected as evidence, so a dev-loop
 measurement is visible without becoming a baseline. Dimension and architecture
 must match before two numbers are compared -- otherwise you have measured the
-difference between two machines.
+difference between two machines. Each dimension takes fresh fitness checks before
+launch and after descendant cleanup. An unfit preflight launches nothing; post-run
+contamination is stored diagnostically and returns nonzero. Comparison requires
+the requested repeat count, identical metric keys/units and compatible machine/
+configuration cohorts. Repeats on one side must share source; baseline and
+candidate may intentionally use different source commits. Direct protocol
+`--record` lacks pre-workload fitness and is diagnostic only.
 
 ## Collectors
 
@@ -79,6 +96,9 @@ Rules the collector protocol enforces, each because it was violated:
   own diagnostics
 - every collector is bounded; one that never exits holds the machine lock the
   whole gate runs under
+- `[benchmark.run]` caps stdout during drain and samples during deserialization;
+  exceeding a per-metric or total budget fails rather than silently thinning
+  evidence. The store enforces the same bounds and prunes raw data with its run.
 
 `[boundary.bench]` caps a collector at 300 lines. A collector growing past that
 means statistics have started living in it again.
@@ -87,8 +107,9 @@ The eight guest collectors are one file, `_guest`, symlinked per mode: they
 read their mode from `argv[0]` and drive the modules in
 `guest/artifacts/capsem_bench/`. `criterion` derives its targets from the Cargo
 manifests and reads raw per-iteration nanoseconds out of Criterion's
-`sample.json`. A target is measured only when it produces fresh raw samples;
-running a `[[bench]]` target alone does not establish coverage.
+`sample.json`. Require fresh raw samples for measured coverage; running a
+`[[bench]]` target alone does not establish it. Current automatic per-target
+freshness enforcement remains the explicit follow-up below.
 
 Two current targets, `ipc_framing_micro` and `db_read_write_micro`, only print
 manual summary tables. They produce no Criterion samples and are diagnostic-only;
@@ -195,12 +216,17 @@ the explicit debt inventory until their owning fixture can replay them safely.
 ## Benchmarks that are still pytest
 
 Not yet migrated; they remain the gate for their paths.
+The full `just test` graph runs these serial/guest/Kingslanding owners and an
+early standing-fitness check; it does not implicitly run the canonical collector
+dimension sweep. Explicit performance requirements need their collector runs in
+addition to full functional qualification. A HUD or a declared dimension is not
+evidence of a completed measurement.
 
 | what | where |
 |---|---|
 | VM lifecycle: provision, exec-ready, exec, delete | `tests/capsem-serial/test_lifecycle_benchmark.py` |
 | fork, image size, boot-from-image, data survival | same file, `test_fork_benchmark` |
-| route latency gate | `tests/ironbank/test_route_latency.py` |
+| route latency gate | `tests/ironbank/test_route_health.py` |
 | route latency artifact | `tests/capsem-serial/test_route_latency_benchmark.py` |
 
 Each guards against the latest checked-in evidence by the same config-owned
@@ -212,7 +238,7 @@ changing guest categories, storage/rootfs attribution, or protocol deltas.
 ## When to run
 
 - `just bench-quick` while working on the service or gateway hot paths
-- `just bench` before claiming anything about performance
-- `just bench criterion` after touching MITM, SSE, JSON-RPC, DNS, the
+- explicit exact-source collector runs before claiming anything about performance
+- the Criterion collector after touching MITM, SSE, JSON-RPC, DNS, the
   interpreters, or the logger's write path
 - the lifecycle and fork suites after boot, teardown, image or VirtioFS changes
