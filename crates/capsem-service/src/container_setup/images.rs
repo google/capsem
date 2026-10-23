@@ -396,6 +396,67 @@ fn requested(image: &str) -> Result<Requested, ImageError> {
 /// `GET /images` -- the catalog entries the current policy permits. Every
 /// catalog digest is admitted by construction, so the policy decides per
 /// catalog: one that turns the catalog off lists nothing and reads nothing.
+fn app_metadata(
+    name: &str,
+    entry: &capsem_assets::oci::CatalogEntry,
+    version: &capsem_assets::oci::CatalogVersion,
+    architecture: capsem_assets::asset_manager::PackageArchitecture,
+) -> api::ImageApp {
+    let mut evidence = Vec::new();
+    if let Some(digest) = version.obom(architecture) {
+        evidence.push(api::ImageEvidence {
+            kind: api::ImageEvidenceKind::Obom,
+            reference: format!("{}@{digest}", version.image().repository()),
+            media_type: "application/vnd.cyclonedx+json".into(),
+        });
+    }
+    evidence.extend(version.evidence(architecture).iter().filter_map(|entry| {
+        let kind = match entry.kind.as_str() {
+            "sbom" => api::ImageEvidenceKind::Sbom,
+            "abom" => api::ImageEvidenceKind::Abom,
+            "package_inventory" => api::ImageEvidenceKind::PackageInventory,
+            _ => return None,
+        };
+        Some(api::ImageEvidence {
+            kind,
+            reference: entry.reference.to_string(),
+            media_type: entry.media_type.clone(),
+        })
+    }));
+    let interfaces = if entry.interfaces().is_empty() {
+        match entry.surface() {
+            Some("xpra") => vec![api::ImageInterface::Graphical],
+            Some("terminal") => vec![api::ImageInterface::Terminal],
+            _ => vec![],
+        }
+    } else {
+        entry
+            .interfaces()
+            .iter()
+            .filter_map(|kind| match kind.as_str() {
+                "terminal" => Some(api::ImageInterface::Terminal),
+                "graphical" => Some(api::ImageInterface::Graphical),
+                "web" => Some(api::ImageInterface::Web),
+                "api" => Some(api::ImageInterface::Api),
+                _ => None,
+            })
+            .collect()
+    };
+    api::ImageApp {
+        catalog_name: name.into(),
+        image: version.image().to_string(),
+        display_name: entry.display_name().unwrap_or(name).into(),
+        description: entry.description().into(),
+        architecture: architecture.as_str().into(),
+        publisher: entry.publisher().map(str::to_owned),
+        url: entry.url().map(str::to_owned),
+        icon: entry.icon().map(str::to_owned),
+        category: entry.category().map(str::to_owned),
+        interfaces,
+        evidence,
+    }
+}
+
 pub(crate) async fn handle_list_images(
     State(state): State<Arc<ServiceState>>,
     Query(query): Query<ImageListQuery>,
@@ -474,6 +535,13 @@ pub(crate) async fn handle_list_images(
             .catalog
             .resolve(&image.name, architecture, RUNTIME_CONTRACT)
             .map_err(|error| ImageError::Failed(format!("catalog image identity: {error:#}")))?;
+        let entry = loaded.catalog.entry(&image.name).expect("listed catalog entry");
+        let version = entry
+            .versions()
+            .iter()
+            .find(|version| version.image() == &resolved)
+            .expect("selected catalog version");
+        image.app = Some(app_metadata(&image.name, entry, version, architecture));
         let required_root = root_binding(&filesystems, resolved.digest())?;
         image.cached = match decision.setups.source.cache_state(&key, required_root) {
             Ok(Some(CacheState::Missing)) => ImageCacheState::Missing,

@@ -656,11 +656,15 @@ async fn the_list_names_each_entry_its_architectures_and_the_pin_this_host_runs(
             },
             "images": [
                 {"name": "codex-cli", "description": "OpenAI Codex CLI", "architectures": both,
-                 "image": format!("ghcr.io/google/capsem/codex-cli@{}", digest('b')), "cached": "unknown"},
+                 "image": format!("ghcr.io/google/capsem/codex-cli@{}", digest('b')), "cached": "unknown",
+                 "app": {"catalog_name":"codex-cli","display_name":"codex-cli","description":"OpenAI Codex CLI",
+                    "image":format!("ghcr.io/google/capsem/codex-cli@{}",digest('b')),"architecture":host(),"interfaces":[],"evidence":[]}},
                 {"name": "elsewhere", "description": "Another machine's", "architectures": [other()],
                  "cached": "unknown"},
                 {"name": "redis", "description": "Not Docker Hub's", "architectures": [host()],
-                 "image": format!("ghcr.io/google/capsem/redis@{}", digest('d')), "cached": "unknown"},
+                 "image": format!("ghcr.io/google/capsem/redis@{}", digest('d')), "cached": "unknown",
+                 "app": {"catalog_name":"redis","display_name":"redis","description":"Not Docker Hub's",
+                    "image":format!("ghcr.io/google/capsem/redis@{}",digest('d')),"architecture":host(),"interfaces":[],"evidence":[]}},
             ]
         })
     );
@@ -862,4 +866,34 @@ async fn image_update_requires_a_verified_earlier_compatible_image_and_missing_s
             .all(|keys| !keys.contains(&key('c'))),
         "future incompatible version must not be observed as an older version"
     );
+}
+
+#[tokio::test]
+async fn catalog_info_uses_selected_version_metadata_and_never_invents_artifacts() {
+    let fx = Fixture::default_policy();
+    {
+        let mut catalog = fx.catalog.lock().unwrap();
+        let entry = &mut catalog.as_mut().unwrap()["entries"]["codex-cli"];
+        entry["display_name"] = json!("Codex CLI");
+        entry["publisher"] = json!("Example publisher");
+        entry["url"] = json!("https://example.com/codex");
+        entry["interfaces"] = json!(["terminal"]);
+        entry["versions"][0]["evidence"] = json!({host(): [{"kind":"abom","reference":format!("ghcr.io/google/capsem/codex-cli@{}",digest('8')),"media_type":"application/json"}]});
+        entry["versions"][1]["obom"] = json!({host():digest('7')});
+        drop(catalog);
+    }
+    let (status, body) = fx.list().await;
+    assert_eq!(status, StatusCode::OK);
+    let app = &body["images"][0]["app"];
+    assert_eq!(app["display_name"], "Codex CLI");
+    assert_eq!(app["publisher"], "Example publisher");
+    assert_eq!(app["image"], format!("ghcr.io/google/capsem/codex-cli@{}", digest('b')));
+    assert_eq!(app["architecture"], host());
+    assert!(app.get("icon").is_none());
+    assert_eq!(
+        app["evidence"],
+        json!([{"kind":"obom","reference":format!("ghcr.io/google/capsem/codex-cli@{}",digest('7')),"media_type":"application/vnd.cyclonedx+json"}])
+    );
+    assert!(body["images"][1]["app"].is_null());
+    assert_eq!(body["images"][2]["app"]["evidence"], json!([]));
 }
