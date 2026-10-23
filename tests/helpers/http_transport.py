@@ -17,6 +17,15 @@ from __future__ import annotations
 import http.client
 import socket
 import threading
+import time
+
+from helpers.http_measurement import (
+    DeadlineSocket,
+    MeasuredResponse,
+    StrictResponse,
+    drain,
+    validate_limits,
+)
 
 
 class UdsConnection(http.client.HTTPConnection):
@@ -27,7 +36,7 @@ class UdsConnection(http.client.HTTPConnection):
         self.socket_path = socket_path
 
     def connect(self) -> None:
-        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock = DeadlineSocket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.sock.settimeout(self.timeout)
         self.sock.connect(self.socket_path)
 
@@ -38,6 +47,9 @@ class TcpConnection(http.client.HTTPConnection):
     def connect(self) -> None:
         super().connect()
         if self.sock is not None:
+            timeout = self.sock.gettimeout()
+            self.sock = DeadlineSocket(fileno=self.sock.detach())
+            self.sock.settimeout(timeout)
             self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 
 
@@ -142,6 +154,54 @@ class Transport:
                 self._close_current()
                 raise ConnectionError(f"{method} {path} failed: {error}") from error
         raise ConnectionError(f"{method} {path} failed after retry")
+
+    def measure_request(
+        self, method: str, path: str, *, timeout: float, max_response_bytes: int,
+        headers: dict[str, str] | None = None, body: bytes | None = None,
+    ) -> MeasuredResponse:
+        """One bounded attempt. Every failure retires this thread's connection."""
+        validate_limits(timeout, max_response_bytes)
+        # DNS resolution has no synchronous deadline. Measurement uses literal
+        # IPs/UDS, as the owning benchmark fixture does; functional requests keep DNS.
+        if self._socket_path is None:
+            try:
+                socket.inet_pton(socket.AF_INET6 if ":" in (self._host or "") else socket.AF_INET, self._host or "")
+            except OSError as error:
+                raise ValueError("measurement requires a literal IP or Unix socket") from error
+        started = time.monotonic_ns()
+        deadline = started / 1_000_000_000 + timeout
+        if method.upper() not in {"GET", "HEAD"}:
+            self._close_current()
+        conn = self._connection(timeout)
+        response_class = conn.response_class
+        response = None
+        try:
+            conn.response_class = StrictResponse
+            if conn.sock is None:
+                conn.timeout = max(0.0, deadline - time.monotonic())
+                conn.connect()
+            if not isinstance(conn.sock, DeadlineSocket):
+                raise TypeError("measurement requires the owned deadline socket")
+            conn.sock.deadline = deadline
+            conn.request(method, path, body=body, headers=headers or {})
+            response = conn.getresponse()
+            result = drain(response, started, max_response_bytes)
+            if time.monotonic() > deadline:
+                raise TimeoutError("HTTP measurement total deadline exceeded")
+            if response.will_close:
+                self._close_current()
+            return result
+        except BaseException as error:
+            self._close_current()
+            if isinstance(error, (OSError, http.client.HTTPException, ValueError)):
+                raise ConnectionError(f"{method} {path} measurement failed: {error}") from error
+            raise
+        finally:
+            if response is not None:
+                response.close()
+            conn.response_class = response_class
+            if isinstance(conn.sock, DeadlineSocket):
+                conn.sock.deadline = None
 
     def status_line(self, path: str, headers: dict[str, str], timeout: float = 5) -> int:
         """The status code of a raw GET, read straight off the socket.

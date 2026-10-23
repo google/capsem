@@ -60,6 +60,8 @@ class RouteCoverageConfig(Strict):
 class RouteLoadConfig(Strict):
     """Concurrent request window applied to every measured read-only route."""
 
+    timeout_seconds: PositiveFloat = Field(allow_inf_nan=False)
+    max_response_bytes: PositiveInt
     concurrency: PositiveInt
     requests: PositiveInt
     quick_requests: PositiveInt

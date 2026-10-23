@@ -12,6 +12,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from capsem_builder.gate import config as gate_config
+from helpers.http_measurement import MeasuredResponse
+
+from benchmarks.helpers.route_measurements import Observations
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -56,18 +59,18 @@ def test_concurrent_route_samples_real_overlap_and_rps() -> None:
         def __init__(self):
             self.warmed = False
 
-        def request(self, *_args, **_kwargs):
+        def measure_request(self, *_args, **_kwargs):
             nonlocal active, peak
             if not self.warmed:
                 self.warmed = True
-                return 200, {}, b"{}"
+                return MeasuredResponse(200, {}, b"{}", 1, 2, 3)
             with lock:
                 active += 1
                 peak = max(peak, active)
             time.sleep(0.002)
             with lock:
                 active -= 1
-            return 200, {}, b"{}"
+            return MeasuredResponse(200, {}, b"{}", 1, 2, 3)
 
         def close(self):
             pass
@@ -77,7 +80,7 @@ def test_concurrent_route_samples_real_overlap_and_rps() -> None:
         target, "/status", samples=24, concurrency=4
     )
 
-    assert len(latencies) == 24
+    assert len(latencies.completion) == len(latencies.headers) == len(latencies.first_body_byte) == 24
     assert peak == 4
     assert cpu == {}
     assert requests_per_second > 0
@@ -121,7 +124,7 @@ def test_routes_reuse_owned_gateway_and_default_product_fixture(monkeypatch, tmp
             assert target.headers == {"Authorization": "Bearer private-token"}
             assert target.cpu_processes == {"gateway": 4242, "downstream_service": 123}
         calls.append(target.label)
-        return [1.0], {}
+        return Observations([1.0], [0.1], [0.2]), {}
 
     monkeypatch.setattr(sys, "argv", [str(COLLECTOR), "--samples", "1"])
     for key, value in {
@@ -136,8 +139,8 @@ def test_routes_reuse_owned_gateway_and_default_product_fixture(monkeypatch, tmp
         "measured_cases": lambda: [module["RouteCase"]("GET", "/vms/{id}/exposures", "default")],
         "preflight": lambda *_: None,
         "sample_warm_route": warm,
-        "sample_cold_route": lambda *_: [1.0],
-        "sample_concurrent_route": lambda *_: ([1.0], {}, 1.0),
+        "sample_cold_route": lambda *_: Observations([1.0], [0.1], [0.2]),
+        "sample_concurrent_route": lambda target, path, samples, *_: (Observations([1.0] * samples, [0.1] * samples, [0.2] * samples), {}, 1.0),
     }.items():
         monkeypatch.setitem(globals_, key, value)
     assert module["main"]() == 0
@@ -152,8 +155,8 @@ def test_preflight_checks_declared_method_and_real_payload_before_timing() -> No
     closed = []
 
     class Transport:
-        def request(self, *_args, **_kwargs):
-            return 200, {}, b'{"events":[]}'
+        def measure_request(self, *_args, **_kwargs):
+            return MeasuredResponse(200, {}, b'{"events":[]}', 1, 2, 3)
 
         def close(self):
             closed.append(True)
@@ -172,3 +175,61 @@ def test_all_configured_cases_use_the_declared_http_method() -> None:
     collector = _collector()
     for case in collector["measured_cases"]():
         assert collector["request_input"](case.resolve("live-id", "network-id"))[0] == case.method
+
+
+def test_routes_refuse_partial_or_retried_measurement_receipts() -> None:
+    import pytest
+    collector = _collector()
+    for receipt in (MeasuredResponse(200, {}, b"{}", 1, None, 3), MeasuredResponse(200, {}, b"{}", 1, 2, 3, attempts=2)):
+        class Transport:
+            def request(self, *_args, **_kwargs):
+                raise AssertionError("functional retrying request must not be used")
+            def measure_request(self, *_args, value=receipt, **kwargs):
+                assert kwargs["timeout"] > 0 and kwargs["max_response_bytes"] > 0
+                return value
+            def close(self):
+                pass
+        target = collector["Target"]("test", Transport, {}, {})
+        with pytest.raises(ValueError, match="receipt"):
+            collector["sample_warm_route"](target, "/status", 1)
+
+
+def test_route_raw_series_keep_expected_counts_and_clock_identity() -> None:
+    import pytest
+
+    from benchmarks.helpers.route_measurements import route_metrics
+    observations = Observations()
+    for i in (1, 2):
+        observations.append(MeasuredResponse(200, {}, b"{}", i, i + 1, i + 2))
+    observations.require_count(2)
+    metrics = route_metrics("gateway", "GET /status [default]", observations, observations, {}, expected=2)
+    for suffix in ("latency_ms", "headers_ms", "first_body_byte_ms", "cold_latency_ms", "cold_headers_ms", "cold_first_body_byte_ms"):
+        assert len(metrics[f"gateway.GET /status [default].{suffix}"]["samples"]) == 2
+    assert metrics["gateway.GET /status [default].headers_ms"]["samples"] == [1e-6, 2e-6]
+    with pytest.raises(ValueError, match="count"):
+        route_metrics("gateway", "/status", observations, None, {}, expected=3)
+
+
+def test_strict_route_limits_are_owned_by_typed_config() -> None:
+    import pytest
+    from capsem_builder.gate.benchmarkschema import RouteLoadConfig
+    from pydantic import ValidationError
+    settings = _collector()["route_load_config"]()
+    assert RouteLoadConfig(**settings).max_response_bytes == settings["max_response_bytes"]
+    for field, invalid in (("timeout_seconds", 0), ("timeout_seconds", float("inf")), ("max_response_bytes", 0)):
+        with pytest.raises(ValidationError):
+            RouteLoadConfig(**{**settings, field: invalid})
+
+
+def test_invalid_sample_count_fails_before_fixture_creation(monkeypatch, capsys) -> None:
+    import pytest
+    module = _collector()
+    def forbidden():
+        raise AssertionError("no child fixture may start")
+    monkeypatch.setitem(module["main"].__globals__, "ServiceInstance", forbidden)
+    for count in ("0", "-1"):
+        monkeypatch.setattr(sys, "argv", ["routes", "--samples", count])
+        with pytest.raises(SystemExit) as error:
+            module["main"]()
+        assert error.value.code == 2
+        assert "samples must be positive" in capsys.readouterr().err

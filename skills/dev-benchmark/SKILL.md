@@ -236,6 +236,16 @@ one another. Sample counts, raw retention, fitness, CPU and statistics owners ar
 unchanged. Added coverage is source readiness until the exact-source native
 collector runs complete; it is not a new performance result.
 
+Route samples use the existing transport owner's strict `measure_request` path:
+no retries, one total monotonic deadline and a config-owned response-body budget.
+Raw headers, first client-observed body byte and complete-body durations are
+retained for warm, cold and concurrent samples with exact requested counts.
+First body byte means a completed client read, not a hardware wire timestamp.
+Truncated framing, slow trickles, oversize or missing body observations fail the
+collector. Ordinary functional HTTP requests retain their retry contract. The
+strict receipt/config cohort differs from older completion samples which also
+included JSON validation; do not present them as identical measurements.
+
 ## Benchmarks that are still pytest
 
 Not yet migrated; they remain the gate for their paths.

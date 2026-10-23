@@ -11,6 +11,8 @@ from types import SimpleNamespace
 import pytest
 from helpers.stopped_workspace import BODY_ROUTE, BODY_URL, VM_ID
 
+from benchmarks.helpers.route_measurements import Observations
+
 ROOT = Path(__file__).resolve().parents[1]
 config = tomllib.loads((ROOT / "config/gate.toml").read_text())
 loader = SourceFileLoader("benchmark_routes", str(ROOT / config["benchmark"]["run"]["collectors"] / "routes"))
@@ -83,12 +85,12 @@ def test_fixture_diagnostics_do_not_corrupt_collector_json(
     monkeypatch.setattr(collector, "seed_logs", lambda *_: None)
     monkeypatch.setattr(
         collector, "sample_warm_route",
-        lambda target, *_: ([0.1], dict.fromkeys(target.cpu_processes, 0.0)),
+        lambda target, *_: (Observations([0.1], [0.01], [0.02]), dict.fromkeys(target.cpu_processes, 0.0)),
     )
-    monkeypatch.setattr(collector, "sample_cold_route", lambda *_: [0.2])
+    monkeypatch.setattr(collector, "sample_cold_route", lambda *_: Observations([0.2], [0.01], [0.02]))
     monkeypatch.setattr(
         collector, "sample_concurrent_route",
-        lambda target, *_: ([0.3], dict.fromkeys(target.cpu_processes, 0.0), 10.0),
+        lambda target, path, samples, *_: (Observations([0.3] * samples, [0.01] * samples, [0.02] * samples), dict.fromkeys(target.cpu_processes, 0.0), 10.0),
     )
     monkeypatch.setattr(sys, "argv", ["routes", "--samples", "1"])
 
@@ -100,6 +102,6 @@ def test_fixture_diagnostics_do_not_corrupt_collector_json(
         monkeypatch.setattr(collector.psutil, "Process", original_process)
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
-    assert len(payload["metrics"]) == 14
+    assert len(payload["metrics"]) == 26
     assert "SERVICE LOG:" in captured.err
     assert stopped == ["service"]
