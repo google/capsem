@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Refresh bundled model prices from October 23 upstream data and add Google's
+  published, dated Gemini 4 Argon API rates. Unverified internal trial models
+  continue to show unknown cost.
+
 - Estimate model costs using the call's UTC date and published input-size tiers,
   including dated price changes and case-insensitive model matching.
 

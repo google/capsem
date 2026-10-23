@@ -119,3 +119,16 @@ def test_known_measured_zero_is_valid() -> None:
             "timestamp": "2026-10-23T00:00:00Z",
         }
     )
+
+
+def test_reviewed_argon_prices_follow_published_dates_without_trial_alias() -> None:
+    values = {
+        "provider": "google",
+        "model": "gemini-4-argon",
+        "input_tokens": 1_000_000,
+        "output_tokens": 1_000_000,
+        "usage_details": {"cache_read": 100_000},
+    }
+    assert estimate_cost_usd(**values, timestamp="2026-10-12T23:59:59Z") is None
+    assert estimate_cost_usd(**values, timestamp="2026-11-30T23:59:59Z") == pytest.approx(11.81)
+    assert estimate_cost_usd(**values, timestamp="2026-12-01T00:00:00Z") == pytest.approx(23.62)

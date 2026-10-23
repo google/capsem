@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,34 @@ MODEL_ID_PREFIXES = {
         "whisper-",
     ),
 }
+
+
+def merge_reviewed_prices(
+    providers: list[dict[str, Any]], reviewed: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Fill exact missing IDs from reviewed primary sources; upstream wins on refresh."""
+    date.fromisoformat(reviewed["verified_on"])
+    seen: set[tuple[str, str]] = set()
+    for row in reviewed["models"]:
+        provider_id = row["provider"]
+        model = row["model"]
+        identity = (provider_id, model["id"])
+        if (
+            provider_id not in RUNTIME_PROVIDERS
+            or identity in seen
+            or not row["source_url"].startswith("https://")
+            or model["match"] != {"equals": model["id"]}
+        ):
+            raise ValueError(
+                "reviewed prices require unique exact IDs and primary-source provenance"
+            )
+        seen.add(identity)
+        provider = next((entry for entry in providers if entry["id"] == provider_id), None)
+        if provider is None:
+            raise ValueError(f"missing upstream provider: {provider_id}")
+        if not any(entry["id"] == model["id"] for entry in provider["models"]):
+            provider["models"].append({key: model[key] for key in MODEL_FIELDS if key in model})
+    return providers
 
 
 def compact_pricing(data: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -64,6 +93,11 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("source", type=Path)
     parser.add_argument("dest", type=Path)
+    parser.add_argument(
+        "--reviewed",
+        type=Path,
+        default=Path(__file__).resolve().parents[3] / "config/data/genai-prices-reviewed.json",
+    )
     args = parser.parse_args()
 
     data = json.loads(args.source.read_text(encoding="utf-8"))
@@ -73,6 +107,7 @@ def main() -> None:
     ids = {provider["id"] for provider in compact}
     if ids != RUNTIME_PROVIDERS:
         raise SystemExit(f"missing runtime providers: {sorted(RUNTIME_PROVIDERS - ids)}")
+    merge_reviewed_prices(compact, json.loads(args.reviewed.read_text(encoding="utf-8")))
     args.dest.parent.mkdir(parents=True, exist_ok=True)
     args.dest.write_text(
         json.dumps(compact, sort_keys=True, separators=(",", ":")) + "\n",
