@@ -47,6 +47,10 @@ def run_as_user(id_map, owner, operation):
             if os.read(resume_read, 1) != b"1":
                 raise OSError("scratch import user map was not installed")
             os.close(resume_read)
+            # unshare starts with an unmapped caller uid. Transition through
+            # namespace root so selecting a nonroot image uid drops its
+            # namespace capabilities through the normal setuid semantics.
+            os.setuid(0)
             os.setgid(user[1])
             os.setuid(user[0])
             operation()

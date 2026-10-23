@@ -67,5 +67,5 @@ def test_child_enters_user_namespace_before_using_image_relative_ids(monkeypatch
     assert exited.value.code == 0
     assert events == [
         ("groups", []), ("unshare", 0x10000000), ("ready", b"1"),
-        ("mapped", 12), ("gid", 1000), ("uid", 1000), ("copy",),
+        ("mapped", 12), ("uid", 0), ("gid", 1000), ("uid", 1000), ("copy",),
     ]
