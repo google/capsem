@@ -19,7 +19,7 @@ impl Dispatcher {
     pub(super) async fn run(&self, call: Call, held_bytes: usize) -> Result<()> {
         if call.disposition == StreamDisposition::Notification {
             let summary = interpret_mcp_method(&call.request);
-            let decision = evaluate_mcp_security_event(
+            let (decision, approval_event_id) = evaluate_mcp_security_event(
                 &self.endpoint,
                 &self.db,
                 mcp_security_event_from_summary(
@@ -55,7 +55,10 @@ impl Dispatcher {
                 &response,
                 McpCaller::frame(&call.process_name),
                 0,
-                McpCallPolicyFields::from(&decision),
+                McpCallPolicyFields {
+                    approval_event_id,
+                    ..McpCallPolicyFields::from(&decision)
+                },
             )
             .await;
             return Ok(());

@@ -31,6 +31,63 @@ fn endpoint() -> (
 }
 
 #[tokio::test]
+async fn original_mcp_approval_identity_reaches_physical_tool_ledger() {
+    for outcome in [ApprovalOutcome::Approved, ApprovalOutcome::Denied] {
+        for transport in [McpTransport::Direct, McpTransport::VsockFrame] {
+            let (endpoint, driver, sender, receiver) = endpoint();
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("session.db");
+            let db = Arc::new(DbWriter::open(&path, 64).unwrap());
+            let call = tokio::spawn(dispatch_logged_mcp_request(
+                endpoint,
+                Arc::clone(&db),
+                request("tools/call", json!({"name":"local__slow"})),
+                "service".into(),
+                transport,
+            ));
+            let ApprovalClientMessage::Begin { request_id, request } =
+                tokio::time::timeout(Duration::from_secs(2), receiver.recv())
+                    .await
+                    .unwrap()
+                    .unwrap()
+            else {
+                panic!("begin")
+            };
+            assert_eq!(driver.started.load(Ordering::SeqCst), 0);
+            sender
+                .send(ApprovalServerMessage { request_id, outcome })
+                .await
+                .unwrap();
+            if outcome == ApprovalOutcome::Approved {
+                wait_for_started(&driver, 1).await;
+                driver.release.send(true).unwrap();
+            }
+            let result = tokio::time::timeout(Duration::from_secs(2), call)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                driver.started.load(Ordering::SeqCst),
+                usize::from(outcome == ApprovalOutcome::Approved)
+            );
+            db.flush_checked().await.unwrap();
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            let linked: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM tool_calls t JOIN security_ask_events a ON a.event_id=t.event_id \
+                 WHERE a.ask_id=? AND a.status='pending' AND t.event_id=?",
+                    rusqlite::params![request.ask_id, request.event_id],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(linked, 1, "MCP telemetry lost the original approval identity");
+            assert_eq!(result.event_id.as_deref(), Some(request.event_id.as_str()));
+        }
+    }
+}
+
+#[tokio::test]
 async fn direct_connection_cancellation_denies_original_mcp_without_executing_tool() {
     let (endpoint, driver, sender, receiver) = endpoint();
     let db = Arc::new(DbWriter::open_in_memory(64).unwrap());

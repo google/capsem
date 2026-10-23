@@ -121,7 +121,7 @@ pub async fn dispatch_cancellable_mcp_request(
     };
     let summary = interpret_mcp_method(&request);
     let runtime_event_type = runtime_mcp_event_type(&summary.method);
-    let request_decision = evaluate_mcp_security_event(
+    let (request_decision, request_approval_event_id) = evaluate_mcp_security_event(
         &endpoint,
         &db,
         mcp_security_event_from_summary(runtime_event_type, &summary, &process_name, None),
@@ -139,7 +139,10 @@ pub async fn dispatch_cancellable_mcp_request(
             &response,
             caller,
             0,
-            McpCallPolicyFields::from(&request_decision),
+            McpCallPolicyFields {
+                approval_event_id: request_approval_event_id,
+                ..McpCallPolicyFields::from(&request_decision)
+            },
         )
         .await;
         return Some(LoggedMcpResponse {
@@ -162,7 +165,7 @@ pub async fn dispatch_cancellable_mcp_request(
     };
     let duration_ms = start.elapsed().as_millis() as u64;
 
-    let response_decision = evaluate_mcp_security_event(
+    let (response_decision, response_approval_event_id) = evaluate_mcp_security_event(
         &endpoint,
         &db,
         mcp_security_event_from_summary(
@@ -192,7 +195,10 @@ pub async fn dispatch_cancellable_mcp_request(
         &response,
         caller,
         duration_ms,
-        McpCallPolicyFields::from(&final_decision),
+        McpCallPolicyFields {
+            approval_event_id: request_approval_event_id.or(response_approval_event_id),
+            ..McpCallPolicyFields::from(&final_decision)
+        },
     )
     .await;
     Some(LoggedMcpResponse {
@@ -564,6 +570,7 @@ fn response_content(response: &JsonRpcResponse) -> Option<String> {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct McpCallPolicyFields {
+    approval_event_id: Option<String>,
     policy_mode: Option<String>,
     policy_action: Option<String>,
     policy_rule: Option<String>,
@@ -573,6 +580,7 @@ struct McpCallPolicyFields {
 impl From<&SecurityEnforcementDecision> for McpCallPolicyFields {
     fn from(decision: &SecurityEnforcementDecision) -> Self {
         Self {
+            approval_event_id: None,
             policy_mode: Some("security_event".to_string()),
             policy_action: Some(decision.action.as_str().to_string()),
             policy_rule: decision.rule_id.clone(),
@@ -649,7 +657,7 @@ async fn log_mcp_call_with_policy(
     let bytes_received = response_preview.as_ref().map_or(0, |preview| preview.len() as u64);
 
     let call = McpCall {
-        event_id: None,
+        event_id: policy_fields.approval_event_id,
         timestamp: SystemTime::now(),
         server_name,
         method: req.method.clone(),
@@ -797,7 +805,7 @@ async fn evaluate_mcp_security_event(
     event: SecurityEvent,
     held_bytes: usize,
     cancellation: Option<&tokio_util::sync::CancellationToken>,
-) -> SecurityEnforcementDecision {
+) -> (SecurityEnforcementDecision, Option<String>) {
     let (rules, plugin_policy) = endpoint.policy_snapshot();
     let result = async {
         let mut evaluation =
@@ -818,20 +826,26 @@ async fn evaluate_mcp_security_event(
                 evaluation.enforcement.reason = Some("MCP policy changed while approval was pending".into());
             }
         }
-        Ok::<_, String>(evaluation.enforcement)
+        Ok::<_, String>((
+            evaluation.enforcement,
+            evaluation.approval_event_id.map(|id| id.as_str().to_string()),
+        ))
     }
     .await;
     match result {
         Ok(enforcement) => enforcement,
         Err(error) => {
             warn!(error = %error, "MCP security event evaluation failed closed");
-            SecurityEnforcementDecision {
-                action: SecurityEnforcementAction::Block,
-                rule_id: Some("security.mcp.evaluation_error".to_string()),
-                rule_name: Some("mcp_security_evaluation_error".to_string()),
-                reason: Some(error),
-                ask_id: None,
-            }
+            (
+                SecurityEnforcementDecision {
+                    action: SecurityEnforcementAction::Block,
+                    rule_id: Some("security.mcp.evaluation_error".to_string()),
+                    rule_name: Some("mcp_security_evaluation_error".to_string()),
+                    reason: Some(error),
+                    ask_id: None,
+                },
+                None,
+            )
         }
     }
 }

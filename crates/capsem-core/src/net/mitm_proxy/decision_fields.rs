@@ -23,7 +23,13 @@ impl SecurityBoundaryDecisionFields {
     pub(super) fn with_evaluation(self, evaluation: &SecurityBoundaryEvaluation) -> Self {
         Self {
             approval_event_id: self.approval_event_id.or_else(|| {
-                if evaluation.event.event_type == RuntimeSecurityEventType::HttpRequest {
+                if matches!(
+                    evaluation.event.event_type,
+                    RuntimeSecurityEventType::HttpRequest
+                        | RuntimeSecurityEventType::McpToolCall
+                        | RuntimeSecurityEventType::McpToolList
+                        | RuntimeSecurityEventType::McpEvent
+                ) {
                     evaluation.approval_event_id.as_ref().map(|id| id.as_str().to_owned())
                 } else {
                     None

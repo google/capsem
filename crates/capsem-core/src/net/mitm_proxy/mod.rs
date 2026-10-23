@@ -1381,7 +1381,7 @@ async fn handle_request(
                 upstream_port,
             );
             let denied_call = McpCall {
-                event_id: None,
+                event_id: request_security_decision.approval_event_id.clone(),
                 timestamp: SystemTime::now(),
                 server_name: observed.server_name.clone(),
                 method: observed.method.clone(),
@@ -2356,7 +2356,7 @@ async fn handle_request(
                 upstream_port,
             );
             let call = McpCall {
-                event_id: None,
+                event_id: mcp_request_security_decision.approval_event_id.clone(),
                 timestamp: SystemTime::now(),
                 server_name: observed.server_name.clone(),
                 method: observed.method.clone(),
