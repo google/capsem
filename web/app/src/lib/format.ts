@@ -27,8 +27,11 @@ export function formatUptime(secs: number): string {
   return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
 
-/** Format USD cost as "$X.XX". */
+/** Preserve small estimates down to the ledger's micro-USD precision. */
 export function formatCost(usd: number): string {
+  if (!Number.isFinite(usd) || usd < 0) return '--';
+  if (usd > 0 && usd < 0.000001) return '<$0.000001';
+  if (usd > 0 && usd < 0.01) return `$${usd.toFixed(6).replace(/0+$/, '')}`;
   return `$${usd.toFixed(2)}`;
 }
 

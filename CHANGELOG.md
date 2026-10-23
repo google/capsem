@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Show subcent AI estimates to micro-dollar precision instead of rounding them
+  to $0.00, and reject invalid monetary values.
+
 - Preserve unpriced model calls as unknown in the ledger and track price
   coverage separately from known cost totals.
 
