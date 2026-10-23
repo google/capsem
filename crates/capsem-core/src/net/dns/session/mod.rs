@@ -227,7 +227,9 @@ fn current_unix_ms() -> i64 {
 /// readiness and the task parks instead of spinning or blocking a thread.
 fn async_side(file: std::fs::File) -> std::io::Result<AsyncFd<std::fs::File>> {
     capsem_foundation::unix::fd::set_nonblocking(file.as_fd(), true)?;
-    AsyncFd::new(file)
+    // SAFETY: this private session owner retains the file unchanged until
+    // AsyncFd deregisters it; all consumers borrow it through get_ref().
+    Ok(unsafe { AsyncFd::register(file) }?)
 }
 
 async fn read_exact(fd: &AsyncFd<std::fs::File>, buf: &mut [u8]) -> std::io::Result<usize> {

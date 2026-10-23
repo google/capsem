@@ -310,13 +310,13 @@ pub async fn handle_standalone_connection(
 ) {
     ::metrics::gauge!(m::ACTIVE_CONNECTIONS).increment(1.0);
     let _gauge_guard = ConnectionGauge;
-
     let std_fd = std::fs::File::from(client_fd);
     if let Err(error) = capsem_foundation::unix::fd::set_nonblocking(std_fd.as_fd(), true) {
         warn!(%error, "standalone proxy could not configure client socket");
         return;
     }
-    let async_fd = match tokio::io::unix::AsyncFd::new(std_fd) {
+    // SAFETY: AsyncFdStream retains this owned file unchanged until deregistration.
+    let async_fd = match unsafe { tokio::io::unix::AsyncFd::register(std_fd) } {
         Ok(fd) => fd,
         Err(error) => {
             warn!(%error, "standalone proxy could not adopt client socket");
@@ -332,8 +332,6 @@ pub async fn handle_standalone_connection(
     .await;
 }
 
-/// Inner handler. Returns Ok(domain) on success, Err((domain, decision, reason))
-/// on connection-level failure. Per-request telemetry is emitted by `TelemetryHook`.
 /// Deadline for each pre-classification read from a freshly-accepted guest
 /// connection. The guest is the adversary here: one that connects and then
 /// stalls without sending a ClientHello must not pin the handler task and its
@@ -355,11 +353,13 @@ where
     }
 }
 
+/// Returns the domain, or (domain, decision, reason); TelemetryHook records requests.
 async fn handle_inner(vsock_fd: OwnedFd, config: &Arc<MitmProxyConfig>) -> Result<String, (String, Decision, String)> {
     let std_fd = std::fs::File::from(vsock_fd);
     capsem_foundation::unix::fd::set_nonblocking(std_fd.as_fd(), true)
         .map_err(|e| (String::new(), Decision::Error, format!("set nonblocking: {e}")))?;
-    let async_fd = tokio::io::unix::AsyncFd::new(std_fd)
+    // SAFETY: AsyncFdStream retains this owned file unchanged until deregistration.
+    let async_fd = unsafe { tokio::io::unix::AsyncFd::register(std_fd) }
         .map_err(|e| (String::new(), Decision::Error, format!("async fd: {e}")))?;
     let mut vsock_stream = AsyncFdStream(async_fd);
     let classify_span = tracing::debug_span!(
