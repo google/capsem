@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Associate observed credential metadata with its session in the broker's
+  existing inventory response, without treating shared storage as VM access.
+
 - Keep the TUI footer quiet when update status is unknown or no update is
   available; show the update shortcut only for confirmed available updates.
 

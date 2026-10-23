@@ -3,6 +3,7 @@
 use super::*;
 
 use capsem_core::net::policy_config::merge_plugin_policy;
+mod credential_inventory;
 
 #[derive(Debug, Serialize)]
 pub(super) struct PluginListResponse {
@@ -42,6 +43,7 @@ struct PluginCapabilities {
 
 #[derive(Debug, Clone, Serialize)]
 pub(super) struct BrokeredCredentialStatus {
+    source: Option<String>,
     provider: Option<String>,
     credential_ref: String,
     observed_count: u64,
@@ -110,6 +112,7 @@ pub(super) struct CredentialBrokerDetailResponse {
     plugin_id: &'static str,
     store: capsem_core::credential_broker::CredentialStoreStatus,
     inventory: Vec<BrokeredCredentialStatus>,
+    sessions: Vec<credential_inventory::SessionInventory>,
     grants: CredentialBrokerGrantStatus,
     corp_constraints: Vec<CredentialBrokerCorpConstraint>,
 }
@@ -415,6 +418,7 @@ pub(super) fn merge_brokered_credential_status(
             }
         })
         .or_insert(BrokeredCredentialStatus {
+            source: None,
             provider,
             credential_ref,
             observed_count: observed_delta,
@@ -477,11 +481,13 @@ pub(super) async fn handle_plugins(
 pub(super) async fn handle_credential_broker_credentials_info(
     State(state): State<Arc<ServiceState>>,
 ) -> Result<Json<CredentialBrokerDetailResponse>, AppError> {
-    let info = plugin_info_for(&state, "credential_broker", true).await?;
+    let info = plugin_info_for(&state, "credential_broker", false).await?;
+    let (inventory, sessions) = credential_inventory::read(&state, info.config).await?;
     Ok(Json(CredentialBrokerDetailResponse {
         plugin_id: "credential_broker",
         store: capsem_core::credential_broker::credential_store_status(),
-        inventory: info.runtime.brokered_credentials,
+        inventory,
+        sessions,
         grants: CredentialBrokerGrantStatus {
             enabled: info.config.mode != SecurityPluginMode::Disable,
             vm_grants: Vec::new(),

@@ -281,15 +281,26 @@ pub(crate) fn history_processes(counters: &LedgerCounters, limit: usize) -> Vec<
 /// demand rather than polled, so each session's handle is readied first: its
 /// `ready()` is the barrier that brings the snapshot up to the last commit.
 pub(crate) async fn session_counters(state: &ServiceState) -> Result<Vec<Arc<LedgerCounters>>, AppError> {
+    Ok(named_session_counters(state)
+        .await?
+        .into_iter()
+        .map(|(_, counters)| counters)
+        .collect())
+}
+
+pub(crate) async fn named_session_counters(
+    state: &ServiceState,
+) -> Result<Vec<(String, Arc<LedgerCounters>)>, AppError> {
     let mut snapshots = Vec::new();
     for (vm_id, session_dir) in service_session_dirs(state) {
         let db_path = session_db_path_for_session_dir(&session_dir);
         let db = open_ready_session_db(state, &vm_id, "plugins", &db_path).await?;
-        snapshots.push(
+        snapshots.push((
+            vm_id.clone(),
             db.ledger_counters()
                 .await
                 .map_err(|error| ledger_route_error(&vm_id, "plugins", "counters", &db_path, error))?,
-        );
+        ));
     }
     Ok(snapshots)
 }

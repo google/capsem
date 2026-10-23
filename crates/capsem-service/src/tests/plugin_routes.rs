@@ -102,6 +102,9 @@ async fn credential_broker_reload_route_rehydrates_store_and_returns_same_contra
     assert_eq!(before["plugin_id"], "credential_broker");
     assert_eq!(before["store"]["backend"], "disk_override");
     assert_eq!(before["inventory"][0]["credential_ref"], credential_ref);
+    assert_eq!(before["sessions"][0]["vm_id"], "broker-reload-vm");
+    assert_eq!(before["sessions"][0]["inventory"][0]["credential_ref"], credential_ref);
+    assert!(before["sessions"][0]["inventory"][0]["source"].is_null());
     assert_eq!(before["inventory"][0]["replay_available"], false);
 
     let (status, after) = route_request(
