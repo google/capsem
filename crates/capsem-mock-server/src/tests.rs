@@ -244,7 +244,7 @@ fn deterministic_bytes_are_cached_and_correct() {
 
 #[test]
 fn dns_fixture_answers_known_names_and_rejects_unknown() {
-    let query = test_dns_query("fixture.capsem.test", 0xCAFE);
+    let query = test_dns_query("oauth2.googleapis.com", 0xCAFE);
     let response = dns_response(&query).expect("dns response");
     assert_eq!(&response[..2], b"\xCA\xFE");
     assert_eq!(response[3] & 0x0F, 0);

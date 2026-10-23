@@ -55,6 +55,7 @@ pub(super) const DNS_FIXTURES: &[&str] = &[
     "daily-cloudcode-pa.googleapis.com",
     "generativelanguage.googleapis.com",
     "www.googleapis.com",
+    "oauth2.googleapis.com",
     "play.googleapis.com",
     "antigravity-unleash.goog",
     "deb.debian.org",
