@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Restore graphical keyboard focus when clicking back into the app after
+  using Capsem's toolbar or returning from the browser.
+
 - Preserve graphical keyboard capture when browser keyboard-layout discovery
   completes after the connection is ready.
 

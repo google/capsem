@@ -1687,6 +1687,11 @@ var mbutton = 0;
   }
 
   on_mousedown(e, win) {
+    // Guest focus and browser focus are separate. The click handler cancels
+    // default focus, so reclaim our existing capture widget on a real click.
+    if (win && this.connected && !this.server_readonly) {
+      document.getElementById(PASTEBOARD_SELECTOR.slice(1))?.focus({preventScroll: true});
+    }
     this.mousedown_event = e;
     this.mouseup_event = null;
     this.do_window_mouse_click(e, win, true);
