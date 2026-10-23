@@ -266,6 +266,24 @@ impl<'a> Decision<'a> {
 
     /// The catalog the policy names, read once per decision (from the
     /// service's copy unless `refresh`) and joined to the policy.
+    pub(super) async fn app(&mut self, resolved: &ResolvedImage) -> Option<api::ImageApp> {
+        let architecture = stage::catalog_architecture().ok()?;
+        let catalog = self.load(false).await?;
+        let mut matches = catalog.catalog.entries().iter().flat_map(|(name, entry)| {
+            entry
+                .versions()
+                .iter()
+                .filter(move |version| {
+                    version.image() == resolved
+                        && version.contract() <= RUNTIME_CONTRACT
+                        && version.platforms().contains(&architecture)
+                })
+                .map(move |version| app_metadata(name, entry, version, architecture))
+        });
+        let app = matches.next()?;
+        matches.next().is_none().then_some(app)
+    }
+
     async fn load(&mut self, refresh: bool) -> Option<&LoadedCatalog> {
         if refresh || !self.asked {
             let loaded = match self.policy.catalog_source() {

@@ -81,6 +81,7 @@ pub(crate) fn restore(state: &Arc<ServiceState>, id: &str) {
     let Some(record) = read_launch_record(&session_dir) else {
         return;
     };
+    let app = record.app.clone();
     let manifest = record.manifest.clone();
     let owner = match record
         .cache_key
@@ -109,6 +110,7 @@ pub(crate) fn restore(state: &Arc<ServiceState>, id: &str) {
     let generation = state.containers.begin(id, &status.image);
     state.containers.advance(id, generation, |live| *live = status);
     state.containers.pin_image(id, generation, manifest, owner);
+    state.containers.set_app(id, generation, app);
     if needs_relaunch(state, id) {
         relaunch_in_background(state, id, generation);
     }

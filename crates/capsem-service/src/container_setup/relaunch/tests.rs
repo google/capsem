@@ -5,6 +5,7 @@ const IMAGE: &str = "registry.example/app:1";
 
 fn record(exposure_id: Option<&str>) -> LaunchRecord {
     LaunchRecord {
+        app: None,
         image: IMAGE.into(),
         digest: "sha256:aa".into(),
         surface: Some(ContainerSurface {
@@ -314,4 +315,45 @@ fn forgetting_a_run_never_follows_a_marker_link() {
     assert_eq!(std::fs::read_to_string(&outside).unwrap(), "keep");
     // A session that never staged an image has nothing to forget.
     forget_previous_run(&dir.path().join("bare")).unwrap();
+}
+
+#[test]
+fn clone_keeps_the_exact_source_app_metadata_and_old_records_have_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("source");
+    let clone = dir.path().join("clone");
+    let mut original = record(None);
+    let pin = format!("registry.example/app@sha256:{}", "a".repeat(64));
+    original.resolved = Some(pin.clone());
+    original.app = Some(api::ImageApp {
+        catalog_name: "dev".into(),
+        image: pin.clone(),
+        display_name: "Development".into(),
+        description: "Tools".into(),
+        architecture: "arm64".into(),
+        publisher: None,
+        url: None,
+        icon: None,
+        category: None,
+        interfaces: vec![],
+        evidence: vec![],
+    });
+    write_record(&source, &original);
+    std::fs::create_dir_all(&clone).unwrap();
+    carry_launch_record(&source, &clone).unwrap();
+    let carried = read_launch_record(&clone).unwrap();
+    assert_eq!(carried.app, original.app);
+    let state = make_test_state_owned();
+    assert_eq!(source_app(&state, "not-live", &clone).unwrap().image, pin);
+    let mut wrong = carried;
+    wrong.resolved = Some(format!("registry.example/app@sha256:{}", "b".repeat(64)));
+    write_record(&clone, &wrong);
+    assert!(
+        source_app(&state, "not-live", &clone).is_none(),
+        "metadata for a different pin must never label this session"
+    );
+    let mut old = serde_json::to_value(record(None)).unwrap();
+    old.as_object_mut().unwrap().remove("app");
+    let old: LaunchRecord = serde_json::from_value(old).unwrap();
+    assert!(old.app.is_none());
 }

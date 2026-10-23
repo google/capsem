@@ -18,6 +18,8 @@ use tracing::debug;
 
 mod activity;
 mod cache_owners;
+mod metadata;
+pub(crate) use metadata::source_app;
 mod progress;
 mod registry;
 use registry::RegistryImages;
@@ -120,6 +122,7 @@ pub(crate) type PolicyFuture =
     Pin<Box<dyn Future<Output = anyhow::Result<capsem_core::container::admission::ImagePolicy>> + Send>>;
 
 struct ContainerRecord {
+    app: Option<api::ImageApp>,
     generation: u64,
     status: ContainerStatusResponse,
     /// The manifest digest the image share holds the image under, once
@@ -198,6 +201,7 @@ impl ContainerSetups {
         let replaced = records.insert(
             id.to_owned(),
             ContainerRecord {
+                app: None,
                 generation,
                 status: ContainerStatusResponse {
                     state: ContainerState::Pulling,
@@ -421,6 +425,9 @@ async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: Contain
     let started = std::time::Instant::now();
     // Admission is on the resolved digest, before anything is staged.
     let resolved = decision.admit(&requested, &image).await?;
+    if !state.containers.set_app(id, generation, decision.app(&resolved).await) {
+        return Err("container setup was cancelled".into());
+    }
     let rootfs = decision
         .published_root(&requested, &image, &resolved, access, ImageFetch::PreferCached.into())
         .await?;
@@ -672,6 +679,8 @@ const LAUNCH_RECORD: &str = "container.json";
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct LaunchRecord {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    app: Option<api::ImageApp>,
     image: String,
     digest: String,
     /// The declared surface and, once granted, its exposure: the exposure

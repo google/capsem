@@ -83,6 +83,9 @@ pub(super) fn build_list_response(state: &ServiceState) -> (ListResponse, Vec<Pa
         session_dirs.push(entry.session_dir.clone());
     }
 
+    for (info, session_dir) in sandboxes.iter_mut().zip(&session_dirs) {
+        info.app = container_setup::source_app(state, &info.id, session_dir);
+    }
     (ListResponse { sandboxes }, session_dirs)
 }
 

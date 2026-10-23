@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Preserve the exact source application metadata with session launch records,
+  including across clones, resumes and catalog updates.
+
 - Support canonical application branding, independent category/interface metadata,
   and optional artifact references bound to an exact image version and platform.
 

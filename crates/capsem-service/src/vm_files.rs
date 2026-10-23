@@ -791,9 +791,17 @@ pub(super) async fn handle_info(
         };
         if let (Some(mut info), Some(dir)) = (instance_data, session_dir) {
             populate_vm_info(&state, &mut info, &dir).await?;
-            info.storage = state
-                .off_worker(move |state| state.storage_diagnostics_cached(&dir))
+            let app_id = info.id.clone();
+            let (app, storage) = state
+                .off_worker(move |state| {
+                    (
+                        container_setup::source_app(&state, &app_id, &dir),
+                        state.storage_diagnostics_cached(&dir),
+                    )
+                })
                 .await?;
+            info.app = app;
+            info.storage = storage;
             return Ok(Json(info));
         }
     }
@@ -806,16 +814,22 @@ pub(super) async fn handle_info(
         // storage diagnostics are all blocking reads: one trip to the blocking
         // pool, not one per read, since `/info` is polled.
         let blocking_entry = entry.clone();
-        let ((status, can_resume, blocked_reason), size_bytes, storage) = state
+        let ((status, can_resume, blocked_reason), size_bytes, storage, app) = state
             .off_worker(move |state| {
                 (
                     state.persistent_entry_resume_state_cached(&blocking_entry),
                     capsem_core::session::disk_usage_bytes(&blocking_entry.session_dir),
                     state.storage_diagnostics_cached(&blocking_entry.session_dir),
+                    container_setup::source_app(
+                        &state,
+                        &persistent_entry_vm_id(&blocking_entry),
+                        &blocking_entry.session_dir,
+                    ),
                 )
             })
             .await?;
         let mut info = sandbox_info::inactive_sandbox_info(vm_id, &entry, status, can_resume, blocked_reason);
+        info.app = app;
         info.size_bytes = Some(size_bytes);
         populate_vm_info(&state, &mut info, &entry.session_dir).await?;
         info.storage = storage;

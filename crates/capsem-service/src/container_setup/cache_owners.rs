@@ -59,6 +59,7 @@ impl ContainerSetups {
         let records = self.records.lock().unwrap();
         let record = records.get(id)?;
         let snapshot = LaunchRecord {
+            app: record.app.clone(),
             image: record.status.image.clone(),
             digest: record.status.digest.clone().unwrap_or_default(),
             surface: record.status.surface.clone(),

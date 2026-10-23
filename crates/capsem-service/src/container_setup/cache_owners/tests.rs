@@ -59,6 +59,7 @@ fn cloned_and_restored_cache_identity_binds_only_the_new_instance_owner() {
     std::fs::create_dir(&clone).unwrap();
     let key = key('a');
     let record = LaunchRecord {
+        app: None,
         image: "image".into(),
         digest: "native".into(),
         surface: None,
