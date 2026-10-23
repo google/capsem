@@ -3136,12 +3136,12 @@ measured = [
 [benchmark.routes.unmeasured]
 "DELETE /connections/authorizations/{transaction_id}" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
 "DELETE /connections/{connection_id}" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
-"DELETE /networks/{id}" = { owner = "benchmarks/collectors/network", reason = "Needs isolated network membership and bounded populated log fixture." }
-"DELETE /networks/{id}/members/{vm_id}" = { owner = "benchmarks/collectors/network", reason = "Needs isolated network membership and bounded populated log fixture." }
+"DELETE /networks/{id}" = { owner = "tests/ironbank/test_managed_network_lifecycle.py", reason = "Needs isolated network membership and bounded logs; mutations must measure completed ownership changes." }
+"DELETE /networks/{id}/members/{vm_id}" = { owner = "tests/ironbank/test_managed_network_lifecycle.py", reason = "Needs isolated network membership and bounded logs; mutations must measure completed ownership changes." }
 "DELETE /vms/{id}/credential-grants/{grant_id}" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
 "DELETE /vms/{id}/delete" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
-"DELETE /vms/{id}/exposures/{exposure_id}" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
-"DELETE /vms/{id}/exposures/{exposure_id}/preview-session" = { owner = "tests/ironbank/kingslanding/test_workload_browser.py", reason = "Needs real UI exposure and single-use browser capability lifecycle fixture." }
+"DELETE /vms/{id}/exposures/{exposure_id}" = { owner = "tests/ironbank/kingslanding/test_preview.py", reason = "Needs actual exposure ownership and single-use preview capability lifecycle, including revoke/delete cleanup." }
+"DELETE /vms/{id}/exposures/{exposure_id}/preview-session" = { owner = "tests/ironbank/kingslanding/test_preview.py", reason = "Needs actual exposure ownership and single-use preview capability lifecycle, including revoke/delete cleanup." }
 "GET /" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
 "GET /connections/authorizations/{transaction_id}" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
 "GET /connections/{connection_id}" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
@@ -3151,49 +3151,49 @@ measured = [
 "GET /images" = { owner = "tests/ironbank/kingslanding/test_image_catalog.py", reason = "Needs hermetic registry and installed inventory fixture; never time vendor downloads." }
 "GET /images/{name}/inventory" = { owner = "tests/ironbank/kingslanding/test_image_catalog.py", reason = "Needs hermetic registry and installed inventory fixture; never time vendor downloads." }
 "GET /mcp/servers/{server_id}/tools/list" = { owner = "tests/ironbank/test_mcp_protocol_ledger.py", reason = "Needs configured MCP server lifecycle and bounded tool fixture; no live vendor calls." }
-"GET /networks/{id}" = { owner = "benchmarks/collectors/network", reason = "Needs isolated network membership and bounded populated log fixture." }
-"GET /networks/{id}/logs" = { owner = "benchmarks/collectors/network", reason = "Needs isolated network membership and bounded populated log fixture." }
+"GET /networks/{id}" = { owner = "tests/ironbank/test_managed_network_lifecycle.py", reason = "Needs isolated network membership and bounded logs; mutations must measure completed ownership changes." }
+"GET /networks/{id}/logs" = { owner = "tests/ironbank/test_managed_network_lifecycle.py", reason = "Needs isolated network membership and bounded logs; mutations must measure completed ownership changes." }
 "GET /openapi.json" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
 "GET /panics" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
 "GET /service-logs" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
 "GET /triage" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
 "GET /vms/{id}/bodies/export.warc.gz" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
-"GET /vms/{id}/files/content" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
+"GET /vms/{id}/files/content" = { owner = "tests/ironbank/test_files_process_ledger.py", reason = "Needs real guest-owned file and bounded content/forensic ledger proof; uploads mutate state and require isolated cleanup." }
 "GET /vms/{id}/files/list" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
 "GET /vms/{id}/history/transcript" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
 "GET /vms/{id}/logs" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
 "GET /vms/{id}/stream" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
 "GET /vms/{id}/surface/" = { owner = "tests/ironbank/kingslanding/test_workload_browser.py", reason = "Needs real UI exposure and single-use browser capability lifecycle fixture." }
 "GET /vms/{id}/surface/launch.js" = { owner = "tests/ironbank/kingslanding/test_workload_browser.py", reason = "Needs real UI exposure and single-use browser capability lifecycle fixture." }
-"PATCH /mcp/default/edit" = { owner = "tests/ironbank/test_mcp_protocol_ledger.py", reason = "Needs configured MCP server lifecycle and bounded tool fixture; no live vendor calls." }
-"PATCH /mcp/servers/{server_id}/tools/{tool_id}/edit" = { owner = "tests/ironbank/test_mcp_protocol_ledger.py", reason = "Needs configured MCP server lifecycle and bounded tool fixture; no live vendor calls." }
-"PATCH /plugins/{plugin_id}/edit" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
-"PATCH /settings/edit" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
-"POST /assets/ensure" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
+"PATCH /mcp/default/edit" = { owner = "tests/ironbank/test_mcp_settings_ledger.py", reason = "Needs isolated MCP policy mutation and actual settings ledger evidence, with configuration restored." }
+"PATCH /mcp/servers/{server_id}/tools/{tool_id}/edit" = { owner = "tests/ironbank/test_mcp_settings_ledger.py", reason = "Needs isolated MCP policy mutation and actual settings ledger evidence, with configuration restored." }
+"PATCH /plugins/{plugin_id}/edit" = { owner = "tests/ironbank/test_policy_mutation_routes.py", reason = "Needs isolated plugin policy mutation plus durable publication evidence and exact configuration restore." }
+"PATCH /settings/edit" = { owner = "crates/capsem-service/src/tests/settings_files.rs", reason = "Needs isolated policy files with exact restore and real validation/publication; repeated arbitrary mutations are not read latency." }
+"POST /assets/ensure" = { owner = "tests/ironbank/test_asset_readiness.py", reason = "Needs isolated pinned asset readiness/materialization fixture; external downloads are separate from local admission." }
 "POST /connections/google/authorize" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
-"POST /corp/reload" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
-"POST /corp/validate" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
+"POST /corp/reload" = { owner = "tests/ironbank/test_managed_policy.py", reason = "Needs real running-owner policy publication and acknowledgement, with isolated policy files restored afterwards." }
+"POST /corp/validate" = { owner = "crates/capsem-service/src/tests/settings_files.rs", reason = "Needs isolated policy files with exact restore and real validation/publication; repeated arbitrary mutations are not read latency." }
 "POST /credentials/inject" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
 "POST /images/pull" = { owner = "tests/ironbank/kingslanding/test_image_catalog.py", reason = "Needs hermetic registry and installed inventory fixture; never time vendor downloads." }
 "POST /mcp/servers/{server_id}/refresh" = { owner = "tests/ironbank/test_mcp_protocol_ledger.py", reason = "Needs configured MCP server lifecycle and bounded tool fixture; no live vendor calls." }
 "POST /mcp/servers/{server_id}/tools/{tool_id}/call" = { owner = "tests/ironbank/test_mcp_protocol_ledger.py", reason = "Needs configured MCP server lifecycle and bounded tool fixture; no live vendor calls." }
-"POST /networks" = { owner = "benchmarks/collectors/network", reason = "Needs isolated network membership and bounded populated log fixture." }
-"POST /plugins/credential_broker/credentials/reload" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
-"POST /proxies" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
-"POST /proxies/{id}/heartbeat" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
-"POST /proxies/{id}/stop" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
+"POST /networks" = { owner = "tests/ironbank/test_managed_network_lifecycle.py", reason = "Needs isolated network membership and bounded logs; mutations must measure completed ownership changes." }
+"POST /plugins/credential_broker/credentials/reload" = { owner = "tests/ironbank/test_credential_store_lifecycle.py", reason = "Needs isolated synthetic durable credential store and broker reload; never time real user credential storage." }
+"POST /proxies" = { owner = "tests/ironbank/test_standalone_proxy.py", reason = "Needs the supervised proxy create/heartbeat/stop fixture, with real worker lease and teardown." }
+"POST /proxies/{id}/heartbeat" = { owner = "tests/ironbank/test_standalone_proxy.py", reason = "Needs the supervised proxy create/heartbeat/stop fixture, with real worker lease and teardown." }
+"POST /proxies/{id}/stop" = { owner = "tests/ironbank/test_standalone_proxy.py", reason = "Needs the supervised proxy create/heartbeat/stop fixture, with real worker lease and teardown." }
 "POST /purge" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
-"POST /restart" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
+"POST /restart" = { owner = "tests/ironbank/test_sdk_restart.py", reason = "Needs disposable supervisor and real client reconnection; accepted restart is distinct from ready completion." }
 "POST /run" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
-"POST /update/apply" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
-"POST /update/check" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
+"POST /update/apply" = { owner = "crates/capsem-service/src/tests/update_routes.rs", reason = "Needs hermetic update subprocess and isolated runtime; plan-only response must not certify live update performance." }
+"POST /update/check" = { owner = "crates/capsem-service/src/tests/update_routes.rs", reason = "Needs hermetic update subprocess and isolated runtime; plan-only response must not certify live update performance." }
 "POST /vms/create" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
-"POST /vms/{id}/browser/acknowledge" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
+"POST /vms/{id}/browser/acknowledge" = { owner = "tests/ironbank/kingslanding/test_workload_browser.py", reason = "Needs real forwarded browser request and VM-owner acknowledgement; no borrowed stale handoff metadata." }
 "POST /vms/{id}/credential-grants" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
 "POST /vms/{id}/exec" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
-"POST /vms/{id}/exposures" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
-"POST /vms/{id}/exposures/{exposure_id}/preview-session" = { owner = "tests/ironbank/kingslanding/test_workload_browser.py", reason = "Needs real UI exposure and single-use browser capability lifecycle fixture." }
-"POST /vms/{id}/files/content" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
+"POST /vms/{id}/exposures" = { owner = "tests/ironbank/kingslanding/test_preview.py", reason = "Needs actual exposure ownership and single-use preview capability lifecycle, including revoke/delete cleanup." }
+"POST /vms/{id}/exposures/{exposure_id}/preview-session" = { owner = "tests/ironbank/kingslanding/test_preview.py", reason = "Needs actual exposure ownership and single-use preview capability lifecycle, including revoke/delete cleanup." }
+"POST /vms/{id}/files/content" = { owner = "tests/ironbank/test_files_process_ledger.py", reason = "Needs real guest-owned file and bounded content/forensic ledger proof; uploads mutate state and require isolated cleanup." }
 "POST /vms/{id}/fork" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
 "POST /vms/{id}/pause" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
 "POST /vms/{id}/resume" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
@@ -3202,14 +3202,14 @@ measured = [
 "POST /vms/{id}/start" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
 "POST /vms/{id}/stop" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
 "POST /vms/{id}/surface/session" = { owner = "tests/ironbank/kingslanding/test_workload_browser.py", reason = "Needs real UI exposure and single-use browser capability lifecycle fixture." }
-"PUT /corp/edit" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
-"PUT /networks/{id}/members/{vm_id}" = { owner = "benchmarks/collectors/network", reason = "Needs isolated network membership and bounded populated log fixture." }
+"PUT /corp/edit" = { owner = "crates/capsem-service/src/tests/settings_files.rs", reason = "Needs isolated policy files with exact restore and real validation/publication; repeated arbitrary mutations are not read latency." }
+"PUT /networks/{id}/members/{vm_id}" = { owner = "tests/ironbank/test_managed_network_lifecycle.py", reason = "Needs isolated network membership and bounded logs; mutations must measure completed ownership changes." }
 
 # A timed idle/read case does not certify every state of the same operation.
 [benchmark.routes.unmeasured_cases]
 "GET /vms/{id}/security/asks [pending]" = { owner = "crates/capsem-service/src/approval_routes.rs", reason = "Needs a real generation-bound original waiter and populated approval queue; idle case is not that workload." }
-"POST /vms/managed/{request_id}/claim [initial-claim]" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Closed tombstone retries do not measure first ownership admission and lifecycle work." }
-"POST /vms/managed/{request_id}/close [initial-close]" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Closed tombstone retries do not measure first producer drain and VM teardown." }
+"POST /vms/managed/{request_id}/claim [initial-claim]" = { owner = "tests/ironbank/test_managed_sessions.py", reason = "Closed tombstone retries do not measure first ownership admission and lifecycle work." }
+"POST /vms/managed/{request_id}/close [initial-close]" = { owner = "tests/ironbank/test_managed_sessions.py", reason = "Closed tombstone retries do not measure first producer drain and VM teardown." }
 
 [benchmark.routes.internal]
 "GET /internal/gateway/status" = { owner = "service-control-plane", reason = "The gateway reads one combined VM, asset, and update snapshot over its brokered service channel; this route is never exposed on TCP" }

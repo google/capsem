@@ -110,3 +110,14 @@ def test_gateway_owned_method_additions_cannot_hide_behind_proxy_inventory(monke
     monkeypatch.setattr(sys.modules[__name__], "GATEWAY", gateway)
     with pytest.raises(AssertionError, match="POST /health"):
         validate(registered_operations(), config())
+
+
+@pytest.mark.parametrize("operation,owner", [
+    ("PATCH /plugins/{plugin_id}/edit", "tests/ironbank/test_policy_mutation_routes.py"),
+    ("PATCH /settings/edit", "crates/capsem-service/src/tests/settings_files.rs"),
+    ("POST /proxies", "tests/ironbank/test_standalone_proxy.py"),
+    ("POST /networks", "tests/ironbank/test_managed_network_lifecycle.py"),
+    ("POST /restart", "tests/ironbank/test_sdk_restart.py"),
+])
+def test_mutation_debt_keeps_its_domain_fixture_owner(operation: str, owner: str) -> None:
+    assert config()["unmeasured"][operation]["owner"] == owner, RATIONALE
