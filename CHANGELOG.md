@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Give the image-declared Antigravity scratch workspace its existing image-user
+  mapping on every backend, without changing physical workspace permissions.
+
 - Pack app-image EROFS with its declared tool platform when rebuilding AMD64
   images on an ARM64 host.
 

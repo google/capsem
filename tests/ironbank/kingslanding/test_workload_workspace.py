@@ -49,6 +49,7 @@ def test_new_image_clone_imports_scratch_without_changing_original_home(service,
         ):
             copy_id = copy["id"]
             assert run(client, copy_id, "id -u").strip() == "1000"
+            assert run(client, copy_id, "stat -c %u /workspace").strip() == "1000"
             assert run(client, copy_id, "cat /workspace/poem.md") == "workspace-wins"
             assert run(client, copy_id, "cat /workspace/poem.md.imported-1") == "scratch-original"
             assert run(client, copy_id, f"cat {HOME}/private-sibling") == "synthetic-private-sibling"

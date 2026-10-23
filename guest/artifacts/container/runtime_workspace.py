@@ -47,6 +47,12 @@ def enabled(image, workspace):
     return True
 
 
+def workspace_user(image, workspace, requested, user):
+    if requested not in (None, "image_user"):
+        raise ValueError("unsupported workspace owner policy")
+    return user if requested == "image_user" or enabled(image, workspace) else None
+
+
 def alias_mounts(image, workspace, source, stage):
     if not enabled(image, workspace):
         return []

@@ -1004,10 +1004,9 @@ def run(stage, detached=False):
             bundle, image, unpacked = roots.enter_context(published_root(options, id_map))
         if options.get("workspace") is not None:
             WORKSPACE_VIEW.mkdir(mode=0o700, exist_ok=True)
-            owner_policy = options.get("workspace_owner")
-            if owner_policy not in (None, "image_user"):
-                raise ValueError("unsupported workspace owner policy")
-            user = unpacked["process"]["user"] if owner_policy == "image_user" else None
+            user = _workspace["workspace_user"](
+                image, options.get("workspace"), options.get("workspace_owner"), unpacked["process"]["user"]
+            )
             idmap_workspace(id_map, WORKSPACE_VIEW, user)
         config_path = bundle / "config.json"
         mount_layer(bundle / "rootfs")

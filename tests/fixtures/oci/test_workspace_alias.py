@@ -216,3 +216,13 @@ def test_directory_enumeration_stops_at_the_remaining_entry_budget(monkeypatch):
     with pytest.raises(ValueError, match="entry budget"):
         owner["bounded_names"](42, budget)
     assert len(visits) == 3
+
+
+def test_alias_selects_the_image_user_for_existing_idmap_on_every_backend():
+    user = {"uid": 1000, "gid": 1000}
+    choose = module()["workspace_user"]
+    assert choose(policy(), "/workspace", None, user) == user
+    assert choose({"config": {}}, "/workspace", None, user) is None
+    assert choose({"config": {}}, "/workspace", "image_user", user) == user
+    with pytest.raises(ValueError, match="owner policy"):
+        choose(policy(), "/workspace", "root", user)
