@@ -20,6 +20,7 @@ pub(crate) fn build(artifact: &Artifact, channel: &str, commit: &str, strays: Ve
                     key: format!("protocol.{}.{}.{suffix}", report.lane, scenario.name),
                     unit,
                     summary,
+                    samples: Some(samples.to_vec()),
                 });
             }
         };

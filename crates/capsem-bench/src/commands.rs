@@ -134,6 +134,7 @@ fn run_with_probe(
     if !missing.is_empty() {
         bail!("requested benchmark collectors are missing: {}", missing.join(", "));
     }
+    let limits = crate::sample_limits::Limits::from_config(profile)?;
     if !quick && (profile.is_empty() || commit.len() != 40 || !commit.bytes().all(|b| b.is_ascii_hexdigit())) {
         bail!("authoritative recording requires an exact source SHA and nonempty configuration");
     }
@@ -173,17 +174,18 @@ fn run_with_probe(
         if quick {
             args.push("--quick".to_string());
         }
-        let collected = collector::run(&program, &args, timeout)?;
+        let collected = collector::run(&program, &args, timeout, limits)?;
         let after = probe()?;
 
         let metrics = collected
             .metrics
-            .iter()
+            .into_iter()
             .filter_map(|(key, raw)| {
                 stats::Summary::of(&raw.samples).map(|summary| schema::Metric {
                     key: format!("{}.{key}", dimension.as_str()),
                     unit: raw.unit,
                     summary,
+                    samples: Some(raw.samples),
                 })
             })
             .collect::<Vec<_>>();
@@ -208,7 +210,7 @@ fn run_with_probe(
             sidecar: collected.sidecar,
         };
         let authoritative = crate::evidence::eligible(&record).is_ok();
-        let run_id = store::insert(&mut connection, &record)?;
+        let run_id = store::insert_with_limits(&mut connection, &record, limits)?;
         println!(
             "{}: {} metrics recorded as run {run_id}",
             dimension.as_str(),

@@ -29,6 +29,14 @@ pub(crate) fn eligible(record: &Record) -> Result<()> {
     if record.metrics.is_empty() {
         bail!("benchmark has no metrics");
     }
+    if record.metrics.iter().any(|metric| {
+        metric
+            .samples
+            .as_ref()
+            .is_none_or(|samples| samples.is_empty() || samples.len() != metric.summary.n)
+    }) {
+        bail!("benchmark has no complete original sample arrays");
+    }
     Ok(())
 }
 

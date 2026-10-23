@@ -21,6 +21,7 @@ fn record(at: &str, value: f64) -> schema::Record {
         quick: false,
         measurement: None,
         metrics: vec![schema::Metric {
+            samples: Some(vec![value]),
             key: "routes.service./status.cpu_s".to_string(),
             unit: schema::Unit::Seconds,
             summary: stats::Summary::of(&[value]).unwrap(),

@@ -22,6 +22,7 @@ fn record() -> Record {
         quick: false,
         measurement: None,
         metrics: vec![Metric {
+            samples: None,
             key: "gateway./vms/list.cpu_s".to_string(),
             unit: Unit::Seconds,
             summary: Summary::of(&[0.14, 0.15, 0.16]).expect("summarizes"),

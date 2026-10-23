@@ -20,6 +20,8 @@ mod protocol_record;
 mod rates;
 mod redis;
 mod runtime_limits;
+#[cfg(feature = "host")]
+mod sample_limits;
 mod scenarios;
 #[cfg(feature = "host")]
 mod schema;

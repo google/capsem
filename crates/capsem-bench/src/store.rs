@@ -19,11 +19,14 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
 
+use crate::sample_limits::Limits;
 use crate::schema::{Dimension, Metric, Record, Unit};
 use crate::stats::Summary;
 
+mod raw;
+
 /// Bumped when a reader must change; checked on open.
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 4;
 
 const CREATE: &str = "
 CREATE TABLE IF NOT EXISTS meta (
@@ -69,6 +72,7 @@ CREATE TABLE IF NOT EXISTS metrics (
     stddev  REAL    NOT NULL,
     cv      REAL    NOT NULL,
     mad     REAL    NOT NULL,
+    raw_samples BLOB,
     PRIMARY KEY (run_id, key)
 );
 
@@ -90,6 +94,7 @@ pub fn open(path: &Path) -> Result<Connection> {
     }
     let connection =
         Connection::open(path).with_context(|| format!("cannot open benchmark store {}", path.display()))?;
+    connection.execute_batch("PRAGMA foreign_keys = ON;")?;
     connection.execute_batch(CREATE)?;
 
     let found: Option<i64> = connection
@@ -105,8 +110,9 @@ pub fn open(path: &Path) -> Result<Connection> {
                 params![SCHEMA_VERSION.to_string()],
             )?;
         }
-        Some(2) => {
+        Some(2 | 3) => {
             // Old summaries remain readable observations, with no invented fitness.
+            connection.execute("ALTER TABLE metrics ADD COLUMN raw_samples BLOB", [])?;
             connection.execute(
                 "UPDATE meta SET value = ?1 WHERE key = 'schema_version'",
                 params![SCHEMA_VERSION.to_string()],
@@ -129,6 +135,11 @@ pub fn open(path: &Path) -> Result<Connection> {
 /// than accumulating a second copy, which is what the old per-file scheme did
 /// by overwriting a filename -- except there the identity was accidental.
 pub fn insert(connection: &mut Connection, record: &Record) -> Result<i64> {
+    insert_with_limits(connection, record, Limits::configured())
+}
+
+pub fn insert_with_limits(connection: &mut Connection, record: &Record, limits: Limits) -> Result<i64> {
+    raw::validate(record, limits)?;
     let transaction = connection.transaction()?;
     transaction.execute(
         "INSERT INTO runs(
@@ -163,8 +174,8 @@ pub fn insert(connection: &mut Connection, record: &Record) -> Result<i64> {
         let mut insert = transaction.prepare(
             "INSERT INTO metrics(
                 run_id, key, unit, n, min, max, mean, median,
-                p90, p95, p99, p999, stddev, cv, mad
-             ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
+                p90, p95, p99, p999, stddev, cv, mad, raw_samples
+             ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
         )?;
         for metric in &record.metrics {
             let summary = &metric.summary;
@@ -184,6 +195,7 @@ pub fn insert(connection: &mut Connection, record: &Record) -> Result<i64> {
                 summary.stddev,
                 summary.cv,
                 summary.mad,
+                metric.samples.as_deref().map(raw::encode),
             ])?;
         }
     }
@@ -261,12 +273,20 @@ pub fn latest_many(connection: &Connection, dimension: Dimension, arch: &str, co
 fn metrics_of(connection: &Connection, run_id: i64) -> Result<Vec<Metric>> {
     let mut query = connection.prepare(
         "SELECT key, unit, n, min, max, mean, median, p90, p95, p99, p999,
-                stddev, cv, mad
+                stddev, cv, mad, raw_samples
            FROM metrics WHERE run_id = ?1 ORDER BY key",
     )?;
+    let mut total = 0;
+    let limits = Limits::configured();
     let rows = query.query_map(params![run_id], |row| {
         let unit: String = row.get(1)?;
         Ok(Metric {
+            samples: match row.get_ref(14)? {
+                rusqlite::types::ValueRef::Null => None,
+                value => Some(raw::decode(value.as_blob()?, limits, &mut total).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(14, rusqlite::types::Type::Blob, error.into())
+                })?),
+            },
             key: row.get(0)?,
             unit: serde_json::from_str::<Unit>(&format!("\"{unit}\"")).unwrap_or(Unit::Count),
             summary: Summary {

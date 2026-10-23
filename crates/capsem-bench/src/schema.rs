@@ -152,6 +152,9 @@ pub enum Unit {
 /// One measured thing: a stable key, a unit, and its distribution.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Metric {
+    /// Original observations live only in the store's binary sample column.
+    #[serde(skip)]
+    pub samples: Option<Vec<f64>>,
     /// Dotted and stable across releases -- `gateway./vms/list.cpu_s`. This is
     /// the identity a trend line and a budget both hang on, so it must survive
     /// renaming the function that produced it.

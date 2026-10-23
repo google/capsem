@@ -71,6 +71,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Carry committed price coverage through session, per-model and global service
   totals without deriving price completeness from a zero cost.
+- Retain original benchmark samples as bounded binary arrays alongside their
+  summaries, and stop collectors that exceed configured output/sample budgets.
+
 - Record fresh machine-fitness receipts before and after each benchmark, retain
   contaminated results as diagnostics, and require compatible complete repeats
   before comparison or verification can treat observations as evidence.

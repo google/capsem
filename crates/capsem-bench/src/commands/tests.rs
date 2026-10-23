@@ -1,5 +1,7 @@
 use super::*;
 
+const PROFILE: &str = include_str!("../../../../config/gate.toml");
+
 const SHA: &str = "0123456789012345678901234567890123456789";
 
 fn fitness(fit: bool) -> machine::Fitness {
@@ -47,7 +49,7 @@ fn unfit_admission_never_launches_the_workload() {
         false,
         "test",
         SHA,
-        "config",
+        PROFILE,
         || Ok(fitness(false)),
     );
     assert!(result.unwrap_err().to_string().contains("unfit before"));
@@ -69,7 +71,7 @@ fn contaminated_observations_are_retained_but_never_authority() {
         false,
         "test",
         SHA,
-        "config",
+        PROFILE,
         || Ok(checks.next().unwrap()),
     );
     assert!(result.unwrap_err().to_string().contains("diagnostic"));
@@ -96,7 +98,7 @@ fn each_dimension_receives_fresh_checks_after_child_cleanup() {
         false,
         "test",
         SHA,
-        "config",
+        PROFILE,
         || {
             calls += 1;
             Ok(fitness(true))
@@ -119,7 +121,7 @@ fn quick_run_is_diagnostic_even_on_a_busy_machine() {
         true,
         "test",
         "unknown",
-        "config",
+        PROFILE,
         || Ok(fitness(false)),
     )
     .unwrap();

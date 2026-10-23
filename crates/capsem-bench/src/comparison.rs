@@ -47,10 +47,13 @@ fn aggregate(records: &[schema::Record]) -> Option<schema::Record> {
                 .iter()
                 .map(|record| record.metric(&metric.key).map(|found| found.summary.median))
                 .collect();
+            let samples = samples?;
+            let summary = stats::Summary::of(&samples)?;
             Some(schema::Metric {
+                samples: Some(samples),
                 key: metric.key.clone(),
                 unit: metric.unit,
-                summary: stats::Summary::of(&samples?)?,
+                summary,
             })
         })
         .collect();

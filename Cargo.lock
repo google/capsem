@@ -889,6 +889,7 @@ dependencies = [
  "socket2",
  "tempfile",
  "tokio",
+ "toml 0.8.2",
 ]
 
 [[package]]
