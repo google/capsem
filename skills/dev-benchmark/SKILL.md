@@ -203,23 +203,25 @@ Coverage is method-aware: a measured GET never covers a POST on the same path.
 remaining operation with its existing fixture owner and reason. The source-only
 Citadel guard derives methods from service and gateway registrations, including
 chained Axum handlers, and rejects missing, stale or duplicate classifications.
-Gateway-only schema, health, event and surface operations remain explicit debt.
+Gateway-only event streams remain explicit debt.
 A new route or method cannot silently inherit another method's coverage.
 
 For every measured case, the `routes` collector records warm and cold latency
-plus a 16-client kept-alive load window over service UDS and authenticated gateway.
+plus a 16-client kept-alive load window over its explicitly selected target scope.
+Ordinary cases use service UDS and authenticated gateway; gateway-owned health,
+OpenAPI and static surface cases use only the gateway, never a service HTTP404.
 It retains raw concurrent latency, aggregate RPS and CPU samples. Managed claim
 and close measure repeatable closed tombstones, not initial lifecycle operations.
 Uncovered mutations require their real disposable lifecycle fixtures; successful
 read timing and functional acceptance are not proof of mutation performance.
-The collector currently declares 56 cases over 52 operations, including four
+The collector currently declares 65 cases over 59 operations, including four
 plugin-detail IDs, the existing stopped recorded session and one live image VM.
 Untimed preflight validates selected public SDK schemas and private DTO/counter
 contracts, checks nonempty recorded traffic/history and reconciles shared
 counters. The original HTTP/JSON checks remain in every timed request. Security
 ledger arrays can be empty in this recorded corpus; an idle Ask queue is explicitly
 not pending approval performance. Initial managed claim/close and pending Ask
-cases remain named `unmeasured_cases`; 64 other operations retain their owners.
+cases remain named `unmeasured_cases`; 57 other operations retain their owners.
 The additional read corpus is config-owned under `[benchmark.routes.corpus]`:
 64 workspace files plus two changed files, 1 MiB logs with 128-byte unique lines,
 16-line filtered tails within 100 KiB reads, and one cached builtin tool metadata
@@ -262,6 +264,16 @@ event-body reads likewise compare original bytes and distinguish capture from
 transport truncation. Response validation runs after receipt clocks; throughput
 includes client validation work. CPU series still name service/gateway components,
 not total VM policy CPU. Source readiness is not an executed native measurement.
+
+Gateway-only static reads compare source version and exact owning service socket,
+complete selected OpenAPI paths/schemas, and first-party launcher HTML/JS bytes.
+Surface CSP, no-store, nosniff, frame denial, referrer and opener headers are
+validated on every response after strict receipt clocks. The default launcher
+uses a syntactically valid recorded VM ID and no bootstrap token or Xpra session;
+these cases do not certify GUI bootstrap, rendering or native input latency.
+Bounds remain the typed shared response budget; raw/stats/fitness owners and
+ordinary sample counts are unchanged. Content validation is outside latency
+clocks but remains part of measured load throughput.
 
 ## Benchmarks that are still pytest
 

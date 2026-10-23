@@ -3082,6 +3082,11 @@ slowest_steps = 10
 # fixture owner and exact gap. New registration or method drift fails Citadel.
 [benchmark.routes]
 measured = [
+    { method = "GET", path = "/", case = "gateway-static", target_scope = "gateway", response = "health" },
+    { method = "GET", path = "/health", case = "gateway-static", target_scope = "gateway", response = "health" },
+    { method = "GET", path = "/openapi.json", case = "gateway-static", target_scope = "gateway", response = "openapi" },
+    { method = "GET", path = "/vms/{id}/surface/", case = "gateway-static", target_scope = "gateway", response = "html" },
+    { method = "GET", path = "/vms/{id}/surface/launch.js", case = "gateway-static", target_scope = "gateway", response = "javascript" },
     { method = "POST", path = "/vms/managed/{request_id}/close", case = "closed-tombstone" },
     { method = "POST", path = "/vms/managed/{request_id}/claim", case = "closed-tombstone" },
     { method = "GET", path = "/connections", case = "default" },
@@ -3153,21 +3158,16 @@ measured = [
 "DELETE /vms/{id}/delete" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
 "DELETE /vms/{id}/exposures/{exposure_id}" = { owner = "tests/ironbank/kingslanding/test_preview.py", reason = "Needs actual exposure ownership and single-use preview capability lifecycle, including revoke/delete cleanup." }
 "DELETE /vms/{id}/exposures/{exposure_id}/preview-session" = { owner = "tests/ironbank/kingslanding/test_preview.py", reason = "Needs actual exposure ownership and single-use preview capability lifecycle, including revoke/delete cleanup." }
-"GET /" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
 "GET /connections/authorizations/{transaction_id}" = { owner = "crates/capsem-service/src/connection_routes.rs", reason = "Production Runtime constructs only disabled unconfigured agy-native profile; successful enrollment metadata needs an implemented provider contract, never fabricated authority." }
 "GET /connections/{connection_id}" = { owner = "crates/capsem-service/src/connection_routes.rs", reason = "Production Runtime constructs only disabled unconfigured agy-native profile; successful enrollment metadata needs an implemented provider contract, never fabricated authority." }
 "GET /events" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
-"GET /health" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
 "GET /images" = { owner = "tests/ironbank/kingslanding/test_image_catalog.py", reason = "Needs hermetic registry and installed inventory fixture; never time vendor downloads." }
 "GET /images/{name}/inventory" = { owner = "tests/ironbank/kingslanding/test_image_catalog.py", reason = "Needs hermetic registry and installed inventory fixture; never time vendor downloads." }
 "GET /networks/{id}/logs" = { owner = "tests/ironbank/test_managed_network_lifecycle.py", reason = "Fresh network metadata writes no transport events; populated timing requires actual recorded transport traffic." }
-"GET /openapi.json" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
 "GET /panics" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
 "GET /triage" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
 "GET /vms/{id}/history/transcript" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
 "GET /vms/{id}/stream" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
-"GET /vms/{id}/surface/" = { owner = "tests/ironbank/kingslanding/test_workload_browser.py", reason = "Needs real UI exposure and single-use browser capability lifecycle fixture." }
-"GET /vms/{id}/surface/launch.js" = { owner = "tests/ironbank/kingslanding/test_workload_browser.py", reason = "Needs real UI exposure and single-use browser capability lifecycle fixture." }
 "PATCH /mcp/default/edit" = { owner = "tests/ironbank/test_mcp_settings_ledger.py", reason = "Needs isolated MCP policy mutation and actual settings ledger evidence, with configuration restored." }
 "PATCH /mcp/servers/{server_id}/tools/{tool_id}/edit" = { owner = "tests/ironbank/test_mcp_settings_ledger.py", reason = "Needs isolated MCP policy mutation and actual settings ledger evidence, with configuration restored." }
 "PATCH /plugins/{plugin_id}/edit" = { owner = "tests/ironbank/test_policy_mutation_routes.py", reason = "Needs isolated plugin policy mutation plus durable publication evidence and exact configuration restore." }

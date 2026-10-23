@@ -89,7 +89,7 @@ def test_binary_case_counts_preserve_existing_defaults_and_bound_new_profiles() 
     assert all(case.counts(128, 512, 8, 4) == (4, 16, 2) for case in files)
     assert next(case for case in cases if case.path == "/status").counts(128, 512, 8) == (128, 512, 8)
     assert expected_file_exports(cases, samples=128, load_requests=512, concurrency=8, warmup=2, targets=2, override=None) == 148
-    assert len({(case.method, case.path) for case in cases}) == 54
+    assert len({(case.method, case.path) for case in cases}) == 59
 
 
 def test_binary_fixture_uses_workload_and_preserves_producer_until_drain(monkeypatch, tmp_path) -> None:

@@ -8,6 +8,8 @@ from urllib.parse import urlencode
 
 from helpers.stopped_workspace import BODY_ROUTE, BODY_URL, VM_ID
 
+from .route_gateway import GATEWAY_RESPONSES
+
 ROOT = Path(__file__).resolve().parents[2]
 LIVE_ROUTES = {
     "/vms/{id}/exposures", "/vms/{id}/security/status",
@@ -25,9 +27,19 @@ class RouteCase:
     parameters: dict[str, str] = field(default_factory=dict)
     query: dict[str, str | int] = field(default_factory=dict)
     response: str = "json"
+    target_scope: str = "both"
     samples: int | None = None
     load_requests: int | None = None
     concurrency: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.target_scope not in {"both", "gateway"}:
+            raise ValueError("unknown route target scope")
+        if self.path in GATEWAY_RESPONSES and (self.target_scope != "gateway" or self.response != GATEWAY_RESPONSES[self.path]):
+            raise ValueError("gateway-only operation requires explicit gateway scope and response contract")
+
+    def supports_target(self, label: str) -> bool:
+        return self.target_scope == "both" or label == "gateway"
 
     def counts(self, samples: int, load_requests: int, concurrency: int, override: int | None = None) -> tuple[int, int, int]:
         return (override if override is not None else self.samples or samples,

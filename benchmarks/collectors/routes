@@ -43,6 +43,7 @@ from benchmarks.helpers.route_fixtures import (
     seed_logs,
     seed_metadata,
 )
+from benchmarks.helpers.route_gateway import GATEWAY_RESPONSES
 from benchmarks.helpers.route_measurements import Observations, route_metrics
 from benchmarks.helpers.route_requests import Target, request, request_input, route_load_config
 from benchmarks.helpers.route_validation import validate_snapshot, validate_wire
@@ -57,11 +58,13 @@ def preflight(target: Target, cases: list[RouteCase], live_id: str | None, netwo
     payloads = {}
     try:
         for case in cases:
+            if not case.supports_target(target.label):
+                continue
             path = case.resolve(live_id, network_id)
             if request_input(path)[0] != case.method:
                 raise ValueError(f"case method differs from its request: {case.metric_key}")
             receipt = request(transport, target, path, case.response)
-            payloads[case.path] = receipt.body if case.response in {"binary", "warc"} else validate_wire(case, receipt.body, live_id, network_id)
+            payloads[case.path] = receipt.body if case.response in {"binary", "warc", *GATEWAY_RESPONSES.values()} else validate_wire(case, receipt.body, live_id, network_id)
         validate_snapshot(payloads)
     finally:
         transport.close()
@@ -190,6 +193,7 @@ def main() -> int:
             ),
             Target(
                 label="gateway",
+                service_socket=str(service.uds_path),
                 transport_factory=lambda: Transport(
                     host="127.0.0.1", port=gateway.port
                 ),
@@ -218,6 +222,8 @@ def main() -> int:
                 path = case.metric_key
                 count, requests, workers = case.counts(samples, load_samples, concurrency, args.samples)
                 for target in targets:
+                    if not case.supports_target(target.label):
+                        continue
                     print(f"{target.label} {path}", file=sys.stderr)
                     latencies, cpu = sample_warm_route(target, concrete_path, count, case.response)
                     cold_latencies = sample_cold_route(target, concrete_path, count, case.response)

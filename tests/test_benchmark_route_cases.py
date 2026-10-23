@@ -10,9 +10,9 @@ from benchmarks.helpers.route_validation import validate_case, validate_snapshot
 
 def test_slice_one_and_two_are_successful_cases_not_method_wildcards() -> None:
     cases = measured_cases()
-    assert len(cases) == 60
+    assert len(cases) == 65
     assert len({case.metric_key for case in cases}) == len(cases)
-    assert len({case.path for case in cases}) == 54
+    assert len({case.path for case in cases}) == 59
     assert {case.case for case in cases if "{plugin_id}" in case.path} == {
         "credential_broker", "pii_filter", "secret_exfiltration", "utf8_guard",
     }

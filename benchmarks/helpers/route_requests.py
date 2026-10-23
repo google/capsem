@@ -13,6 +13,7 @@ from helpers.http_transport import Transport
 from helpers.stopped_workspace import BODY_URL, assert_event_bodies
 
 from .route_binary import validate_archive, validate_file, validate_full_event
+from .route_gateway import GATEWAY_RESPONSES, validate_gateway
 from .route_measurements import validate_receipt
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -40,12 +41,15 @@ class Target:
     headers: dict[str, str]
     cpu_processes: dict[str, psutil.Process]
     limits: dict[str, int | float] = field(default_factory=route_load_config)
+    service_socket: str | None = None
 
 
 def request(transport: Transport, target: Target, path: str, response: str = "json") -> MeasuredResponse:
     """Require one complete first-attempt JSON/text receipt."""
+    if response in GATEWAY_RESPONSES.values() and target.label != "gateway":
+        raise ValueError("gateway artifact cannot be measured over service UDS")
     method, request_body = request_input(path)
-    accept = {"binary": "application/octet-stream", "warc": "application/warc", "text": "text/plain"}.get(response, "application/json")
+    accept = {"binary": "application/octet-stream", "warc": "application/warc", "text": "text/plain", "html": "text/html", "javascript": "text/javascript"}.get(response, "application/json")
     headers = {**target.headers, "Accept": accept}
     if request_body is not None:
         headers["Content-Type"] = "application/json"
@@ -61,6 +65,9 @@ def request(transport: Transport, target: Target, path: str, response: str = "js
         raise RuntimeError(
             f"{target.label} {path} returned HTTP {status}: {body[:500]!r}"
         )
+    if response in GATEWAY_RESPONSES.values():
+        validate_gateway(response, body, receipt.headers, target.service_socket)
+        return receipt
     if response in {"binary", "warc"}:
         (validate_archive(body, receipt.headers) if response == "warc" else validate_file(path, body, receipt.headers))
         return receipt
