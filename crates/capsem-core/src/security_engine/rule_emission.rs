@@ -150,7 +150,7 @@ async fn emit_rule_rows(
         rule_events.push(rule_event);
         emitted += 1;
     }
-    if matches!(enforcement.action, SecurityEnforcementAction::Ask) {
+    if recorded == RuleRowDecision::Enforced && matches!(enforcement.action, SecurityEnforcementAction::Ask) {
         let Some(rule) = selected_rule else {
             return Err("ask enforcement decision did not carry a rule".to_string());
         };
@@ -224,7 +224,7 @@ fn emit_rule_rows_blocking(
         rule_events.push(rule_event);
         emitted += 1;
     }
-    if matches!(enforcement.action, SecurityEnforcementAction::Ask) {
+    if recorded == RuleRowDecision::Enforced && matches!(enforcement.action, SecurityEnforcementAction::Ask) {
         let Some(rule) = selected_rule else {
             return Err("ask enforcement decision did not carry a rule".to_string());
         };

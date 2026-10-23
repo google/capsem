@@ -4,6 +4,57 @@
 use super::decision_ledger::archived_payload_of;
 use super::*;
 
+async fn observer_does_not_invent_a_continuation(blocking: bool) {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("session.db");
+    let writer = capsem_logger::DbWriter::open(&path, 16).unwrap();
+    let rules = security_rule_set(
+        r#"
+        [profiles.rules.ask_observed]
+        name = "ask_observed"
+        action = "ask"
+        match = 'http.host == "observed.example"'
+    "#,
+    );
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
+        .with_http(HttpSecurityEvent {
+            host: Some("observed.example".into()),
+            ..Default::default()
+        })
+        .with_http_request(HttpRequestSecurityEvent::new(
+            "observed.example",
+            None,
+            http::HeaderMap::new(),
+            None,
+        ));
+    let id = SecurityEventId::new_uuid4();
+    let count = if blocking {
+        emit_matching_security_rules_blocking(&writer, id, RuntimeSecurityEventType::HttpRequest, &rules, &event, 1)
+            .unwrap()
+    } else {
+        emit_matching_security_rules(&writer, id, RuntimeSecurityEventType::HttpRequest, &rules, &event, 1)
+            .await
+            .unwrap()
+    };
+    assert_eq!(count, 1, "the observational rule row is still recorded");
+    writer.shutdown_blocking();
+    let reader = capsem_logger::DbReader::open(&path).unwrap();
+    assert!(
+        reader.recent_security_ask_events(10).unwrap().is_empty(),
+        "an already-observed operation has no original continuation to approve"
+    );
+}
+
+#[tokio::test]
+async fn async_observation_does_not_create_pending_asks() {
+    observer_does_not_invent_a_continuation(false).await;
+}
+
+#[tokio::test]
+async fn blocking_observation_does_not_create_pending_asks() {
+    observer_does_not_invent_a_continuation(true).await;
+}
+
 #[tokio::test]
 async fn ask_enforcement_writes_pending_and_resolution_controls_materialization() {
     let tmp = tempfile::tempdir().unwrap();
