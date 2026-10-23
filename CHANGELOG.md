@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Benchmark six owned VM lifecycle operations with finite strict request samples and separate verified workload/process/path completion; native measurement remains required.
+
 - Add finite host-only settings and policy mutation benchmark cases with exact
   file restoration and fresh effective-state checks; VM publication stays separate.
 

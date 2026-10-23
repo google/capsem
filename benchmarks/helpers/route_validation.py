@@ -27,7 +27,9 @@ def _schemas() -> dict[str, TypeAdapter]:
     try:
         from capsem.models.asset_status import AssetStatus
         from capsem.models.container_status_response import ContainerStatusResponse
+        from capsem.models.exec_response import ExecResponse
         from capsem.models.file_list_response import FileListResponse
+        from capsem.models.fork_response import ForkResponse
         from capsem.models.history_response import HistoryResponse
         from capsem.models.host_logs_response import HostLogsResponse
         from capsem.models.image_inventory_response import ImageInventoryResponse
@@ -39,13 +41,22 @@ def _schemas() -> dict[str, TypeAdapter]:
         from capsem.models.mcp_servers_list_response import McpServersListResponse
         from capsem.models.mcp_tools_list_response import McpToolsListResponse
         from capsem.models.network_info import NetworkInfo
+        from capsem.models.provision_response import ProvisionResponse
         from capsem.models.sandbox_info import SandboxInfo
         from capsem.models.security_ask_list_response import SecurityAskListResponse
+        from capsem.models.stop_response import StopResponse
         from capsem.models.timeline_response import TimelineResponse
+        from capsem.models.vm_action_response import VmActionResponse
         from capsem.models.vm_stats_detail_response import VmStatsDetailResponse
         from capsem.models.vm_stats_summary_response import VmStatsSummaryResponse
         return {path: TypeAdapter(model) for path, model in {
             "/images": ImageListResponse,
+            "/vms/create": ProvisionResponse,
+            "/vms/{id}/exec": ExecResponse,
+            "/vms/{id}/fork": ForkResponse,
+            "/vms/{id}/start": ProvisionResponse,
+            "/vms/{id}/stop": StopResponse,
+            "/vms/{id}/delete": VmActionResponse,
             "/images/{name}/inventory": ImageInventoryResponse,
             "/images/pull": ImagePullResponse,
             "/assets/ensure": AssetStatus,

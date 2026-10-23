@@ -136,6 +136,7 @@ def test_routes_reuse_owned_gateway_and_default_product_fixture(monkeypatch, tmp
         "seed_metadata": lambda *_: None,
         "seed_logs": lambda *_: None,
         "collect_policy": lambda *_: {},
+        "collect_lifecycle": lambda *_: {},
         "collect_images": lambda *_: {},
         "clone_benchmark_assets": lambda *args: tmp_path,
         "measured_cases": lambda: [module["RouteCase"]("GET", "/vms/{id}/exposures", "default")],
