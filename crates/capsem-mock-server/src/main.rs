@@ -24,6 +24,7 @@ use tokio_rustls::TlsAcceptor;
 
 mod agent_mcp;
 mod anthropic;
+mod content;
 mod dns;
 mod limits;
 mod responses;
@@ -179,7 +180,7 @@ async fn main() -> Result<()> {
         dns_tcp_addr: dns_tcp_addr.to_string(),
         dns_fixtures,
         dns_answer_ip: args.dns_answers.provider_answer(),
-        endpoints: ENDPOINTS.to_vec(),
+        endpoints: ENDPOINTS.iter().chain(content::ENDPOINTS).copied().collect(),
         request_log: args.request_log.as_ref().map(|path| path.display().to_string()),
     };
     println!("{}", serde_json::to_string(&ready)?);
@@ -296,6 +297,9 @@ async fn route(
     request_body: Bytes,
     _tls: bool,
 ) -> Response<RespBody> {
+    if path.starts_with("/content/") || matches!(path, "/chunked" | "/delayed-chunks") {
+        return content::route(method, path, query, headers, request_body);
+    }
     match (method, path) {
         (&Method::HEAD, "/") => response(StatusCode::OK, Bytes::new(), "text/plain; charset=utf-8"),
         (&Method::HEAD, "/tiny") => {
@@ -401,11 +405,6 @@ event: model.done\ndata: {\"finish_reason\":\"stop\"}\n\n",
             StatusCode::OK,
             Bytes::from_static(b"capsem-mock-server:deny-target\n"),
             "text/plain",
-        ),
-        (&Method::GET, "/chunked") | (&Method::GET, "/delayed-chunks") => response(
-            StatusCode::OK,
-            Bytes::from_static(b"chunk-0\nchunk-1\nchunk-2\nchunk-3\n"),
-            "text/plain; charset=utf-8",
         ),
         (&Method::GET, _) if path.starts_with("/bytes/") => {
             let size = path.trim_start_matches("/bytes/");
