@@ -308,15 +308,23 @@ impl DnsHandler {
     /// * `mitm.dns_upstream_duration_ms` histogram only when the
     ///   upstream forward path runs.
     /// * `mitm.dns_upstream_failures_total` counter on resolver error.
+    pub async fn handle(&self, query_bytes: &[u8]) -> DnsHandlerResult {
+        self.handle_with_cancellation(query_bytes, None).await
+    }
+
     #[instrument(
         target = "capsem::net::dns",
         name = "mitm.dns.query",
-        skip(self, query_bytes),
+        skip(self, query_bytes, cancellation),
         fields(qname, qtype, decision, rcode, upstream_ms)
     )]
-    pub async fn handle(&self, query_bytes: &[u8]) -> DnsHandlerResult {
+    pub(crate) async fn handle_with_cancellation(
+        &self,
+        query_bytes: &[u8],
+        cancellation: Option<&tokio_util::sync::CancellationToken>,
+    ) -> DnsHandlerResult {
         let handle_t0 = Instant::now();
-        let result = self.handle_inner(query_bytes).await;
+        let result = self.handle_inner(query_bytes, cancellation).await;
 
         // Stamp span fields + emit metrics on every exit path. Done
         // here so the four early-returns inside handle_inner stay
@@ -343,7 +351,11 @@ impl DnsHandler {
     /// Inner handler -- the actual decision tree. Wrapped by
     /// `handle()` which owns the span + metric emission so every
     /// exit path is observed identically.
-    async fn handle_inner(&self, query_bytes: &[u8]) -> DnsHandlerResult {
+    async fn handle_inner(
+        &self,
+        query_bytes: &[u8],
+        cancellation: Option<&tokio_util::sync::CancellationToken>,
+    ) -> DnsHandlerResult {
         let query = match parse_query(query_bytes) {
             Ok(q) => q,
             Err(e) => {
@@ -367,7 +379,12 @@ impl DnsHandler {
         let policy = self.policy.snapshot();
         let evaluation = if let Some(engine) = &self.engine {
             engine
-                .evaluate_with_held_bytes(&policy, dns_security_event, query_bytes.len().saturating_mul(2))
+                .evaluate_cancellable(
+                    &policy,
+                    dns_security_event,
+                    query_bytes.len().saturating_mul(2),
+                    cancellation,
+                )
                 .await
         } else {
             evaluate_security_boundary(

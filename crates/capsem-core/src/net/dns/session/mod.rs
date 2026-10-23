@@ -26,10 +26,13 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use tokio::io::unix::AsyncFd;
 use tokio::sync::{mpsc, Semaphore};
+use tokio::task::JoinSet;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
 /// Queries one connection answers concurrently. Past the shared guest/host
-/// bound the reader waits instead of admitting unbounded tasks.
+/// bound an overloaded connection fails closed instead of hiding its EOF
+/// behind requests awaiting human approval.
 use capsem_proto::DNS_SESSION_MAX_IN_FLIGHT;
 
 pub async fn serve_dns_session(
@@ -57,18 +60,38 @@ pub async fn serve_dns_session(
     };
 
     let (frames, mut frames_rx) = mpsc::channel::<Vec<u8>>(DNS_SESSION_MAX_IN_FLIGHT);
+    let cancellation = CancellationToken::new();
+    let writer_cancellation = cancellation.clone();
     let write_task = tokio::spawn(async move {
-        while let Some(frame) = frames_rx.recv().await {
-            if let Err(error) = write_all(&writer, &frame).await {
+        loop {
+            let frame = tokio::select! {
+                biased;
+                _ = writer_cancellation.cancelled() => break,
+                frame = frames_rx.recv() => match frame { Some(frame) => frame, None => break },
+            };
+            let result = tokio::select! {
+                biased;
+                _ = writer_cancellation.cancelled() => break,
+                result = write_all(&writer, &frame) => result,
+            };
+            if let Err(error) = result {
                 debug!(error = %error, "DNS port: write failed");
-                return;
+                writer_cancellation.cancel();
+                break;
             }
         }
     });
     let in_flight = Arc::new(Semaphore::new(DNS_SESSION_MAX_IN_FLIGHT));
+    let mut queries = JoinSet::new();
 
     loop {
-        let payload = match read_frame(&reader).await {
+        while queries.try_join_next().is_some() {}
+        let read = tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => break,
+            read = read_frame(&reader) => read,
+        };
+        let payload = match read {
             Ok(Some(payload)) => payload,
             Ok(None) => break,
             Err(error) => {
@@ -83,26 +106,33 @@ pub async fn serve_dns_session(
                 break;
             }
         };
-        let Ok(permit) = Arc::clone(&in_flight).acquire_owned().await else {
+        let Ok(permit) = Arc::clone(&in_flight).try_acquire_owned() else {
             break;
         };
         let frames = frames.clone();
         let handler = Arc::clone(&handler);
         let db = Arc::clone(&db);
         let policy = policy.clone();
-        tokio::spawn(async move {
-            let frame = answer_one(request, &handler, &db, &policy).await;
+        let cancellation = cancellation.clone();
+        queries.spawn(async move {
+            let frame = answer_one(request, &handler, &db, &policy, &cancellation).await;
             if let Some(frame) = frame {
                 // channel-closed-ok: the writer is gone with the connection.
-                let _ = frames.send(frame).await;
+                tokio::select! {
+                    biased;
+                    _ = cancellation.cancelled() => {},
+                    _ = frames.send(frame) => {},
+                }
             }
             drop(permit);
         });
     }
 
+    // Cancel human waits, but drain producers so an already executed lookup
+    // cannot lose its primary and derived audit rows during disconnect.
+    cancellation.cancel();
+    while queries.join_next().await.is_some() {}
     drop(frames);
-    // Queries already accepted still get their answers written; the writer
-    // ends when the last of them has sent its frame.
     let _ = write_task.await;
     drop(conn);
 }
@@ -113,8 +143,9 @@ async fn answer_one(
     handler: &super::DnsHandler,
     db: &Arc<capsem_logger::DbWriter>,
     policy: &crate::net::proxy_engine::ProxyPolicyHandle,
+    cancellation: &CancellationToken,
 ) -> Option<Vec<u8>> {
-    let result = handler.handle(&request.raw).await;
+    let result = handler.handle_with_cancellation(&request.raw, Some(cancellation)).await;
 
     // T3.3 -- one `dns_events` row per query. trace_id ties it back to the
     // agent action; source_proto distinguishes UDP from TCP DNS at the

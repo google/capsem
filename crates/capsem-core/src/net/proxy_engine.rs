@@ -137,11 +137,21 @@ impl ProxyEngine {
     }
 
     /// Include caller-owned wire buffers retained beside the semantic event.
-    pub async fn evaluate_with_held_bytes(
+    pub fn evaluate_with_held_bytes<'a>(
+        &'a self,
+        snapshot: &'a ProxyPolicySnapshot,
+        event: SecurityEvent,
+        retained_bytes: usize,
+    ) -> impl Future<Output = Result<SecurityBoundaryEvaluation, SecurityActionError>> + Send + 'a {
+        self.evaluate_cancellable(snapshot, event, retained_bytes, None)
+    }
+
+    pub(crate) async fn evaluate_cancellable(
         &self,
         snapshot: &ProxyPolicySnapshot,
         event: SecurityEvent,
         retained_bytes: usize,
+        cancellation: Option<&tokio_util::sync::CancellationToken>,
     ) -> Result<SecurityBoundaryEvaluation, SecurityActionError> {
         let rules = Arc::clone(snapshot.security_rules());
         let plugins = Arc::clone(snapshot.plugins());
@@ -159,6 +169,7 @@ impl ProxyEngine {
                 snapshot.security_rules(),
                 &mut evaluation,
                 held_bytes,
+                cancellation,
             )
             .await
             .map_err(SecurityActionError::new)?;

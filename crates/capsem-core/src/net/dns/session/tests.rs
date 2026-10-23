@@ -4,6 +4,8 @@ use crate::net::proxy_engine::{ProxyPolicyHandle, ProxyPolicySnapshot};
 use std::os::fd::OwnedFd;
 use std::os::unix::net::UnixStream;
 
+mod approval;
+
 fn handler() -> Arc<DnsHandler> {
     let policy = ProxyPolicyHandle::new(ProxyPolicySnapshot::new(
         "blake3:test".into(),

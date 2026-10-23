@@ -371,6 +371,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Cancel pending DNS approvals when the original guest connection closes,
+  draining owned audit producers before the session ends.
+
 - Reject control characters in restored terminal checkpoint hyperlinks.
 
 - Bound combining-character retention in the session terminal engine, keeping
