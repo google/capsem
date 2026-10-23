@@ -33,9 +33,13 @@ pub type ProxyCapabilityFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 
 /// The only ledger authority exposed to a proxy worker.
 pub trait ProxyLedger: Send + Sync {
     fn write(&self, op: WriteOp) -> ProxyCapabilityFuture<'_, Result<(), String>>;
+    fn flush(&self) -> ProxyCapabilityFuture<'_, Result<(), String>>;
 }
 
 impl ProxyLedger for DbWriter {
+    fn flush(&self) -> ProxyCapabilityFuture<'_, Result<(), String>> {
+        Box::pin(self.flush_checked())
+    }
     fn write(&self, op: WriteOp) -> ProxyCapabilityFuture<'_, Result<(), String>> {
         Box::pin(self.write_checked(op))
     }
@@ -87,6 +91,7 @@ pub struct ProxyEngine {
     policy: ProxyPolicyHandle,
     ledger: Arc<dyn ProxyLedger>,
     credentials: Arc<dyn ProxyCredentials>,
+    approvals: Option<Arc<crate::security_engine::approval::client::ApprovalCapability>>,
 }
 
 impl ProxyEngine {
@@ -99,11 +104,20 @@ impl ProxyEngine {
             policy,
             ledger,
             credentials,
+            approvals: None,
         }
     }
 
     pub fn local(policy: ProxyPolicyHandle, ledger: Arc<DbWriter>) -> Self {
         Self::new(policy, ledger, Arc::new(LocalProxyCredentials))
+    }
+
+    pub fn with_approvals(
+        mut self,
+        approvals: Option<Arc<crate::security_engine::approval::client::ApprovalCapability>>,
+    ) -> Self {
+        self.approvals = approvals;
+        self
     }
 
     pub fn policy(&self) -> &ProxyPolicyHandle {
@@ -122,10 +136,28 @@ impl ProxyEngine {
         let rules = Arc::clone(snapshot.security_rules());
         let plugins = Arc::clone(snapshot.plugins());
         let credentials = Arc::clone(&self.credentials);
-        off_runtime(move || {
+        let mut evaluation = off_runtime(move || {
             crate::security_engine::evaluate_security_boundary_with_credentials(&rules, plugins, credentials, event)
         })
-        .await?
+        .await??;
+        if evaluation.enforcement.action == crate::security_engine::SecurityEnforcementAction::Ask {
+            let held_bytes = crate::security_engine::approval::enforcement::held_bytes(&evaluation.event);
+            crate::security_engine::approval::enforcement::resolve_proxy(
+                self.ledger.as_ref(),
+                self.approvals.as_deref(),
+                snapshot.security_rules(),
+                &mut evaluation,
+                held_bytes,
+            )
+            .await
+            .map_err(SecurityActionError::new)?;
+            if self.policy.snapshot().digest() != snapshot.digest() {
+                evaluation.enforcement.action = crate::security_engine::SecurityEnforcementAction::Block;
+                evaluation.event.decision.effective = crate::security_engine::SecurityDecisionKind::Block;
+                evaluation.enforcement.reason = Some("policy changed while approval was pending".into());
+            }
+        }
+        Ok(evaluation)
     }
 
     pub async fn capture_credential(&self, observation: CredentialObservation) -> Result<BrokeredCredential, String> {

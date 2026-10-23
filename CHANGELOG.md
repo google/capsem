@@ -141,6 +141,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Show a compact toolbar notice when the service confirms a newer Capsem version,
   with a direct action to review its update status.
+- Hold HTTP and model Ask operations behind a bounded, session-bound approval
+  capability; unavailable decisions and policy changes keep the operation blocked.
+
 - Expose live pending security approval counts in the gateway overview and
   session status, with typed SDK operations for reviewing and resolving requests.
 

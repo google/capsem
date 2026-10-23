@@ -9,6 +9,10 @@ use tokio::sync::{oneshot, watch};
 use tokio::time::Instant;
 use uuid::Uuid;
 
+pub mod client;
+pub(crate) mod enforcement;
+pub use enforcement::resolve_emission;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ApprovalBinding {
     pub session_id: String,
@@ -45,6 +49,7 @@ pub enum ApprovalError {
 type Key = (ApprovalBinding, String);
 
 struct Entry {
+    published: bool,
     identity: Arc<()>,
     request: ApprovalRequest,
     created_ms: i64,
@@ -65,6 +70,7 @@ struct State {
 pub struct ApprovalBroker {
     state: Arc<Mutex<State>>,
     limits: ApprovalLimits,
+    changes: watch::Sender<u64>,
 }
 
 impl Default for ApprovalBroker {
@@ -90,13 +96,43 @@ impl ApprovalBroker {
         Ok(Self {
             state: Arc::default(),
             limits,
+            changes: watch::channel(0).0,
         })
+    }
+
+    /// Live queue revisions contain no payloads and are not ledger data.
+    pub fn subscribe(&self) -> watch::Receiver<u64> {
+        self.changes.subscribe()
+    }
+
+    fn changed(&self) {
+        self.changes
+            .send_modify(|revision| *revision = revision.wrapping_add(1));
     }
 
     pub fn register(
         &self,
         binding: ApprovalBinding,
         request: ApprovalRequest,
+    ) -> Result<PendingApproval, ApprovalError> {
+        self.register_with_visibility(binding, request, true)
+    }
+
+    /// Capacity is reserved before bounded ledger verification. It cannot be
+    /// listed or resolved until its owning continuation publishes it.
+    pub fn reserve(
+        &self,
+        binding: ApprovalBinding,
+        request: ApprovalRequest,
+    ) -> Result<PendingApproval, ApprovalError> {
+        self.register_with_visibility(binding, request, false)
+    }
+
+    fn register_with_visibility(
+        &self,
+        binding: ApprovalBinding,
+        request: ApprovalRequest,
+        published: bool,
     ) -> Result<PendingApproval, ApprovalError> {
         if binding.session_id.is_empty() || binding.session_id.len() > 64 || binding.generation.is_nil() {
             return Err(ApprovalError::Invalid);
@@ -132,6 +168,7 @@ impl ApprovalBroker {
         state.entries.insert(
             key.clone(),
             Entry {
+                published,
                 identity: Arc::clone(&identity),
                 request,
                 created_ms,
@@ -143,6 +180,9 @@ impl ApprovalBroker {
             },
         );
         drop(state);
+        if published {
+            self.changed();
+        }
         Ok(PendingApproval {
             broker: self.clone(),
             key,
@@ -161,13 +201,14 @@ impl ApprovalBroker {
         let key = (binding.clone(), ask_id.to_string());
         let mut state = self.state.lock().unwrap();
         let entry = state.entries.get_mut(&key).ok_or(ApprovalError::Missing)?;
-        if entry.deadline <= Instant::now() || *entry.cancel.borrow() {
+        if !entry.published || entry.deadline <= Instant::now() || *entry.cancel.borrow() {
             return Err(ApprovalError::Missing);
         }
         let delivery = entry.delivery.take().ok_or(ApprovalError::AlreadyResolving)?;
         let identity = Arc::clone(&entry.identity);
         let audit = Arc::clone(&entry.audit);
         drop(state);
+        self.changed();
         Ok(ApprovalTicket {
             broker: self.clone(),
             key,
@@ -184,7 +225,7 @@ impl ApprovalBroker {
             .entries
             .iter()
             .filter(|((owner, _), entry)| {
-                owner == binding && entry.delivery.is_some() && entry.deadline > Instant::now()
+                owner == binding && entry.published && entry.delivery.is_some() && entry.deadline > Instant::now()
             })
             .count()
     }
@@ -195,6 +236,7 @@ impl ApprovalBroker {
             .unwrap()
             .entries
             .get(&(binding.clone(), ask_id.to_string()))
+            .filter(|entry| entry.published && entry.deadline > Instant::now() && !*entry.cancel.borrow())
             .map(|entry| ApprovalSnapshot {
                 request: entry.request.clone(),
                 created_ms: entry.created_ms,
@@ -214,32 +256,48 @@ impl ApprovalBroker {
             .filter(|(owner, _)| owner == binding)
             .cloned()
             .collect();
+        let changed = !keys.is_empty();
         for key in keys {
             remove(&mut state, &key);
         }
         drop(state);
+        if changed {
+            self.changed();
+        }
     }
 
     fn remove(&self, key: &Key) {
-        remove(&mut self.state.lock().unwrap(), key);
+        let changed = remove(&mut self.state.lock().unwrap(), key);
+        if changed {
+            self.changed();
+        }
     }
 
     fn remove_identity(&self, key: &Key, identity: &Arc<()>) {
         let mut state = self.state.lock().unwrap();
-        if state
+        let changed = if state
             .entries
             .get(key)
             .is_some_and(|entry| Arc::ptr_eq(&entry.identity, identity))
         {
-            remove(&mut state, key);
+            remove(&mut state, key)
+        } else {
+            false
+        };
+        drop(state);
+        if changed {
+            self.changed();
         }
     }
 }
 
-fn remove(state: &mut State, key: &Key) {
+fn remove(state: &mut State, key: &Key) -> bool {
     if let Some(entry) = state.entries.remove(key) {
         state.held_bytes -= entry.request.held_bytes as usize;
         let _ = entry.cancel.send(true);
+        true
+    } else {
+        false
     }
 }
 
@@ -263,6 +321,22 @@ pub struct PendingApproval {
 }
 
 impl PendingApproval {
+    /// Publish only after the trusted owner verifies the canonical pending
+    /// event. Cancellation and deadline still win during verification.
+    pub fn publish(&self) -> bool {
+        let mut state = self.broker.state.lock().unwrap();
+        let Some(entry) = state.entries.get_mut(&self.key) else {
+            return false;
+        };
+        if !Arc::ptr_eq(&entry.identity, &self.identity) || entry.deadline <= Instant::now() || *entry.cancel.borrow() {
+            return false;
+        }
+        entry.published = true;
+        drop(state);
+        self.broker.changed();
+        true
+    }
+
     pub async fn wait(mut self) -> ApprovalOutcome {
         let outcome = tokio::select! {
             biased;
@@ -298,7 +372,10 @@ impl ApprovalTicket {
     pub fn complete_after_audit(mut self, outcome: ApprovalOutcome) -> bool {
         let mut state = self.broker.state.lock().unwrap();
         let live = state.entries.get(&self.key).is_some_and(|entry| {
-            Arc::ptr_eq(&entry.identity, &self.identity) && entry.deadline > Instant::now() && !*entry.cancel.borrow()
+            entry.published
+                && Arc::ptr_eq(&entry.identity, &self.identity)
+                && entry.deadline > Instant::now()
+                && !*entry.cancel.borrow()
         });
         if !live || !matches!(outcome, ApprovalOutcome::Approved | ApprovalOutcome::Denied) {
             return false;
@@ -308,6 +385,7 @@ impl ApprovalTicket {
             state.held_bytes -= entry.request.held_bytes as usize;
         }
         drop(state);
+        self.broker.changed();
         self.delivery.take().is_some_and(|sender| sender.send(outcome).is_ok())
     }
 }

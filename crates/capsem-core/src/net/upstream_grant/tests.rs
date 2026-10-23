@@ -18,6 +18,33 @@ const POLICY_A: &str = "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 const POLICY_B: &str = "blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
 #[tokio::test]
+async fn approval_channel_has_no_session_selection_and_is_not_retried_after_denial() {
+    let (broker, worker) = UnixStream::pair().unwrap();
+    let client = UpstreamGrantClient::start(worker).unwrap();
+    let (requests, responses) = channels(broker);
+    let (done, keep) = tokio::sync::oneshot::channel();
+    let broker = tokio::spawn(async move {
+        assert_eq!(
+            receive_request(&requests).await,
+            UpstreamGrantRequest::OpenApproval { request_id: 1 }
+        );
+        send_response(
+            &responses,
+            &UpstreamGrantResponse::Denied {
+                request_id: 1,
+                reason: UpstreamGrantDenial::NotConfigured,
+            },
+            None,
+        )
+        .await;
+        let _ = keep.await;
+    });
+    assert!(client.open_approval().await.is_err());
+    done.send(()).unwrap();
+    broker.await.unwrap();
+}
+
+#[tokio::test]
 async fn mcp_aggregator_grant_is_connected_and_a_denial_does_not_replay_the_request() {
     let (broker, worker) = UnixStream::pair().unwrap();
     let client = UpstreamGrantClient::start(worker).unwrap();

@@ -22,6 +22,7 @@ use capsem_proto::upstream_grant::{
 };
 use tokio::sync::{mpsc, oneshot};
 
+mod approval;
 mod mcp;
 
 const COMMAND_CAPACITY: usize = 64;
@@ -33,6 +34,9 @@ type WireSender = DescriptorSender<UPSTREAM_GRANT_FRAME_SIZE, UPSTREAM_GRANT_MAX
 type WireReceiver = DescriptorReceiver<UPSTREAM_GRANT_FRAME_SIZE, UPSTREAM_GRANT_MAX_FDS>;
 
 enum Command {
+    OpenApproval {
+        reply: oneshot::Sender<Result<UnixStream, String>>,
+    },
     AttachMcpHttp {
         role: McpHttpRole,
         descriptor: OwnedFd,
@@ -345,6 +349,7 @@ async fn dispatch(
     command: Command,
 ) -> Result<(), String> {
     match command {
+        Command::OpenApproval { reply } => finish(reply, approval::open(sender, receiver, request_id).await),
         Command::OpenMcpAggregator { reply } => finish(reply, mcp::open_aggregator(sender, receiver, request_id).await),
         Command::AttachMcpHttp {
             role,

@@ -150,6 +150,9 @@ struct RecordingLedger {
 }
 
 impl ProxyLedger for RecordingLedger {
+    fn flush(&self) -> ProxyCapabilityFuture<'_, Result<(), String>> {
+        Box::pin(async { Ok(()) })
+    }
     fn write(&self, op: WriteOp) -> ProxyCapabilityFuture<'_, Result<(), String>> {
         Box::pin(async move {
             let kind = match op {

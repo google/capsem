@@ -20,6 +20,44 @@ fn request(id: u64, bytes: u64) -> ApprovalRequest {
 }
 
 #[tokio::test]
+async fn live_queue_changes_are_observable_without_polling_ledger_rows() {
+    let broker = ApprovalBroker::default();
+    let owner = binding("session");
+    let mut changes = broker.subscribe();
+    let pending = broker.register(owner.clone(), request(1, 0)).unwrap();
+    changes.changed().await.unwrap();
+    assert_eq!(broker.pending_count(&owner), 1);
+    broker.cancel_generation(&owner);
+    changes.changed().await.unwrap();
+    assert_eq!(broker.pending_count(&owner), 0);
+    assert_eq!(pending.wait().await, ApprovalOutcome::Cancelled);
+}
+
+#[tokio::test]
+async fn unresolved_original_emission_is_blocked_without_a_capability() {
+    use crate::security_engine::*;
+    let db = capsem_logger::DbWriter::open_in_memory(16).unwrap();
+    let mut event = SecurityEvent::new(RuntimeSecurityEventType::ProcessExec);
+    event.decision.effective = SecurityDecisionKind::Ask;
+    let mut emission = SecurityRuleEmission {
+        event_id: SecurityEventId::new_uuid4(),
+        emitted: 1,
+        event,
+        rule_events: vec![],
+        enforcement: SecurityEnforcementDecision {
+            action: SecurityEnforcementAction::Ask,
+            rule_id: Some("test.ask".into()),
+            rule_name: Some("Ask".into()),
+            reason: None,
+            ask_id: Some(SecurityEventId::new_uuid4()),
+        },
+    };
+    resolve_emission(&db, None, &mut emission, 0).await.unwrap();
+    assert!(!emission.enforcement.is_allowed());
+    assert_eq!(emission.enforcement.action, SecurityEnforcementAction::Block);
+}
+
+#[tokio::test]
 async fn original_continuation_resumes_only_after_one_audited_decision() {
     let broker = ApprovalBroker::default();
     let owner = binding("session");
