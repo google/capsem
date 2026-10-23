@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Bind stream benchmarks to real terminal output, rotated transcript tails and
+  gateway state-change delivery, with transport Ping/Pong reported separately.
+
 - Cover gateway-only health, OpenAPI and static app launcher reads in route
   benchmarks, validating source content and security headers without service HTTP404
   samples or claiming graphical rendering performance.

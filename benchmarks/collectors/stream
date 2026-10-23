@@ -35,14 +35,24 @@ from helpers.service import ServiceInstance
 from websockets.sync.client import ClientConnection, connect
 from websockets.typing import Subprotocol
 
-from benchmarks.helpers.stream_measurements import Gateway, measure, service_gateway
+from benchmarks.helpers.stream_events import event_samples
+from benchmarks.helpers.stream_measurements import (
+    Gateway,
+    measure,
+    require_endpoint_metrics,
+    sample_count,
+    service_gateway,
+    stream_config,
+)
+from benchmarks.helpers.stream_transcript import COMMAND, MARKER, transcript_samples
 
 ROOT = Path(__file__).resolve().parents[2]
 WIRE = json.loads((ROOT / "sdk/specification/stream-v3.json").read_text())
 SUBPROTOCOL = Subprotocol(WIRE["subprotocol"])
 STDOUT, STDERR, STATUS = "stdout", "stderr", "status"
-EXEC_BYTES = 100 * 1024 * 1024
-TERMINAL_BYTES = 16 * 1024 * 1024
+CONFIG = stream_config()
+EXEC_BYTES = CONFIG["exec_bytes"]
+TERMINAL_BYTES = CONFIG["terminal_bytes"]
 #: Kill-line (Ctrl-U), so the prompt line never grows past a screen.
 KILL_LINE = b"\x15"
 
@@ -221,8 +231,8 @@ def main() -> int:
         "--quick", action="store_true", help="one transfer run and fewer keystrokes"
     )
     args = parser.parse_args()
-    runs = 1 if args.quick else 3
-    keystrokes = 50 if args.quick else 400
+    runs = sample_count(CONFIG, "runs", args.quick)
+    keystrokes = sample_count(CONFIG, "keystrokes", args.quick)
 
     service = ServiceInstance()
     metrics: dict[str, dict] = {}
@@ -259,6 +269,13 @@ def main() -> int:
                 record("exec.output_mbps", "megabits_per_second", mbps)
                 record("exec.output_100mib_seconds", "seconds", seconds)
             measure(metrics, "idle.after", root, lambda: time.sleep(5))
+            with open_stream(gateway, vm, {"type": "start", "kind": "terminal"}) as stream:
+                ready_terminal(stream)
+                stream.send(stdin(COMMAND))
+                read_until(stream, MARKER, timeout=CONFIG["marker_timeout_seconds"])
+            metrics.update(measure(metrics, "events", root, lambda: event_samples(service, gateway, vm, CONFIG, sample_count(CONFIG, "events_ping_samples", args.quick))))
+            metrics.update(measure(metrics, "transcript", root, lambda: transcript_samples(service, gateway, vm, CONFIG, sample_count(CONFIG, "transcript_samples", args.quick))))
+            require_endpoint_metrics(metrics, args.quick)
     finally:
         service.stop()
 

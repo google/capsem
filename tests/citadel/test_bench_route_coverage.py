@@ -27,6 +27,15 @@ def measured_operations(coverage: dict) -> set[str]:
 
 def validate(registered: set[str], coverage: dict) -> None:
     measured = measured_operations(coverage)
+    streams = coverage.get("streaming", {})
+    assert not (measured & set(streams)), RATIONALE
+    measured |= set(streams)
+    for operation, entry in streams.items():
+        assert operation.startswith("GET ") and entry["collector"] == "stream", RATIONALE
+        assert entry["target_scope"] in {"gateway", "both"} and len(entry["reason"]) >= 20, RATIONALE
+        assert entry["cases"] and (ROOT / "benchmarks/collectors/stream").exists(), RATIONALE
+        for case in entry["cases"].values():
+            assert case["sample_key"] and case["metrics"], RATIONALE
     debt, internal = set(coverage["unmeasured"]), set(coverage["internal"])
     assert not (measured & debt or measured & internal or debt & internal), RATIONALE
     assert measured | debt | internal == registered, (
@@ -68,7 +77,7 @@ def test_gateway_method_topology_matches_service() -> None:
 
 
 def test_unmeasured_operations_remain_explicit_debt() -> None:
-    assert len(config()["unmeasured"]) <= 57, RATIONALE
+    assert len(config()["unmeasured"]) <= 54, RATIONALE
     assert len(config()["internal"]) == 7, RATIONALE
 
 
@@ -121,3 +130,18 @@ def test_gateway_owned_method_additions_cannot_hide_behind_proxy_inventory(monke
 ])
 def test_mutation_debt_keeps_its_domain_fixture_owner(operation: str, owner: str) -> None:
     assert config()["unmeasured"][operation]["owner"] == owner, RATIONALE
+
+
+def test_stream_evidence_cannot_overlap_polls_or_hide_missing_registered_method() -> None:
+    import copy
+
+    coverage = copy.deepcopy(config())
+    operation = "GET /vms/{id}/stream"
+    assert set(coverage["streaming"]) == {operation, "GET /events", "GET /vms/{id}/history/transcript"}, RATIONALE
+    coverage["measured"].append({"method": "GET", "path": "/vms/{id}/stream", "case": "false-poll"})
+    with pytest.raises(AssertionError):
+        validate(registered_operations(), coverage)
+    coverage = copy.deepcopy(config())
+    del coverage["streaming"][operation]
+    with pytest.raises(AssertionError, match="Missing"):
+        validate(registered_operations(), coverage)

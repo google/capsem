@@ -203,7 +203,8 @@ Coverage is method-aware: a measured GET never covers a POST on the same path.
 remaining operation with its existing fixture owner and reason. The source-only
 Citadel guard derives methods from service and gateway registrations, including
 chained Axum handlers, and rejects missing, stale or duplicate classifications.
-Gateway-only event streams remain explicit debt.
+Streaming operations bind to their real stream collector and named raw metrics;
+they never inherit JSON read-poll coverage.
 A new route or method cannot silently inherit another method's coverage.
 
 For every measured case, the `routes` collector records warm and cold latency
@@ -221,7 +222,7 @@ contracts, checks nonempty recorded traffic/history and reconciles shared
 counters. The original HTTP/JSON checks remain in every timed request. Security
 ledger arrays can be empty in this recorded corpus; an idle Ask queue is explicitly
 not pending approval performance. Initial managed claim/close and pending Ask
-cases remain named `unmeasured_cases`; 57 other operations retain their owners.
+cases remain named `unmeasured_cases`; 54 other operations retain their owners.
 The additional read corpus is config-owned under `[benchmark.routes.corpus]`:
 64 workspace files plus two changed files, 1 MiB logs with 128-byte unique lines,
 16-line filtered tails within 100 KiB reads, and one cached builtin tool metadata
@@ -274,6 +275,35 @@ these cases do not certify GUI bootstrap, rendering or native input latency.
 Bounds remain the typed shared response budget; raw/stats/fitness owners and
 ordinary sample counts are unchanged. Content validation is outside latency
 clocks but remains part of measured load throughput.
+
+The same inventory separately binds three operations to `stream`: real
+stream-v3 echo/resize/terminal and exec transfers, rotated transcript tails, and
+gateway JSON WebSocket events. The65 ordinary route cases cover59 operations;
+these three streaming bindings bring explicit source coverage to62 operations,
+with54 remaining operations plus7 internal controls and3 unmeasured states.
+Bindings require each raw metric and its configured sample count; missing or
+partial phases fail instead of silently inheriting a successful collector exit.
+
+`[benchmark.stream]` owns sizes/counts and transcript/event bounds. The existing
+16MiB terminal source transfer base64-expands past the real20MiB transcript
+rotation threshold. A known foreground marker is emitted through the same
+stream, then the disposable persistent owner stops/drains. Transcript timing
+uses strict warm/cold HTTP receipts on service and gateway, exact base64/byte
+count and nonempty bounded tail/marker validation; rotation metadata comes from
+the real owner log generation, never fabricated PTY frames. All statistics and
+whole-process-tree resource samples retain their existing owners.
+
+`/events` is a separate JSON WebSocket, not stream-v3 or SSE. Matched Ping/Pong
+samples are transport RTT and exclude upgrade time; they do not measure app
+latency. A Running snapshot is primed before subscribe; no initial event is
+assumed. After one actual stop, authoritative gateway status must report Stopped,
+then the matching `status_poll` transition is required under byte/frame/deadline
+budgets. Stop-to-event includes stop+poll; poll-to-event begins before that
+status request. These are client-observed delivery clocks, not server timestamps.
+One transition per collector run is deliberately not a p99/tail distribution;
+no removed-VM event, general notification delivery, POST-stop endpoint coverage
+or GUI/native rendering claim follows from it. Native matching-cohort execution
+and fit repeats remain required before any performance conclusion.
 
 ## Benchmarks that are still pytest
 

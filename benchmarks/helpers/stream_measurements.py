@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import time
+import tomllib
+from pathlib import Path
 from typing import NamedTuple
 
 from helpers.process_resources import ProcessTreeSampler
@@ -42,3 +44,25 @@ def measure(metrics: dict, phase: str, root, operation):
         elapsed = time.monotonic() - started
         metrics.update({f"{phase}.{key}": value for key, value in sampler.stop().items()})
         metrics[f"{phase}.wall_s"] = {"unit": "seconds", "samples": [elapsed]}
+
+
+def stream_config() -> dict:
+    return tomllib.loads((Path(__file__).resolve().parents[2] / "config/gate.toml").read_text())["benchmark"]["stream"]
+
+
+def endpoint_bindings() -> dict:
+    return tomllib.loads((Path(__file__).resolve().parents[2] / "config/gate.toml").read_text())["benchmark"]["routes"]["streaming"]
+
+
+def sample_count(cfg: dict, key: str, quick: bool) -> int:
+    return cfg.get("quick_" + key, cfg[key]) if quick else cfg[key]
+
+
+def require_endpoint_metrics(metrics: dict, quick: bool = False) -> None:
+    cfg = stream_config()
+    for endpoint in endpoint_bindings().values():
+        for case in endpoint["cases"].values():
+            expected = sample_count(cfg, case["sample_key"], quick)
+            for key in case["metrics"]:
+                if key not in metrics or len(metrics[key]["samples"]) != expected:
+                    raise ValueError(f"missing or partial streaming endpoint metric: {key}")

@@ -3149,6 +3149,49 @@ measured = [
     { method = "GET", path = "/networks/{id}", case = "created-network" },
 ]
 
+[benchmark.routes.streaming."GET /vms/{id}/stream"]
+collector = "stream"
+target_scope = "gateway"
+reason = "Real authenticated stream-v3 terminal echo/resize/projection and byte-counted streaming exec; no JSON poll substitution."
+cases = { echo = { sample_key = "keystrokes", metrics = ["terminal.keystroke_echo_ms"] }, resize = { sample_key = "resize_samples", metrics = ["terminal.resize_echo_ms"] }, transfer = { sample_key = "runs", metrics = ["terminal.source_input_mbps", "terminal.projected_wire_mbps", "exec.output_mbps", "exec.output_100mib_seconds"] } }
+
+[benchmark.routes.streaming."GET /vms/{id}/history/transcript"]
+collector = "stream"
+target_scope = "both"
+reason = "Known actual terminal output after real PTY rotation and owner stop/drain; bounded base64 tail with strict complete receipts."
+cases = { tail = { sample_key = "transcript_samples", metrics = ["service.GET /vms/{id}/history/transcript [rotated-tail].latency_ms", "service.GET /vms/{id}/history/transcript [rotated-tail].cold_latency_ms", "gateway.GET /vms/{id}/history/transcript [rotated-tail].latency_ms", "gateway.GET /vms/{id}/history/transcript [rotated-tail].cold_latency_ms"] } }
+
+[benchmark.routes.streaming."GET /events"]
+collector = "stream"
+target_scope = "gateway"
+reason = "Separate matched Ping/Pong transport RTT and genuine persistent owner stop followed by authoritative status-poll transition delivery."
+cases = { transport = { sample_key = "events_ping_samples", metrics = ["events.transport_ping_pong_ms"] }, transition = { sample_key = "event_transitions", metrics = ["events.stop_to_event_ms", "events.status_poll_to_event_ms"] } }
+
+[benchmark.stream]
+runs = 3
+quick_runs = 1
+keystrokes = 400
+quick_keystrokes = 50
+resize_samples = 20
+terminal_bytes = 16777216
+exec_bytes = 104857600
+marker_timeout_seconds = 30
+transcript_samples = 8
+quick_transcript_samples = 2
+transcript_tail_lines = 16
+transcript_max_bytes = 65536
+transcript_rotation_min_bytes = 20971520
+transcript_rotated_path = "owner/logs/pty.log.1"
+events_ping_samples = 16
+quick_events_ping_samples = 4
+event_transitions = 1
+events_max_frame_bytes = 65536
+events_max_frames = 8
+events_timeout_seconds = 10
+events_open_timeout_seconds = 15
+events_close_timeout_seconds = 5
+mutation_timeout_seconds = 60
+
 [benchmark.routes.unmeasured]
 "DELETE /connections/authorizations/{transaction_id}" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
 "DELETE /connections/{connection_id}" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
@@ -3160,14 +3203,11 @@ measured = [
 "DELETE /vms/{id}/exposures/{exposure_id}/preview-session" = { owner = "tests/ironbank/kingslanding/test_preview.py", reason = "Needs actual exposure ownership and single-use preview capability lifecycle, including revoke/delete cleanup." }
 "GET /connections/authorizations/{transaction_id}" = { owner = "crates/capsem-service/src/connection_routes.rs", reason = "Production Runtime constructs only disabled unconfigured agy-native profile; successful enrollment metadata needs an implemented provider contract, never fabricated authority." }
 "GET /connections/{connection_id}" = { owner = "crates/capsem-service/src/connection_routes.rs", reason = "Production Runtime constructs only disabled unconfigured agy-native profile; successful enrollment metadata needs an implemented provider contract, never fabricated authority." }
-"GET /events" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
 "GET /images" = { owner = "tests/ironbank/kingslanding/test_image_catalog.py", reason = "Needs hermetic registry and installed inventory fixture; never time vendor downloads." }
 "GET /images/{name}/inventory" = { owner = "tests/ironbank/kingslanding/test_image_catalog.py", reason = "Needs hermetic registry and installed inventory fixture; never time vendor downloads." }
 "GET /networks/{id}/logs" = { owner = "tests/ironbank/test_managed_network_lifecycle.py", reason = "Fresh network metadata writes no transport events; populated timing requires actual recorded transport traffic." }
 "GET /panics" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
 "GET /triage" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
-"GET /vms/{id}/history/transcript" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
-"GET /vms/{id}/stream" = { owner = "benchmarks/collectors/routes", reason = "Read requires successful populated local or live-owner fixture before promotion." }
 "PATCH /mcp/default/edit" = { owner = "tests/ironbank/test_mcp_settings_ledger.py", reason = "Needs isolated MCP policy mutation and actual settings ledger evidence, with configuration restored." }
 "PATCH /mcp/servers/{server_id}/tools/{tool_id}/edit" = { owner = "tests/ironbank/test_mcp_settings_ledger.py", reason = "Needs isolated MCP policy mutation and actual settings ledger evidence, with configuration restored." }
 "PATCH /plugins/{plugin_id}/edit" = { owner = "tests/ironbank/test_policy_mutation_routes.py", reason = "Needs isolated plugin policy mutation plus durable publication evidence and exact configuration restore." }

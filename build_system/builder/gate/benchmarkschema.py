@@ -13,6 +13,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field, PositiveFloat, PositiveInt, field_validator
 
+from .benchmarkstreamschema import StreamConfig, StreamEndpointEvidence
 from .configschema import Strict
 
 
@@ -60,6 +61,7 @@ class RouteCoverageConfig(Strict):
     """Exhaustive method-aware coverage; no path-only coverage claims."""
 
     measured: tuple[RouteCaseConfig, ...]
+    streaming: dict[str, StreamEndpointEvidence]
     unmeasured: dict[str, RouteDebtConfig]
     internal: dict[str, RouteDebtConfig]
     unmeasured_cases: dict[str, RouteDebtConfig]
@@ -255,6 +257,7 @@ class BenchmarkGatesConfig(Strict):
 
 
 class BenchmarkConfig(Strict):
+    stream: StreamConfig
     routes: RouteCoverageConfig
     route_load: RouteLoadConfig
     route_health: RouteHealthConfig
