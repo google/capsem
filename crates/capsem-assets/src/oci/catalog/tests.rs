@@ -335,3 +335,38 @@ fn supported_lists_every_digest_and_revocation_is_omission() {
         &digest(A)
     );
 }
+
+#[test]
+fn catalog_branding_and_evidence_are_optional_and_bound_to_the_exact_version() {
+    let mut value = document();
+    value["entries"]["codex"]["display_name"] = json!("Codex CLI");
+    value["entries"]["codex"]["publisher"] = json!("OpenAI");
+    value["entries"]["codex"]["url"] = json!("https://example.com/product");
+    value["entries"]["codex"]["versions"][0]["evidence"] = json!({"arm64":[{
+        "kind":"package_inventory", "reference":image(E),"media_type":"application/json"
+    }]});
+    let catalog = parse(&value).unwrap();
+    let entry = catalog.entry("codex").unwrap();
+    assert_eq!(entry.display_name(), Some("Codex CLI"));
+    assert_eq!(entry.publisher(), Some("OpenAI"));
+    assert_eq!(entry.url(), Some("https://example.com/product"));
+    assert_eq!(entry.versions()[0].evidence(PackageArchitecture::Arm64).len(), 1);
+    assert!(entry.versions()[1].evidence(PackageArchitecture::Arm64).is_empty());
+    assert_eq!(catalog.entry("claude-code").unwrap().display_name(), None);
+}
+
+#[test]
+fn catalog_rejects_unsafe_branding_and_unpinned_or_wrong_platform_evidence() {
+    let mut value = document();
+    value["entries"]["codex"]["url"] = json!("javascript:alert(1)");
+    assert!(parse(&value).is_err());
+    value["entries"]["codex"].as_object_mut().unwrap().remove("url");
+    value["entries"]["codex"]["versions"][1]["evidence"] = json!({"amd64":[{
+        "kind":"sbom", "reference":image(E),"media_type":"application/spdx+json"
+    }]});
+    assert!(parse(&value).is_err());
+    value["entries"]["codex"]["versions"][1]["evidence"] = json!({"arm64":[{
+        "kind":"abom", "reference":"registry.example/app:latest","media_type":"application/json"
+    }]});
+    assert!(parse(&value).is_err());
+}

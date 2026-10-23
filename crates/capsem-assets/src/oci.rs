@@ -25,8 +25,8 @@ const METADATA_LIMIT: usize = 4 * 1024 * 1024;
 const PULL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 mod pull;
 pub use catalog::{
-    is_catalog_name, Catalog, CatalogEntry, CatalogVersion, Channel, CATALOG_MEDIA_TYPE, DEFAULT_CATALOG,
-    RUNTIME_CONTRACT,
+    is_catalog_name, Catalog, CatalogEntry, CatalogEvidence, CatalogVersion, Channel, CATALOG_MEDIA_TYPE,
+    DEFAULT_CATALOG, RUNTIME_CONTRACT,
 };
 mod selector;
 pub use oci_client::secrets::RegistryAuth;

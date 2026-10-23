@@ -67,6 +67,11 @@ pub struct Catalog {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CatalogEntry {
     description: String,
+    display_name: Option<String>,
+    publisher: Option<String>,
+    url: Option<String>,
+    category: Option<String>,
+    interfaces: Vec<String>,
     icon: Option<String>,
     surface: Option<String>,
     versions: Vec<CatalogVersion>,
@@ -80,6 +85,15 @@ pub struct CatalogVersion {
     contract: u32,
     obom: BTreeMap<PackageArchitecture, Digest>,
     erofs: BTreeMap<PackageArchitecture, Digest>,
+    evidence: BTreeMap<PackageArchitecture, Vec<CatalogEvidence>>,
+}
+
+/// An immutable artifact declared for one exact image version and platform.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogEvidence {
+    pub kind: String,
+    pub reference: ResolvedImage,
+    pub media_type: String,
 }
 
 impl Catalog {
@@ -181,12 +195,59 @@ impl CatalogEntry {
             );
             versions.push(version);
         }
+        for text in [&entry.display_name, &entry.publisher, &entry.category]
+            .into_iter()
+            .flatten()
+        {
+            ensure!(
+                !text.trim().is_empty() && text.len() <= 200 && !text.chars().any(char::is_control),
+                "invalid display metadata"
+            );
+        }
+        if let Some(url) = &entry.url {
+            let url = reqwest::Url::parse(url).context("invalid product URL")?;
+            ensure!(
+                url.scheme() == "https"
+                    && url.host_str().is_some()
+                    && url.username().is_empty()
+                    && url.password().is_none(),
+                "product URL must be public HTTPS"
+            );
+        }
+        ensure!(
+            entry
+                .interfaces
+                .iter()
+                .all(|kind| matches!(kind.as_str(), "terminal" | "graphical" | "web" | "api")),
+            "invalid interface capability"
+        );
         Ok(Self {
+            display_name: entry.display_name,
+            publisher: entry.publisher,
+            url: entry.url,
+            category: entry.category,
+            interfaces: entry.interfaces,
             description: entry.description,
             icon: entry.icon,
             surface: entry.surface,
             versions,
         })
+    }
+
+    pub fn display_name(&self) -> Option<&str> {
+        self.display_name.as_deref()
+    }
+    pub fn publisher(&self) -> Option<&str> {
+        self.publisher.as_deref()
+    }
+    pub fn url(&self) -> Option<&str> {
+        self.url.as_deref()
+    }
+    pub fn category(&self) -> Option<&str> {
+        self.category.as_deref()
+    }
+    pub fn interfaces(&self) -> &[String] {
+        &self.interfaces
     }
 
     pub fn description(&self) -> &str {
@@ -228,13 +289,55 @@ impl CatalogVersion {
         }
         let obom = per_architecture("obom", version.obom, &platforms)?;
         let erofs = per_architecture("erofs", version.erofs, &platforms)?;
+        let evidence = version
+            .evidence
+            .into_iter()
+            .map(|(architecture, entries)| {
+                ensure!(
+                    platforms.contains(&architecture),
+                    "evidence platform is not built by this version"
+                );
+                let mut kinds = std::collections::BTreeSet::new();
+                let entries = entries
+                    .into_iter()
+                    .map(|entry| {
+                        ensure!(
+                            matches!(entry.kind.as_str(), "sbom" | "abom" | "package_inventory"),
+                            "unknown evidence kind"
+                        );
+                        ensure!(kinds.insert(entry.kind.clone()), "duplicate evidence kind");
+                        let reference: ImageReference = entry.reference.parse()?;
+                        let digest = reference
+                            .digest()
+                            .cloned()
+                            .context("evidence must be pinned by digest")?;
+                        ensure!(
+                            entry.media_type.starts_with("application/")
+                                && entry.media_type.bytes().all(|byte| byte.is_ascii_graphic()),
+                            "invalid evidence media type"
+                        );
+                        Ok(CatalogEvidence {
+                            kind: entry.kind,
+                            reference: reference.resolve(digest)?,
+                            media_type: entry.media_type,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Ok((architecture, entries))
+            })
+            .collect::<Result<BTreeMap<_, _>>>()?;
         Ok(Self {
             image,
             platforms,
             contract: version.contract,
             obom,
             erofs,
+            evidence,
         })
+    }
+
+    pub fn evidence(&self, architecture: PackageArchitecture) -> &[CatalogEvidence] {
+        self.evidence.get(&architecture).map(Vec::as_slice).unwrap_or_default()
     }
 
     pub fn image(&self) -> &ResolvedImage {
@@ -278,6 +381,16 @@ struct Document {
 struct EntryDocument {
     description: String,
     #[serde(default)]
+    display_name: Option<String>,
+    #[serde(default)]
+    publisher: Option<String>,
+    #[serde(default)]
+    url: Option<String>,
+    #[serde(default)]
+    category: Option<String>,
+    #[serde(default)]
+    interfaces: Vec<String>,
+    #[serde(default)]
     icon: Option<String>,
     #[serde(default)]
     surface: Option<String>,
@@ -294,6 +407,16 @@ struct VersionDocument {
     obom: BTreeMap<PackageArchitecture, String>,
     #[serde(default)]
     erofs: BTreeMap<PackageArchitecture, String>,
+    #[serde(default)]
+    evidence: BTreeMap<PackageArchitecture, Vec<EvidenceDocument>>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EvidenceDocument {
+    kind: String,
+    reference: String,
+    media_type: String,
 }
 
 /// Validate a per-architecture digest map such as `obom` or `erofs`: every
