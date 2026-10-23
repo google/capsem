@@ -38,47 +38,42 @@ def build(image, selected: str | None = None) -> str:
         common += ["--build-arg", f"BASE={base}"]
     context = str(ROOT / settings.context)
     image.stage().mkdir(parents=True, exist_ok=True)
+    from images.ci.rootfs import main as build_rootfs
+
+    from . import producer_evidence
+
     with tempfile.TemporaryDirectory(dir=image.stage(), prefix=".build-") as tmp:
         staged = Path(tmp) / "layout"
         output = f"type=oci,tar=false,dest={staged}"
         subprocess.run([*common, "--output", output, context], check=True, timeout=3600)
         (entry,) = json.loads((staged / "index.json").read_text())["manifests"]
         digest = entry["digest"]
+        producer_evidence.safe_tree(staged)
         verify(staged, digest, platform)
         layout = image.layout_path(digest)
-        if layout.is_dir():
-            verify(layout, digest, platform)
+        if layout.exists() or layout.is_symlink():
+            # Reuse first producer bytes; missing metadata is a refusal, never
+            # an excuse to regenerate a different filesystem under this subject.
+            producer_evidence.ready(layout, settings.repository, arch, maximum=settings.evidence_max_bytes)
+            subprocess.run([*common, "--load", "--tag", f"{settings.name}:{arch}", context], check=True, timeout=3600)
         else:
+            tag = f"{settings.name}:{arch}"
+            subprocess.run([*common, "--load", "--tag", tag, context], check=True, timeout=3600)
+            filesystem = Path(tmp) / "filesystem"
+            filesystem.mkdir()
+            build_rootfs(["--image", tag, "--arch", arch, "--repository", settings.repository,
+                "--digest", digest, "--out", str(filesystem),
+                *(["--without-shared-toolkit"] if image.section == "debug_image" else [])])
+            evidence = producer_evidence.stage(staged, filesystem, settings.repository, arch, maximum=settings.evidence_max_bytes)
+            expected = (evidence / "receipt.json").read_bytes()
             _publish(staged, layout)
-    # The same build again from BuildKit's cache, loaded into Docker under a
-    # local tag, for images/ci/rootfs.py (the OBOM) and hands-on use.
-    tag = f"{settings.name}:{arch}"
-    subprocess.run([*common, "--load", "--tag", tag, context], check=True, timeout=3600)
-    from images.ci.rootfs import main as build_rootfs
-
-    from .published_root import stage
-
-    with tempfile.TemporaryDirectory(dir=image.stage(), prefix=".filesystem-") as temporary:
-        output = Path(temporary)
-        build_rootfs(
-            [
-                "--image",
-                tag,
-                "--arch",
-                arch,
-                "--repository",
-                settings.repository,
-                "--digest",
-                digest,
-                "--out",
-                str(output),
-                *(["--without-shared-toolkit"] if image.section == "debug_image" else []),
-            ]
-        )
-        stage(layout, output)
+            actual = producer_evidence.ready(layout, settings.repository, arch, maximum=settings.evidence_max_bytes)
+            if (actual / "receipt.json").read_bytes() != expected:
+                raise ValueError("published generation differs from original producer evidence")
     print(f"Built {settings.name} {platform}: {digest}")
     print(f"  layout: {layout}")
-    print(f"  docker: {tag}")
+    print(f"  docker: {settings.name}:{arch}")
+    print(f"  original evidence: {layout / producer_evidence.DIRECTORY}")
     print(f"Pin it in config/gate.toml [functional.{image.section}] digests:")
     print(f'  "{platform}" = "{digest}"')
     return digest

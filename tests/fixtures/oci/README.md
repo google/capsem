@@ -144,7 +144,14 @@ the broker's hermetic OAuth endpoint -- stays a `"target": "vm"` exec.
    `uv pip compile images/capsem-debug/requirements.in --generate-hashes --python-version 3.11 --universal --exclude-newer <date> --no-header -o images/capsem-debug/requirements.txt`.
 2. `uv run --project build_system --frozen capsem-gate debug-image` builds it
    for this host's platform into the cache stage and loads it into Docker as
-   `capsem-debug:<arch>`. It prints the line to pin.
+   `capsem-debug:<arch>`. It prints the line to pin and the original evidence
+   directory. The complete new generation is published atomically: its original
+   OCI layout, prepared `rootfs-v2/` blob and `producer-evidence/` with unchanged
+   canonical OBOM, package inventory, root BLAKE3 receipt and subject/platform
+   binding. The existing root blob is shared, never duplicated for metadata.
+   A matching cached generation must retain and validate all original evidence;
+   missing/corrupt/foreign evidence fails without rescanning or repacking. An old
+   incomplete generation is not silently upgraded from regenerated output.
 3. Qualify the candidate using the layout path printed by the build:
    `uv run --project build_system --frozen capsem-gate image-qualify --image capsem-debug --layout <built-layout>`.
    Only after qualification passes, put that digest in
@@ -164,11 +171,17 @@ the broker's hermetic OAuth endpoint -- stays a `"target": "vm"` exec.
 
    `oras cp` copies the manifest and blobs verbatim; `docker push` would
    recompress the layers and publish a different digest. Then attach its
-   OBOM the way the official images do:
-   `uv run --project build_system --frozen python images/ci/rootfs.py --image capsem-debug:<arch> --arch <arch> --repository ghcr.io/google/capsem/capsem-debug --digest sha256:<hex digest> --out <dir>`
-   and `oras attach --artifact-type application/vnd.cyclonedx+json ghcr.io/google/capsem/capsem-debug@sha256:<hex digest> <dir>/obom.cdx.json:application/vnd.cyclonedx+json`.
+   OBOM and package inventory from the **original** `producer-evidence/`
+   directory printed by the build, after its subject/platform/integrity checks.
+   Never rerun `images/ci/rootfs.py` merely to recover metadata: its regenerated
+   EROFS may differ from the root that qualified. Retain the original root blob
+   named by `rootfs-v2`'s verified manifest, and use that exact file for the root
+   attachment. The metadata directory intentionally contains no second EROFS.
+   `oras attach --artifact-type application/vnd.cyclonedx+json ghcr.io/google/capsem/capsem-debug@sha256:<hex digest> <original-evidence>/obom.cdx.json:application/vnd.cyclonedx+json`.
    Attach the prepared filesystem to the same platform subject too:
-   `oras attach --artifact-type application/vnd.capsem.rootfs.erofs.v2 --annotation org.capsem.rootfs.blake3="$(cat <dir>/rootfs.blake3)" ghcr.io/google/capsem/capsem-debug@sha256:<hex digest> <dir>/rootfs.erofs:application/vnd.capsem.rootfs.erofs.v2`.
+   `oras attach --artifact-type application/vnd.capsem.rootfs.erofs.v2 --annotation org.capsem.rootfs.blake3="$(cat <original-evidence>/rootfs.blake3)" ghcr.io/google/capsem/capsem-debug@sha256:<hex digest> <original-root-blob>:application/vnd.capsem.rootfs.erofs.v2`.
+   Attach original `packages.json` with artifact type
+   `application/vnd.capsem.package-inventory.v1+json` to that same subject.
    The pinned manifest binds the BLAKE3 annotation to the platform subject.
    OCI transport retains SHA-256; host and guest verify the prepared EROFS
    bytes with BLAKE3 before use. Version 1 roots are not admitted.
@@ -185,9 +198,11 @@ printed layout with `capsem-gate image-qualify --image dev --layout
 <built-layout>`, and update `[functional.reference_image] digests` only after
 that native qualification passes. Publish the exact layout bytes to
 `ghcr.io/google/capsem/dev` with `oras cp`; rebuilding or using `docker push`
-can produce a different manifest digest. Attach the OBOM with
-`images/ci/rootfs.py --image dev:<arch>`, make the package public, and verify an
-anonymous manifest fetch by digest before relying on the pin in CI. The pinned
+can produce a different manifest digest. Use the original `producer-evidence/`
+OBOM/package inventory/integrity and the verified existing `rootfs-v2` blob, as
+for capsem-debug above; do not regenerate its root to recover deleted metadata.
+Make the package public, and verify an anonymous manifest fetch by digest before
+relying on the pin in CI. The pinned
 layout is also mounted read-only into installed-package proofs through
 `CAPSEM_REFERENCE_IMAGE_LAYOUT`.
 

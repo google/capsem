@@ -300,6 +300,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preserve active image generations and their lease-control inodes during
   cache retention, including permissive policies and stale prune plans.
 
+- Preserve original pinned-image OBOM, package inventory and root integrity
+  evidence atomically with its qualified filesystem; reuse validates those bytes
+  instead of regenerating a different root to recover deleted metadata.
+
 - Keep approval, denial, refresh and close shortcuts readable in narrow TUI
   approval panels.
 

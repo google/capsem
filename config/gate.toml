@@ -2412,6 +2412,7 @@ context = "images/capsem-debug"
 script = "tests/fixtures/oci/pinned_image.py"
 repository = "ghcr.io/google/capsem/capsem-debug"
 cache_stage = "test-images"
+evidence_max_bytes = 67108864
 digests = { "linux/arm64" = "sha256:880983cdd4ca21e051745fc563d07642ca86cfc7b0aa6fc75ff6db3e16779f3c", "linux/amd64" = "sha256:0af41def16f371368e03b668169c841c5a15ae28091a9d2ec6bf5ef479ae34a7" }
 
 # The reference image: a pinned digest of the official `dev` image. Every
@@ -2430,6 +2431,7 @@ base_context = "images/base"
 script = "tests/fixtures/oci/pinned_image.py"
 repository = "ghcr.io/google/capsem/dev"
 cache_stage = "test-images"
+evidence_max_bytes = 67108864
 # The installed proofs (winterfell, through the glow-up and the transition
 # replay) boot this image from the layout this variable names, mounted into
 # their container at its own path.

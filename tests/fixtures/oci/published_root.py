@@ -81,7 +81,7 @@ def ready(layout: Path, *, root: Path | None = None) -> tuple[dict, Path]:
     return manifest, path
 
 
-def stage(layout: Path, output: Path) -> None:
+def stage(layout: Path, output: Path) -> tuple[dict, Path]:
     """Retain canonical producer output; reject an OBOM for another image."""
     image = subject(layout)
     component = json.loads((output / "obom.cdx.json").read_text())["metadata"]["component"]
@@ -115,10 +115,12 @@ def stage(layout: Path, output: Path) -> None:
         (root / "index.json").write_text(json.dumps({"schemaVersion": 2, "manifests": [entry]}))
         (root / "oci-layout").write_text('{"imageLayoutVersion":"1.0.0"}')
         if (layout / "rootfs-v2").exists():
-            ready(layout)
+            existing, _ = ready(layout)
+            if existing['layers'][0]['digest'] != root_digest:
+                raise ValueError('prepared original root differs from producer output')
         else:
             root.rename(layout / "rootfs-v2")
-    ready(layout)
+    return ready(layout)
 
 
 def _download(client, url, token, root, entry, kind, limit):

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from pydantic import StringConstraints, model_validator
+from pydantic import PositiveInt, StringConstraints, model_validator
 
 from .configschema import SafeToken, Strict
 
@@ -56,6 +56,7 @@ class PinnedImageConfig(Strict):
     script: str
     repository: str
     cache_stage: SafeToken
+    evidence_max_bytes: PositiveInt
     digests: dict[Platform, ManifestDigest]
     #: The variable an installed proof reads the image's layout path from,
     #: for an image the release proofs boot (the reference image).
