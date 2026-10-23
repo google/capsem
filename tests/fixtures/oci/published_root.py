@@ -190,7 +190,10 @@ def prepare(layout: Path, repository: str, *, context=None) -> None:
         if manifest["schemaVersion"] != 2 or manifest["artifactType"] != MEDIA:
             raise ValueError("unsupported prepared-root artifact")
         (layer,) = manifest["layers"]
-        for blob, kind, limit in ((manifest["config"], EMPTY, 2), (layer, MEDIA, LIMIT)):
+        for blob, kind, limit in (
+            (manifest["config"], EMPTY, 2),
+            (layer, MEDIA, LIMIT),
+        ):
             _download(
                 client,
                 f"{base}/blobs/{blob['digest']}",
