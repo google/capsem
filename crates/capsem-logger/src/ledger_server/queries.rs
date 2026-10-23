@@ -16,6 +16,18 @@ pub(super) async fn execute(db: &DbHandle, query: LedgerQuery) -> Result<Vec<Led
 
 fn statements(query: LedgerQuery) -> Result<Vec<Statement>, String> {
     match query {
+        LedgerQuery::SecurityAsks { limit, ask_id } => Ok(vec![(
+            "SELECT event.timestamp_unix_ms, event.ask_id, event.event_id, event.event_type, \
+             event.rule_id, event.rule_name, event.status, event.rule_json, event.resolver, event.reason, event.trace_id, \
+             COALESCE((SELECT created.timestamp_unix_ms FROM security_ask_events AS created \
+                 WHERE created.ask_id = event.ask_id AND created.status = 'pending' ORDER BY created.id LIMIT 1), \
+                 event.timestamp_unix_ms) AS created_at_unix_ms \
+             FROM security_ask_events AS event WHERE (?2 IS NULL OR event.ask_id = ?2) \
+             AND NOT EXISTS (SELECT 1 FROM security_ask_events AS newer \
+                 WHERE newer.ask_id = event.ask_id AND newer.id > event.id) \
+             ORDER BY event.id DESC LIMIT ?1".into(),
+            vec![json!(limit), ask_id.map_or(Value::Null, Value::String)],
+        )]),
         LedgerQuery::SecurityLatest { limit, detection_only } => {
             let detection = if detection_only {
                 "WHERE event.detection_level != 'none'"
@@ -64,6 +76,9 @@ fn statements(query: LedgerQuery) -> Result<Vec<Statement>, String> {
         LedgerQuery::Triage { limit } => Ok(triage_statements(limit)),
     }
 }
+
+#[cfg(test)]
+mod tests;
 
 const EXEC_WINDOW: &str = "SELECT timestamp, 'exec' AS layer, exec_id AS ref, command AS summary, \
     exit_code AS status, duration_ms, trace_id FROM exec_events WHERE timestamp >= ?2 \

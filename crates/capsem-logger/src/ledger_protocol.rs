@@ -122,6 +122,10 @@ fn valid_event_id(value: &str) -> bool {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LedgerQuery {
+    SecurityAsks {
+        limit: u16,
+        ask_id: Option<String>,
+    },
     SecurityLatest {
         limit: u16,
         detection_only: bool,
@@ -149,6 +153,7 @@ impl LedgerQuery {
         let valid_limit = |limit: u16| limit > 0 && usize::from(limit) <= MAX_LEDGER_QUERY_ROWS;
         let bounded_text = |value: &str| value.len() <= MAX_QUERY_TEXT_BYTES;
         let valid = match self {
+            Self::SecurityAsks { limit, ask_id } => valid_limit(*limit) && ask_id.as_deref().is_none_or(valid_event_id),
             Self::SecurityLatest { limit, .. } | Self::Triage { limit } => valid_limit(*limit),
             Self::Timeline {
                 layers,

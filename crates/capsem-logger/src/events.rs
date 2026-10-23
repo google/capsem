@@ -238,6 +238,14 @@ pub struct SecurityAskRecord {
     pub trace_id: Option<String>,
 }
 
+/// Latest lifecycle row, with its original creation time. No event payload.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SecurityAskView {
+    #[serde(flatten)]
+    pub event: SecurityAskRecord,
+    pub created_at_unix_ms: i64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PolicyMutationEvent {
     pub timestamp_unix_ms: i64,

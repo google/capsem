@@ -197,16 +197,14 @@ pub(super) fn insert_security_rule_event(
 }
 
 /// An ask's row, with the asked-about event archived beside it the way every
-/// security payload is. The pending row and its resolution carry the same
-/// event, and both are staged: the index holds one body per event, so the
-/// second names the same bytes the first did.
+/// security payload is. Only the pending row stages its original payload:
+/// a resolver carries a decision, never replacement operation bytes.
 pub(super) fn insert_security_ask_event(
     conn: &Connection,
     event: &SecurityAskEvent,
     target: WriteTarget,
     bodies: &mut BodyArchive,
 ) -> rusqlite::Result<()> {
-    let payload = security_payload(&event.event_json, &event.event_type);
     execute_cached(
         conn,
         &format!(
@@ -231,6 +229,10 @@ pub(super) fn insert_security_ask_event(
             event.trace_id,
         ],
     )?;
+    if event.status != crate::SecurityAskStatus::Pending {
+        return Ok(());
+    }
+    let payload = security_payload(&event.event_json, &event.event_type);
     bodies.stage(
         conn,
         EventBodyBlob {

@@ -179,6 +179,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Sort dashboard sessions correctly by total tokens and estimated cost, and
   expose the active sort direction to assistive technology. Include output-only
   token usage in the displayed total.
+- Preserve the original security approval request's forensic payload when its
+  resolution is appended to the session ledger.
 
 - Apply configured archive retention through trusted ledger maintenance after
   session producers drain, keeping VM and proxy channels restricted.
