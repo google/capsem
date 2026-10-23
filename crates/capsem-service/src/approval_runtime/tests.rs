@@ -25,8 +25,8 @@ async fn fixture() -> (
     };
     let authority = WorkerAuthority::default();
     let binding = ApprovalBinding {
-        session_id: uuid::Uuid::new_v4().to_string(),
-        generation: uuid::Uuid::new_v4(),
+        session_id: capsem_crypto::uuid_v4().to_string(),
+        generation: capsem_crypto::uuid_v4(),
     };
     let session = runtime
         .install(
@@ -104,7 +104,7 @@ async fn retired_generation_cannot_resolve_or_resume_an_original_operation() {
     let (runtime, session, _db, authority, _dir) = fixture().await;
     let pending = session.begin(request()).await.unwrap();
     let mut wrong = session.binding.clone();
-    wrong.generation = uuid::Uuid::new_v4();
+    wrong.generation = capsem_crypto::uuid_v4();
     assert!(runtime.get(&wrong).is_none());
     authority.revoke();
     runtime.retire(&session.binding);
@@ -200,7 +200,7 @@ async fn mounted_approval_routes_bind_session_generation_and_reject_repeated_dec
     assert!(!body.to_string().contains("fixture-secret"));
     let resolve = format!("{route}/0123456789ab/resolve");
     let decision = json!({"generation":session.binding.generation.to_string(),"decision":"approve"});
-    let wrong = json!({"generation":uuid::Uuid::new_v4().to_string(),"decision":"approve"});
+    let wrong = json!({"generation":capsem_crypto::uuid_v4().to_string(),"decision":"approve"});
     let (status, _) = route_request(
         build_service_router(Arc::clone(&state)),
         Method::POST,
@@ -227,7 +227,7 @@ async fn mounted_approval_routes_bind_session_generation_and_reject_repeated_dec
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT);
-    let missing = format!("/vms/{}/security/asks/0123456789ab/resolve", uuid::Uuid::new_v4());
+    let missing = format!("/vms/{}/security/asks/0123456789ab/resolve", capsem_crypto::uuid_v4());
     let (status, _) = route_request(build_service_router(state), Method::POST, &missing, Some(decision)).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
