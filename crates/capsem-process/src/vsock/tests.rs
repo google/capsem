@@ -6,6 +6,7 @@ mod ports;
 
 mod ack;
 mod audit;
+mod file_observation;
 
 #[tokio::test]
 async fn stalled_control_handshake_has_a_deadline() {

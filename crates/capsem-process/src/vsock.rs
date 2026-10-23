@@ -38,10 +38,7 @@ mod exec_output;
 mod file_content;
 mod shutdown;
 
-use crate::ipc::file_boundary::{
-    emit_explicit_file_security_event, file_content_preview, FileSecurityBoundary, PluginPolicyHandle,
-    SecurityRulesHandle,
-};
+use crate::ipc::file_boundary::{file_content_preview, PluginPolicyHandle, SecurityRulesHandle};
 #[cfg(test)]
 use crate::ipc::file_boundary::{rewritten_file_content, FILE_SECURITY_CONTENT_PREVIEW_MAX};
 
@@ -738,16 +735,20 @@ async fn handle_guest_msg(
             if let Some(context) = context {
                 match context {
                     ActiveFileOp::Write { path, data } => {
-                        if let Err(error) = emit_explicit_file_security_event(
+                        let rules = security_rules.read().unwrap().clone();
+                        let plugins = plugin_policy.read().unwrap().clone();
+                        if let Err(error) = capsem_core::security_engine::emit_observed_explicit_file_security_write_and_rules_with_plugins(
                             db,
-                            security_rules,
-                            plugin_policy,
-                            FileSecurityBoundary {
+                            &rules,
+                            plugins,
+                            capsem_core::security_engine::ExplicitFileSecurityEvent {
                                 action: capsem_logger::FileAction::Modified,
                                 path,
                                 size: Some(data.len() as u64),
                                 content: Some(file_content_preview(&data)),
                                 mime_type: None,
+                                trace_id: None,
+                                credential_ref: None,
                             },
                         )
                         .await
