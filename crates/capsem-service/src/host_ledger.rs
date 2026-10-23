@@ -267,6 +267,7 @@ fn session_json(summary: &SessionSummary) -> serde_json::Value {
         "total_input_tokens": counters.model.total.input_tokens,
         "total_output_tokens": counters.model.total.output_tokens,
         "total_estimated_cost": usd(counters.model.total.cost_micro_usd),
+        "cost_coverage": capsem_api::CostCoverage::from(&counters.model.total),
         "total_tool_calls": counters.tools.calls,
         "total_file_events": counters.files.events.saturating_sub(overflow),
         "storage_mode": summary.detail.storage_mode,
@@ -303,6 +304,12 @@ fn render_stats(total_sessions: u64, totals: &LedgerCounters, listed: &[SessionS
                     "input_tokens": sum(|usage| usage.input_tokens),
                     "output_tokens": sum(|usage| usage.output_tokens),
                     "estimated_cost": usd(sum(|usage| usage.cost_micro_usd)),
+                    "cost_coverage": capsem_api::CostCoverage::from(&capsem_proto::ledger_counters::ModelUsage {
+                        calls,
+                        priced_calls: sum(|usage| usage.priced_calls),
+                        unpriced_calls: sum(|usage| usage.unpriced_calls),
+                        ..Default::default()
+                    }),
                     "total_duration_ms": sum(|usage| usage.duration_ms),
                 }),
             )
@@ -341,6 +348,7 @@ fn render_stats(total_sessions: u64, totals: &LedgerCounters, listed: &[SessionS
             "total_input_tokens": totals.model.total.input_tokens,
             "total_output_tokens": totals.model.total.output_tokens,
             "total_estimated_cost": usd(totals.model.total.cost_micro_usd),
+            "cost_coverage": capsem_api::CostCoverage::from(&totals.model.total),
             "total_tool_calls": totals.tools.calls,
             "total_file_events": totals.files.events.saturating_sub(overflow),
             "total_requests": totals.net.total,

@@ -636,7 +636,7 @@ async fn stats_detail_route_reads_session_db_ledger() {
         usage_details: BTreeMap::from([("thinking".to_string(), 5)]),
         duration_ms: 25,
         response_bytes: 64,
-        estimated_cost_usd: 0.001,
+        estimated_cost_usd: Some(0.001),
         trace_id: Some("trace-stats-detail".to_string()),
         credential_ref: None,
         tool_calls: vec![capsem_logger::ToolCallEntry {
@@ -800,7 +800,7 @@ async fn write_test_model_call(db_path: &std::path::Path, provider: &str, model:
         usage_details: BTreeMap::new(),
         duration_ms: 25,
         response_bytes: 64,
-        estimated_cost_usd: 0.001,
+        estimated_cost_usd: Some(0.001),
         trace_id: Some(format!("trace-{event_id}")),
         credential_ref: None,
         tool_calls: vec![],

@@ -9,6 +9,9 @@ use capsem_logger::counters::{usd_from_micro, LedgerCounters};
 
 use super::*;
 
+#[cfg(test)]
+mod tests;
+
 /// The session's counter snapshot, from its ledger handle's memory.
 ///
 /// Every polled total comes through here or [`counters_if_ready`], so none of
@@ -55,6 +58,7 @@ pub(crate) fn apply_totals(info: &mut SandboxInfo, counters: &LedgerCounters) {
     info.total_thinking_tokens = Some(thinking_tokens(counters));
     info.total_output_tokens = Some(counters.model.total.output_tokens);
     info.total_estimated_cost = Some(usd_from_micro(counters.model.total.cost_micro_usd));
+    info.cost_coverage = Some((&counters.model.total).into());
     info.total_tool_calls = Some(counters.tools.calls);
     info.total_requests = Some(counters.net.total);
     info.allowed_requests = Some(counters.net.allowed);
@@ -82,6 +86,7 @@ pub(crate) fn stats_summary(counters: &LedgerCounters) -> api::VmStatsSummaryRes
         total_output_tokens: counters.model.total.output_tokens,
         total_tool_calls: counters.tools.calls,
         total_estimated_cost: usd_from_micro(counters.model.total.cost_micro_usd),
+        cost_coverage: Some((&counters.model.total).into()),
     }
 }
 
@@ -99,6 +104,7 @@ pub(crate) fn model_usage(counters: &LedgerCounters) -> Vec<capsem_api::ModelUsa
                 input_tokens: usage.input_tokens,
                 output_tokens: usage.output_tokens,
                 estimated_cost_usd: usd_from_micro(usage.cost_micro_usd),
+                cost_coverage: Some(usage.into()),
                 duration_ms: usage.duration_ms,
             })
         })
@@ -148,6 +154,7 @@ pub(crate) fn ai_info(counters: &LedgerCounters) -> capsem_api::VmAiInfo {
         total_output_tokens: counters.model.total.output_tokens,
         total_tool_calls: counters.tools.calls,
         total_estimated_cost_usd: usd_from_micro(counters.model.total.cost_micro_usd),
+        cost_coverage: Some((&counters.model.total).into()),
         models: model_usage(counters),
         mcp: mcp_usage(counters),
     }

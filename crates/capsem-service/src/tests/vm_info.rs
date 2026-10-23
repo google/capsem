@@ -106,7 +106,7 @@ async fn info_route_reports_nested_ai_activity_through_db_owner() {
         usage_details,
         duration_ms: 25,
         response_bytes: 64,
-        estimated_cost_usd: 0.001,
+        estimated_cost_usd: Some(0.001),
         trace_id: Some("trace-toolbar".to_string()),
         credential_ref: None,
         tool_calls: vec![capsem_logger::ToolCallEntry {

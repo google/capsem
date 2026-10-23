@@ -122,4 +122,24 @@ fn global_ai_requests_are_model_exchanges_not_http_requests() {
     assert_eq!(body["global"]["total_requests"], 73);
     assert_eq!(body["global"]["total_input_tokens"], 0);
     assert_eq!(body["global"]["total_output_tokens"], 11);
+    assert_eq!(body["global"]["cost_coverage"]["unknown_calls"], 3);
+}
+
+#[test]
+fn host_totals_and_provider_rows_keep_partial_price_coverage() {
+    let mut counters = LedgerCounters::default();
+    counters.model.total.calls = 6;
+    counters.model.total.priced_calls = 2;
+    counters.model.total.unpriced_calls = 4;
+    counters.model.total.cost_micro_usd = 4380;
+    counters
+        .model
+        .by_model
+        .entry("google".into())
+        .or_default()
+        .insert("mixed".into(), counters.model.total.clone());
+    let body: serde_json::Value = serde_json::from_slice(&render_stats(1, &counters, &[])).unwrap();
+    assert_eq!(body["global"]["total_estimated_cost"], 0.00438);
+    assert_eq!(body["global"]["cost_coverage"]["unpriced_calls"], 4);
+    assert_eq!(body["top_providers"][0]["cost_coverage"]["priced_calls"], 2);
 }

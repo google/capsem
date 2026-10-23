@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Carry committed price coverage through session, per-model and global service
+  totals without deriving price completeness from a zero cost.
+
 - Expose priced, unpriced and historical unknown call coverage with AI cost
   estimates so clients can distinguish a known subtotal from a complete price.
 

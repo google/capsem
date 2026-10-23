@@ -681,7 +681,7 @@ async fn winterfell_routes_read_session_ledgers_after_startup_cache_hydration() 
         usage_details: BTreeMap::new(),
         duration_ms: 31,
         response_bytes: 33,
-        estimated_cost_usd: 0.00001,
+        estimated_cost_usd: Some(0.00001),
         trace_id: Some("trace-winterfell".to_string()),
         credential_ref: Some(
             "credential:blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
