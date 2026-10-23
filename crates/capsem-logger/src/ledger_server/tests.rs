@@ -16,6 +16,80 @@ use crate::{Decision, NetEvent, WriteOp};
 type ClientSender = ipc_channel::Sender<LedgerClientMessage>;
 type ClientReceiver = ipc_channel::Receiver<LedgerServerMessage>;
 
+#[tokio::test]
+async fn only_coordinator_can_attest_terminal_approval_in_single_or_batch_admission() {
+    use crate::{SecurityAskEvent, SecurityAskPending, SecurityAskStatus};
+    let dir = tempfile::tempdir().unwrap();
+    let server = Arc::new(LedgerServer::open(&dir.path().join("session.db")).unwrap());
+    let event = SecurityAskEvent::pending(SecurityAskPending {
+        timestamp_unix_ms: 1_789_000_000_001,
+        ask_id: "0123456789ab".into(),
+        event_id: "0123456789ac".into(),
+        event_type: "process.exec".into(),
+        rule_id: "test.ask".into(),
+        rule_name: "Ask".into(),
+        rule_json: "{}".into(),
+        event_json: "{}".into(),
+    });
+    for role in [
+        LedgerClientRole::VmOwner,
+        LedgerClientRole::Proxy,
+        LedgerClientRole::Coordinator,
+    ] {
+        let (sender, receiver, task) = connect(Arc::clone(&server), grant(role)).await;
+        assert!(matches!(
+            request(
+                &sender,
+                &receiver,
+                1,
+                LedgerCommand::Admit {
+                    event: Box::new(WriteOp::SecurityAskEvent(event.clone()))
+                }
+            )
+            .await,
+            LedgerReply::Accepted { .. }
+        ));
+        for (status_index, status) in [SecurityAskStatus::Approved, SecurityAskStatus::Denied]
+            .into_iter()
+            .enumerate()
+        {
+            let event = event.clone().with_status(status);
+            for (index, operation) in [
+                LedgerCommand::Admit {
+                    event: Box::new(WriteOp::SecurityAskEvent(event.clone())),
+                },
+                LedgerCommand::AdmitBatch {
+                    events: vec![body_event(vec![]), WriteOp::SecurityAskEvent(event.clone())],
+                },
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                sender
+                    .send(LedgerClientMessage::Request {
+                        request: LedgerRequest::new((status_index * 2 + index + 2) as u64, operation).unwrap(),
+                    })
+                    .await
+                    .unwrap();
+                let LedgerServerMessage::Response { response } = receiver.recv().await.unwrap() else {
+                    panic!("response")
+                };
+                if role == LedgerClientRole::Coordinator {
+                    assert!(matches!(response.outcome(), LedgerOutcome::Success { .. }));
+                } else {
+                    let LedgerOutcome::Failure { failure } = response.outcome() else {
+                        panic!("producer forged approval: {role:?}")
+                    };
+                    assert_eq!(failure.code(), LedgerFailureCode::UnauthorizedOperation);
+                }
+            }
+        }
+        drop(sender);
+        drop(receiver);
+        task.await.unwrap().unwrap();
+    }
+}
+
 fn grant(role: LedgerClientRole) -> LedgerChannelGrant {
     LedgerChannelGrant::new(LedgerGeneration::new([4; 16]), 17, role).unwrap()
 }

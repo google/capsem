@@ -106,6 +106,18 @@ impl LedgerServer {
                 send_failure(&sender, request_id, code, error.to_string()).await?;
                 continue;
             }
+            if grant.role() != capsem_proto::ledger::LedgerClientRole::Coordinator
+                && contains_ask_resolution(request.operation())
+            {
+                send_failure(
+                    &sender,
+                    request_id,
+                    LedgerFailureCode::UnauthorizedOperation,
+                    "only the trusted coordinator can attest an approval resolution",
+                )
+                .await?;
+                continue;
+            }
             if self.dispatch(&sender, request).await? {
                 return Ok(LedgerClientExit::ShutdownRequested);
             }
@@ -302,6 +314,18 @@ impl LedgerServer {
             },
         )
         .await
+    }
+}
+
+fn contains_ask_resolution(operation: &LedgerCommand) -> bool {
+    let terminal = |event: &crate::WriteOp| {
+        matches!(event,
+        crate::WriteOp::SecurityAskEvent(ask) if ask.status != crate::SecurityAskStatus::Pending)
+    };
+    match operation {
+        LedgerCommand::Admit { event } => terminal(event),
+        LedgerCommand::AdmitBatch { events } => events.iter().any(terminal),
+        _ => false,
     }
 }
 

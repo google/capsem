@@ -179,6 +179,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Sort dashboard sessions correctly by total tokens and estimated cost, and
   expose the active sort direction to assistive technology. Include output-only
   token usage in the displayed total.
+- Restrict terminal security approval audit records to the trusted coordinator,
+  preventing confined producers from forging approval or denial history.
+
 - Preserve the original security approval request's forensic payload when its
   resolution is appended to the session ledger.
 
