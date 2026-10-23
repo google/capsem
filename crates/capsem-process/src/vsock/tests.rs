@@ -701,6 +701,7 @@ match = 'file.export.path == "/workspace/out.txt" && file.export.content.contain
     js.active_file_ops.lock().unwrap().insert(
         id,
         ActiveFileOp::Read {
+            state: Arc::new(crate::job_store::FileReadState::default()),
             path: "/workspace/out.txt".to_string(),
         },
     );
@@ -774,6 +775,7 @@ async fn read_file_content_is_refused_when_its_export_cannot_be_recorded() {
     js.active_file_ops.lock().unwrap().insert(
         id,
         ActiveFileOp::Read {
+            state: Arc::new(crate::job_store::FileReadState::default()),
             path: "/workspace/secret.txt".to_string(),
         },
     );

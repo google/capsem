@@ -12,7 +12,7 @@ pub(crate) type PluginPolicyHandle = capsem_core::net::policy_config::SharedPlug
 
 /// Evaluate and record a host file operation independently of guest readiness.
 pub(super) async fn spawn(
-    state: &Arc<capsem_core::SandboxNetworkState>,
+    jobs: &Arc<crate::job_store::JobStore>,
     runtime: &Arc<McpRuntime>,
     output: &Sender<ProcessToService>,
     request: ServiceToProcess,
@@ -31,9 +31,15 @@ pub(super) async fn spawn(
     else {
         unreachable!("file boundary handler received another request")
     };
-    let permit = match Arc::clone(capacity).try_acquire_owned() {
-        Ok(permit) => permit,
-        Err(_) => {
+    let (permit, memory) = match (
+        Arc::clone(capacity).try_acquire_owned().ok(),
+        jobs.retain_file_bytes(
+            data.capacity(),
+            path.len().saturating_add(mime_type.as_ref().map_or(0, String::len)),
+        ),
+    ) {
+        (Some(permit), Some(memory)) => (permit, memory),
+        _ => {
             let _ = output
                 .send(ProcessToService::LogFileBoundaryResult {
                     id,
@@ -46,7 +52,7 @@ pub(super) async fn spawn(
         }
     };
     let (db, rules, plugins, output) = (
-        Arc::clone(&state.db),
+        Arc::clone(&runtime.db),
         Arc::clone(&runtime.security_rules),
         Arc::clone(&runtime.plugin_policy),
         output.clone(),
@@ -55,6 +61,7 @@ pub(super) async fn spawn(
     let cancellation = cancellation.clone();
     calls.spawn(async move {
         let _permit = permit;
+        let _memory = memory;
         let held_bytes = usize::try_from(size)
             .unwrap_or(usize::MAX)
             .max(data.len())
@@ -154,6 +161,15 @@ pub(crate) async fn emit_explicit_file_security_event(
     .await?
     else {
         return Ok(None);
+    };
+    let held_bytes = if emission.enforcement.action == capsem_core::security_engine::SecurityEnforcementAction::Ask {
+        // Include semantic metadata and plugin-produced content as well as
+        // original bytes. A tiny preview or expanding rewrite cannot buy a
+        // larger live continuation than the shared retained-memory admission.
+        let semantic = serde_json::to_vec(&emission.event.serializable()).map_err(|error| error.to_string())?;
+        held_bytes.saturating_add(semantic.len().saturating_mul(4))
+    } else {
+        held_bytes
     };
     capsem_core::security_engine::approval::resolve_emission(db, approvals, &mut emission, held_bytes).await?;
     if !Arc::ptr_eq(&rules, &security_rules.read().unwrap()) || !Arc::ptr_eq(&plugins, &plugin_policy.read().unwrap()) {

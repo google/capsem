@@ -5,6 +5,7 @@ use super::*;
 
 mod approval;
 mod authorization;
+mod file_read;
 use authorization::controller_identity;
 mod classification;
 mod publications;

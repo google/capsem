@@ -4,7 +4,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::sync::{oneshot, Notify};
+mod file_read;
 mod snapshot;
+pub(crate) use file_read::FileReadState;
 pub(crate) use snapshot::{snapshot_transition, with_quiescence};
 
 pub(crate) struct JobStore {
@@ -19,6 +21,7 @@ pub(crate) struct JobStore {
     /// response only carries enough context for reads; writes need the original
     /// path and payload to emit the security-event ledger row after success.
     pub(crate) active_file_ops: Mutex<HashMap<u64, ActiveFileOp>>,
+    pub(crate) file_memory: Arc<tokio::sync::Semaphore>,
     pub(crate) snapshot_transition: Mutex<Option<snapshot::Waiter>>,
     /// Held across one quiescence sequence. The transition has room for a
     /// single waiter, so a fork and a suspend overlapping would each take
@@ -124,6 +127,7 @@ impl JobStore {
             clone_completions: Mutex::new(HashMap::new()),
             active_execs: Mutex::new(HashMap::new()),
             active_file_ops: Mutex::new(HashMap::new()),
+            file_memory: Arc::new(tokio::sync::Semaphore::new(capsem_proto::APPROVAL_HELD_BYTES_TOTAL)),
             snapshot_transition: Mutex::new(None),
             quiescence: tokio::sync::Mutex::new(()),
             pending_acks: Mutex::new(HashMap::new()),
@@ -147,6 +151,7 @@ impl JobStore {
     /// the oneshots (see `ipc.rs` Exec/WriteFile/ReadFile handlers) get a
     /// prompt failure instead of a 30s IPC timeout.
     pub(crate) fn fail_all(&self, message: &str) {
+        self.cancel_file_reads();
         let pending: Vec<_> = self.jobs.lock().unwrap().drain().collect();
         for (_id, tx) in pending {
             capsem_core::try_send!(
@@ -188,7 +193,7 @@ impl JobStore {
 #[derive(Debug)]
 pub(crate) enum ActiveFileOp {
     Write { path: String, data: Vec<u8> },
-    Read { path: String },
+    Read { path: String, state: Arc<FileReadState> },
 }
 
 #[derive(Debug)]

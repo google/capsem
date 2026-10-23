@@ -225,6 +225,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
 
     tokio::spawn(async move {
         let pending = pending_for_bridge;
+        let mut file_calls = tokio::task::JoinSet::new();
         let mut current_conn = control_rekey_rx_inner.recv().await;
         loop {
             let conn = match current_conn.take() {
@@ -357,12 +358,13 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                                         break;
                                     }
                                 }
-                                handle_guest_msg(
+                                handle_guest_msg_with_tasks(
                                     msg,
                                     &js,
                                     &db_ctrl,
                                     &security_rules_ctrl,
                                     &plugin_policy_ctrl,
+                                    &mut file_calls,
                                 )
                                 .await
                             }
@@ -386,6 +388,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
             js.publisher.control_lost();
             control.close().await;
         }
+        while file_calls.join_next().await.is_some() {}
     });
 
     // Heartbeat
@@ -493,18 +496,33 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     );
                 }
                 ServiceToProcess::ReadFile { id, path } => {
-                    js_for_cmd
-                        .active_file_ops
-                        .lock()
-                        .unwrap()
-                        .insert(id, ActiveFileOp::Read { path: path.clone() });
-                    capsem_core::try_send!("hub_file_read", hub_tx.send(HostToGuest::FileRead { id, path }).await);
+                    let state = {
+                        let active = js_for_cmd.active_file_ops.lock().unwrap();
+                        match active.get(&id) {
+                            Some(ActiveFileOp::Read { path: original, state }) if original == &path => {
+                                Some(Arc::clone(state))
+                            }
+                            _ => None,
+                        }
+                    };
+                    let Some(state) = state else { continue };
+                    let Ok(permit) = hub_tx.reserve().await else {
+                        state.cancel();
+                        continue;
+                    };
+                    // Receipt and final delivery share this short gate. A
+                    // queued retry cannot re-read an already-received file.
+                    let arrived = state.arrived.lock().unwrap();
+                    if !*arrived && !state.cancellation.is_cancelled() {
+                        permit.send(HostToGuest::FileRead { id, path });
+                    }
                 }
                 ServiceToProcess::CloneState { id } => {
                     clone_state::spawn(&hub_tx, &js_for_cmd, &ipc_tx_for_cmd, id);
                 }
                 ServiceToProcess::Suspend => {
                     js_for_cmd.cancel_execs();
+                    js_for_cmd.cancel_file_reads();
                     suspend::Suspend {
                         vm: Arc::clone(&vm_handle_for_cmd),
                         hub: hub_tx.clone(),
@@ -520,6 +538,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                 }
                 ServiceToProcess::Shutdown => {
                     js_for_cmd.cancel_execs();
+                    js_for_cmd.cancel_file_reads();
                     capsem_core::try_send!("hub_shutdown", hub_tx.send(HostToGuest::Shutdown).await);
                     shutdown::spawn_stop_after_guest(
                         Arc::clone(&js_for_cmd),
@@ -669,13 +688,28 @@ fn exec_boundary_refusal(
     }
 }
 
-async fn handle_guest_msg(
+#[cfg(test)]
+pub(crate) async fn handle_guest_msg(
     msg: GuestToHost,
     js: &Arc<JobStore>,
     db: &Arc<capsem_logger::DbWriter>,
     security_rules: &SecurityRulesHandle,
     plugin_policy: &PluginPolicyHandle,
 ) {
+    let mut calls = tokio::task::JoinSet::new();
+    handle_guest_msg_with_tasks(msg, js, db, security_rules, plugin_policy, &mut calls).await;
+    while calls.join_next().await.is_some() {}
+}
+
+pub(crate) async fn handle_guest_msg_with_tasks(
+    msg: GuestToHost,
+    js: &Arc<JobStore>,
+    db: &Arc<capsem_logger::DbWriter>,
+    security_rules: &SecurityRulesHandle,
+    plugin_policy: &PluginPolicyHandle,
+    calls: &mut tokio::task::JoinSet<()>,
+) {
+    while calls.try_join_next().is_some() {}
     match msg {
         GuestToHost::ShutdownComplete => js.shutdown_complete.notify_one(),
         GuestToHost::BootTiming { stages } => drop(guest_report::record_boot_timing(stages)),
@@ -709,21 +743,47 @@ async fn handle_guest_msg(
         GuestToHost::FileContent { id, path: _, data } => {
             let context = {
                 let mut active_file_ops = js.active_file_ops.lock().unwrap();
-                if matches!(active_file_ops.get(&id), Some(ActiveFileOp::Read { .. })) {
-                    active_file_ops.remove(&id)
-                } else {
-                    None
+                match active_file_ops.get_mut(&id) {
+                    Some(ActiveFileOp::Read { path, state }) => {
+                        let mut arrived = state.arrived.lock().unwrap();
+                        if *arrived {
+                            None
+                        } else {
+                            *arrived = true;
+                            drop(arrived);
+                            state.received.notify_one();
+                            Some(ActiveFileOp::Read {
+                                path: path.clone(),
+                                state: Arc::clone(state),
+                            })
+                        }
+                    }
+                    _ => None,
                 }
             };
             let Some(context) = context else {
                 warn!(id, "unsolicited file content ignored");
                 return;
             };
+            let context_bytes = match &context {
+                ActiveFileOp::Read { path, .. } => path.len(),
+                _ => unreachable!("only registered reads admit file content"),
+            };
+            let memory = js.retain_file_bytes(data.capacity(), context_bytes);
+            if calls.len() >= capsem_proto::MCP_WORKER_QUEUE_CAPACITY || memory.is_none() {
+                drop(memory);
+                if let ActiveFileOp::Read { state, .. } = context {
+                    state.cancel();
+                    js.finish_file_read(id, &state);
+                }
+                return;
+            }
             let js = Arc::clone(js);
             let db = Arc::clone(db);
             let security_rules = Arc::clone(security_rules);
             let plugin_policy = Arc::clone(plugin_policy);
-            tokio::spawn(async move {
+            calls.spawn(async move {
+                let _memory = memory;
                 file_content::complete(id, context, data, js, db, security_rules, plugin_policy).await;
             });
         }
@@ -756,7 +816,7 @@ async fn handle_guest_msg(
                             warn!(id, error, "failed to evaluate file write completion boundary");
                         }
                     }
-                    ActiveFileOp::Read { path } => {
+                    ActiveFileOp::Read { path, .. } => {
                         warn!(
                             id,
                             path, "FileOpDone received for read context; skipping explicit file security event"

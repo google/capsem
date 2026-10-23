@@ -17,11 +17,17 @@ pub(super) async fn complete(
     security_rules: SecurityRulesHandle,
     plugin_policy: PluginPolicyHandle,
 ) {
-    let ActiveFileOp::Read { path } = context else {
+    let ActiveFileOp::Read { path, state } = context else {
         unreachable!("only active reads admit FileContent")
     };
+    // Take this original sender once, before any wait. Never look up an id
+    // again to deliver bytes after approval: the id may have been reused.
+    let Some(mut sender) = js.take_file_read_reply(id, &state) else {
+        js.finish_file_read(id, &state);
+        return;
+    };
     let action = FileAction::Exported;
-    let boundary = emit_explicit_file_security_event(
+    let evaluate = emit_explicit_file_security_event(
         &db,
         &security_rules,
         &plugin_policy,
@@ -32,10 +38,15 @@ pub(super) async fn complete(
             content: Some(file_content_preview(&data)),
             mime_type: None,
         },
-        None,
+        state.approvals.as_deref(),
         data.len().saturating_mul(4),
-    )
-    .await;
+    );
+    let boundary = tokio::select! {
+        biased;
+        _ = state.cancellation.cancelled() => Err("file export cancelled".into()),
+        _ = sender.closed() => Err("file export caller disconnected".into()),
+        result = evaluate => result,
+    };
     // Exported bytes are delivered only after their ledger event is admitted
     // and allowed. A failed ledger or policy evaluation refuses the export.
     let refusal = match &boundary {
@@ -50,23 +61,20 @@ pub(super) async fn complete(
         Ok(None) => Some("its security event could not be recorded".into()),
         Err(error) => Some(format!("its security event failed: {error}")),
     };
-    if let Some(reason) = refusal {
-        let error = Some(format!("file export refused: {reason}"));
-        if let Some(tx) = js.jobs.lock().unwrap().remove(&id) {
-            capsem_core::try_send!(
-                "job_result_read_file_blocked",
-                tx.send(JobResult::ReadFile { data: None, error })
-            );
+    let result = if let Some(reason) = refusal {
+        JobResult::ReadFile {
+            data: None,
+            error: Some(format!("file export refused: {reason}")),
         }
-        return;
-    }
-    if let Some(tx) = js.jobs.lock().unwrap().remove(&id) {
-        capsem_core::try_send!(
-            "job_result_read_file",
-            tx.send(JobResult::ReadFile {
-                data: Some(data),
-                error: None
-            })
-        );
-    }
+    } else {
+        JobResult::ReadFile {
+            data: Some(data),
+            error: None,
+        }
+    };
+    js.deliver_file_read(id, &state, sender, result);
+    js.finish_file_read(id, &state);
 }
+
+#[cfg(test)]
+mod tests;

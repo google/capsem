@@ -20,6 +20,7 @@ mod container_pull;
 mod credentials;
 mod exec;
 pub(crate) mod file_boundary;
+mod file_read;
 mod mcp_call;
 mod private;
 mod publication;
@@ -164,6 +165,14 @@ pub(crate) async fn handle_ipc_connection(
     let _cancel_on_disconnect = cancellation.clone().drop_guard();
     let mcp_capacity = Arc::new(tokio::sync::Semaphore::new(capsem_proto::MCP_WORKER_QUEUE_CAPACITY));
     let mut mcp_calls = tokio::task::JoinSet::new();
+    let read_files = file_read::ReadFiles::new(
+        Arc::clone(&job_store),
+        ctrl_tx.clone(),
+        ipc_tx_out.clone(),
+        &mcp_runtime,
+        Arc::clone(&mcp_capacity),
+        cancellation.clone(),
+    );
     let mut connection_tasks = tokio::task::JoinSet::new();
     connection_tasks.spawn(async move {
         while let Some(msg) = ipc_rx_out.recv().await {
@@ -607,92 +616,11 @@ pub(crate) async fn handle_ipc_connection(
                 });
             }
             ServiceToProcess::ReadFile { id, path } => {
-                let job_store = job_store.clone();
-                let ctrl_tx = ctrl_tx.clone();
-                let ipc_tx_out = ipc_tx_out.clone();
-                tokio::spawn(async move {
-                    debug!(id, path, "Received ReadFile command via IPC");
-                    let (j_tx, mut j_rx) = oneshot::channel();
-                    job_store.jobs.lock().unwrap().insert(id, j_tx);
-                    capsem_core::try_send!(
-                        "ctrl_read_file",
-                        ctrl_tx
-                            .send(ServiceToProcess::ReadFile { id, path: path.clone() })
-                            .await
-                    );
-                    let mut retries: u16 = 0;
-                    let result = loop {
-                        match tokio::time::timeout(GUEST_PAYLOAD_TIMEOUT, &mut j_rx).await {
-                            Ok(res) => break Ok(res),
-                            Err(_) => {
-                                if retries >= GUEST_PAYLOAD_MAX_RETRIES {
-                                    break Err("FileRead watchdog exhausted retries");
-                                }
-                                retries += 1;
-                                warn!(
-                                    id,
-                                    attempt = retries,
-                                    "no FileContent in 1s; resending HostToGuest::FileRead"
-                                );
-                                capsem_core::try_send!(
-                                    "ctrl_read_file_retry",
-                                    ctrl_tx
-                                        .send(ServiceToProcess::ReadFile { id, path: path.clone() })
-                                        .await
-                                );
-                            }
-                        }
-                    };
-                    match result {
-                        Ok(Ok(JobResult::ReadFile { data, error })) => {
-                            debug!(id, success = data.is_some(), "Sending ReadFileResult back via IPC");
-                            capsem_core::try_send!(
-                                "ipc_read_file_result",
-                                ipc_tx_out
-                                    .send(ProcessToService::ReadFileResult { id, data, error })
-                                    .await
-                            );
-                        }
-                        Ok(Ok(JobResult::Error { message })) => {
-                            error!(id, message, "Sending ReadFile error back via IPC");
-                            capsem_core::try_send!(
-                                "ipc_read_file_result_err",
-                                ipc_tx_out
-                                    .send(ProcessToService::ReadFileResult {
-                                        id,
-                                        data: None,
-                                        error: Some(message)
-                                    })
-                                    .await
-                            );
-                        }
-                        Ok(_) => {
-                            error!(id, "Job result channel closed for ReadFile");
-                        }
-                        Err(msg) => {
-                            error!(id, msg, "ReadFile watchdog exhausted");
-                            let _ = job_store.jobs.lock().unwrap().remove(&id);
-                            // Watchdog gave up -- remove the pending-ack
-                            // entry so the bridge stops replaying a
-                            // message no caller is still waiting for.
-                            job_store.pending_acks.lock().unwrap().remove(&id);
-                            capsem_core::try_send!(
-                                "ipc_read_file_result_watchdog",
-                                ipc_tx_out
-                                    .send(ProcessToService::ReadFileResult {
-                                        id,
-                                        data: None,
-                                        error: Some(msg.into()),
-                                    })
-                                    .await
-                            );
-                        }
-                    }
-                });
+                read_files.spawn(&mut mcp_calls, id, path).await;
             }
             message @ ServiceToProcess::LogFileBoundary { .. } => {
                 file_boundary::spawn(
-                    &net_state,
+                    &job_store,
                     &mcp_runtime,
                     &ipc_tx_out,
                     message,
