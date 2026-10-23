@@ -13,6 +13,7 @@ fn collector_keeps_raw_protocol_latencies() {
             version: "test".into(),
             lane: "guest_capsem".into(),
             base_url: "http://127.0.0.1:3713".into(),
+            query: None,
             dns_udp_addr: None,
             total_requests: 3,
             concurrency: 2,
@@ -61,7 +62,11 @@ fn collector_keeps_raw_protocol_latencies() {
     #[cfg(feature = "host")]
     {
         let record = crate::protocol_record::build(&artifact, "test", "source", Vec::new());
-        let metric = record.metrics.iter().find(|metric| metric.key == "protocol.guest_capsem.model_json_response.first_body_byte_ms").unwrap();
+        let metric = record
+            .metrics
+            .iter()
+            .find(|metric| metric.key == "protocol.guest_capsem.model_json_response.first_body_byte_ms")
+            .unwrap();
         assert_eq!(metric.unit, crate::schema::Unit::Milliseconds);
         assert_eq!(metric.summary.n, 3);
     }

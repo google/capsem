@@ -138,6 +138,19 @@ Capsem lock. Report aggregate RPS, RPS per consumed CPU, PSS per loaded VM and
 per-VM latency together. Run the lane twice after changing VM ownership,
 network workers, proxy concurrency, ledger admission or their limits.
 
+`just bench content-filter` compares a disabled baseline with independently enabled
+PII, secret and UTF-8 filters through the same native product dev image and Rust
+protocol engine. `[benchmark.content_filter]` owns response sizes, one/two-client
+cohorts, request counts and deliberate SSE tail delay. Both first-body-byte and
+completion distributions retain every raw observation. This makes complete-body
+buffering visible instead of reporting only total throughput. The collector refuses
+request failures, retries, wrong byte counts, missing samples and hidden proxy
+refusals, and separates upstream fixture pressure from Capsem CPU/RSS/PSS/USS.
+Matching/blocking, permitted broker headers and durable archive non-disclosure are
+proved by `tests/ironbank/test_content_filter_ledger.py`, not inferred from speed.
+Enabled content inspection deliberately buffers bounded SSE bodies; do not claim
+streaming-token latency or run authoritative comparisons on an unfit machine.
+
 ## Is the move real?
 
 `compare` and `verify` report `delta_abs`, `delta_pct`, `ratio`, and

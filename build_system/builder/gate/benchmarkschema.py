@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 from itertools import pairwise
+from typing import Annotated, Literal
 
 from pydantic import Field, PositiveFloat, PositiveInt, field_validator
 
@@ -132,6 +133,25 @@ class BenchmarkProtocolConfig(Strict):
     scenarios: list[str]
 
 
+class ContentFilterProfile(Strict):
+    """One independent plugin mode compared to the disabled baseline."""
+
+    name: str
+    plugin: Literal["pii_filter", "secret_exfiltration", "utf8_guard"]
+    mode: Literal["disable", "rewrite", "block"]
+
+
+class BenchmarkContentFilterConfig(Strict):
+    """Bounded text/SSE cohorts; concurrency respects the two-body inspection budget."""
+
+    requests: PositiveInt
+    concurrency: tuple[Annotated[int, Field(ge=1, le=2)], ...] = Field(min_length=1)
+    body_bytes: tuple[Annotated[int, Field(ge=1, le=1048576)], ...] = Field(min_length=1)
+    stream_delay_ms: Annotated[int, Field(ge=1, le=1000)]
+    timeout_ms: PositiveInt
+    profiles: tuple[ContentFilterProfile, ...] = Field(min_length=1)
+
+
 class BenchmarkMitmScaleConfig(Strict):
     """Independent-VM fanout used to measure aggregate HTTPS interception."""
 
@@ -201,4 +221,5 @@ class BenchmarkConfig(Strict):
     run: BenchmarkRunConfig
     protocol: BenchmarkProtocolConfig
     mitm_scale: BenchmarkMitmScaleConfig
+    content_filter: BenchmarkContentFilterConfig
     gates: BenchmarkGatesConfig

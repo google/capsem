@@ -346,6 +346,7 @@ fn build_delta_report_keeps_inline_artifact_identity() {
             version: "1.1-rust".to_string(),
             lane: "host_direct".to_string(),
             base_url: "http://127.0.0.1:3713".to_string(),
+            query: None,
             dns_udp_addr: None,
             total_requests: 100,
             concurrency: 10,
@@ -546,4 +547,49 @@ async fn first_body_byte_precedes_delayed_response_completion() {
         .first_body_byte_ms
         .expect("nonempty HTTP body has a first-byte sample");
     assert!(sample.latency_ms - first >= 50.0, "{sample:?}");
+}
+
+#[tokio::test]
+async fn content_fixture_query_reaches_the_existing_http_engine() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut request = [0_u8; 1024];
+        let read = stream.read(&mut request).await.unwrap();
+        assert!(std::str::from_utf8(&request[..read])
+            .unwrap()
+            .starts_with("GET /content/text?bytes=37&delay_ms=50 HTTP/1.1\r\n"));
+        stream
+            .write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\ncontent-length: 37\r\nconnection: close\r\n\r\n{}",
+                    "x".repeat(37)
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+    });
+    let scenario = *SCENARIOS
+        .iter()
+        .find(|scenario| scenario.name == "content_text")
+        .unwrap();
+    let clients = HttpClients::build(1, Duration::from_secs(2)).unwrap();
+    let row = run_http_scenario(
+        clients,
+        &format!("http://{address}"),
+        scenario,
+        Some("bytes=37&delay_ms=50"),
+        1,
+        1,
+        Duration::from_secs(2),
+    )
+    .await
+    .unwrap();
+    server.await.unwrap();
+    assert_eq!(row.successful, 1);
+    assert_eq!(row.transfer_bytes, 37);
+    assert_eq!(row.first_body_byte_samples.len(), 1);
+    assert_eq!(row.latency_samples.len(), 1);
 }

@@ -137,6 +137,9 @@ pub(crate) struct DoctorArgs {
 pub(crate) struct ProtocolArgs {
     #[arg(long)]
     pub(crate) base_url: Option<String>,
+    /// Fixture query controls, retained in the artifact (for example bytes and delay_ms).
+    #[arg(long)]
+    pub(crate) query: Option<String>,
     #[arg(long)]
     pub(crate) dns_udp_addr: Option<String>,
     #[arg(long, default_value_t = 50_000)]

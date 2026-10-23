@@ -3421,6 +3421,22 @@ scenarios = [
     "mcp_tool_call",
 ]
 
+# Text-only nonmatching traffic measures detector/buffering overhead without
+# conflating intended block decisions with failed throughput. Matching bytes,
+# broker permits and archive non-disclosure belong to the Ironbank matrix.
+[benchmark.content_filter]
+requests = 32
+concurrency = [1, 2]
+body_bytes = [4096, 65536, 1048576]
+stream_delay_ms = 50
+timeout_ms = 30000
+profiles = [
+  { name = "disabled", plugin = "pii_filter", mode = "disable" },
+  { name = "pii", plugin = "pii_filter", mode = "rewrite" },
+  { name = "secret", plugin = "secret_exfiltration", mode = "block" },
+  { name = "utf8", plugin = "utf8_guard", mode = "block" },
+]
+
 [benchmark.mitm_scale]
 # One low-contention HTTPS cohort per independent VM. Each level keeps the
 # per-VM work fixed, so aggregate RPS and resident pressure reveal whether

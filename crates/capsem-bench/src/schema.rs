@@ -52,6 +52,8 @@ pub enum Dimension {
     MitmLoad,
     /// Aggregate HTTPS interception throughput as independent VMs fan out.
     MitmScale,
+    /// Disabled and enabled HTTP content filters over the real guest proxy.
+    ContentFilter,
     DnsLoad,
 }
 
@@ -78,6 +80,7 @@ impl Dimension {
         Dimension::McpLoad,
         Dimension::MitmLoad,
         Dimension::MitmScale,
+        Dimension::ContentFilter,
         Dimension::DnsLoad,
     ];
 
@@ -103,6 +106,7 @@ impl Dimension {
             Dimension::McpLoad => "mcp-load",
             Dimension::MitmLoad => "mitm-load",
             Dimension::MitmScale => "mitm-scale",
+            Dimension::ContentFilter => "content-filter",
             Dimension::DnsLoad => "dns-load",
         }
     }

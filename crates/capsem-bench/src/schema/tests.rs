@@ -94,7 +94,7 @@ fn every_dimension_is_listed_once() {
     names.sort_unstable();
     names.dedup();
     assert_eq!(names.len(), listed, "a dimension is listed twice");
-    assert_eq!(listed, 21, "ALL must carry every dimension");
+    assert_eq!(listed, 22, "ALL must carry every dimension");
 }
 
 #[test]

@@ -63,6 +63,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Carry committed price coverage through session, per-model and global service
   totals without deriving price completeness from a zero cost.
+- Add a canonical full-pipe content-filter benchmark with disabled/PII/secret/UTF-8
+  profiles, bounded text/SSE cohorts, exact sample validation and process CPU/memory.
+
 - Record raw first-body-byte latency alongside full HTTP completion in the
   canonical traffic benchmark, exposing buffering and streaming delay.
 

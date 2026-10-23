@@ -48,6 +48,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command.unwrap_or(Command::Protocol(ProtocolArgs {
         base_url: None,
+        query: None,
         dns_udp_addr: None,
         requests: 50_000,
         concurrency: 64,
