@@ -183,7 +183,8 @@ finally:
         paused = client.post(f"/vms/{vm_id}/pause", {}, timeout=60)
         assert paused == {"success": True}, paused
         assert client.get(f"/vms/{vm_id}/status")["status"] == "Suspended"
-        resumed = client.post(f"/vms/{vm_id}/resume", {}, timeout=90)
+        status, resumed = client.call_json("POST", f"/vms/{vm_id}/resume", {}, timeout=90)
+        assert status == 200, (status, resumed)
         assert resumed["id"] == vm_id, resumed
         # The first public exec proves the resumed workload is usable. Its
         # foreground PID plus subsequent key-driven stages rule out cold boot.
