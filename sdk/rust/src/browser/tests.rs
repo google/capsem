@@ -1,5 +1,29 @@
 use super::*;
 
+#[tokio::test]
+async fn acknowledgement_sends_only_generation_and_revision_and_never_replays_conflict() {
+    let mut server = crate::test_gateway::Server::reply(409, br#"{"error":"changed"}"#, None).await;
+    let vm = VM::new(&server.url, "synthetic", crate::VmSelector::Id("vm-1".into())).unwrap();
+    let request = crate::models::BrowserRequest {
+        owner_generation: Some("18f59e33-8af6-4992-81d9-71e10873af9a".into()),
+        id: 7,
+        url: "https://example.test/?private=do-not-send".into(),
+    };
+    assert!(vm.acknowledge_browser_request(&request).await.is_err());
+    let (parts, body) = next(&mut server).await;
+    assert_eq!(parts.method, "POST");
+    assert_eq!(parts.uri.path(), "/vms/vm-1/browser/acknowledge");
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+        serde_json::json!({"owner_generation":request.owner_generation,"request_id":7})
+    );
+    assert!(server.received.try_recv().is_err());
+    let mut missing = request;
+    missing.owner_generation = None;
+    assert!(vm.acknowledge_browser_request(&missing).await.is_err());
+    assert!(server.received.try_recv().is_err());
+}
+
 fn login(callback: &str, state: &str) -> String {
     let mut url = reqwest::Url::parse("https://login.example/authorize").unwrap();
     url.query_pairs_mut()

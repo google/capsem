@@ -12,6 +12,31 @@ mod preview;
 mod server;
 use plan::CallbackPlan;
 
+impl VM {
+    /// Retire metadata after a successful local browser opener. No URL is sent.
+    /// A different VM process generation cannot be acknowledged by this request.
+    pub async fn acknowledge_browser_request(&self, request: &crate::models::BrowserRequest) -> Result<()> {
+        let body = crate::models::BrowserAcknowledgeRequest {
+            owner_generation: request
+                .owner_generation
+                .clone()
+                .ok_or(Error::InvalidInput("browser owner generation unavailable"))?,
+            request_id: request.id,
+        };
+        body.validate().map_err(Error::InvalidInput)?;
+        let id = self.resolve().await?;
+        crate::operations::acknowledge_browser_request(
+            &self.client.transport,
+            &crate::operations::AcknowledgeBrowserRequestParams { id, body },
+            crate::transport::CallOptions {
+                timeout: Some(Duration::from_secs(2)),
+            },
+        )
+        .await?;
+        Ok(())
+    }
+}
+
 /// A prepared, single-use callback on this client's loopback interface.
 /// Keep it alive while the user's browser signs in. Drop cancels the listener
 /// and schedules exposure cleanup; `close` also waits for that cleanup.

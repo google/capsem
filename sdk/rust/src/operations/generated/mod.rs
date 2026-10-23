@@ -1,4 +1,6 @@
 // Generated from sdk/specification/openapi.json. Do not edit.
+mod acknowledge_browser_request;
+pub use acknowledge_browser_request::{acknowledge_browser_request, AcknowledgeBrowserRequestParams};
 mod attach_network_member;
 pub use attach_network_member::{attach_network_member, AttachNetworkMemberParams};
 mod authorize_google_connection;
