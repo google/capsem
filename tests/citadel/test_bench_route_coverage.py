@@ -47,11 +47,12 @@ def validate(registered: set[str], coverage: dict) -> None:
 
 def registered_operations() -> set[str]:
     service = function_operations(SERVICE, "fn build_service_router")
-    # Service and gateway have separately owned /status implementations.
-    extra = {"GET /", "GET /health", "GET /events"}
+    # Include gateway-owned registrations as well as the service proxy chain.
+    # A hand-maintained health/events set would hide new gateway-only methods.
+    extra = route_operations(GATEWAY.read_text())
     for filename in ("schema.rs", "surface.rs"):
         extra |= function_operations(GATEWAY.parent / filename, "fn routes()")
-    return service | extra | {"POST /vms/{id}/exposures/{exposure_id}/preview-session"}
+    return service | extra
 
 
 def test_every_operation_has_exact_benchmark_ownership() -> None:
@@ -93,3 +94,19 @@ def test_measured_get_does_not_cover_post_or_missing_case() -> None:
 
 def test_nested_handler_methods_do_not_invent_http_coverage() -> None:
     assert route_operations('.route("/x", get(make().post(payload)).layer(trace()))') == {"GET /x"}
+
+
+def test_gateway_owned_method_additions_cannot_hide_behind_proxy_inventory(monkeypatch, tmp_path: Path) -> None:
+    import sys
+
+    source = GATEWAY.read_text().replace(
+        '.route("/health", get(handle_health))',
+        '.route("/health", get(handle_health).post(handle_health))',
+    )
+    gateway = tmp_path / "main.rs"
+    gateway.write_text(source)
+    for filename in ("schema.rs", "surface.rs"):
+        (tmp_path / filename).write_text((GATEWAY.parent / filename).read_text())
+    monkeypatch.setattr(sys.modules[__name__], "GATEWAY", gateway)
+    with pytest.raises(AssertionError, match="POST /health"):
+        validate(registered_operations(), config())
