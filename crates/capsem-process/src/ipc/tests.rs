@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use super::*;
 
+mod approval;
 mod authorization;
 use authorization::controller_identity;
 mod classification;

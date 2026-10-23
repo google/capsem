@@ -371,6 +371,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Own bounded host MCP calls through IPC disconnect, canceling human approval
+  waits before draining their execution audits.
+
 - Bound direct MCP retained requests and cancel their pending approvals with
   the original caller, while draining audits for tools already executed.
 

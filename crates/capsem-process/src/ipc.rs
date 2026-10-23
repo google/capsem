@@ -20,6 +20,7 @@ mod container_pull;
 mod credentials;
 mod exec;
 pub(crate) mod file_boundary;
+mod mcp_call;
 mod private;
 mod publication;
 mod terminal;
@@ -159,6 +160,10 @@ pub(crate) async fn handle_ipc_connection(
     // each complete frame, while this queue supplies connection-level
     // backpressure and one place to stop after a write failure.
     let (ipc_tx_out, mut ipc_rx_out) = mpsc::channel::<ProcessToService>(256);
+    let cancellation = tokio_util::sync::CancellationToken::new();
+    let _cancel_on_disconnect = cancellation.clone().drop_guard();
+    let mcp_capacity = Arc::new(tokio::sync::Semaphore::new(capsem_proto::MCP_WORKER_QUEUE_CAPACITY));
+    let mut mcp_calls = tokio::task::JoinSet::new();
     let mut connection_tasks = tokio::task::JoinSet::new();
     connection_tasks.spawn(async move {
         while let Some(msg) = ipc_rx_out.recv().await {
@@ -244,6 +249,7 @@ pub(crate) async fn handle_ipc_connection(
     let mut connection_execs = std::collections::HashSet::new();
 
     loop {
+        while mcp_calls.try_join_next().is_some() {}
         let received = tokio::select! {
             received = rx.recv() => received,
             _ = connection_tasks.join_next() => break,
@@ -893,63 +899,21 @@ pub(crate) async fn handle_ipc_connection(
                     }
                 });
             }
-            ServiceToProcess::McpCallTool {
-                id,
-                namespaced_name,
-                arguments_json,
-            } => {
-                let mcp = Arc::clone(&mcp_runtime);
-                let ipc_tx_out = ipc_tx_out.clone();
-                tokio::spawn(async move {
-                    // The MCP boundary remains JSON even though internal IPC
-                    // is MessagePack, so its dynamic result shape stays owned
-                    // by the MCP contract rather than the transport.
-                    let arguments: serde_json::Value =
-                        serde_json::from_str(&arguments_json).unwrap_or(serde_json::Value::Null);
-                    let request = capsem_proto::mcp_contracts::JsonRpcRequest {
-                        jsonrpc: "2.0".to_string(),
-                        id: Some(serde_json::json!(id)),
-                        method: "tools/call".to_string(),
-                        params: Some(serde_json::json!({"name": namespaced_name, "arguments": arguments})),
-                        meta: None,
-                    };
-                    let response = capsem_core::net::mitm_proxy::dispatch_logged_mcp_request(
-                        Arc::clone(&mcp.endpoint),
-                        Arc::clone(&mcp.db),
-                        request,
-                        "capsem-service".to_string(),
-                        capsem_core::net::mitm_proxy::McpTransport::Direct,
-                    )
-                    .await;
-                    mcp.db.flush().await;
-                    let result_json = response
-                        .as_ref()
-                        .and_then(|result| serde_json::to_string(&result.response).ok());
-                    let event_id = response.as_ref().and_then(|result| result.event_id.clone());
-                    let error = response
-                        .as_ref()
-                        .and_then(|result| result.response.error.as_ref())
-                        .map(|error| error.message.clone())
-                        .or_else(|| {
-                            response
-                                .is_none()
-                                .then(|| "MCP request produced no response".to_string())
-                        });
-                    capsem_core::try_send!(
-                        "ipc_mcp_call_tool",
-                        ipc_tx_out
-                            .send(ProcessToService::McpCallToolResult {
-                                id,
-                                result_json,
-                                event_id,
-                                error
-                            })
-                            .await
-                    );
-                });
+            message @ ServiceToProcess::McpCallTool { .. } => {
+                mcp_call::spawn(
+                    &mcp_capacity,
+                    &mut mcp_calls,
+                    &mcp_runtime,
+                    &ipc_tx_out,
+                    &cancellation,
+                    message,
+                )
+                .await;
             }
         }
     }
+    cancellation.cancel();
+    while mcp_calls.join_next().await.is_some() {}
     if let Some(view) = terminal_view {
         session_terminal.release(view);
     }
