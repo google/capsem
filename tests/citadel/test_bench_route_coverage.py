@@ -1,10 +1,10 @@
 """A timed GET does not cover a POST on the same path; cases retain their owner."""
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 
 import pytest
-import tomllib
 from helpers.route_inventory import function_operations, route_operations
 
 ROOT = Path(__file__).parents[2]

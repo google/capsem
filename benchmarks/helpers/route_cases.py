@@ -1,10 +1,10 @@
 """Configured method/path cases against the existing stopped and live fixtures."""
 from __future__ import annotations
 
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-import tomllib
 from helpers.stopped_workspace import BODY_ROUTE, BODY_URL, VM_ID
 
 ROOT = Path(__file__).resolve().parents[2]
