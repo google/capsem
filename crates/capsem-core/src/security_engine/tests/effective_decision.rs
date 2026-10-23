@@ -61,6 +61,7 @@ async fn completed_explicit_file_observation_runs_only_logging_and_never_claims_
             SecurityPluginConfig {
                 mode,
                 detection_level: DetectionLevel::High,
+                content: Default::default(),
             },
         )
     })
