@@ -37,7 +37,16 @@ fn main() {
     ];
     write_hash("schema_hash.txt", &files);
     write_hash("ledger_schema_hash.txt", &["ledger.rs", "ledger_control.rs"]);
-    write_hash("proxy_schema_hash.txt", &["proxy_control.rs", "proxy_policy.rs"]);
+    write_hash(
+        "proxy_schema_hash.txt",
+        &[
+            "proxy_control.rs",
+            "proxy_policy.rs",
+            "approval.rs",
+            "upstream_grant.rs",
+            "upstream_grant/request.rs",
+        ],
+    );
     runtime_limits::write_runtime_limits();
 }
 

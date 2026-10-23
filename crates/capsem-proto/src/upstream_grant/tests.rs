@@ -4,6 +4,30 @@ use crate::ledger::{LedgerChannelGrant, LedgerClientRole, LedgerGeneration};
 const POLICY_DIGEST: &str = "blake3:0000000000000000000000000000000000000000000000000000000000000001";
 
 #[test]
+fn approval_grant_cannot_select_another_session_or_carry_payloads() {
+    let request = UpstreamGrantRequest::OpenApproval { request_id: 44 };
+    request_roundtrip(request.clone());
+    let response = UpstreamGrantResponse::ApprovalGranted { request_id: 44 };
+    response_roundtrip(response.clone());
+    assert_eq!(request.expected_descriptor_count(), 0);
+    assert_eq!(response.expected_descriptor_count(), 1);
+    for offset in [
+        RESOURCE_ID_RANGE.start,
+        PORT_RANGE.start,
+        DETAIL_RANGE.start,
+        NAME_LENGTH_OFFSET,
+        PATH_RANGE.start,
+    ] {
+        let mut frame = encode_upstream_grant_request(&request).unwrap();
+        frame[offset] = 1;
+        assert!(decode_upstream_grant_request(&frame).is_err());
+        let mut frame = encode_upstream_grant_response(&response).unwrap();
+        frame[offset] = 1;
+        assert!(decode_upstream_grant_response(&frame).is_err());
+    }
+}
+
+#[test]
 fn mcp_aggregator_grant_has_no_worker_selected_process_or_environment_fields() {
     let request = UpstreamGrantRequest::OpenMcpAggregator { request_id: 43 };
     request_roundtrip(request.clone());

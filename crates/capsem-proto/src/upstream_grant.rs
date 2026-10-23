@@ -37,7 +37,7 @@ pub const MAX_UPSTREAM_HOST_BYTES: usize = 253;
 pub const MAX_GUEST_SHARE_PATH_BYTES: usize = 4096;
 
 const MAGIC: [u8; 2] = *b"UG";
-const VERSION: u8 = 9;
+const VERSION: u8 = 10;
 const MAGIC_RANGE: std::ops::Range<usize> = 0..2;
 const VERSION_OFFSET: usize = 2;
 const KIND_OFFSET: usize = 3;
@@ -65,6 +65,7 @@ const OPEN_LOOPBACK_LISTENER: u8 = 11;
 const SET_GUEST_TIMES: u8 = 12;
 const ATTACH_MCP_HTTP: u8 = 13;
 const OPEN_MCP_AGGREGATOR: u8 = 14;
+const OPEN_APPROVAL: u8 = 15;
 const TCP_RESOLVED: u8 = 101;
 const DESCRIPTOR_GRANTED: u8 = 102;
 const DENIED: u8 = 103;
@@ -77,6 +78,7 @@ const LOOPBACK_LISTENER_GRANTED: u8 = 109;
 const GUEST_TIMES_SET: u8 = 110;
 const MCP_HTTP_ADOPTED: u8 = 111;
 const MCP_AGGREGATOR_GRANTED: u8 = 112;
+const APPROVAL_GRANTED: u8 = 113;
 
 /// Application protocol spoken over a granted TCP stream.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -230,6 +232,10 @@ pub enum UpstreamGrantRequest {
     OpenLedger {
         request_id: u64,
     },
+    /// One connected capability bound by its coordinator to this boot only.
+    OpenApproval {
+        request_id: u64,
+    },
     AttachProxyTraffic {
         request_id: u64,
         service: ProxyTrafficService,
@@ -289,6 +295,9 @@ pub enum UpstreamGrantResponse {
         request_id: u64,
         grant: LedgerChannelGrant,
     },
+    ApprovalGranted {
+        request_id: u64,
+    },
     ProxyTrafficAdopted {
         request_id: u64,
     },
@@ -327,6 +336,7 @@ impl UpstreamGrantResponse {
             Self::DescriptorGranted { .. }
             | Self::LoopbackListenerGranted { .. }
             | Self::McpAggregatorGranted { .. } => 1,
+            Self::ApprovalGranted { .. } => 1,
             Self::LedgerGranted { .. } => 1,
             Self::TcpResolved { .. }
             | Self::Denied { .. }
@@ -344,6 +354,11 @@ impl UpstreamGrantResponse {
 pub fn encode_upstream_grant_response(response: &UpstreamGrantResponse) -> Result<[u8; UPSTREAM_GRANT_FRAME_SIZE]> {
     let mut frame = empty_frame();
     match response {
+        UpstreamGrantResponse::ApprovalGranted { request_id } => {
+            require_nonzero("request id", *request_id)?;
+            frame[KIND_OFFSET] = APPROVAL_GRANTED;
+            put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
+        }
         UpstreamGrantResponse::McpAggregatorGranted { request_id } => {
             require_nonzero("request id", *request_id)?;
             frame[KIND_OFFSET] = MCP_AGGREGATOR_GRANTED;
@@ -516,6 +531,12 @@ pub fn decode_upstream_grant_response(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) -
                 bail!("guest timestamp response carries unrelated fields");
             }
             Ok(UpstreamGrantResponse::GuestTimesSet { request_id })
+        }
+        APPROVAL_GRANTED => {
+            if resource_id != 0 || detail != 0 || !name.is_empty() || policy_digest.is_some() {
+                bail!("approval grant carries unrelated fields");
+            }
+            Ok(UpstreamGrantResponse::ApprovalGranted { request_id })
         }
         LEDGER_GRANTED => {
             if policy_digest.is_some() {

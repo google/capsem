@@ -94,9 +94,13 @@ pub fn encode_upstream_grant_request(request: &UpstreamGrantRequest) -> Result<[
             put_path(&mut frame, relative_path)?;
             put_guest_times(&mut frame, *atime, *mtime)?;
         }
-        UpstreamGrantRequest::OpenLedger { request_id } => {
+        UpstreamGrantRequest::OpenLedger { request_id } | UpstreamGrantRequest::OpenApproval { request_id } => {
             require_nonzero("request id", *request_id)?;
-            frame[KIND_OFFSET] = OPEN_LEDGER;
+            frame[KIND_OFFSET] = if matches!(request, UpstreamGrantRequest::OpenApproval { .. }) {
+                OPEN_APPROVAL
+            } else {
+                OPEN_LEDGER
+            };
             put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
         }
         UpstreamGrantRequest::AttachProxyTraffic { request_id, service } => {
@@ -242,14 +246,18 @@ pub fn decode_upstream_grant_request(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) ->
                 mtime,
             })
         }
-        OPEN_LEDGER => {
+        OPEN_LEDGER | OPEN_APPROVAL => {
             require_nonzero("request id", request_id)?;
             if resource_id != 0 {
                 bail!("ledger request cannot carry a resource");
             }
             require_empty_fields(port, detail, &name)?;
             require_empty_path(&relative_path)?;
-            Ok(UpstreamGrantRequest::OpenLedger { request_id })
+            Ok(if frame[KIND_OFFSET] == OPEN_APPROVAL {
+                UpstreamGrantRequest::OpenApproval { request_id }
+            } else {
+                UpstreamGrantRequest::OpenLedger { request_id }
+            })
         }
         ATTACH_PROXY_TRAFFIC => {
             require_nonzero("request id", request_id)?;
