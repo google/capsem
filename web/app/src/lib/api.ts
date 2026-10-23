@@ -47,6 +47,14 @@ let _connected = false;
 let _baseUrl = gatewayBaseUrl();
 const _sdk = new GatewaySdk({ url: () => _baseUrl, token: () => _token, refreshToken: _refreshToken });
 
+export function listSecurityAsks(vmId:string) {
+  return _sdk.call(transport=>gateway.listSecurityAsks(transport,{id:vmId,limit:100}));
+}
+
+export function resolveSecurityAsk(vmId:string,askId:string,generation:string,decision:import('@capsem/sdk').SecurityAskDecision) {
+  return _sdk.call(transport=>gateway.resolveSecurityAsk(transport,{id:vmId,ask_id:askId,body:{generation,decision}}),false);
+}
+
 // -- Public getters --
 
 export function isConnected(): boolean {

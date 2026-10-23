@@ -6,6 +6,7 @@
   import NewTabPage from './NewTabPage.svelte';
   import VMFrame from './VMFrame.svelte';
   import SurfaceFrame from './SurfaceFrame.svelte';
+  import ApprovalCenter from './ApprovalCenter.svelte';
 
   // Heavy views split into separate chunks; loaded on first use.
   const loadSettings = () => import('./SettingsPage.svelte').then(m => m.default);
@@ -94,6 +95,7 @@
 <div class="flex flex-col h-full">
   <TabBar />
   <Toolbar />
+  {#if gatewayStore.connected}<ApprovalCenter />{/if}
 
   <div class="flex-1 overflow-hidden bg-background relative">
     {#if !gatewayStore.connected}

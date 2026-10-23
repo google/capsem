@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Review live approval requests from a compact app notice, with explicit
+  generation-bound approve or deny actions and actionable request status.
+
 - Review waiting operations in the TUI with Alt+A, select a request with the
   arrow keys and explicitly approve once or deny its observed session generation.
 
