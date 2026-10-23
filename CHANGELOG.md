@@ -29,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Start an app from one New session action, preparing missing downloads before
+  launch while its icon reflects readiness.
+
 - Simplify the dashboard to New session app rows and Existing sessions, removing
   the generic New/Customize launcher and redundant page heading.
 

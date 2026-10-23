@@ -27,3 +27,15 @@ export function imageLaunchRequest(image: ImageInfo): ProvisionRequest {
   if (!image.image) throw new Error('This app is unavailable on this computer.');
   return { persistent: true, container: { image: image.image, args: [], env: {}, attach: false } };
 }
+
+/** One action owns preparation and creation; failure never creates a session. */
+export async function startImageSession(image: ImageInfo, runtimeReady: boolean, actions: {
+  prepareRuntime: () => Promise<void>;
+  pullImage: (reference: string) => Promise<unknown>;
+  launch: () => Promise<void>;
+}): Promise<void> {
+  if (!image.image) throw new Error('This app is unavailable on this computer.');
+  if (!runtimeReady) await actions.prepareRuntime();
+  if (image.cached !== ImageCacheState.READY) await actions.pullImage(image.image);
+  await actions.launch();
+}

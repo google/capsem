@@ -1,6 +1,6 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { ImageCacheState, ImageSurface, type ImageInfo } from '@capsem/sdk';
-import { imageNeedsDownload, imageLaunchRequest, imageInterfaceLabel, retainImageActionFailure } from '../image-launch';
+import { imageNeedsDownload, imageLaunchRequest, imageInterfaceLabel, retainImageActionFailure, startImageSession } from '../image-launch';
 
 const image: ImageInfo = { name: 'codex-cli', description: 'Codex', architectures: ['arm64'], cached: ImageCacheState.READY, image: `registry.example/codex@sha256:${'a'.repeat(64)}` };
 
@@ -36,4 +36,27 @@ it('preserves a launch failure even when the app is already downloaded', () => {
   const failure = { image: image.name, action: 'launch' as const, message: 'Launch failed' };
   expect(retainImageActionFailure(failure, [image], true)).toBe(failure);
   expect(retainImageActionFailure(null, [image], true)).toBeNull();
+});
+
+it('prepares a missing image then launches from the same action', async () => {
+  const calls: string[] = [];
+  await startImageSession({ ...image, cached: ImageCacheState.MISSING }, false, {
+    prepareRuntime: async () => { calls.push('runtime'); },
+    pullImage: async reference => { expect(reference).toBe(image.image); calls.push('image'); },
+    launch: async () => { calls.push('launch'); },
+  });
+  expect(calls).toEqual(['runtime', 'image', 'launch']);
+});
+
+it('launches a ready app directly and stops on preparation failure', async () => {
+  const actions = { prepareRuntime: vi.fn().mockResolvedValue(undefined),
+    pullImage: vi.fn().mockResolvedValue(undefined), launch: vi.fn().mockResolvedValue(undefined) };
+  await startImageSession(image, true, actions);
+  expect(actions.prepareRuntime).not.toHaveBeenCalled();
+  expect(actions.pullImage).not.toHaveBeenCalled();
+  expect(actions.launch).toHaveBeenCalledTimes(1);
+  actions.launch.mockClear();
+  actions.pullImage.mockRejectedValueOnce(Error('offline'));
+  await expect(startImageSession({ ...image, cached: ImageCacheState.MISSING }, true, actions)).rejects.toThrow('offline');
+  expect(actions.launch).not.toHaveBeenCalled();
 });

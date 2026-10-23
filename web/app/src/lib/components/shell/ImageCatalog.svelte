@@ -5,7 +5,7 @@
   import { vmStore } from '../../stores/vms.svelte';
   import { tabStore } from '../../stores/tabs.svelte';
   import { sessionActionError } from '../../models/session-action-error';
-  import { imageNeedsDownload, imageLaunchRequest, imageInterfaceLabel, retainImageActionFailure, type ImageActionFailure } from '../../models/image-launch';
+  import { imageNeedsDownload, imageLaunchRequest, imageInterfaceLabel, retainImageActionFailure, startImageSession, type ImageActionFailure } from '../../models/image-launch';
   import { imageDownloadView } from '../../models/image-download';
   import { watchVisibleRefresh } from '../../models/visible-refresh';
   import CircleNotch from 'phosphor-svelte/lib/CircleNotch';
@@ -30,33 +30,30 @@
 
   async function activate(image: ImageInfo) {
     if (!image.image || caching || launching || vmStore.acting) return;
-    if (!imageNeedsDownload(image, ready)) {
-      launching = image.name;
-      failure = null;
-      try {
-        const graphical = image.surface === ImageSurface.XPRA;
-        const { id, name } = await vmStore.provision(imageLaunchRequest(image));
-        tabStore.openVM(id, name, graphical ? 'ui' : 'terminal');
-      } catch (e) {
-        failure = { image: image.name, action: 'launch', message: sessionActionError(e) };
-      } finally {
-        launching = null;
-      }
-      return;
-    }
-    caching = image.name;
+    let action: ImageActionFailure['action'] = 'prepare';
+    caching = imageNeedsDownload(image, ready) ? image.name : null;
     lastProgress = null;
     failure = null;
-    void load(false, true);
+    if (caching) void load(false, true);
     try {
-      if (!ready) await prepareRuntime();
-      if (image.cached !== ImageCacheState.READY) await pullImage(image.image);
-      await load(false, true);
+      await startImageSession(image, ready, {
+        prepareRuntime,
+        pullImage,
+        launch: async () => {
+          action = 'launch';
+          caching = null;
+          launching = image.name;
+          const { id, name } = await vmStore.provision(imageLaunchRequest(image));
+          tabStore.openVM(id, name, image.surface === ImageSurface.XPRA ? 'ui' : 'terminal');
+        },
+      });
     } catch (e) {
-      failure = { image: image.name, action: 'prepare', message: sessionActionError(e) };
+      failure = { image: image.name, action, message: sessionActionError(e) };
     } finally {
       caching = null;
+      launching = null;
       lastProgress = null;
+      void load(false, true);
     }
   }
 
@@ -144,16 +141,16 @@
               </div>
             {:else}
             <button type="button" class="shrink-0 inline-flex items-center justify-center gap-1.5 min-w-24 text-xs rounded-lg px-3 py-2 bg-primary text-primary-foreground hover:bg-primary-hover disabled:opacity-50"
-              aria-label={`${imageNeedsDownload(image, ready) ? 'Download' : 'Launch'} ${image.name}`}
+              aria-label={`New session with ${image.name}`}
               disabled={caching !== null || launching !== null || vmStore.acting}
               onclick={() => activate(image)}>
               {#if launching === image.name}
                 <CircleNotch size={14} class="animate-spin" />
-                Launching...
+                New session
               {:else if imageNeedsDownload(image, ready)}
-                <DownloadSimple size={14} /> Download
+                <DownloadSimple size={14} /> New session
               {:else}
-                <Play size={14} weight="fill" /> Launch
+                <Play size={14} weight="fill" /> New session
               {/if}
             </button>
             {/if}
