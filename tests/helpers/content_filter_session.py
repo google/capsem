@@ -18,15 +18,16 @@ from helpers.session_ledger import stop_session_for_ledger_read
 from helpers.uds_client import UdsHttpClient
 
 FIXTURE_HOST = "fixture.capsem.test"
+OAUTH_HOST = "oauth2.googleapis.com"
 
 
-def upstream_records(text: str) -> list[dict]:
+def upstream_records(text: str, *, required_hosts=(FIXTURE_HOST,)) -> list[dict]:
     """Validate DNS exchanges explicitly, then return HTTP rows for byte proofs."""
     dns, http = [], []
     for line in text.splitlines():
         row = json.loads(line)
         if row.get("kind") == "dns":
-            assert row["qname"].rstrip(".") == FIXTURE_HOST, row
+            assert row["qname"].rstrip(".") in (FIXTURE_HOST, OAUTH_HOST), row
             assert row["qtype"] in (1, 28) and row["qclass"] == 1, row
             assert row["rcode"] == 0 and row["source_proto"] in ("udp", "tcp"), row
             assert row["request_bytes"] > 0 and row["response_bytes"] > 0, row
@@ -35,7 +36,8 @@ def upstream_records(text: str) -> list[dict]:
             assert "kind" not in row, row
             assert {"method", "path", "headers", "request_bytes"} <= row.keys(), row
             http.append(row)
-    assert dns, "native requests did not traverse the hermetic DNS fixture"
+    observed = {row["qname"].rstrip(".") for row in dns}
+    assert set(required_hosts) <= observed, "native requests did not traverse required hermetic DNS hosts"
     return http
 
 
@@ -46,6 +48,9 @@ refresh_policy = "24h"
 [network.dns]
 upstreams = [{json.dumps(ready["dns_udp_addr"])}]
 [network.upstream_overrides."{FIXTURE_HOST}:443"]
+dial = {json.dumps(ready["http_addr"])}
+protocol = "http"
+[network.upstream_overrides."{OAUTH_HOST}:443"]
 dial = {json.dumps(ready["http_addr"])}
 protocol = "http"
 [settings."security.web.http_upstream_ports"]
@@ -70,7 +75,15 @@ action = "allow"
 priority = -100
 detection_level = "informational"
 reason = "Admit only the hermetic content-filter and synthetic broker fixtures."
-match = 'http.host == "{FIXTURE_HOST}" && tcp.port == "443" && (http.path.matches("^/content/(echo|text|stream)$") || (http.path == "/oauth/token" || http.path == "/echo"))'
+match = 'http.host == "{FIXTURE_HOST}" && tcp.port == "443" && (http.path.matches("^/content/(echo|text|stream)$") || (http.path == "/echo"))'
+[corp.rules.allow_google_oauth_fixture]
+name = "allow_google_oauth_fixture"
+action = "allow"
+priority = -100
+detection_level = "informational"
+reason = "Canonical Google provider identity routed only to the hermetic token fixture."
+match = 'http.host == "{OAUTH_HOST}" && tcp.port == "443" && http.path == "/oauth/token"'
+
 '''
 
 
@@ -98,8 +111,8 @@ class FilterSession:
         assert len(lines) == 1, result
         return json.loads(lines[0].split("=", 1)[1])
 
-    def upstream(self) -> list[dict]:
-        return upstream_records(self.transcript.read_text())
+    def upstream(self, *, required_hosts=(FIXTURE_HOST,)) -> list[dict]:
+        return upstream_records(self.transcript.read_text(), required_hosts=required_hosts)
 
     def ledger(self) -> Path:
         path = vm_session_db_path(self.service.tmp_dir, self.client, self.vm_id)

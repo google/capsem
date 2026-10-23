@@ -12,7 +12,7 @@ from contextlib import closing
 
 import pytest
 from helpers.body_archive import archived_bodies, security_payload
-from helpers.content_filter_session import FIXTURE_HOST, filter_session
+from helpers.content_filter_session import FIXTURE_HOST, OAUTH_HOST, filter_session
 from helpers.session_ledger import open_session_ledger
 from ironbank.test_http_protocol_ledger import EXPECTED_NET_COLUMNS
 
@@ -211,7 +211,7 @@ def test_secret_guard_preserves_authorized_broker_header_and_blocks_reference_co
         result = env.python(f"""
 import json, urllib.request, urllib.parse, urllib.error
 base = {base!r}
-request = urllib.request.Request(base + "/oauth/token", data=urllib.parse.urlencode({{"code": "capsem_test_oauth_code_content_proof"}}).encode(), headers={{"content-type": "application/x-www-form-urlencoded"}})
+request = urllib.request.Request("https://{OAUTH_HOST}/oauth/token", data=urllib.parse.urlencode({{"code": "capsem_test_oauth_code_content_proof"}}).encode(), headers={{"content-type": "application/x-www-form-urlencoded"}})
 with urllib.request.urlopen(request, timeout=30) as response:
     token = json.load(response)["access_token"]
 assert token.startswith("credential:blake3:"), token
@@ -231,7 +231,8 @@ print("FILTER_RESULT=" + json.dumps({{"status": status, "has_authorization": ech
             "has_authorization": True,
             "ref_at_upstream": False,
         }
-        upstream = env.upstream()
+        upstream = env.upstream(required_hosts=(FIXTURE_HOST, OAUTH_HOST))
+        assert len([row for row in upstream if row["path"] == "/oauth/token"]) == 1
         assert len([row for row in upstream if row["path"] == "/echo"]) == 1
         assert not [row for row in upstream if row["path"] == "/content/echo"]
         assert_private_ledger(

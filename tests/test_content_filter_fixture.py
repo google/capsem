@@ -4,10 +4,15 @@ from __future__ import annotations
 
 import ast
 import json
-import tomllib
 
 import pytest
-from helpers.content_filter_session import FIXTURE_HOST, fixture_config, upstream_records
+import tomllib
+from helpers.content_filter_session import (
+    FIXTURE_HOST,
+    OAUTH_HOST,
+    fixture_config,
+    upstream_records,
+)
 from ironbank.test_content_filter_ledger import request_script
 
 
@@ -17,7 +22,8 @@ def test_hermetic_content_config_uses_existing_public_settings_and_scoped_rules(
     assert config["network"] == {
         "dns": {"upstreams": [ready["dns_udp_addr"]]},
         "upstream_overrides": {
-            f"{FIXTURE_HOST}:443": {"dial": ready["http_addr"], "protocol": "http"}
+            f"{FIXTURE_HOST}:443": {"dial": ready["http_addr"], "protocol": "http"},
+            f"{OAUTH_HOST}:443": {"dial": ready["http_addr"], "protocol": "http"}
         },
     }
     settings = config["settings"]
@@ -31,7 +37,11 @@ def test_hermetic_content_config_uses_existing_public_settings_and_scoped_rules(
     assert rule["action"] == "allow"
     assert rule["priority"] == -100
     assert "/content/(echo|text|stream)" in rule["match"]
-    assert 'http.path == "/oauth/token" || http.path == "/echo"' in rule["match"]
+    assert 'http.path == "/echo"' in rule["match"]
+    assert "/oauth/token" not in rule["match"]
+    oauth = config["corp"]["rules"]["allow_google_oauth_fixture"]
+    assert oauth["action"] == "allow"
+    assert oauth["match"] == f'http.host == "{OAUTH_HOST}" && tcp.port == "443" && http.path == "/oauth/token"'
 
 
 def test_dns_exchanges_are_checked_separately_from_http_records():
@@ -48,6 +58,10 @@ def test_dns_exchanges_are_checked_separately_from_http_records():
     http = {"method": "POST", "path": "/content/echo", "headers": {}, "request_bytes": 3}
     transcript = "\n".join(json.dumps(row) for row in (dns, http))
     assert upstream_records(transcript) == [http]
+    with pytest.raises(AssertionError, match="DNS"):
+        upstream_records(transcript, required_hosts=(FIXTURE_HOST, OAUTH_HOST))
+    oauth = dict(dns, qname=OAUTH_HOST)
+    assert upstream_records(transcript + "\n" + json.dumps(oauth), required_hosts=(FIXTURE_HOST, OAUTH_HOST)) == [http]
 
 
 @pytest.mark.parametrize(
