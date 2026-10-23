@@ -303,3 +303,18 @@ def test_oci_architectures_resolve_to_the_guest_config() -> None:
     build = rootfs.build_config()
     assert rootfs.builder_architecture(build, "arm64") == "arm64"
     assert rootfs.builder_architecture(build, "amd64") == "x86_64"
+
+def test_catalog_branding_refreshes_without_rewriting_images() -> None:
+    previous, _ = _merge(None, catalog.versions(_records(), REGISTRY))
+    metadata = {"dev": {"display_name": "Development", "category": "development", "interfaces": ["terminal"]}}
+    document, changed = catalog.merge(previous, channel="nightly", generated_at="t", described={}, new={}, metadata=metadata)
+    assert changed
+    assert document["entries"]["dev"]["display_name"] == "Development"
+    assert document["entries"]["dev"]["versions"] == previous["entries"]["dev"]["versions"]
+    assert "icon" not in document["entries"]["dev"]
+    assert not catalog.merge(document, channel="nightly", generated_at="t", described={}, new={}, metadata=metadata)[1]
+
+
+def test_approved_development_metadata_is_canonical() -> None:
+    assert catalog.metadata()["dev"]["display_name"] == "Development"
+    assert catalog.descriptions()["dev"] == "An agentless environment with development tools."

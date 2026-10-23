@@ -4,25 +4,45 @@
 # publication workflow's matrix to the same set of names.
 
 [images.dev]
+display_name = "Development"
+category = "development"
+interfaces = ["terminal"]
 surface = "terminal"
-description = "A development session without an agent: the Capsem base plus a compiler toolchain and everyday tools."
+description = "An agentless environment with development tools."
 
 [images.codex-cli]
+display_name = "Codex CLI"
+category = "terminal_agents"
+interfaces = ["terminal"]
 surface = "terminal"
 description = "OpenAI Codex CLI on the Capsem base."
 
 [images.claude-code]
+display_name = "Claude Code"
+category = "terminal_agents"
+interfaces = ["terminal"]
 surface = "terminal"
 description = "Claude Code on the Capsem base."
 
 [images.agy]
+display_name = "Antigravity CLI"
+category = "terminal_agents"
+interfaces = ["terminal"]
 surface = "terminal"
 description = "Antigravity CLI (agy) on the Capsem base."
 
 [images.claude-desktop]
+display_name = "Claude Desktop"
+publisher = "Anthropic"
+url = "https://claude.ai/download"
+category = "desktop_apps"
+interfaces = ["graphical"]
 surface = "xpra"
 description = "Claude Desktop on the Capsem base, streamed as a single-application GUI over Xpra (arm64 only)."
 
 [images.antigravity-desktop]
+display_name = "Antigravity App 2"
+category = "desktop_apps"
+interfaces = ["graphical"]
 surface = "xpra"
 description = "Antigravity App 2, Google's agent-first desktop application."

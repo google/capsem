@@ -51,6 +51,15 @@ def surfaces(path: Path = DESCRIPTIONS) -> dict[str, str]:
     return result
 
 
+METADATA_FIELDS = ("display_name", "publisher", "url", "icon", "category", "interfaces")
+
+
+def metadata(path: Path = DESCRIPTIONS) -> dict[str, dict[str, Any]]:
+    images = tomllib.loads(path.read_text(encoding="utf-8"))["images"]
+    return {name: {key: entry[key] for key in METADATA_FIELDS if key in entry}
+            for name, entry in images.items()}
+
+
 def _digest(record: Mapping[str, Any], field: str) -> str:
     value = record.get(field)
     if not isinstance(value, str) or not DIGEST.match(value):
@@ -104,6 +113,7 @@ def merge(
     described: Mapping[str, str],
     new: Mapping[str, Mapping[str, Any]],
     surfaces: Mapping[str, str] | None = None,
+    metadata: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """The previous catalog with `new` appended; never drops or rewrites a version."""
     entries: dict[str, Any] = {}
@@ -127,6 +137,14 @@ def merge(
         description = described.get(name, entry["description"])
         changed |= entry["description"] != description
         entry["description"] = description
+        if metadata is not None and name in metadata:
+            for key in METADATA_FIELDS:
+                value = metadata[name].get(key)
+                changed |= entry.get(key) != value
+                if value is None:
+                    entry.pop(key, None)
+                else:
+                    entry[key] = copy.deepcopy(value)
         if surfaces is not None and name in surfaces:
             surface = surfaces[name]
             if surface not in {"terminal", "xpra"}:
@@ -162,6 +180,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         described=descriptions(),
         new=versions(records, args.registry),
         surfaces=surfaces(),
+        metadata=metadata(),
     )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(catalog, indent=2, sort_keys=True) + "\n")
