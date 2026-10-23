@@ -1,0 +1,232 @@
+{
+  "schema": "capsem.developer_toolkit.v1",
+  "packages": [
+    "zsh",
+    "tmux",
+    "fzf",
+    "git-lfs",
+    "gh",
+    "fd-find",
+    "bat",
+    "ugrep",
+    "wget",
+    "unzip"
+  ],
+  "downloads": [
+    {
+      "name": "starship",
+      "version": "1.27.0",
+      "artifacts": {
+        "arm64": {
+          "url": "https://github.com/starship/starship/releases/download/v1.27.0/starship-aarch64-unknown-linux-musl.tar.gz",
+          "sha256": "341f5cbf24699fa0b27ec88965ad25f862ea09e15d35a543fd6ffdff1d2aa00d",
+          "archive": "tar"
+        },
+        "amd64": {
+          "url": "https://github.com/starship/starship/releases/download/v1.27.0/starship-x86_64-unknown-linux-musl.tar.gz",
+          "sha256": "10c8eb4cb3b761d9bf59ea828444c2dab36c900b7d69a69e08814b286969df89",
+          "archive": "tar"
+        }
+      }
+    },
+    {
+      "name": "delta",
+      "version": "0.20.1",
+      "artifacts": {
+        "arm64": {
+          "url": "https://github.com/dandavison/delta/releases/download/0.20.1/delta-0.20.1-aarch64-unknown-linux-gnu.tar.gz",
+          "sha256": "da7f4338f593572ff426ae153e0870e2fdc72729416eff551b40cdeb67940db8",
+          "archive": "tar"
+        },
+        "amd64": {
+          "url": "https://github.com/dandavison/delta/releases/download/0.20.1/delta-0.20.1-x86_64-unknown-linux-gnu.tar.gz",
+          "sha256": "50f08c879f84c81ceb220e476491a7f492d2c9c671e79918cc44badf961a6240",
+          "archive": "tar"
+        }
+      }
+    },
+    {
+      "name": "lazygit",
+      "version": "0.66.2",
+      "artifacts": {
+        "arm64": {
+          "url": "https://github.com/jesseduffield/lazygit/releases/download/v0.66.2/lazygit_0.66.2_linux_arm64.tar.gz",
+          "sha256": "79a3161eeb642f0473e23db6341f7baabd4a5933e921a9c1167c5d5c765c41a4",
+          "archive": "tar"
+        },
+        "amd64": {
+          "url": "https://github.com/jesseduffield/lazygit/releases/download/v0.66.2/lazygit_0.66.2_linux_x86_64.tar.gz",
+          "sha256": "158efc9ddfa1241fab5fb3526bb442c8dc6c4b1904d73213b9e4e93e03c52034",
+          "archive": "tar"
+        }
+      }
+    },
+    {
+      "name": "ast-grep",
+      "version": "0.51.0",
+      "artifacts": {
+        "arm64": {
+          "url": "https://github.com/ast-grep/ast-grep/releases/download/0.51.0/app-aarch64-unknown-linux-gnu.zip",
+          "sha256": "73af0ebe5958acee012754a5b2826a186580ef83333092408a7a01096fc30b8b",
+          "archive": "zip"
+        },
+        "amd64": {
+          "url": "https://github.com/ast-grep/ast-grep/releases/download/0.51.0/app-x86_64-unknown-linux-gnu.zip",
+          "sha256": "a7eead5552d3a8daad70f5d50d935da44bd0c138e946b5b0a96b1d38169fa639",
+          "archive": "zip"
+        }
+      }
+    },
+    {
+      "name": "yq",
+      "version": "4.54.1",
+      "artifacts": {
+        "arm64": {
+          "url": "https://github.com/mikefarah/yq/releases/download/v4.54.1/yq_linux_arm64",
+          "sha256": "189088da0c6429ec5178dfaab1a114805f6cab0b61b165ab236efedf1d57a71b",
+          "archive": "binary"
+        },
+        "amd64": {
+          "url": "https://github.com/mikefarah/yq/releases/download/v4.54.1/yq_linux_amd64",
+          "sha256": "8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f",
+          "archive": "binary"
+        }
+      }
+    }
+  ],
+  "tools": [
+    {
+      "name": "bash",
+      "command": [
+        "bash",
+        "--version"
+      ]
+    },
+    {
+      "name": "zsh",
+      "command": [
+        "zsh",
+        "--version"
+      ]
+    },
+    {
+      "name": "tmux",
+      "command": [
+        "tmux",
+        "-V"
+      ]
+    },
+    {
+      "name": "fzf",
+      "command": [
+        "fzf",
+        "--version"
+      ]
+    },
+    {
+      "name": "starship",
+      "command": [
+        "starship",
+        "--version"
+      ]
+    },
+    {
+      "name": "git",
+      "command": [
+        "git",
+        "--version"
+      ]
+    },
+    {
+      "name": "git-lfs",
+      "command": [
+        "git-lfs",
+        "version"
+      ]
+    },
+    {
+      "name": "gh",
+      "command": [
+        "gh",
+        "--version"
+      ]
+    },
+    {
+      "name": "delta",
+      "command": [
+        "delta",
+        "--version"
+      ]
+    },
+    {
+      "name": "lazygit",
+      "command": [
+        "lazygit",
+        "--version"
+      ]
+    },
+    {
+      "name": "ripgrep",
+      "command": [
+        "rg",
+        "--version"
+      ]
+    },
+    {
+      "name": "fd",
+      "command": [
+        "fd",
+        "--version"
+      ]
+    },
+    {
+      "name": "jq",
+      "command": [
+        "jq",
+        "--version"
+      ]
+    },
+    {
+      "name": "yq",
+      "command": [
+        "yq",
+        "--version"
+      ]
+    },
+    {
+      "name": "bat",
+      "command": [
+        "bat",
+        "--version"
+      ]
+    },
+    {
+      "name": "ast-grep",
+      "command": [
+        "ast-grep",
+        "--version"
+      ]
+    },
+    {
+      "name": "ugrep",
+      "command": [
+        "ugrep",
+        "--version"
+      ]
+    },
+    {
+      "name": "curl",
+      "command": [
+        "curl",
+        "--version"
+      ]
+    },
+    {
+      "name": "wget",
+      "command": [
+        "wget",
+        "--version"
+      ]
+    }
+  ]
+}

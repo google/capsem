@@ -30,6 +30,11 @@ COPY install-xpra.sh /tmp/install-xpra.sh
 RUN sh /tmp/install-xpra.sh "$TARGETARCH" && rm /tmp/install-xpra.sh
 COPY --chmod=0555 gui-entrypoint.sh /usr/local/bin/capsem-gui
 
+# Shared tools are one base layer, including git and GitHub CLI for every app.
+COPY developer-tools.json install-developer-tools.py /tmp/
+RUN python3 /tmp/install-developer-tools.py "$TARGETARCH" /tmp/developer-tools.json \
+    && rm /tmp/install-developer-tools.py /tmp/developer-tools.json
+
 # Agents refuse to skip their permission prompts as root, and nothing in a
 # session needs it. Container root still owns the workspace, which is mounted
 # at /workspace.

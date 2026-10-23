@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Include the shared shell, Git, GitHub CLI and code-search toolkit in every
+  application image, with pinned downloads and recorded installed versions.
+
 - Group compact app cards by interface, add an Info sidepanel with exact image
   evidence, and show canonical source app names alongside session names.
 
