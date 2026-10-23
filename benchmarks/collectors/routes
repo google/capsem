@@ -19,12 +19,11 @@ import json
 import sys
 import threading
 import time
+import tomllib
 from collections.abc import Callable
 from contextlib import ExitStack, redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
-
-import tomllib
 
 # Match pytest's roots for helpers that import `helpers.*` and `scripts.*`.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))

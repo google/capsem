@@ -14,7 +14,8 @@ from benchmarks.helpers.route_validation import validate_wire
 
 def test_seeded_corpus_is_exact_bounded_and_never_replaces_active_logs(tmp_path) -> None:
     service = SimpleNamespace(home_dir=tmp_path / "home", tmp_dir=tmp_path / "run")
-    service.home_dir.mkdir(); service.tmp_dir.mkdir()
+    service.home_dir.mkdir()
+    service.tmp_dir.mkdir()
     (service.tmp_dir / "service.log").write_text("live owner\n")
     session = service.tmp_dir / "persistent" / VM_ID
     session.mkdir(parents=True)

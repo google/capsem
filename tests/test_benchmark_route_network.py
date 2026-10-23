@@ -49,9 +49,8 @@ def test_inspect_case_uses_real_network_id_and_public_schema() -> None:
 
 
 def test_network_logs_remain_uncovered_without_real_traffic() -> None:
-    from pathlib import Path
-
     import tomllib
+    from pathlib import Path
 
     cfg = tomllib.loads((Path(__file__).parents[1] / "config/gate.toml").read_text())["benchmark"]["routes"]
     assert "GET /networks/{id}/logs" in cfg["unmeasured"]

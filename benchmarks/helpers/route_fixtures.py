@@ -7,11 +7,11 @@ boundary; a separate retained service generation never rewrites the active sink.
 from __future__ import annotations
 
 import json
+import tomllib
 from contextlib import contextmanager
 from pathlib import Path
 from uuid import UUID
 
-import tomllib
 from helpers.stopped_workspace import VM_ID
 
 ROOT = Path(__file__).resolve().parents[2]
