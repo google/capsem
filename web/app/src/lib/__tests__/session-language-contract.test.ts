@@ -69,6 +69,12 @@ describe('user-facing session language contract', () => {
     expect(dashboard).not.toContain('openCreateModal');
   });
 
+  it('opens official Help through the host browser opener', () => {
+    expect(toolbar).toContain("await openUrl('https://docs.capsem.org/')");
+    expect(toolbar).toContain('onclick={openHelp}');
+    expect(toolbar).toContain('<span>Help</span>');
+  });
+
   it('routes About Capsem to a top-level canonical status page', () => {
     expect(toolbar).toContain("tabStore.openSingleton('about', 'About Capsem')");
     expect(app).toContain("tab.view === 'about'");

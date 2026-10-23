@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add Help to the app menu, opening the official documentation in the host browser.
+
 - Show a compact toolbar notice when the service confirms a newer Capsem version,
   with a direct action to review its update status.
 

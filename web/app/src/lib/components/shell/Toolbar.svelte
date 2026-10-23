@@ -25,7 +25,7 @@
   import { formatTokens, formatCost } from '../../format';
   import { hasVmAction, startAction, startLabel } from '../../vm-actions';
   import { sessionActionError } from '../../models/session-action-error';
-  import { getContainerStatus } from '../../api';
+  import { getContainerStatus, openUrl } from '../../api';
   import { defaultSessionView, hasOpenableSurface, surfaceMayAppear } from '../../models/surface';
 
   let active = $derived(tabStore.active);
@@ -129,6 +129,15 @@
   }
   onMount(() => window.addEventListener('capsem:tab-action', onTabAction));
   onDestroy(() => window.removeEventListener('capsem:tab-action', onTabAction));
+
+  async function openHelp() {
+    menuOpen = false;
+    try {
+      await openUrl('https://docs.capsem.org/');
+    } catch (error) {
+      actionError = sessionActionError(error);
+    }
+  }
 
   function closeModal() {
     modalKind = null;
@@ -281,6 +290,12 @@
           >
             <GearSix size={16} />
             <span>Settings</span>
+          </button>
+          <button type="button"
+            class="w-full flex items-center gap-x-3 py-2 px-3 text-sm text-dropdown-item-foreground rounded-lg hover:bg-dropdown-item-hover"
+            onclick={openHelp}>
+            <Info size={16} />
+            <span>Help</span>
           </button>
           <button
             type="button"
