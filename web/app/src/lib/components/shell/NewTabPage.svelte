@@ -14,6 +14,7 @@
   import Modal from './Modal.svelte';
   import SessionCredentials from './SessionCredentials.svelte';
   import ImageCatalog from './ImageCatalog.svelte';
+  import AppIcon from './AppIcon.svelte';
   import Pause from 'phosphor-svelte/lib/Pause';
   import Trash from 'phosphor-svelte/lib/Trash';
   import Play from 'phosphor-svelte/lib/Play';
@@ -250,7 +251,14 @@
               class="{canOpenSession(vm) ? 'hover:bg-muted-hover cursor-pointer' : 'opacity-60 cursor-default'}"
               onclick={() => { if (canOpenSession(vm)) tabStore.openVM(vm.id, vm.name ?? vm.id); }}
             >
-              <td class="p-3 whitespace-nowrap text-sm font-medium text-foreground">{vm.name ?? vm.id}</td>
+              <td class="p-3 text-sm font-medium text-foreground">
+                <div class="flex items-center gap-2 min-w-0">
+                  {#if vm.app}<AppIcon icon={vm.app.icon} class="size-7" />{/if}
+                  <div class="min-w-0"><p class="truncate">{vm.name ?? vm.id}</p>
+                    {#if vm.app}<p class="truncate text-xs font-normal text-muted-foreground-1">{vm.app.display_name}</p>{/if}
+                  </div>
+                </div>
+              </td>
               <td class="p-3 whitespace-nowrap text-sm">
                 <span class="text-xs px-2 py-0.5 rounded-full {statusBadge(vm.status)}">{vm.status}</span>
               </td>

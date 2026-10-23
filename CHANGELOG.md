@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Group compact app cards by interface, add an Info sidepanel with exact image
+  evidence, and show canonical source app names alongside session names.
+
 - Preserve the exact source application metadata with session launch records,
   including across clones, resumes and catalog updates.
 

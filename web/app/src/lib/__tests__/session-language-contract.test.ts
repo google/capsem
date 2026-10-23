@@ -69,6 +69,13 @@ describe('user-facing session language contract', () => {
     expect(dashboard).not.toContain('openCreateModal');
   });
 
+  it('retains the session name and shows only authoritative source-app metadata', () => {
+    expect(dashboard).toContain('{vm.name ?? vm.id}');
+    expect(dashboard).toContain('{vm.app.display_name}');
+    expect(dashboard).toContain('<AppIcon icon={vm.app.icon}');
+    expect(dashboard).not.toContain('vm.name.split');
+  });
+
   it('shows compact truthful usage totals before session launch', () => {
     expect(dashboard.indexOf('aria-label="Usage summary"')).toBeLessThan(dashboard.indexOf('<ImageCatalog'));
     for (const label of ['Sessions', 'AI requests', 'Tokens', 'Estimated cost']) expect(dashboard).toContain(`>${label}</dt>`);

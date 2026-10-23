@@ -8,12 +8,16 @@
   import { imageNeedsDownload, imageLaunchRequest, imageInterfaceLabel, retainImageActionFailure, startImageSession, imageHasUpdate, type ImageActionFailure } from '../../models/image-launch';
   import { imageDownloadView } from '../../models/image-download';
   import { watchVisibleRefresh } from '../../models/visible-refresh';
+  import {catalogGroups,imageDisplayName} from '../../models/image-metadata';
+  import AppIcon from './AppIcon.svelte';
+  import ImageInfoPanel from './ImageInfoPanel.svelte';
   import CircleNotch from 'phosphor-svelte/lib/CircleNotch';
   import DownloadSimple from 'phosphor-svelte/lib/DownloadSimple';
   import Play from 'phosphor-svelte/lib/Play';
 
   let { ready, prepareRuntime }: { ready: boolean; prepareRuntime: () => Promise<void> } = $props();
   let images = $state<ImageInfo[]>([]);
+  let infoImage = $state<ImageInfo|null>(null);
   let loading = $state(true);
   let error = $state<string | null>(null);
   let controller: AbortController | null = null;
@@ -114,14 +118,19 @@
   {:else if availableImages.length === 0}
     <p class="text-sm text-muted-foreground-1">No apps are available for this computer.</p>
   {:else}
-    <div class="border border-card-line rounded-xl divide-y divide-card-line overflow-hidden">
-      {#each availableImages as image (image.name)}
+    <div class="space-y-4">
+      {#each catalogGroups(availableImages) as group (group.label)}
+      <section aria-label={group.label}>
+      <h4 class="mb-2 text-xs font-semibold text-foreground uppercase tracking-wider">{group.label}</h4>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      {#each group.images as image (image.name)}
         {@const download = imageDownloadView(image.progress, caching === image.name ? lastProgress : null)}
-        <article class="px-4 py-3">
+        <article class="rounded-xl border border-card-line px-3 py-3">
           <div class="flex items-center gap-3">
+            <AppIcon icon={image.app?.icon} />
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-2">
-                <h4 class="text-sm font-semibold text-foreground truncate">{image.name}</h4>
+                <h5 class="text-sm font-semibold text-foreground truncate">{imageDisplayName(image)}</h5>
                 {#if imageHasUpdate(image)}
                   <span class="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary" title="A newer app image is available">Updated</span>
                 {/if}
@@ -129,8 +138,10 @@
                   <span class="shrink-0 text-[10px] text-muted-foreground-1">{imageInterfaceLabel(image)}</span>
                 {/if}
               </div>
+              {#if image.app?.publisher}<p class="text-[11px] text-muted-foreground-1">{image.app.publisher}</p>{/if}
               <p class="text-xs text-muted-foreground-1 truncate" title={image.description}>{image.description}</p>
             </div>
+            <button type="button" class="shrink-0 text-xs text-muted-foreground-1 hover:text-primary" aria-label={`Info about ${imageDisplayName(image)}`} onclick={()=>infoImage=image}>Info</button>
             {#if caching === image.name || image.progress}
               <div class="shrink-0 w-24">
                 <div class="app-download-progress bg-muted rounded-full" class:indeterminate={download.percent === null}
@@ -144,7 +155,7 @@
               </div>
             {:else}
             <button type="button" class="shrink-0 inline-flex items-center justify-center gap-1.5 min-w-24 text-xs rounded-lg px-3 py-2 bg-primary text-primary-foreground hover:bg-primary-hover disabled:opacity-50"
-              aria-label={`New session with ${image.name}`}
+              aria-label={`New session with ${imageDisplayName(image)}`}
               disabled={caching !== null || launching !== null || vmStore.acting}
               onclick={() => activate(image)}>
               {#if launching === image.name}
@@ -166,9 +177,12 @@
           {/if}
         </article>
       {/each}
+      </div></section>
+      {/each}
     </div>
   {/if}
 </section>
+{#if infoImage}<ImageInfoPanel image={infoImage} onclose={()=>infoImage=null} />{/if}
 
 <style>
   .app-download-progress {
