@@ -95,7 +95,7 @@ async fn stale_export_cannot_deliver_after_its_job_identity_is_reused() {
     export
         .peer
         .sender
-        .send(ApprovalServerMessage {
+        .send(ApprovalServerMessage::Resolved {
             request_id,
             outcome: ApprovalOutcome::Approved,
         })
@@ -159,7 +159,7 @@ async fn denied_or_expired_export_never_delivers_the_held_bytes() {
         export
             .peer
             .sender
-            .send(ApprovalServerMessage { request_id, outcome })
+            .send(ApprovalServerMessage::Resolved { request_id, outcome })
             .await
             .unwrap();
         tokio::time::timeout(Duration::from_secs(1), export.worker)

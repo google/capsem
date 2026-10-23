@@ -74,7 +74,7 @@ async fn received_export_stops_transport_retries_while_original_bytes_wait_for_a
         .await
         .is_err());
     peer.sender
-        .send(ApprovalServerMessage {
+        .send(ApprovalServerMessage::Resolved {
             request_id,
             outcome: ApprovalOutcome::Approved,
         })

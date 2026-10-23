@@ -72,7 +72,7 @@ async fn original_guest_export_holds_its_bytes_for_the_bound_approval() {
         .await
         .is_err());
     peer.sender
-        .send(ApprovalServerMessage {
+        .send(ApprovalServerMessage::Resolved {
             request_id,
             outcome: ApprovalOutcome::Approved,
         })

@@ -67,7 +67,7 @@ async fn original_import_waits_for_explicit_decision_without_blocking_ipc() {
                 ProcessToService::Pong
             ));
             peer.sender
-                .send(ApprovalServerMessage { request_id, outcome })
+                .send(ApprovalServerMessage::Resolved { request_id, outcome })
                 .await
                 .unwrap();
             let result = tokio::time::timeout(Duration::from_secs(1), response.recv())
@@ -140,7 +140,7 @@ async fn changed_policy_refuses_a_late_import_approval() {
     };
     *dispatcher.mcp_runtime.security_rules.write().unwrap() = Arc::new(SecurityRuleSet::new(Vec::new()));
     peer.sender
-        .send(ApprovalServerMessage {
+        .send(ApprovalServerMessage::Resolved {
             request_id,
             outcome: ApprovalOutcome::Approved,
         })

@@ -57,7 +57,7 @@ async fn original_exec_waits_for_approval_and_only_approved_command_reaches_gues
         assert!(guest.try_recv().is_err(), "no guest execution before approval");
         assert!(!request.summary.contains("PRIVATE_EXEC_CANARY"));
         peer.sender
-            .send(ApprovalServerMessage { request_id, outcome })
+            .send(ApprovalServerMessage::Resolved { request_id, outcome })
             .await
             .unwrap();
         tokio::time::timeout(Duration::from_secs(2), call)
@@ -127,7 +127,7 @@ async fn runtime_end_cancels_held_exec_without_touching_a_reused_job_id() {
         matches!(tokio::time::timeout(Duration::from_secs(2), peer.receiver.recv()).await.unwrap().unwrap(), ApprovalClientMessage::Cancel { request_id: id } if id == request_id)
     );
     peer.sender
-        .send(ApprovalServerMessage {
+        .send(ApprovalServerMessage::Resolved {
             request_id,
             outcome: ApprovalOutcome::Approved,
         })
@@ -262,7 +262,7 @@ async fn pending_exec_rechecks_its_policy_before_guest_delivery() {
     };
     *rules.write().unwrap() = Arc::new(capsem_core::net::policy_config::SecurityRuleSet::new(Vec::new()));
     peer.sender
-        .send(ApprovalServerMessage {
+        .send(ApprovalServerMessage::Resolved {
             request_id,
             outcome: ApprovalOutcome::Approved,
         })
@@ -307,7 +307,7 @@ async fn cancellation_does_not_wait_for_a_full_guest_control_queue() {
         panic!("begin")
     };
     peer.sender
-        .send(ApprovalServerMessage {
+        .send(ApprovalServerMessage::Resolved {
             request_id,
             outcome: ApprovalOutcome::Approved,
         })
