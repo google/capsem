@@ -1,5 +1,41 @@
 use super::*;
 
+#[tokio::test]
+async fn acknowledged_browser_request_is_cleared_for_a_fresh_observer() {
+    let temp = tempfile::tempdir().unwrap();
+    let (dispatcher, _) = Dispatcher::new(temp.path());
+    dispatcher
+        .session_browser
+        .request("https://example.org/login?state=opaque")
+        .unwrap();
+    let (tx, rx) = connect_as(&dispatcher, "capsem-service").await;
+    tx.send(ServiceToProcess::AcknowledgeBrowserRequest { id: 7, request_id: 1 })
+        .await
+        .unwrap();
+    assert!(matches!(
+        tokio::time::timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .unwrap()
+            .unwrap(),
+        ProcessToService::BrowserRequestAcknowledged {
+            id: 7,
+            acknowledged: true
+        }
+    ));
+    let (_tx, rx) = connect_as(&dispatcher, "capsem-terminal-observer").await;
+    loop {
+        match tokio::time::timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .unwrap()
+            .unwrap()
+        {
+            ProcessToService::BrowserRequestCleared { request_id: 1 } => break,
+            ProcessToService::TerminalSummary { .. } => {}
+            other => panic!("unexpected observer state: {other:?}"),
+        }
+    }
+}
+
 async fn connect_as(
     dispatcher: &Dispatcher,
     peer: &'static str,

@@ -177,15 +177,21 @@ pub(crate) async fn handle_ipc_connection(
     if terminal_observer {
         let mut requests = session_browser.subscribe();
         let request_tx = ipc_tx_out.clone();
+        let browser_observer = Arc::clone(&session_browser);
         connection_tasks.spawn(async move {
             loop {
-                let request = requests.borrow_and_update().clone();
-                if let Some(request) = request {
-                    if request_tx
-                        .send(ProcessToService::BrowserRequest { request })
-                        .await
-                        .is_err()
-                    {
+                let message = {
+                    let request = requests.borrow_and_update();
+                    match request.clone() {
+                        Some(request) => Some(ProcessToService::BrowserRequest { request }),
+                        None if browser_observer.revision() > 0 => Some(ProcessToService::BrowserRequestCleared {
+                            request_id: browser_observer.revision(),
+                        }),
+                        None => None,
+                    }
+                };
+                if let Some(message) = message {
+                    if request_tx.send(message).await.is_err() {
                         break;
                     }
                 }
@@ -253,6 +259,15 @@ pub(crate) async fn handle_ipc_connection(
             }
         };
         match msg {
+            ServiceToProcess::AcknowledgeBrowserRequest { id, request_id } => {
+                let acknowledged = session_browser.acknowledge(request_id);
+                capsem_core::try_send!(
+                    "ipc_browser_acknowledged",
+                    ipc_tx_out
+                        .send(ProcessToService::BrowserRequestAcknowledged { id, acknowledged })
+                        .await
+                );
+            }
             ServiceToProcess::InjectCredentials {
                 id,
                 credentials: material,

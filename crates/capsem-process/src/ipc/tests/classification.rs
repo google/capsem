@@ -6,6 +6,7 @@ pub(super) fn classify_ipc_message(msg: &ServiceToProcess) -> IpcAction {
     match msg {
         ServiceToProcess::StartTerminalStream | ServiceToProcess::StopTerminalStream => IpcAction::StreamSetup,
         ServiceToProcess::Ping => IpcAction::HealthCheck,
+        ServiceToProcess::AcknowledgeBrowserRequest { .. } => IpcAction::BrowserMetadata,
         ServiceToProcess::TerminalInput { .. }
         | ServiceToProcess::TerminalResize { .. }
         | ServiceToProcess::TerminalFocus { .. } => IpcAction::Forward,
@@ -47,6 +48,7 @@ pub(super) fn classify_ipc_message(msg: &ServiceToProcess) -> IpcAction {
 pub(super) enum IpcAction {
     StreamSetup,
     HealthCheck,
+    BrowserMetadata,
     Forward,
     Job,
     Reload,
