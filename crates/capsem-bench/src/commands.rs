@@ -15,6 +15,9 @@ use crate::schema;
 use crate::stats;
 use crate::store;
 
+#[cfg(test)]
+mod tests;
+
 /// What can be measured, and what a quick run leaves out.
 pub(crate) fn list_dimensions() {
     println!("{:<12}  QUICK", "DIMENSION");
@@ -88,6 +91,15 @@ pub(crate) fn run_dimensions(
     commit: &str,
     strays: Vec<String>,
 ) -> Result<()> {
+    let missing = wanted
+        .iter()
+        .filter(|dimension| !quick || dimension.in_quick_lane())
+        .filter(|dimension| !collectors.join(dimension.as_str()).is_file())
+        .map(|dimension| dimension.as_str())
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        bail!("requested benchmark collectors are missing: {}", missing.join(", "));
+    }
     let fitness = machine::examine(
         machine::Judgement::Measurement,
         std::env::consts::ARCH,
@@ -101,13 +113,10 @@ pub(crate) fn run_dimensions(
         // A quick run answers "how bad is it" while developing, so it takes
         // only the dimensions that finish in seconds.
         if quick && !dimension.in_quick_lane() {
+            println!("{}: excluded from quick diagnostics", dimension.as_str());
             continue;
         }
         let program = collectors.join(dimension.as_str());
-        if !program.exists() {
-            println!("{}: no collector yet", dimension.as_str());
-            continue;
-        }
 
         // An interpreter prefix runs the collector as an argument to it, so a
         // collector needing the project's Python gets that environment rather
