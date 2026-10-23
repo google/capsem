@@ -20,6 +20,25 @@ from helpers.uds_client import UdsHttpClient
 FIXTURE_HOST = "fixture.capsem.test"
 
 
+def upstream_records(text: str) -> list[dict]:
+    """Validate DNS exchanges explicitly, then return HTTP rows for byte proofs."""
+    dns, http = [], []
+    for line in text.splitlines():
+        row = json.loads(line)
+        if row.get("kind") == "dns":
+            assert row["qname"].rstrip(".") == FIXTURE_HOST, row
+            assert row["qtype"] in (1, 28) and row["qclass"] == 1, row
+            assert row["rcode"] == 0 and row["source_proto"] in ("udp", "tcp"), row
+            assert row["request_bytes"] > 0 and row["response_bytes"] > 0, row
+            dns.append(row)
+        else:
+            assert "kind" not in row, row
+            assert {"method", "path", "headers", "request_bytes"} <= row.keys(), row
+            http.append(row)
+    assert dns, "native requests did not traverse the hermetic DNS fixture"
+    return http
+
+
 def fixture_config(ready: dict) -> str:
     port = int(ready["http_addr"].rsplit(":", 1)[1])
     return f'''
@@ -39,19 +58,19 @@ modified = "2026-10-23T00:00:00Z"
 value = 8192
 modified = "2026-10-23T00:00:00Z"
 [ai.google]
-allowed_remote_targets = ["127.0.0.1:{port}"]
+allowed_remote_targets = ["{FIXTURE_HOST}:443"]
 [ai.google.rules.content_broker_binding]
 name = "content_broker_binding"
 action = "allow"
 detection_level = "informational"
-match = 'http.host == "127.0.0.1" && tcp.port == "{port}"'
+match = 'http.host == "{FIXTURE_HOST}" && tcp.port == "443"'
 [corp.rules.allow_content_fixture]
 name = "allow_content_fixture"
 action = "allow"
 priority = -100
 detection_level = "informational"
 reason = "Admit only the hermetic content-filter and synthetic broker fixtures."
-match = '(http.host == "{FIXTURE_HOST}" && tcp.port == "443" && http.path.matches("^/content/(echo|text|stream)$")) || (http.host == "127.0.0.1" && tcp.port == "{port}" && (http.path == "/oauth/token" || http.path == "/echo"))'
+match = 'http.host == "{FIXTURE_HOST}" && tcp.port == "443" && (http.path.matches("^/content/(echo|text|stream)$") || (http.path == "/oauth/token" || http.path == "/echo"))'
 '''
 
 
@@ -62,7 +81,6 @@ class FilterSession:
     gateway: TcpHttpClient
     vm_id: str
     transcript: Path
-    mock: dict
     mock_process: subprocess.Popen[str]
     corp_config: Path
 
@@ -72,20 +90,16 @@ class FilterSession:
             f"/vms/{self.vm_id}/files/content?path={name}", script.encode(), timeout=30
         )
         assert uploaded["success"] is True, uploaded
-        result = workload_exec(
-            self.client, self.vm_id, f"python3 {WORKSPACE}/{name}", timeout=120
-        )
+        result = workload_exec(self.client, self.vm_id, f"python3 {WORKSPACE}/{name}", timeout=120)
         assert result["exit_code"] == 0, result
         lines = [
-            line
-            for line in result["stdout_text"].splitlines()
-            if line.startswith("FILTER_RESULT=")
+            line for line in result["stdout_text"].splitlines() if line.startswith("FILTER_RESULT=")
         ]
         assert len(lines) == 1, result
         return json.loads(lines[0].split("=", 1)[1])
 
     def upstream(self) -> list[dict]:
-        return [json.loads(line) for line in self.transcript.read_text().splitlines()]
+        return upstream_records(self.transcript.read_text())
 
     def ledger(self) -> Path:
         path = vm_session_db_path(self.service.tmp_dir, self.client, self.vm_id)
@@ -93,9 +107,7 @@ class FilterSession:
 
 
 @contextlib.contextmanager
-def filter_session(
-    workdir: Path, plugin: str, mode: str, *, content=None, capture_requests=True
-):
+def filter_session(workdir: Path, plugin: str, mode: str, *, content=None, capture_requests=True):
     """Configure public controls before boot; use exactly the verified product dev pin."""
     workdir.mkdir(parents=True, exist_ok=True)
     transcript = workdir / "upstream.jsonl"
@@ -126,9 +138,7 @@ def filter_session(
         with image_session(
             service, workdir / "image", f"content-proof-{uuid.uuid4().hex[:8]}"
         ) as vm_id:
-            yield FilterSession(
-                service, client, public, vm_id, transcript, ready, mock, corp
-            )
+            yield FilterSession(service, client, public, vm_id, transcript, mock, corp)
     finally:
         if gateway is not None:
             gateway.stop()

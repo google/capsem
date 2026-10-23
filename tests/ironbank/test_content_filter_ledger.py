@@ -207,7 +207,7 @@ def test_secret_guard_preserves_authorized_broker_header_and_blocks_reference_co
     tmp_path,
 ):
     with filter_session(tmp_path, "secret_exfiltration", "block") as env:
-        base = env.mock["base_url"].rstrip("/")
+        base = f"https://{FIXTURE_HOST}"
         result = env.python(f"""
 import json, urllib.request, urllib.parse, urllib.error
 base = {base!r}
