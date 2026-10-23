@@ -1,5 +1,7 @@
 use super::*;
 
+mod approval;
+
 async fn accept_and_handshake(listener: &tokio::net::UnixListener) -> std::os::unix::net::UnixStream {
     let (stream, _) = listener.accept().await.unwrap();
     let std_stream = stream.into_std().unwrap();

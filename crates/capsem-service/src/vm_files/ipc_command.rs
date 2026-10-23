@@ -1,6 +1,8 @@
 //! One request and its correlated reply over a fresh VM-owner IPC connection.
 use super::*;
 
+mod budget;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum IpcCommandError {
     Timeout { timeout_secs: u64 },
@@ -67,9 +69,9 @@ pub(crate) async fn send_owner_command(
         .await
         .map_err(|e| IpcCommandError::Failed(format!("failed to send IPC command: {e}")))?;
 
-    let deadline = timeout_secs.map(|secs| tokio::time::Instant::now() + std::time::Duration::from_secs(secs));
+    let mut budget = budget::ExecBudget::new(timeout_secs);
     loop {
-        let msg = match deadline {
+        let msg = match budget.deadline() {
             Some(deadline) => match tokio::time::timeout_at(deadline, rx.recv()).await {
                 Ok(Ok(msg)) => msg,
                 Ok(Err(e)) => {
@@ -77,6 +79,9 @@ pub(crate) async fn send_owner_command(
                     return Err(IpcCommandError::Failed(format!("IPC connection closed: {e}")));
                 }
                 Err(_) => {
+                    if budget.waiting() {
+                        return Err(IpcCommandError::Failed("registered execution approval expired".into()));
+                    }
                     let timeout_secs = timeout_secs.unwrap_or_default();
                     return Err(IpcCommandError::Timeout { timeout_secs });
                 }
@@ -90,6 +95,13 @@ pub(crate) async fn send_owner_command(
             },
         };
 
+        if let ProcessToService::ExecApproval { id, progress } = &msg {
+            if matches!(&cmd, ServiceToProcess::Exec { id: original, .. } if original == id) {
+                budget.observe(progress).map_err(IpcCommandError::Failed)?;
+            }
+            continue;
+        }
+
         // The connection also carries lifecycle broadcasts and, for streams,
         // output chunks; only the message answering this request's id is the
         // reply. Id-less requests are answered by `Pong`.
@@ -98,6 +110,11 @@ pub(crate) async fn send_owner_command(
             None => matches!(msg, ProcessToService::Pong) && matches!(cmd, ServiceToProcess::Ping),
         };
         if answers {
+            if budget.waiting() {
+                return Err(IpcCommandError::Failed(
+                    "execution result preceded its approval resolution".into(),
+                ));
+            }
             owner.validate(state, false)?;
             return Ok(msg);
         }

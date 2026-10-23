@@ -560,6 +560,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   certificates so macOS creates certificates accepted by strict TLS clients.
 ### Changed
 
+- Keep an original exec waiting through its verified, bounded human approval phase without spending its command timeout; retain caller cancellation and fail closed on stale or duplicate progress.
+
 - Use webpki roots for Rust SDK WebSocket TLS, matching its HTTP transport
   without loading the macOS keychain trust stack.
 
