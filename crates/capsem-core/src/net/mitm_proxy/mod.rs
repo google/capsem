@@ -2101,13 +2101,8 @@ async fn handle_request(
     let resp_status = resp_parts.status.as_u16();
     tracing::Span::current().record("status", resp_status);
 
-    // Strip Content-Encoding / Content-Length when the body is gzip --
-    // the DecompressionHook (sync ChunkHook) handles the actual byte
-    // transformation downstream. The guest receives uncompressed data
-    // (vsock is local; compression is unnecessary). This header strip
-    // is just three field accesses on the parts struct and stays
-    // inline here -- moving it to an async Hook would re-introduce
-    // the kind of plumbing the slice removed.
+    // Replay decoded bytes without stale gzip/length headers. Complete-body
+    // policy decodes here; ordinary forwarding uses the DecompressionHook.
     let inspect_inbound = inspect_inbound || semantic_body::utf8_enabled(&policy_snapshot, true, &resp_parts.headers);
     let mut _response_content_permit =
         if inspect_inbound && _content_body_permit.is_none() && _semantic_body_permit.is_none() {
@@ -2219,8 +2214,10 @@ async fn handle_request(
         };
 
         if should_evaluate_model_response || inspect_inbound {
+            let body_is_utf8 = !inspect_inbound || std::str::from_utf8(&response_body).is_ok();
+            let text_body = body_is_utf8.then(|| String::from_utf8_lossy(&response_body).into_owned());
             let model_event = if let (true, Some(provider), Some(model_protocol)) = (
-                should_evaluate_model_response,
+                should_evaluate_model_response && body_is_utf8,
                 effective_ai_provider,
                 effective_ai_protocol,
             ) {
@@ -2243,7 +2240,7 @@ async fn handle_request(
                     path: Some(path.clone()),
                     query: query.clone(),
                     status: Some(resp_status.to_string()),
-                    body: Some(String::from_utf8_lossy(&response_body).to_string()),
+                    body: text_body,
                 })
             } else {
                 SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
@@ -2252,11 +2249,11 @@ async fn handle_request(
                     path: Some(path.clone()),
                     query: query.clone(),
                     status: Some(resp_status.to_string()),
-                    body: Some(String::from_utf8_lossy(&response_body).into_owned()),
+                    body: text_body,
                 })
             };
             let mut model_event = security_event_with_transport(model_event, upstream_ip, upstream_port);
-            model_event.http_body_utf8_valid = inspect_inbound.then(|| std::str::from_utf8(&response_body).is_ok());
+            model_event.http_body_utf8_valid = inspect_inbound.then_some(body_is_utf8);
             let model_evaluation = match config.engine.evaluate(&policy_snapshot, model_event).await {
                 Ok(evaluation) => evaluation,
                 Err(error) => {
