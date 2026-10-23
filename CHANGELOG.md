@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Resolve deep-linked session tabs to their names when status arrives and
+  reflect session renames without reopening the tab.
+
 - Hide Antigravity IDE's own minimize, maximize and close buttons through its
   supported window setting, leaving session window controls to Capsem.
 

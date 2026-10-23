@@ -1,7 +1,9 @@
 <script lang="ts">
   import { tabStore } from '../../stores/tabs.svelte.ts';
+  import { vmStore } from '../../stores/vms.svelte';
 
   let isActive = $derived((id: string) => id === tabStore.activeId);
+  let sessionNames = $derived(new Map(vmStore.vms.map(vm => [vm.id, vm.name])));
 
   // Drag reorder state
   let dragIndex = $state<number | null>(null);
@@ -58,7 +60,7 @@
           {dropIndex === i && dragIndex !== i ? 'border-l-primary' : ''}"
         onclick={() => tabStore.activate(tab.id)}
       >
-        <span class="truncate">{tab.title}</span>
+        <span class="truncate">{(tab.vmId && sessionNames.get(tab.vmId)) || tab.title}</span>
         {#if tabStore.tabs.length > 1}
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <span
