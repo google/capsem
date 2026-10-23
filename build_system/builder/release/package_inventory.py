@@ -1,12 +1,13 @@
 """Package inventory from an exact flattened image, without executing its code."""
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import tarfile
 from pathlib import Path, PurePosixPath
 from typing import Any
+
+from ..crypto import sha256
 
 
 def _read(image: tarfile.TarFile, path: str, limit: int) -> bytes:
@@ -49,7 +50,7 @@ def from_rootfs(source: Path, subject: str, architecture: str) -> dict[str, Any]
             raise ValueError("toolkit architecture differs from image")
         for tool in toolkit["tools"]:
             binary = _read(image, tool["binary_path"], 256 * 1024 * 1024)
-            if hashlib.sha256(binary).hexdigest() != tool["binary_sha256"]:
+            if sha256(binary).hexdigest() != tool["binary_sha256"]:
                 raise ValueError(f"{tool['name']}: inventoried binary changed in descendant image")
     return {"schema": "capsem.package_inventory.v1", "subject": subject,
             "architecture": architecture, "packages": packages, "tools": toolkit["tools"]}
