@@ -57,8 +57,12 @@ pub use emission::{
     admit_within, emit_security_write, emit_security_write_blocking, RuntimeSecurityEvent, SECURITY_ADMISSION_DEADLINE,
 };
 mod file_facts;
+mod file_observation;
 use file_facts::explicit_primary_file_event;
 pub use file_facts::{security_event_from_explicit_file_event, security_event_from_file_event};
+pub use file_observation::{
+    emit_explicit_file_security_write_and_rules, emit_observed_explicit_file_security_write_and_rules_with_plugins,
+};
 mod event_type;
 pub use event_type::{RuntimeSecurityEventFamily, RuntimeSecurityEventType, SecurityEventTypeParseError};
 
@@ -93,30 +97,6 @@ pub struct ExplicitFileSecurityEvent {
     pub mime_type: Option<String>,
     pub trace_id: Option<String>,
     pub credential_ref: Option<String>,
-}
-
-pub async fn emit_explicit_file_security_write_and_rules(
-    db: &DbWriter,
-    rules: &SecurityRuleSet,
-    event: ExplicitFileSecurityEvent,
-) -> Option<SecurityEventId> {
-    let primary = explicit_primary_file_event(&event);
-    let security_event = security_event_from_explicit_file_event(&event);
-    let event_type = runtime_file_event_type(event.action);
-    let event_id = emit_security_write(db, WriteOp::FileEvent(primary)).await?;
-    if let Err(error) = emit_matching_security_rules(
-        db,
-        event_id.clone(),
-        event_type,
-        rules,
-        &security_event,
-        current_unix_ms(),
-    )
-    .await
-    {
-        tracing::warn!(error = %error, "failed to emit explicit file security rule ledger rows");
-    }
-    Some(event_id)
 }
 
 /// Write a boundary's primary ledger row, run the plugin stages over its

@@ -44,6 +44,64 @@ fn export() -> ExplicitFileSecurityEvent {
     }
 }
 
+#[tokio::test]
+async fn completed_explicit_file_observation_runs_only_logging_and_never_claims_an_ask() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("session.db");
+    let db = capsem_logger::DbWriter::open(&path, 32).unwrap();
+    let plugins: BTreeMap<_, _> = [
+        ("dummy_pre_eicar", SecurityPluginMode::Ask),
+        ("dummy_post_allow", SecurityPluginMode::Block),
+        ("log_sanitizer", SecurityPluginMode::Rewrite),
+    ]
+    .into_iter()
+    .map(|(id, mode)| {
+        (
+            id.to_string(),
+            SecurityPluginConfig {
+                mode,
+                detection_level: DetectionLevel::High,
+            },
+        )
+    })
+    .collect();
+    let id = emit_observed_explicit_file_security_write_and_rules_with_plugins(
+        &db,
+        &rules("ask", r#"file.write.path == "/workspace/secret.txt""#),
+        plugins,
+        ExplicitFileSecurityEvent {
+            action: FileAction::Modified,
+            size: Some(21),
+            content: Some("EICAR already written".into()),
+            ..export()
+        },
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    db.flush_checked().await.unwrap();
+    db.shutdown_blocking();
+    assert_eq!(
+        stored_decision(&path).await,
+        // The policy transition still records what the rule requested; the
+        // observation's forensic outcome records what actually happened.
+        ("ask".into(), "allow".into(), "ask".into())
+    );
+    let reader = capsem_logger::DbReader::open(&path).unwrap();
+    let pending: serde_json::Value =
+        serde_json::from_str(&reader.query_raw("SELECT COUNT(*) FROM security_ask_events").unwrap()).unwrap();
+    assert_eq!(pending["rows"][0][0], 0);
+    let payload: serde_json::Value = serde_json::from_str(
+        &super::decision_ledger::archived_payload_of(&path, "security_rule_events", id.as_str()).await,
+    )
+    .unwrap();
+    let executions = payload["plugin_executions"].as_array().unwrap();
+    assert_eq!(executions.len(), 1);
+    assert_eq!(executions[0]["plugin_id"], "log_sanitizer");
+    assert_eq!(executions[0]["stage"], "logging");
+    assert_eq!(payload["file"]["write_content"], "EICAR already written");
+}
+
 /// `(rule_action, the rule row's decision.effective, the decision ledger's effective)`.
 async fn stored_decision(db_path: &std::path::Path) -> (String, String, String) {
     let (event_id, rule_action, effective) = {
