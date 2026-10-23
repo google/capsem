@@ -426,3 +426,28 @@ fn stream_queues_of_a_listener_or_an_orphaned_stream_are_harmless() {
     drop(peer);
     assert_eq!(super::stream_queues(stream.as_fd()).unread, Some(0));
 }
+
+#[test]
+fn connected_pair_has_cloexec_kernel_identity_and_bidirectional_ownership() {
+    let (mut left, mut right) = super::connected_unix_pair().unwrap();
+    let expected = super::super::peer::PeerIdentity {
+        pid: std::process::id().try_into().unwrap(),
+        uid: super::super::process::current_uid(),
+    };
+    for socket in [&left, &right] {
+        super::validate_connected_stream(socket.as_fd()).unwrap();
+        assert!(
+            FdFlag::from_bits_truncate(fcntl(socket.as_raw_fd(), FcntlArg::F_GETFD).unwrap())
+                .contains(FdFlag::FD_CLOEXEC)
+        );
+        super::super::peer::require(socket.as_fd(), expected).unwrap();
+    }
+    left.write_all(b"left").unwrap();
+    let mut bytes = [0; 4];
+    right.read_exact(&mut bytes).unwrap();
+    assert_eq!(&bytes, b"left");
+    right.write_all(b"right").unwrap();
+    let mut bytes = [0; 5];
+    left.read_exact(&mut bytes).unwrap();
+    assert_eq!(&bytes, b"right");
+}

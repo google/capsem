@@ -1,7 +1,7 @@
 //! Owned descriptor operations with atomic inheritance guarantees.
 
 use std::io;
-use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd};
 use std::time::Duration;
 
 use nix::errno::Errno;
@@ -116,6 +116,23 @@ impl SocketShutdown {
             Self::Both => Shutdown::Both,
         }
     }
+}
+
+/// Create an owned, connected local byte stream pair with CLOEXEC on both ends.
+/// Linux applies CLOEXEC at creation; platforms without that socket flag apply
+/// it before either owned descriptor leaves this boundary. No pathname or
+/// external connection authority is involved.
+pub fn connected_unix_pair() -> io::Result<(std::os::unix::net::UnixStream, std::os::unix::net::UnixStream)> {
+    #[cfg(target_os = "linux")]
+    let flags = socket::SockFlag::SOCK_CLOEXEC;
+    #[cfg(not(target_os = "linux"))]
+    let flags = socket::SockFlag::empty();
+    let (left, right) =
+        retry_eintr(|| socket::socketpair(socket::AddressFamily::Unix, socket::SockType::Stream, None, flags))
+            .map_err(errno::io)?;
+    set_close_on_exec(left.as_fd())?;
+    set_close_on_exec(right.as_fd())?;
+    Ok((left.into(), right.into()))
 }
 
 /// Duplicate a borrowed descriptor into independently owned storage.
