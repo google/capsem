@@ -90,6 +90,11 @@ describe('user-facing session language contract', () => {
     expect(toolbar).toContain('<span>Help</span>');
   });
 
+  it('does not describe disconnected production transport as a mock mode', () => {
+    expect(toolbar).not.toContain('mock mode');
+    expect(toolbar).toContain('Offline');
+  });
+
   it('routes About Capsem to a top-level canonical status page', () => {
     expect(toolbar).toContain("tabStore.openSingleton('about', 'About Capsem')");
     expect(app).toContain("tab.view === 'about'");

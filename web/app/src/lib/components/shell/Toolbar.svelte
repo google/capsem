@@ -319,7 +319,7 @@
               {:else if gatewayStore.reachable}
                 Gateway {gatewayStore.version ?? ''} -- needs rebuild
               {:else}
-                Offline -- mock mode
+                Offline
               {/if}
             </span>
           </div>
