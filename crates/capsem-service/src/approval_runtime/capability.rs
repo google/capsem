@@ -65,7 +65,7 @@ impl Drop for Requests {
     }
 }
 
-async fn server(
+pub(super) async fn server(
     stream: UnixStream,
     session: Arc<Session>,
     mut policy: tokio::sync::watch::Receiver<Arc<crate::upstream_broker::BrokerPolicy>>,
@@ -75,6 +75,7 @@ async fn server(
         capsem_core::security_engine::approval::client::frame_limit(),
     )
     .map_err(|error| error.to_string())?;
+    let sender = Arc::new(sender);
     let mut requests = Requests {
         session: Arc::clone(&session),
         ids: HashMap::new(),
@@ -92,7 +93,7 @@ async fn server(
             completed = tasks.join_next(), if !tasks.is_empty() => {
                 let Some(Ok((id, outcome))) = completed else { break; };
                 requests.ids.remove(&id);
-                let sent = tokio::time::timeout(std::time::Duration::from_secs(5), sender.send(ApprovalServerMessage { request_id: id, outcome })).await;
+                let sent = tokio::time::timeout(std::time::Duration::from_secs(5), sender.send(ApprovalServerMessage::Resolved { request_id: id, outcome })).await;
                 if !matches!(sent, Ok(Ok(()))) { break; }
             }
             message = receiver.recv() => match message {
@@ -103,15 +104,21 @@ async fn server(
                     if let Some(pending) = pending {
                         requests.ids.insert(request_id, request.ask_id.clone());
                         let session = Arc::clone(&session);
+                        let registered = Arc::clone(&sender);
                         tasks.spawn(async move {
                             let outcome = if session.verify(&request).await.is_ok() {
-                                pending.publish();
+                                if let Some(registration) = pending.publish_registered() {
+                                    let sent = tokio::time::timeout(std::time::Duration::from_secs(5), registered.send(
+                                        ApprovalServerMessage::Registered {request_id,registration}
+                                    )).await;
+                                    if !matches!(sent,Ok(Ok(()))) { session.broker.cancel(&session.binding,&request.ask_id); }
+                                }
                                 session.wait(&request.ask_id, pending).await
                             } else { ApprovalOutcome::Unavailable };
                             (request_id, outcome)
                         });
                     } else {
-                        let sent = tokio::time::timeout(std::time::Duration::from_secs(5), sender.send(ApprovalServerMessage { request_id, outcome: ApprovalOutcome::Unavailable })).await;
+                        let sent = tokio::time::timeout(std::time::Duration::from_secs(5), sender.send(ApprovalServerMessage::Resolved { request_id, outcome: ApprovalOutcome::Unavailable })).await;
                         if !matches!(sent, Ok(Ok(()))) { break; }
                     }
                 }

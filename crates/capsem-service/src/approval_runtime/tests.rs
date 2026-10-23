@@ -3,6 +3,7 @@ use crate::instance::WorkerAuthority;
 use capsem_core::security_engine::approval::ApprovalLimits;
 
 mod capability;
+mod registration;
 
 async fn fixture() -> (
     Runtime,
