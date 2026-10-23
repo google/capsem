@@ -25,6 +25,11 @@ ENCODER_OWNERS = {
     Path("crates/capsem-foundation/src/ipc_handshake.rs"),
 }
 DURABLE_ENCODER_OWNERS = {
+    Path("crates/capsem-bench/src/store.rs"): (
+        "The benchmark store owns schema-versioned measurement persistence in its "
+        "SQLite database. Named MessagePack retains its typed measurement facts, "
+        "not gateway or IPC DTOs; storage remains with the benchmark owner."
+    ),
     Path("crates/capsem-core/src/terminal/checkpoint.rs"): (
         "The terminal engine owns versioned, bounded Alacritty model/parser suspend "
         "checkpoints. These are local durable continuation, not gateway or IPC DTOs; "
@@ -133,6 +138,14 @@ def test_durable_engine_checkpoint_has_one_explicit_owner() -> None:
     assert not encoder_violations(path, "rmp_serde::Serializer::new(&mut bounded).with_struct_map()")
     assert encoder_violations(path.with_name("other.rs"), "rmp_serde::to_vec_named(&state)")
     assert encoder_violations(path, "rmp_serde::to_vec(&state)")
+
+
+def test_durable_benchmark_store_has_one_explicit_owner() -> None:
+    path = Path("crates/capsem-bench/src/store.rs")
+    assert len(DURABLE_ENCODER_OWNERS[path]) > 100
+    assert not encoder_violations(path, "rmp_serde::to_vec_named(measurement)")
+    assert encoder_violations(path.with_name("other.rs"), "rmp_serde::to_vec_named(measurement)")
+    assert encoder_violations(path, "rmp_serde::to_vec(measurement)")
 
 
 def test_capsem_messagepack_is_sparse_and_owned() -> None:
