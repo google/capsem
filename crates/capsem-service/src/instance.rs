@@ -154,6 +154,11 @@ impl ServiceState {
         let removed = instances.remove(id)?;
         drop(instances);
         removed.authority.revoke();
+        self.approvals
+            .retire(&capsem_core::security_engine::approval::ApprovalBinding {
+                session_id: id.into(),
+                generation,
+            });
         self.remove_proxy_worker(id, generation);
         Some(removed)
     }

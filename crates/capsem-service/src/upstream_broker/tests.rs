@@ -122,17 +122,9 @@ async fn typed_guest_traffic_is_adopted_by_the_registered_proxy_generation() {
     let policy = test_policy("policy-a", None, vec![]);
     let (pending, _publisher) = PendingBroker::pair(policy).unwrap();
     let pending = pending.with_proxy(crate::proxy_worker::ProxyWorker::test_stub());
-    let client = TestClient::new(pending.worker);
+    let client = TestClient::new(pending.worker.try_clone().unwrap());
     let authority = WorkerAuthority::default();
-    let task = tokio::spawn(run(
-        pending.coordinator,
-        pending.initial_policy,
-        pending.updates,
-        authority.grant(),
-        pending.session_dir,
-        pending.ledger,
-        pending.proxy,
-    ));
+    let task = tokio::spawn(run(pending, authority.grant()));
     let (traffic, _peer) = UnixStream::pair().unwrap();
 
     let response = client
@@ -226,17 +218,9 @@ fn start_broker(
     tokio::task::JoinHandle<Result<BrokerCompletion, String>>,
 ) {
     let (pending, publisher) = PendingBroker::pair(policy).unwrap();
-    let client = TestClient::new(pending.worker);
+    let client = TestClient::new(pending.worker.try_clone().unwrap());
     let authority = WorkerAuthority::default();
-    let task = tokio::spawn(run(
-        pending.coordinator,
-        pending.initial_policy,
-        pending.updates,
-        authority.grant(),
-        pending.session_dir,
-        pending.ledger,
-        pending.proxy,
-    ));
+    let task = tokio::spawn(run(pending, authority.grant()));
     (client, publisher, authority, task)
 }
 
@@ -251,17 +235,9 @@ fn start_broker_with_ledger(
 ) {
     let (pending, publisher) = PendingBroker::pair(policy).unwrap();
     let pending = pending.with_ledger(ledger);
-    let client = TestClient::new(pending.worker);
+    let client = TestClient::new(pending.worker.try_clone().unwrap());
     let authority = WorkerAuthority::default();
-    let task = tokio::spawn(run(
-        pending.coordinator,
-        pending.initial_policy,
-        pending.updates,
-        authority.grant(),
-        pending.session_dir,
-        pending.ledger,
-        pending.proxy,
-    ));
+    let task = tokio::spawn(run(pending, authority.grant()));
     (client, publisher, authority, task)
 }
 
@@ -275,17 +251,9 @@ fn start_broker_for_session(
     tokio::task::JoinHandle<Result<BrokerCompletion, String>>,
 ) {
     let (pending, publisher) = PendingBroker::pair_for_session(policy, session_dir).unwrap();
-    let client = TestClient::new(pending.worker);
+    let client = TestClient::new(pending.worker.try_clone().unwrap());
     let authority = WorkerAuthority::default();
-    let task = tokio::spawn(run(
-        pending.coordinator,
-        pending.initial_policy,
-        pending.updates,
-        authority.grant(),
-        pending.session_dir,
-        pending.ledger,
-        pending.proxy,
-    ));
+    let task = tokio::spawn(run(pending, authority.grant()));
     (client, publisher, authority, task)
 }
 

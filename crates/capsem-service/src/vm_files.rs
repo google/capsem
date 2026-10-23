@@ -790,6 +790,7 @@ pub(super) async fn handle_info(
             }
         };
         if let (Some(mut info), Some(dir)) = (instance_data, session_dir) {
+            info.pending_approval_count = state.pending_approval_count(&info.id);
             populate_vm_info(&state, &mut info, &dir).await?;
             let app_id = info.id.clone();
             let (app, storage) = state
@@ -861,6 +862,7 @@ pub(super) async fn handle_vm_status(
             .off_worker(move |state| state.storage_diagnostics_cached(&session_dir))
             .await?;
         return Ok(Json(api::VmStatusResponse {
+            pending_approval_count: state.pending_approval_count(&vm_id),
             id: vm_id,
             name,
             status: VmLifecycleState::Running,
@@ -888,6 +890,7 @@ pub(super) async fn handle_vm_status(
                 .off_worker(move |state| state.storage_diagnostics_cached(&session_dir))
                 .await?;
             return Ok(Json(api::VmStatusResponse {
+                pending_approval_count: 0,
                 id: vm_id,
                 name: entry.name.clone(),
                 status,

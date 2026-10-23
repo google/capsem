@@ -2,7 +2,7 @@ use super::*;
 pub(crate) mod activity;
 pub(crate) mod bodies;
 pub(super) use bodies::{handle_bodies_warc_export, handle_event_bodies};
-mod rows;
+pub(crate) mod rows;
 use rows::{ledger_rows_to_objects, query_route_typed_rows};
 pub(crate) mod stats_detail;
 pub(super) use stats_detail::read_stats_detail_payload_from_session_db;

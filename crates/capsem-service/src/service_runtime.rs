@@ -263,6 +263,7 @@ async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
     let state = Arc::new(ServiceState {
         managed,
         connections,
+        approvals: Default::default(),
         instances: Mutex::new(HashMap::new()),
         proxy_workers: Mutex::new(HashMap::new()),
         standalone_proxies: tokio::sync::Mutex::new(HashMap::new()),

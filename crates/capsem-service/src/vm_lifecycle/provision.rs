@@ -412,8 +412,12 @@ impl ServiceState {
             return Err(error);
         }
         let retirement = retirement.with_brokers([
-            upstream_broker.start(upstream_grant),
-            proxy_upstream_broker.start(proxy_upstream_grant),
+            upstream_broker
+                .with_approvals(self, id, generation, &session_dir)
+                .start(upstream_grant),
+            proxy_upstream_broker
+                .with_approvals(self, id, generation, &session_dir)
+                .start(proxy_upstream_grant),
         ]);
         crate::terminal_observer::start(Arc::clone(self), id.to_string(), generation);
         let _reaper = instance_reaper::spawn_exit_reaper(

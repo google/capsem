@@ -33,6 +33,7 @@ use crate::instance::WorkerGrant;
 use crate::ledger_worker::{LedgerClient, LedgerWorkers};
 
 mod adoption;
+mod approval;
 use adoption::AwaitingAdoption;
 mod guest_metadata;
 mod mcp_http;
@@ -72,6 +73,7 @@ pub(crate) struct PendingBroker {
     session_dir: Option<PathBuf>,
     ledger: Option<LedgerSource>,
     proxy: Option<crate::proxy_worker::ProxyWorker>,
+    approval: Option<approval::Source>,
 }
 
 struct PolicyUpdate {
@@ -176,6 +178,7 @@ impl PendingBroker {
                 session_dir: None,
                 ledger: None,
                 proxy: None,
+                approval: None,
             },
             PolicyPublisher {
                 updates: vec![updates_tx],
@@ -224,17 +227,7 @@ impl PendingBroker {
 
     pub(crate) fn start(self, authority: WorkerGrant) -> tokio::task::JoinHandle<BrokerCompletion> {
         tokio::spawn(async move {
-            match run(
-                self.coordinator,
-                self.initial_policy,
-                self.updates,
-                authority,
-                self.session_dir,
-                self.ledger,
-                self.proxy,
-            )
-            .await
-            {
+            match run(self, authority).await {
                 Ok(completion) => {
                     if let Err(error) = &completion.protocol_result {
                         debug!(%error, "upstream broker stopped");
@@ -254,15 +247,18 @@ impl PendingBroker {
     }
 }
 
-async fn run(
-    socket: UnixStream,
-    mut policy: Arc<BrokerPolicy>,
-    mut updates: mpsc::Receiver<PolicyUpdate>,
-    authority: WorkerGrant,
-    session_dir: Option<PathBuf>,
-    mut ledger: Option<LedgerSource>,
-    proxy: Option<crate::proxy_worker::ProxyWorker>,
-) -> Result<BrokerCompletion, String> {
+async fn run(pending: PendingBroker, authority: WorkerGrant) -> Result<BrokerCompletion, String> {
+    let PendingBroker {
+        coordinator: socket,
+        worker,
+        initial_policy: mut policy,
+        mut updates,
+        session_dir,
+        mut ledger,
+        proxy,
+        mut approval,
+    } = pending;
+    drop(worker);
     let requests =
         WireReceiver::new(socket.try_clone().map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
     let responses = WireSender::new(socket).map_err(|error| error.to_string())?;
@@ -342,6 +338,17 @@ async fn run(
                 }
             }
             match request {
+                UpstreamGrantRequest::OpenApproval { request_id } => {
+                    approval::open(
+                        &mut approval,
+                        authority.clone(),
+                        mcp_policy.clone(),
+                        &responses,
+                        request_id,
+                        &mut mcp_workers,
+                    )
+                    .await?;
+                }
                 UpstreamGrantRequest::OpenMcpAggregator { request_id } => {
                     let Some(session) = session_dir.clone() else {
                         send_denied(&responses, request_id, UpstreamGrantDenial::NotConfigured).await?;

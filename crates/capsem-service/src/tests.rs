@@ -97,6 +97,7 @@ pub(crate) fn test_state(
     ServiceState {
         managed,
         connections,
+        approvals: Default::default(),
         instances: Mutex::new(HashMap::new()),
         proxy_workers: Mutex::new(HashMap::new()),
         standalone_proxies: tokio::sync::Mutex::new(HashMap::new()),

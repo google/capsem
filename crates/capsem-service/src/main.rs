@@ -29,6 +29,8 @@ use tokio::process::Command;
 use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn, Instrument};
 mod active_policy;
+mod approval_routes;
+mod approval_runtime;
 use active_policy::push_policy_to_running_instances;
 mod asset_background;
 mod asset_routes;
@@ -219,6 +221,7 @@ const ACTIVE_POLICY_FILE: &str = "active_policy.toml";
 pub struct ServiceState {
     managed: managed_routes::Runtime,
     connections: connection_routes::Runtime,
+    approvals: approval_runtime::Runtime,
     instances: Mutex<HashMap<String, InstanceInfo>>, // instance id to process info
     proxy_workers: Mutex<HashMap<String, (uuid::Uuid, proxy_worker::ProxyWorker)>>,
     standalone_proxies: tokio::sync::Mutex<HashMap<String, standalone_proxy::StandaloneProxy>>,
@@ -566,6 +569,11 @@ impl ServiceState {
     /// and `rename` can block on large dirs and stall other handlers
     /// racing for the lock.
     fn scrub_evicted_instance(&self, id: &str, info: &InstanceInfo) {
+        self.approvals
+            .retire(&capsem_core::security_engine::approval::ApprovalBinding {
+                session_id: id.into(),
+                generation: info.generation,
+            });
         self.connections.fence_runtime(
             id,
             info.generation,

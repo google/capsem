@@ -125,6 +125,13 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route("/vms/{id}/bodies/{event_id}", get(handle_event_bodies))
         .route("/vms/{id}/timeline", get(handle_timeline))
         .route("/vms/{id}/security/latest", get(handle_security_latest))
+        .route("/vms/{id}/security/asks", get(approval_routes::list))
+        .route(
+            "/vms/{id}/security/asks/{ask_id}/resolve",
+            post(approval_routes::resolve).layer(axum::extract::DefaultBodyLimit::max(
+                capsem_proto::APPROVAL_CONTEXT_BYTES,
+            )),
+        )
         .route("/vms/{id}/security/status", get(handle_security_info))
         .route("/vms/{id}/detection/latest", get(handle_detection_latest))
         .route("/vms/{id}/detection/status", get(handle_security_info))

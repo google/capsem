@@ -1,7 +1,7 @@
 //! Typed ledger-worker results mapped into route JSON objects.
 use super::*;
 
-pub(super) fn ledger_rows_to_objects(rows: capsem_logger::ledger_protocol::LedgerRows) -> Vec<serde_json::Value> {
+pub(crate) fn ledger_rows_to_objects(rows: capsem_logger::ledger_protocol::LedgerRows) -> Vec<serde_json::Value> {
     rows.rows
         .into_iter()
         .map(|values| {
@@ -67,7 +67,7 @@ pub(super) async fn query_route_objects(
     Ok(ledger_rows_to_objects(sets.swap_remove(set)))
 }
 
-pub(super) async fn query_route_typed_rows<T>(
+pub(crate) async fn query_route_typed_rows<T>(
     vm_id: &str,
     ledger: &str,
     query_name: &str,

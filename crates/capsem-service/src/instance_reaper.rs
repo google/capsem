@@ -48,6 +48,12 @@ pub(super) fn spawn_exit_reaper(
                     instance.authority.revoke();
                 }
                 drop(instances);
+                state
+                    .approvals
+                    .retire(&capsem_core::security_engine::approval::ApprovalBinding {
+                        session_id: id.clone(),
+                        generation,
+                    });
                 if current {
                     state.remove_proxy_worker(&id, generation);
                 }
@@ -57,6 +63,17 @@ pub(super) fn spawn_exit_reaper(
         else {
             return;
         };
+        if let Err(error) = state
+            .approvals
+            .finish(&capsem_core::security_engine::approval::ApprovalBinding {
+                session_id: id.clone(),
+                generation,
+            })
+            .await
+        {
+            warn!(id, %error, "approval producer retirement remains unconfirmed");
+            return;
+        }
         if !current {
             retirement.complete();
             return;

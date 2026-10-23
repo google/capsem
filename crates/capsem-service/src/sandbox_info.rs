@@ -104,6 +104,7 @@ pub(super) async fn list_response(state: &Arc<ServiceState>) -> Result<ListRespo
     )
     .await;
     for (info, counters) in response.sandboxes.iter_mut().zip(counters) {
+        info.pending_approval_count = state.pending_approval_count(&info.id);
         if let Some(counters) = counters {
             ledger_routes::activity::apply_totals(info, &counters);
         }
