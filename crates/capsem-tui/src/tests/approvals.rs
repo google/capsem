@@ -2,6 +2,35 @@ use super::*;
 use capsem_sdk::models::{SecurityAskDecision, SecurityAskListResponse, SecurityAskRequest, SecurityAskStatus};
 
 #[test]
+fn compact_footer_keeps_pending_approval_and_browser_shortcuts() {
+    let mut state = fixture_state();
+    state.sessions[0].attention.push(Attention::ApprovalRequired);
+    for browser in [false, true] {
+        state.sessions[0].browser_request = browser.then(|| capsem_sdk::models::BrowserRequest {
+            owner_generation: Some("11111111-1111-4111-8111-111111111111".into()),
+            id: 1,
+            url: "https://example.org/login".into(),
+        });
+        for width in [80, 40, 32, 26, 20] {
+            let snapshot = render_snapshot(&state, width, 24).unwrap();
+            let footer = snapshot.lines().last().unwrap();
+            assert!(footer.starts_with("  18ms●"), "{footer}");
+            assert_eq!(footer.contains("Alt+M"), width >= 26, "{footer}");
+            assert!(footer.contains("Alt+A"), "{footer}");
+            assert_eq!(footer.contains("Alt+b"), browser && width >= 32, "{footer}");
+            assert!(footer.ends_with("Alt+?"), "{footer}");
+        }
+    }
+    state.sessions[0].attention.clear();
+    assert!(!render_snapshot(&state, 40, 24)
+        .unwrap()
+        .lines()
+        .last()
+        .unwrap()
+        .contains("Alt+A"));
+}
+
+#[test]
 fn pending_approval_badge_comes_from_the_live_count_and_clears_after_resolution() {
     let mut response: serde_json::Value = serde_json::from_str(gateway_status_body()).unwrap();
     response["vms"][0]["pending_approval_count"] = 2.into();

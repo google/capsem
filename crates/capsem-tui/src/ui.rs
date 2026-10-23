@@ -164,22 +164,30 @@ fn render_status_bar(frame: &mut Frame<'_>, state: &AppState, area: Rect) {
         .active_session()
         .and_then(|session| session.browser_request.as_ref())
         .is_some();
+    let pending_approval = state
+        .active_session()
+        .is_some_and(|session| session.attention.contains(&crate::model::Attention::ApprovalRequired));
     let full = format!(
         "Manager: Alt+M  {}{}Help: Alt+?",
-        if state
-            .active_session()
-            .is_some_and(|session| session.attention.contains(&crate::model::Attention::ApprovalRequired))
-        {
-            "Alt+A approvals  "
-        } else {
-            ""
-        },
+        if pending_approval { "Alt+A approvals  " } else { "" },
         if pending_browser { "Alt+b browser  " } else { "" }
     );
-    let shortcuts = if area.width as usize >= full.chars().count() + spans_width(&left) {
+    let shortcut_width = (area.width as usize).saturating_sub(spans_width(&left));
+    let shortcuts = if full.chars().count() <= shortcut_width {
         full
     } else {
-        format!("Alt+M {}Alt+?", if pending_browser { "Alt+b " } else { "" })
+        [(true, true), (true, false), (false, false)]
+            .into_iter()
+            .find_map(|(manager, browser)| {
+                let compact = format!(
+                    "{}{}{}Alt+?",
+                    if manager { "Alt+M " } else { "" },
+                    if pending_approval { "Alt+A " } else { "" },
+                    if browser && pending_browser { "Alt+b " } else { "" },
+                );
+                (compact.len() <= shortcut_width).then_some(compact)
+            })
+            .unwrap_or_else(|| "Alt+?".into())
     };
     let right = vec![Span::styled(shortcuts, base)];
     let left_width = spans_width(&left).min(area.width as usize) as u16;

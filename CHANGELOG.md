@@ -260,6 +260,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep pending approval shortcuts visible in compact TUI footers, prioritizing
+  the approval action and Help when the terminal is especially narrow.
+
 - Keep the pending-browser Alt+B action available while TUI Manager or another
   overlay is open, matching its footer hint without reopening handled requests.
 
