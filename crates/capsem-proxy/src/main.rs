@@ -622,7 +622,8 @@ impl ProxyRuntimeState {
                         tool_call_ceiling: Duration::from_millis(mcp_hello.tool_call_ceiling_ms),
                     },
                 )
-                .with_builtin_ledger(Arc::clone(db), mcp_hello.builtin_servers.iter().cloned().collect()),
+                .with_builtin_ledger(Arc::clone(db), mcp_hello.builtin_servers.iter().cloned().collect())
+                .with_approvals(self.approvals.clone()),
             )),
             None if self.standalone_provider.is_some() => None,
             None => return Ok(None),
