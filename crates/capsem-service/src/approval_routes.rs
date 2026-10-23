@@ -101,14 +101,40 @@ pub(crate) async fn list(
         ));
     }
     let (binding, directory) = binding(&state, &id)?;
-    let requests = rows(&state, &binding, &directory, limit, None)
-        .await?
+    let history = rows(&state, &binding, &directory, limit, None).await?;
+    let mut live = state.approvals.broker.active_requests(&binding);
+    live.sort_by(|a, b| {
+        b.created_ms
+            .cmp(&a.created_ms)
+            .then_with(|| a.request.ask_id.cmp(&b.request.ask_id))
+    });
+    let mut requests: Vec<_> = live
         .into_iter()
-        .map(|row| {
-            let active = state.approvals.broker.active(&binding, &row.event.ask_id);
-            request(row, active)
+        .map(|snapshot| api::SecurityAskRequest {
+            ask_id: snapshot.request.ask_id,
+            event_id: snapshot.request.event_id,
+            event_type: snapshot.request.event_type,
+            rule_id: snapshot.request.rule_id,
+            rule_name: snapshot.request.rule_name,
+            summary: snapshot.request.summary,
+            status: api::SecurityAskStatus::Pending,
+            created_at_unix_ms: snapshot.created_ms,
+            expires_at_unix_ms: snapshot.expires_ms,
+            resolved_at_unix_ms: None,
+            resolution_reason: None,
         })
         .collect();
+    let live_ids: std::collections::HashSet<_> = requests.iter().map(|request| request.ask_id.clone()).collect();
+    requests.extend(
+        history
+            .into_iter()
+            .filter(|row| !live_ids.contains(&row.event.ask_id))
+            .map(|row| {
+                let active = state.approvals.broker.active(&binding, &row.event.ask_id);
+                request(row, active)
+            }),
+    );
+    requests.truncate(limit as usize);
     Ok(Json(api::SecurityAskListResponse {
         vm_id: id,
         generation: binding.generation.to_string(),

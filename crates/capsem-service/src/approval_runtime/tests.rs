@@ -155,6 +155,24 @@ async fn mounted_approval_routes_bind_session_generation_and_reject_repeated_dec
 
     let (runtime, session, _db, _authority, dir) = fixture().await;
     let pending = session.begin(request()).await.unwrap();
+    // History cannot push the original live operation out of a bounded page.
+    session
+        .writer
+        .write_checked(WriteOp::SecurityAskEvent(SecurityAskEvent::pending(
+            capsem_logger::SecurityAskPending {
+                timestamp_unix_ms: now_ms() + 1000,
+                ask_id: "ffffffffffff".into(),
+                event_id: "eeeeeeeeeeee".into(),
+                event_type: "process.exec".into(),
+                rule_id: "test.ask".into(),
+                rule_name: "Ask".into(),
+                rule_json: "{}".into(),
+                event_json: "{}".into(),
+            },
+        )))
+        .await
+        .unwrap();
+    session.writer.flush_checked().await.unwrap();
     let mut state = make_test_state_owned();
     state.approvals = runtime;
     let id = session.binding.session_id.clone();
@@ -167,10 +185,18 @@ async fn mounted_approval_routes_bind_session_generation_and_reject_repeated_dec
         .insert(id.clone(), Arc::clone(&session.reader));
     let state = Arc::new(state);
     let route = format!("/vms/{id}/security/asks");
-    let (status, body) = route_request(build_service_router(Arc::clone(&state)), Method::GET, &route, None).await;
+    let (status, body) = route_request(
+        build_service_router(Arc::clone(&state)),
+        Method::GET,
+        &format!("{route}?limit=1"),
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["pending_count"], 1);
     assert_eq!(body["requests"][0]["status"], "pending");
+    assert_eq!(body["requests"][0]["ask_id"], "0123456789ab");
+    assert_eq!(body["requests"].as_array().unwrap().len(), 1);
     assert!(!body.to_string().contains("fixture-secret"));
     let resolve = format!("{route}/0123456789ab/resolve");
     let decision = json!({"generation":session.binding.generation.to_string(),"decision":"approve"});
