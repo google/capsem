@@ -163,7 +163,7 @@ fn tui_update_smoke_matrix_covers_release_states_and_atomic_action() {
     assert_eq!(app.pending_action(), Some(&ControlAction::Update));
     app.handle_key(key(KeyCode::Esc, KeyModifiers::NONE));
     assert_eq!(
-        app.handle_key(key(KeyCode::Char('a'), KeyModifiers::ALT)),
+        app.handle_key(key(KeyCode::Char('z'), KeyModifiers::ALT)),
         AppAction::Forward
     );
     assert_eq!(app.pending_action(), None);

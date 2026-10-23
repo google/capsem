@@ -3,7 +3,9 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::model::{AppState, ServiceStatus, SessionLifecycle};
 
+mod approvals;
 mod create;
+pub use approvals::ApprovalView;
 pub use create::{CreateDraft, CreateField, ImageCatalog, ImageCatalogRequest};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -24,10 +26,20 @@ pub enum AppOverlay {
     Create,
     Fork,
     Confirm,
+    Approvals,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ControlAction {
+    ListApprovals {
+        id: String,
+    },
+    ResolveApproval {
+        id: String,
+        generation: String,
+        ask_id: String,
+        decision: capsem_sdk::models::SecurityAskDecision,
+    },
     OpenBrowser {
         id: String,
         request: capsem_sdk::models::BrowserRequest,
@@ -78,6 +90,8 @@ pub enum ControlAction {
 impl ControlAction {
     pub const fn label(&self) -> &'static str {
         match self {
+            Self::ListApprovals { .. } => "check approvals",
+            Self::ResolveApproval { .. } => "decide approval",
             Self::OpenBrowser { .. } => "open browser",
             Self::StartService => "start service",
             Self::Update => "update",
@@ -96,6 +110,8 @@ impl ControlAction {
 
     pub const fn progress_label(&self) -> &'static str {
         match self {
+            Self::ListApprovals { .. } => "checking approvals",
+            Self::ResolveApproval { .. } => "recording decision",
             Self::OpenBrowser { .. } => "opening browser",
             Self::StartService => "starting service",
             Self::Update => "updating",
@@ -114,6 +130,7 @@ impl ControlAction {
 
     pub fn target(&self) -> &str {
         match self {
+            Self::ListApprovals { id } | Self::ResolveApproval { id, .. } => id,
             Self::OpenBrowser { .. } => "browser on this device",
             Self::StartService => "Capsem service",
             Self::Update => "complete verified release",
@@ -147,6 +164,8 @@ pub struct App {
     catalog_request: Option<ImageCatalogRequest>,
     fork_draft: Option<ForkDraft>,
     handled_browser: std::collections::BTreeMap<String, capsem_sdk::models::BrowserRequest>,
+    approval_view: Option<ApprovalView>,
+    approval_request: Option<ControlAction>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -175,6 +194,8 @@ impl App {
             catalog_request: None,
             fork_draft: None,
             handled_browser: Default::default(),
+            approval_view: None,
+            approval_request: None,
         };
         app.ensure_active_tab_visible();
         app.sync_empty_state_prompt();
@@ -235,6 +256,9 @@ impl App {
         self.ensure_active_tab_visible();
         self.sync_empty_state_prompt();
         self.poll_pending_image_catalog();
+        if self.overlay == AppOverlay::Approvals {
+            self.refresh_approvals();
+        }
     }
 
     pub fn set_control_message(&mut self, message: impl Into<String>) {
@@ -272,6 +296,13 @@ impl App {
     pub fn handle_key(&mut self, key: KeyEvent) -> AppAction {
         if is_exit_key(key) {
             return AppAction::Exit;
+        }
+        if self.overlay == AppOverlay::Approvals {
+            return self.handle_approval_key(key);
+        }
+        if is_alt_key(key.modifiers) && matches!(key.code, KeyCode::Char('a' | 'A')) {
+            self.open_approvals();
+            return AppAction::Consumed;
         }
         if let Some(action) = self.handle_pending_action_key(key) {
             return action;

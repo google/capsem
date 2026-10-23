@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Review waiting operations in the TUI with Alt+A, select a request with the
+  arrow keys and explicitly approve once or deny its observed session generation.
+
 - Keep TUI keyboard input in the newly created session when a stale empty
   session refresh arrives during the handoff to its terminal.
 

@@ -2,6 +2,7 @@ mod snapshots;
 #[cfg(test)]
 mod tests;
 use snapshots::buffer_to_svg;
+mod approvals;
 mod create;
 mod manager;
 use manager::home_lines;
@@ -47,6 +48,7 @@ pub fn render_with_terminal(frame: &mut Frame<'_>, state: &AppState, terminal: O
             control_progress: None,
             create_draft: None,
             fork_draft: None,
+            approval_view: None,
         },
     );
 }
@@ -62,6 +64,7 @@ pub fn render_app(frame: &mut Frame<'_>, app: &App, terminal: Option<&TerminalSu
             control_progress: app.control_progress(),
             create_draft: app.create_draft(),
             fork_draft: app.fork_draft(),
+            approval_view: app.approval_view(),
         },
     );
 }
@@ -74,6 +77,7 @@ struct RenderLayoutCtx<'a> {
     control_progress: Option<&'a str>,
     create_draft: Option<&'a CreateDraft>,
     fork_draft: Option<&'a ForkDraft>,
+    approval_view: Option<&'a crate::app::ApprovalView>,
 }
 
 fn render_layout(frame: &mut Frame<'_>, ctx: RenderLayoutCtx<'_>) {
@@ -101,15 +105,7 @@ fn render_layout(frame: &mut Frame<'_>, ctx: RenderLayoutCtx<'_>) {
         }
     }
     render_status_bar(frame, ctx.state, chunks[1]);
-    render_overlay(
-        frame,
-        chunks[0],
-        ctx.state,
-        ctx.overlay,
-        ctx.pending_action,
-        ctx.create_draft,
-        ctx.fork_draft,
-    );
+    render_overlay(frame, chunks[0], &ctx);
 }
 
 pub fn render_snapshot(state: &AppState, width: u16, height: u16) -> Result<String> {
@@ -458,15 +454,15 @@ fn terminal_color_to_ratatui(color: TerminalColor) -> Option<Color> {
     }
 }
 
-fn render_overlay(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    state: &AppState,
-    overlay: AppOverlay,
-    pending_action: Option<&ControlAction>,
-    create_draft: Option<&CreateDraft>,
-    fork_draft: Option<&ForkDraft>,
-) {
+fn render_overlay(frame: &mut Frame<'_>, area: Rect, ctx: &RenderLayoutCtx<'_>) {
+    let RenderLayoutCtx {
+        state,
+        overlay,
+        pending_action,
+        create_draft,
+        fork_draft,
+        ..
+    } = *ctx;
     if overlay == AppOverlay::None {
         return;
     }
@@ -484,6 +480,7 @@ fn render_overlay(
         AppOverlay::Create => "",
         AppOverlay::Fork => " fork session ",
         AppOverlay::Confirm => " confirm ",
+        AppOverlay::Approvals => " approval requests ",
         AppOverlay::None => "",
     };
     let block = Block::new()
@@ -503,6 +500,10 @@ fn render_overlay(
         create::render(frame, inner, create_draft, state.service.control_message.as_deref());
         return;
     }
+    if overlay == AppOverlay::Approvals {
+        approvals::render(frame, inner, ctx.approval_view);
+        return;
+    }
     let mut lines = match overlay {
         AppOverlay::Help => help_lines(),
         AppOverlay::Stats => stats_lines(state),
@@ -511,6 +512,7 @@ fn render_overlay(
         AppOverlay::Fork => fork_lines(state, fork_draft),
         AppOverlay::Confirm => confirm_lines(pending_action),
         AppOverlay::None => Vec::new(),
+        AppOverlay::Approvals => Vec::new(),
     };
     if let Some(message) = &state.service.control_message {
         lines.insert(1, overlay_line(&truncate(message, 100)));
@@ -543,6 +545,7 @@ fn overlay_height(state: &AppState, overlay: AppOverlay) -> u16 {
         AppOverlay::Create => 24,
         AppOverlay::Fork => 8,
         AppOverlay::Confirm => 6,
+        AppOverlay::Approvals => 22,
         AppOverlay::None => 0,
     }
 }
@@ -557,6 +560,12 @@ fn help_lines() -> Vec<Line<'static>> {
         help_row("Alt+1..9", "jump", "global", "select by tab number"),
         help_row("Alt+M / Alt+0", "manager", "global", "terminal sessions and activity"),
         help_row("Alt+i", "session info", "session", "active session details"),
+        help_row(
+            "Alt+a",
+            "approvals",
+            "session",
+            "review waiting operations; A approves, D denies",
+        ),
         help_row("Alt+n", "new", "global", "create a session"),
         help_row("Alt+f", "fork", "session", "fork active session"),
         help_row("Alt+s", "suspend", "session", "warm stop active session"),

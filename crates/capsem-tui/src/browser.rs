@@ -54,6 +54,7 @@ pub(crate) async fn open(
     Ok(ActionOutcome {
         message: "opened browser on this device".into(),
         focus_session: None,
+        approval_requests: None,
     })
 }
 

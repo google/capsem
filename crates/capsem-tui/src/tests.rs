@@ -1,3 +1,4 @@
+mod approvals;
 mod gateway_fixtures;
 mod image_creation;
 mod lifecycle;
@@ -350,7 +351,7 @@ fn update_action_is_alt_owned_atomic_and_confirmed() {
     );
 
     assert_eq!(
-        app.handle_key(key(KeyCode::Char('a'), KeyModifiers::ALT)),
+        app.handle_key(key(KeyCode::Char('z'), KeyModifiers::ALT)),
         AppAction::Forward
     );
     assert_eq!(app.pending_action(), None);
@@ -448,7 +449,8 @@ fn help_lists_save_sessions_status_and_fork_shortcuts() {
     assert!(snapshot.contains("purge"));
     assert!(snapshot.contains("Alt+u"));
     assert!(snapshot.contains("apply complete verified release"));
-    assert!(!snapshot.contains("Alt+a"));
+    assert!(snapshot.contains("Alt+a"));
+    assert!(snapshot.contains("approvals"));
 }
 
 #[test]

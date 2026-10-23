@@ -3,6 +3,43 @@ use crate::gateway_provider::GatewayProvider;
 use crate::tests::{read_http_request, write_json_response, write_response};
 
 #[tokio::test]
+async fn approval_decision_posts_observed_generation_once_and_surfaces_conflict() {
+    use tokio::io::AsyncWriteExt;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let request = read_http_request(&mut stream).await;
+        assert!(request.contains("POST /vms/vm-a/security/asks/ask-a/resolve "));
+        assert_eq!(
+            request_body(&request),
+            serde_json::json!({"generation":"11111111-1111-4111-8111-111111111111","decision":"approve"})
+        );
+        stream
+            .write_all(b"HTTP/1.1 409 Conflict\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+            .await
+            .unwrap();
+        drop(stream);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(100), listener.accept())
+                .await
+                .is_err(),
+            "decision must not replay after conflict"
+        );
+    });
+    let result = GatewayProvider::with_test_token(format!("http://{addr}"), "test-token")
+        .invoke_async(&ControlAction::ResolveApproval {
+            id: "vm-a".into(),
+            ask_id: "ask-a".into(),
+            generation: "11111111-1111-4111-8111-111111111111".into(),
+            decision: capsem_sdk::models::SecurityAskDecision::Approve,
+        })
+        .await;
+    assert!(result.unwrap_err().to_string().contains("409"));
+    server.await.unwrap();
+}
+
+#[tokio::test]
 async fn cache_image_honors_the_generated_complete_pull_deadline() {
     use std::{sync::Arc, time::Duration};
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

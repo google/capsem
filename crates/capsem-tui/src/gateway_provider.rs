@@ -400,6 +400,7 @@ fn cost_to_micros(cost: Option<f64>) -> u64 {
 pub struct ActionOutcome {
     pub message: String,
     pub focus_session: Option<String>,
+    pub approval_requests: Option<capsem_sdk::models::SecurityAskListResponse>,
 }
 
 async fn invoke_action(
@@ -428,6 +429,7 @@ async fn invoke_action(
             Ok(ActionOutcome {
                 message,
                 focus_session: None,
+                approval_requests: None,
             })
         }
         action => crate::sdk_actions::invoke(hypervisor, transport, action)
@@ -455,6 +457,7 @@ pub(crate) async fn start_service_with_binary(binary: &Path) -> Result<ActionOut
     Ok(ActionOutcome {
         message: "service start requested".to_string(),
         focus_session: None,
+        approval_requests: None,
     })
 }
 
@@ -472,6 +475,7 @@ pub(crate) async fn update_with_binary(binary: &Path) -> Result<ActionOutcome> {
     Ok(ActionOutcome {
         message: command_summary(&output).unwrap_or_else(|| "Capsem update finished".to_string()),
         focus_session: None,
+        approval_requests: None,
     })
 }
 

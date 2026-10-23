@@ -198,15 +198,33 @@ fn run_loop(
             }
         }
         if let Some(bridge) = &control_bridge {
+            if let Some(request) = app.take_approval_request() {
+                bridge.invoke(request);
+            }
             let mut should_refresh = false;
             for event in bridge.drain_events() {
                 needs_draw = true;
                 match event {
                     ControlEvent::Started(label) => {
+                        if label == "checking approvals" {
+                            continue;
+                        }
                         app.set_control_message(format!("{label}..."));
                         app.set_control_progress(label);
                     }
                     ControlEvent::Finished(action, Ok(outcome)) => {
+                        if let ControlAction::ListApprovals { id } = &action {
+                            app.apply_approval_list(
+                                id,
+                                outcome
+                                    .approval_requests
+                                    .clone()
+                                    .ok_or_else(|| "approval response missing".into()),
+                            );
+                        }
+                        if let ControlAction::ResolveApproval { id, .. } = &action {
+                            app.complete_approval_decision(id, true);
+                        }
                         if let ControlAction::OpenBrowser { id, request } = &action {
                             app.complete_browser_open(id, request, true);
                         }
@@ -221,9 +239,15 @@ fn run_loop(
                         if let Some(session_id) = outcome.focus_session {
                             app.focus_session_when_available(session_id);
                         }
-                        should_refresh = true;
+                        should_refresh |= !matches!(action, ControlAction::ListApprovals { .. });
                     }
                     ControlEvent::Finished(action, Err(error)) => {
+                        if let ControlAction::ListApprovals { id } = &action {
+                            app.apply_approval_list(id, Err("approval requests unavailable".into()));
+                        }
+                        if let ControlAction::ResolveApproval { id, .. } = &action {
+                            app.complete_approval_decision(id, false);
+                        }
                         if let ControlAction::OpenBrowser { id, request } = &action {
                             app.complete_browser_open(id, request, false);
                         }
@@ -235,7 +259,7 @@ fn run_loop(
                         }
                         app.clear_control_progress();
                         app.set_control_message(error);
-                        should_refresh = true;
+                        should_refresh |= !matches!(action, ControlAction::ListApprovals { .. });
                     }
                 }
             }
