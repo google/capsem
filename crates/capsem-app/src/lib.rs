@@ -1,4 +1,3 @@
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -8,6 +7,7 @@ use tracing_subscriber::prelude::*;
 use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
 
 mod browser;
+mod gateway;
 
 // ---------- IPC commands ----------
 
@@ -99,36 +99,8 @@ async fn open_url(
 /// an unauthenticated localhost HTTP endpoint. The gateway writes this file
 /// mode 0600 after its listeners and descriptor grants are ready.
 #[tauri::command]
-fn get_gateway_token() -> Result<String, String> {
-    let run_dir = std::env::var("CAPSEM_RUN_DIR")
-        .ok()
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| capsem_home_dir().join("run"));
-    read_gateway_token(&run_dir.join("gateway.token"))
-}
-
-fn read_gateway_token(path: &Path) -> Result<String, String> {
-    let file = capsem_foundation::unix::fs::open_regular_file_no_follow(path)
-        .map_err(|_| "gateway token is unavailable".to_string())?;
-    let metadata = file
-        .metadata()
-        .map_err(|_| "gateway token is unavailable".to_string())?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if metadata.permissions().mode() & 0o077 != 0 {
-            return Err("gateway token file is not private".to_string());
-        }
-    }
-    let mut token = String::new();
-    file.take(65)
-        .read_to_string(&mut token)
-        .map_err(|_| "gateway token is unavailable".to_string())?;
-    if token.len() != 64 || !token.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
-        return Err("gateway token is invalid".to_string());
-    }
-    Ok(token)
+fn get_gateway_connection() -> Result<gateway::Connection, String> {
+    gateway::read_connection(&capsem_foundation::paths::capsem_run_dir())
 }
 
 // ---------- Deep link handling (--connect <vm_id>) ----------
@@ -365,7 +337,7 @@ pub fn run(context: tauri::Context<tauri::Wry>) {
             log_frontend,
             open_url,
             dump_frontend_logs,
-            get_gateway_token,
+            get_gateway_connection,
         ])
         .run(context)
         .expect("error while running tauri application");

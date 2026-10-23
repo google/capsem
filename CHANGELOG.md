@@ -213,6 +213,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep the native app and embedded terminals on the selected local gateway,
+  including isolated runtime ports.
+
 - Forward authenticated package inventories through the gateway so app Info can
   display the selected image's verified installed packages.
 

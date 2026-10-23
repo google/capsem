@@ -11,23 +11,23 @@ fn args(input: &[&str]) -> Vec<String> {
 fn gateway_token_reader_accepts_only_a_complete_private_file() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("gateway.token");
-    assert!(read_gateway_token(&path).is_err());
+    assert!(gateway::read_token(&path).is_err());
     fs::write(&path, "short").unwrap();
-    assert!(read_gateway_token(&path).is_err());
+    assert!(gateway::read_token(&path).is_err());
     let token = "a".repeat(64);
     fs::write(&path, &token).unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
-        assert!(read_gateway_token(&path).is_err());
+        assert!(gateway::read_token(&path).is_err());
         fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
     }
-    assert_eq!(read_gateway_token(&path).unwrap(), token);
+    assert_eq!(gateway::read_token(&path).unwrap(), token);
     #[cfg(unix)]
     {
         std::os::unix::fs::symlink(&path, dir.path().join("gateway.link")).unwrap();
-        assert!(read_gateway_token(&dir.path().join("gateway.link")).is_err());
+        assert!(gateway::read_token(&dir.path().join("gateway.link")).is_err());
     }
 }
 

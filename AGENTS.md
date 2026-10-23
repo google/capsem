@@ -172,7 +172,7 @@ Skills contain hard-won lessons and project-specific patterns. **Before writing 
 
 ## Desktop app (capsem-app)
 
-- Thin Tauri webview shell -- only IPC commands are `log_frontend`, `open_url`, `dump_frontend_logs`, and `get_gateway_token`. No VM logic, no capsem-core dep. All UI state flows through the gateway at `http://127.0.0.1:19222`; the bearer comes from the private runtime file through desktop IPC.
+- Thin Tauri webview shell -- only IPC commands are `log_frontend`, `open_url`, `dump_frontend_logs`, and `get_gateway_connection`. No VM logic, no capsem-core dep. All UI state flows through the gateway. Desktop IPC pairs its strict loopback origin and bearer from private `gateway.port`/`gateway.token` files under the selected runtime directory (installed default port 19222).
 - **The frontend is embedded in the Rust binary at cargo build time** via `tauri::generate_context!()`. Running `pnpm run build` alone does **nothing** to a compiled binary. After any frontend change meant for the desktop app, run `just build` (frontend build + `cargo build -p capsem-app`). The toolbar shows `build <timestamp>` -- if it's stale, you forgot to rebuild the Rust binary.
 - Iframe `src` for bundled pages must be explicit (`/vm/terminal/index.html`). The Tauri custom protocol on macOS does not auto-append `index.html` the way dev servers do.
 
