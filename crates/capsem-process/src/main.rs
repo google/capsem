@@ -748,6 +748,9 @@ async fn run_async_main_loop(
         Arc::clone(&job_store.publisher),
         ctrl_tx.clone(),
     ));
+    let approvals = Arc::new(capsem_core::security_engine::approval::client::ApprovalCapability::new(
+        Arc::clone(&upstream_grants),
+    ));
     let mcp_endpoint = Arc::new(
         capsem_core::net::mitm_proxy::McpEndpointState::new(
             aggregator_client.clone(),
@@ -757,6 +760,7 @@ async fn run_async_main_loop(
             mcp_timeouts.clone(),
         )
         .with_builtin_ledger(Arc::clone(&db), builtin_servers.clone())
+        .with_approvals(Some(approvals))
         .with_scoped_tools(Arc::clone(&scoped_tools)),
     );
     let mcp_runtime = Arc::new(McpRuntime {
