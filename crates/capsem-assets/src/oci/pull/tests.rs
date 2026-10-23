@@ -1,4 +1,5 @@
 use super::*;
+mod inventory;
 mod progress;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};

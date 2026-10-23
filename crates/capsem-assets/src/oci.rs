@@ -30,7 +30,10 @@ pub use catalog::{
 };
 mod selector;
 pub use oci_client::secrets::RegistryAuth;
-pub use pull::{BlobProgress, ImageLayout, ProgressObserver, Puller, RootfsLayout, ROOTFS_MEDIA_TYPE};
+pub use pull::{
+    BlobProgress, ImageLayout, InventoryPackage, InventoryTool, PackageInventory, ProgressObserver, Puller,
+    RootfsLayout, ROOTFS_MEDIA_TYPE,
+};
 pub use selector::{admits, allows_source, Digest, ImageReference, ImageSelector, Repository, ResolvedImage};
 
 /// Require a qualified registry reference or explicit `docker://` prefix so

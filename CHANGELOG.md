@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Verify bounded package inventory artifacts against their exact application
+  image and platform without downloading application layers.
+
 - Report disconnected transport as Offline without implying a mock mode.
 
 - Present Developer mode with the shared accessible settings switch.

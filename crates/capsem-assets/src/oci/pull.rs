@@ -39,7 +39,10 @@ pub(super) fn validate_architecture(architecture: &str) -> Result<()> {
     Ok(())
 }
 
+mod inventory;
+mod metadata;
 mod offline;
+pub use inventory::{InventoryPackage, InventoryTool, PackageInventory};
 mod owner;
 mod readiness;
 mod reconcile;
@@ -422,44 +425,9 @@ impl Puller {
                 permit = Some(cache.materialization_lease(&cache_identity.key()).await?);
             }
         }
-        let bytes = match serde_json::from_slice::<OciManifest>(&first)? {
-            OciManifest::Image(_) => first.clone(),
-            OciManifest::ImageIndex(index) => {
-                ensure!(index.schema_version == 2, "unsupported OCI index schema");
-                let selected = index
-                    .manifests
-                    .iter()
-                    .find(|entry| {
-                        entry.platform.as_ref().is_some_and(|p| {
-                            p.os == "linux"
-                                && p.architecture == self.architecture
-                                && p.variant
-                                    .as_deref()
-                                    .is_none_or(|v| self.architecture == "arm64" && v == "v8")
-                                && p.os_features.as_ref().is_none_or(Vec::is_empty)
-                                && p.features.as_ref().is_none_or(Vec::is_empty)
-                        })
-                    })
-                    .context("registry has no compatible native Linux image")?;
-                digest_hex(&selected.digest)?;
-                ensure!(
-                    selected.size > 0 && selected.size <= METADATA_LIMIT as i64,
-                    "manifest size exceeds limit"
-                );
-                let pinned = Reference::with_digest(
-                    reference.registry().into(),
-                    reference.repository().into(),
-                    selected.digest.clone(),
-                );
-                let bytes = if cache_only {
-                    self.cached_manifest(&pinned).await?
-                } else {
-                    self.manifest(&pinned, token.as_deref()).await?
-                };
-                ensure!(bytes.len() == selected.size as usize, "manifest size mismatch");
-                bytes
-            }
-        };
+        let bytes = self
+            .platform_manifest(&reference, &first, token.as_deref(), cache_only)
+            .await?;
         let source_digest = sha256(&bytes);
         let mut manifest: OciImageManifest =
             serde_json::from_slice(&bytes).context("expected platform image manifest")?;
