@@ -10,24 +10,6 @@ import sys
 from ipaddress import IPv4Network
 from pathlib import Path
 
-# Use the selected source contract without installing another SDK cohort.
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "sdk/python"))
-
-from capsem.models.container_status_response import ContainerStatusResponse
-from capsem.models.file_list_response import FileListResponse
-from capsem.models.history_response import HistoryResponse
-from capsem.models.host_logs_response import HostLogsResponse
-from capsem.models.logs_response import LogsResponse
-from capsem.models.mcp_default_permission_response import McpDefaultPermissionResponse
-from capsem.models.mcp_info_response import McpInfoResponse
-from capsem.models.mcp_servers_list_response import McpServersListResponse
-from capsem.models.mcp_tools_list_response import McpToolsListResponse
-from capsem.models.network_info import NetworkInfo
-from capsem.models.sandbox_info import SandboxInfo
-from capsem.models.security_ask_list_response import SecurityAskListResponse
-from capsem.models.timeline_response import TimelineResponse
-from capsem.models.vm_stats_detail_response import VmStatsDetailResponse
-from capsem.models.vm_stats_summary_response import VmStatsSummaryResponse
 from helpers.stopped_workspace import VM_ID
 from pydantic import TypeAdapter
 
@@ -36,23 +18,48 @@ from .route_fixtures import MARKER, corpus_config
 
 # Private UI routes are intentionally not all in selected OpenAPI. Their
 # explicit field/counter contracts below come from the service DTOs.
-SCHEMAS = {path: TypeAdapter(model) for path, model in {
-    "/networks/{id}": NetworkInfo,
-    "/vms/{id}/files/list": FileListResponse,
-    "/vms/{id}/logs": LogsResponse,
-    "/host-logs/{name}": HostLogsResponse,
-    "/mcp/servers/{server_id}/tools/list": McpToolsListResponse,
-    "/vms/{id}/info": SandboxInfo,
-    "/vms/{id}/stats/summary": VmStatsSummaryResponse,
-    "/vms/{id}/stats/detail": VmStatsDetailResponse,
-    "/vms/{id}/history": HistoryResponse,
-    "/vms/{id}/timeline": TimelineResponse,
-    "/vms/{id}/container": ContainerStatusResponse,
-    "/vms/{id}/security/asks": SecurityAskListResponse,
-    "/mcp/info": McpInfoResponse,
-    "/mcp/servers/list": McpServersListResponse,
-    "/mcp/default/info": McpDefaultPermissionResponse,
-}.items()}
+def _schemas() -> dict[str, TypeAdapter]:
+    """Load selected SDK DTOs without exposing its unrelated tests package."""
+    sdk = str(Path(__file__).resolve().parents[2] / "sdk/python")
+    sys.path.insert(0, sdk)
+    try:
+        from capsem.models.container_status_response import ContainerStatusResponse
+        from capsem.models.file_list_response import FileListResponse
+        from capsem.models.history_response import HistoryResponse
+        from capsem.models.host_logs_response import HostLogsResponse
+        from capsem.models.logs_response import LogsResponse
+        from capsem.models.mcp_default_permission_response import McpDefaultPermissionResponse
+        from capsem.models.mcp_info_response import McpInfoResponse
+        from capsem.models.mcp_servers_list_response import McpServersListResponse
+        from capsem.models.mcp_tools_list_response import McpToolsListResponse
+        from capsem.models.network_info import NetworkInfo
+        from capsem.models.sandbox_info import SandboxInfo
+        from capsem.models.security_ask_list_response import SecurityAskListResponse
+        from capsem.models.timeline_response import TimelineResponse
+        from capsem.models.vm_stats_detail_response import VmStatsDetailResponse
+        from capsem.models.vm_stats_summary_response import VmStatsSummaryResponse
+        return {path: TypeAdapter(model) for path, model in {
+            "/networks/{id}": NetworkInfo,
+            "/vms/{id}/files/list": FileListResponse,
+            "/vms/{id}/logs": LogsResponse,
+            "/host-logs/{name}": HostLogsResponse,
+            "/mcp/servers/{server_id}/tools/list": McpToolsListResponse,
+            "/vms/{id}/info": SandboxInfo,
+            "/vms/{id}/stats/summary": VmStatsSummaryResponse,
+            "/vms/{id}/stats/detail": VmStatsDetailResponse,
+            "/vms/{id}/history": HistoryResponse,
+            "/vms/{id}/timeline": TimelineResponse,
+            "/vms/{id}/container": ContainerStatusResponse,
+            "/vms/{id}/security/asks": SecurityAskListResponse,
+            "/mcp/info": McpInfoResponse,
+            "/mcp/servers/list": McpServersListResponse,
+            "/mcp/default/info": McpDefaultPermissionResponse,
+        }.items()}
+    finally:
+        sys.path.remove(sdk)
+
+
+SCHEMAS = _schemas()
 
 
 def count(value: object) -> int:
