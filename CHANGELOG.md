@@ -32,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Cap gateway buffering of unsized JSON responses at 32 MiB, preventing a
+  large service response from exhausting gateway memory.
+
 - Redact injected environment values in guest boot diagnostics instead of
   writing their first 40 characters to the host-visible workspace log.
 
