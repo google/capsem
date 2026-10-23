@@ -235,6 +235,7 @@ max_size_bytes = 8589934592 # 8 GiB
 prune_strategy = "lru"
 maximum_age_hours = 720
 maximum_count = 4
+managed_globs = ["[!.]*"]
 lease_template = ".{key}.lock"
 
 [stages.test-benchmarks]
