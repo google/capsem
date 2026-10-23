@@ -193,7 +193,9 @@ fn insert_batch_ops<'a>(
                 effect.forensic = insert_security_rule_event(tx, e, WriteTarget::Memory, bodies)?;
             }
             WriteOp::SecurityAskEvent(e) => insert_security_ask_event(tx, e, WriteTarget::Memory, bodies)?,
-            WriteOp::SecurityDecisionEvent(e) => insert_security_decision_event(tx, e, WriteTarget::Memory, bodies)?,
+            WriteOp::SecurityDecisionEvent(e) => {
+                effect.forensic = insert_security_decision_event(tx, e, WriteTarget::Memory, bodies)?;
+            }
             WriteOp::PolicyMutationEvent(e) => insert_policy_mutation_event(tx, e, WriteTarget::Memory)?,
             WriteOp::HostEvent(e) => insert_host_event(tx, e, WriteTarget::Memory)?,
             WriteOp::Network(n) => event_rows::upsert_network(tx, n, WriteTarget::Memory)?,

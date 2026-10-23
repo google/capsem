@@ -21,9 +21,43 @@ fn stored(op: &WriteOp) -> StoredEffect {
             WriteOp::SecurityRuleEvent(event) => {
                 SecurityForensicEvent::from_json(&event.event_json, &event.event_type).ok()
             }
+            WriteOp::SecurityDecisionEvent(event) if event.actor == "security.plugins" => {
+                SecurityForensicEvent::from_json(&event.event_json, &event.event_type).ok()
+            }
             _ => None,
         },
     }
+}
+
+#[test]
+fn plugin_only_decision_counts_payload_once_without_a_rule_match() {
+    let event = crate::events::SecurityDecisionEvent {
+        timestamp_unix_ms: 100,
+        event_id: "plugin-only".into(),
+        event_type: "http.request".into(),
+        stage: crate::events::SecurityDecisionStage::Preprocess,
+        actor: "security.plugins".into(),
+        rule_id: None,
+        plugin_id: Some("dlp".into()),
+        previous_decision: crate::events::SecurityDecision::Block,
+        requested_decision: crate::events::SecurityDecision::Block,
+        effective_decision: crate::events::SecurityDecision::Block,
+        reason: None,
+        trace_id: None,
+        turn_id: None,
+        credential_ref: None,
+        event_json:
+            json!({"plugin_executions": [{"plugin_id":"dlp", "stage":"preprocess", "applied":true, "duration_us":40}],
+            "detections":[{"source":"plugin", "plugin_id":"dlp"}]})
+            .to_string(),
+    };
+    let counters = tally(&[
+        WriteOp::SecurityDecisionEvent(event.clone()),
+        WriteOp::SecurityDecisionEvent(event),
+    ]);
+    assert_eq!(counters.security.matches, 0);
+    let plugin = &counters.plugins["dlp"];
+    assert_eq!((plugin.executions, plugin.applied, plugin.detections), (1, 1, 1));
 }
 
 #[test]

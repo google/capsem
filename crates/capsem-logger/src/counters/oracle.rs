@@ -262,6 +262,29 @@ pub(crate) async fn counters_from_rows(db: &DbHandle) -> LedgerCounters {
             scan_payload(&mut counters, &payload, row[1].as_i64().unwrap());
         }
     }
+    // A plugin-only outcome has no CEL rule row. Its canonical evidence lives
+    // in the existing decision ledger and must participate in the same oracle.
+    for row in rows(
+        db,
+        "SELECT event_id, timestamp_unix_ms FROM security_decision_events WHERE actor = 'security.plugins' ORDER BY id",
+    )
+    .await
+    {
+        let id = s(&row[0]);
+        if !counted.insert(id.clone()) {
+            continue;
+        }
+        if let Some(body) = db
+            .read_body(&id, "security_decision_events", BodyDirection::Payload)
+            .await
+            .unwrap()
+        {
+            if let Ok(forensic) = SecurityForensicEvent::decode(&body.bytes) {
+                let payload: Value = serde_json::from_str(&forensic.to_json().unwrap()).unwrap();
+                scan_payload(&mut counters, &payload, row[1].as_i64().unwrap());
+            }
+        }
+    }
     counters
 }
 

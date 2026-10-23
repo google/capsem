@@ -257,7 +257,7 @@ pub(super) fn insert_security_decision_event(
     event: &SecurityDecisionEvent,
     target: WriteTarget,
     bodies: &mut BodyArchive,
-) -> rusqlite::Result<()> {
+) -> rusqlite::Result<Option<SecurityForensicEvent>> {
     let payload = security_payload(&event.event_json, &event.event_type);
     execute_cached(
         conn,
@@ -301,7 +301,7 @@ pub(super) fn insert_security_decision_event(
             turn_id: event.turn_id.as_deref(),
         },
     );
-    Ok(())
+    Ok(payload.projection)
 }
 
 pub(super) fn insert_policy_mutation_event(

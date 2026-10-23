@@ -202,16 +202,10 @@ impl LedgerTally {
                     rule.latest_event_id.clone_from(&event.event_id);
                     rule.latest_timestamp_unix_ms = event.timestamp_unix_ms;
                 }
-                if let Some(forensic) = &effect.forensic {
-                    if self.recent_payload_events.contains(&event.event_id) {
-                        return;
-                    }
-                    if self.recent_payload_events.len() == RECENT_PAYLOAD_EVENTS {
-                        self.recent_payload_events.pop_front();
-                    }
-                    self.recent_payload_events.push_back(event.event_id.clone());
-                    record_payload(&mut self.counters, forensic, event.timestamp_unix_ms);
-                }
+                self.record_forensic(&event.event_id, event.timestamp_unix_ms, effect);
+            }
+            WriteOp::SecurityDecisionEvent(event) if event.actor == "security.plugins" => {
+                self.record_forensic(&event.event_id, event.timestamp_unix_ms, effect);
             }
             WriteOp::SecurityAskEvent(event) => {
                 let security = &mut counters.security;
@@ -241,6 +235,18 @@ impl LedgerTally {
             | WriteOp::Network(_)
             | WriteOp::NetworkMembership(_)
             | WriteOp::NetworkDeparture(_) => {}
+        }
+    }
+    fn record_forensic(&mut self, event_id: &str, timestamp_unix_ms: i64, effect: &StoredEffect) {
+        if let Some(forensic) = &effect.forensic {
+            if self.recent_payload_events.iter().any(|id| id == event_id) {
+                return;
+            }
+            if self.recent_payload_events.len() == RECENT_PAYLOAD_EVENTS {
+                self.recent_payload_events.pop_front();
+            }
+            self.recent_payload_events.push_back(event_id.to_owned());
+            record_payload(&mut self.counters, forensic, timestamp_unix_ms);
         }
     }
 }
