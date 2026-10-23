@@ -18,6 +18,9 @@ capsem-crypto = { path = "../capsem-crypto", default-features = false, features 
 capsem-api = { path = "../capsem-api" }
 capsem-foundation = { path = "../capsem-foundation" }
 capsem-proto = { path = "../capsem-proto" }
+capsem-telemetry = { path = "../capsem-telemetry", features = ["export", "http-observation"] }
+opentelemetry-http = { version = "0.33", default-features = false }
+async-trait = "0.1"
 capsem-guard = { path = "../capsem-guard" }
 anyhow.workspace = true
 tokio.workspace = true
@@ -32,7 +35,7 @@ http.workspace = true
 tower-service.workspace = true
 bytes.workspace = true
 axum = { version = "0.8", features = ["ws"] }
-tower-http = { version = "0.6", features = ["trace", "cors"] }
+tower-http = { version = "0.6", features = ["cors"] }
 url = "2"
 
 [build-dependencies]
@@ -48,3 +51,5 @@ tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 tokio-tungstenite = "0.30.0"
 futures.workspace = true
+metrics = "0.24"
+metrics-util = "0.19"

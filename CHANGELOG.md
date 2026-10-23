@@ -284,6 +284,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Gateway HTTP telemetry records normalized operation lifecycle metrics, including
+  rejected requests, through a bounded service-granted exporter without exposing
+  collector credentials or recording raw request paths.
+
 - Refresh the ARM debug test image to the qualified, anonymously verified
   publication containing the current security dependency updates.
 

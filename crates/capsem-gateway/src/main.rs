@@ -1,6 +1,7 @@
 mod auth;
 mod cors;
 mod listener;
+mod metric_export;
 mod preview;
 mod proxy;
 mod schema;
@@ -22,7 +23,6 @@ use axum::routing::{delete, get, patch, post, put};
 use axum::{Json, Router};
 use clap::Parser;
 use tower_http::cors::{AllowOrigin, CorsLayer};
-use tower_http::trace::TraceLayer;
 use tracing::info;
 
 use crate::auth::{AuthFailureTracker, AuthState};
@@ -153,7 +153,9 @@ async fn run(args: Args) -> Result<()> {
     if service_socket_missing {
         tracing::warn!(path = %uds_path.display(), "service socket not found -- requests will return 502 until service starts");
     }
-    let service_client = ServiceClient::granted(service_grant::GatewayGrantClient::start(grant_socket)?);
+    let grants = service_grant::GatewayGrantClient::start(grant_socket)?;
+    let metric_export = metric_export::start(grants.clone());
+    let service_client = ServiceClient::granted(grants);
     let state = Arc::new(AppState {
         token,
         uds_path: uds_path.clone(),
@@ -182,7 +184,7 @@ async fn run(args: Args) -> Result<()> {
     );
 
     // Graceful shutdown on SIGTERM/SIGINT
-    axum::serve(
+    let result = axum::serve(
         listener::low_latency(listener),
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
@@ -190,8 +192,9 @@ async fn run(args: Args) -> Result<()> {
         shutdown_signal().await;
         info!("shutting down");
     })
-    .await
-    .context("server error")?;
+    .await;
+    metric_export::stop(metric_export).await;
+    result.context("server error")?;
 
     Ok(())
 }
@@ -215,7 +218,10 @@ fn gateway_router(state: Arc<AppState>) -> Router {
                 .allow_methods(tower_http::cors::Any)
                 .allow_headers(tower_http::cors::Any),
         )
-        .layer(request_trace_layer())
+        .layer(axum::middleware::from_fn_with_state(
+            capsem_telemetry::http::Component::Gateway,
+            capsem_telemetry::http::observe,
+        ))
         .with_state(state)
 }
 
@@ -475,26 +481,6 @@ async fn handle_events_ws(
                 }
             }
         }
-    })
-}
-
-/// Request spans name the method and path, never the query string.
-///
-/// tower-http's default span records the full URI at debug, and the gateway
-/// log runs `tower_http=debug`. The browser WebSocket API cannot set headers,
-/// so `/events` and `/vms/{id}/stream` authenticate with `?token=`; with the
-/// default span every such request wrote the bearer token into gateway.log.
-fn request_trace_layer() -> TraceLayer<
-    tower_http::classify::SharedClassifier<tower_http::classify::ServerErrorsAsFailures>,
-    impl tower_http::trace::MakeSpan<axum::body::Body> + Clone,
-> {
-    TraceLayer::new_for_http().make_span_with(|req: &http::Request<axum::body::Body>| {
-        tracing::debug_span!(
-            "request",
-            method = %req.method(),
-            path = req.uri().path(),
-            version = ?req.version(),
-        )
     })
 }
 

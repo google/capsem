@@ -6,6 +6,7 @@ use tower::ServiceExt;
 use crate::status::StatusCache;
 
 mod hostile;
+mod http_metrics;
 mod route_forwarding;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -452,6 +453,8 @@ fn token_comparison_does_not_depend_on_prefix_agreement() {
 // URI at debug, and the gateway log runs `tower_http=debug`, so every such
 // request wrote the bearer token into gateway.log in clear text.
 
+static HTTP_TRACE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 #[derive(Default)]
 struct TraceCapture {
     records: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
@@ -484,6 +487,7 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for TraceCapture {
 
 #[tokio::test]
 async fn request_spans_record_the_path_but_never_the_query() {
+    let _trace = HTTP_TRACE_LOCK.lock().await;
     use tracing::instrument::WithSubscriber;
     use tracing_subscriber::layer::SubscriberExt;
 
@@ -494,7 +498,10 @@ async fn request_spans_record_the_path_but_never_the_query() {
     let (_, state) = health_app("/tmp/test.sock");
     let app = axum::Router::new()
         .route("/health", axum::routing::get(handle_health))
-        .layer(request_trace_layer())
+        .layer(axum::middleware::from_fn_with_state(
+            capsem_telemetry::http::Component::Gateway,
+            capsem_telemetry::http::observe,
+        ))
         .with_state(state);
     let req = http::Request::builder()
         .uri("/health?token=SECRET-QUERY-TOKEN")

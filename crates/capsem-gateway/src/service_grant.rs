@@ -20,6 +20,7 @@ type WireReceiver = DescriptorReceiver<GATEWAY_GRANT_FRAME_SIZE, GATEWAY_GRANT_M
 
 enum Command {
     Service(oneshot::Sender<io::Result<OwnedFd>>),
+    Metrics(oneshot::Sender<io::Result<OwnedFd>>),
     Owner {
         vm_id: String,
         reply: oneshot::Sender<io::Result<OwnedFd>>,
@@ -33,11 +34,12 @@ pub(crate) struct GatewayGrantClient {
 
 impl GatewayGrantClient {
     pub(crate) fn start(socket: UnixStream) -> io::Result<Self> {
+        let peer = capsem_foundation::unix::peer::identity(socket.as_fd())?;
         let sender = WireSender::new(socket.try_clone()?)?;
         let receiver = WireReceiver::new(socket)?;
         let (commands, requests) = mpsc::channel(COMMAND_CAPACITY);
         tokio::spawn(async move {
-            if let Err(error) = run(sender, receiver, requests).await {
+            if let Err(error) = run(sender, receiver, requests, peer).await {
                 tracing::warn!(%error, "gateway descriptor grant channel stopped");
             }
         });
@@ -53,6 +55,15 @@ impl GatewayGrantClient {
         into_tokio(result.await.map_err(|_| closed())??)
     }
 
+    pub(crate) async fn open_metrics(&self) -> io::Result<UnixStream> {
+        let (reply, result) = oneshot::channel();
+        self.commands
+            .send(Command::Metrics(reply))
+            .await
+            .map_err(|_| closed())?;
+        Ok(UnixStream::from(result.await.map_err(|_| closed())??))
+    }
+
     pub(crate) async fn open_owner(&self, vm_id: String) -> io::Result<tokio::net::UnixStream> {
         let (reply, result) = oneshot::channel();
         self.commands
@@ -63,13 +74,23 @@ impl GatewayGrantClient {
     }
 }
 
-async fn run(sender: WireSender, receiver: WireReceiver, mut commands: mpsc::Receiver<Command>) -> io::Result<()> {
+async fn run(
+    sender: WireSender,
+    receiver: WireReceiver,
+    mut commands: mpsc::Receiver<Command>,
+    peer: capsem_foundation::unix::peer::PeerIdentity,
+) -> io::Result<()> {
     let mut request_id = 1_u64;
     while let Some(command) = commands.recv().await {
         let (request, expected, reply) = match command {
             Command::Service(reply) => (
                 GatewayGrantRequest::OpenService { request_id },
                 GatewayGrantKind::Service,
+                reply,
+            ),
+            Command::Metrics(reply) => (
+                GatewayGrantRequest::OpenMetrics { request_id },
+                GatewayGrantKind::Metrics,
                 reply,
             ),
             Command::Owner { vm_id, reply } => (
@@ -81,8 +102,17 @@ async fn run(sender: WireSender, receiver: WireReceiver, mut commands: mpsc::Rec
         request_id = request_id
             .checked_add(1)
             .ok_or_else(|| io::Error::other("gateway grant request id exhausted"))?;
-        let result = exchange(&sender, &receiver, request, expected).await;
-        let failed = result.is_err();
+        let exchanged = exchange(&sender, &receiver, request, expected, peer).await;
+        let failed = exchanged.is_err()
+            || (expected != GatewayGrantKind::Metrics && matches!(exchanged, Ok(GrantResult::Denied(_))));
+        let result = match exchanged {
+            Ok(GrantResult::Descriptor(fd)) => Ok(fd),
+            Ok(GrantResult::Denied(reason)) => Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!("gateway grant denied: {reason:?}"),
+            )),
+            Err(error) => Err(error),
+        };
         let _ = reply.send(result);
         if failed {
             return Err(io::Error::other("gateway descriptor grant exchange failed"));
@@ -91,12 +121,18 @@ async fn run(sender: WireSender, receiver: WireReceiver, mut commands: mpsc::Rec
     Ok(())
 }
 
+enum GrantResult {
+    Descriptor(OwnedFd),
+    Denied(capsem_proto::gateway_grant::GatewayGrantDenial),
+}
+
 async fn exchange(
     sender: &WireSender,
     receiver: &WireReceiver,
     request: GatewayGrantRequest,
     expected: GatewayGrantKind,
-) -> io::Result<OwnedFd> {
+    peer: capsem_foundation::unix::peer::PeerIdentity,
+) -> io::Result<GrantResult> {
     let request_id = request.request_id();
     let frame = encode_gateway_grant_request(&request).map_err(io::Error::other)?;
     tokio::time::timeout(WIRE_TIMEOUT, sender.send(&frame, &[]))
@@ -116,17 +152,17 @@ async fn exchange(
         GatewayGrantResponse::Granted { kind, .. } if kind == expected && response.fds.len() == 1 => {
             let descriptor = response.fds.into_iter().next().unwrap();
             capsem_foundation::unix::fd::validate_connected_stream(descriptor.as_fd())?;
+            if expected == GatewayGrantKind::Metrics {
+                capsem_foundation::unix::peer::require(descriptor.as_fd(), peer)?;
+            }
             let receipt =
                 encode_gateway_grant_request(&GatewayGrantRequest::Adopted { request_id }).map_err(io::Error::other)?;
             tokio::time::timeout(WIRE_TIMEOUT, sender.send(&receipt, &[]))
                 .await
                 .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "gateway adoption receipt timed out"))??;
-            Ok(descriptor)
+            Ok(GrantResult::Descriptor(descriptor))
         }
-        GatewayGrantResponse::Denied { reason, .. } if response.fds.is_empty() => Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            format!("gateway grant denied: {reason:?}"),
-        )),
+        GatewayGrantResponse::Denied { reason, .. } if response.fds.is_empty() => Ok(GrantResult::Denied(reason)),
         _ => Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "invalid gateway descriptor grant response",

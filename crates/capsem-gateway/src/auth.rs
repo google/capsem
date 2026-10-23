@@ -241,7 +241,7 @@ pub async fn auth_middleware(
     next: Next,
 ) -> Response {
     if !request_names_loopback_host(&req) {
-        warn!(method = %req.method(), path = req.uri().path(), "request for a foreign host refused (403)");
+        warn!("request for a foreign host refused (403)");
         return (
             StatusCode::FORBIDDEN,
             axum::Json(serde_json::json!({"error": "forbidden host"})),
@@ -277,17 +277,16 @@ pub async fn auth_middleware(
         next.run(req).await
     } else {
         let shape = classify_auth_header(req.headers().get("authorization"));
-        let method = req.method().clone();
         let throttled = state.auth_failures.record_failure().await;
         if throttled {
-            warn!(%method, path, shape, "auth rejected (429 throttled)");
+            warn!(shape, "auth rejected (429 throttled)");
             (
                 StatusCode::TOO_MANY_REQUESTS,
                 axum::Json(serde_json::json!({"error": "too many failed auth attempts"})),
             )
                 .into_response()
         } else {
-            info!(%method, path, shape, "auth rejected (401)");
+            info!(shape, "auth rejected (401)");
             (
                 StatusCode::UNAUTHORIZED,
                 axum::Json(serde_json::json!({"error": "unauthorized"})),

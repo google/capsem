@@ -1058,6 +1058,7 @@ name = "capsem-gateway"
 version = "0.7.1"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
  "bytes",
  "capsem-api",
@@ -1065,12 +1066,16 @@ dependencies = [
  "capsem-foundation",
  "capsem-guard",
  "capsem-proto",
+ "capsem-telemetry",
  "clap",
  "futures",
  "http",
  "http-body-util",
  "hyper",
  "hyper-util",
+ "metrics",
+ "metrics-util",
+ "opentelemetry-http",
  "serde",
  "serde_json",
  "tempfile",
@@ -7872,7 +7877,6 @@ dependencies = [
  "tower",
  "tower-layer",
  "tower-service",
- "tracing",
  "url",
 ]
 

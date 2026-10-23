@@ -67,17 +67,12 @@ pub async fn handle_proxy(State(state): State<Arc<AppState>>, req: Request) -> R
     let started = Instant::now();
 
     let span = {
-        let method = req.method();
-        let path = req.uri().path();
         tracing::info_span!(
             target: "capsem_gateway",
             "capsem.gateway.proxy",
             gateway_request_id = %request_id,
-            method = %method,
-            path = %path,
             query_present,
             content_length = ?content_length,
-            uds_path = %state.uds_path.display(),
             status = tracing::field::Empty,
             latency_ms = tracing::field::Empty,
             error = tracing::field::Empty,
@@ -117,13 +112,12 @@ pub async fn handle_proxy(State(state): State<Arc<AppState>>, req: Request) -> R
                 );
                 resp
             }
-            Err(e) => {
+            Err(_) => {
                 span.record("status", StatusCode::BAD_GATEWAY.as_u16());
                 span.record("latency_ms", started.elapsed().as_millis() as u64);
-                span.record("error", tracing::field::display(&e));
+                span.record("error", "service_unavailable");
                 tracing::error!(
                     target: "capsem_gateway",
-                    error = %e,
                     "gateway.proxy.error"
                 );
                 (
