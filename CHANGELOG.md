@@ -374,6 +374,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Hold original commands for scoped approval before guest execution, with
+  bounded waiters and cancellation on caller, runtime, suspend or stop.
+
 - Own bounded host MCP calls through IPC disconnect, canceling human approval
   waits before draining their execution audits.
 

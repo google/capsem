@@ -1,6 +1,8 @@
 use super::*;
 use capsem_logger::DbHandle;
 
+mod approval;
+
 struct Bridge {
     _dir: tempfile::TempDir,
     path: std::path::PathBuf,
@@ -21,6 +23,7 @@ fn bridge() -> Bridge {
         plugins: Arc::new(std::sync::RwLock::new(Arc::new(std::collections::BTreeMap::new()))),
         jobs: Arc::new(JobStore::new()),
         hub,
+        approvals: None,
     };
     Bridge {
         _dir: dir,
@@ -64,6 +67,15 @@ fn dispatched(guest: &mut mpsc::Receiver<HostToGuest>) -> (u64, String) {
 async fn a_workload_exec_is_recorded_as_asked_and_dispatched_through_the_launcher() {
     let mut bridge = bridge();
     let asked = "id -u; printf '%s' \"$HOME\"";
+    for id in [7, 8] {
+        bridge
+            .dispatch
+            .jobs
+            .active_execs
+            .lock()
+            .unwrap()
+            .insert(id, crate::job_store::ActiveExec::new());
+    }
     bridge.dispatch.dispatch(7, asked.into(), ExecTarget::Workload).await;
     bridge
         .dispatch

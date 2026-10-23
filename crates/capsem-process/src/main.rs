@@ -760,7 +760,7 @@ async fn run_async_main_loop(
             mcp_timeouts.clone(),
         )
         .with_builtin_ledger(Arc::clone(&db), builtin_servers.clone())
-        .with_approvals(Some(approvals))
+        .with_approvals(Some(Arc::clone(&approvals)))
         .with_scoped_tools(Arc::clone(&scoped_tools)),
     );
     let mcp_runtime = Arc::new(McpRuntime {
@@ -852,6 +852,7 @@ async fn run_async_main_loop(
             upstream_grants: upstream_grants_for_vsock,
             security_rules: Arc::clone(&security_rules),
             plugin_policy: Arc::clone(&plugin_policy),
+            approvals: Some(approvals),
             _net_state: net_state_clone,
             is_restore,
             vm_ready: vm_ready_vsock,

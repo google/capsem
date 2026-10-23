@@ -3,6 +3,9 @@ use capsem_proto::ledger::{LedgerChannelGrant, LedgerClientRole, LedgerGeneratio
 use clap::Parser;
 use std::os::fd::AsRawFd as _;
 
+mod approval;
+pub(crate) use approval::ApprovalPeer;
+
 #[test]
 fn entry_closes_ambient_descriptors_before_runtime_initialization() {
     let source = include_str!("main.rs");

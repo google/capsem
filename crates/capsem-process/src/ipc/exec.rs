@@ -67,6 +67,7 @@ pub(super) async fn run(
     if installed {
         jobs.jobs.lock().unwrap().remove(&id);
         if let Some(active) = jobs.active_execs.lock().unwrap().remove(&id) {
+            active.cancellation.cancel();
             active.deposited.notify_one();
         }
         jobs.pending_acks.lock().unwrap().remove(&id);
@@ -122,6 +123,7 @@ pub(super) fn input(id: u64, frame: capsem_proto::ExecInputFrame, jobs: &JobStor
 }
 
 pub(super) async fn cancel(id: u64, jobs: &JobStore, control: &mpsc::Sender<ServiceToProcess>) -> Result<(), String> {
+    jobs.cancel_exec(id);
     if !jobs.active_execs.lock().unwrap().contains_key(&id) {
         return Ok(());
     }

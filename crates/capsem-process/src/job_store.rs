@@ -57,6 +57,7 @@ pub(crate) struct JobStore {
 /// active_execs lock; ExecDone uses it to distinguish "empty stdout" from
 /// "deposit still in flight" without sleeping unconditionally.
 pub(crate) struct ActiveExec {
+    pub(crate) cancellation: Arc<tokio_util::sync::CancellationToken>,
     pub(crate) started_at: Instant,
     pub(crate) event_id: Option<capsem_core::security_engine::SecurityEventId>,
     pub(crate) captured: Vec<u8>,
@@ -85,6 +86,7 @@ impl ActiveExec {
     pub(crate) fn new() -> Self {
         let (input_tx, input_rx) = tokio::sync::mpsc::channel(capsem_proto::EXEC_STDIN_WINDOW);
         Self {
+            cancellation: Arc::new(tokio_util::sync::CancellationToken::new()),
             started_at: Instant::now(),
             event_id: None,
             captured: Vec::new(),
@@ -103,6 +105,18 @@ impl ActiveExec {
 }
 
 impl JobStore {
+    pub(crate) fn cancel_execs(&self) {
+        for active in self.active_execs.lock().unwrap().values() {
+            active.cancellation.cancel();
+        }
+    }
+
+    pub(crate) fn cancel_exec(&self, id: u64) {
+        if let Some(active) = self.active_execs.lock().unwrap().get(&id) {
+            active.cancellation.cancel();
+        }
+    }
+
     pub(crate) fn new() -> Self {
         Self {
             publisher: Arc::new(capsem_core::container::publish::Publisher::default()),
@@ -152,6 +166,7 @@ impl JobStore {
         // Wake every ExecDone handler parked on a deposit notifier. Each will
         // then observe its removed slot and complete without hanging.
         for (_, active) in self.active_execs.lock().unwrap().drain() {
+            active.cancellation.cancel();
             active.deposited.notify_one();
         }
         self.active_file_ops.lock().unwrap().clear();

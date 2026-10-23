@@ -81,6 +81,7 @@ pub(crate) struct VsockOptions {
     pub(crate) upstream_grants: Arc<capsem_core::net::upstream_grant::UpstreamGrantClient>,
     pub(crate) security_rules: SecurityRulesHandle,
     pub(crate) plugin_policy: PluginPolicyHandle,
+    pub(crate) approvals: Option<Arc<capsem_core::security_engine::approval::client::ApprovalCapability>>,
     pub(crate) _net_state: Arc<capsem_core::SandboxNetworkState>,
     pub(crate) is_restore: bool,
     pub(crate) vm_ready: Arc<AtomicBool>,
@@ -109,6 +110,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
         upstream_grants,
         security_rules,
         plugin_policy,
+        approvals,
         is_restore,
         vm_ready,
         mut ready,
@@ -419,11 +421,14 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
         plugins: Arc::clone(&plugin_policy),
         jobs: Arc::clone(&job_store),
         hub: hub_tx.clone(),
+        approvals,
     };
     let mut ctrl_rx = ctrl_rx;
 
     tokio::spawn(async move {
+        let mut exec_calls = tokio::task::JoinSet::new();
         while let Some(msg) = ctrl_rx.recv().await {
+            while exec_calls.try_join_next().is_some() {}
             match msg {
                 ServiceToProcess::TerminalInput { data } => {
                     if let Some(ref pl) = pty_log_for_cmd {
@@ -457,8 +462,11 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                 ServiceToProcess::UnplugCable { cable } => {
                     capsem_core::try_send!("hub_cable", hub_tx.send(HostToGuest::UnplugCable { cable }).await);
                 }
-                ServiceToProcess::Exec { id, command, target } => exec_dispatch.dispatch(id, command, target).await,
+                ServiceToProcess::Exec { id, command, target } => {
+                    exec_dispatch.spawn(&mut exec_calls, id, command, target)
+                }
                 ServiceToProcess::CancelExec { id } => {
+                    js_for_cmd.cancel_exec(id);
                     let cancellation_id = js_for_cmd
                         .next_control_id
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -499,6 +507,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     clone_state::spawn(&hub_tx, &js_for_cmd, &ipc_tx_for_cmd, id);
                 }
                 ServiceToProcess::Suspend => {
+                    js_for_cmd.cancel_execs();
                     suspend::Suspend {
                         vm: Arc::clone(&vm_handle_for_cmd),
                         hub: hub_tx.clone(),
@@ -513,6 +522,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     .await;
                 }
                 ServiceToProcess::Shutdown => {
+                    js_for_cmd.cancel_execs();
                     capsem_core::try_send!("hub_shutdown", hub_tx.send(HostToGuest::Shutdown).await);
                     shutdown::spawn_stop_after_guest(
                         Arc::clone(&js_for_cmd),
@@ -530,6 +540,8 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                 _ => {}
             }
         }
+        js_for_cmd.fail_all("guest control command channel closed");
+        while exec_calls.join_next().await.is_some() {}
     });
 
     // -----------------------------------------------------------------------
