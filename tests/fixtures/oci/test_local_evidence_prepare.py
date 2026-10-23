@@ -57,17 +57,24 @@ def test_missing_or_mismatched_retained_image_fails_before_export(monkeypatch, t
 
 
 @pytest.mark.parametrize("containerd", [False, True])
-def test_callback_generates_exact_local_subject_with_existing_producer(monkeypatch, tmp_path, containerd):
+@pytest.mark.parametrize("tools_index", [False, True])
+def test_callback_generates_exact_local_subject_with_existing_producer(monkeypatch, tmp_path, containerd, tools_index):
     from images.ci import rootfs
     image, digest, config = fixture(tmp_path)
     calls = []
     metadata = retained(config, containerd=containerd)
-    monkeypatch.setattr(image_build.subprocess, "run", lambda *_, **__: SimpleNamespace(returncode=0, stdout=json.dumps(metadata)))
+    tool_metadata = retained(config)
+    if tools_index:
+        tool_metadata["Id"] = "sha256:" + "6" * 64
+        tool_metadata["Descriptor"] = {"digest": tool_metadata["Id"], "mediaType": "application/vnd.oci.image.index.v1+json"}
+    def inspect(args, **kwargs):
+        return SimpleNamespace(returncode=0, stdout=json.dumps(tool_metadata if args[-1] == "existing-pinned-tools" else metadata))
+    monkeypatch.setattr(image_build.subprocess, "run", inspect)
     monkeypatch.setattr(rootfs, "build_config", lambda: None)
     monkeypatch.setattr(rootfs, "builder_architecture", lambda *_: "arm64")
     monkeypatch.setattr(rootfs.assettools, "image_tag", lambda *_: "existing-pinned-tools")
     def produce(args, *, prepared_tools):
-        assert prepared_tools == metadata["Id"]
+        assert prepared_tools == tool_metadata["Id"]
         calls.append(args)
         output = tmp_path / "evidence"
         output.mkdir()

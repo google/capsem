@@ -84,7 +84,7 @@ def build(image, selected: str | None = None) -> str:
     return digest
 
 
-def _retained_image(runtime, tag, architecture, inspect_timeout):
+def _retained_image(runtime, tag, architecture, inspect_timeout, *, config_required=True):
     fields = '{"Id":{{json .Id}},"Descriptor":{{json .Descriptor}},"Os":{{json .Os}},"Architecture":{{json .Architecture}},"RootFS":{{json .RootFS}}}'
     found = subprocess.run([runtime, "image", "inspect", "--format", fields, tag],
                            capture_output=True, text=True, check=False, timeout=inspect_timeout)
@@ -101,13 +101,14 @@ def _retained_image(runtime, tag, architecture, inspect_timeout):
     descriptor = value.get("Descriptor")
     config = identity
     if descriptor is not None:
-        if not isinstance(descriptor, dict) or descriptor.get("digest") != identity or descriptor.get("mediaType") not in {
-            "application/vnd.oci.image.manifest.v1+json", "application/vnd.docker.distribution.manifest.v2+json",
-        }:
+        media = descriptor.get("mediaType") if isinstance(descriptor, dict) else None
+        manifest = media in {"application/vnd.oci.image.manifest.v1+json", "application/vnd.docker.distribution.manifest.v2+json"}
+        tools_index = not config_required and media in {"application/vnd.oci.image.index.v1+json", "application/vnd.docker.distribution.manifest.list.v2+json"}
+        if not isinstance(descriptor, dict) or descriptor.get("digest") != identity or not (manifest or tools_index):
             raise ValueError("retained image descriptor identity is invalid")
         annotations = descriptor.get("annotations")
         config = annotations.get("config.digest") if isinstance(annotations, dict) else None
-        if not isinstance(config, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", config):
+        if (config_required or config is not None) and (not isinstance(config, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", config)):
             raise ValueError("retained image descriptor config identity is invalid")
     rootfs = value.get("RootFS")
     layers = rootfs.get("Layers") if isinstance(rootfs, dict) else None
@@ -149,7 +150,9 @@ def prepare_local_evidence(image, reference: str, output: Path, *, inspect_timeo
         raise ValueError("retained image ordered layers differ from selected OCI config")
     build = rootfs.build_config()
     arch_name = rootfs.builder_architecture(build, architecture)
-    tools, _, _ = _retained_image(rootfs.RUNTIME, rootfs.assettools.image_tag(build, arch_name, rootfs.ROOT), architecture, inspect_timeout)
+    # The input-keyed tools may be an index. Its immutable digest and selected
+    # platform are sufficient; never mistake that index for a workload config.
+    tools, _, _ = _retained_image(rootfs.RUNTIME, rootfs.assettools.image_tag(build, arch_name, rootfs.ROOT), architecture, inspect_timeout, config_required=False)
     rootfs.main(["--image", identity, "--arch", architecture, "--repository", reference.split("@")[0],
                  "--digest", entry["digest"], "--out", str(output)], prepared_tools=tools)
     read_evidence(output, reference, architecture, entry["digest"])
