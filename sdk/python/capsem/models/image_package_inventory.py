@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import StrictStr
+from pydantic import Field, StrictStr
 
 from .image_package import ImagePackage
 from .image_tool import ImageTool
@@ -12,6 +12,6 @@ from .model_base import Model
 class ImagePackageInventory(Model):
     architecture: StrictStr
     packages: list[ImagePackage]
-    schema: StrictStr
+    schema_: StrictStr = Field(alias='schema')
     subject: StrictStr
     tools: list[ImageTool]

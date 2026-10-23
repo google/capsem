@@ -1,5 +1,8 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .acknowledge_browser_request import (
+    acknowledge_browser_request as acknowledge_browser_request,
+)
 from .attach_network_member import attach_network_member as attach_network_member
 from .authorize_google_connection import (
     authorize_google_connection as authorize_google_connection,
