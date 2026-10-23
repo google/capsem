@@ -395,8 +395,10 @@ fn create_overlay_edits_prefilled_name() {
 #[test]
 fn create_overlay_prefills_the_first_free_vm_name() {
     let mut state = fixture_state();
+    state.sessions[0].title = "vm-2".to_string();
     let mut taken = state.sessions[0].clone();
     taken.id = "vm-1".to_string();
+    taken.title = "vm-1".to_string();
     state.sessions.push(taken);
     let mut app = App::new(state);
 
@@ -456,7 +458,9 @@ fn help_lists_save_sessions_status_and_fork_shortcuts() {
 
 #[test]
 fn fork_overlay_asks_for_name_and_invokes_fork_action() {
-    let mut app = App::new(fixture_state());
+    let mut state = fixture_state();
+    state.sessions[0].title = "vm-2".to_string();
+    let mut app = App::new(state);
 
     assert_eq!(
         app.handle_key(key(KeyCode::Char('f'), KeyModifiers::ALT)),
@@ -466,7 +470,7 @@ fn fork_overlay_asks_for_name_and_invokes_fork_action() {
     let snapshot = render_app_snapshot(&app, 100, 24).expect("render fork dialog");
     assert!(snapshot.contains("fork session"));
     assert!(snapshot.contains("source"));
-    assert!(snapshot.contains("Session V2"));
+    assert!(snapshot.contains("vm-2"));
     assert!(snapshot.contains("vm-2-fork"));
 
     for ch in ['-', 'c', 'o', 'p', 'y'] {

@@ -829,27 +829,47 @@ fn visible_session_indices(state: &AppState) -> Vec<usize> {
 
 /// The first free `vm-N` session name, the service's own spelling.
 fn next_session_name(state: &AppState) -> String {
-    for index in 1..1000 {
+    for index in 1..=state.sessions.len() + 1 {
         let candidate = format!("vm-{index}");
-        if state.sessions.iter().all(|session| session.id != candidate) {
+        if state
+            .sessions
+            .iter()
+            .all(|session| !session.title.eq_ignore_ascii_case(&candidate))
+        {
             return candidate;
         }
     }
-    "vm-1000".to_string()
+    unreachable!("a finite session list leaves a free name")
 }
 
 fn next_fork_name(state: &AppState, source_id: &str) -> String {
-    let base = format!("{source_id}-fork");
-    if state.sessions.iter().all(|session| session.id != base) {
-        return base;
-    }
-    for index in 2..1000 {
-        let candidate = format!("{base}-{index}");
-        if state.sessions.iter().all(|session| session.id != candidate) {
+    let source = state.sessions.iter().find(|session| session.id == source_id);
+    let title = source.map_or(source_id, |session| session.title.as_str());
+    for index in 1..=state.sessions.len() + 1 {
+        let suffix = if index == 1 {
+            "-fork".to_string()
+        } else {
+            format!("-fork-{index}")
+        };
+        let mut prefix = title.to_string();
+        let candidate = loop {
+            let candidate = format!("{prefix}{suffix}");
+            if capsem_sdk::models::validate_name("VM name", &candidate).is_ok() {
+                break candidate;
+            }
+            if prefix.pop().is_none() {
+                prefix = "session".to_string();
+            }
+        };
+        if state
+            .sessions
+            .iter()
+            .all(|session| !session.title.eq_ignore_ascii_case(&candidate))
+        {
             return candidate;
         }
     }
-    base
+    unreachable!("a finite session list leaves a free fork name")
 }
 
 fn select_index(key: KeyEvent) -> Option<usize> {

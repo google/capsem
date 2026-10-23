@@ -243,6 +243,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Suggest TUI session and fork names from existing human names, avoiding collisions
+  and keeping fork suffixes within the public name limit.
+
 - Keep the native app and embedded terminals on the selected local gateway,
   including isolated runtime ports.
 

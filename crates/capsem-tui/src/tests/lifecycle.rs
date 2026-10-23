@@ -336,3 +336,57 @@ fn gateway_status_can_resume_false_blocks_tui_resume() {
     );
     assert_eq!(app.pending_action(), None);
 }
+
+#[test]
+fn generated_session_names_compare_human_titles_not_uuid_ids() {
+    let mut state = fixture_state();
+    for (index, session) in state.sessions.iter_mut().enumerate() {
+        session.id = format!("00000000-0000-4000-8000-{index:012}");
+        session.title = format!("vm-{}", index + 1);
+    }
+    state.active_session_id = state.sessions[0].id.clone();
+    let mut app = App::new(state);
+    app.handle_key(key(KeyCode::Char('n'), KeyModifiers::ALT));
+    assert_eq!(app.create_draft().unwrap().name, "vm-3");
+}
+
+#[test]
+fn fork_names_use_human_titles_and_preserve_the_source_uuid() {
+    let mut state = fixture_state();
+    let source = "00000000-0000-4000-8000-000000000001";
+    state.sessions[0].id = source.into();
+    state.sessions[0].title = "dev-work".into();
+    state.active_session_id = source.into();
+    state.sessions[1].title = "dev-work-fork".into();
+    let mut taken = state.sessions[1].clone();
+    taken.id = "00000000-0000-4000-8000-000000000002".into();
+    taken.title = "dev-work-fork-2".into();
+    state.sessions.push(taken.clone());
+    taken.id = "dev-work-fork-3".into();
+    taken.title = "unrelated-name".into();
+    state.sessions.push(taken);
+    let mut app = App::new(state);
+    app.handle_key(key(KeyCode::Char('f'), KeyModifiers::ALT));
+    assert_eq!(app.fork_draft().unwrap().source_id, source);
+    assert_eq!(app.fork_draft().unwrap().name, "dev-work-fork-3");
+    assert_eq!(
+        app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
+        AppAction::Invoke(ControlAction::Fork {
+            id: source.into(),
+            name: "dev-work-fork-3".into()
+        })
+    );
+}
+
+#[test]
+fn fork_name_suffix_keeps_long_names_within_the_public_contract() {
+    let mut state = fixture_state();
+    state.sessions[0].title = "x".repeat(64);
+    state.sessions[1].title = format!("{}-fork", "x".repeat(59));
+    let mut app = App::new(state);
+    app.handle_key(key(KeyCode::Char('f'), KeyModifiers::ALT));
+    let name = &app.fork_draft().unwrap().name;
+    assert!(name.starts_with(&"x".repeat(57)));
+    assert!(name.ends_with("-fork-2"));
+    assert!(capsem_sdk::models::validate_name("VM name", name).is_ok());
+}
