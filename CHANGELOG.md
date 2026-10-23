@@ -48,6 +48,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Carry committed price coverage through session, per-model and global service
   totals without deriving price completeness from a zero cost.
+- List three independent opt-in HTTP filters in Plugins and persist their
+  direction and PII entity options through the existing settings API.
+
 - Add separate opt-in HTTP PII, secret-exfiltration and UTF-8 text plugins with
   typed direction/entity controls, bounded complete-body enforcement and
   payload-free audit counts. Enabled inspection buffers text streams; unsupported

@@ -124,12 +124,15 @@ pub(super) struct PluginUpdate {
     mode: Option<SecurityPluginMode>,
     #[serde(default)]
     detection_level: Option<DetectionLevel>,
+    #[serde(default)]
+    content: Option<capsem_core::net::policy_config::ContentFilterConfig>,
 }
 
 pub(super) fn default_plugin_config(mode: SecurityPluginMode) -> SecurityPluginConfig {
     SecurityPluginConfig {
         mode,
         detection_level: DetectionLevel::Informational,
+        content: Default::default(),
     }
 }
 
@@ -144,6 +147,36 @@ pub(super) struct PluginCatalogEntry {
 
 static PLUGIN_CATALOG: LazyLock<BTreeMap<String, PluginCatalogEntry>> = LazyLock::new(|| {
     BTreeMap::from([
+        (
+            "pii_filter".to_string(),
+            PluginCatalogEntry {
+                name: "PII Filter",
+                description: "filters selected email, North American phone, payment card and US SSN text inbound or outbound; bounded body buffering when enabled",
+                default_config: default_plugin_config(SecurityPluginMode::Disable),
+                stage: PluginStage::Preprocess,
+                version: "1",
+            },
+        ),
+        (
+            "secret_exfiltration".to_string(),
+            PluginCatalogEntry {
+                name: "Secret Exfiltration Prevention",
+                description: "blocks supported token, private key and broker-reference patterns in outbound HTTP text outside authorized credential fields; bounded buffering when enabled",
+                default_config: default_plugin_config(SecurityPluginMode::Disable),
+                stage: PluginStage::Preprocess,
+                version: "1",
+            },
+        ),
+        (
+            "utf8_guard".to_string(),
+            PluginCatalogEntry {
+                name: "UTF-8 Text Guard",
+                description: "rejects invalid UTF-8 HTTP text inbound or outbound, preserves valid Unicode and binary media; bounded text buffering when enabled",
+                default_config: default_plugin_config(SecurityPluginMode::Disable),
+                stage: PluginStage::Preprocess,
+                version: "1",
+            },
+        ),
         (
             "credential_broker".to_string(),
             PluginCatalogEntry {
@@ -287,6 +320,11 @@ async fn plugin_info_from(
 
 fn plugin_capabilities(plugin_id: &str) -> PluginCapabilities {
     match plugin_id {
+        "pii_filter" | "secret_exfiltration" | "utf8_guard" => PluginCapabilities {
+            event_families: vec!["http"],
+            credential_providers: Vec::new(),
+            credential_sources: Vec::new(),
+        },
         "credential_broker" => PluginCapabilities {
             event_families: vec!["http", "file", "mcp"],
             credential_providers: capsem_core::credential_broker::CredentialProvider::all()
@@ -560,6 +598,12 @@ pub(super) async fn handle_plugin_update(
         }
         if let Some(detection_level) = update.detection_level {
             config.detection_level = detection_level;
+        }
+        if let Some(content) = update.content {
+            if !matches!(id.as_str(), "pii_filter" | "secret_exfiltration" | "utf8_guard") {
+                return Err("content options only apply to content-inspection plugins".to_string());
+            }
+            config.content = content;
         }
         edit.set_plugin_config(corp, &id, config, "service-api")
     })

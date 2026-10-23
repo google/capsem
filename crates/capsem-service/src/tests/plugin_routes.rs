@@ -7,6 +7,57 @@
 
 use super::*;
 
+#[tokio::test]
+async fn content_plugins_are_independent_disabled_and_persist_typed_options() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_guard, settings_path, _) = install_empty_settings_env(&dir);
+    let app = build_service_router(make_test_state());
+    let (status, list) = route_request(app.clone(), axum::http::Method::GET, "/plugins/list", None).await;
+    assert_eq!(status, StatusCode::OK);
+    for id in ["pii_filter", "secret_exfiltration", "utf8_guard"] {
+        let plugin = list["plugins"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|plugin| plugin["id"] == id)
+            .unwrap();
+        assert_eq!(plugin["config"]["mode"], "disable");
+        assert_eq!(plugin["capabilities"]["event_families"], json!(["http"]));
+    }
+    let content = json!({"direction":"outbound", "email":true,"phone":false,"card":true,"ssn":false});
+    let (status, info) = route_request(
+        app.clone(),
+        axum::http::Method::PATCH,
+        "/plugins/pii_filter/edit",
+        Some(json!({"mode":"rewrite", "content":content})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{info}");
+    assert_eq!(info["config"]["content"], content);
+    let settings: toml::Value = toml::from_str(&std::fs::read_to_string(settings_path).unwrap()).unwrap();
+    assert_eq!(
+        settings["plugins"]["pii_filter"]["content"]["direction"].as_str(),
+        Some("outbound")
+    );
+    let (status, _) = route_request(
+        app.clone(),
+        axum::http::Method::PATCH,
+        "/plugins/pii_filter/edit",
+        Some(json!({"content":{"passport":true}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    let (status, _) = route_request(
+        app,
+        axum::http::Method::PATCH,
+        "/plugins/log_sanitizer/edit",
+        Some(json!({"content":content})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
 fn archived_forensic_json(body: capsem_logger::StoredBody) -> String {
     assert_eq!(
         body.content_type.as_deref(),
