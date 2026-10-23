@@ -284,6 +284,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Refresh the ARM debug test image to the qualified, anonymously verified
+  publication containing the current security dependency updates.
+
 - The confined gateway inherits only diagnostic and coverage environment inputs,
   excluding ambient host provider and collector credentials.
 
