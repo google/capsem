@@ -204,6 +204,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Saved sessions retain audit sequence reservations across restarts, preventing
+  duplicate ledger entries from disabling commands after reopening an app.
+
 - Restore KVM VirtioFS root attributes after containment checks while still
   refusing a share root replaced by an outside symlink.
 
