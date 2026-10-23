@@ -32,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Update app tooling to Undici 8.12.2 and fast-uri 3.1.9.
+
 - Update MCP URI parsing to fast-uri 3.1.9.
 
 - Update release-site HTTP tooling to Undici 8.12.2.
