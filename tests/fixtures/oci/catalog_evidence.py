@@ -28,6 +28,19 @@ def _attach(artifacts, repository, subject, body, media):
     return artifact["digest"]
 
 
+def read_evidence(output, reference, architecture, subject_digest):
+    """One subject validator shared by preparation and publication."""
+    inventory = (output / "packages.json").read_bytes()
+    document = json.loads(inventory)
+    if document.get("subject") != reference or document.get("architecture") != architecture:
+        raise ValueError("local inventory subject or platform differs")
+    obom = (output / "obom.cdx.json").read_bytes()
+    component = json.loads(obom)["metadata"]["component"]
+    if component["name"] != reference.split("@")[0] or component["version"] != subject_digest:
+        raise ValueError("local OBOM subject differs")
+    return inventory, obom
+
+
 def publish(artifacts, reference, subject, config, evidence, root):
     """Use the publication producer, never a second set of app names or metadata.
 
@@ -47,14 +60,7 @@ def publish(artifacts, reference, subject, config, evidence, root):
         version["erofs"] = {arch: root["digest"]}
     if evidence:
         output = evidence(reference)
-        inventory = (output / "packages.json").read_bytes()
-        document = json.loads(inventory)
-        if document.get("subject") != reference or document.get("architecture") != arch:
-            raise ValueError("local inventory subject or platform differs")
-        obom = (output / "obom.cdx.json").read_bytes()
-        component = json.loads(obom)["metadata"]["component"]
-        if component["name"] != repository or component["version"] != subject["digest"]:
-            raise ValueError("local OBOM subject differs")
+        inventory, obom = read_evidence(output, reference, arch, subject["digest"])
         pin = _attach(artifacts, route, subject, inventory, INVENTORY)
         version["evidence"] = {arch: [{"kind": "package_inventory", "reference": f"{repository}@{pin}", "media_type": INVENTORY}]}
         version["obom"] = {arch: _attach(artifacts, route, subject, obom, OBOM)}

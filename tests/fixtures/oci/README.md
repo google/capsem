@@ -255,9 +255,13 @@ The image's real interface must match that metadata. Generic fixtures retain
 their explicit fixture description unless this option is selected.
 
 The callback receives the final local immutable image reference and returns a
-directory containing canonical `packages.json` and `obom.cdx.json` output. Run
-`images.ci.rootfs.main` against the verified retained image tag with that local
-repository and digest; retain its normal image/cache leases. A GHCR inventory
+directory containing canonical `packages.json` and `obom.cdx.json` output. The untimed
+`image_build.prepare_local_evidence` callback checks the retained recipe tag
+against the selected OCI config, resolves existing scanner tools to an immutable
+local Docker identity, then calls `images.ci.rootfs.main` with the final local
+repository and digest. Missing images/tools fail preflight rather than being
+built or fetched. Retain the normal image/cache leases; export, inventory scan
+and repack are setup costs, outside endpoint measurement windows. A GHCR inventory
 cannot be copied into this local repository: its embedded subject differs.
 The fixture verifies both subjects, publishes their OCI manifests and referrers,
 and lists exact evidence pins in the generated catalogue. An already prepared

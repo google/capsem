@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 from collections.abc import Sequence
 from pathlib import Path
@@ -78,7 +79,7 @@ def asset_tools(build: BuildConfig, name: str) -> str:
     return tag
 
 
-def main(argv: Sequence[str] | None = None) -> None:
+def main(argv: Sequence[str] | None = None, *, prepared_tools: str | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--image", required=True, help="local tag of the built image")
     parser.add_argument("--arch", required=True, choices=("arm64", "amd64"))
@@ -89,10 +90,12 @@ def main(argv: Sequence[str] | None = None) -> None:
                         help="standalone fixture not derived from the shared toolkit base")
     args = parser.parse_args(argv)
 
+    if prepared_tools is not None and not re.fullmatch(r"sha256:[0-9a-f]{64}", prepared_tools):
+        raise ValueError("prepared tools must be an immutable local Docker identity")
     build = build_config()
     name = builder_architecture(build, args.arch)
     platform = build.architectures[name].docker_platform
-    tools = asset_tools(build, name)
+    tools = prepared_tools or asset_tools(build, name)
     network = build.asset_tools.runtime_network
     args.out.mkdir(parents=True, exist_ok=True)
     tar = args.out / "rootfs.tar"
