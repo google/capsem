@@ -1,6 +1,7 @@
 // Generated from Capsem OpenAPI. Do not edit.
 
 import type { BrowserRequest } from "./BrowserRequest.js";
+import type { CostCoverage } from "./CostCoverage.js";
 import type { ImageApp } from "./ImageApp.js";
 import type { SessionDbStatus } from "./SessionDbStatus.js";
 import type { StorageDiagnostics } from "./StorageDiagnostics.js";
@@ -18,6 +19,7 @@ export interface SandboxInfo {
   "available_actions": Array<VmAction>;
   "browser_request"?: null | BrowserRequest;
   "can_resume"?: boolean;
+  "cost_coverage"?: null | CostCoverage;
   "cpus"?: number | null;
   "created_at"?: string | null;
   "denied_requests"?: number | null;

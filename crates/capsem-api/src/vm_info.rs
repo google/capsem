@@ -10,6 +10,8 @@ pub struct VmAiInfo {
     pub total_output_tokens: u64,
     pub total_tool_calls: u64,
     pub total_estimated_cost_usd: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_coverage: Option<crate::CostCoverage>,
     /// Models observed in the session, grouped by provider and model identity.
     pub models: Vec<ModelUsage>,
     /// Recorded MCP tool calls, grouped by server and tool identity.
@@ -25,6 +27,8 @@ pub struct ModelUsage {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub estimated_cost_usd: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_coverage: Option<crate::CostCoverage>,
     pub duration_ms: u64,
 }
 

@@ -6,11 +6,13 @@ from typing import Annotated
 
 from pydantic import Field, StrictFloat, StrictInt
 
+from .cost_coverage import CostCoverage
 from .model_base import Model
 
 
 class VmStatsSummaryResponse(Model):
     allowed_requests: Annotated[StrictInt, Field(ge=0)]
+    cost_coverage: CostCoverage | None = None
     denied_requests: Annotated[StrictInt, Field(ge=0)]
     total_estimated_cost: StrictFloat
     total_input_tokens: Annotated[StrictInt, Field(ge=0)]

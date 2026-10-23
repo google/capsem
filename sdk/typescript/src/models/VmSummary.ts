@@ -1,6 +1,7 @@
 // Generated from Capsem OpenAPI. Do not edit.
 
 import type { BrowserRequest } from "./BrowserRequest.js";
+import type { CostCoverage } from "./CostCoverage.js";
 import type { ImageApp } from "./ImageApp.js";
 import type { TerminalSummary } from "./TerminalSummary.js";
 import type { VmAction } from "./VmAction.js";
@@ -12,6 +13,7 @@ export interface VmSummary {
   "available_actions": Array<VmAction>;
   "browser_request"?: null | BrowserRequest;
   "can_resume"?: boolean;
+  "cost_coverage"?: null | CostCoverage;
   "denied_requests"?: number | null;
   "id": string;
   "last_error"?: string | null;

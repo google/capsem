@@ -4295,6 +4295,32 @@
           "xpra"
         ]
       },
+      "CostCoverage": {
+        "type": "object",
+        "required": [
+          "priced_calls",
+          "unpriced_calls",
+          "unknown_calls"
+        ],
+        "properties": {
+          "priced_calls": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "unknown_calls": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Historical calls whose snapshots predate explicit price coverage facts.",
+            "minimum": 0
+          },
+          "unpriced_calls": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "CreateNetworkRequest": {
         "type": "object",
         "required": [
@@ -6980,6 +7006,16 @@
             "format": "int64",
             "minimum": 0
           },
+          "cost_coverage": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CostCoverage"
+              }
+            ]
+          },
           "duration_ms": {
             "type": "integer",
             "format": "int64",
@@ -7828,6 +7864,16 @@
           "can_resume": {
             "type": "boolean",
             "description": "True only when an inactive persistent VM can be started/resumed: its\npinned boot assets are installed and its shape is current."
+          },
+          "cost_coverage": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CostCoverage"
+              }
+            ]
           },
           "cpus": {
             "type": [
@@ -9410,6 +9456,16 @@
           "mcp"
         ],
         "properties": {
+          "cost_coverage": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CostCoverage"
+              }
+            ]
+          },
           "mcp": {
             "type": "array",
             "items": {
@@ -9636,6 +9692,16 @@
             "format": "int64",
             "minimum": 0
           },
+          "cost_coverage": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CostCoverage"
+              }
+            ]
+          },
           "denied_requests": {
             "type": "integer",
             "format": "int64",
@@ -9795,6 +9861,16 @@
           },
           "can_resume": {
             "type": "boolean"
+          },
+          "cost_coverage": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CostCoverage"
+              }
+            ]
           },
           "denied_requests": {
             "type": [

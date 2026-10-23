@@ -6,12 +6,14 @@ from typing import Annotated
 
 from pydantic import Field, StrictFloat, StrictInt
 
+from .cost_coverage import CostCoverage
 from .mcp_usage import McpUsage
 from .model_base import Model
 from .model_usage import ModelUsage
 
 
 class VmAiInfo(Model):
+    cost_coverage: CostCoverage | None = None
     mcp: list[McpUsage]
     model_call_count: Annotated[StrictInt, Field(ge=0)]
     models: list[ModelUsage]

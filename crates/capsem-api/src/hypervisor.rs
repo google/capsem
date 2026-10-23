@@ -48,6 +48,8 @@ pub struct VmSummary {
     pub total_output_tokens: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_estimated_cost: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_coverage: Option<crate::CostCoverage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_tool_calls: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]

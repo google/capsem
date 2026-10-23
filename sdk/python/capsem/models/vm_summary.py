@@ -7,6 +7,7 @@ from typing import Annotated
 from pydantic import Field, StrictBool, StrictFloat, StrictInt, StrictStr
 
 from .browser_request import BrowserRequest
+from .cost_coverage import CostCoverage
 from .image_app import ImageApp
 from .model_base import Model
 from .terminal_summary import TerminalSummary
@@ -21,6 +22,7 @@ class VmSummary(Model):
     available_actions: list[VmAction]
     browser_request: BrowserRequest | None = None
     can_resume: StrictBool | None = None
+    cost_coverage: CostCoverage | None = None
     denied_requests: Annotated[StrictInt, Field(ge=0)] | None = None
     id: StrictStr
     last_error: StrictStr | None = None

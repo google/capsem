@@ -32,6 +32,7 @@ from .container_status_response import (
 )
 from .container_surface import ContainerSurface as ContainerSurface
 from .container_surface_kind import ContainerSurfaceKind as ContainerSurfaceKind
+from .cost_coverage import CostCoverage as CostCoverage
 from .create_network_request import CreateNetworkRequest as CreateNetworkRequest
 from .create_proxy_request import CreateProxyRequest as CreateProxyRequest
 from .create_proxy_response import CreateProxyResponse as CreateProxyResponse

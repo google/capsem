@@ -26,6 +26,7 @@ export { ContainerState } from "./ContainerState.js";
 export type { ContainerStatusResponse } from "./ContainerStatusResponse.js";
 export type { ContainerSurface } from "./ContainerSurface.js";
 export { ContainerSurfaceKind } from "./ContainerSurfaceKind.js";
+export type { CostCoverage } from "./CostCoverage.js";
 export type { CreateNetworkRequest } from "./CreateNetworkRequest.js";
 export type { CreateProxyRequest } from "./CreateProxyRequest.js";
 export type { CreateProxyResponse } from "./CreateProxyResponse.js";

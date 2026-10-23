@@ -21,6 +21,8 @@ mod exposures;
 pub use exposures::*;
 mod images;
 pub use images::*;
+mod cost;
+pub use cost::*;
 mod lifecycle;
 mod managed_sessions;
 pub use managed_sessions::*;

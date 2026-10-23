@@ -2,9 +2,11 @@
 
 import {z} from "zod";
 import type {VmStatsSummaryResponse} from "../models/VmStatsSummaryResponse.js";
+import {CostCoverageSchema} from "./CostCoverage.js";
 
 export const VmStatsSummaryResponseSchema: z.ZodType<VmStatsSummaryResponse> = z.object({
   "allowed_requests": z.int().min(0),
+  "cost_coverage": z.union([z.null(), z.lazy(() => CostCoverageSchema)]).exactOptional(),
   "denied_requests": z.int().min(0),
   "total_estimated_cost": z.number(),
   "total_input_tokens": z.int().min(0),

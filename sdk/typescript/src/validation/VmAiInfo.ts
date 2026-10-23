@@ -2,10 +2,12 @@
 
 import {z} from "zod";
 import type {VmAiInfo} from "../models/VmAiInfo.js";
+import {CostCoverageSchema} from "./CostCoverage.js";
 import {McpUsageSchema} from "./McpUsage.js";
 import {ModelUsageSchema} from "./ModelUsage.js";
 
 export const VmAiInfoSchema: z.ZodType<VmAiInfo> = z.object({
+  "cost_coverage": z.union([z.null(), z.lazy(() => CostCoverageSchema)]).exactOptional(),
   "mcp": z.array(z.lazy(() => McpUsageSchema)),
   "model_call_count": z.int().min(0),
   "models": z.array(z.lazy(() => ModelUsageSchema)),

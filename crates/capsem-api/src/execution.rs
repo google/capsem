@@ -14,6 +14,8 @@ pub struct VmStatsSummaryResponse {
     pub total_output_tokens: u64,
     pub total_tool_calls: u64,
     pub total_estimated_cost: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_coverage: Option<crate::CostCoverage>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]

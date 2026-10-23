@@ -26,6 +26,7 @@ export {ContainerStateSchema} from "./ContainerState.js";
 export {ContainerStatusResponseSchema} from "./ContainerStatusResponse.js";
 export {ContainerSurfaceSchema} from "./ContainerSurface.js";
 export {ContainerSurfaceKindSchema} from "./ContainerSurfaceKind.js";
+export {CostCoverageSchema} from "./CostCoverage.js";
 export {CreateNetworkRequestSchema} from "./CreateNetworkRequest.js";
 export {CreateProxyRequestSchema} from "./CreateProxyRequest.js";
 export {CreateProxyResponseSchema} from "./CreateProxyResponse.js";

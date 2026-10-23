@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Expose priced, unpriced and historical unknown call coverage with AI cost
+  estimates so clients can distinguish a known subtotal from a complete price.
+
 - Keep unknown model prices and unsupported usage unpriced, account for
   published cache rates, and include disjoint Google thinking and Anthropic
   cache token components without double-counting OpenAI reasoning.

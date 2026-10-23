@@ -261,6 +261,8 @@ pub struct SandboxInfo {
     pub total_output_tokens: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_estimated_cost: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_coverage: Option<crate::CostCoverage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_tool_calls: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -321,6 +323,7 @@ impl SandboxInfo {
             total_thinking_tokens: None,
             total_output_tokens: None,
             total_estimated_cost: None,
+            cost_coverage: None,
             total_tool_calls: None,
             total_requests: None,
             allowed_requests: None,
