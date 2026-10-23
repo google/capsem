@@ -37,6 +37,7 @@ class RouteCoverageConfig(Strict):
     measured: tuple[RouteCaseConfig, ...]
     unmeasured: dict[str, RouteDebtConfig]
     internal: dict[str, RouteDebtConfig]
+    unmeasured_cases: dict[str, RouteDebtConfig]
 
 
 class RouteLoadConfig(Strict):

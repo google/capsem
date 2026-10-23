@@ -212,6 +212,18 @@ It retains raw concurrent latency, aggregate RPS and CPU samples. Managed claim
 and close measure repeatable closed tombstones, not initial lifecycle operations.
 Uncovered mutations require their real disposable lifecycle fixtures; successful
 read timing and functional acceptance are not proof of mutation performance.
+The collector currently declares 49 cases over 46 operations, including four
+plugin-detail IDs, the existing stopped recorded session and one live image VM.
+Untimed preflight validates selected public SDK schemas and private DTO/counter
+contracts, checks nonempty recorded traffic/history and reconciles shared
+counters. The original HTTP/JSON checks remain in every timed request. Security
+ledger arrays can be empty in this recorded corpus; an idle Ask queue is explicitly
+not pending approval performance. Initial managed claim/close and pending Ask
+cases remain named `unmeasured_cases`; 70 other operations retain their owners.
+Metric keys include method, template and case, so plugin cases never overwrite
+one another. Sample counts, raw retention, fitness, CPU and statistics owners are
+unchanged. Added coverage is source readiness until the exact-source native
+collector runs complete; it is not a new performance result.
 
 ## Benchmarks that are still pytest
 

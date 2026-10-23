@@ -2,13 +2,14 @@
 
 import json
 import sys
-import tomllib
 from importlib.machinery import SourceFileLoader
 from importlib.util import module_from_spec, spec_from_loader
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import tomllib
+from helpers.stopped_workspace import BODY_ROUTE, BODY_URL, VM_ID
 
 ROOT = Path(__file__).resolve().parents[1]
 config = tomllib.loads((ROOT / "config/gate.toml").read_text())
@@ -25,28 +26,28 @@ loader.exec_module(collector)
     [
         ("/connections", "/connections"),
         ("/status", "/status"),
-        ("/vms/{id}/status", f"/vms/{collector.VM_ID}/status"),
-        ("/vms/{id}/credential-grants", f"/vms/{collector.VM_ID}/credential-grants"),
-        (collector.BODY_ROUTE, collector.BODY_URL),
+        ("/vms/{id}/status", f"/vms/{VM_ID}/status"),
+        ("/vms/{id}/credential-grants", f"/vms/{VM_ID}/credential-grants"),
+        (BODY_ROUTE, BODY_URL),
     ],
 )
 def test_measured_paths_use_the_actual_fixture(pattern: str, expected: str) -> None:
-    assert collector.request_path(pattern) == expected
+    assert collector.RouteCase("GET", pattern, "default").resolve(None) == expected
 
 
 @pytest.mark.parametrize("pattern", ["/connections/{connection_id}", "/vms/{id}/bodies/{other}"])
 def test_a_route_without_a_successful_fixture_is_refused(pattern: str) -> None:
     with pytest.raises(ValueError, match="fixture"):
-        collector.request_path(pattern)
+        collector.RouteCase("GET", pattern, "default").resolve(None)
 
 
 @pytest.mark.parametrize("pattern", ["/vms/{id}/exposures", "/vms/{id}/security/status"])
 def test_live_owner_routes_require_the_live_fixture(pattern: str) -> None:
     with pytest.raises(ValueError, match="live"):
-        collector.request_path(pattern)
+        collector.RouteCase("GET", pattern, "default").resolve(None)
     live_id = "2ac847f8-55fa-46e6-93f4-bd91db45d4ea"
-    assert collector.request_path(pattern, live_id) == pattern.replace("{id}", live_id)
-    assert collector.request_path(collector.BODY_ROUTE, live_id) == collector.BODY_URL
+    assert collector.RouteCase("GET", pattern, "default").resolve(live_id) == pattern.replace("{id}", live_id)
+    assert collector.RouteCase("GET", BODY_ROUTE, "default").resolve(live_id) == BODY_URL
 
 
 def test_fixture_diagnostics_do_not_corrupt_collector_json(
@@ -66,17 +67,18 @@ def test_fixture_diagnostics_do_not_corrupt_collector_json(
     gateway = SimpleNamespace(
         port=12345,
         token="fixture-token",
-        proc=SimpleNamespace(pid=2),
+        pid=2,
         start=lambda: print("GATEWAY LOG: isolated fixture"),
         stop=lambda: stopped.append("gateway"),
     )
     monkeypatch.setattr(collector, "ServiceInstance", lambda: service)
-    monkeypatch.setattr(collector, "GatewayInstance", lambda _: gateway)
+    monkeypatch.setattr(collector, "service_gateway", lambda _: gateway)
     monkeypatch.setattr(collector, "seed_stopped_workspace", lambda *_: None)
     monkeypatch.setattr(collector, "clone_benchmark_assets", lambda *_: tmp_path / "benchmark-assets")
     original_process = collector.psutil.Process
     monkeypatch.setattr(collector.psutil, "Process", lambda _: None)
-    monkeypatch.setattr(collector, "measured_routes", lambda: ["/status"])
+    monkeypatch.setattr(collector, "measured_cases", lambda: [collector.RouteCase("GET", "/status", "default")])
+    monkeypatch.setattr(collector, "preflight", lambda *_: None)
     monkeypatch.setattr(
         collector, "sample_warm_route",
         lambda target, *_: ([0.1], dict.fromkeys(target.cpu_processes, 0.0)),
@@ -98,5 +100,4 @@ def test_fixture_diagnostics_do_not_corrupt_collector_json(
     payload = json.loads(captured.out)
     assert len(payload["metrics"]) == 14
     assert "SERVICE LOG:" in captured.err
-    assert "GATEWAY LOG:" in captured.err
-    assert stopped == ["gateway", "service"]
+    assert stopped == ["service"]

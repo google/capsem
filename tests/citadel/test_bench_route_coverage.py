@@ -33,6 +33,11 @@ def validate(registered: set[str], coverage: dict) -> None:
         f"Missing: {sorted(registered - measured - debt - internal)}; "
         f"stale: {sorted((measured | debt | internal) - registered)}. {RATIONALE}"
     )
+    keys = {f'{case["method"]} {case["path"]} [{case["case"]}]' for case in coverage["measured"]}
+    for key, entry in coverage.get("unmeasured_cases", {}).items():
+        operation, separator, name = key.rpartition(" [")
+        assert "*" not in key and separator and name.endswith("]") and operation in registered and key not in keys, RATIONALE
+        assert (ROOT / entry["owner"]).exists() and len(entry["reason"]) >= 20, RATIONALE
     for group in ("unmeasured", "internal"):
         for operation, entry in coverage[group].items():
             assert "*" not in operation and entry["owner"].strip() and len(entry["reason"].strip()) >= 20, RATIONALE
@@ -62,7 +67,7 @@ def test_gateway_method_topology_matches_service() -> None:
 
 
 def test_unmeasured_operations_remain_explicit_debt() -> None:
-    assert len(config()["unmeasured"]) <= 96, RATIONALE
+    assert len(config()["unmeasured"]) <= 70, RATIONALE
     assert len(config()["internal"]) == 7, RATIONALE
 
 

@@ -24,26 +24,15 @@ def _collector() -> dict:
 
 def test_every_measured_route_resolves_to_a_concrete_fixture_request() -> None:
     collector = _collector()
-    request_path = collector["request_path"]
 
-    unresolved = {
-        route: request_path(route, "live-owner")
-        for route in collector["measured_routes"]()
-        if "{" in request_path(route, "live-owner") or "}" in request_path(route, "live-owner")
-    }
-
-    assert not unresolved, (
-        "the benchmark sent route templates literally, so a fast 404 replaced "
-        f"the intended latency measurement: {unresolved}"
-    )
+    assert all("{" not in case.resolve("live-owner") for case in collector["measured_cases"]())
 
 
 def test_managed_routes_use_repeatable_authenticated_posts() -> None:
     collector = _collector()
-    request_path = collector["request_path"]
     request_input = collector["request_input"]
 
-    close_path = request_path("/vms/managed/{request_id}/close")
+    close_path = collector["RouteCase"]("POST", "/vms/managed/{request_id}/close", "closed-tombstone").resolve(None)
     method, body = request_input(close_path)
     assert method == "POST"
     assert json.loads(body) == {
@@ -51,7 +40,7 @@ def test_managed_routes_use_repeatable_authenticated_posts() -> None:
         "outcome": "cancelled",
     }
 
-    claim_path = request_path("/vms/managed/{request_id}/claim")
+    claim_path = collector["RouteCase"]("POST", "/vms/managed/{request_id}/claim", "closed-tombstone").resolve(None)
     method, body = request_input(claim_path)
     assert method == "POST"
     assert json.loads(body) == {"ownership_token": "af" * 32}
@@ -142,7 +131,8 @@ def test_routes_reuse_owned_gateway_and_default_product_fixture(monkeypatch, tmp
         "psutil": SimpleNamespace(Process=lambda pid: pid),
         "seed_stopped_workspace": lambda *_: None,
         "clone_benchmark_assets": lambda *args: tmp_path,
-        "measured_routes": lambda: ["/vms/{id}/exposures"],
+        "measured_cases": lambda: [module["RouteCase"]("GET", "/vms/{id}/exposures", "default")],
+        "preflight": lambda *_: None,
         "sample_warm_route": warm,
         "sample_cold_route": lambda *_: [1.0],
         "sample_concurrent_route": lambda *_: ([1.0], {}, 1.0),
@@ -151,3 +141,32 @@ def test_routes_reuse_owned_gateway_and_default_product_fixture(monkeypatch, tmp
     assert module["main"]() == 0
     assert calls == ["start", "product image", "service", "gateway", "stop"]
     assert json.loads(capsys.readouterr().out)["metrics"]
+
+
+def test_preflight_checks_declared_method_and_real_payload_before_timing() -> None:
+    import pytest
+
+    collector = _collector()
+    closed = []
+
+    class Transport:
+        def request(self, *_args, **_kwargs):
+            return 200, {}, b'{"events":[]}'
+
+        def close(self):
+            closed.append(True)
+
+    target = collector["Target"]("test", Transport, {}, {})
+    case = collector["RouteCase"]("GET", "/vms/{id}/timeline", "recorded-session")
+    with pytest.raises(AssertionError, match="must not be empty"):
+        collector["preflight"](target, [case], None)
+    case = collector["RouteCase"]("POST", "/vms/{id}/timeline", "recorded-session")
+    with pytest.raises(ValueError, match="method differs"):
+        collector["preflight"](target, [case], None)
+    assert len(closed) == 2
+
+
+def test_all_configured_cases_use_the_declared_http_method() -> None:
+    collector = _collector()
+    for case in collector["measured_cases"]():
+        assert collector["request_input"](case.resolve("live-id"))[0] == case.method

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Measure HTTP route latency and per-request CPU, direct and via the gateway.
 
-Routes come from `[benchmark.routes] measured` in `config/gate.toml`. Citadel
+Method/path/cases come from `[benchmark.routes] measured` in `config/gate.toml`. Citadel
 requires every registered route to be measured, recorded as debt, or identified
 as an internal control route.
 
@@ -38,44 +38,23 @@ from helpers.image_session import image_session
 from helpers.process_cpu import process_cpu_seconds
 from helpers.service import ServiceInstance
 from helpers.stopped_workspace import (
-    BODY_ROUTE,
     BODY_URL,
-    VM_ID,
     assert_event_bodies,
     seed_stopped_workspace,
 )
 
+from benchmarks.helpers.route_cases import RouteCase, measured_cases
 from benchmarks.helpers.route_measurements import route_metrics
+from benchmarks.helpers.route_validation import validate_snapshot, validate_wire
 from benchmarks.helpers.stream_measurements import service_gateway
 
 ROOT = Path(__file__).resolve().parents[2]
 WARMUP = 2
-MANAGED_REQUEST_ID = "fc120782-2272-4b3d-a2e6-a26ee2f8ab61"
 MANAGED_TOKEN = "af" * 32
-LIVE_ROUTES = {"/vms/{id}/exposures", "/vms/{id}/security/status"}
-
-
-def measured_routes() -> list[str]:
-    config = tomllib.loads((ROOT / "config" / "gate.toml").read_text(encoding="utf-8"))
-    return [case["path"] for case in config["benchmark"]["routes"]["measured"]]
-
 
 def route_load_config() -> dict[str, int]:
     config = tomllib.loads((ROOT / "config" / "gate.toml").read_text(encoding="utf-8"))
     return dict(config["benchmark"]["route_load"])
-
-
-def request_path(route: str, live_session_id: str | None = None) -> str:
-    """Resolve a configured route template against the stopped VM fixture."""
-    if route == BODY_ROUTE:
-        return BODY_URL
-    if route in LIVE_ROUTES and live_session_id is None:
-        raise ValueError(f"measured route requires a live owner fixture: {route}")
-    subject = live_session_id if route in LIVE_ROUTES else VM_ID
-    path = route.replace("{id}", subject).replace("{request_id}", MANAGED_REQUEST_ID)
-    if "{" in path or "}" in path:
-        raise ValueError(f"measured route has no successful fixture: {route}")
-    return path
 
 
 def request_input(path: str) -> tuple[str, bytes | None]:
@@ -96,7 +75,7 @@ class Target:
     cpu_processes: dict[str, psutil.Process]
 
 
-def request(transport: Transport, target: Target, path: str) -> None:
+def request(transport: Transport, target: Target, path: str) -> bytes:
     """Require one successful JSON response."""
     method, request_body = request_input(path)
     headers = dict(target.headers)
@@ -117,6 +96,22 @@ def request(transport: Transport, target: Target, path: str) -> None:
         ) from error
     if path == BODY_URL:
         assert_event_bodies(payload)
+    return body
+
+
+def preflight(target: Target, cases: list[RouteCase], live_id: str | None) -> None:
+    """Validate real schemas/counters outside all measured windows."""
+    transport = target.transport_factory()
+    payloads = {}
+    try:
+        for case in cases:
+            path = case.resolve(live_id)
+            if request_input(path)[0] != case.method:
+                raise ValueError(f"case method differs from its request: {case.metric_key}")
+            payloads[case.path] = validate_wire(case, request(transport, target, path), live_id)
+        validate_snapshot(payloads)
+    finally:
+        transport.close()
 
 
 def sample_warm_route(
@@ -210,8 +205,8 @@ def main() -> int:
     load = route_load_config()
     load_samples = load["quick_requests"] if args.quick else load["requests"]
     concurrency = load["concurrency"]
-    routes = measured_routes()
-    if not routes:
+    cases = measured_cases()
+    if not cases:
         print(
             "no routes are listed as measured in [benchmark.routes]; every one "
             "is still in the unmeasured debt inventory",
@@ -230,6 +225,7 @@ def main() -> int:
         with redirect_stdout(sys.stderr):
             service.start()
         gateway = service_gateway(service)
+        assert service.proc is not None, "service must be running before measurement"
         service_proc = psutil.Process(service.proc.pid)
         gateway_proc = psutil.Process(gateway.pid)
         targets = (
@@ -253,12 +249,15 @@ def main() -> int:
         )
         with ExitStack() as fixtures:
             live_id = None
-            if LIVE_ROUTES.intersection(routes):
+            if any(case.live for case in cases):
                 live_id = fixtures.enter_context(
                     image_session(service, service.home_dir / "route-registry", "route-live-owner")
                 )
-            for path in routes:
-                concrete_path = request_path(path, live_id)
+            for target in targets:
+                preflight(target, cases, live_id)
+            for case in cases:
+                concrete_path = case.resolve(live_id)
+                path = case.metric_key
                 for target in targets:
                     print(f"{target.label} {path}", file=sys.stderr)
                     latencies, cpu = sample_warm_route(target, concrete_path, samples)

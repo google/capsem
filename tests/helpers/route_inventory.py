@@ -18,6 +18,7 @@ def _methods(expression: str) -> set[str]:
         name = match[1]
         assert name in METHODS | {"layer", "route_layer"}, f"unknown Axum method: {name}"
         if name in METHODS:
+            assert name not in found, f"duplicate HTTP method: {name}"
             found.add(name)
         offset = len(expression) - len(rest)
         cursor = offset + match.end()
