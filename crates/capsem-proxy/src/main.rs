@@ -683,7 +683,8 @@ impl ProxyRuntimeState {
                 resolver,
                 Arc::new(capsem_core::net::dns::DnsAnswerCache::default()),
             )
-            .with_private_names(Arc::clone(private_names)),
+            .with_private_names(Arc::clone(private_names))
+            .with_engine(Arc::clone(engine)),
         );
         let runtime = Arc::new(DnsRuntime {
             handler,
