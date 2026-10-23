@@ -244,6 +244,29 @@ impl ApprovalBroker {
             })
     }
 
+    /// Live continuation metadata, distinct from stored event history. A
+    /// bounded history page must never hide an actionable original operation.
+    pub fn active_requests(&self, binding: &ApprovalBinding) -> Vec<ApprovalSnapshot> {
+        self.state
+            .lock()
+            .unwrap()
+            .entries
+            .iter()
+            .filter(|((owner, _), entry)| {
+                owner == binding
+                    && entry.published
+                    && entry.delivery.is_some()
+                    && entry.deadline > Instant::now()
+                    && !*entry.cancel.borrow()
+            })
+            .map(|(_, entry)| ApprovalSnapshot {
+                request: entry.request.clone(),
+                created_ms: entry.created_ms,
+                expires_ms: entry.expires_ms,
+            })
+            .collect()
+    }
+
     pub fn cancel(&self, binding: &ApprovalBinding, ask_id: &str) {
         self.remove(&(binding.clone(), ask_id.to_string()));
     }

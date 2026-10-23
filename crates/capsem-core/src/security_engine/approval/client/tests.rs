@@ -12,6 +12,36 @@ fn request() -> ApprovalRequest {
     }
 }
 
+#[tokio::test(start_paused = true)]
+async fn setup_and_human_wait_share_one_operation_deadline() {
+    let (commands, mut inbox) = mpsc::channel(capsem_proto::APPROVAL_PENDING_PER_SESSION);
+    let client = ApprovalClient {
+        commands,
+        stopped: CancellationToken::new(),
+        next: Arc::new(AtomicU64::new(1)),
+    };
+    let (sender, receiver) = tokio::sync::watch::channel(None);
+    let setup = tokio::spawn(async move {
+        tokio::time::sleep(deadline().checked_sub(Duration::from_secs(1)).unwrap()).await;
+        sender.send_replace(Some(Ok(client)));
+    });
+    let capability = ApprovalCapability {
+        client: receiver,
+        setup,
+    };
+    let started = tokio::time::Instant::now();
+    assert_eq!(capability.decide(request()).await, ApprovalOutcome::Expired);
+    assert_eq!(
+        started.elapsed(),
+        deadline(),
+        "setup must not reset the original deadline"
+    );
+    let Command::Begin { id, .. } = inbox.recv().await.unwrap() else {
+        panic!("begin")
+    };
+    assert!(matches!(inbox.recv().await.unwrap(), Command::Cancel { id: cancelled } if cancelled == id));
+}
+
 #[tokio::test]
 async fn original_caller_consumes_only_its_correlated_decision() {
     let (a, b) = UnixStream::pair().unwrap();

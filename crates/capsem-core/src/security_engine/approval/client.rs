@@ -49,15 +49,19 @@ impl ApprovalCapability {
     }
 
     pub async fn decide(&self, request: ApprovalRequest) -> ApprovalOutcome {
-        let mut receiver = self.client.clone();
-        let client = match tokio::time::timeout(deadline(), receiver.wait_for(Option::is_some)).await {
-            Ok(Ok(client)) => client.clone(),
-            _ => return ApprovalOutcome::Unavailable,
-        };
-        match client {
-            Some(Ok(client)) => client.decide(request).await,
-            _ => ApprovalOutcome::Unavailable,
-        }
+        tokio::time::timeout(deadline(), async {
+            let mut receiver = self.client.clone();
+            let client = match receiver.wait_for(Option::is_some).await {
+                Ok(client) => client.clone(),
+                Err(_) => return ApprovalOutcome::Unavailable,
+            };
+            match client {
+                Some(Ok(client)) => client.decide(request).await,
+                _ => ApprovalOutcome::Unavailable,
+            }
+        })
+        .await
+        .unwrap_or(ApprovalOutcome::Expired)
     }
 }
 
