@@ -413,6 +413,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Keep DNS approval decisions linked to the original query in the session ledger.
+
 - Hold original commands for scoped approval before guest execution, with
   bounded waiters and cancellation on caller, runtime, suspend or stop.
 

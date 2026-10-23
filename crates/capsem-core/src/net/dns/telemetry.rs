@@ -36,7 +36,7 @@ pub fn build_dns_event(
     };
 
     DnsEvent {
-        event_id: None,
+        event_id: result.approval_event_id.as_ref().map(|id| id.as_str().to_string()),
         timestamp: SystemTime::now(),
         qname,
         qtype,

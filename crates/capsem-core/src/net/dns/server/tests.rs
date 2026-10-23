@@ -102,11 +102,14 @@ async fn dns_ask_holds_original_datagram_before_any_upstream_lookup() {
             match = 'dns.qname == "held.example.com"'
         "#,
         );
-        let db = Arc::new(capsem_logger::DbWriter::open_in_memory(16).unwrap());
+        let directory = tempfile::tempdir().unwrap();
+        let db_path = directory.path().join("session.db");
+        let db = Arc::new(capsem_logger::DbWriter::open(&db_path, 16).unwrap());
         let (worker, service) = std::os::unix::net::UnixStream::pair().unwrap();
         let capability = ApprovalCapability::connected(ApprovalClient::from_stream(worker).unwrap());
         let engine = Arc::new(
-            crate::net::proxy_engine::ProxyEngine::local(policy.clone(), db).with_approvals(Some(Arc::new(capability))),
+            crate::net::proxy_engine::ProxyEngine::local(policy.clone(), Arc::clone(&db))
+                .with_approvals(Some(Arc::new(capability))),
         );
         let handler =
             DnsHandler::new(policy, Arc::new(DnsResolver::with_upstreams(vec![upstream]))).with_engine(engine);
@@ -143,6 +146,19 @@ async fn dns_ask_holds_original_datagram_before_any_upstream_lookup() {
             seen.load(Ordering::SeqCst),
             usize::from(outcome == ApprovalOutcome::Approved)
         );
+        let event = crate::net::dns::telemetry::build_dns_event(&result, Some("tcp"), None, None);
+        db.write(capsem_logger::WriteOp::DnsEvent(event)).await;
+        db.flush_checked().await.unwrap();
+        let reader = rusqlite::Connection::open(&db_path).unwrap();
+        let joined: i64 = reader
+            .query_row(
+                "SELECT COUNT(*) FROM dns_events d JOIN security_ask_events a ON a.event_id=d.event_id \
+                 WHERE a.ask_id=? AND a.status='pending' AND d.event_id=?",
+                rusqlite::params![request.ask_id, request.event_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(joined, 1, "DNS telemetry lost the original approval identity");
     }
 }
 

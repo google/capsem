@@ -33,7 +33,8 @@ use crate::net::parsers::dns_parser::{
 };
 use crate::net::proxy_engine::ProxyPolicyHandle;
 use crate::security_engine::{
-    evaluate_security_boundary, DnsSecurityEvent, RuntimeSecurityEventType, SecurityEnforcementDecision, SecurityEvent,
+    evaluate_security_boundary, DnsSecurityEvent, RuntimeSecurityEventType, SecurityBoundaryEvaluation, SecurityEvent,
+    SecurityEventId,
 };
 use capsem_telemetry::dns as m;
 
@@ -78,6 +79,8 @@ pub struct DnsHandlerResult {
     pub policy_rule: Option<String>,
     /// Human-readable policy reason or fail-closed detail.
     pub policy_reason: Option<String>,
+    /// Identity already persisted for the original held Ask operation.
+    pub approval_event_id: Option<SecurityEventId>,
 }
 
 impl DnsHandlerResult {
@@ -93,6 +96,7 @@ impl DnsHandlerResult {
             policy_action: None,
             policy_rule: None,
             policy_reason: None,
+            approval_event_id: None,
         }
     }
 
@@ -108,6 +112,7 @@ impl DnsHandlerResult {
             policy_action: None,
             policy_rule: None,
             policy_reason: None,
+            approval_event_id: None,
         }
     }
 
@@ -123,6 +128,7 @@ impl DnsHandlerResult {
             policy_action: None,
             policy_rule: None,
             policy_reason: None,
+            approval_event_id: None,
         }
     }
 
@@ -138,6 +144,7 @@ impl DnsHandlerResult {
             policy_action: None,
             policy_rule: None,
             policy_reason: None,
+            approval_event_id: None,
         }
     }
 
@@ -153,18 +160,22 @@ impl DnsHandlerResult {
             policy_action: None,
             policy_rule: None,
             policy_reason: None,
+            approval_event_id: None,
         }
     }
-}
 
-fn apply_security_enforcement_fields(result: &mut DnsHandlerResult, enforcement: &SecurityEnforcementDecision) {
-    if result.matched_rule.is_none() {
-        result.matched_rule = enforcement.rule_id.clone();
+    fn with_security(mut self, evaluation: &SecurityBoundaryEvaluation) -> Self {
+        let enforcement = &evaluation.enforcement;
+        if self.matched_rule.is_none() {
+            self.matched_rule = enforcement.rule_id.clone();
+        }
+        self.policy_mode = Some("security_event".to_string());
+        self.policy_action = Some(enforcement.action.as_str().to_string());
+        self.policy_rule = enforcement.rule_id.clone();
+        self.policy_reason = enforcement.reason.clone();
+        self.approval_event_id = evaluation.approval_event_id.clone();
+        self
     }
-    result.policy_mode = Some("security_event".to_string());
-    result.policy_action = Some(enforcement.action.as_str().to_string());
-    result.policy_rule = enforcement.rule_id.clone();
-    result.policy_reason = enforcement.reason.clone();
 }
 
 /// Async DNS handler shared across vsock connections.
@@ -423,18 +434,17 @@ impl DnsHandler {
                 Err(e) => {
                     warn!(error = %e, "dns handler: failed to encode NXDOMAIN");
                     let sf = build_servfail(query_bytes).unwrap_or_default();
-                    return DnsHandlerResult::upstream_failed(sf, query, 0);
+                    return DnsHandlerResult::upstream_failed(sf, query, 0).with_security(&dns_evaluation);
                 }
             };
-            let mut result = DnsHandlerResult::denied(nxd, query, matched_rule);
-            apply_security_enforcement_fields(&mut result, &dns_evaluation.enforcement);
-            return result;
+            return DnsHandlerResult::denied(nxd, query, matched_rule).with_security(&dns_evaluation);
         }
 
         if let Some(question) = super::private::private_question(&query.qname, query.qtype) {
-            let mut result = self.answer_private(query_bytes, query, question).await;
-            apply_security_enforcement_fields(&mut result, &dns_evaluation.enforcement);
-            return result;
+            return self
+                .answer_private(query_bytes, query, question)
+                .await
+                .with_security(&dns_evaluation);
         }
 
         if is_capsem_local_nxdomain_name(&query.qname) {
@@ -449,12 +459,11 @@ impl DnsHandler {
                 Err(e) => {
                     warn!(error = %e, "dns handler: failed to encode local NXDOMAIN fixture");
                     let sf = build_servfail(query_bytes).unwrap_or_default();
-                    return DnsHandlerResult::upstream_failed(sf, query, 0);
+                    return DnsHandlerResult::upstream_failed(sf, query, 0).with_security(&dns_evaluation);
                 }
             };
-            let mut result = DnsHandlerResult::denied(nxd, query, CAPSEM_LOCAL_NXDOMAIN_RULE.to_string());
-            apply_security_enforcement_fields(&mut result, &dns_evaluation.enforcement);
-            return result;
+            return DnsHandlerResult::denied(nxd, query, CAPSEM_LOCAL_NXDOMAIN_RULE.to_string())
+                .with_security(&dns_evaluation);
         }
 
         // T3.d -- DNS redirect rules. Checked AFTER security enforcement
@@ -473,7 +482,7 @@ impl DnsHandler {
             );
             match build_redirect_response(query_bytes, &redirect.answers, redirect.ttl) {
                 Ok(bytes) => {
-                    return DnsHandlerResult::redirected(bytes, query, matched_rule);
+                    return DnsHandlerResult::redirected(bytes, query, matched_rule).with_security(&dns_evaluation);
                 }
                 Err(e) => {
                     // Re-encoding failed despite a successful parse --
@@ -481,7 +490,7 @@ impl DnsHandler {
                     // upstream (admin intent was "do not forward").
                     warn!(error = %e, "dns handler: failed to build redirect response");
                     let sf = build_servfail(query_bytes).unwrap_or_default();
-                    return DnsHandlerResult::upstream_failed(sf, query, 0);
+                    return DnsHandlerResult::upstream_failed(sf, query, 0).with_security(&dns_evaluation);
                 }
             }
         }
@@ -502,9 +511,7 @@ impl DnsHandler {
                     qtype = query.qtype,
                     "dns handler: answer cache hit"
                 );
-                let mut result = DnsHandlerResult::allowed(cached, query, 0, rcode);
-                apply_security_enforcement_fields(&mut result, &dns_evaluation.enforcement);
-                return result;
+                return DnsHandlerResult::allowed(cached, query, 0, rcode).with_security(&dns_evaluation);
             }
             ::metrics::counter!(m::DNS_CACHE_MISSES_TOTAL).increment(1);
         }
@@ -560,15 +567,14 @@ impl DnsHandler {
                 } else {
                     t0.elapsed().as_millis()
                 } as u64;
-                let mut result = DnsHandlerResult::allowed(resp, query, waited_ms, rcode);
-                apply_security_enforcement_fields(&mut result, &dns_evaluation.enforcement);
-                result
+                DnsHandlerResult::allowed(resp, query, waited_ms, rcode).with_security(&dns_evaluation)
             }
             Err(e) => {
                 ::metrics::counter!(m::DNS_UPSTREAM_FAILURES_TOTAL).increment(1);
                 warn!(qname = %query.qname, error = %e, "dns handler: upstream resolve failed");
                 let sf = build_servfail(query_bytes).unwrap_or_default();
                 DnsHandlerResult::upstream_failed(sf, query, t0.elapsed().as_millis() as u64)
+                    .with_security(&dns_evaluation)
             }
         }
     }

@@ -26,6 +26,7 @@ fn allowed_result() -> DnsHandlerResult {
         policy_action: None,
         policy_rule: None,
         policy_reason: None,
+        approval_event_id: None,
     }
 }
 
@@ -47,6 +48,7 @@ fn denied_result() -> DnsHandlerResult {
         policy_action: None,
         policy_rule: None,
         policy_reason: None,
+        approval_event_id: None,
     }
 }
 
@@ -100,6 +102,7 @@ fn build_event_for_undecodable_query_uses_sentinel_qname() {
         policy_action: None,
         policy_rule: None,
         policy_reason: None,
+        approval_event_id: None,
     };
     let evt = build_dns_event(&res, Some("udp"), None, None);
     assert_eq!(evt.qname, "INVALID_DNS_BYTES");
