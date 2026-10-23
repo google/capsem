@@ -41,6 +41,8 @@ operation!(get_hypervisor_logs, "getHypervisorLogs", GetHypervisorLogsParams);
 operation!(get_asset_status, "getAssetStatus");
 operation!(inject_credential, "injectCredential", InjectCredentialParams);
 operation!(list_connections, "listConnections", ListConnectionsParams);
+operation!(list_security_asks, "listSecurityAsks", ListSecurityAsksParams);
+operation!(resolve_security_ask, "resolveSecurityAsk", ResolveSecurityAskParams);
 operation!(
     authorize_google_connection,
     "authorizeGoogleConnection",
