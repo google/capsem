@@ -35,6 +35,7 @@ pub(crate) async fn resolve_proxy(
     evaluation: &mut SecurityBoundaryEvaluation,
     held_bytes: usize,
     cancellation: Option<&tokio_util::sync::CancellationToken>,
+    registered: Option<tokio::sync::oneshot::Sender<capsem_proto::approval::ApprovalRegistration>>,
 ) -> Result<(), String> {
     if evaluation.enforcement.action != SecurityEnforcementAction::Ask {
         return Ok(());
@@ -61,12 +62,10 @@ pub(crate) async fn resolve_proxy(
     ledger.write(WriteOp::SecurityAskEvent(pending)).await?;
     ledger.flush().await?;
     let outcome = if let Some(capability) = capability {
-        let decision = capability.decide(request(
-            &evaluation.enforcement,
-            &evaluation.event,
-            &event_id,
-            held_bytes,
-        )?);
+        let decision = capability.decide_registered(
+            request(&evaluation.enforcement, &evaluation.event, &event_id, held_bytes)?,
+            registered,
+        );
         if let Some(cancellation) = cancellation {
             tokio::select! {
                 biased;

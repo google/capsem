@@ -135,7 +135,25 @@ pub async fn serve_dns_session(
         let id = request.id;
         query_cancellations.insert(id, cancellation.clone());
         queries.spawn(async move {
-            let frame = answer_one(request, &handler, &db, &policy, &cancellation).await;
+            let (registered, registration) = tokio::sync::oneshot::channel();
+            let answer = answer_one(request, &handler, &db, &policy, &cancellation, registered);
+            tokio::pin!(answer);
+            let frame = tokio::select! {
+                frame = &mut answer => frame,
+                registration = registration => {
+                    if let Ok(registration) = registration {
+                        let id = std::num::NonZeroU32::new(id).expect("decoded DNS query ID is nonzero");
+                        if let Ok(frame) = capsem_proto::encode_dns_pending(id,&registration) {
+                            tokio::select! {
+                                biased;
+                                _ = cancellation.cancelled() => {},
+                                _ = frames.send(frame) => {},
+                            }
+                        }
+                    }
+                    answer.await
+                }
+            };
             if let Some(frame) = frame {
                 // channel-closed-ok: the writer is gone with the connection.
                 tokio::select! {
@@ -165,8 +183,11 @@ async fn answer_one(
     db: &Arc<capsem_logger::DbWriter>,
     policy: &crate::net::proxy_engine::ProxyPolicyHandle,
     cancellation: &CancellationToken,
+    registered: tokio::sync::oneshot::Sender<capsem_proto::approval::ApprovalRegistration>,
 ) -> Option<Vec<u8>> {
-    let result = handler.handle_with_cancellation(&request.raw, Some(cancellation)).await;
+    let result = handler
+        .handle_registered(&request.raw, Some(cancellation), Some(registered))
+        .await;
 
     // T3.3 -- one `dns_events` row per query. trace_id ties it back to the
     // agent action; source_proto distinguishes UDP from TCP DNS at the

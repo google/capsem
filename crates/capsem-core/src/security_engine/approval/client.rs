@@ -6,7 +6,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use capsem_foundation::ipc_channel::{self, Receiver, Sender};
-use capsem_proto::approval::{ApprovalClientMessage, ApprovalOutcome, ApprovalRequest, ApprovalServerMessage};
+use capsem_proto::approval::{
+    ApprovalClientMessage, ApprovalOutcome, ApprovalRegistration, ApprovalRequest, ApprovalServerMessage,
+};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
@@ -15,6 +17,7 @@ enum Command {
         id: u64,
         request: ApprovalRequest,
         reply: oneshot::Sender<ApprovalOutcome>,
+        registered: Option<oneshot::Sender<ApprovalRegistration>>,
     },
     Cancel {
         id: u64,
@@ -69,6 +72,14 @@ impl ApprovalCapability {
     }
 
     pub async fn decide(&self, request: ApprovalRequest) -> ApprovalOutcome {
+        self.decide_registered(request, None).await
+    }
+
+    pub(crate) async fn decide_registered(
+        &self,
+        request: ApprovalRequest,
+        registered: Option<oneshot::Sender<ApprovalRegistration>>,
+    ) -> ApprovalOutcome {
         if request.validate().is_err() {
             return ApprovalOutcome::Unavailable;
         }
@@ -90,7 +101,7 @@ impl ApprovalCapability {
                 Err(_) => return ApprovalOutcome::Unavailable,
             };
             match client {
-                Some(Ok(client)) => client.decide(request).await,
+                Some(Ok(client)) => client.decide_registered(request, registered).await,
                 _ => ApprovalOutcome::Unavailable,
             }
         })
@@ -121,6 +132,14 @@ impl ApprovalClient {
     /// Dropping this future cancels its original operation. A saturated cancel
     /// queue closes the capability, causing all its requests to fail closed.
     pub async fn decide(&self, request: ApprovalRequest) -> ApprovalOutcome {
+        self.decide_registered(request, None).await
+    }
+
+    async fn decide_registered(
+        &self,
+        request: ApprovalRequest,
+        registered: Option<oneshot::Sender<ApprovalRegistration>>,
+    ) -> ApprovalOutcome {
         if request.validate().is_err() || self.stopped.is_cancelled() {
             return ApprovalOutcome::Unavailable;
         }
@@ -130,7 +149,16 @@ impl ApprovalClient {
             return ApprovalOutcome::Unavailable;
         }
         let (reply, result) = oneshot::channel();
-        if self.commands.try_send(Command::Begin { id, request, reply }).is_err() {
+        if self
+            .commands
+            .try_send(Command::Begin {
+                id,
+                request,
+                reply,
+                registered,
+            })
+            .is_err()
+        {
             return ApprovalOutcome::Unavailable;
         }
         let mut guard = Cancellation {
@@ -175,27 +203,46 @@ async fn actor(
     mut commands: mpsc::Receiver<Command>,
     stopped: CancellationToken,
 ) {
-    let mut pending = HashMap::<u64, oneshot::Sender<ApprovalOutcome>>::new();
+    struct Waiting {
+        request: ApprovalRequest,
+        reply: oneshot::Sender<ApprovalOutcome>,
+        registered: Option<oneshot::Sender<ApprovalRegistration>>,
+        received: bool,
+    }
+    let mut pending = HashMap::<u64, Waiting>::new();
     loop {
         tokio::select! {
             biased;
             _ = stopped.cancelled() => break,
             message = receive.recv() => match message {
-                Ok(message) => if let Some(reply) = pending.remove(&message.request_id) {
-                    let _ = reply.send(message.outcome);
+                Ok(ApprovalServerMessage::Resolved {request_id,outcome}) => if let Some(waiter) = pending.remove(&request_id) {
+                    let _ = waiter.reply.send(outcome);
+                },
+                Ok(ApprovalServerMessage::Registered {request_id,registration}) => if let Some(waiter) = pending.get_mut(&request_id) {
+                    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                        .ok().and_then(|elapsed|i64::try_from(elapsed.as_millis()).ok()).unwrap_or(i64::MAX);
+                    if waiter.received || registration.validate().is_err()
+                        || registration.ask_id != waiter.request.ask_id || registration.event_id != waiter.request.event_id
+                        || registration.expires_at_unix_ms <= now
+                        || registration.expires_at_unix_ms > now.saturating_add(deadline().as_millis() as i64) {
+                        break;
+                    }
+                    waiter.received = true;
+                    if let Some(registered) = waiter.registered.take() { let _ = registered.send(registration); }
                 },
                 Err(_) => break,
             },
             command = commands.recv() => match command {
-                Some(Command::Begin { id, request, reply }) => {
+                Some(Command::Begin { id, request, reply, registered }) => {
                     if pending.len() >= capsem_proto::APPROVAL_PENDING_PER_SESSION {
                         let _ = reply.send(ApprovalOutcome::Unavailable);
                         continue;
                     }
+                    let request_identity = request.clone();
                     if !matches!(tokio::time::timeout(deadline(), send.send(ApprovalClientMessage::Begin { request_id: id, request })).await, Ok(Ok(()))) {
                         break;
                     }
-                    pending.insert(id, reply);
+                    pending.insert(id, Waiting {request:request_identity,reply,registered,received:false});
                 }
                 Some(Command::Cancel { id }) => {
                     pending.remove(&id);

@@ -53,7 +53,7 @@ async fn approved_http_and_observed_mcp_identity_reaches_completed_network_ledge
         else {
             panic!("begin")
         };
-        send.send(ApprovalServerMessage {
+        send.send(ApprovalServerMessage::Resolved {
             request_id,
             outcome: ApprovalOutcome::Approved,
         })

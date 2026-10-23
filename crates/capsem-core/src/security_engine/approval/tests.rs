@@ -20,6 +20,37 @@ fn request(id: u64, bytes: u64) -> ApprovalRequest {
 }
 
 #[tokio::test]
+async fn registered_publication_reports_original_identity_and_cannot_revive_expired_or_cancelled_work() {
+    let broker = ApprovalBroker::new(ApprovalLimits {
+        timeout: Duration::from_millis(30),
+        ..Default::default()
+    })
+    .unwrap();
+    let owner = binding("registered");
+    let original = request(1, 0);
+    let pending = broker.reserve(owner.clone(), original.clone()).unwrap();
+    assert_eq!(broker.pending_count(&owner), 0);
+    let registration = pending.publish_registered().unwrap();
+    assert_eq!(registration.ask_id, original.ask_id);
+    assert_eq!(registration.event_id, original.event_id);
+    assert!(registration.remaining_ms > 0 && registration.remaining_ms <= 30);
+    assert_eq!(
+        registration.expires_at_unix_ms,
+        broker.active(&owner, &original.ask_id).unwrap().expires_ms
+    );
+    broker.cancel_generation(&owner);
+    assert!(pending.publish_registered().is_none());
+    drop(pending);
+    let expired = broker.reserve(owner.clone(), request(2, 0)).unwrap();
+    tokio::time::sleep(Duration::from_millis(40)).await;
+    assert!(expired.publish_registered().is_none());
+    assert!(matches!(
+        broker.claim(&owner, "000000000002"),
+        Err(ApprovalError::Missing)
+    ));
+}
+
+#[tokio::test]
 async fn live_queue_changes_are_observable_without_polling_ledger_rows() {
     let broker = ApprovalBroker::default();
     let owner = binding("session");

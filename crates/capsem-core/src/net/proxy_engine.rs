@@ -146,12 +146,23 @@ impl ProxyEngine {
         self.evaluate_cancellable(snapshot, event, retained_bytes, None)
     }
 
-    pub(crate) async fn evaluate_cancellable(
+    pub(crate) fn evaluate_cancellable<'a>(
+        &'a self,
+        snapshot: &'a ProxyPolicySnapshot,
+        event: SecurityEvent,
+        retained_bytes: usize,
+        cancellation: Option<&'a tokio_util::sync::CancellationToken>,
+    ) -> impl Future<Output = Result<SecurityBoundaryEvaluation, SecurityActionError>> + Send + 'a {
+        self.evaluate_registered(snapshot, event, retained_bytes, cancellation, None)
+    }
+
+    pub(crate) async fn evaluate_registered(
         &self,
         snapshot: &ProxyPolicySnapshot,
         event: SecurityEvent,
         retained_bytes: usize,
         cancellation: Option<&tokio_util::sync::CancellationToken>,
+        registered: Option<tokio::sync::oneshot::Sender<capsem_proto::approval::ApprovalRegistration>>,
     ) -> Result<SecurityBoundaryEvaluation, SecurityActionError> {
         let rules = Arc::clone(snapshot.security_rules());
         let plugins = Arc::clone(snapshot.plugins());
@@ -170,6 +181,7 @@ impl ProxyEngine {
                 &mut evaluation,
                 held_bytes,
                 cancellation,
+                registered,
             )
             .await
             .map_err(SecurityActionError::new)?;

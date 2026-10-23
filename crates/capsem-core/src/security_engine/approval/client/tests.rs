@@ -13,6 +13,72 @@ fn request() -> ApprovalRequest {
 }
 
 #[tokio::test]
+async fn registered_identity_notifies_the_original_wait_but_never_resolves_it_or_extends_twice() {
+    for mismatch in [false, true] {
+        let (a, b) = UnixStream::pair().unwrap();
+        let client = ApprovalClient::from_stream(a).unwrap();
+        let (sender, receiver) =
+            ipc_channel::channel_from_std_with_limit::<ApprovalServerMessage, ApprovalClientMessage>(b, frame_limit())
+                .unwrap();
+        let (registered, receipt) = oneshot::channel();
+        let original = tokio::spawn(async move { client.decide_registered(request(), Some(registered)).await });
+        let ApprovalClientMessage::Begin {
+            request_id,
+            request: original_request,
+        } = receiver.recv().await.unwrap()
+        else {
+            panic!("begin")
+        };
+        let expires_at_unix_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64
+            + 1000;
+        let registration = ApprovalRegistration {
+            ask_id: if mismatch {
+                "ffffffffffff".into()
+            } else {
+                original_request.ask_id
+            },
+            event_id: original_request.event_id,
+            expires_at_unix_ms,
+            remaining_ms: 1000,
+        };
+        sender
+            .send(ApprovalServerMessage::Registered {
+                request_id,
+                registration: registration.clone(),
+            })
+            .await
+            .unwrap();
+        if mismatch {
+            assert!(receipt.await.is_err());
+            assert_eq!(original.await.unwrap(), ApprovalOutcome::Unavailable);
+        } else {
+            assert_eq!(receipt.await.unwrap(), registration);
+            assert!(
+                !original.is_finished(),
+                "registration cannot authorize the held operation"
+            );
+            // A second receipt, including a longer expiry, cannot reset its deadline.
+            let duplicate = ApprovalRegistration {
+                expires_at_unix_ms: expires_at_unix_ms + 1000,
+                remaining_ms: 2000,
+                ..registration
+            };
+            sender
+                .send(ApprovalServerMessage::Registered {
+                    request_id,
+                    registration: duplicate,
+                })
+                .await
+                .unwrap();
+            assert_eq!(original.await.unwrap(), ApprovalOutcome::Unavailable);
+        }
+    }
+}
+
+#[tokio::test]
 async fn setup_waiters_are_bounded_before_any_coordinator_reply() {
     let (_sender, receiver) = tokio::sync::watch::channel(None);
     let capability = ApprovalCapability::with_setup(receiver, tokio::spawn(std::future::pending()));
@@ -79,7 +145,7 @@ async fn original_caller_consumes_only_its_correlated_decision() {
         panic!("begin")
     };
     sender
-        .send(ApprovalServerMessage {
+        .send(ApprovalServerMessage::Resolved {
             request_id: request_id + 1,
             outcome: ApprovalOutcome::Approved,
         })
@@ -87,7 +153,7 @@ async fn original_caller_consumes_only_its_correlated_decision() {
         .unwrap();
     assert!(!operation.is_finished());
     sender
-        .send(ApprovalServerMessage {
+        .send(ApprovalServerMessage::Resolved {
             request_id,
             outcome: ApprovalOutcome::Denied,
         })

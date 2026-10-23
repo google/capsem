@@ -6,15 +6,28 @@ use std::time::Duration;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn guest_disconnect_cancels_original_dns_approval_without_upstream_lookup() {
-    original_dns_cancellation(false).await;
+    original_dns_case(DnsCase::Disconnect).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn query_cancellation_keeps_the_dns_session_and_other_queries_alive() {
-    original_dns_cancellation(true).await;
+    original_dns_case(DnsCase::QueryCancellation).await;
 }
 
-async fn original_dns_cancellation(cancel_query: bool) {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dns_session_forwards_only_registered_original_receipt_before_the_final_answer() {
+    original_dns_case(DnsCase::Registered).await;
+}
+
+#[derive(PartialEq, Eq)]
+enum DnsCase {
+    Disconnect,
+    QueryCancellation,
+    Registered,
+}
+
+async fn original_dns_case(mode: DnsCase) {
+    let cancel_query = mode == DnsCase::QueryCancellation;
     let upstream = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
     let profile = crate::net::policy_config::SecurityRuleProfile::parse_toml(
         r#"
@@ -83,53 +96,110 @@ async fn original_dns_cancellation(cancel_query: bool) {
     else {
         panic!("begin")
     };
-    if cancel_query {
-        guest
-            .write_all(
-                &capsem_proto::dns_session::encode_dns_cancellation(&capsem_proto::dns_session::DnsQueryCancellation {
-                    cancel_query_id: std::num::NonZeroU32::new(999).unwrap(),
-                })
-                .unwrap(),
-            )
+    if mode == DnsCase::Registered {
+        let registration = capsem_proto::approval::ApprovalRegistration {
+            ask_id: request.ask_id.clone(),
+            event_id: request.event_id.clone(),
+            remaining_ms: 1000,
+            expires_at_unix_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as i64
+                + 1000,
+        };
+        let expected = registration.clone();
+        sender
+            .send(ApprovalServerMessage::Registered {
+                request_id,
+                registration,
+            })
+            .await
             .unwrap();
+        guest.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        guest = tokio::task::spawn_blocking(move || {
+            let mut length = [0;4];
+            guest.read_exact(&mut length).unwrap();
+            let mut payload = vec![0;u32::from_be_bytes(length) as usize];
+            guest.read_exact(&mut payload).unwrap();
+            assert!(matches!(capsem_proto::decode_dns_session_reply(&payload).unwrap(),
+                capsem_proto::dns_session::DnsSessionReply::Pending {id,registration} if id.get()==1 && registration==expected));
+            guest
+        }).await.unwrap();
+        let mut packet = [0; 512];
         assert!(
-            tokio::time::timeout(Duration::from_millis(50), receiver.recv())
+            tokio::time::timeout(Duration::from_millis(20), upstream.recv_from(&mut packet))
                 .await
                 .is_err(),
-            "another correlation ID cannot cancel the held query"
+            "receipt cannot authorize lookup"
         );
-        guest
-            .write_all(
-                &capsem_proto::dns_session::encode_dns_cancellation(&capsem_proto::dns_session::DnsQueryCancellation {
-                    cancel_query_id: std::num::NonZeroU32::new(1).unwrap(),
-                })
-                .unwrap(),
-            )
-            .unwrap();
-    } else {
-        guest.shutdown(std::net::Shutdown::Both).unwrap();
-    }
-    let ApprovalClientMessage::Cancel { request_id: cancelled } =
-        tokio::time::timeout(Duration::from_secs(2), receiver.recv())
+        sender
+            .send(ApprovalServerMessage::Resolved {
+                request_id,
+                outcome: ApprovalOutcome::Denied,
+            })
             .await
-            .unwrap()
-            .unwrap()
-    else {
-        panic!("cancel")
-    };
-    assert_eq!(cancelled, request_id);
-    if cancel_query {
-        guest.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
-        guest
-            .write_all(&request_frame(2, super::query(2, "still-alive")))
             .unwrap();
         guest = tokio::task::spawn_blocking(move || {
-            let response = read_response(&mut guest).expect("same session must answer an independent query");
-            assert_eq!(response.id, 2);
+            let answer = read_response(&mut guest).unwrap();
+            assert_eq!(answer.id, 1);
+            assert_eq!(answer.rcode, 3);
             guest
         })
         .await
         .unwrap();
+    } else {
+        if cancel_query {
+            guest
+                .write_all(
+                    &capsem_proto::dns_session::encode_dns_cancellation(
+                        &capsem_proto::dns_session::DnsQueryCancellation {
+                            cancel_query_id: std::num::NonZeroU32::new(999).unwrap(),
+                        },
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            assert!(
+                tokio::time::timeout(Duration::from_millis(50), receiver.recv())
+                    .await
+                    .is_err(),
+                "another correlation ID cannot cancel the held query"
+            );
+            guest
+                .write_all(
+                    &capsem_proto::dns_session::encode_dns_cancellation(
+                        &capsem_proto::dns_session::DnsQueryCancellation {
+                            cancel_query_id: std::num::NonZeroU32::new(1).unwrap(),
+                        },
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+        } else {
+            guest.shutdown(std::net::Shutdown::Both).unwrap();
+        }
+        let ApprovalClientMessage::Cancel { request_id: cancelled } =
+            tokio::time::timeout(Duration::from_secs(2), receiver.recv())
+                .await
+                .unwrap()
+                .unwrap()
+        else {
+            panic!("cancel")
+        };
+        assert_eq!(cancelled, request_id);
+        if cancel_query {
+            guest.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            guest
+                .write_all(&request_frame(2, super::query(2, "still-alive")))
+                .unwrap();
+            guest = tokio::task::spawn_blocking(move || {
+                let response = read_response(&mut guest).expect("same session must answer an independent query");
+                assert_eq!(response.id, 2);
+                guest
+            })
+            .await
+            .unwrap();
+        }
     }
     drop(guest);
     tokio::time::timeout(Duration::from_secs(2), owner)
@@ -153,7 +223,7 @@ async fn original_dns_cancellation(cancel_query: bool) {
         1
     );
     let _ = sender
-        .send(ApprovalServerMessage {
+        .send(ApprovalServerMessage::Resolved {
             request_id,
             outcome: ApprovalOutcome::Approved,
         })

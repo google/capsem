@@ -827,6 +827,7 @@ async fn evaluate_mcp_security_event(
                 &mut evaluation,
                 held_bytes,
                 cancellation,
+                None,
             ))
             .await?;
             let (current_rules, current_plugins) = endpoint.policy_snapshot();

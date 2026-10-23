@@ -347,17 +347,28 @@ impl PendingApproval {
     /// Publish only after the trusted owner verifies the canonical pending
     /// event. Cancellation and deadline still win during verification.
     pub fn publish(&self) -> bool {
+        self.publish_registered().is_some()
+    }
+
+    /// Publish the verified live continuation and return its actual identity
+    /// and broker deadline. A receipt never grants its pending decision.
+    pub fn publish_registered(&self) -> Option<capsem_proto::approval::ApprovalRegistration> {
         let mut state = self.broker.state.lock().unwrap();
-        let Some(entry) = state.entries.get_mut(&self.key) else {
-            return false;
-        };
-        if !Arc::ptr_eq(&entry.identity, &self.identity) || entry.deadline <= Instant::now() || *entry.cancel.borrow() {
-            return false;
+        let entry = state.entries.get_mut(&self.key)?;
+        let remaining_ms = entry.deadline.saturating_duration_since(Instant::now()).as_millis() as u64;
+        if !Arc::ptr_eq(&entry.identity, &self.identity) || remaining_ms == 0 || *entry.cancel.borrow() {
+            return None;
         }
         entry.published = true;
+        let registration = capsem_proto::approval::ApprovalRegistration {
+            ask_id: entry.request.ask_id.clone(),
+            event_id: entry.request.event_id.clone(),
+            expires_at_unix_ms: entry.expires_ms,
+            remaining_ms,
+        };
         drop(state);
         self.broker.changed();
-        true
+        Some(registration)
     }
 
     pub async fn wait(mut self) -> ApprovalOutcome {

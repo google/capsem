@@ -102,7 +102,7 @@ async fn observed_mcp_response_security_holds_original_response() {
                 continue;
             }
             sender
-                .send(ApprovalServerMessage { request_id, outcome })
+                .send(ApprovalServerMessage::Resolved { request_id, outcome })
                 .await
                 .unwrap();
         }

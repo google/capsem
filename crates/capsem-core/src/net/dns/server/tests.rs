@@ -134,7 +134,7 @@ async fn dns_ask_holds_original_datagram_before_any_upstream_lookup() {
         assert!(request.held_bytes >= query_len as u64);
         assert_eq!(seen.load(Ordering::SeqCst), 0, "no lookup before approval");
         sender
-            .send(ApprovalServerMessage { request_id, outcome })
+            .send(ApprovalServerMessage::Resolved { request_id, outcome })
             .await
             .unwrap();
         let result = original.await.unwrap();

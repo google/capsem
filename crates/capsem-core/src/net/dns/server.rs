@@ -323,19 +323,28 @@ impl DnsHandler {
         self.handle_with_cancellation(query_bytes, None).await
     }
 
-    #[instrument(
-        target = "capsem::net::dns",
-        name = "mitm.dns.query",
-        skip(self, query_bytes, cancellation),
-        fields(qname, qtype, decision, rcode, upstream_ms)
-    )]
     pub(crate) async fn handle_with_cancellation(
         &self,
         query_bytes: &[u8],
         cancellation: Option<&tokio_util::sync::CancellationToken>,
     ) -> DnsHandlerResult {
+        self.handle_registered(query_bytes, cancellation, None).await
+    }
+
+    #[instrument(
+        target = "capsem::net::dns",
+        name = "mitm.dns.query",
+        skip(self, query_bytes, cancellation, registered),
+        fields(qname, qtype, decision, rcode, upstream_ms)
+    )]
+    pub(crate) async fn handle_registered(
+        &self,
+        query_bytes: &[u8],
+        cancellation: Option<&tokio_util::sync::CancellationToken>,
+        registered: Option<tokio::sync::oneshot::Sender<capsem_proto::approval::ApprovalRegistration>>,
+    ) -> DnsHandlerResult {
         let handle_t0 = Instant::now();
-        let result = self.handle_inner(query_bytes, cancellation).await;
+        let result = self.handle_inner(query_bytes, cancellation, registered).await;
 
         // Stamp span fields + emit metrics on every exit path. Done
         // here so the four early-returns inside handle_inner stay
@@ -366,6 +375,7 @@ impl DnsHandler {
         &self,
         query_bytes: &[u8],
         cancellation: Option<&tokio_util::sync::CancellationToken>,
+        registered: Option<tokio::sync::oneshot::Sender<capsem_proto::approval::ApprovalRegistration>>,
     ) -> DnsHandlerResult {
         let query = match parse_query(query_bytes) {
             Ok(q) => q,
@@ -390,11 +400,12 @@ impl DnsHandler {
         let policy = self.policy.snapshot();
         let evaluation = if let Some(engine) = &self.engine {
             engine
-                .evaluate_cancellable(
+                .evaluate_registered(
                     &policy,
                     dns_security_event,
                     query_bytes.len().saturating_mul(2),
                     cancellation,
+                    registered,
                 )
                 .await
         } else {

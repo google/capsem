@@ -55,7 +55,7 @@ async fn original_mcp_approval_identity_reaches_physical_tool_ledger() {
             };
             assert_eq!(driver.started.load(Ordering::SeqCst), 0);
             sender
-                .send(ApprovalServerMessage { request_id, outcome })
+                .send(ApprovalServerMessage::Resolved { request_id, outcome })
                 .await
                 .unwrap();
             if outcome == ApprovalOutcome::Approved {
@@ -120,7 +120,7 @@ async fn direct_connection_cancellation_denies_original_mcp_without_executing_to
         ApprovalClientMessage::Cancel { request_id: id } if id == request_id)
     );
     sender
-        .send(ApprovalServerMessage {
+        .send(ApprovalServerMessage::Resolved {
             request_id,
             outcome: ApprovalOutcome::Approved,
         })
@@ -286,7 +286,7 @@ async fn actual_disconnect_cancels_held_mcp_before_tool_dispatch() {
         matches!(tokio::time::timeout(Duration::from_secs(2), receiver.recv()).await.unwrap().unwrap(), ApprovalClientMessage::Cancel { request_id: cancelled } if cancelled == request_id)
     );
     let _ = sender
-        .send(ApprovalServerMessage {
+        .send(ApprovalServerMessage::Resolved {
             request_id,
             outcome: ApprovalOutcome::Approved,
         })
@@ -315,7 +315,7 @@ async fn graceful_end_keeps_original_mcp_waiter_until_approved_and_drained() {
     };
     assert_eq!(driver.started.load(Ordering::SeqCst), 0);
     sender
-        .send(ApprovalServerMessage {
+        .send(ApprovalServerMessage::Resolved {
             request_id,
             outcome: ApprovalOutcome::Approved,
         })
