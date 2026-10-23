@@ -7,6 +7,8 @@ use crate::net::mitm_proxy::ScopedMcpTools;
 
 use super::*;
 
+mod approval;
+
 fn request(method: &str, params: serde_json::Value) -> JsonRpcRequest {
     JsonRpcRequest {
         jsonrpc: "2.0".to_string(),
@@ -545,6 +547,14 @@ struct GatedDriver {
 /// Endpoint whose aggregator holds every `tools/call` until `release` is
 /// flipped, counting how many were started and how many ran at once.
 fn gated_endpoint(inflight: usize, hold: bool) -> (Arc<McpEndpointState>, GatedDriver) {
+    gated_endpoint_with_rules(inflight, hold, SecurityRuleSet::new(Vec::new()))
+}
+
+fn gated_endpoint_with_rules(
+    inflight: usize,
+    hold: bool,
+    rules: SecurityRuleSet,
+) -> (Arc<McpEndpointState>, GatedDriver) {
     let (aggregator, mut rx) = capsem_proto::mcp_aggregator::AggregatorClient::channel(64);
     let started = Arc::new(AtomicUsize::new(0));
     let max_active = Arc::new(AtomicUsize::new(0));
@@ -582,7 +592,7 @@ fn gated_endpoint(inflight: usize, hold: bool) -> (Arc<McpEndpointState>, GatedD
     });
     let endpoint = Arc::new(McpEndpointState::new(
         aggregator,
-        Arc::new(std::sync::RwLock::new(Arc::new(SecurityRuleSet::new(Vec::new())))),
+        Arc::new(std::sync::RwLock::new(Arc::new(rules))),
         Arc::new(std::sync::RwLock::new(BTreeMap::new().into())),
         Arc::new(tokio::sync::Semaphore::new(inflight)),
         super::super::McpTimeouts::default(),

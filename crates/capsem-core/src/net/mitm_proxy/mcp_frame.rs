@@ -13,7 +13,7 @@ use std::time::{Instant, SystemTime};
 use anyhow::{bail, Context, Result};
 use capsem_logger::{DbWriter, Decision, McpCall, WriteOp};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tracing::{debug, warn};
+use tracing::warn;
 
 use crate::net::dns::private::MCP_HOST;
 #[cfg(test)]
@@ -28,6 +28,8 @@ use capsem_proto::mcp_contracts::{parse_namespaced, parse_resource_uri, JsonRpcR
 use super::fd_stream::{AsyncFdStream, ReplayReader};
 use super::McpEndpointState;
 use capsem_telemetry::mitm as m;
+mod dispatch;
+mod memory;
 mod wire;
 pub(super) use wire::truncate_preview;
 use wire::{
@@ -106,8 +108,11 @@ pub async fn dispatch_logged_mcp_request(
     let runtime_event_type = runtime_mcp_event_type(&summary.method);
     let request_decision = evaluate_mcp_security_event(
         &endpoint,
+        &db,
         mcp_security_event_from_summary(runtime_event_type, &summary, &process_name, None),
-    );
+        memory::request(&request),
+    )
+    .await;
 
     if !request_decision.is_allowed() {
         let response = policy_blocked_response(request.id.clone(), "request", &request_decision);
@@ -128,18 +133,24 @@ pub async fn dispatch_logged_mcp_request(
     }
 
     let start = Instant::now();
-    let response = endpoint.handle_request(&request).await?;
+    let response = match endpoint.inflight.acquire().await {
+        Ok(_permit) => endpoint.handle_request(&request).await?,
+        Err(_) => JsonRpcResponse::err(request.id.clone(), -32603, "MCP endpoint is shutting down"),
+    };
     let duration_ms = start.elapsed().as_millis() as u64;
 
     let response_decision = evaluate_mcp_security_event(
         &endpoint,
+        &db,
         mcp_security_event_from_summary(
             runtime_mcp_event_type(&summary.method),
             &summary,
             &process_name,
             Some(&response),
         ),
-    );
+        memory::request(&request).saturating_add(memory::response(&response)),
+    )
+    .await;
     let final_decision = if response_decision.is_allowed() {
         request_decision
     } else {
@@ -192,13 +203,6 @@ pub(super) async fn dispatch_http_message(
         Err(error) => return HttpMcpReply::Invalid(JsonRpcResponse::err(error.id, error.code, error.message)),
     };
     let notification = request.id.is_none();
-    let Ok(_permit) = Arc::clone(&endpoint.inflight).acquire_owned().await else {
-        return HttpMcpReply::Invalid(JsonRpcResponse::err(
-            request.id,
-            -32603,
-            "MCP endpoint is shutting down",
-        ));
-    };
     let logged = dispatch_logged_mcp_request(endpoint, db, request, process_name.to_string(), McpTransport::Http).await;
     match logged {
         Some(logged) if !notification => HttpMcpReply::Answer(logged.response),
@@ -245,11 +249,28 @@ where
         Ok::<(), anyhow::Error>(())
     });
 
-    let (result, writer_completed): (Result<()>, bool) = tokio::select! {
+    let dispatch = Arc::new(dispatch::Dispatcher {
+        endpoint: Arc::clone(&endpoint),
+        db: Arc::clone(&db),
+        streams: Arc::clone(&streams),
+        tx: tx.clone(),
+    });
+    let mut workers = tokio::task::JoinSet::<Result<()>>::new();
+    let mut graceful = false;
+    let (mut result, writer_completed): (Result<()>, bool) = tokio::select! {
         result = async {
         loop {
-            let frame = match read_next_frame(&mut reader).await? {
-                FrameRead::Eof | FrameRead::End => return Ok(()),
+            let frame = tokio::select! {
+                biased;
+                completed = workers.join_next(), if !workers.is_empty() => {
+                    if let Some(completed) = completed { completed??; }
+                    continue;
+                }
+                frame = read_next_frame(&mut reader) => frame?,
+            };
+            let frame = match frame {
+                FrameRead::Eof => return Ok(()),
+                FrameRead::End => { graceful = true; return Ok(()); },
                 FrameRead::InvalidFrame { stream_id, error } => {
                     warn!(stream_id, error, "invalid framed MCP frame discarded");
                     ::metrics::counter!(
@@ -318,149 +339,14 @@ where
             }
 
             let summary = interpret_mcp_method(&request);
-            let runtime_event_type = runtime_mcp_event_type(&summary.method);
             record_method_metric(&summary);
-            let request_decision = evaluate_mcp_security_event(
-                &endpoint,
-                mcp_security_event_from_summary(runtime_event_type, &summary, &process_name, None),
-            );
-
-            ::metrics::counter!(
-                m::PARSER_EVENTS_TOTAL,
-                "parser" => "mcp_json_rpc",
-                "kind" => summary.kind.label(),
-            )
-            .increment(1);
-
-            if disposition == StreamDisposition::Notification {
-                // A notification is still dispatched to the aggregator when
-                // its method is a request-type method such as tools/call, so
-                // it takes the same in-flight permit a request does; without
-                // one a guest fired unbounded concurrent tool calls by
-                // omitting the id.
-                let permit = if request_decision.is_allowed() {
-                    match Arc::clone(&endpoint.inflight).acquire_owned().await {
-                        Ok(permit) => Some(permit),
-                        Err(_) => {
-                            warn!("framed MCP inflight semaphore closed");
-                            continue;
-                        }
-                    }
-                } else {
-                    None
-                };
-                let endpoint_h = Arc::clone(&endpoint);
-                let db_h = Arc::clone(&db);
-                let process_name_h = process_name.clone();
-                let request_decision_h = request_decision.clone();
-                let request_h = request.clone();
-                tokio::spawn(async move {
-                    let _permit = permit;
-                    if request_decision_h.is_allowed() {
-                        let _ = endpoint_h.handle_request(&request_h).await;
-                    }
-                    let response = JsonRpcResponse {
-                        jsonrpc: "2.0".to_string(),
-                        id: None,
-                        result: None,
-                        error: None,
-                        meta: None,
-                    };
-                    log_mcp_call_with_policy(
-                        db_h,
-                        &endpoint_h,
-                        &request_h,
-                        &response,
-                        McpCaller::frame(&process_name_h),
-                        0,
-                        McpCallPolicyFields::from(&request_decision_h),
-                    )
-                    .await;
-                });
-                continue;
-            }
-
-            let dispatch_request = request.clone();
-            if !request_decision.is_allowed() {
-                let response = policy_blocked_response(request.id.clone(), "request", &request_decision);
-                log_mcp_call_with_policy(
-                    Arc::clone(&db),
-                    &endpoint,
-                    &dispatch_request,
-                    &response,
-                    McpCaller::frame(&process_name),
-                    0,
-                    McpCallPolicyFields::from(&request_decision),
-                )
-                .await;
-                streams
-                    .lock()
-                    .expect("framed MCP stream tracker poisoned")
-                    .complete(frame.stream_id);
-                send_response(&tx, frame.stream_id, &process_name, &response).await?;
-                continue;
-            }
-
-            let permit = match Arc::clone(&endpoint.inflight).acquire_owned().await {
-                Ok(permit) => permit,
-                Err(_) => {
-                    warn!("framed MCP inflight semaphore closed");
-                    continue;
-                }
-            };
-
-            let endpoint_h = Arc::clone(&endpoint);
-            let db_h = Arc::clone(&db);
-            let tx_h = tx.clone();
-            let streams_h = Arc::clone(&streams);
-            let process_name_h = process_name.clone();
-            let summary_h = summary.clone();
-            let request_decision_h = request_decision.clone();
-            tokio::spawn(async move {
-                let _permit = permit;
-                let start = Instant::now();
-                let response = endpoint_h.handle_request(&dispatch_request).await;
-                let duration_ms = start.elapsed().as_millis() as u64;
-                streams_h
-                    .lock()
-                    .expect("framed MCP stream tracker poisoned")
-                    .complete(frame.stream_id);
-                let Some(response) = response else {
-                    return;
-                };
-                let response_decision = evaluate_mcp_security_event(
-                    &endpoint_h,
-                    mcp_security_event_from_summary(
-                        runtime_mcp_event_type(&summary_h.method),
-                        &summary_h,
-                        &process_name_h,
-                        Some(&response),
-                    ),
-                );
-                let final_decision = if response_decision.is_allowed() {
-                    request_decision_h
-                } else {
-                    response_decision
-                };
-                let response = if final_decision.is_allowed() {
-                    response
-                } else {
-                    policy_blocked_response(dispatch_request.id.clone(), "response", &final_decision)
-                };
-                let policy_fields = McpCallPolicyFields::from(&final_decision);
-                log_mcp_call_with_policy(
-                    db_h,
-                    &endpoint_h,
-                    &dispatch_request,
-                    &response,
-                    McpCaller::frame(&process_name_h),
-                    duration_ms,
-                    policy_fields,
-                )
-                .await;
-                if let Err(e) = send_response(&tx_h, frame.stream_id, &process_name_h, &response).await {
-                    debug!(error = %e, "framed MCP response dropped");
-                }
+            ::metrics::counter!(m::PARSER_EVENTS_TOTAL, "parser" => "mcp_json_rpc", "kind" => summary.kind.label()).increment(1);
+            let held_bytes = memory::request(&request).saturating_add(process_name.capacity().saturating_mul(2));
+            let admission = endpoint.admit_frame(held_bytes).ok_or_else(|| anyhow::anyhow!("MCP pending request capacity reached"))?;
+            let dispatch = Arc::clone(&dispatch);
+            workers.spawn(async move {
+                let _admission = admission;
+                dispatch.run(dispatch::Call { stream_id: frame.stream_id, process_name, request, disposition }, held_bytes).await
             });
         }
         } => (result, false),
@@ -474,6 +360,18 @@ where
         }
     };
 
+    if !graceful || writer_completed {
+        workers.abort_all();
+    }
+    while let Some(completed) = workers.join_next().await {
+        match completed {
+            Ok(Ok(())) => {}
+            Err(error) if error.is_cancelled() && !graceful => {}
+            Ok(Err(error)) => result = Err(error),
+            Err(error) => result = Err(error.into()),
+        }
+    }
+    drop(dispatch);
     drop(tx);
     let result = if writer_completed {
         result
@@ -845,17 +743,43 @@ fn ensure_mcp_request_identity(mcp: &mut McpSecurityEvent, request_id: Option<St
     }
 }
 
-fn evaluate_mcp_security_event(endpoint: &McpEndpointState, event: SecurityEvent) -> SecurityEnforcementDecision {
+async fn evaluate_mcp_security_event(
+    endpoint: &McpEndpointState,
+    db: &DbWriter,
+    event: SecurityEvent,
+    held_bytes: usize,
+) -> SecurityEnforcementDecision {
     let (rules, plugin_policy) = endpoint.policy_snapshot();
-    match evaluate_security_boundary(&rules, plugin_policy, event) {
-        Ok(evaluation) => evaluation.enforcement,
+    let result = async {
+        let mut evaluation =
+            evaluate_security_boundary(&rules, Arc::clone(&plugin_policy), event).map_err(|error| error.to_string())?;
+        if evaluation.enforcement.action == SecurityEnforcementAction::Ask {
+            Box::pin(crate::security_engine::approval::enforcement::resolve_proxy(
+                db,
+                endpoint.approvals.as_deref(),
+                &rules,
+                &mut evaluation,
+                held_bytes,
+            ))
+            .await?;
+            let (current_rules, current_plugins) = endpoint.policy_snapshot();
+            if !Arc::ptr_eq(&rules, &current_rules) || !Arc::ptr_eq(&plugin_policy, &current_plugins) {
+                evaluation.enforcement.action = SecurityEnforcementAction::Block;
+                evaluation.enforcement.reason = Some("MCP policy changed while approval was pending".into());
+            }
+        }
+        Ok::<_, String>(evaluation.enforcement)
+    }
+    .await;
+    match result {
+        Ok(enforcement) => enforcement,
         Err(error) => {
             warn!(error = %error, "MCP security event evaluation failed closed");
             SecurityEnforcementDecision {
                 action: SecurityEnforcementAction::Block,
                 rule_id: Some("security.mcp.evaluation_error".to_string()),
                 rule_name: Some("mcp_security_evaluation_error".to_string()),
-                reason: Some(error.to_string()),
+                reason: Some(error),
                 ask_id: None,
             }
         }

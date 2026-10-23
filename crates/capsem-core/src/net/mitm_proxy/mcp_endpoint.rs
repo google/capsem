@@ -69,6 +69,9 @@ pub struct McpEndpointState {
     pub timeouts: McpTimeouts,
     scoped_tools: Option<Arc<dyn ScopedMcpTools>>,
     tool_timeout_overrides: RwLock<HashMap<String, Duration>>,
+    pub(super) approvals: Option<Arc<crate::security_engine::approval::client::ApprovalCapability>>,
+    queued: Arc<tokio::sync::Semaphore>,
+    held_bytes: Arc<tokio::sync::Semaphore>,
 }
 
 enum McpEndpointPolicy {
@@ -114,6 +117,9 @@ impl McpEndpointState {
             timeouts,
             scoped_tools: None,
             tool_timeout_overrides: RwLock::new(HashMap::new()),
+            approvals: None,
+            queued: Arc::new(tokio::sync::Semaphore::new(capsem_proto::MCP_WORKER_QUEUE_CAPACITY)),
+            held_bytes: Arc::new(tokio::sync::Semaphore::new(capsem_proto::APPROVAL_HELD_BYTES_TOTAL)),
         }
     }
 
@@ -134,6 +140,9 @@ impl McpEndpointState {
             timeouts,
             scoped_tools: None,
             tool_timeout_overrides: RwLock::new(HashMap::new()),
+            approvals: None,
+            queued: Arc::new(tokio::sync::Semaphore::new(capsem_proto::MCP_WORKER_QUEUE_CAPACITY)),
+            held_bytes: Arc::new(tokio::sync::Semaphore::new(capsem_proto::APPROVAL_HELD_BYTES_TOTAL)),
         }
     }
 
@@ -156,6 +165,26 @@ impl McpEndpointState {
     pub fn with_scoped_tools(mut self, scoped_tools: Arc<dyn ScopedMcpTools>) -> Self {
         self.scoped_tools = Some(scoped_tools);
         self
+    }
+
+    pub fn with_approvals(
+        mut self,
+        approvals: Option<Arc<crate::security_engine::approval::client::ApprovalCapability>>,
+    ) -> Self {
+        self.approvals = approvals;
+        self
+    }
+
+    /// Waiting frames remain owned and bounded even before an in-flight slot.
+    pub(super) fn admit_frame(
+        &self,
+        bytes: usize,
+    ) -> Option<(tokio::sync::OwnedSemaphorePermit, tokio::sync::OwnedSemaphorePermit)> {
+        let count = Arc::clone(&self.queued).try_acquire_owned().ok()?;
+        let bytes = Arc::clone(&self.held_bytes)
+            .try_acquire_many_owned(u32::try_from(bytes).ok()?)
+            .ok()?;
+        Some((count, bytes))
     }
 
     /// Admit ledger records carried by tools from the configured builtin MCP

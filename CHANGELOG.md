@@ -155,6 +155,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Show a compact toolbar notice when the service confirms a newer Capsem version,
   with a direct action to review its update status.
+- Suspend MCP Ask operations with bounded retained bodies and owned continuations;
+  disconnect cancels them, while graceful session end drains approved responses.
+
 - Connect confined DNS workers to their inherited approval capability.
 
 - Hold original DNS queries for security Ask decisions before any upstream lookup.
