@@ -185,9 +185,9 @@ fn resolving(config: Arc<MitmProxyConfig>, name: &str, address: &str) -> Arc<Mit
 }
 
 /// The built-in guard, not a test rule: a name that is on no list but
-/// resolves to loopback, where the host's own services listen, is asked.
+/// resolves to loopback must fail closed when this fixture has no approval owner.
 #[tokio::test]
-async fn default_rules_ask_before_a_name_that_resolves_to_loopback_and_never_dial_it() {
+async fn default_rules_without_approval_authority_block_loopback_without_dialing() {
     let (port, dialed) = dial_probe().await;
     let (config, db) = make_proxy_config_with_security_rules(default_rules(), &[port]);
     let config = resolving(config, "gateway.attacker.example", "127.0.0.1");
@@ -200,19 +200,19 @@ async fn default_rules_ask_before_a_name_that_resolves_to_loopback_and_never_dia
 
     assert!(!dialed.await.unwrap(), "the default guard let a loopback name through");
     assert!(response.starts_with("HTTP/1.1 403"), "expected 403, got:\n{response}");
-    assert!(response.contains("requires approval"), "{response}");
+    assert!(response.contains("blocked by security rule"), "{response}");
     db.flush().await;
     let events = db.reader().unwrap().recent_net_events(10).unwrap();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].domain, "gateway.attacker.example");
     assert_eq!(events[0].matched_rule.as_deref(), Some(LOCAL_NETWORK));
-    assert_eq!(events[0].policy_action.as_deref(), Some("ask"));
+    assert_eq!(events[0].policy_action.as_deref(), Some("block"));
 }
 
 /// HTTPS takes its name from SNI and always dials 443; the same guard
-/// applies, e.g. to a name aimed at the cloud metadata address.
+/// fails closed without an approval owner for the cloud metadata address too.
 #[tokio::test]
-async fn default_rules_ask_before_a_tls_name_that_resolves_to_the_metadata_address() {
+async fn default_rules_without_approval_authority_block_tls_metadata_address() {
     let (config, db) = make_proxy_config_with_security_rules(default_rules(), &[80]);
     let config = resolving(config, "metadata.attacker.example", "169.254.169.254");
     let (proxy_task, addr) = spawn_proxy(config).await;
@@ -239,7 +239,7 @@ async fn default_rules_ask_before_a_tls_name_that_resolves_to_the_metadata_addre
     let events = db.reader().unwrap().recent_net_events(10).unwrap();
     assert_eq!(events[0].domain, "metadata.attacker.example");
     assert_eq!(events[0].matched_rule.as_deref(), Some(LOCAL_NETWORK));
-    assert_eq!(events[0].policy_action.as_deref(), Some("ask"));
+    assert_eq!(events[0].policy_action.as_deref(), Some("block"));
 }
 
 /// The dial goes to the address the rules judged. `judged.invalid` never
