@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Produce per-platform package inventories from exact application image files,
+  verify toolkit binaries, and publish immutable inventory references in catalogs.
+
 - Distinguish unavailable image evidence metadata from artifacts confirmed absent
   by the service in the app Info panel.
 

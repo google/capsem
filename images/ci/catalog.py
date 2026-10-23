@@ -20,10 +20,11 @@ import copy
 import datetime
 import json
 import re
-import tomllib
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
+
+import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
 DESCRIPTIONS = ROOT / "images" / "catalog.toml"
@@ -98,6 +99,13 @@ def versions(records: Iterable[Mapping[str, Any]], registry: str) -> dict[str, d
             "contract": CONTRACT,
             "obom": {leg["arch"]: _digest(leg, "obom") for leg in legs},
             "erofs": {leg["arch"]: _digest(leg, "erofs") for leg in legs},
+            "evidence": {
+                leg["arch"]: [{
+                    "kind": "package_inventory",
+                    "reference": f"{registry}/{name}@{_digest(leg, 'inventory')}",
+                    "media_type": "application/vnd.capsem.package-inventory.v1+json",
+                }] for leg in legs if "inventory" in leg
+            },
         }
     orphans = sorted(set(platforms) - set(indexes))
     if orphans:

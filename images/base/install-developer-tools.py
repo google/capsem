@@ -67,7 +67,13 @@ def install(arch: str, path: Path) -> None:
         pin = pins.get(tool["name"])
         if pin and pin["version"] not in observed:
             raise ValueError(f"{tool['name']}: wrong observed version {observed}")
+        executable = shutil.which(tool["command"][0])
+        if executable is None:
+            raise ValueError(f"{tool['name']}: executable not found")
+        binary_path = Path(executable).resolve(strict=True)
         versions.append({"name": tool["name"], "version": observed,
+                         "binary_path": str(binary_path),
+                         "binary_sha256": hashlib.sha256(binary_path.read_bytes()).hexdigest(),
                          **({"artifact": pin["artifacts"][arch]} if pin else {})})
     subprocess.run(["ast-grep", "outline", "--help"], stdout=subprocess.DEVNULL, check=True)
     packages = subprocess.check_output(["dpkg-query", "-W", "-f=${binary:Package}\t${Version}\n"], text=True)

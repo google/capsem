@@ -204,6 +204,7 @@ jobs:
             "images/$IMAGE" images/ci/*.py .github/workflows/images.yaml \
             build_system/builder/*.py build_system/builder/image/*.py \
             build_system/builder/gate/*.py build_system/builder/release/obom.py \
+            build_system/builder/release/package_inventory.py \
             build_system/docker/Dockerfile.asset-tools config/docker/image/build.toml \
             config/gate.toml build_system/pyproject.toml build_system/uv.lock \
             --with "$BASE_DIGEST")"
@@ -240,7 +241,7 @@ jobs:
         run: |
           uv run --project build_system --frozen python images/ci/rootfs.py --image capsem-image:local \
             --arch "$ARCH" --repository "$REGISTRY/$IMAGE" --digest "$DIGEST" --out rootfs
-      - name: Attach the OBOM and the EROFS rootfs
+      - name: Attach the OBOM, package inventory and the EROFS rootfs
         id: attach
         if: steps.published.outputs.build == 'true'
         working-directory: rootfs
@@ -249,11 +250,13 @@ jobs:
         run: |
           obom="$(oras attach --format json --artifact-type application/vnd.cyclonedx+json \
             "$SUBJECT" obom.cdx.json:application/vnd.cyclonedx+json | jq -r .digest)"
+          inventory="$(oras attach --format json --artifact-type application/vnd.capsem.package-inventory.v1+json \
+            "$SUBJECT" packages.json:application/vnd.capsem.package-inventory.v1+json | jq -r .digest)"
           integrity="$(cat rootfs.blake3)"
           erofs="$(oras attach --format json --artifact-type application/vnd.capsem.rootfs.erofs.v2 \
             --annotation "org.capsem.rootfs.blake3=$integrity" \
             "$SUBJECT" rootfs.erofs:application/vnd.capsem.rootfs.erofs.v2 | jq -r .digest)"
-          printf 'obom=%s\nerofs=%s\n' "$obom" "$erofs" >> "$GITHUB_OUTPUT"
+          printf 'obom=%s\nerofs=%s\ninventory=%s\n' "$obom" "$erofs" "$inventory" >> "$GITHUB_OUTPUT"
       - name: Record this architecture
         env:
           KEY: ${{ steps.published.outputs.key }}
@@ -261,12 +264,13 @@ jobs:
           DIGEST: ${{ steps.push.outputs.digest }}
           OBOM: ${{ steps.attach.outputs.obom }}
           EROFS: ${{ steps.attach.outputs.erofs }}
+          INVENTORY: ${{ steps.attach.outputs.inventory }}
         run: |
           mkdir -p records
           jq -n --arg image "$IMAGE" --arg arch "$ARCH" --arg key "$KEY" --argjson built "$BUILT" \
-            --arg digest "$DIGEST" --arg obom "$OBOM" --arg erofs "$EROFS" \
+            --arg digest "$DIGEST" --arg obom "$OBOM" --arg erofs "$EROFS" --arg inventory "$INVENTORY" \
             '{kind: "platform", image: $image, arch: $arch, key: $key, built: $built}
-             + (if $built then {digest: $digest, obom: $obom, erofs: $erofs} else {} end)' \
+             + (if $built then {digest: $digest, obom: $obom, erofs: $erofs, inventory: $inventory} else {} end)' \
             > "records/$IMAGE-$ARCH.json"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:

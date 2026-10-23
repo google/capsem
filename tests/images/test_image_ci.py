@@ -172,6 +172,7 @@ def test_a_rebuilt_image_becomes_one_version() -> None:
             "contract": 1,
             "obom": {"arm64": ARM, "amd64": AMD},
             "erofs": {"arm64": ARM, "amd64": AMD},
+            "evidence": {},
         }
     }
 

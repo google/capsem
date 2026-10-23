@@ -18,6 +18,7 @@ Usage: rootfs.py --image TAG --arch {arm64,amd64} --repository REPO --digest SHA
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 from collections.abc import Sequence
 from pathlib import Path
@@ -28,6 +29,7 @@ from capsem_builder.image import assettools, docker
 from capsem_builder.image.config import load_guest_config
 from capsem_builder.image.models import BuildConfig
 from capsem_builder.release.obom import ObomSubject
+from capsem_builder.release.package_inventory import from_rootfs
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = "docker"
@@ -94,6 +96,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     tar = args.out / "rootfs.tar"
     docker.export_container_fs(RUNTIME, args.image, platform, tar)
     try:
+        inventory = from_rootfs(tar, f"{args.repository}@{args.digest}", args.arch)
+        (args.out / "packages.json").write_text(json.dumps(inventory, indent=2) + "\n")
         docker.generate_cyclonedx_obom(
             tar,
             args.out / "obom.cdx.json",
