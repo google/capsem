@@ -2,14 +2,14 @@
 from __future__ import annotations
 
 import filecmp
-import json
 import re
 import time
 import tomllib
 from pathlib import Path
 from urllib.parse import quote
 
-from .route_measurements import Observations, validate_receipt
+from .route_measurements import Observations
+from .route_requests import json_request
 from .route_validation import SCHEMAS
 from .stream_measurements import measure, sample_count
 
@@ -72,20 +72,14 @@ def validate_assets(payload, *, downloaded: int | None = None) -> None:
 
 
 def receipt(transport, target, method: str, path: str, cfg: dict, body=None):
-    headers = {**target.headers, 'Accept': 'application/json'}
-    if body is not None:
-        headers['Content-Type'] = 'application/json'
-    result = transport.measure_request(method, path, headers=headers,
-        body=None if body is None else json.dumps(body).encode(),
-        timeout=cfg['timeout_seconds'], max_response_bytes=cfg['max_response_bytes'])
-    validate_receipt(result)
-    assert result.status == 200, (method, path, result.status, result.body[:500])
+    result, payload = json_request(transport, target, method, path, body,
+        timeout=cfg['timeout_seconds'], maximum=cfg['max_response_bytes'])
     schema_path = path.split('?', 1)[0]
     if schema_path.endswith('/inventory'):
         schema_path = '/images/{name}/inventory'
     if schema_path in SCHEMAS:
         SCHEMAS[schema_path].validate_json(result.body)
-    return result, json.loads(result.body)
+    return result, payload
 
 
 def settled(transport, target, cfg):

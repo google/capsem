@@ -46,6 +46,7 @@ from benchmarks.helpers.route_fixtures import (
 from benchmarks.helpers.route_gateway import GATEWAY_RESPONSES
 from benchmarks.helpers.route_images import collect_images
 from benchmarks.helpers.route_measurements import Observations, route_metrics
+from benchmarks.helpers.route_policy import collect_policy
 from benchmarks.helpers.route_requests import Target, request, request_input, route_load_config
 from benchmarks.helpers.route_validation import validate_snapshot, validate_wire
 from benchmarks.helpers.stream_measurements import service_gateway
@@ -172,6 +173,7 @@ def main() -> int:
 
     with redirect_stdout(sys.stderr):
         metrics: dict[str, dict] = collect_images(args.quick)
+        metrics.update(collect_policy(args.quick))
 
     service = ServiceInstance()
     service.assets_dir = clone_benchmark_assets(

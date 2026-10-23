@@ -7,10 +7,10 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import psutil
 from helpers.http_measurement import MeasuredResponse
 from helpers.http_transport import Transport
 from helpers.stopped_workspace import BODY_URL, assert_event_bodies
+from psutil import Process
 
 from .route_binary import validate_archive, validate_file, validate_full_event
 from .route_gateway import GATEWAY_RESPONSES, validate_gateway
@@ -39,7 +39,7 @@ class Target:
     label: str
     transport_factory: Callable[[], Transport]
     headers: dict[str, str]
-    cpu_processes: dict[str, psutil.Process]
+    cpu_processes: dict[str, Process]
     limits: dict[str, int | float] = field(default_factory=route_load_config)
     service_socket: str | None = None
 
@@ -85,3 +85,33 @@ def request(transport: Transport, target: Target, path: str, response: str = "js
     elif "/bodies/" in path:
         validate_full_event(payload)
     return receipt
+
+
+def service_target(service, label: str) -> Target:
+    """Address the existing real service companion, never spawn another."""
+    from .stream_measurements import service_gateway
+    assert service.proc is not None
+    process = Process(service.proc.pid)
+    if label == "service":
+        return Target(label, lambda: Transport(socket_path=str(service.uds_path)), {}, {"service": process})
+    if label != "gateway":
+        raise ValueError("unsupported measurement target")
+    gateway = service_gateway(service)
+    return Target(label, lambda: Transport(host="127.0.0.1", port=gateway.port),
+                  {"Authorization": f"Bearer {gateway.token}"},
+                  {"gateway": Process(gateway.pid), "downstream_service": process},
+                  service_socket=str(service.uds_path))
+
+
+def json_request(transport, target: Target, method: str, path: str, body, *, timeout: float, maximum: int):
+    """Finite mutations reuse the existing strict single-attempt HTTP owner."""
+    headers = {**target.headers, "Accept": "application/json"}
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+    result = transport.measure_request(method, path, headers=headers,
+        body=None if body is None else json.dumps(body).encode(),
+        timeout=timeout, max_response_bytes=maximum)
+    validate_receipt(result)
+    if result.status != 200:
+        raise ValueError(f"{method} {path} refused with HTTP {result.status}")
+    return result, json.loads(result.body)

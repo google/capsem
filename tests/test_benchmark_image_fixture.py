@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from benchmarks.helpers import route_image_fixture as fixture
+from benchmarks.helpers import route_requests
 
 
 def test_independent_service_homes_keep_real_source_assets_untouched(monkeypatch, tmp_path):
@@ -30,7 +31,7 @@ def test_independent_service_homes_keep_real_source_assets_untouched(monkeypatch
             calls.append('start')
         return SimpleNamespace(home_dir=home, proc=SimpleNamespace(pid=123), start=start, stop=lambda: calls.append('stop'))
     monkeypatch.setattr(fixture, 'ServiceInstance', service)
-    monkeypatch.setattr(fixture, 'Process', lambda *_: None)
+    monkeypatch.setattr(route_requests, 'Process', lambda *_: None)
     for _ in range(2):
         with fixture.image_target('service', '127.0.0.1:12345/library/dev@sha256:pin', tmp_path / 'ca') as (target, owner):
             assert target.label == 'service'

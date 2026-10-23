@@ -8,16 +8,13 @@ from pathlib import Path
 
 from helpers.benchmark_assets import clone_benchmark_assets
 from helpers.constants import ASSETS_DIR
-from helpers.http_transport import Transport
 from helpers.service import ServiceInstance
-from psutil import Process
 
 from tests.fixtures.oci.image_build import prepare_local_evidence
 from tests.fixtures.oci.layout_registry import layout_registry
 from tests.fixtures.oci.pinned_image import reference_image
 
-from .route_requests import Target
-from .stream_measurements import service_gateway
+from .route_requests import service_target
 
 
 @contextlib.contextmanager
@@ -56,16 +53,7 @@ def image_target(label, reference, certificate):
         # ServiceInstance owns CAPSEM_HOME, so cold is a real independent cache.
         assert not (service.home_dir / 'cache').exists()
         service.start()
-        assert service.proc is not None
-        processes = {'service': Process(service.proc.pid)}
-        if label == 'gateway':
-            gateway = service_gateway(service)
-            processes = {'gateway': Process(gateway.pid), 'downstream_service': processes['service']}
-            target = Target(label, lambda: Transport(host='127.0.0.1', port=gateway.port), {'Authorization': f'Bearer {gateway.token}'}, processes)
-        elif label == 'service':
-            target = Target(label, lambda: Transport(socket_path=str(service.uds_path)), {}, processes)
-        else:
-            raise ValueError('unsupported image measurement target')
+        target = service_target(service, label)
         yield target, service
     finally:
         service.stop()

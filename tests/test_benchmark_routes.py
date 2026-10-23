@@ -80,6 +80,7 @@ def test_fixture_diagnostics_do_not_corrupt_collector_json(
     original_process = collector.psutil.Process
     monkeypatch.setattr(collector.psutil, "Process", lambda _: None)
     monkeypatch.setattr(collector, "measured_cases", lambda: [collector.RouteCase("GET", "/status", "default")])
+    monkeypatch.setattr(collector, "collect_policy", lambda *_: {})
     monkeypatch.setattr(collector, "collect_images", lambda *_: (print("IMAGE PREPARATION: untimed") or {}))
     monkeypatch.setattr(collector, "preflight", lambda *_: None)
     monkeypatch.setattr(collector, "seed_metadata", lambda *_: None)

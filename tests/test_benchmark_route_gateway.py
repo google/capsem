@@ -121,6 +121,7 @@ def test_main_emits_only_gateway_series_for_gateway_owned_cases(monkeypatch, tmp
         "ServiceInstance": lambda: service,
         "service_gateway": lambda _: SimpleNamespace(port=12345, pid=20, token="synthetic-token"),
         "psutil": SimpleNamespace(Process=lambda pid: pid),
+        "collect_policy": lambda *_: {},
         "collect_images": lambda *_: {},
         "clone_benchmark_assets": lambda *_: tmp_path,
         "seed_stopped_workspace": lambda *_, **__: None,

@@ -36,12 +36,13 @@ def validate(registered: set[str], coverage: dict) -> None:
         assert entry["cases"] and (ROOT / "benchmarks/collectors/stream").exists(), RATIONALE
         for case in entry["cases"].values():
             assert case["sample_key"] and case["metrics"], RATIONALE
-    finite = coverage.get("images", {}).get("endpoints", {})
-    assert not (measured & set(finite)), RATIONALE
-    for entry in finite.values():
-        assert entry["collector"] == "routes" and entry["target_scope"] == "both", RATIONALE
-        assert entry["cases"] and len(entry["reason"]) >= 20, RATIONALE
-    measured |= set(finite)
+    for domain in ("images", "policy"):
+        finite = coverage.get(domain, {}).get("endpoints", {})
+        assert not (measured & set(finite)), RATIONALE
+        for entry in finite.values():
+            assert entry["collector"] == "routes" and entry["target_scope"] == "both", RATIONALE
+            assert entry["cases"] and len(entry["reason"]) >= 20, RATIONALE
+        measured |= set(finite)
     debt, internal = set(coverage["unmeasured"]), set(coverage["internal"])
     assert not (measured & debt or measured & internal or debt & internal), RATIONALE
     assert measured | debt | internal == registered, (
@@ -83,7 +84,7 @@ def test_gateway_method_topology_matches_service() -> None:
 
 
 def test_unmeasured_operations_remain_explicit_debt() -> None:
-    assert len(config()["unmeasured"]) <= 50, RATIONALE
+    assert len(config()["unmeasured"]) <= 44, RATIONALE
     assert len(config()["internal"]) == 7, RATIONALE
 
 
@@ -128,8 +129,6 @@ def test_gateway_owned_method_additions_cannot_hide_behind_proxy_inventory(monke
 
 
 @pytest.mark.parametrize("operation,owner", [
-    ("PATCH /plugins/{plugin_id}/edit", "tests/ironbank/test_policy_mutation_routes.py"),
-    ("PATCH /settings/edit", "crates/capsem-service/src/tests/settings_files.rs"),
     ("POST /proxies", "tests/ironbank/test_standalone_proxy.py"),
     ("POST /networks", "tests/ironbank/test_managed_network_lifecycle.py"),
     ("POST /restart", "tests/ironbank/test_sdk_restart.py"),
@@ -163,5 +162,25 @@ def test_finite_image_evidence_keeps_exact_operations_and_rejects_poll_overlap()
         validate(registered_operations(), coverage)
     coverage = copy.deepcopy(config())
     del coverage['images']['endpoints']['POST /images/pull']
+    with pytest.raises(AssertionError, match='Missing'):
+        validate(registered_operations(), coverage)
+
+
+def test_policy_mutation_cases_keep_host_scope_and_live_ledger_debt() -> None:
+    import copy
+
+    coverage = copy.deepcopy(config())
+    operations = set(coverage['policy']['endpoints'])
+    assert operations == {'PATCH /settings/edit', 'PUT /corp/edit', 'POST /corp/validate', 'PATCH /plugins/{plugin_id}/edit', 'PATCH /mcp/default/edit', 'PATCH /mcp/servers/{server_id}/tools/{tool_id}/edit'}, RATIONALE
+    for operation, endpoint in coverage['policy']['endpoints'].items():
+        assert len(endpoint['cases']) == 1 and set(endpoint['cases'].values()) == {'cycles'}, RATIONALE
+        if operation.startswith('PATCH /mcp/') or '/plugins/' in operation:
+            assert coverage['unmeasured_cases'][operation + ' [durable-ledger-read]']['owner'] == 'tests/ironbank/test_policy_mutation_routes.py', RATIONALE
+            assert coverage['unmeasured_cases'][operation + ' [running-vm-publication]']['owner'] == 'crates/capsem-service/src/tests/policy_push.rs', RATIONALE
+    coverage['measured'].append({'method': 'PATCH', 'path': '/settings/edit', 'case': 'fake-concurrent-write'})
+    with pytest.raises(AssertionError):
+        validate(registered_operations(), coverage)
+    coverage = copy.deepcopy(config())
+    del coverage['policy']['endpoints']['PUT /corp/edit']
     with pytest.raises(AssertionError, match='Missing'):
         validate(registered_operations(), coverage)

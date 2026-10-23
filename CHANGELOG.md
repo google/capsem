@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add finite host-only settings and policy mutation benchmark cases with exact
+  file restoration and fresh effective-state checks; VM publication stays separate.
+
 - Measure finite hermetic image catalogue, installed package inventory, cold/warm
   image preparation and local runtime asset materialization as separate cases.
 
