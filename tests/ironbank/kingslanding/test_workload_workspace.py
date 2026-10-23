@@ -49,7 +49,9 @@ def test_new_image_clone_imports_scratch_without_changing_original_home(service,
         ):
             copy_id = copy["id"]
             assert run(client, copy_id, "id -u").strip() == "1000"
-            assert run(client, copy_id, "stat -c %u /workspace").strip() == "1000"
+            # Root ownership is backend metadata: stable-root KVM uses the
+            # image-user idmap; Apple's existing caller-relative map does not.
+            workspace_owner = run(client, copy_id, "stat -c '%u:%g:%a' /workspace").strip()
             assert run(client, copy_id, "cat /workspace/poem.md") == "workspace-wins"
             # Preserve the first read before stat can refresh caller-owned
             # VirtioFS inode metadata. Diagnostics must not make the read pass.
@@ -60,7 +62,7 @@ def test_new_image_clone_imports_scratch_without_changing_original_home(service,
                 client, copy_id,
                 "stat -c '%u:%g:%a' /workspace/poem.md.imported-1",
             ).strip()
-            assert imported_read["exit_code"] == 0, (imported_owner, imported_read)
+            assert imported_read["exit_code"] == 0, (workspace_owner, imported_owner, imported_read)
             assert imported_owner == "1000:1000:600", imported_owner
             assert exec_output_text(imported_read) == "scratch-original"
             assert run(client, copy_id, f"cat {HOME}/private-sibling") == "synthetic-private-sibling"
