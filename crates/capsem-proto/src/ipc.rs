@@ -326,7 +326,10 @@ pub enum ProcessToService {
         trigger: String,
     },
     /// Progress of the original exec's bounded human wait, never its result.
-    ExecApproval { id: u64, progress: ExecApprovalProgress },
+    ExecApproval {
+        id: u64,
+        progress: ExecApprovalProgress,
+    },
     /// Result of an Exec command.
     ExecResult {
         id: u64,
