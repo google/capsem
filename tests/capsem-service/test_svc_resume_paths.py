@@ -1,10 +1,10 @@
 """Resume persistence across filesystem paths.
 
 The /root tree is bind-mounted from the host VirtioFS workspace -- files there
-are obviously preserved because the host owns the directory. The rest of the
-guest filesystem lives on the overlayfs upper layer (rootfs.img attached
-as virtio-blk /dev/vdb), which is also persisted in the session_dir on
-the host.
+are preserved because the host owns the directory. The persistent guest
+filesystem lives on the overlayfs upper layer (rootfs.img attached as
+virtio-blk /dev/vdb). Runtime directories use fresh tmpfs on cold boot;
+a warm checkpoint preserves their memory instead.
 
 Regression net for "file disappears after stop+resume" reports: write a marker
 to several representative paths via shell exec (the way a user would), stop
@@ -27,15 +27,15 @@ pytestmark = pytest.mark.integration
 
 # Directories spanning workspace bind-mount and overlayfs upper.
 # /root              -> VirtioFS workspace bind-mount
-# /tmp, /etc, /var, /opt, /usr/local -> overlayfs upper on rootfs.img
+# /etc, /var, /opt, /usr/local -> overlayfs upper on rootfs.img
 PERSIST_PATHS = [
     "/root",
-    "/tmp",
     "/etc",
     "/var",
     "/opt",
     "/usr/local",
 ]
+RUNTIME_PATHS = ["/run", "/tmp", "/var/log"]
 
 
 def _exec(client, name, command):
@@ -45,30 +45,59 @@ def _exec(client, name, command):
     )
 
 
+def _transition(client, name, action):
+    status, response = client.call_json("POST", f"/vms/{name}/{action}", {})
+    assert status == 200, response
+    return response
+
+
 class TestResumePathPersistence:
 
-    def _paths_for(self, marker):
-        return [f"{base}/marker-{marker}.txt" for base in PERSIST_PATHS]
+    def _paths_for(self, marker, paths=PERSIST_PATHS):
+        return [f"{base}/marker-{marker}.txt" for base in paths]
 
     def _write_markers(self, client, name, marker):
-        for path in self._paths_for(marker):
+        for path in self._paths_for(marker, PERSIST_PATHS + RUNTIME_PATHS):
             resp = _exec(
                 client,
                 name,
                 f"mkdir -p $(dirname {path}) && echo {marker} > {path} && cat {path}",
             )
             assert resp.get("exit_code") == 0, f"write to {path} failed: {resp}"
-            assert marker in exec_output_text(resp), \
+            assert exec_output_text(resp) == f"{marker}\n", \
                 f"write/read-back of {path} did not see marker: {resp}"
 
-    def _check_markers(self, client, name, marker):
+    def _check_markers(self, client, name, marker, *, warm=False):
         missing = []
-        for path in self._paths_for(marker):
+        paths = PERSIST_PATHS + RUNTIME_PATHS if warm else PERSIST_PATHS
+        for path in self._paths_for(marker, paths):
             resp = _exec(client, name, f"cat {path} 2>&1")
             stdout = exec_output_text(resp)
-            if marker not in stdout:
+            if resp.get("exit_code") != 0 or stdout != f"{marker}\n":
                 missing.append((path, resp.get("exit_code"), stdout.strip()[:200]))
         return missing
+
+    def _check_runtime_reset(self, client, name, marker):
+        for path in self._paths_for(marker, RUNTIME_PATHS):
+            resp = _exec(client, name, f"test ! -e {path}")
+            assert resp.get("exit_code") == 0 and exec_output_text(resp) == "", (
+                f"runtime marker survived cold boot at {path}: {resp}"
+            )
+
+    def test_missing_marker_path_cannot_satisfy_persistence(self, client):
+        """An error containing the marker in its filename is not retained data."""
+        name = vm_name("missing")
+        client.post("/vms/create", {
+            "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS,
+        })
+        try:
+            assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
+            marker = f"absent-{uuid.uuid4().hex[:8]}"
+            missing = self._check_markers(client, name, marker)
+            assert {path for path, _, _ in missing} == set(self._paths_for(marker))
+            assert all(code != 0 for _, code, _ in missing), missing
+        finally:
+            client.delete(f"/vms/{name}/delete")
 
     def test_files_survive_stop_resume_across_paths(self, client):
         """Write marker files to overlay + workspace paths, stop, resume, verify all survive."""
@@ -90,10 +119,10 @@ class TestResumePathPersistence:
             self._write_markers(client, name, marker)
 
             # Stop the VM (preserves state for persistent VMs).
-            client.post(f"/vms/{name}/stop", {})
+            _transition(client, name, "stop")
 
             # Resume.
-            resume_resp = client.post(f"/vms/{name}/resume", {})
+            resume_resp = _transition(client, name, "resume")
             assert resume_resp is not None, "resume returned None"
             resumed_id = resume_resp.get("id", name)
             assert wait_exec_ready(client, resumed_id, timeout=EXEC_READY_TIMEOUT), \
@@ -104,6 +133,7 @@ class TestResumePathPersistence:
                 "Files lost after stop+resume:\n"
                 + "\n".join(f"  {p}: exit={ec} out={out!r}" for p, ec, out in missing)
             )
+            self._check_runtime_reset(client, resumed_id, marker)
         finally:
             client.delete(f"/vms/{name}/delete")
 
@@ -127,16 +157,16 @@ class TestResumePathPersistence:
             self._write_markers(client, name, marker)
 
             # Suspend (warm checkpoint via Apple VZ saveMachineState).
-            client.post(f"/vms/{name}/pause", {})
+            _transition(client, name, "pause")
 
             # Resume (restores from checkpoint).
-            resume_resp = client.post(f"/vms/{name}/resume", {})
+            resume_resp = _transition(client, name, "resume")
             assert resume_resp is not None, "resume returned None"
             resumed_id = resume_resp.get("id", name)
             assert wait_exec_ready(client, resumed_id, timeout=EXEC_READY_TIMEOUT), \
                 f"VM {resumed_id} never became exec-ready after suspend+resume"
 
-            missing = self._check_markers(client, resumed_id, marker)
+            missing = self._check_markers(client, resumed_id, marker, warm=True)
             assert not missing, (
                 "Files lost after suspend+resume:\n"
                 + "\n".join(f"  {p}: exit={ec} out={out!r}" for p, ec, out in missing)
@@ -161,16 +191,17 @@ class TestResumePathPersistence:
 
             marker_a = f"cycle-a-{uuid.uuid4().hex[:6]}"
             self._write_markers(client, name, marker_a)
-            client.post(f"/vms/{name}/stop", {})
-            client.post(f"/vms/{name}/resume", {})
+            _transition(client, name, "stop")
+            _transition(client, name, "resume")
             assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
             assert not self._check_markers(client, name, marker_a), \
                 "first resume lost files written before first stop"
+            self._check_runtime_reset(client, name, marker_a)
 
             marker_b = f"cycle-b-{uuid.uuid4().hex[:6]}"
             self._write_markers(client, name, marker_b)
-            client.post(f"/vms/{name}/stop", {})
-            client.post(f"/vms/{name}/resume", {})
+            _transition(client, name, "stop")
+            _transition(client, name, "resume")
             assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT)
             # Both A (from before first stop) and B (from before second stop)
             # must still be there.
@@ -180,5 +211,6 @@ class TestResumePathPersistence:
                     f"second resume lost {marker}:\n"
                     + "\n".join(f"  {p}: exit={ec} out={out!r}" for p, ec, out in missing)
                 )
+                self._check_runtime_reset(client, name, marker)
         finally:
             client.delete(f"/vms/{name}/delete")
