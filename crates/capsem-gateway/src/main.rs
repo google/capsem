@@ -370,6 +370,8 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/vms/{id}/bodies/{event_id}", get(proxy::handle_proxy))
         .route("/vms/{id}/timeline", get(proxy::handle_proxy))
         .route("/vms/{id}/security/latest", get(proxy::handle_proxy))
+        .route("/vms/{id}/security/asks", get(proxy::handle_proxy))
+        .route("/vms/{id}/security/asks/{ask_id}/resolve", post(proxy::handle_proxy))
         .route("/vms/{id}/security/status", get(proxy::handle_proxy))
         .route("/vms/{id}/detection/latest", get(proxy::handle_proxy))
         .route("/vms/{id}/detection/status", get(proxy::handle_proxy))

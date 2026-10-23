@@ -3,6 +3,26 @@
 use super::*;
 
 #[tokio::test]
+async fn overview_projects_actual_pending_approval_count_without_using_denials() {
+    let mock = axum::Router::new().route(
+        "/internal/gateway/status",
+        axum::routing::get(|| async {
+            axum::Json(serde_json::json!({"sandboxes":[{
+                "id":"test", "status":"Running", "persistent":false,
+                "pending_approval_count":3, "denied_requests":91,
+                "available_actions":[]
+            }]}))
+        }),
+    );
+    let (path, handle, _dir) = mock_uds(mock).await;
+    let info = fetch_status(&test_app_state(&path)).await;
+    let wire = serde_json::to_value(&info).unwrap();
+    assert_eq!(wire["vms"][0]["pending_approval_count"], 3);
+    assert_eq!(wire["vms"][0]["denied_requests"], 91);
+    handle.abort();
+}
+
+#[tokio::test]
 async fn overview_never_treats_an_error_response_as_authoritative_data() {
     let mock = axum::Router::new().route(
         "/internal/gateway/status",
@@ -250,6 +270,7 @@ fn test_vm(id: &str, name: Option<&str>, status: VmLifecycleState, persistent: b
     VmSummary {
         cost_coverage: None,
         app: None,
+        pending_approval_count: 0,
         browser_request: None,
         terminal: None,
         id: id.into(),

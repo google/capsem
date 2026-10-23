@@ -106,6 +106,8 @@ struct SessionInfo {
     #[serde(default)]
     app: Option<capsem_api::ImageApp>,
     #[serde(default)]
+    pending_approval_count: u32,
+    #[serde(default)]
     browser_request: Option<capsem_api::BrowserRequest>,
     #[serde(default)]
     terminal: Option<capsem_api::TerminalSummary>,
@@ -193,6 +195,7 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
 
         vms.push(VmSummary {
             app: sess.app.clone(),
+            pending_approval_count: sess.pending_approval_count,
             browser_request: sess.browser_request.clone(),
             terminal: sess.terminal.clone(),
             id: sess.id.clone(),

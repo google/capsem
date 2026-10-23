@@ -129,6 +129,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Show a compact toolbar notice when the service confirms a newer Capsem version,
   with a direct action to review its update status.
+- Expose live pending security approval counts in the gateway overview and
+  session status, with typed SDK operations for reviewing and resolving requests.
 
 - Show key-event counts, keyboard capture and focus in the opt-in graphical
   Debug overlay without recording input contents.
