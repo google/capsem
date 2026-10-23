@@ -5,7 +5,7 @@
   import { vmStore } from '../../stores/vms.svelte';
   import { tabStore } from '../../stores/tabs.svelte';
   import { sessionActionError } from '../../models/session-action-error';
-  import { imageNeedsDownload, imageLaunchRequest, imageInterfaceLabel, retainImageActionFailure, startImageSession, type ImageActionFailure } from '../../models/image-launch';
+  import { imageNeedsDownload, imageLaunchRequest, imageInterfaceLabel, retainImageActionFailure, startImageSession, imageHasUpdate, type ImageActionFailure } from '../../models/image-launch';
   import { imageDownloadView } from '../../models/image-download';
   import { watchVisibleRefresh } from '../../models/visible-refresh';
   import CircleNotch from 'phosphor-svelte/lib/CircleNotch';
@@ -122,6 +122,9 @@
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-2">
                 <h4 class="text-sm font-semibold text-foreground truncate">{image.name}</h4>
+                {#if imageHasUpdate(image)}
+                  <span class="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary" title="A newer app image is available">Updated</span>
+                {/if}
                 {#if imageInterfaceLabel(image)}
                   <span class="shrink-0 text-[10px] text-muted-foreground-1">{imageInterfaceLabel(image)}</span>
                 {/if}

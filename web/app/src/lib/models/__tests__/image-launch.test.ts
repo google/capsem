@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest';
 import { ImageCacheState, ImageSurface, type ImageInfo } from '@capsem/sdk';
-import { imageNeedsDownload, imageLaunchRequest, imageInterfaceLabel, retainImageActionFailure, startImageSession } from '../image-launch';
+import { imageNeedsDownload, imageLaunchRequest, imageInterfaceLabel, retainImageActionFailure, startImageSession, imageHasUpdate } from '../image-launch';
 
 const image: ImageInfo = { name: 'codex-cli', description: 'Codex', architectures: ['arm64'], cached: ImageCacheState.READY, image: `registry.example/codex@sha256:${'a'.repeat(64)}` };
 
@@ -59,4 +59,15 @@ it('launches a ready app directly and stops on preparation failure', async () =>
   actions.pullImage.mockRejectedValueOnce(Error('offline'));
   await expect(startImageSession({ ...image, cached: ImageCacheState.MISSING }, true, actions)).rejects.toThrow('offline');
   expect(actions.launch).not.toHaveBeenCalled();
+});
+
+it('marks only a service-proven previous image with missing selected bytes as updated', () => {
+  const prior = { ...image, previous_image: `registry.example/codex@sha256:${'b'.repeat(64)}` };
+  for (const cached of [ImageCacheState.MISSING, ImageCacheState.PARTIAL]) {
+    expect(imageHasUpdate({ ...prior, cached })).toBe(true);
+    expect(imageHasUpdate({ ...image, cached })).toBe(false);
+  }
+  expect(imageHasUpdate(prior)).toBe(false);
+  expect(imageHasUpdate({ ...prior, cached: ImageCacheState.UNKNOWN })).toBe(false);
+  expect(imageHasUpdate({ ...prior, cached: ImageCacheState.MISSING, previous_image: image.image })).toBe(false);
 });

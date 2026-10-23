@@ -39,3 +39,8 @@ export async function startImageSession(image: ImageInfo, runtimeReady: boolean,
   if (image.cached !== ImageCacheState.READY) await actions.pullImage(image.image);
   await actions.launch();
 }
+
+export function imageHasUpdate(image: ImageInfo): boolean {
+  return Boolean(image.image && image.previous_image && image.previous_image !== image.image &&
+    (image.cached === ImageCacheState.MISSING || image.cached === ImageCacheState.PARTIAL));
+}
