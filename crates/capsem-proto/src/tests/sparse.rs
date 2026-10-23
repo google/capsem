@@ -35,8 +35,11 @@ fn named_msgpack_omits_default_fields_and_restores_them_on_decode() {
         process_name: None,
     };
     let frame = encode_dns_request(&req).unwrap();
-    let fields: std::collections::BTreeMap<String, Option<serde::de::IgnoredAny>> =
-        rmp_serde::from_slice(&frame[4..]).unwrap();
+    #[derive(serde::Deserialize)]
+    enum Envelope {
+        Query(std::collections::BTreeMap<String, Option<serde::de::IgnoredAny>>),
+    }
+    let Envelope::Query(fields) = rmp_serde::from_slice(&frame[4..]).unwrap();
     assert!(!fields.contains_key("id"));
     assert!(!fields.contains_key("process_name"));
     assert_eq!(decode_dns_request(&frame[4..]).unwrap(), req);

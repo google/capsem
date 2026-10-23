@@ -690,7 +690,8 @@ pub struct DnsResponse {
 
 /// Encode a `DnsRequest` into a length-prefixed RMP frame.
 pub fn encode_dns_request(req: &DnsRequest) -> Result<Vec<u8>> {
-    let payload = rmp_serde::to_vec_named(req).context("failed to encode DnsRequest")?;
+    let payload =
+        rmp_serde::to_vec_named(&dns_session::DnsSessionMessage::Query(req)).context("failed to encode DnsRequest")?;
     let len = payload.len() as u32;
     let mut frame = Vec::with_capacity(4 + payload.len());
     frame.extend_from_slice(&len.to_be_bytes());
@@ -700,7 +701,10 @@ pub fn encode_dns_request(req: &DnsRequest) -> Result<Vec<u8>> {
 
 /// Decode a `DnsRequest` from an RMP payload (without the length prefix).
 pub fn decode_dns_request(payload: &[u8]) -> Result<DnsRequest> {
-    rmp_serde::from_slice(payload).context("failed to decode DnsRequest")
+    match dns_session::decode_dns_session_message(payload)? {
+        dns_session::DnsSessionMessage::Query(request) => Ok(request),
+        dns_session::DnsSessionMessage::Cancel(_) => bail!("DNS cancellation is not a query"),
+    }
 }
 
 /// Encode a `DnsResponse` into a length-prefixed RMP frame.

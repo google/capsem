@@ -10,12 +10,20 @@ fn cancellation_names_one_nonzero_query_and_cannot_be_decoded_as_a_query() {
         matches!(decode_dns_session_message(&frame[4..]).unwrap(), DnsSessionMessage::Cancel(value) if value == cancel)
     );
     assert!(crate::decode_dns_request(&frame[4..]).is_err());
-    let zero = rmp_serde::to_vec_named(&serde_json::json!({"cancel_query_id":0})).unwrap();
+    #[derive(Serialize)]
+    struct InvalidCancellation {
+        cancel_query_id: u32,
+    }
+    #[derive(Serialize)]
+    enum InvalidMessage {
+        Cancel(InvalidCancellation),
+    }
+    let zero = rmp_serde::to_vec_named(&InvalidMessage::Cancel(InvalidCancellation { cancel_query_id: 0 })).unwrap();
     assert!(decode_dns_session_message(&zero).is_err());
 }
 
 #[test]
-fn existing_queries_keep_their_wire_bytes_and_decode_as_queries() {
+fn query_frames_are_explicitly_typed_and_borrow_original_bytes() {
     let request = crate::DnsRequest {
         id: 19,
         raw: vec![1, 2, 3],
@@ -26,6 +34,9 @@ fn existing_queries_keep_their_wire_bytes_and_decode_as_queries() {
     assert!(
         matches!(decode_dns_session_message(&frame[4..]).unwrap(), DnsSessionMessage::Query(value) if value == request)
     );
-    let legacy = rmp_serde::to_vec_named(&serde_json::json!({"raw":[], "proto":"udp"})).unwrap();
-    assert!(matches!(decode_dns_session_message(&legacy).unwrap(), DnsSessionMessage::Query(value) if value.id == 0));
+    let untyped = rmp_serde::to_vec_named(&request).unwrap();
+    assert!(
+        decode_dns_session_message(&untyped).is_err(),
+        "untyped legacy envelopes must fail closed"
+    );
 }

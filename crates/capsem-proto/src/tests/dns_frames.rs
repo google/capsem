@@ -74,12 +74,11 @@ fn decode_dns_response_garbage_fails() {
 
 #[test]
 fn dns_envelope_is_disjoint_from_ipc_frames() {
-    // The DNS envelope is a freestanding RMP-encoded struct (NOT a
-    // tagged-enum like HostToGuest / GuestToHost). It must NOT
-    // accidentally trip the looks_like_ipc_frame heuristic, otherwise
+    // The DNS envelope has its own typed variants. It must NOT
+    // accidentally trip the control-channel IPC heuristic, otherwise
     // a stray DNS frame leaked to a tty would be mis-flagged as a
     // control-channel leak. Spot-check that an encoded DnsRequest
-    // does NOT match the fixmap[1] / fixmap[2] enum-frame shape.
+    // does NOT match a control-channel variant.
     let req = DnsRequest {
         id: 0,
         raw: vec![0u8; 12],
@@ -114,21 +113,13 @@ fn dns_correlation_id_round_trips_in_both_directions() {
     assert_eq!(decode_dns_response(&frame[4..]).unwrap().id, u32::MAX);
 }
 
-/// A peer built before the correlation id existed sends frames without it;
-/// they decode with id 0, the value that means "answer in lock-step".
 #[test]
-fn dns_frames_without_a_correlation_id_decode_as_id_zero() {
+fn dns_queries_refuse_untyped_envelopes() {
     #[derive(serde::Serialize)]
     struct LegacyRequest {
         raw: Vec<u8>,
         proto: String,
         process_name: Option<String>,
-    }
-    #[derive(serde::Serialize)]
-    struct LegacyResponse {
-        raw: Vec<u8>,
-        decision: String,
-        rcode: u16,
     }
     let payload = rmp_serde::to_vec_named(&LegacyRequest {
         raw: vec![7],
@@ -136,14 +127,5 @@ fn dns_frames_without_a_correlation_id_decode_as_id_zero() {
         process_name: None,
     })
     .unwrap();
-    let req = decode_dns_request(&payload).unwrap();
-    assert_eq!((req.id, req.raw.as_slice(), req.proto.as_str()), (0, &[7][..], "tcp"));
-    let payload = rmp_serde::to_vec_named(&LegacyResponse {
-        raw: vec![8],
-        decision: "denied".into(),
-        rcode: 3,
-    })
-    .unwrap();
-    let resp = decode_dns_response(&payload).unwrap();
-    assert_eq!((resp.id, resp.rcode), (0, 3));
+    assert!(decode_dns_request(&payload).is_err());
 }
