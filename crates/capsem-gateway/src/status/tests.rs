@@ -248,6 +248,7 @@ use crate::AppState;
 
 fn test_vm(id: &str, name: Option<&str>, status: VmLifecycleState, persistent: bool) -> VmSummary {
     VmSummary {
+        cost_coverage: None,
         app: None,
         browser_request: None,
         terminal: None,
@@ -718,6 +719,7 @@ async fn fetch_status_passes_through_telemetry() {
                     "ram_mb": 2048, "cpus": 2,
                     "uptime_secs": 120, "total_input_tokens": 3000,
                     "total_output_tokens": 1000, "total_estimated_cost": 0.99,
+                    "cost_coverage": {"priced_calls":2,"unpriced_calls":4,"unknown_calls":0},
                     "total_tool_calls": 10, "model_call_count": 5,
                     "available_actions": ["pause", "stop", "fork", "delete"]
                 }]
@@ -734,6 +736,7 @@ async fn fetch_status_passes_through_telemetry() {
     assert_eq!(vm.total_input_tokens, Some(3000));
     assert_eq!(vm.total_output_tokens, Some(1000));
     assert_eq!(vm.total_estimated_cost, Some(0.99));
+    assert_eq!(vm.cost_coverage.as_ref().unwrap().unpriced_calls, 4);
     assert_eq!(vm.total_tool_calls, Some(10));
     assert_eq!(vm.model_call_count, Some(5));
     assert_eq!(vm.total_file_events, None);

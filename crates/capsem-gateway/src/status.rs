@@ -129,6 +129,8 @@ struct SessionInfo {
     #[serde(default)]
     total_estimated_cost: Option<f64>,
     #[serde(default)]
+    cost_coverage: Option<capsem_api::CostCoverage>,
+    #[serde(default)]
     total_tool_calls: Option<u64>,
     #[serde(default)]
     total_requests: Option<u64>,
@@ -201,6 +203,7 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
             total_input_tokens: sess.total_input_tokens,
             total_output_tokens: sess.total_output_tokens,
             total_estimated_cost: sess.total_estimated_cost,
+            cost_coverage: sess.cost_coverage.clone(),
             total_tool_calls: sess.total_tool_calls,
             total_requests: sess.total_requests,
             allowed_requests: sess.allowed_requests,
