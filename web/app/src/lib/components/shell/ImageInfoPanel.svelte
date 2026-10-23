@@ -41,7 +41,7 @@
           {#if evidence}
             <p class="mt-1 break-all text-xs font-mono text-muted-foreground-1">{evidence.reference}</p>
             <button type="button" class="mt-2 text-xs text-primary hover:underline" onclick={()=>copy(evidence.reference)}>{copied===evidence.reference?'Copied':'Copy artifact reference'}</button>
-          {:else}<p class="mt-1 text-xs text-muted-foreground-1">Not published for this image.</p>{/if}
+          {:else}<p class="mt-1 text-xs text-muted-foreground-1">{image.app ? 'Not published for this image.' : 'Not provided by this service.'}</p>{/if}
         </div>
       {/each}
     </section>

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Distinguish unavailable image evidence metadata from artifacts confirmed absent
+  by the service in the app Info panel.
+
 - Include the shared shell, Git, GitHub CLI and code-search toolkit in every
   application image, with pinned downloads and recorded installed versions.
 
