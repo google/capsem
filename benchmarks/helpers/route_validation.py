@@ -15,6 +15,7 @@ from pydantic import TypeAdapter
 
 from .route_binary import validate_full_event
 from .route_cases import RouteCase
+from .route_diagnostics import expected_payload
 from .route_fixtures import MARKER, corpus_config
 
 
@@ -41,16 +42,20 @@ def _schemas() -> dict[str, TypeAdapter]:
         from capsem.models.mcp_servers_list_response import McpServersListResponse
         from capsem.models.mcp_tools_list_response import McpToolsListResponse
         from capsem.models.network_info import NetworkInfo
+        from capsem.models.panics_response import PanicsResponse
         from capsem.models.provision_response import ProvisionResponse
         from capsem.models.sandbox_info import SandboxInfo
         from capsem.models.security_ask_list_response import SecurityAskListResponse
         from capsem.models.stop_response import StopResponse
         from capsem.models.timeline_response import TimelineResponse
+        from capsem.models.triage_response import TriageResponse
         from capsem.models.vm_action_response import VmActionResponse
         from capsem.models.vm_stats_detail_response import VmStatsDetailResponse
         from capsem.models.vm_stats_summary_response import VmStatsSummaryResponse
         return {path: TypeAdapter(model) for path, model in {
             "/images": ImageListResponse,
+            "/panics": PanicsResponse,
+            "/triage": TriageResponse,
             "/vms/create": ProvisionResponse,
             "/vms/{id}/exec": ExecResponse,
             "/vms/{id}/fork": ForkResponse,
@@ -112,7 +117,9 @@ def plugin_info(payload: dict, expected: str | None = None) -> None:
 def validate_case(case: RouteCase, payload, live_id: str | None, network_id: str | None = None) -> None:
     """Reject a fast empty/error response before any timed request."""
     path = case.path
-    if path == "/vms/{id}/bodies/{event_id}" and case.case == "complete-recorded-body":
+    if path in {"/panics", "/triage"}:
+        assert payload == expected_payload(path, case.query), "diagnostic corpus fields/order differ"
+    elif path == "/vms/{id}/bodies/{event_id}" and case.case == "complete-recorded-body":
         validate_full_event(payload)
     elif path == "/networks/{id}":
         assert network_id is not None and payload["id"] == network_id

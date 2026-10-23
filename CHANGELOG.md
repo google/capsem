@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add populated synthetic-log diagnostics and finite owned empty-network benchmark
+  cases with strict status receipts, independent retirement checks and retained
+  audit-history validation; these do not claim real crash or native timing proof.
+
 - Benchmark six owned VM lifecycle operations with finite strict request samples and separate verified workload/process/path completion; native measurement remains required.
 
 - Add finite host-only settings and policy mutation benchmark cases with exact

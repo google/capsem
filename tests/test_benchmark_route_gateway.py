@@ -32,7 +32,7 @@ def test_gateway_only_cases_are_explicit_and_never_selected_for_service() -> Non
     cases = measured_cases()
     owned = [case for case in cases if case.target_scope == "gateway"]
     assert {case.path: case.response for case in owned} == GATEWAY_RESPONSES
-    assert len(cases) == 65 and len({(case.method, case.path) for case in cases}) == 59
+    assert len(cases) == 71 and len({(case.method, case.path) for case in cases}) == 61
     for case in owned:
         assert not case.supports_target("service") and case.supports_target("gateway")
         assert not case.live and "{" not in case.resolve(None)
@@ -123,6 +123,7 @@ def test_main_emits_only_gateway_series_for_gateway_owned_cases(monkeypatch, tmp
         "psutil": SimpleNamespace(Process=lambda pid: pid),
         "collect_policy": lambda *_: {},
         "collect_lifecycle": lambda *_: {},
+        "collect_networks": lambda *_: {},
         "collect_images": lambda *_: {},
         "clone_benchmark_assets": lambda *_: tmp_path,
         "seed_stopped_workspace": lambda *_, **__: None,

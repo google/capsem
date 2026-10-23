@@ -13,6 +13,7 @@ from helpers.stopped_workspace import BODY_URL, assert_event_bodies
 from psutil import Process
 
 from .route_binary import validate_archive, validate_file, validate_full_event
+from .route_diagnostics import validate_response as validate_diagnostics
 from .route_gateway import GATEWAY_RESPONSES, validate_gateway
 from .route_measurements import validate_receipt
 
@@ -71,6 +72,9 @@ def request(transport: Transport, target: Target, path: str, response: str = "js
     if response in {"binary", "warc"}:
         (validate_archive(body, receipt.headers) if response == "warc" else validate_file(path, body, receipt.headers))
         return receipt
+    if response == "diagnostics":
+        validate_diagnostics(path, body)
+        return receipt
     if response == "text":
         assert body.decode("utf-8"), "empty text response"
         return receipt
@@ -103,7 +107,7 @@ def service_target(service, label: str) -> Target:
                   service_socket=str(service.uds_path))
 
 
-def json_request(transport, target: Target, method: str, path: str, body, *, timeout: float, maximum: int):
+def json_request(transport, target: Target, method: str, path: str, body, *, timeout: float, maximum: int, expected_status: int = 200):
     """Finite mutations reuse the existing strict single-attempt HTTP owner."""
     headers = {**target.headers, "Accept": "application/json"}
     if body is not None:
@@ -112,6 +116,6 @@ def json_request(transport, target: Target, method: str, path: str, body, *, tim
         body=None if body is None else json.dumps(body).encode(),
         timeout=timeout, max_response_bytes=maximum)
     validate_receipt(result)
-    if result.status != 200:
+    if result.status != expected_status:
         raise ValueError(f"{method} {path} refused with HTTP {result.status}")
     return result, json.loads(result.body)

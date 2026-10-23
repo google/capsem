@@ -36,7 +36,7 @@ def validate(registered: set[str], coverage: dict) -> None:
         assert entry["cases"] and (ROOT / "benchmarks/collectors/stream").exists(), RATIONALE
         for case in entry["cases"].values():
             assert case["sample_key"] and case["metrics"], RATIONALE
-    for domain in ("images", "policy", "lifecycle"):
+    for domain in ("images", "policy", "lifecycle", "networks"):
         finite = coverage.get(domain, {}).get("endpoints", {})
         assert not (measured & set(finite)), RATIONALE
         for entry in finite.values():
@@ -84,7 +84,7 @@ def test_gateway_method_topology_matches_service() -> None:
 
 
 def test_unmeasured_operations_remain_explicit_debt() -> None:
-    assert len(config()["unmeasured"]) <= 38, RATIONALE
+    assert len(config()["unmeasured"]) <= 34, RATIONALE
     assert len(config()["internal"]) == 7, RATIONALE
 
 
@@ -130,7 +130,7 @@ def test_gateway_owned_method_additions_cannot_hide_behind_proxy_inventory(monke
 
 @pytest.mark.parametrize("operation,owner", [
     ("POST /proxies", "tests/ironbank/test_standalone_proxy.py"),
-    ("POST /networks", "tests/ironbank/test_managed_network_lifecycle.py"),
+    ("PUT /networks/{id}/members/{vm_id}", "tests/ironbank/test_managed_network_lifecycle.py"),
     ("POST /restart", "tests/ironbank/test_sdk_restart.py"),
 ])
 def test_mutation_debt_keeps_its_domain_fixture_owner(operation: str, owner: str) -> None:
@@ -201,4 +201,22 @@ def test_lifecycle_bindings_are_six_finite_mutations_and_keep_debt():
     coverage = copy.deepcopy(config())
     coverage['measured'].append({'method': 'POST', 'path': '/vms/create', 'case': 'fake-concurrent-create'})
     with pytest.raises(AssertionError):
+        validate(registered_operations(), coverage)
+
+
+def test_finite_empty_network_and_synthetic_diagnostics_bind_exact_four_operations():
+    import copy
+    coverage = copy.deepcopy(config())
+    assert set(coverage['networks']['endpoints']) == {'POST /networks', 'DELETE /networks/{id}'}, RATIONALE
+    diagnostics = [case for case in coverage['measured'] if case.get('response') == 'diagnostics']
+    assert len(diagnostics) == 6 and {case['path'] for case in diagnostics} == {'/panics', '/triage'}, RATIONALE
+    assert {case['case'] for case in diagnostics} == {'synthetic-populated', 'synthetic-limited', 'synthetic-later-since'}, RATIONALE
+    assert {'GET /networks/{id}/logs', 'PUT /networks/{id}/members/{vm_id}', 'DELETE /networks/{id}/members/{vm_id}'} <= set(coverage['unmeasured']), RATIONALE
+    operations = measured_operations(coverage) | set(coverage['streaming'])
+    for domain in ('images', 'policy', 'lifecycle', 'networks'):
+        operations |= set(coverage[domain]['endpoints'])
+    assert len(operations) == 82 and len(coverage['unmeasured']) == 34, RATIONALE
+    assert len(coverage['internal']) == 7 and len(coverage['unmeasured_cases']) == 11, RATIONALE
+    del coverage['networks']['endpoints']['POST /networks']
+    with pytest.raises(AssertionError, match='POST /networks'):
         validate(registered_operations(), coverage)

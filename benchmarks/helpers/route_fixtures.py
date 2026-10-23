@@ -66,3 +66,9 @@ def network_fixture(service):
     finally:
         deleted = client.delete(f"/networks/{network_id}")
         assert deleted["success"] is True, "network fixture teardown failed"
+
+
+def seed_diagnostics(service, cfg):
+    """Static app JSONL is separate from every active host log writer."""
+    from .route_diagnostics import seed
+    seed(service, cfg['diagnostics'])

@@ -15,6 +15,7 @@ from pydantic import Field, PositiveFloat, PositiveInt, field_validator
 
 from .benchmarkimageschema import ImageRouteConfig
 from .benchmarklifecycleschema import LifecycleRouteConfig
+from .benchmarknetworkschema import DiagnosticCorpusConfig, NetworkRouteConfig
 from .benchmarkpolicyschema import PolicyRouteConfig
 from .benchmarkstreamschema import StreamConfig, StreamEndpointEvidence
 from .configschema import Strict
@@ -28,7 +29,7 @@ class RouteCaseConfig(Strict):
     case: str
     parameters: dict[str, str] = Field(default_factory=dict)
     query: dict[str, str | int] = Field(default_factory=dict)
-    response: Literal["json", "text", "binary", "warc", "health", "openapi", "html", "javascript"] = "json"
+    response: Literal["json", "text", "binary", "warc", "health", "openapi", "html", "javascript", "diagnostics"] = "json"
     target_scope: Literal["both", "gateway"] = "both"
     samples: PositiveInt | None = None
     load_requests: PositiveInt | None = None
@@ -58,6 +59,7 @@ class RouteCorpusConfig(Strict):
     file_depth: PositiveInt
     mcp_tools: tuple[str, ...]
     network_name: str
+    diagnostics: DiagnosticCorpusConfig
 
 
 class RouteCoverageConfig(Strict):
@@ -68,6 +70,7 @@ class RouteCoverageConfig(Strict):
     images: ImageRouteConfig
     policy: PolicyRouteConfig
     lifecycle: LifecycleRouteConfig
+    networks: NetworkRouteConfig
     unmeasured: dict[str, RouteDebtConfig]
     internal: dict[str, RouteDebtConfig]
     unmeasured_cases: dict[str, RouteDebtConfig]
