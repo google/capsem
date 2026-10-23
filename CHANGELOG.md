@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Strip terminal control characters from TUI metadata and status labels while
+  preserving the parsed guest terminal stream.
+
 - Use a terminal-only app picker in the TUI and expose an agent manager through
   Alt+M or Alt+0, with session actions and structured terminal activity.
 

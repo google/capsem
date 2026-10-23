@@ -1,4 +1,6 @@
 mod snapshots;
+#[cfg(test)]
+mod tests;
 use snapshots::buffer_to_svg;
 mod create;
 mod manager;
@@ -316,7 +318,10 @@ fn render_terminal_surface(frame: &mut Frame<'_>, area: Rect, state: &AppState, 
         .collect::<Vec<_>>();
     if lines.is_empty() {
         let status = terminal.status_for(active_id).unwrap_or("waiting for terminal");
-        lines.push(Line::from(Span::styled(format!(" {status}"), muted_style())));
+        lines.push(Line::from(Span::styled(
+            format!(" {}", truncate(status, 512)),
+            muted_style(),
+        )));
     }
     frame.render_widget(Paragraph::new(lines), area);
 }
@@ -324,7 +329,10 @@ fn render_terminal_surface(frame: &mut Frame<'_>, area: Rect, state: &AppState, 
 fn render_waiting_terminal_surface(frame: &mut Frame<'_>, area: Rect, session: &SessionSummary) {
     let lines = vec![Line::from(vec![
         Span::styled("connecting terminal ", muted_style()),
-        Span::styled(session.title.clone(), muted_style().add_modifier(Modifier::BOLD)),
+        Span::styled(
+            truncate(&session.title, 120),
+            muted_style().add_modifier(Modifier::BOLD),
+        ),
     ])];
     frame.render_widget(Paragraph::new(lines).alignment(Alignment::Center), area);
 }
@@ -332,7 +340,7 @@ fn render_waiting_terminal_surface(frame: &mut Frame<'_>, area: Rect, session: &
 fn render_inactive_session_surface(frame: &mut Frame<'_>, area: Rect, session: &SessionSummary) {
     let mut lines = vec![
         Line::from(Span::styled(
-            session.title.clone(),
+            truncate(&session.title, 120),
             muted_style().add_modifier(Modifier::BOLD),
         )),
         Line::from(Span::styled(inactive_session_label(session.lifecycle), muted_style())),
@@ -625,24 +633,24 @@ fn logo_line() -> Line<'static> {
 }
 
 fn overlay_line(text: &str) -> Line<'static> {
-    Line::from(Span::styled(text.to_string(), status_base_style()))
+    Line::from(Span::styled(truncate(text, 512), status_base_style()))
 }
 
 fn focus_line(text: &str) -> Line<'static> {
-    Line::from(Span::styled(text.to_string(), focus_style()))
+    Line::from(Span::styled(truncate(text, 512), focus_style()))
 }
 
 fn overlay_pair(label: &'static str, value: &str) -> Line<'static> {
     Line::from(vec![
         Span::styled(format!("{label:>8}  "), muted_style()),
-        Span::styled(value.to_string(), status_base_style()),
+        Span::styled(truncate(value, 512), status_base_style()),
     ])
 }
 
 fn focus_pair(label: &'static str, value: &str) -> Line<'static> {
     Line::from(vec![
         Span::styled(format!("{label:>8}  "), muted_style()),
-        Span::styled(value.to_string(), focus_style()),
+        Span::styled(truncate(value, 512), focus_style()),
     ])
 }
 
@@ -910,7 +918,7 @@ fn format_cost_amount(cost_micros: u64) -> String {
 }
 
 fn truncate(value: &str, max_chars: usize) -> String {
-    let mut chars = value.chars();
+    let mut chars = value.chars().filter(|ch| !ch.is_control());
     let truncated = chars.by_ref().take(max_chars).collect::<String>();
     if chars.next().is_some() {
         format!("{truncated}...")
