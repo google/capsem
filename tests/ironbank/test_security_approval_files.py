@@ -30,7 +30,7 @@ def prepare(service, client, vm_id, action):
         service,
         "ask_native_file",
         action="ask",
-        priority=-100,
+        priority=0,
         match=f'file.{action}.path.endsWith("{NAME}")',
     )
     return seed["vm_path"]
