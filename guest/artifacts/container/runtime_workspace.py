@@ -8,8 +8,11 @@ directory descriptors, no-follow opens and exclusive destination creation.
 import contextlib
 import errno
 import os
+import runpy
 import stat
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
+
+_userns = runpy.run_path(str(Path(__file__).with_name("runtime_userns.py")))
 
 POLICY = "antigravity-scratch-v1"
 LABEL = "org.capsem.workspace.policy"
@@ -50,7 +53,7 @@ def enabled(image, workspace):
 def workspace_user(image, workspace, requested, user):
     if requested not in (None, "image_user"):
         raise ValueError("unsupported workspace owner policy")
-    return user if requested == "image_user" or enabled(image, workspace) else None
+    return user if requested == "image_user" else None
 
 
 def alias_mounts(image, workspace, source, stage):
@@ -221,34 +224,25 @@ def copy_tree(source, destination, budget, owner, depth=0):
     os.fsync(destination)
 
 
-def copy_as_owner(source, destination, maximum, owner):
+def copy_as_owner(source, destination, maximum, owner, id_map=None):
+    if id_map is not None:
+        def copy():
+            # Refresh metadata as the actual namespace-relative caller before
+            # permission checks on a previously root-opened directory handle.
+            os.fstat(destination)
+            copy_tree(source, destination, Budget(maximum), None)
+        _userns["run_as_user"](id_map, owner, copy)
+        return
     if owner is None:
         copy_tree(source, destination, Budget(maximum), None)
         return
-    if os.geteuid() != 0:
-        if owner != (os.geteuid(), os.getegid()):
-            raise ValueError("scratch import requires the image user")
+    if owner == (os.geteuid(), os.getegid()):
         copy_tree(source, destination, Budget(maximum), None)
         return
-    # Use the actual workload caller through the existing idmapped view.
-    # Root-created files can have different owners on caller-owned VirtioFS.
-    child = os.fork()
-    if child == 0:
-        status = 1
-        try:
-            os.setgroups([])
-            os.setgid(owner[1])
-            os.setuid(owner[0])
-            copy_tree(source, destination, Budget(maximum), None)
-            status = 0
-        finally:
-            os._exit(status)
-    _, status = os.waitpid(child, 0)
-    if status != 0:
-        raise ValueError("scratch import failed as the image user")
+    raise ValueError("scratch import requires the workload user namespace")
 
 
-def import_scratch(home, workspace, receipts, owner=None, max_bytes=256 * 1024 * 1024):
+def import_scratch(home, workspace, receipts, owner=None, max_bytes=256 * 1024 * 1024, id_map=None):
     with directory(None, receipts) as state:
         try:
             marker = os.open(POLICY, FILE_FLAGS, dir_fd=state)
@@ -271,7 +265,7 @@ def import_scratch(home, workspace, receipts, owner=None, max_bytes=256 * 1024 *
                     directory(source, name, owner, create=True)
                 )
             with directory(None, workspace) as destination:
-                copy_as_owner(source, destination, max_bytes, owner)
+                copy_as_owner(source, destination, max_bytes, owner, id_map)
         marker = os.open(
             POLICY,
             os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,

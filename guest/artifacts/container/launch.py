@@ -1021,7 +1021,7 @@ def run(stage, detached=False):
             user = config["process"]["user"]
             workspace_mappings(id_map, user)  # Reject identities outside the existing map.
             owner = tuple(id_map["hostID"] + user[key] for key in ("uid", "gid"))
-            _workspace["import_scratch"](volume_dir(_workspace["HOME"]), WORKSPACE_VIEW, LAYER, owner)
+            _workspace["import_scratch"](volume_dir(_workspace["HOME"]), WORKSPACE_VIEW, LAYER, owner, id_map=id_map)
         config_path.write_text(json.dumps(config))
         (RUNTIME / "resolv.conf").write_text(resolv_conf())
         (RUNTIME / "hosts").write_text(hosts_file())

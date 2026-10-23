@@ -12,8 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preserve active OCI image generations and their lock files during cache
   retention instead of treating hidden lease controls as removable payloads.
 
-- Give the image-declared Antigravity scratch workspace its existing image-user
-  mapping on every backend, without changing physical workspace permissions.
+- Import Antigravity scratch files as the actual workload user namespace,
+  preserving private file modes and each backend's workspace ownership mapping.
 
 - Pack app-image EROFS with its declared tool platform when rebuilding AMD64
   images on an ARM64 host.

@@ -218,10 +218,13 @@ def test_directory_enumeration_stops_at_the_remaining_entry_budget(monkeypatch):
     assert len(visits) == 3
 
 
-def test_alias_selects_the_image_user_for_existing_idmap_on_every_backend():
+def test_alias_preserves_backend_owned_workspace_metadata_mapping():
     user = {"uid": 1000, "gid": 1000}
     choose = module()["workspace_user"]
-    assert choose(policy(), "/workspace", None, user) == user
+    # Apple's daemon reflects caller-namespace ids; KVM reports stable root.
+    # Rotating caller-relative uid1000 makes it workload uid999.
+    assert choose(policy(), "/workspace", None, user) is None
+    assert choose(policy(), "/workspace", "image_user", user) == user
     assert choose({"config": {}}, "/workspace", None, user) is None
     assert choose({"config": {}}, "/workspace", "image_user", user) == user
     with pytest.raises(ValueError, match="owner policy"):

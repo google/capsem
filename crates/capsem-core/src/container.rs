@@ -104,6 +104,10 @@ pub const LAUNCHER_FILES: &[(&str, &[u8])] = &[
         include_bytes!("../../../guest/artifacts/container/runtime_terminal.py"),
     ),
     (
+        "runtime_userns.py",
+        include_bytes!("../../../guest/artifacts/container/runtime_userns.py"),
+    ),
+    (
         "runtime_workspace.py",
         include_bytes!("../../../guest/artifacts/container/runtime_workspace.py"),
     ),
