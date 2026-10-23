@@ -488,7 +488,7 @@ impl App {
             self.pending_action = None;
             self.overlay = AppOverlay::None;
         }
-        if self.state.sessions.is_empty() && self.overlay == AppOverlay::None {
+        if self.state.sessions.is_empty() && self.overlay == AppOverlay::None && self.pending_focus_session.is_none() {
             self.open_create();
         }
     }

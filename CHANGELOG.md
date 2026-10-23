@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Keep TUI keyboard input in the newly created session when a stale empty
+  session refresh arrives during the handoff to its terminal.
+
 - Refresh bundled model prices from October 23 upstream data and add Google's
   published, dated Gemini 4 Argon API rates. Unverified internal trial models
   continue to show unknown cost.

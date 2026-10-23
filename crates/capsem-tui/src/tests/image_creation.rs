@@ -1,6 +1,39 @@
 use super::*;
 
 #[test]
+fn successful_create_waits_for_its_session_through_stale_empty_refreshes() {
+    let mut empty = fixture_state();
+    let mut created = empty.sessions[0].clone();
+    empty.sessions.clear();
+    empty.active_session_id.clear();
+    let mut app = App::new(empty.clone());
+    let generation = app.take_catalog_request().unwrap();
+    app.apply_image_catalog(generation, Ok(catalog()));
+    assert!(matches!(
+        app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
+        AppAction::Invoke(ControlAction::CreateSession { .. })
+    ));
+    app.replace_state(empty.clone());
+    app.complete_create(true);
+    app.focus_session_when_available("created-id");
+    app.replace_state(empty.clone());
+    assert_eq!(
+        app.overlay(),
+        AppOverlay::None,
+        "a stale empty poll must not reopen creation"
+    );
+    created.id = "created-id".into();
+    empty.sessions.push(created);
+    app.replace_state(empty);
+    assert_eq!(app.overlay(), AppOverlay::None);
+    assert_eq!(app.state().active_session_id, "created-id");
+    assert_eq!(
+        app.handle_key(key(KeyCode::Char('p'), KeyModifiers::NONE)),
+        AppAction::Forward
+    );
+}
+
+#[test]
 fn image_picker_excludes_graphical_and_unknown_surfaces_and_refuses_default_create() {
     let mut app = App::new(fixture_state());
     app.handle_key(key(KeyCode::Char('n'), KeyModifiers::ALT));
