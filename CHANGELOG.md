@@ -188,6 +188,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Show a compact toolbar notice when the service confirms a newer Capsem version,
   with a direct action to review its update status.
+- Preserve the original HTTP approval identity in completed network telemetry,
+  so request review and final security records describe the same operation.
+
 - Hold original guest file exports for scoped approval without repeating reads;
   caller cancellation and session shutdown discard held bytes safely.
 

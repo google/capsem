@@ -19,6 +19,8 @@ use crate::net::policy_config::{
 };
 
 pub mod approval;
+mod boundary_evaluation;
+pub use boundary_evaluation::SecurityBoundaryEvaluation;
 mod builtin_actions;
 mod container;
 mod credential_grants;
@@ -531,13 +533,6 @@ pub struct SecurityRuleEmission {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SecurityBoundaryEvaluation {
-    pub event: SecurityEvent,
-    pub enforcement: SecurityEnforcementDecision,
-    pub matched_rule_count: usize,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SecurityEnforcementDecision {
     pub action: SecurityEnforcementAction,
     pub rule_id: Option<String>,
@@ -740,6 +735,7 @@ fn evaluate_security_boundary_with_registry(
     apply_event_decision_to_enforcement(&event, &mut enforcement);
 
     Ok(SecurityBoundaryEvaluation {
+        approval_event_id: None,
         event,
         enforcement,
         matched_rule_count: evaluation.matched_rules().len(),

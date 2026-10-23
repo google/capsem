@@ -147,29 +147,6 @@ pub(super) fn response_body_capture_limit(
     }
 }
 
-#[derive(Clone, Debug, Default)]
-pub(super) struct SecurityBoundaryDecisionFields {
-    pub(super) policy_mode: Option<String>,
-    pub(super) policy_action: Option<String>,
-    pub(super) policy_rule: Option<String>,
-    pub(super) policy_reason: Option<String>,
-}
-
-impl SecurityBoundaryDecisionFields {
-    pub(super) fn from_enforcement(decision: &crate::security_engine::SecurityEnforcementDecision) -> Self {
-        Self {
-            policy_mode: Some("enforce".to_string()),
-            policy_action: Some(decision.action.as_str().to_string()),
-            policy_rule: decision.rule_id.clone(),
-            policy_reason: decision.reason.clone(),
-        }
-    }
-
-    pub(super) fn matched_rule(&self, fallback: String) -> String {
-        self.policy_rule.clone().unwrap_or(fallback)
-    }
-}
-
 pub(super) fn ai_identity_for_target_or_path(
     registry: &crate::net::policy_config::ModelEndpointRegistry,
     domain: &str,

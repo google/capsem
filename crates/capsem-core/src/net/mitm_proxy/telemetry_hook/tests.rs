@@ -148,6 +148,7 @@ fn anthropic_req_ctx() -> TelemetryRequestContext {
         max_response_body_capture: 4096,
         port: 443,
         conn_type: "https-mitm",
+        approval_event_id: None,
         policy_mode: None,
         policy_action: None,
         policy_rule: None,
@@ -868,6 +869,7 @@ async fn chunk_counting_with_seeded_context() {
     assert_eq!(stats.preview, b"hello world");
 }
 
+mod approval;
 /// The credential-broker and security-rule ledger writes.
 ///
 /// Their own module because they are a different kind of test from the ones

@@ -13,6 +13,8 @@
 /// 8. Emit per-request telemetry (one NetEvent per HTTP request, not per connection)
 pub mod body;
 mod config;
+mod decision_fields;
+use decision_fields::SecurityBoundaryDecisionFields;
 pub mod decompression_hook;
 pub mod events;
 mod fd_stream;
@@ -30,13 +32,13 @@ mod semantic_body;
 use request_security::{
     ai_identity_for_target_or_path, ai_protocol_for_body_preview, body_capture_limit, collected_request_body_stats,
     http_request_security_event, response_body_capture_limit, should_sniff_unknown_model_body,
-    HttpRequestSecurityEventInput, RequestBodySource, SecurityBoundaryDecisionFields,
+    HttpRequestSecurityEventInput, RequestBodySource,
 };
 pub mod spans;
 pub mod sse_parser_hook;
 pub mod telemetry_hook;
 pub mod tls_server;
-pub use tls_server::make_server_tls_config;
+pub use tls_server::{make_server_tls_config, make_upstream_tls_config};
 mod upgrade;
 mod upstream;
 mod util;
@@ -222,19 +224,6 @@ impl StandaloneModelTarget {
     pub const fn model_protocol(&self) -> ModelProtocol {
         self.model_protocol
     }
-}
-
-/// Build the upstream TLS client config (trusts standard webpki roots).
-pub fn make_upstream_tls_config() -> Arc<rustls::ClientConfig> {
-    let mut root_store = rustls::RootCertStore::empty();
-    root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    let provider = Arc::new(capsem_crypto::tls::provider());
-    let config = rustls::ClientConfig::builder_with_provider(provider)
-        .with_safe_default_protocol_versions()
-        .expect("TLS config")
-        .with_root_certificates(root_store)
-        .with_no_client_auth();
-    Arc::new(config)
 }
 
 /// Handle a single MITM proxy connection from the guest.
@@ -898,6 +887,7 @@ async fn handle_request(
             max_response_body_capture: 0,
             port: upstream_port,
             conn_type,
+            approval_event_id: policy_fields.approval_event_id.clone(),
             policy_mode: policy_fields.policy_mode.clone(),
             policy_action: policy_fields.policy_action.clone(),
             policy_rule: policy_fields.policy_rule.clone(),
@@ -1183,7 +1173,7 @@ async fn handle_request(
         observations
     };
     let credential_injections = http_evaluation.event.credential_injections.clone();
-    request_security_decision = SecurityBoundaryDecisionFields::from_enforcement(&http_evaluation.enforcement);
+    request_security_decision = request_security_decision.with_evaluation(&http_evaluation);
     if !http_evaluation.enforcement.is_allowed() {
         actions_span.record("decision", http_evaluation.enforcement.action.as_str());
         actions_span.record("status", "ok");
@@ -1217,6 +1207,7 @@ async fn handle_request(
             max_response_body_capture: max_body,
             port: upstream_port,
             conn_type,
+            approval_event_id: request_security_decision.approval_event_id.clone(),
             policy_mode: request_security_decision.policy_mode.clone(),
             policy_action: request_security_decision.policy_action.clone(),
             policy_rule: request_security_decision.policy_rule.clone(),
@@ -1274,6 +1265,7 @@ async fn handle_request(
             max_response_body_capture: max_body,
             port: upstream_port,
             conn_type,
+            approval_event_id: request_security_decision.approval_event_id.clone(),
             policy_mode: request_security_decision.policy_mode.clone(),
             policy_action: request_security_decision.policy_action.clone(),
             policy_rule: request_security_decision.policy_rule.clone(),
@@ -1365,7 +1357,7 @@ async fn handle_request(
                 ));
             }
         };
-        mcp_request_security_decision = SecurityBoundaryDecisionFields::from_enforcement(&mcp_evaluation.enforcement);
+        mcp_request_security_decision = request_security_decision.clone().with_evaluation(&mcp_evaluation);
         if !mcp_evaluation.enforcement.is_allowed() {
             mcp_span.record("decision", mcp_evaluation.enforcement.action.as_str());
             mcp_span.record("status", "ok");
@@ -1447,6 +1439,7 @@ async fn handle_request(
                 max_response_body_capture: 0,
                 port: upstream_port,
                 conn_type,
+                approval_event_id: request_security_decision.approval_event_id.clone(),
                 policy_mode: request_security_decision.policy_mode.clone(),
                 policy_action: request_security_decision.policy_action.clone(),
                 policy_rule: request_security_decision.policy_rule.clone(),
@@ -1579,7 +1572,7 @@ async fn handle_request(
                     ));
                 }
             };
-            request_security_decision = SecurityBoundaryDecisionFields::from_enforcement(&model_evaluation.enforcement);
+            request_security_decision = request_security_decision.with_evaluation(&model_evaluation);
             if !model_evaluation.enforcement.is_allowed() {
                 model_request_span.record("decision", model_evaluation.enforcement.action.as_str());
                 model_request_span.record("status", "ok");
@@ -1610,6 +1603,7 @@ async fn handle_request(
                     max_response_body_capture: 0,
                     port: upstream_port,
                     conn_type,
+                    approval_event_id: request_security_decision.approval_event_id.clone(),
                     policy_mode: request_security_decision.policy_mode.clone(),
                     policy_action: request_security_decision.policy_action.clone(),
                     policy_rule: request_security_decision.policy_rule.clone(),
@@ -2272,8 +2266,7 @@ async fn handle_request(
                 }
             };
             semantic_body::record_content_evidence(&mut content_evidence, &model_evaluation.event);
-            effective_security_decision =
-                SecurityBoundaryDecisionFields::from_enforcement(&model_evaluation.enforcement);
+            effective_security_decision = effective_security_decision.with_evaluation(&model_evaluation);
             effective_matched_rule = effective_security_decision.matched_rule(matched_rule.clone());
             if !model_evaluation.enforcement.is_allowed() {
                 model_response_span.record("decision", model_evaluation.enforcement.action.as_str());
@@ -2303,6 +2296,7 @@ async fn handle_request(
                     max_response_body_capture: 0,
                     port: upstream_port,
                     conn_type,
+                    approval_event_id: effective_security_decision.approval_event_id.clone(),
                     policy_mode: effective_security_decision.policy_mode.clone(),
                     policy_action: effective_security_decision.policy_action.clone(),
                     policy_rule: effective_security_decision.policy_rule.clone(),
@@ -2429,6 +2423,7 @@ async fn handle_request(
         max_response_body_capture: resp_max_body_capture,
         port: upstream_port,
         conn_type,
+        approval_event_id: effective_security_decision.approval_event_id.clone(),
         policy_mode: effective_security_decision.policy_mode.clone(),
         policy_action: effective_security_decision.policy_action.clone(),
         policy_rule: effective_security_decision.policy_rule.clone(),

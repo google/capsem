@@ -55,6 +55,8 @@ use capsem_telemetry::mitm as m;
 pub struct TelemetryRequestContext {
     /// Payload-free evidence from actual content enforcement, before forwarding.
     pub content_evidence: Option<Box<SecurityEvent>>,
+    /// Original HTTP approval identity, if admission required a human.
+    pub approval_event_id: Option<String>,
     /// The exact active-policy revision that admitted this request.
     pub policy_snapshot: Arc<ProxyPolicySnapshot>,
     pub domain: String,
@@ -492,7 +494,7 @@ pub fn build_net_event(req_ctx: &TelemetryRequestContext, resp_stats: &Telemetry
     };
 
     NetEvent {
-        event_id: None,
+        event_id: req_ctx.approval_event_id.clone(),
         timestamp: SystemTime::now(),
         domain: req_ctx.domain.clone(),
         port: req_ctx.port,

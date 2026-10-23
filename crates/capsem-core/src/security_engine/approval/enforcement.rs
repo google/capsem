@@ -40,6 +40,7 @@ pub(crate) async fn resolve_proxy(
         return Ok(());
     }
     let event_id = SecurityEventId::new_uuid4();
+    evaluation.approval_event_id = Some(event_id.clone());
     let ask_id = SecurityEventId::new_uuid4();
     let rule = rules
         .rules()

@@ -207,6 +207,13 @@ async fn default_rules_without_approval_authority_block_loopback_without_dialing
     assert_eq!(events[0].domain, "gateway.attacker.example");
     assert_eq!(events[0].matched_rule.as_deref(), Some(LOCAL_NETWORK));
     assert_eq!(events[0].policy_action.as_deref(), Some("block"));
+    assert_eq!(
+        events[0].policy_reason.as_deref(),
+        Some("approval denied or unavailable")
+    );
+    let asks = db.reader().unwrap().recent_security_ask_events(10).unwrap();
+    assert_eq!(asks.len(), 1);
+    assert_eq!(asks[0].rule_id, LOCAL_NETWORK);
 }
 
 /// HTTPS takes its name from SNI and always dials 443; the same guard
@@ -240,6 +247,13 @@ async fn default_rules_without_approval_authority_block_tls_metadata_address() {
     assert_eq!(events[0].domain, "metadata.attacker.example");
     assert_eq!(events[0].matched_rule.as_deref(), Some(LOCAL_NETWORK));
     assert_eq!(events[0].policy_action.as_deref(), Some("block"));
+    assert_eq!(
+        events[0].policy_reason.as_deref(),
+        Some("approval denied or unavailable")
+    );
+    let asks = db.reader().unwrap().recent_security_ask_events(10).unwrap();
+    assert_eq!(asks.len(), 1);
+    assert_eq!(asks[0].rule_id, LOCAL_NETWORK);
 }
 
 /// The dial goes to the address the rules judged. `judged.invalid` never

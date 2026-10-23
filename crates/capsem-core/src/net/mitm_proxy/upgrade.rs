@@ -104,6 +104,7 @@ pub(super) async fn handle_upgrade(
             max_response_body_capture: 0,
             port: upstream_port,
             conn_type,
+            approval_event_id: request_security_decision.approval_event_id.clone(),
             policy_mode: request_security_decision.policy_mode.clone(),
             policy_action: request_security_decision.policy_action.clone(),
             policy_rule: request_security_decision.policy_rule.clone(),
@@ -166,6 +167,7 @@ pub(super) async fn handle_upgrade(
             max_response_body_capture: 0,
             port: upstream_port,
             conn_type,
+            approval_event_id: decision.approval_event_id.clone(),
             policy_mode: decision.policy_mode.clone(),
             policy_action: decision.policy_action.clone(),
             policy_rule: decision.policy_rule.clone(),
@@ -210,7 +212,7 @@ pub(super) async fn handle_upgrade(
         Ok(evaluation) => evaluation,
         Err(error) => return Ok(make_ws_error(&error)),
     };
-    let request_security_decision = SecurityBoundaryDecisionFields::from_enforcement(&upgrade_decision.enforcement);
+    let request_security_decision = SecurityBoundaryDecisionFields::default().with_evaluation(&upgrade_decision);
     if !upgrade_decision.enforcement.is_allowed() {
         let rule_id = upgrade_decision.enforcement.rule_id.as_deref().unwrap_or("unknown");
         tracing::Span::current().record("decision", upgrade_decision.enforcement.action.as_str());
@@ -396,6 +398,7 @@ pub(super) async fn handle_upgrade(
         max_response_body_capture: 0,
         port: upstream_port,
         conn_type,
+        approval_event_id: request_security_decision.approval_event_id.clone(),
         policy_mode: request_security_decision.policy_mode.clone(),
         policy_action: request_security_decision.policy_action.clone(),
         policy_rule: request_security_decision.policy_rule.clone(),

@@ -238,6 +238,7 @@ impl Turn {
             } else {
                 "ws-mitm"
             },
+            approval_event_id: None,
             policy_mode: None,
             policy_action: None,
             policy_rule: None,

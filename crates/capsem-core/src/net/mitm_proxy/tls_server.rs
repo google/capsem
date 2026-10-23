@@ -1,4 +1,4 @@
-//! The guest-facing TLS server configuration, built once per VM.
+//! Shared TLS configurations for guest-facing and upstream connections.
 //!
 //! It used to be built per connection, with a fresh crypto provider and a
 //! resolver that also carried the connection's SNI. A `ServerConfig` owns
@@ -24,6 +24,19 @@ pub fn make_server_tls_config(ca: &Arc<CertAuthority>) -> Arc<ServerConfig> {
         .with_no_client_auth()
         .with_cert_resolver(resolver);
     config.alpn_protocols = vec![b"http/1.1".to_vec()];
+    Arc::new(config)
+}
+
+/// Build the upstream TLS client config (trusts standard webpki roots).
+pub fn make_upstream_tls_config() -> Arc<rustls::ClientConfig> {
+    let mut root_store = rustls::RootCertStore::empty();
+    root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    let provider = Arc::new(capsem_crypto::tls::provider());
+    let config = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .expect("TLS config")
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
     Arc::new(config)
 }
 
