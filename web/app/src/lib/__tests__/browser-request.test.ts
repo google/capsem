@@ -35,7 +35,17 @@ describe('fresh active-session browser requests', () => {
     expect(requests.next('vm-b', login(8))).toBe(login(8).url);
     expect(requests.next('vm-a', login(19))).toBeNull();
     expect(requests.next('vm-a', null)).toBeNull();
-    expect(requests.next('vm-a', login(1))).toBe(login(1).url);
+    expect(requests.next('vm-a', {...login(1),owner_generation:'new-owner'})).toBe(login(1).url);
+  });
+
+  it('tracks owner generation when request IDs restart and never replays a cleared request',()=>{
+    const cursor=new BrowserRequestCursor();
+    const original={...login(1),owner_generation:'old-owner'};
+    expect(cursor.next('vm',original)).toBeNull();
+    const replacement={...original,owner_generation:'new-owner'};
+    expect(cursor.next('vm',replacement)).toBe(replacement.url);
+    expect(cursor.next('vm',null)).toBeNull();
+    expect(cursor.next('vm',replacement)).toBeNull();
   });
 
   it('opens the first request from a session without a retained request and refuses unsafe navigation', () => {

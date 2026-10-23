@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Confirm successful desktop and web browser handoffs at the VM owner, with
+  metadata-only retries that never reopen an already opened browser.
+
 - Declare the canonical workspace policy in new Antigravity Desktop image builds.
 
 - Support Antigravity's image-declared scratch workspace alias with bounded,

@@ -25,11 +25,15 @@ describe('browser opener', () => {
   });
 
   it('keeps browser gesture opening synchronous and never exposes gateway credentials', async () => {
-    const open = vi.fn();
+    const child = {opener:{},document:{createElement:vi.fn(()=>({name:'',content:''})),head:{append:vi.fn()}},location:{replace:vi.fn()}};
+    const open = vi.fn().mockReturnValue(child);
     vi.stubGlobal('window', { open, location: new URL('http://127.0.0.1:55090') });
     const api = await import('../api');
     const result = api.openUrl('https://login.example/', 'vm-1');
-    expect(open).toHaveBeenCalledWith('https://login.example/', '_blank', 'noopener,noreferrer');
+    expect(open).toHaveBeenCalledWith('', '_blank');
+    expect(child.opener).toBeNull();
+    expect(child.document.head.append).toHaveBeenCalledWith({name:'referrer',content:'no-referrer'});
+    expect(child.location.replace).toHaveBeenCalledWith('https://login.example/');
     await result;
     expect(invoke).not.toHaveBeenCalled();
   });
@@ -40,4 +44,17 @@ describe('browser opener', () => {
     await expect(api.openUrl('https://login.example/', 'vm-1')).rejects.toThrow('Browser session unavailable');
     expect(invoke).not.toHaveBeenCalled();
   });
+});
+
+it('does not report a blocked browser opening as success', async () => {
+  vi.stubGlobal('window', {open:vi.fn().mockReturnValue(null),location:new URL('http://127.0.0.1:55090')});
+  const api = await import('../api');
+  await expect(api.openUrl('https://example.org/')).rejects.toThrow('blocked');
+});
+
+it('rejects unsafe URLs before invoking any browser capability', async () => {
+  const open=vi.fn();vi.stubGlobal('window',{open,location:new URL('http://127.0.0.1:55090')});
+  const api=await import('../api');
+  await expect(api.openUrl('javascript:alert(1)')).rejects.toThrow('Unsupported');
+  expect(open).not.toHaveBeenCalled();
 });

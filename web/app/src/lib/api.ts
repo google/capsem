@@ -5,6 +5,7 @@ import { Connections, CredentialGrants, HostLogSource, NetworkError, ServiceAvai
 import type { AuthorizeGoogleRequest, CreateSessionGrantRequest } from '@capsem/sdk';
 import type { StopResponse, VmActionResponse, LogsResponse, VmStatsDetailResponse, EventBodiesResponse } from '@capsem/sdk';
 import type { ContainerStatusResponse, ImageListResponse, ImagePullResponse, CredentialInjectProvider, CredentialInjectResponse, CredentialStorage } from '@capsem/sdk';
+import { browserUrl } from './models/browser';
 import { gatewayBaseUrl } from './gateway-url';
 import { surfaceLaunchUrl, type SurfaceSession } from './models/surface';
 import { readGatewayToken } from './gateway-token';
@@ -953,19 +954,36 @@ export async function applyUpdate(
   return _sdk.call(transport => gateway.updateHypervisor(transport, { body: opts }));
 }
 
+export async function acknowledgeBrowserRequest(vmId: string, body: import('@capsem/sdk').BrowserAcknowledgeRequest): Promise<void> {
+  const receipt = await _sdk.call(transport => gateway.acknowledgeBrowserRequest(transport,
+    {id:vmId, body}, {timeoutMs:2000}), false);
+  if (receipt.vm_id !== vmId || receipt.owner_generation !== body.owner_generation || receipt.request_id !== body.request_id) {
+    throw new ApiError(502, 'Browser confirmation did not match the request');
+  }
+}
+
 // -- App actions --
 
 /** Open a URL in the system default browser. Routes through the Tauri IPC
  * inside the desktop shell (where `window.open` is a no-op) and falls back to
  * a new tab in the browser. */
 export async function openUrl(url: string, vmId?: string): Promise<void> {
+  const target = browserUrl(url);
+  if (!target) throw new Error('Unsupported browser URL');
   if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
     if (vmId && !_token) throw new Error('Browser session unavailable');
     const { invoke } = await import('@tauri-apps/api/core');
     await invoke('open_url', { url, browser: vmId ? { gatewayUrl: _baseUrl, token: _token, vmId } : null });
     return;
   }
-  window.open(url, '_blank', 'noopener,noreferrer');
+  const child = window.open('', '_blank');
+  if (!child) throw new Error('Browser opening was blocked');
+  child.opener = null;
+  const referrer = child.document.createElement('meta');
+  referrer.name = 'referrer';
+  referrer.content = 'no-referrer';
+  child.document.head.append(referrer);
+  child.location.replace(target);
 }
 
 // -- Files API (host-side VirtioFS) --

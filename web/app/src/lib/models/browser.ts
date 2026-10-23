@@ -15,16 +15,19 @@ export function browserUrl(value: unknown): string | null {
 export class BrowserRequestCursor {
   #vmId: string | undefined;
   #requestId = 0;
+  #ownerGeneration: string | null = null;
 
   next(vmId: string | undefined, request?: BrowserRequest | null): string | null {
     if (vmId !== this.#vmId) {
       this.#vmId = vmId;
       this.#requestId = request?.id ?? 0;
+      this.#ownerGeneration = request?.owner_generation ?? null;
       return null;
     }
-    if (!request) {
+    if (!request) return null;
+    if ((request.owner_generation ?? null) !== this.#ownerGeneration) {
+      this.#ownerGeneration = request.owner_generation ?? null;
       this.#requestId = 0;
-      return null;
     }
     if (!vmId || request.id <= this.#requestId) return null;
     this.#requestId = request.id;

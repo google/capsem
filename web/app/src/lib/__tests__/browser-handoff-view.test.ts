@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { render } from 'svelte/server';
-vi.mock('../api', () => ({openUrl:vi.fn()}));
+vi.mock('../api', () => ({openUrl:vi.fn(),acknowledgeBrowserRequest:vi.fn()}));
 import BrowserRequest from '../components/shell/BrowserRequest.svelte';
 
 afterEach(() => vi.unstubAllGlobals());
