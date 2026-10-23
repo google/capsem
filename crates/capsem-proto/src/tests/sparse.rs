@@ -29,7 +29,7 @@ fn named_msgpack_omits_default_fields_and_restores_them_on_decode() {
     assert_eq!(decode_audit_record(&frame[4..]).unwrap(), audit);
 
     let req = DnsRequest {
-        id: 0,
+        id: 1,
         raw: vec![1, 2],
         proto: "udp".into(),
         process_name: None,
@@ -40,7 +40,7 @@ fn named_msgpack_omits_default_fields_and_restores_them_on_decode() {
         Query(std::collections::BTreeMap<String, Option<serde::de::IgnoredAny>>),
     }
     let Envelope::Query(fields) = rmp_serde::from_slice(&frame[4..]).unwrap();
-    assert!(!fields.contains_key("id"));
+    assert!(fields.contains_key("id"), "query identity is required for cancellation");
     assert!(!fields.contains_key("process_name"));
     assert_eq!(decode_dns_request(&frame[4..]).unwrap(), req);
 }

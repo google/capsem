@@ -5,7 +5,7 @@ use super::*;
 #[test]
 fn roundtrip_dns_request() {
     let req = DnsRequest {
-        id: 0,
+        id: 1,
         raw: vec![0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0],
         proto: "udp".into(),
         process_name: Some("curl".into()),
@@ -20,7 +20,7 @@ fn roundtrip_dns_request() {
 #[test]
 fn roundtrip_dns_request_no_process_name() {
     let req = DnsRequest {
-        id: 0,
+        id: 1,
         raw: vec![0u8; 12],
         proto: "tcp".into(),
         process_name: None,
@@ -33,7 +33,7 @@ fn roundtrip_dns_request_no_process_name() {
 #[test]
 fn roundtrip_dns_response() {
     let resp = DnsResponse {
-        id: 0,
+        id: 1,
         raw: vec![0x12, 0x34, 0x81, 0x83, 0, 1, 0, 0, 0, 0, 0, 0],
         decision: "denied".into(),
         rcode: 3,
@@ -49,7 +49,7 @@ fn dns_envelope_is_compact() {
     // under 200 bytes encoded -- ensures we don't accidentally pull
     // in heavy framing (e.g. nested struct + named fields blow-up).
     let req = DnsRequest {
-        id: 0,
+        id: 1,
         raw: vec![0u8; 60],
         proto: "udp".into(),
         process_name: None,
@@ -80,7 +80,7 @@ fn dns_envelope_is_disjoint_from_ipc_frames() {
     // control-channel leak. Spot-check that an encoded DnsRequest
     // does NOT match a control-channel variant.
     let req = DnsRequest {
-        id: 0,
+        id: 1,
         raw: vec![0u8; 12],
         proto: "udp".into(),
         process_name: None,

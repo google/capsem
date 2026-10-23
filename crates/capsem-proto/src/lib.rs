@@ -655,9 +655,9 @@ pub fn decode_audit_record(payload: &[u8]) -> Result<AuditRecord> {
 pub struct DnsRequest {
     /// Correlation id chosen by the guest. The host echoes it in the
     /// matching `DnsResponse` so many queries can be in flight on one
-    /// vsock connection and be answered out of order. Peers that predate
-    /// the field decode it as 0 and still speak in lock-step.
-    #[serde(default, skip_serializing_if = "crate::sparse::is_default")]
+    /// vsock connection and be answered out of order. Zero and missing IDs
+    /// are refused; every query must support scoped cancellation.
+    #[serde(deserialize_with = "dns_session::nonzero_id")]
     pub id: u32,
     #[serde(with = "serde_bytes")]
     pub raw: Vec<u8>,
@@ -680,7 +680,7 @@ pub struct DnsRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DnsResponse {
     /// The `DnsRequest::id` this answers.
-    #[serde(default, skip_serializing_if = "crate::sparse::is_default")]
+    #[serde(deserialize_with = "dns_session::nonzero_id")]
     pub id: u32,
     #[serde(with = "serde_bytes")]
     pub raw: Vec<u8>,
@@ -690,6 +690,9 @@ pub struct DnsResponse {
 
 /// Encode a `DnsRequest` into a length-prefixed RMP frame.
 pub fn encode_dns_request(req: &DnsRequest) -> Result<Vec<u8>> {
+    if req.id == 0 {
+        bail!("DNS query ID must be nonzero");
+    }
     let payload =
         rmp_serde::to_vec_named(&dns_session::DnsSessionMessage::Query(req)).context("failed to encode DnsRequest")?;
     let len = payload.len() as u32;
@@ -707,8 +710,23 @@ pub fn decode_dns_request(payload: &[u8]) -> Result<DnsRequest> {
     }
 }
 
+pub fn decode_dns_session_message(payload: &[u8]) -> Result<dns_session::DnsSessionMessage> {
+    rmp_serde::from_slice(payload).context("failed to decode DNS session message")
+}
+
+pub fn encode_dns_cancellation(cancel: &dns_session::DnsQueryCancellation) -> Result<Vec<u8>> {
+    let message = dns_session::DnsSessionMessage::<&DnsRequest>::Cancel(*cancel);
+    length_prefixed(
+        rmp_serde::to_vec_named(&message).context("failed to encode DNS cancellation")?,
+        "DNS cancellation",
+    )
+}
+
 /// Encode a `DnsResponse` into a length-prefixed RMP frame.
 pub fn encode_dns_response(resp: &DnsResponse) -> Result<Vec<u8>> {
+    if resp.id == 0 {
+        bail!("DNS response ID must be nonzero");
+    }
     let payload = rmp_serde::to_vec_named(resp).context("failed to encode DnsResponse")?;
     let len = payload.len() as u32;
     let mut frame = Vec::with_capacity(4 + payload.len());
