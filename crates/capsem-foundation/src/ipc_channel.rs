@@ -39,6 +39,7 @@ pub struct PreparedFrame<T> {
 /// The sending half of a typed channel.
 pub struct Sender<T> {
     inner: Mutex<OwnedWriteHalf>,
+    limit: u32,
     marker: PhantomData<fn(T)>,
 }
 
@@ -52,6 +53,7 @@ pub struct Receiver<T> {
 /// future, so dropping that future loses no consumed bytes.
 struct ReadState {
     half: OwnedReadHalf,
+    limit: u32,
     header: [u8; 4],
     header_read: usize,
     payload: Vec<u8>,
@@ -75,11 +77,11 @@ impl ReadState {
             self.header_read += count;
             if self.header_read == self.header.len() {
                 let len = u32::from_be_bytes(self.header);
-                if len > MAX_IPC_FRAME_SIZE {
+                if len > self.limit {
                     self.unframed = true;
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
-                        format!("IPC frame too large: {len} bytes (max {MAX_IPC_FRAME_SIZE})"),
+                        format!("IPC frame too large: {len} bytes (max {})", self.limit),
                     ));
                 }
                 self.payload = vec![0_u8; len as usize];
@@ -101,17 +103,28 @@ impl ReadState {
 /// Register a connected stream with the current runtime as a typed channel
 /// sending `S` and receiving `R`.
 pub fn channel_from_std<S, R>(stream: UnixStream) -> io::Result<(Sender<S>, Receiver<R>)> {
+    channel_from_std_with_limit(stream, MAX_IPC_FRAME_SIZE)
+}
+
+/// Restrict a capability's incoming allocation and outgoing frames below the
+/// general IPC ceiling. Announced lengths are checked before allocation.
+pub fn channel_from_std_with_limit<S, R>(stream: UnixStream, limit: u32) -> io::Result<(Sender<S>, Receiver<R>)> {
+    if limit == 0 || limit > MAX_IPC_FRAME_SIZE {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid IPC frame ceiling"));
+    }
     stream.set_nonblocking(true)?;
     let stream = tokio::net::UnixStream::from_std(stream)?;
     let (read, write) = stream.into_split();
     Ok((
         Sender {
             inner: Mutex::new(write),
+            limit,
             marker: PhantomData,
         },
         Receiver {
             inner: Mutex::new(ReadState {
                 half: read,
+                limit,
                 header: [0; 4],
                 header_read: 0,
                 payload: Vec::new(),
@@ -129,16 +142,21 @@ where
 {
     /// Serialize and send one complete bounded frame.
     pub async fn send(&self, message: T) -> io::Result<()> {
-        self.send_prepared(Self::prepare(&message)?).await
+        self.send_prepared(Self::prepare_with_limit(&message, self.limit)?)
+            .await
     }
 
     /// Encode the final frame without socket I/O. The caller retains ownership
     /// of its message, so a rejected batch can be split without cloning bodies.
     pub fn prepare(message: &T) -> io::Result<PreparedFrame<T>> {
+        Self::prepare_with_limit(message, MAX_IPC_FRAME_SIZE)
+    }
+
+    fn prepare_with_limit(message: &T, limit: u32) -> io::Result<PreparedFrame<T>> {
         // Encode once into the final frame. Reject excess bytes during encode,
         // before socket I/O; neither preflight serialization nor a payload copy.
         let mut frame = vec![0; 4];
-        append_record(&mut frame, message, MAX_IPC_FRAME_SIZE as usize)?;
+        append_record(&mut frame, message, limit as usize)?;
         let len = (frame.len() - 4) as u32;
         frame[..4].copy_from_slice(&len.to_be_bytes());
         Ok(PreparedFrame {
@@ -149,6 +167,9 @@ where
 
     /// Write an already encoded frame without another serialization or copy.
     pub async fn send_prepared(&self, frame: PreparedFrame<T>) -> io::Result<()> {
+        if frame.bytes.len() - 4 > self.limit as usize {
+            return Err(invalid_data("MessagePack frame too large", self.limit as usize));
+        }
         self.inner.lock().await.write_all(&frame.bytes).await
     }
 }

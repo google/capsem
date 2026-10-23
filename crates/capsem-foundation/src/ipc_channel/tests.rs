@@ -4,6 +4,33 @@ use std::os::unix::net::UnixStream;
 use std::sync::Arc;
 use std::time::Duration;
 
+#[tokio::test]
+async fn narrow_channel_bounds_both_announced_and_prepared_frames() {
+    let (left, mut right) = UnixStream::pair().unwrap();
+    let (sender, receiver) = channel_from_std_with_limit::<String, String>(left, 16).unwrap();
+    right.write_all(&17_u32.to_be_bytes()).unwrap();
+    assert_eq!(receiver.recv().await.unwrap_err().kind(), io::ErrorKind::InvalidData);
+    let state = receiver.inner.lock().await;
+    assert!(state.payload.is_empty());
+    drop(state);
+    let frame = Sender::prepare(&"x".repeat(17)).unwrap();
+    assert!(sender.send_prepared(frame).await.is_err());
+    assert!(sender.send("x".repeat(17)).await.is_err());
+}
+
+#[tokio::test]
+async fn narrow_channel_preserves_valid_duplex_messages() {
+    let (left, right) = UnixStream::pair().unwrap();
+    let (a, b) = channel_from_std_with_limit::<String, String>(left, 16).unwrap();
+    let (c, d) = channel_from_std_with_limit::<String, String>(right, 16).unwrap();
+    a.send("hello".into()).await.unwrap();
+    c.send("world".into()).await.unwrap();
+    assert_eq!(b.recv().await.unwrap(), "world");
+    assert_eq!(d.recv().await.unwrap(), "hello");
+    let (left, _) = UnixStream::pair().unwrap();
+    assert!(channel_from_std_with_limit::<String, String>(left, 0).is_err());
+}
+
 #[test]
 fn a_file_record_has_named_keys_and_no_stream_header() {
     use capsem_proto::guest_env::GuestEnvironment;
