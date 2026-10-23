@@ -2,8 +2,9 @@
 
 An image labelled `org.capsem.surface=xpra` with `org.capsem.surface.port`
 gets one `http_preview` exposure of that container port once its workload
-runs, reported in `GET /vms/{id}/container`. The gateway's launcher at
-`/vms/{id}/surface/` mints a single-use bootstrap for it; the preview origin
+runs, reported in `GET /vms/{id}/container`. The authenticated desktop call to
+`POST /vms/{id}/surface/session` mints an authenticated single-use bootstrap;
+the public launcher consumes it from its fragment. The preview origin
 exchanges that for its session cookie and serves the pinned xpra-html5 client
 under `/_capsem/surface/`, and every other path reaches the workload's port.
 
@@ -116,7 +117,11 @@ def test_an_xpra_image_gets_its_surface_through_the_gateway(service, tmp_path):
         assert "form-action http://*.localhost:" in launcher[1]["content-security-policy"], launcher
         assert b'data-auto="true"' in launcher[2], launcher
         script = request(gateway, "GET", f"/vms/{vm_id}/surface/launch.js")
-        assert script[0] == 200 and b"/surface/session" in script[2], script
+        assert script[0] == 200, script
+        assert b"location.hash" in script[2] and b"history.replaceState" in script[2], script
+        assert b'form.method = "POST"' in script[2] and b"bootstrap_token" in script[2], script
+        for secret_or_authority in (token.encode(), b"/token", b"Authorization", b"/surface/session"):
+            assert secret_or_authority not in script[2], "the public launcher cannot mint authority"
 
         # Minting a session is not: it needs the gateway token.
         assert request(gateway, "POST", f"/vms/{vm_id}/surface/session")[0] == 401
