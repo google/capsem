@@ -66,13 +66,20 @@ pub struct ApprovalRegistration {
     pub ask_id: String,
     pub event_id: String,
     pub expires_at_unix_ms: i64,
+    /// Remaining broker-owned monotonic lifetime when publication occurs.
+    pub remaining_ms: u64,
 }
 
 impl ApprovalRegistration {
     pub fn validate(&self) -> Result<(), &'static str> {
         let valid_id =
             |id: &str| id.len() == 12 && id.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
-        if !valid_id(&self.ask_id) || !valid_id(&self.event_id) || self.expires_at_unix_ms <= 0 {
+        if !valid_id(&self.ask_id)
+            || !valid_id(&self.event_id)
+            || self.expires_at_unix_ms <= 0
+            || self.remaining_ms == 0
+            || self.remaining_ms > (crate::APPROVAL_TIMEOUT_SECONDS as u64) * 1000
+        {
             return Err("invalid approval registration identity or expiry");
         }
         Ok(())

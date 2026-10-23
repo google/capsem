@@ -75,6 +75,7 @@ fn a_pending_receipt_is_bound_to_the_original_query_identity_and_expiry_not_an_a
         ask_id: "abcdef012345".into(),
         event_id: "012345abcdef".into(),
         expires_at_unix_ms: 123456,
+        remaining_ms: 1000,
     };
     let frame = crate::encode_dns_pending(NonZeroU32::new(71).unwrap(), &registration).unwrap();
     assert!(
