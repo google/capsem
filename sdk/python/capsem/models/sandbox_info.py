@@ -7,6 +7,7 @@ from typing import Annotated
 from pydantic import Field, StrictBool, StrictFloat, StrictInt, StrictStr
 
 from .browser_request import BrowserRequest
+from .image_app import ImageApp
 from .model_base import Model
 from .session_db_status import SessionDbStatus
 from .storage_diagnostics import StorageDiagnostics
@@ -22,6 +23,7 @@ class SandboxInfo(Model):
     nonnullable_optional = frozenset(['can_resume', 'persistent'])
     ai: VmAiInfo | None = None
     allowed_requests: Annotated[StrictInt, Field(ge=0)] | None = None
+    app: ImageApp | None = None
     available_actions: list[VmAction]
     browser_request: BrowserRequest | None = None
     can_resume: StrictBool | None = None

@@ -1,6 +1,7 @@
 // Generated from Capsem OpenAPI. Do not edit.
 
 import type { BrowserRequest } from "./BrowserRequest.js";
+import type { ImageApp } from "./ImageApp.js";
 import type { SessionDbStatus } from "./SessionDbStatus.js";
 import type { StorageDiagnostics } from "./StorageDiagnostics.js";
 import type { TerminalSummary } from "./TerminalSummary.js";
@@ -13,6 +14,7 @@ import type { VmNetworkInfo } from "./VmNetworkInfo.js";
 export interface SandboxInfo {
   "ai"?: null | VmAiInfo;
   "allowed_requests"?: number | null;
+  "app"?: null | ImageApp;
   "available_actions": Array<VmAction>;
   "browser_request"?: null | BrowserRequest;
   "can_resume"?: boolean;

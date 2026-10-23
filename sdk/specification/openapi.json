@@ -7645,6 +7645,17 @@
             "format": "int64",
             "minimum": 0
           },
+          "app": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImageApp",
+                "description": "Source app metadata captured for this session's immutable image."
+              }
+            ]
+          },
           "available_actions": {
             "type": "array",
             "items": {
@@ -9601,6 +9612,17 @@
             ],
             "format": "int64",
             "minimum": 0
+          },
+          "app": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImageApp",
+                "description": "Source app metadata captured for this session's immutable image."
+              }
+            ]
           },
           "available_actions": {
             "type": "array",

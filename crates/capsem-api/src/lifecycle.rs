@@ -199,6 +199,9 @@ pub struct SessionDbStatus {
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct SandboxInfo {
+    /// Source app metadata captured for this session's immutable image.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app: Option<crate::ImageApp>,
     /// Latest browser navigation requested by the live guest. Ephemeral and
     /// opened only by an explicit action on the attached client.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -292,6 +295,7 @@ impl SandboxInfo {
     pub fn new(id: String, pid: u32, status: VmLifecycleState, persistent: bool) -> Self {
         let available_actions = status.available_actions(false);
         Self {
+            app: None,
             terminal: None,
             browser_request: None,
             id,

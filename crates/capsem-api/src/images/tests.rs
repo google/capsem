@@ -112,3 +112,18 @@ fn image_app_metadata_preserves_exact_identity_and_explicitly_absent_artifacts()
     let parsed: ImageInfo = serde_json::from_value(row.clone()).unwrap();
     assert_eq!(serde_json::to_value(parsed).unwrap()["app"], row["app"]);
 }
+
+#[test]
+fn session_wire_preserves_the_pinned_source_app_snapshot() {
+    let mut row = serde_json::to_value(crate::SandboxInfo::new(
+        "session".into(),
+        1,
+        crate::VmLifecycleState::Running,
+        true,
+    ))
+    .unwrap();
+    row["app"] = json!({"catalog_name":"dev","image":format!("registry.example/dev@sha256:{}", "a".repeat(64)),
+        "display_name":"Development","description":"Tools","architecture":"arm64","interfaces":["terminal"],"evidence":[]});
+    let parsed: crate::SandboxInfo = serde_json::from_value(row.clone()).unwrap();
+    assert_eq!(serde_json::to_value(parsed).unwrap()["app"], row["app"]);
+}

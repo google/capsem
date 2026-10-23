@@ -188,6 +188,7 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
         }
 
         vms.push(VmSummary {
+            app: sess.app.clone(),
             browser_request: sess.browser_request.clone(),
             terminal: sess.terminal.clone(),
             id: sess.id.clone(),

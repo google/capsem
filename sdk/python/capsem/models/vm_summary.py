@@ -7,6 +7,7 @@ from typing import Annotated
 from pydantic import Field, StrictBool, StrictFloat, StrictInt, StrictStr
 
 from .browser_request import BrowserRequest
+from .image_app import ImageApp
 from .model_base import Model
 from .terminal_summary import TerminalSummary
 from .vm_action import VmAction
@@ -16,6 +17,7 @@ from .vm_lifecycle_state import VmLifecycleState
 class VmSummary(Model):
     nonnullable_optional = frozenset(['can_resume'])
     allowed_requests: Annotated[StrictInt, Field(ge=0)] | None = None
+    app: ImageApp | None = None
     available_actions: list[VmAction]
     browser_request: BrowserRequest | None = None
     can_resume: StrictBool | None = None

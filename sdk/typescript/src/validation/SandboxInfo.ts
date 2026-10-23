@@ -3,6 +3,7 @@
 import {z} from "zod";
 import type {SandboxInfo} from "../models/SandboxInfo.js";
 import {BrowserRequestSchema} from "./BrowserRequest.js";
+import {ImageAppSchema} from "./ImageApp.js";
 import {SessionDbStatusSchema} from "./SessionDbStatus.js";
 import {StorageDiagnosticsSchema} from "./StorageDiagnostics.js";
 import {TerminalSummarySchema} from "./TerminalSummary.js";
@@ -15,6 +16,7 @@ import {VmNetworkInfoSchema} from "./VmNetworkInfo.js";
 export const SandboxInfoSchema: z.ZodType<SandboxInfo> = z.object({
   "ai": z.union([z.null(), z.lazy(() => VmAiInfoSchema)]).exactOptional(),
   "allowed_requests": z.int().min(0).nullable().exactOptional(),
+  "app": z.union([z.null(), z.lazy(() => ImageAppSchema)]).exactOptional(),
   "available_actions": z.array(z.lazy(() => VmActionSchema)),
   "browser_request": z.union([z.null(), z.lazy(() => BrowserRequestSchema)]).exactOptional(),
   "can_resume": z.boolean().exactOptional(),

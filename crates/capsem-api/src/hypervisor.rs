@@ -26,6 +26,9 @@ pub struct HypervisorInfo {
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct VmSummary {
+    /// Source app metadata captured for this session's immutable image.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app: Option<crate::ImageApp>,
     /// Latest ephemeral guest request for the client's browser.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub browser_request: Option<crate::BrowserRequest>,
