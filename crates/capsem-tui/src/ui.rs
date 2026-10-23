@@ -515,7 +515,12 @@ fn render_overlay(frame: &mut Frame<'_>, area: Rect, ctx: &RenderLayoutCtx<'_>) 
     let mut lines = match overlay {
         AppOverlay::Help => help_lines(),
         AppOverlay::Stats => stats_lines(state),
-        AppOverlay::Home => home_lines(state),
+        AppOverlay::Home => home_lines(
+            state,
+            inner
+                .height
+                .saturating_sub(u16::from(state.service.control_message.is_some())),
+        ),
         AppOverlay::Create => Vec::new(),
         AppOverlay::Fork => fork_lines(state, fork_draft),
         AppOverlay::Confirm => confirm_lines(pending_action),

@@ -1,6 +1,41 @@
 use super::*;
 
 #[test]
+fn manager_viewport_follows_selection_and_preserves_actions_after_resize() {
+    let mut state = fixture_state();
+    let template = state.sessions[0].clone();
+    state.sessions = (1..=20)
+        .map(|index| {
+            let mut session = template.clone();
+            session.id = format!("00000000-0000-4000-8000-{index:012}");
+            session.title = format!("agent-{index:02}");
+            session
+        })
+        .collect();
+    state.active_session_id = state.sessions[14].id.clone();
+    let mut app = App::new(state);
+    app.handle_key(key(KeyCode::Char('m'), KeyModifiers::ALT));
+    for (width, height) in [(150, 42), (80, 24), (150, 42)] {
+        let snapshot = render_app_snapshot(&app, width, height).unwrap();
+        assert!(snapshot.contains("▶ 15 agent-15"), "{snapshot}");
+        assert!(snapshot.contains("Alt+T: Stop"), "{snapshot}");
+        assert!(snapshot.contains("Alt+F: Fork"), "{snapshot}");
+        assert!(snapshot.contains("Alt+D: Delete"), "{snapshot}");
+        if width == 80 {
+            assert!(!snapshot.contains("agent-01"), "{snapshot}");
+        }
+    }
+    for _ in 0..5 {
+        app.handle_key(key(KeyCode::Down, KeyModifiers::NONE));
+    }
+    let last = render_app_snapshot(&app, 80, 24).unwrap();
+    assert!(last.contains("▶ 20 agent-20"), "{last}");
+    app.handle_key(key(KeyCode::Down, KeyModifiers::NONE));
+    let wrapped = render_app_snapshot(&app, 80, 24).unwrap();
+    assert!(wrapped.contains("▶ 1  agent-01"), "{wrapped}");
+}
+
+#[test]
 fn empty_creation_dismissal_survives_polls_and_explicit_creation_still_works() {
     let mut state = fixture_state();
     state.sessions.clear();

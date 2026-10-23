@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Keep the selected TUI Manager session and its contextual actions visible when
+  navigating long session lists or resizing the terminal.
+
 - Reserve graphical session names when suggesting TUI session and fork names,
   while keeping graphical sessions outside the terminal Manager.
 
