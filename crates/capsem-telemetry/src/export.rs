@@ -16,6 +16,8 @@
 //! attributes. The service uses the bounded reqwest transport below; a
 //! confined worker can supply a local broker transport instead.
 
+pub mod http_admission;
+
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -163,6 +165,34 @@ pub fn install_with_http_client(
     install_provider(provider)
 }
 
+/// Install the confined gateway's finite HTTP schema, without ambient resource
+/// detectors or caller-supplied attributes. The client receives no destination.
+pub fn install_gateway_http_client(
+    client: impl opentelemetry_http::HttpClient + 'static,
+) -> Result<Exporter, InstallError> {
+    install_provider(gateway_provider_with_http_client(client)?)
+}
+
+fn gateway_provider_with_http_client(
+    client: impl opentelemetry_http::HttpClient + 'static,
+) -> Result<SdkMeterProvider, InstallError> {
+    let builder = broker_builder(client);
+    build_resource_provider(
+        builder,
+        Resource::builder_empty().with_service_name("capsem-gateway").build(),
+    )
+}
+
+fn broker_builder(
+    client: impl opentelemetry_http::HttpClient + 'static,
+) -> opentelemetry_otlp::MetricExporterBuilder<opentelemetry_otlp::HttpExporterBuilderSet> {
+    opentelemetry_otlp::MetricExporter::builder()
+        .with_http()
+        .with_http_client(client)
+        .with_timeout(EXPORT_TIMEOUT)
+        .with_endpoint(BROKER_REQUEST_ENDPOINT)
+}
+
 fn install_provider(provider: SdkMeterProvider) -> Result<Exporter, InstallError> {
     let recorder = OtelRecorder::new(provider.meter("capsem"));
     metrics::set_global_recorder(recorder).map_err(|_| InstallError::RecorderAlreadySet)?;
@@ -191,11 +221,7 @@ fn provider_with_http_client(
     service_name: &'static str,
     attributes: Vec<KeyValue>,
 ) -> Result<SdkMeterProvider, InstallError> {
-    let builder = opentelemetry_otlp::MetricExporter::builder()
-        .with_http()
-        .with_http_client(client)
-        .with_timeout(EXPORT_TIMEOUT)
-        .with_endpoint(BROKER_REQUEST_ENDPOINT);
+    let builder = broker_builder(client);
     build_provider(builder, service_name, attributes)
 }
 
@@ -204,13 +230,20 @@ fn build_provider(
     service_name: &'static str,
     attributes: Vec<KeyValue>,
 ) -> Result<SdkMeterProvider, InstallError> {
-    let exporter = builder
-        .build()
-        .map_err(|error| InstallError::Build(error.to_string()))?;
     let resource = Resource::builder()
         .with_service_name(service_name)
         .with_attributes(attributes)
         .build();
+    build_resource_provider(builder, resource)
+}
+
+fn build_resource_provider(
+    builder: opentelemetry_otlp::MetricExporterBuilder<opentelemetry_otlp::HttpExporterBuilderSet>,
+    resource: Resource,
+) -> Result<SdkMeterProvider, InstallError> {
+    let exporter = builder
+        .build()
+        .map_err(|error| InstallError::Build(error.to_string()))?;
     Ok(SdkMeterProvider::builder()
         .with_periodic_exporter(exporter)
         .with_resource(resource)

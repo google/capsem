@@ -338,3 +338,25 @@ fn uncataloged_names_units_and_gauge_increments_reach_the_exporter() {
     };
     assert_eq!(gauge.data_points().next().unwrap().value(), 4.0);
 }
+
+#[test]
+fn real_sdk_http_metrics_pass_confined_admission_without_ambient_resource_metadata() {
+    let client = CapturingHttpClient::default();
+    let received = Arc::clone(&client.0);
+    let provider = gateway_provider_with_http_client(client).unwrap();
+    let recorder = OtelRecorder::new(provider.meter("capsem"));
+    metrics::with_local_recorder(&recorder, || {
+        crate::describe_all();
+        metrics::counter!(crate::http::REQUESTS_TOTAL, "component" => "gateway", "method" => "GET", "route" => "/vms/list").increment(1);
+        metrics::histogram!(crate::http::RESPONSE_READY_MS, "component" => "gateway", "method" => "GET", "route" => "/vms/list", "status" => "200").record(1.5);
+        metrics::histogram!(crate::http::BODY_LIFETIME_MS, "component" => "gateway", "method" => "GET", "route" => "/vms/list", "status" => "200", "completion" => "eof").record(2.5);
+        metrics::counter!(crate::http::RESPONSES_TOTAL, "component" => "gateway", "method" => "GET", "route" => "/vms/list", "status" => "200", "completion" => "eof").increment(1);
+    });
+    provider.force_flush().unwrap();
+    let requests = received.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    let body = requests[0].body();
+    http_admission::validate(body).unwrap();
+    assert!(!contains(body, "telemetry.sdk") && !contains(body, "session.id"));
+    drop(requests);
+}

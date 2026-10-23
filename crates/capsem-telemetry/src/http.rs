@@ -1,5 +1,7 @@
 //! Normalized server-side HTTP lifecycle metrics; never client wire or CPU clocks.
 
+pub mod operations;
+
 use crate::MetricSpec;
 use metrics::Unit;
 

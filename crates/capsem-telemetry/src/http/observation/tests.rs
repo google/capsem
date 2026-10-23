@@ -125,11 +125,11 @@ fn middleware_keys_use_matched_templates_not_user_paths_queries_or_methods() {
     let snapshot = recorder.snapshotter();
     metrics::with_local_recorder(&recorder, || {
         let router = Router::new()
-            .route("/vms/{id}", get(|| async { "ok" }))
+            .route("/vms/{id}/info", get(|| async { "ok" }))
             .layer(axum::middleware::from_fn_with_state(Component::Gateway, observe));
         for uri in [
-            "/vms/private-canary-1?token=secret-canary",
-            "/vms/private-canary-2",
+            "/vms/private-canary-1/info?token=secret-canary",
+            "/vms/private-canary-2/info",
             "/unknown/private-canary-3",
         ] {
             let response = futures::executor::block_on(
@@ -146,7 +146,7 @@ fn middleware_keys_use_matched_templates_not_user_paths_queries_or_methods() {
         assert!(key
             .key()
             .labels()
-            .any(|label| label.key() == "route" && ["/vms/{id}", "unmatched"].contains(&label.value())));
+            .any(|label| label.key() == "route" && ["/vms/{id}/info", "unmatched"].contains(&label.value())));
     }
 }
 
@@ -224,11 +224,11 @@ fn actual_otel_attributes_and_debug_spans_exclude_request_canaries() {
             assert!(tracing::enabled!(tracing::Level::DEBUG));
             tracing::debug!("privacy capture active");
             let router = Router::new()
-                .route("/vms/{id}", get(|| async { "private-body-canary" }))
+                .route("/vms/{id}/info", get(|| async { "private-body-canary" }))
                 .layer(axum::middleware::from_fn_with_state(Component::Service, observe));
             for (method, path) in [
-                ("GET", "/vms/private-id-canary?token=query-canary"),
-                ("METHOD-CANARY", "/vms/other-id-canary"),
+                ("GET", "/vms/private-id-canary/info?token=query-canary"),
+                ("METHOD-CANARY", "/vms/other-id-canary/info"),
                 ("GET", "/unmatched-path-canary"),
             ] {
                 let request = axum::http::Request::builder()
@@ -246,7 +246,7 @@ fn actual_otel_attributes_and_debug_spans_exclude_request_canaries() {
     let exported = exporter.get_finished_metrics().unwrap();
     let text = format!("{exported:?}");
     assert!(!text.contains("canary") && !text.contains("CANARY"), "{text}");
-    assert!(text.contains("/vms/{id}") && text.contains("OTHER"));
+    assert!(text.contains("/vms/{id}/info") && text.contains("OTHER"));
     assert!(text.contains(super::super::REQUESTS_TOTAL));
     assert!(text.contains(super::super::RESPONSE_READY_MS));
     assert!(text.contains(super::super::BODY_LIFETIME_MS));
@@ -276,7 +276,7 @@ fn actual_otel_attributes_and_debug_spans_exclude_request_canaries() {
     assert_eq!(observed, 4);
     let logs = String::from_utf8(captured.0.lock().unwrap().clone()).unwrap();
     assert!(!logs.contains("canary") && !logs.contains("CANARY"), "{logs}");
-    assert!(logs.contains("/vms/{id}") && logs.contains("OTHER"), "{logs}");
+    assert!(logs.contains("/vms/{id}/info") && logs.contains("OTHER"), "{logs}");
 }
 
 #[test]

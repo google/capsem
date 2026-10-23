@@ -48,10 +48,9 @@ fn method_label(method: &str) -> &'static str {
 /// Uses only Axum's registered route template. Never fall back to the URI.
 pub async fn observe(State(component): State<Component>, request: Request, next: Next) -> Response {
     let method = method_label(request.method().as_str());
-    let route = request.extensions().get::<MatchedPath>().map_or_else(
-        || SharedString::const_str("unmatched"),
-        |path| path.as_str().to_owned().into(),
-    );
+    let route = SharedString::const_str(super::operations::normalized_route(
+        request.extensions().get::<MatchedPath>().map(MatchedPath::as_str),
+    ));
     let span = tracing::debug_span!(
         "http.request",
         component = component.label(),

@@ -22,9 +22,13 @@ export = [
     "dep:http",
     "dep:bytes",
     "dep:async-trait",
+    "dep:opentelemetry-proto",
+    "dep:prost",
 ]
 
 [dependencies]
+opentelemetry-proto = { version = "0.33", default-features = false, features = ["gen-tonic-messages", "metrics"], optional = true }
+prost = { version = "0.14", optional = true }
 axum = { version = "0.8", default-features = false, features = ["matched-path"], optional = true }
 http-body = { version = "1", optional = true }
 tracing = { workspace = true, optional = true }
