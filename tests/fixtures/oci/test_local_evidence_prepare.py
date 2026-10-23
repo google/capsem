@@ -29,7 +29,7 @@ def fixture(tmp_path, *, layers=None):
     (layout / "blobs/sha256" / digest.split(":")[1]).write_bytes(raw)
     entry.update(digest=digest, size=len(raw))
     (layout / "index.json").write_text(json.dumps({"schemaVersion": 2, "manifests": [entry]}))
-    image = SimpleNamespace(ready=lambda: layout, pinned=lambda: digest, platform_name=lambda: "linux/arm64", settings=lambda: SimpleNamespace(name="dev"))
+    image = SimpleNamespace(ready=lambda: layout, pinned=lambda: digest, platform_name=lambda: "linux/arm64", settings=lambda: SimpleNamespace(name="dev", local_name="capsem-dev"))
     return image, digest, config
 
 
@@ -51,6 +51,7 @@ def test_missing_or_mismatched_retained_image_fails_before_export(monkeypatch, t
     with pytest.raises(ValueError, match="retained"):
         image_build.prepare_local_evidence(image, f"127.0.0.1:12345/library/dev@{digest}", tmp_path / "evidence", inspect_timeout=5)
     assert len(calls) == 1
+    assert calls[0][-1] == 'capsem-dev:arm64'
     monkeypatch.setattr(image_build.subprocess, "run", lambda *_, **__: SimpleNamespace(returncode=0, stdout=json.dumps("sha256:" + "0" * 64)))
     with pytest.raises(ValueError, match="identity"):
         image_build.prepare_local_evidence(image, f"127.0.0.1:12345/library/dev@{digest}", tmp_path / "evidence", inspect_timeout=5)

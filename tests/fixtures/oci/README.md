@@ -2,6 +2,11 @@
 
 ## Native amd64 CI candidate handoff
 
+Producer-local mutable Docker aliases come from each fixture's `local_name`:
+Development uses `capsem-dev:<arch>` / `capsem-dev-base:<arch>`, which the existing
+`capsem-` inventory owns. Public names/repositories stay `dev`; old foreign
+`dev` aliases are neither adopted nor deleted and are not a fallback input.
+
 The existing `ci.yaml` `test-install` job retains its install/isolation checks,
 native KVM/vhost-vsock requirements, runner, timeout and read-only permissions.
 It then runs `debug-image --candidate-receipt` and

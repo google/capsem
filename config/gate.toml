@@ -2426,6 +2426,7 @@ benchmark_paths = [
 # tests/fixtures/oci/README.md has the qualification and publish steps.
 [functional.debug_image]
 name = "capsem-debug"
+local_name = "capsem-debug"
 context = "images/capsem-debug"
 script = "tests/fixtures/oci/pinned_image.py"
 repository = "ghcr.io/google/capsem/capsem-debug"
@@ -2444,6 +2445,7 @@ digests = { "linux/arm64" = "sha256:880983cdd4ca21e051745fc563d07642ca86cfc7b0aa
 # workflow does.
 [functional.reference_image]
 name = "dev"
+local_name = "capsem-dev"
 context = "images/dev"
 base_context = "images/base"
 script = "tests/fixtures/oci/pinned_image.py"

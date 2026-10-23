@@ -301,6 +301,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The confined gateway inherits only diagnostic and coverage environment inputs,
   excluding ambient host provider and collector credentials.
 
+- Keep Development producer-local Docker image and base tags inside Capsem's
+  owned cache inventory while preserving the public Development image identity.
+
 - Qualify exact debug and Development image candidates on the existing native
   amd64 CI rail and retain their original filesystem, inventory and native proof
   as nonpublishing artifacts for maintainer review.

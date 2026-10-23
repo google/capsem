@@ -11,7 +11,7 @@ from .pinned_image import ROOT, _publish, verify
 
 
 def build(image, selected: str | None = None) -> str:
-    """Build the image into the stage by digest and load it as `<name>:<arch>` too.
+    """Build into the digest stage and load the configured owned local Docker tag.
 
     An image built FROM a base (`base_context`) gets that base built first
     and passed as its BASE argument, as the image workflow does.
@@ -19,6 +19,7 @@ def build(image, selected: str | None = None) -> str:
     settings = image.settings()
     platform = image.platform_name(selected)
     arch = platform.split("/")[1]
+    tag = f"{settings.local_name}:{arch}"
     common = [
         "docker",
         "buildx",
@@ -29,7 +30,7 @@ def build(image, selected: str | None = None) -> str:
         "--sbom=false",
     ]
     if settings.base_context:
-        base = f"{settings.name}-base:{arch}"
+        base = f"{settings.local_name}-base:{arch}"
         subprocess.run(
             [*common, "--load", "--tag", base, str(ROOT / settings.base_context)],
             check=True,
@@ -55,9 +56,8 @@ def build(image, selected: str | None = None) -> str:
             # Reuse first producer bytes; missing metadata is a refusal, never
             # an excuse to regenerate a different filesystem under this subject.
             producer_evidence.ready(layout, settings.repository, arch, maximum=settings.evidence_max_bytes)
-            subprocess.run([*common, "--load", "--tag", f"{settings.name}:{arch}", context], check=True, timeout=3600)
+            subprocess.run([*common, "--load", "--tag", tag, context], check=True, timeout=3600)
         else:
-            tag = f"{settings.name}:{arch}"
             subprocess.run([*common, "--load", "--tag", tag, context], check=True, timeout=3600)
             filesystem = Path(tmp) / "filesystem"
             filesystem.mkdir()
@@ -72,7 +72,7 @@ def build(image, selected: str | None = None) -> str:
                 raise ValueError("published generation differs from original producer evidence")
     print(f"Built {settings.name} {platform}: {digest}")
     print(f"  layout: {layout}")
-    print(f"  docker: {settings.name}:{arch}")
+    print(f"  docker: {tag}")
     print(f"  original evidence: {layout / producer_evidence.DIRECTORY}")
     print(f"Pin it in config/gate.toml [functional.{image.section}] digests:")
     print(f'  "{platform}" = "{digest}"')
@@ -137,7 +137,7 @@ def prepare_local_evidence(image, reference: str, output: Path, *, inspect_timeo
         raise ValueError("evidence requires this exact local image identity")
     manifest = json.loads((layout / "blobs/sha256" / entry["digest"].split(":")[1]).read_text())
     selected = json.loads((layout / "blobs/sha256" / manifest["config"]["digest"].split(":")[1]).read_text())
-    identity, config, layers = _retained_image(rootfs.RUNTIME, f"{name}:{architecture}", architecture, inspect_timeout)
+    identity, config, layers = _retained_image(rootfs.RUNTIME, f"{image.settings().local_name}:{architecture}", architecture, inspect_timeout)
     if config != manifest["config"]["digest"]:
         raise ValueError("retained image identity differs from selected OCI config")
     expected_root = selected.get("rootfs")

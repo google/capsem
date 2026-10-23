@@ -79,6 +79,8 @@ class PinnedImageConfig(Strict):
     """
 
     name: SafeToken
+    #: Producer-local Docker aliases, separate from the catalog/product name.
+    local_name: SafeToken
     context: str
     base_context: str | None = None
     script: str

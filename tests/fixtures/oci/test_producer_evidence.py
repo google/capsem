@@ -31,7 +31,7 @@ def setup(monkeypatch, tmp_path):
     source, digest, _ = _layout(tmp_path / 'source')
     cache = tmp_path / 'stage'
     cache.mkdir()
-    settings = SimpleNamespace(name='capsem-debug', repository=REPOSITORY, context='images/capsem-debug', base_context=None, evidence_max_bytes=1048576)
+    settings = SimpleNamespace(name='capsem-debug', local_name='capsem-debug', repository=REPOSITORY, context='images/capsem-debug', base_context=None, evidence_max_bytes=1048576)
     image = SimpleNamespace(section='debug_image', settings=lambda: settings, stage=lambda: cache,
         platform_name=lambda value: value or 'linux/arm64', layout_path=lambda selected: cache / selected.split(':')[1])
     calls, produced = [], {}
