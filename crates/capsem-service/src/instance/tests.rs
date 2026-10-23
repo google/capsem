@@ -1,6 +1,29 @@
 use super::*;
 use crate::tests::{make_test_state, test_instance};
 
+#[test]
+fn browser_clear_revision_rejects_delayed_observer_frames_and_preserves_newer_request() {
+    let mut instance = test_instance();
+    let request = |id| capsem_api::BrowserRequest {
+        owner_generation: None,
+        id,
+        url: "https://example.test/".into(),
+    };
+    instance.observe_browser(request(1));
+    assert_eq!(
+        instance.browser_request.as_ref().unwrap().owner_generation,
+        Some(instance.generation.to_string())
+    );
+    instance.clear_browser(1);
+    instance.observe_browser(request(1));
+    assert!(instance.browser_request.is_none());
+    instance.observe_browser(request(2));
+    instance.clear_browser(1);
+    assert_eq!(instance.browser_request.as_ref().unwrap().id, 2);
+    instance.clear_browser(2);
+    assert!(instance.browser_request.is_none());
+}
+
 #[tokio::test]
 async fn stale_shutdown_binding_leaves_replacement_socket_and_ledger_intact() {
     let state = make_test_state();

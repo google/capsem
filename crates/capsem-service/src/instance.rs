@@ -44,6 +44,8 @@ impl WorkerGrant {
 
 pub(crate) struct InstanceInfo {
     pub(crate) browser_request: Option<capsem_api::BrowserRequest>,
+    /// Includes cleared requests, so an older observer cannot resurrect a URL.
+    pub(crate) browser_revision: u64,
     pub(crate) terminal: Option<capsem_api::TerminalSummary>,
     pub(crate) id: String,
     /// One actual spawn, never reused when an ID is resumed or replaced.
@@ -69,6 +71,27 @@ pub(crate) struct InstanceInfo {
     pub(crate) forked_from: Option<String>,
     /// Key-value metadata labels attached at creation
     pub(crate) labels: Option<std::collections::HashMap<String, String>>,
+}
+
+impl InstanceInfo {
+    pub(crate) fn observe_browser(&mut self, mut request: capsem_api::BrowserRequest) {
+        if request.id > self.browser_revision {
+            self.browser_revision = request.id;
+            request.owner_generation = Some(self.generation.to_string());
+            self.browser_request = Some(request);
+        }
+    }
+
+    pub(crate) fn clear_browser(&mut self, request_id: u64) {
+        self.browser_revision = self.browser_revision.max(request_id);
+        if self
+            .browser_request
+            .as_ref()
+            .is_some_and(|request| request.id <= request_id)
+        {
+            self.browser_request = None;
+        }
+    }
 }
 
 #[cfg(test)]

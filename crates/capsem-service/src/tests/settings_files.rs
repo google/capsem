@@ -166,6 +166,7 @@ fn resolve_rejects_symlink_escape() {
         InstanceInfo {
             terminal: None,
             browser_request: None,
+            browser_revision: 0,
             generation: capsem_crypto::uuid_v4(),
             authority: Default::default(),
             upstream_policy: upstream_broker::test_policy_publisher(),
@@ -204,6 +205,7 @@ fn resolve_valid_path_inside_workspace() {
         InstanceInfo {
             terminal: None,
             browser_request: None,
+            browser_revision: 0,
             generation: capsem_crypto::uuid_v4(),
             authority: Default::default(),
             upstream_policy: upstream_broker::test_policy_publisher(),

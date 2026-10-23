@@ -74,6 +74,7 @@ async fn memory_handoff_uses_correlated_real_host_ipc_and_acknowledgement() {
         InstanceInfo {
             terminal: None,
             browser_request: None,
+            browser_revision: 0,
             id: "vm".into(),
             name: "vm".into(),
             uds_path: socket.clone(),

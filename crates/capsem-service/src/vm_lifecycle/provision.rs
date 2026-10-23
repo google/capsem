@@ -378,6 +378,7 @@ impl ServiceState {
             InstanceInfo {
                 terminal: None,
                 browser_request: None,
+                browser_revision: 0,
                 generation,
                 authority,
                 upstream_policy,

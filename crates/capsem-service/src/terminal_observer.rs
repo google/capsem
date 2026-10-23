@@ -51,14 +51,17 @@ pub(super) fn start(state: Arc<ServiceState>, id: String, generation: uuid::Uuid
                     else {
                         return Ok(());
                     };
-                    if instance
-                        .browser_request
-                        .as_ref()
-                        .is_none_or(|current| request.id > current.id)
-                    {
-                        instance.browser_request = Some(request);
-                    }
+                    instance.observe_browser(request);
                     drop(instances);
+                } else if let ProcessToService::BrowserRequestCleared { request_id } = message {
+                    let mut instances = state.instances.lock().unwrap();
+                    let Some(instance) = instances
+                        .get_mut(&id)
+                        .filter(|instance| instance.generation == generation)
+                    else {
+                        return Ok(());
+                    };
+                    instance.clear_browser(request_id);
                 }
             }
         }

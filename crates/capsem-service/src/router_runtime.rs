@@ -1,5 +1,6 @@
 use super::*;
 
+mod browser;
 pub(crate) mod exposures;
 pub(crate) mod restart;
 mod streams;
@@ -73,6 +74,7 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route("/vms/list", get(handle_list))
         .route("/vms/{id}/info", get(handle_info))
         .route("/vms/{id}/status", get(handle_vm_status))
+        .route("/vms/{id}/browser/acknowledge", post(browser::handle_acknowledge))
         .route("/vms/{id}/container", get(container_setup::handle_container_status))
         .route("/vms/{id}/stream", get(streams::handle_stream))
         .route(

@@ -203,6 +203,7 @@ pub(crate) fn test_instance() -> InstanceInfo {
     InstanceInfo {
         terminal: None,
         browser_request: None,
+        browser_revision: 0,
         generation: capsem_crypto::uuid_v4(),
         authority: Default::default(),
         upstream_policy: upstream_broker::test_policy_publisher(),
@@ -431,6 +432,7 @@ pub(crate) fn insert_fake_instance_with_session_dir(state: &ServiceState, id: &s
         InstanceInfo {
             terminal: None,
             browser_request: None,
+            browser_revision: 0,
             id: id.to_string(),
             name: id.to_string(),
             pid,
@@ -622,6 +624,7 @@ fn browser_request_is_in_inventory_and_invalidates_its_runtime_snapshot() {
     state.instances.lock().unwrap().insert(id.clone(), instance);
     let before = list_response_fingerprint(&state);
     state.instances.lock().unwrap().get_mut(&id).unwrap().browser_request = Some(capsem_api::BrowserRequest {
+        owner_generation: None,
         id: 1,
         url: "https://example.org/login?state=opaque".into(),
     });
