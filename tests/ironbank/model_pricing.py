@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import math
+import re
+from datetime import UTC, date, datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -19,12 +22,16 @@ def assert_model_call_price(row: Any) -> None:
     expected = estimate_cost_usd(
         provider=row["provider"],
         model=row["model"],
-        input_tokens=int(row["input_tokens"] or 0),
-        output_tokens=int(row["output_tokens"] or 0),
+        input_tokens=row["input_tokens"],
+        output_tokens=row["output_tokens"],
         usage_details=usage_details,
+        timestamp=row["timestamp"],
     )
-    actual = float(row["estimated_cost_usd"] or 0.0)
-    assert abs(actual - expected) <= PRICE_EPSILON_USD, {
+    actual = row["estimated_cost_usd"]
+    if expected is None:
+        assert actual is None, "unpriced usage must remain NULL, not a measured zero"
+        return
+    assert actual is not None and abs(float(actual) - expected) <= PRICE_EPSILON_USD, {
         "provider": row["provider"],
         "model": row["model"],
         "input_tokens": row["input_tokens"],
@@ -33,44 +40,48 @@ def assert_model_call_price(row: Any) -> None:
         "actual_estimated_cost_usd": actual,
         "expected_estimated_cost_usd": expected,
     }
-    if has_pricing(provider=row["provider"], model=row["model"]):
-        token_total = int(row["input_tokens"] or 0) + int(row["output_tokens"] or 0)
-        if token_total > 0:
-            assert actual > 0.0, {
-                "provider": row["provider"],
-                "model": row["model"],
-                "input_tokens": row["input_tokens"],
-                "output_tokens": row["output_tokens"],
-                "estimated_cost_usd": actual,
-            }
 
 
 def estimate_cost_usd(
     *,
     provider: str,
     model: str | None,
-    input_tokens: int,
-    output_tokens: int,
+    input_tokens: int | None,
+    output_tokens: int | None,
     usage_details: dict[str, Any],
-) -> float:
+    timestamp: str | None = None,
+) -> float | None:
     model_str = model or ""
     if not model_str or len(model_str) > 128:
-        return 0.0
+        return None
     if provider not in {"anthropic", "openai", "google"}:
-        return 0.0
-    effective_input = max(0, input_tokens - int(usage_details.get("cache_read") or 0))
-    if effective_input == 0 and output_tokens == 0:
-        return 0.0
+        return None
+    if input_tokens is None or output_tokens is None or min(input_tokens, output_tokens) < 0:
+        return None
+    read = int(usage_details.get("cache_read") or 0)
+    write = int(usage_details.get("cache_write") or 0)
+    effective_input = input_tokens - read - write
+    if min(effective_input, read, write) < 0 or usage_details.get("cache_write_1h", 0):
+        return None
     provider_data = _provider(provider)
     if provider_data is None:
-        return 0.0
-    price = _matched_price(provider_data, model_str)
+        return None
+    price = _matched_price(provider_data, model_str, _day(timestamp))
     if price is None:
-        return 0.0
-    return (
-        effective_input * _rate(price.get("input_mtok")) / 1_000_000.0
-        + output_tokens * _rate(price.get("output_mtok")) / 1_000_000.0
-    )
+        return None
+    total = 0.0
+    for count, key in [
+        (effective_input, "input_mtok"),
+        (output_tokens, "output_mtok"),
+        (read, "cache_read_mtok"),
+        (write, "cache_write_mtok"),
+    ]:
+        if count:
+            rate = _rate(price.get(key), input_tokens)
+            if rate is None:
+                return None
+            total += count * rate / 1_000_000.0
+    return total
 
 
 def has_pricing(*, provider: str, model: str | None) -> bool:
@@ -80,7 +91,7 @@ def has_pricing(*, provider: str, model: str | None) -> bool:
     provider_data = _provider(provider)
     if provider_data is None:
         return False
-    return _matched_price(provider_data, model_str) is not None
+    return _matched_price(provider_data, model_str, _day(None)) is not None
 
 
 @lru_cache(maxsize=1)
@@ -92,44 +103,63 @@ def _provider(provider: str) -> dict[str, Any] | None:
     return next((entry for entry in _pricing_data() if entry.get("id") == provider), None)
 
 
-def _matched_price(provider_data: dict[str, Any], model: str) -> dict[str, Any] | None:
+def _day(timestamp: str | None) -> date:
+    if timestamp is None:
+        return datetime.now(UTC).date()
+    parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    assert parsed.tzinfo is not None, "ledger pricing requires an explicit UTC offset"
+    return parsed.astimezone(UTC).date()
+
+
+def _matched_price(provider_data: dict[str, Any], model: str, day: date) -> dict[str, Any] | None:
     for entry in provider_data.get("models") or []:
         if _matches(entry.get("match") or {}, model):
-            return _price(entry)
+            return _price(entry, day)
     return None
 
 
 def _matches(rule: dict[str, Any], model: str) -> bool:
+    model = model.lower()
     if "equals" in rule:
-        return model == rule["equals"]
+        return model == rule["equals"].lower()
     if "starts_with" in rule:
-        return model.startswith(rule["starts_with"])
+        return model.startswith(rule["starts_with"].lower())
     if "ends_with" in rule:
-        return model.endswith(rule["ends_with"])
+        return model.endswith(rule["ends_with"].lower())
     if "contains" in rule:
-        return rule["contains"] in model
+        return rule["contains"].lower() in model
+    if "regex" in rule:
+        return re.search(rule["regex"], model, re.IGNORECASE) is not None
     if "or" in rule:
         return any(_matches(option, model) for option in rule["or"])
     return False
 
 
-def _price(entry: dict[str, Any] | None) -> dict[str, Any] | None:
+def _price(entry: dict[str, Any] | None, day: date) -> dict[str, Any] | None:
     if entry is None:
         return None
     prices = entry.get("prices")
     if isinstance(prices, dict):
         return prices
-    if isinstance(prices, list) and prices:
-        first = prices[0]
-        nested = first.get("prices") if isinstance(first, dict) else None
-        if isinstance(nested, dict):
-            return nested
+    if isinstance(prices, list):
+        for candidate in reversed(prices):
+            constraint = candidate.get("constraint")
+            if constraint is not None:
+                assert set(constraint) == {"start_date"}, "unsupported pricing constraint"
+                if date.fromisoformat(constraint["start_date"]) > day:
+                    continue
+            return candidate["prices"]
     return None
 
 
-def _rate(value: Any) -> float:
+def _rate(value: Any, input_tokens: int) -> float | None:
     if isinstance(value, int | float):
-        return float(value)
-    if isinstance(value, dict):
-        return float(value.get("base") or 0.0)
-    return 0.0
+        result = float(value)
+    elif isinstance(value, dict):
+        result = float(value["base"])
+        for tier in sorted(value["tiers"], key=lambda tier: tier["start"]):
+            if input_tokens > tier["start"]:
+                result = float(tier["price"])
+    else:
+        return None
+    return result if math.isfinite(result) and result >= 0 else None
