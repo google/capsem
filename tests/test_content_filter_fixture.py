@@ -174,3 +174,35 @@ def test_secret_stimulus_imports_no_literal_but_sends_exact_header(monkeypatch, 
     assert requests[0][2]["body"] == b"safe body"
     assert requests[0][2]["headers"]["x-leaked-token"].encode() == TOKEN
 
+
+@pytest.mark.parametrize("invalid", ["raw-token", "malformed-reference", "truncated"])
+def test_public_capture_reference_requires_complete_redacted_archive(invalid):
+    from helpers.content_filter_session import captured_access_token_if_ready
+
+    reference = "credential:blake3:" + "a" * 64
+    access = {"raw-token": "capsem_test_oauth_access_synthetic",
+              "malformed-reference": "credential:blake3:not-a-digest"}.get(invalid, reference)
+    body = {"source_table": "net_events", "direction": "response", "encoding": "utf8",
+            "truncated": invalid == "truncated", "truncated_for_transport": False,
+            "content": json.dumps({"access_token": access})}
+
+    class Client:
+        phase = 0
+
+        def get(self, path):
+            if path == "/vms/vm/stats/detail":
+                return {"http_events": [] if self.phase == 0 else [{"domain": OAUTH_HOST,
+                    "path": "/oauth/token", "status_code": 200, "event_id": "oauth-event"}]}
+            assert path == "/vms/vm/bodies/oauth-event"
+            return {"bodies": [] if self.phase == 1 else [body]}
+
+    client = Client()
+    assert captured_access_token_if_ready(client, "vm") is None
+    client.phase = 1
+    assert captured_access_token_if_ready(client, "vm") is None
+    client.phase = 2
+    with pytest.raises(AssertionError):
+        captured_access_token_if_ready(client, "vm")
+    body["truncated"] = False
+    body["content"] = json.dumps({"access_token": reference})
+    assert captured_access_token_if_ready(client, "vm") == reference

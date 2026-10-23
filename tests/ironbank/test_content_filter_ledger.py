@@ -16,11 +16,12 @@ from helpers.body_archive import archived_bodies
 from helpers.content_filter_session import (
     FIXTURE_HOST,
     OAUTH_HOST,
+    captured_access_token_if_ready,
     filter_session,
     plugin_execution_payloads,
 )
 from helpers.session_ledger import open_session_ledger
-from ironbank.test_http_protocol_ledger import EXPECTED_NET_COLUMNS
+from ironbank.test_http_protocol_ledger import EXPECTED_NET_COLUMNS, _eventually
 
 pytestmark = pytest.mark.integration
 EMAIL = b"demo.person@example.test"
@@ -207,13 +208,24 @@ def test_secret_guard_preserves_authorized_broker_header_and_blocks_reference_co
 ):
     with filter_session(tmp_path, "secret_exfiltration", "block") as env:
         base = f"https://{FIXTURE_HOST}"
-        result = env.python(f"""
-import json, urllib.request, urllib.parse, urllib.error
-base = {base!r}
+        captured = env.python(f"""
+import json, urllib.request, urllib.parse
 request = urllib.request.Request("https://{OAUTH_HOST}/oauth/token", data=urllib.parse.urlencode({{"code": "capsem_test_oauth_code_content_proof"}}).encode(), headers={{"content-type": "application/x-www-form-urlencoded"}})
 with urllib.request.urlopen(request, timeout=30) as response:
-    token = json.load(response)["access_token"]
-assert token.startswith("credential:blake3:"), token
+    token_body = json.load(response)
+print("FILTER_RESULT=" + json.dumps({{"kind": token_body["kind"]}}))
+""")
+        assert captured == {"kind": "synthetic_oauth_token_fixture"}
+        # Capture protects the host ledger; the canonical broker does not
+        # replace arbitrary OAuth responses delivered to a guest.
+        reference = _eventually(
+            lambda: captured_access_token_if_ready(env.client, env.vm_id), bool
+        )
+        result = env.python(f"""
+import json, urllib.request, urllib.error
+base = {base!r}
+token = {reference!r}
+assert token.startswith("credential:blake3:")
 request = urllib.request.Request(base + "/echo", data=b"authorized broker traffic", headers={{"authorization": "Bearer " + token, "content-type": "text/plain"}})
 with urllib.request.urlopen(request, timeout=30) as response:
     echo = json.load(response)

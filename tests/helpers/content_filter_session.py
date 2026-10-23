@@ -52,6 +52,30 @@ def plugin_execution_payloads(conn) -> dict:
     }
 
 
+def captured_access_token_if_ready(client, vm_id: str) -> str | None:
+    """Read a synthetic captured access reference through public ledger APIs."""
+    detail = client.get(f"/vms/{vm_id}/stats/detail")
+    exchanges = [row for row in detail["http_events"] if row["domain"] == OAUTH_HOST
+                 and row["path"] == "/oauth/token" and row["status_code"] == 200]
+    if not exchanges:
+        return None
+    assert len(exchanges) == 1, "expected exactly one synthetic OAuth exchange"
+    served = client.get(f"/vms/{vm_id}/bodies/{exchanges[0]['event_id']}")
+    bodies = [row for row in served["bodies"] if row["source_table"] == "net_events"
+              and row["direction"] == "response"]
+    if not bodies:
+        return None  # The live event may precede the durable archive index.
+    assert len(bodies) == 1
+    body = bodies[0]
+    assert not body["truncated"] and not body["truncated_for_transport"]
+    assert body["encoding"] == "utf8"
+    reference = json.loads(body["content"])["access_token"]
+    assert isinstance(reference, str) and reference.startswith("credential:blake3:")
+    assert len(reference) == len("credential:blake3:") + 64
+    assert all(char in "0123456789abcdef" for char in reference.removeprefix("credential:blake3:"))
+    return reference
+
+
 def fixture_config(ready: dict) -> str:
     port = int(ready["http_addr"].rsplit(":", 1)[1])
     return f'''
