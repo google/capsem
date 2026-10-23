@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reconnect graphical apps through a fresh scoped preview after idle or sleep,
+  instead of retrying an expired connection indefinitely.
+
 - Resolve deep-linked session tabs to their names when status arrives and
   reflect session renames without reopening the tab.
 

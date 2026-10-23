@@ -39,7 +39,7 @@ fn the_page_split_refuses_a_page_it_cannot_split_exactly() {
     assert_eq!(page.main, "go()");
     assert_eq!(
         page.index,
-        "<html><head><script src=\"a.js\"></script><link rel=\"stylesheet\" href=\"capsem-surface.css\" />\n  <script src=\"capsem-surface-metrics.js\"></script>\n  <script src=\"capsem-surface-profile.js\"></script>\n  <script src=\"capsem-surface-cursor.js\"></script>\n  <script src=\"capsem-surface.js\"></script>\n  </head><body><script src=\"xpra-main.js\"></script></body></html>"
+        "<html><head><script src=\"a.js\"></script><link rel=\"stylesheet\" href=\"capsem-surface.css\" />\n  <script src=\"capsem-surface-metrics.js\"></script>\n  <script src=\"capsem-surface-reconnect.js\"></script>\n  <script src=\"capsem-surface-profile.js\"></script>\n  <script src=\"capsem-surface-cursor.js\"></script>\n  <script src=\"capsem-surface.js\"></script>\n  </head><body><script src=\"xpra-main.js\"></script></body></html>"
     );
     for bad in [
         "<html><head></head><body></body></html>",
@@ -97,6 +97,18 @@ fn capsem_serves_its_own_settings_and_disconnect_page() {
     assert!(disconnected.contains("Capsem") && !disconnected.contains("<script"));
     let (_, surface) = get(&format!("{CLIENT_ROOT}capsem-surface.js"));
     assert!(String::from_utf8(surface).unwrap().contains("system_tray = false"));
+}
+
+#[test]
+fn embedded_reconnection_policy_loads_before_the_bootstrap_metadata_is_removed() {
+    let (head, script) = get(&format!("{CLIENT_ROOT}capsem-surface-reconnect.js"));
+    assert!(head.starts_with("HTTP/1.1 200 OK\r\n"));
+    assert!(head.contains("Content-Type: text/javascript; charset=utf-8"));
+    assert_eq!(script, SURFACE_RECONNECT.as_bytes());
+    let page = PAGE.as_ref().unwrap();
+    let reconnect = page.index.find("src=\"capsem-surface-reconnect.js\"").unwrap();
+    let policy = page.index.find("src=\"capsem-surface.js\"").unwrap();
+    assert!(reconnect < policy);
 }
 
 #[test]
