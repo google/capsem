@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import ast
 import json
+import tomllib
 
 import pytest
-import tomllib
 from helpers.content_filter_session import (
     FIXTURE_HOST,
     OAUTH_HOST,
