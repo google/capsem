@@ -1,6 +1,33 @@
 use super::*;
 
 #[tokio::test]
+async fn image_inventory_is_authenticated_get_only_and_reaches_service() {
+    let (_, state) = health_app("/tmp/capsem-inventory-missing-service.sock");
+    let app = service_proxy_routes()
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            auth::auth_middleware,
+        ))
+        .with_state(state);
+    for (method, token, expected) in [
+        ("GET", None, http::StatusCode::UNAUTHORIZED),
+        ("GET", Some("Bearer wrong"), http::StatusCode::UNAUTHORIZED),
+        ("GET", Some("Bearer test"), http::StatusCode::BAD_GATEWAY),
+        ("POST", Some("Bearer test"), http::StatusCode::METHOD_NOT_ALLOWED),
+    ] {
+        let mut request = http::Request::builder().method(method).uri(format!(
+            "/images/dev/inventory?image=ghcr.io%2Fgoogle%2Fcapsem%2Fdev%40sha256%3A{}",
+            "a".repeat(64)
+        ));
+        if let Some(token) = token {
+            request = request.header("authorization", token);
+        }
+        let response = app.clone().oneshot(request.body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(response.status(), expected, "{method} inventory route");
+    }
+}
+
+#[tokio::test]
 async fn connection_routes_require_gateway_auth_before_service_forwarding() {
     let (_, state) = health_app("/tmp/capsem-credential-route-missing-service.sock");
     let app = service_proxy_routes()

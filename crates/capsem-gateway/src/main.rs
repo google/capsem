@@ -312,6 +312,7 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         )
         .route("/images", get(proxy::handle_proxy))
         .route("/images/pull", post(proxy::handle_proxy))
+        .route("/images/{name}/inventory", get(proxy::handle_proxy))
         .route("/proxies", post(proxy::handle_proxy))
         .route("/proxies/{id}/heartbeat", post(proxy::handle_proxy))
         .route("/proxies/{id}/stop", post(proxy::handle_proxy))

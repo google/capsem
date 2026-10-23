@@ -213,6 +213,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Forward authenticated package inventories through the gateway so app Info can
+  display the selected image's verified installed packages.
+
 - Refuse scratch imports whose source size changes during copying, keeping
   individual files within their checked limit and leaving originals intact.
 
