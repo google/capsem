@@ -1518,7 +1518,7 @@ def test_host_builder_bootstraps_https_trust_before_ubuntu_package_fetches() -> 
         < host_builder.index("    materialize-host-apt")
     )
     assert materializer.index('"${APT_UPDATE_TIMEOUT_SECONDS}s" apt-get') < (
-        materializer.index('"$((APT_INSTALL_TIMEOUT_SECONDS / APT_RETRIES))s" apt-get')
+        materializer.index('"${APT_INSTALL_TIMEOUT_SECONDS}s"')
     )
 
 
@@ -1553,7 +1553,7 @@ def test_host_builder_uses_shared_apt_authority_without_refetching_for_python() 
     assert "python3-venv" in materializer
     assert "materialize-host-apt" in native_tools
     assert "apt-get" not in native_tools
-    assert materializer.count("apt-get") == 2
+    assert materializer.count("apt-get") == 3
     assert host_builder.count("apt-get") == 0
     assert "apt-get update" not in python
     assert "COPY --from=uv-runtime /uv /uvx /usr/local/bin/" in python

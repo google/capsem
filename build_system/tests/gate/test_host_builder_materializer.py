@@ -120,11 +120,11 @@ def test_host_builder_mutable_tool_inventory_is_closed() -> None:
         {
             "cargo": 9,
             "rustup": 4,
-            "apt-get": 2,
+            "apt-get": 3,
             "curl": 1,
             "npm": 1,
             "wget": 1,
-            "apt": 12,
+            "apt": 16,
             "pnpm": 1,
             "uv": 2,
         }
@@ -150,13 +150,15 @@ def test_host_builder_apt_snapshot_outage_has_a_deadline() -> None:
         encoding="utf-8"
     )
     assert '"${APT_UPDATE_TIMEOUT_SECONDS}s" apt-get' in source
-    assert '"$((APT_INSTALL_TIMEOUT_SECONDS / APT_RETRIES))s" apt-get' in source
+    assert '"${APT_INSTALL_TIMEOUT_SECONDS}s"' in source
+    assert "apt-get --no-download install" in source
     assert 'Acquire::https::Timeout="${APT_REQUEST_TIMEOUT_SECONDS}"' in source
     assert 'Acquire::Retries="${APT_RETRIES}"' in source
     assert 0 < CONFIG.apt_snapshot.update_timeout_seconds <= 300
     assert 1200 < CONFIG.apt_snapshot.install_timeout_seconds <= 1800
     assert 0 < CONFIG.apt_snapshot.request_timeout_seconds <= 30
     assert 0 < CONFIG.apt_snapshot.retries <= 5
+    assert 0 < CONFIG.apt_snapshot.download_concurrency <= 16
 
 
 def test_host_builder_preserves_downloads_across_a_bounded_snapshot_retry() -> None:
@@ -171,8 +173,9 @@ def test_host_builder_preserves_downloads_across_a_bounded_snapshot_retry() -> N
     assert "rm -f /var/lib/apt/lists/lock /var/cache/apt/archives/lock" in source
     assert ".capsem-${APT_SNAPSHOT_ID}-complete" in source
     assert '[[ "$attempt" -lt "$APT_RETRIES" ]] || exit 1' in source
-    assert source.count("while ! timeout --signal=TERM") == 2
-    assert '"$((APT_INSTALL_TIMEOUT_SECONDS / APT_RETRIES))s" apt-get' in source
+    assert source.count("while ! timeout --signal=TERM") == 1
+    assert '"${APT_INSTALL_TIMEOUT_SECONDS}s"' in source
+    assert "Acquire::ForceHash=SHA256 --print-uris" in source
     assert "rm -rf /var/lib/apt/lists" not in source
 
 
@@ -229,6 +232,7 @@ def test_warm_identity_skips_build_and_cold_identity_builds_exactly_once() -> No
     assert f"APT_INSTALL_TIMEOUT_SECONDS={CONFIG.apt_snapshot.install_timeout_seconds}" in builds[0]
     assert f"APT_REQUEST_TIMEOUT_SECONDS={CONFIG.apt_snapshot.request_timeout_seconds}" in builds[0]
     assert f"APT_RETRIES={CONFIG.apt_snapshot.retries}" in builds[0]
+    assert f"APT_DOWNLOAD_CONCURRENCY={CONFIG.apt_snapshot.download_concurrency}" in builds[0]
     assert f"RUST_TOOLCHAIN={pinned_toolchain(PROJECT_ROOT)}" in builds[0]
     assert "RUST_TARGETS=" + " ".join(CONFIG.toolchain.rust_targets) in builds[0]
     assert len(cold.matching(r"docker run --rm --network none")) == 6
