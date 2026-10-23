@@ -13,6 +13,7 @@ export const VmStatusResponseSchema: z.ZodType<VmStatusResponse> = z.object({
   "id": z.string(),
   "last_error": z.string().nullable().exactOptional(),
   "name": z.string(),
+  "pending_approval_count": z.int().min(0).exactOptional(),
   "persistent": z.boolean().exactOptional(),
   "pid": z.int().min(0).nullable().exactOptional(),
   "resume_blocked_reason": z.string().nullable().exactOptional(),

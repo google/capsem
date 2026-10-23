@@ -34,6 +34,7 @@ export const SandboxInfoSchema: z.ZodType<SandboxInfo> = z.object({
   "model_call_count": z.int().min(0).nullable().exactOptional(),
   "name": z.string().nullable().exactOptional(),
   "network": z.union([z.null(), z.lazy(() => VmNetworkInfoSchema)]).exactOptional(),
+  "pending_approval_count": z.int().min(0).exactOptional(),
   "persistent": z.boolean().exactOptional(),
   "pid": z.int().min(0),
   "ram_mb": z.int().min(0).nullable().exactOptional(),

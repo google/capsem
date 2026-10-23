@@ -11,6 +11,7 @@ export interface VmStatusResponse {
   "id": string;
   "last_error"?: string | null;
   "name": string;
+  "pending_approval_count"?: number;
   "persistent"?: boolean;
   "pid"?: number | null;
   "resume_blocked_reason"?: string | null;

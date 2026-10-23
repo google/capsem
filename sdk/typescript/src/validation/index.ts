@@ -172,6 +172,11 @@ export {RevokedCredentialAuthoritySchema} from "./RevokedCredentialAuthority.js"
 export {RunRequestSchema} from "./RunRequest.js";
 export {SandboxInfoSchema} from "./SandboxInfo.js";
 export {ScopeProfileSummarySchema} from "./ScopeProfileSummary.js";
+export {SecurityAskDecisionSchema} from "./SecurityAskDecision.js";
+export {SecurityAskListResponseSchema} from "./SecurityAskListResponse.js";
+export {SecurityAskRequestSchema} from "./SecurityAskRequest.js";
+export {SecurityAskResolveRequestSchema} from "./SecurityAskResolveRequest.js";
+export {SecurityAskStatusSchema} from "./SecurityAskStatus.js";
 export {ServiceAvailabilitySchema} from "./ServiceAvailability.js";
 export {ServiceManagerSchema} from "./ServiceManager.js";
 export {SessionDbStatusSchema} from "./SessionDbStatus.js";

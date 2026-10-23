@@ -32,6 +32,7 @@ export interface SandboxInfo {
   "model_call_count"?: number | null;
   "name"?: string | null;
   "network"?: null | VmNetworkInfo;
+  "pending_approval_count"?: number;
   "persistent"?: boolean;
   "pid": number;
   "ram_mb"?: number | null;
