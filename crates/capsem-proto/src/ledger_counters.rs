@@ -87,6 +87,13 @@ pub struct ModelUsage {
     pub duration_ms: u64,
     #[serde(default, skip_serializing_if = "is_default")]
     pub cost_micro_usd: u64,
+    /// Calls whose estimate was supplied, including a genuinely measured zero.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub priced_calls: u64,
+    /// Calls explicitly recorded without a supported price or token usage.
+    /// Legacy snapshots lack both counters; their remaining calls stay unknown.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub unpriced_calls: u64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

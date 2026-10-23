@@ -64,6 +64,8 @@ impl Absorb for ModelUsage {
         self.output_tokens.absorb(&other.output_tokens);
         self.duration_ms.absorb(&other.duration_ms);
         self.cost_micro_usd.absorb(&other.cost_micro_usd);
+        self.priced_calls.absorb(&other.priced_calls);
+        self.unpriced_calls.absorb(&other.unpriced_calls);
     }
 }
 

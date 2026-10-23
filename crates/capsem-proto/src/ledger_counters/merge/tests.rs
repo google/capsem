@@ -1,4 +1,27 @@
 use super::super::*;
+use super::Absorb;
+
+#[test]
+fn price_coverage_merges_without_treating_legacy_calls_as_priced() {
+    let mut left = ModelUsage {
+        calls: 4,
+        unpriced_calls: 4,
+        ..Default::default()
+    };
+    left.absorb(&ModelUsage {
+        calls: 2,
+        priced_calls: 2,
+        cost_micro_usd: 4380,
+        ..Default::default()
+    });
+    assert_eq!(
+        (left.calls, left.priced_calls, left.unpriced_calls, left.cost_micro_usd),
+        (6, 2, 4, 4380)
+    );
+    let legacy: ModelUsage = serde_json::from_str(r#"{"calls":3,"cost_micro_usd":100}"#).unwrap();
+    left.absorb(&legacy);
+    assert_eq!((left.calls, left.priced_calls, left.unpriced_calls), (9, 2, 4));
+}
 
 fn session(provider: &str, model: &str, calls: u64, cost: u64) -> LedgerCounters {
     let mut counters = LedgerCounters::default();
