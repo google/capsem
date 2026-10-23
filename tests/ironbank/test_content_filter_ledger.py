@@ -7,6 +7,7 @@ TLS interception, the real plugin pipeline and a hermetic upstream.
 from __future__ import annotations
 
 import base64
+import json
 import sqlite3
 from contextlib import closing
 
@@ -39,7 +40,7 @@ def request_script(
     return f"""
 import base64, gzip, http.client, json
 body = base64.b64decode({base64.b64encode(body).decode()!r})
-headers = {{"content-type": {media!r}, **{headers or {}!r}}}
+headers = {{"content-type": {media!r}, **json.loads(base64.b64decode({base64.b64encode(json.dumps(headers or {}).encode()).decode()!r}))}}
 if {compress!r}:
     body = gzip.compress(body)
     headers["content-encoding"] = "gzip"

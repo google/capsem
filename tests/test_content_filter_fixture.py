@@ -133,3 +133,44 @@ def test_applied_receipts_include_rule_backed_events_once(monkeypatch):
         assert sum(row["applied"] for payload in payloads.values() for row in payload["plugin_executions"]) == 1
     finally:
         conn.close()
+
+
+def test_secret_stimulus_imports_no_literal_but_sends_exact_header(monkeypatch, tmp_path):
+    import http.client
+    import runpy
+
+    from ironbank.test_content_filter_ledger import TOKEN
+
+    script = request_script(b"safe body", headers={"x-leaked-token": TOKEN.decode()})
+    assert TOKEN not in script.encode(), "the uploaded source must not create its own archive leak"
+    requests = []
+
+    class Connection:
+        status = 403
+
+        def __init__(self, host, *, timeout):
+            assert host == FIXTURE_HOST and timeout == 30
+
+        def request(self, method, path, **kwargs):
+            requests.append((method, path, kwargs))
+
+        def getresponse(self):
+            return self
+
+        def read(self):
+            return b""
+
+        def getheader(self, _name):
+            return None
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(http.client, "HTTPSConnection", Connection)
+    uploaded = tmp_path / "synthetic-content-stimulus.py"
+    uploaded.write_text(script)
+    runpy.run_path(str(uploaded))
+    assert len(requests) == 1
+    assert requests[0][2]["body"] == b"safe body"
+    assert requests[0][2]["headers"]["x-leaked-token"].encode() == TOKEN
+
