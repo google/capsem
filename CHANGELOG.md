@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Read package inventory through catalog-selected image policy, rejecting changed
+  pins and foreign artifacts while preserving verification errors.
+
 - Add typed on-demand image inventory contracts and generated client operations.
 
 - Verify bounded package inventory artifacts against their exact application

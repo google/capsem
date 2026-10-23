@@ -41,6 +41,10 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
             put(network_routes::handle_network_attach).delete(network_routes::handle_network_detach),
         )
         .route("/images", get(container_setup::images::handle_list_images))
+        .route(
+            "/images/{name}/inventory",
+            get(container_setup::images::inventory::handle_inventory),
+        )
         .route("/images/pull", post(container_setup::images::handle_pull_image))
         .route("/connections", get(connection_routes::list))
         .route("/connections/google/authorize", post(connection_routes::authorize))

@@ -105,21 +105,25 @@ impl ImageSource for RegistryImages {
     fn fetch_catalog(&self, source: CatalogSource, parent: PathBuf) -> images::CatalogFuture {
         let images = self.clone();
         Box::pin(async move {
-            let ca = match &source.ca {
-                Some(path) => Some(
-                    tokio::fs::read(path)
-                        .await
-                        .with_context(|| format!("read [images] catalog_ca {}", path.display()))?,
-                ),
-                None => None,
-            };
-            let puller = capsem_assets::oci::Puller::new_with_root_certificate(
-                stage::oci_architecture()?,
-                capsem_assets::oci::RegistryAuth::Anonymous,
-                ca.as_deref(),
-            )?
-            .with_cache(&images.cache()?);
+            let puller = images.catalog_puller(&source).await?;
             puller.fetch_catalog(&source.reference, &parent).await
+        })
+    }
+
+    fn fetch_inventory(
+        &self,
+        catalog: CatalogSource,
+        image: String,
+        artifact: String,
+        parent: PathBuf,
+    ) -> images::inventory::InventoryFuture {
+        let source = self.clone();
+        Box::pin(async move {
+            source
+                .catalog_puller(&catalog)
+                .await?
+                .fetch_inventory(&image, &artifact, &parent)
+                .await
         })
     }
 
@@ -148,5 +152,25 @@ impl ImageSource for RegistryImages {
             }
             Ok(root)
         })
+    }
+}
+
+impl RegistryImages {
+    async fn catalog_puller(&self, source: &CatalogSource) -> anyhow::Result<capsem_assets::oci::Puller> {
+        let ca = match &source.ca {
+            Some(path) => Some(
+                tokio::fs::read(path)
+                    .await
+                    .with_context(|| format!("read [images] catalog_ca {}", path.display()))?,
+            ),
+            None => None,
+        };
+        let puller = capsem_assets::oci::Puller::new_with_root_certificate(
+            stage::oci_architecture()?,
+            capsem_assets::oci::RegistryAuth::Anonymous,
+            ca.as_deref(),
+        )?
+        .with_cache(&self.cache()?);
+        Ok(puller)
     }
 }

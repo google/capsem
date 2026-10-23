@@ -86,7 +86,7 @@ approved = [
 ]
 
 [http]
-count = 111
+count = 112
 approved = [
   # All nine connection/grant routes approved by the user on 2026-10-14.
   "GET /connections",
@@ -110,6 +110,8 @@ approved = [
   "GET /enforcement/status",
   "GET /host-logs/{name}",
   "GET /images",
+  # Catalog-selected package contents approved by user for app Info, 2026-10-23.
+  "GET /images/{name}/inventory",
   "GET /internal/gateway/status",
   "GET /panics",
   "GET /security/latest",

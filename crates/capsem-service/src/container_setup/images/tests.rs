@@ -3,6 +3,7 @@ use crate::tests::route_request;
 use capsem_assets::asset_manager::PackageArchitecture;
 use capsem_core::net::policy_config::{CatalogSetting, ImagePolicyConfig, SettingsFile};
 use serde_json::{json, Value};
+mod inventory;
 
 #[tokio::test]
 async fn cache_observation_requires_the_same_filesystem_as_launch() {
@@ -144,6 +145,31 @@ struct CatalogImages {
 }
 
 impl ImageSource for CatalogImages {
+    fn fetch_inventory(
+        &self,
+        _catalog: CatalogSource,
+        image: String,
+        artifact: String,
+        _parent: PathBuf,
+    ) -> images::inventory::InventoryFuture {
+        Box::pin(async move {
+            anyhow::ensure!(artifact.ends_with(&digest('6')), "fixture inventory unavailable");
+            Ok(capsem_assets::oci::PackageInventory {
+                schema: "capsem.package_inventory.v1".into(),
+                subject: image,
+                architecture: host().into(),
+                packages: vec![capsem_assets::oci::InventoryPackage {
+                    name: "git".into(),
+                    version: "2.39.5".into(),
+                    architecture: host().into(),
+                }],
+                tools: vec![capsem_assets::oci::InventoryTool {
+                    name: "gh".into(),
+                    version: "gh version 2.23.0".into(),
+                }],
+            })
+        })
+    }
     fn cache_state(
         &self,
         key: &capsem_assets::oci::CacheKey,
