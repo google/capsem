@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Configure HTTP PII types and direction, outbound secret-pattern inspection,
+  and UTF-8 validation separately, with their buffering and coverage limits shown.
+
 - Review live approval requests from a compact app notice, with explicit
   generation-bound approve or deny actions and actionable request status.
 

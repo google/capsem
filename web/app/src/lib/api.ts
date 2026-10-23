@@ -77,9 +77,18 @@ export type PluginDetectionLevel = 'informational' | 'low' | 'medium' | 'high' |
 export type PluginStage = 'preprocess' | 'postprocess' | 'logging';
 export type PluginDetailRouteKind = 'credential_broker';
 
+export interface ContentFilterConfig {
+  direction:'inbound'|'outbound'|'both';
+  email:boolean;
+  phone:boolean;
+  card:boolean;
+  ssn:boolean;
+}
+
 export interface PluginConfig {
   mode: PluginMode;
   detection_level: PluginDetectionLevel;
+  content?:ContentFilterConfig;
 }
 
 export interface BrokeredCredentialStatus {

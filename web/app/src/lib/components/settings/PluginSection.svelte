@@ -1,12 +1,14 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import CredentialInventory from './CredentialInventory.svelte';
+  import ContentPluginControls from './ContentPluginControls.svelte';
   import { listPlugins, updatePlugin } from '../../api';
   import type {
     PluginDetectionLevel,
     PluginInfo,
     PluginListResponse,
     PluginMode,
+    ContentFilterConfig,
   } from '../../api';
   import CheckCircle from 'phosphor-svelte/lib/CheckCircle';
   import HandPalm from 'phosphor-svelte/lib/HandPalm';
@@ -119,6 +121,13 @@
     }
   }
 
+  async function setContent(plugin:PluginInfo,content:ContentFilterConfig) {
+    saving={...saving,[plugin.id]:true};error=null;
+    try {replacePlugin(await updatePlugin(plugin.id,{content}));}
+    catch(err) {error=err instanceof Error?err.message:'Could not save inspection options';}
+    finally {saving={...saving,[plugin.id]:false};}
+  }
+
   async function setDetectionLevel(plugin: PluginInfo, detection_level: PluginDetectionLevel) {
     saving = { ...saving, [plugin.id]: true };
     error = null;
@@ -155,8 +164,8 @@
         <div class="p-4"><CredentialInventory /></div>
       {:else}
       {@const modeMeta = pluginModeMeta(plugin.config.mode)}
-      <div class="p-4 {plugin.config.mode === 'disable' ? 'bg-muted/20 opacity-70' : ''}">
-        <div class="grid grid-cols-[minmax(0,1fr)_minmax(10rem,14rem)_10rem_12rem] items-center gap-x-4">
+      <div class="plugin-row p-4 {plugin.config.mode === 'disable' ? 'bg-muted/20 opacity-70' : ''}">
+        <div class="plugin-grid">
           <div class="min-w-0">
             <div class="flex items-center gap-x-2">
               <p class="text-sm font-medium text-foreground truncate">{plugin.name}</p>
@@ -197,19 +206,20 @@
             {/if}
           </div>
 
-          <select
+          <label class="flex min-w-0 flex-col gap-1"><span class="text-xs text-muted-foreground-1">Mode</span><select
             class="py-2 px-3 text-sm rounded-lg border border-line-2 bg-layer text-foreground focus:outline-hidden focus:border-primary disabled:opacity-60"
             value={plugin.config.mode}
             disabled={saving[plugin.id]}
             aria-label="{plugin.id} mode"
             onchange={(e) => setMode(plugin, (e.target as HTMLSelectElement).value as PluginMode)}
           >
-            {#each MODES as mode (mode.value)}
+            {#if plugin.id==='utf8_guard' && plugin.config.mode==='rewrite'}<option value="rewrite" disabled>Rewrite (blocks invalid text)</option>{/if}
+            {#each MODES.filter(mode=>plugin.id!=='utf8_guard' || mode.value!=='rewrite') as mode (mode.value)}
               <option value={mode.value}>{mode.label}</option>
             {/each}
           </select>
-
-          <select
+          </label>
+          <label class="flex min-w-0 flex-col gap-1"><span class="text-xs text-muted-foreground-1">Detection level</span><select
             class="py-2 px-3 text-sm rounded-lg border border-line-2 bg-layer text-foreground focus:outline-hidden focus:border-primary disabled:opacity-60"
             value={plugin.config.detection_level}
             disabled={saving[plugin.id] || plugin.config.mode === 'disable'}
@@ -220,11 +230,22 @@
               <option value={level.value}>{level.label}</option>
             {/each}
           </select>
+          </label>
         </div>
-
-
+        {#if ['pii_filter','secret_exfiltration','utf8_guard'].includes(plugin.id)}
+          <ContentPluginControls pluginId={plugin.id} content={plugin.config.content??{direction:'both',email:true,phone:true,card:true,ssn:true}}
+            disabled={saving[plugin.id]} onchange={content=>{void setContent(plugin,content);}}/>
+        {/if}
       </div>
       {/if}
     {/each}
   </div>
 {/if}
+
+<style>
+  .plugin-row {container-type:inline-size;}
+  .plugin-grid {display:grid;grid-template-columns:minmax(0,1fr);align-items:center;gap:.75rem;}
+  @container (min-width:56rem) {
+    .plugin-grid {grid-template-columns:minmax(0,1fr) minmax(10rem,14rem) 10rem 12rem;column-gap:1rem;}
+  }
+</style>
