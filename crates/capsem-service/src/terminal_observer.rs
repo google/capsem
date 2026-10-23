@@ -62,6 +62,7 @@ pub(super) fn start(state: Arc<ServiceState>, id: String, generation: uuid::Uuid
                         return Ok(());
                     };
                     instance.clear_browser(request_id);
+                    drop(instances);
                 }
             }
         }

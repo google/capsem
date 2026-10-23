@@ -14,7 +14,9 @@ fn owner_path(state: &ServiceState, id: &str, generation: uuid::Uuid) -> Result<
     if instance.generation != generation {
         return Err(conflict());
     }
-    Ok(instance.uds_path.clone())
+    let path = instance.uds_path.clone();
+    drop(instances);
+    Ok(path)
 }
 
 fn clear(state: &ServiceState, id: &str, generation: uuid::Uuid, request_id: u64) -> Result<(), AppError> {
@@ -24,6 +26,7 @@ fn clear(state: &ServiceState, id: &str, generation: uuid::Uuid, request_id: u64
         .filter(|instance| instance.generation == generation)
         .ok_or_else(conflict)?;
     instance.clear_browser(request_id);
+    drop(instances);
     Ok(())
 }
 

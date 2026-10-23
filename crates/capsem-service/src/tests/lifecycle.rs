@@ -758,10 +758,10 @@ async fn stats_detail_route_reads_session_db_ledger() {
             "total_output_tokens": 7,
             "total_tool_calls": 1,
             "total_estimated_cost": 0.001,
+            "cost_coverage": {"priced_calls": 1, "unpriced_calls": 0, "unknown_calls": 0},
         }),
         "toolbar summary must remain compact and agree with the session ledger"
     );
-
     let (status, info) = route_request(app, axum::http::Method::GET, "/vms/stats-detail-vm/info", None).await;
     assert_eq!(status, StatusCode::OK, "{info}");
     // /info carries the same totals the toolbar summary reports.
