@@ -8,7 +8,7 @@ import type { ContainerStatusResponse, ImageListResponse, ImagePullResponse, Cre
 import { browserUrl } from './models/browser';
 import { gatewayBaseUrl } from './gateway-url';
 import { surfaceLaunchUrl, type SurfaceSession } from './models/surface';
-import { readGatewayToken } from './gateway-token';
+import { needsGatewayConnection, readGatewayConnection, readGatewayToken } from './gateway-token';
 import type { AssetStatus, UpdateApplyRequest } from '@capsem/sdk';
 export type { LogsResponse as RawLogsResponse, VmStatsDetailResponse } from '@capsem/sdk';
 import { ApiError, GatewaySdk, isAuthRefreshStatus } from './gateway-sdk';
@@ -238,6 +238,16 @@ export interface SecurityRuleEvent {
 export async function init(): Promise<InitResult> {
   console.log('[api] init() baseUrl=%s', _baseUrl);
   try {
+    const connection = needsGatewayConnection() ? await readGatewayConnection(_baseUrl) : null;
+    if (needsGatewayConnection() && !connection) {
+      _connected = false;
+      _token = null;
+      return { connected: false, reachable: false, version: null, reason: 'offline' };
+    }
+    if (connection && connection.gatewayUrl !== _baseUrl) {
+      _baseUrl = connection.gatewayUrl;
+      _applyToken(connection.token, true);
+    }
     // Probe health first (unauthenticated)
     const healthResp = await fetch(`${_baseUrl}/health`);
     if (!healthResp.ok) {
@@ -247,7 +257,7 @@ export async function init(): Promise<InitResult> {
     }
     const health: HealthResponse = await healthResp.json();
 
-    const token = await readGatewayToken(_baseUrl);
+    const token = connection?.token ?? await readGatewayToken(_baseUrl);
     if (!token) {
       _connected = false;
       
@@ -285,8 +295,8 @@ async function _serviceStatusRunning(): Promise<boolean> {
   }
 }
 
-function _applyToken(token: string): void {
-  if (_token === token) return;
+function _applyToken(token: string, destinationChanged = false): void {
+  if (_token === token && !destinationChanged) return;
   _token = token;
   if (_eventWs) {
     const ws = _eventWs;

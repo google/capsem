@@ -1,22 +1,23 @@
 import { invoke } from '@tauri-apps/api/core';
 import { parseParentMessage } from './terminal/postmessage';
+import { parseGatewayConnection, type GatewayConnection } from './gateway-connection';
 
 let nextRequestId = 0;
 
-function readTokenFromParent(): Promise<string | null> {
+function readConnectionFromParent(): Promise<GatewayConnection | null> {
   return new Promise(resolve => {
     const requestId = nextRequestId++;
     const parent = window.parent;
     const origin = window.location.origin;
-    const finish = (token: string | null) => {
+    const finish = (connection: GatewayConnection | null) => {
       clearTimeout(timeout);
       window.removeEventListener('message', onMessage);
-      resolve(token);
+      resolve(connection);
     };
     const onMessage = (event: MessageEvent) => {
       if (event.source !== parent || event.origin !== origin) return;
       const msg = parseParentMessage(event.data);
-      if (msg?.type === 'gateway-token' && msg.requestId === requestId) finish(msg.token);
+      if (msg?.type === 'gateway-token' && msg.requestId === requestId) finish(parseGatewayConnection(msg));
     };
     const timeout = setTimeout(() => finish(null), 3000);
     window.addEventListener('message', onMessage);
@@ -24,15 +25,18 @@ function readTokenFromParent(): Promise<string | null> {
   });
 }
 
-/** Read the private gateway bearer through the desktop shell. */
-export async function readGatewayToken(gatewayUrl: string): Promise<string | null> {
+export function needsGatewayConnection(): boolean {
+  return typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || Boolean(window.parent && window.parent !== window));
+}
+
+/** Read matching origin and authority through the desktop or its trusted parent. */
+export async function readGatewayConnection(gatewayUrl: string): Promise<GatewayConnection | null> {
   if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
-    const token = await invoke<string>('get_gateway_token');
-    return typeof token === 'string' && token.length === 64 ? token : null;
+    return parseGatewayConnection(await invoke<unknown>('get_gateway_connection'));
   }
 
   if (typeof window !== 'undefined' && window.parent && window.parent !== window) {
-    return readTokenFromParent();
+    return readConnectionFromParent();
   }
 
   // Hermetic Vitest fixtures still exercise the API client with a mocked
@@ -41,7 +45,13 @@ export async function readGatewayToken(gatewayUrl: string): Promise<string | nul
     const response = await fetch(`${gatewayUrl}/token`);
     if (!response.ok) return null;
     const body: { token?: unknown } = await response.json();
-    return typeof body.token === 'string' ? body.token : null;
+    return typeof body.token === 'string' ? { gatewayUrl, token: body.token } : null;
   }
   return null;
+}
+
+/** A refresh may rotate authority, but cannot silently change its destination. */
+export async function readGatewayToken(gatewayUrl: string): Promise<string | null> {
+  const connection = await readGatewayConnection(gatewayUrl);
+  return connection?.gatewayUrl === gatewayUrl ? connection.token : null;
 }

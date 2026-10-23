@@ -143,8 +143,11 @@ describe('parseIframeMessage', () => {
 describe('parseParentMessage', () => {
   it('accepts only complete token replies', () => {
     const token = 'a'.repeat(64);
-    expect(parseParentMessage({ type: 'gateway-token', requestId: 2, token }))
-      .toEqual({ type: 'gateway-token', requestId: 2, token });
+    const gatewayUrl = 'http://127.0.0.1:65228';
+    expect(parseParentMessage({ type: 'gateway-token', requestId: 2, token, gatewayUrl }))
+      .toEqual({ type: 'gateway-token', requestId: 2, token, gatewayUrl });
+    expect(parseParentMessage({ type: 'gateway-token', requestId: 2, token })).toBeNull();
+    expect(parseParentMessage({ type: 'gateway-token', requestId: 2, token, gatewayUrl: 'https://remote.example' })).toBeNull();
     expect(parseParentMessage({ type: 'gateway-token', requestId: 2, token: 'short' })).toBeNull();
     expect(parseParentMessage({ type: 'gateway-token', requestId: -1, token })).toBeNull();
   });

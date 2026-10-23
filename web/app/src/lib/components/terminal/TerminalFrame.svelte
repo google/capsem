@@ -13,13 +13,11 @@
   import { TerminalInputCoalescer } from '../../terminal/io-coalescer';
   import { SessionProjection } from '../../terminal/session-projection';
   import { parseParentMessage } from '../../terminal/postmessage';
-  import { readGatewayToken } from '../../gateway-token';
+  import { readGatewayConnection } from '../../gateway-token';
+  import type { GatewayConnection } from '../../gateway-connection';
   import { STREAM_SUBPROTOCOL, decodeServerFrame, encodeControl, encodeStdin, streamUrl } from '../../terminal/stream-protocol';
 
   initTauriLog();
-
-  const GATEWAY_HTTP = gatewayBaseUrl();
-  const GATEWAY_WS = GATEWAY_HTTP.replace(/^http/, 'ws');
 
   const MAX_RECONNECT = 10;
 
@@ -92,9 +90,9 @@
     }
   }
 
-  async function fetchToken(): Promise<string | null> {
+  async function fetchConnection(): Promise<GatewayConnection | null> {
     try {
-      return await readGatewayToken(GATEWAY_HTTP);
+      return await readGatewayConnection(gatewayBaseUrl());
     } catch (e) {
       console.error('[terminal] token fetch failed', e);
       return null;
@@ -148,13 +146,13 @@
       ws = null;
     }
 
-    const token = await fetchToken();
+    const connection = await fetchConnection();
     if (destroyed || generation !== connectionGeneration) return;
-    if (!token) {
+    if (!connection) {
       scheduleReconnect('token fetch failed');
       return;
     }
-    const url = streamUrl(GATEWAY_WS, vmId, token);
+    const url = streamUrl(connection.gatewayUrl.replace(/^http/, 'ws'), vmId, connection.token);
     console.log('[terminal] connecting vmId=%s', vmId);
 
     let socket: WebSocket;

@@ -5,7 +5,7 @@
   import { themeStore } from '../../stores/theme.svelte.ts';
   import { tabStore } from '../../stores/tabs.svelte.ts';
   import { getBaseUrl, openUrl } from '../../api';
-  import { readGatewayToken } from '../../gateway-token';
+  import { readGatewayConnection } from '../../gateway-token';
 
   let { vmId, tabId }: { vmId: string; tabId: string } = $props();
 
@@ -66,9 +66,10 @@
         void openUrl(msg.url);
         break;
       case 'gateway-token-request':
-        void readGatewayToken(getBaseUrl())
-          .then(token => sendToIframe({ type: 'gateway-token', requestId: msg.requestId, token }))
-          .catch(() => sendToIframe({ type: 'gateway-token', requestId: msg.requestId, token: null }));
+        void readGatewayConnection(getBaseUrl())
+          .then(connection => sendToIframe({ type: 'gateway-token', requestId: msg.requestId,
+            token: connection?.token ?? null, gatewayUrl: connection?.gatewayUrl ?? null }))
+          .catch(() => sendToIframe({ type: 'gateway-token', requestId: msg.requestId, token: null, gatewayUrl: null }));
         break;
       case 'title-update':
         tabStore.updateSubtitle(tabId, msg.title);

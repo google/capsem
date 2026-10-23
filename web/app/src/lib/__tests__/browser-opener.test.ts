@@ -8,7 +8,7 @@ afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); invoke.mockClear(); 
 describe('browser opener', () => {
   it('passes authenticated originating session context only for native guest requests', async () => {
     const token = 's'.repeat(64);
-    invoke.mockResolvedValueOnce(token);
+    invoke.mockResolvedValueOnce({ gatewayUrl: 'http://127.0.0.1:65228', token });
     vi.stubGlobal('window', { __TAURI_INTERNALS__: {}, location: new URL('tauri://localhost') });
     vi.stubGlobal('WebSocket', class { close() {} });
     vi.stubGlobal('fetch', vi.fn()
@@ -19,7 +19,7 @@ describe('browser opener', () => {
     await api.openUrl('https://login.example/', 'vm-1');
     expect(invoke).toHaveBeenLastCalledWith('open_url', { url: 'https://login.example/',
       browser: { gatewayUrl: api.getBaseUrl(), token, vmId: 'vm-1' } });
-    expect(invoke).toHaveBeenCalledWith('get_gateway_token');
+    expect(invoke).toHaveBeenCalledWith('get_gateway_connection');
     await api.openUrl('https://docs.example/');
     expect(invoke).toHaveBeenLastCalledWith('open_url', { url: 'https://docs.example/', browser: null });
   });

@@ -1,6 +1,7 @@
 // PostMessage protocol between parent frame (trusted) and VM iframe (sandboxed).
 // Initial state (vmId, initial theme) flows via iframe URL params -- this
 // contract covers runtime signals and a scoped terminal token request.
+import { parseGatewayConnection } from '../gateway-connection';
 
 const MAX_TITLE_LENGTH = 128;
 const MAX_CLIPBOARD_SIZE = 1_048_576; // 1 MB
@@ -30,6 +31,7 @@ export interface MsgGatewayToken {
   type: 'gateway-token';
   requestId: number;
   token: string | null;
+  gatewayUrl: string | null;
 }
 
 export type ParentToIframeMsg =
@@ -164,7 +166,9 @@ export function parseParentMessage(data: unknown): ParentToIframeMsg | null {
     case 'gateway-token': {
       if (typeof msg.requestId !== 'number' || !Number.isSafeInteger(msg.requestId) || msg.requestId < 0) return null;
       if (msg.token !== null && (typeof msg.token !== 'string' || msg.token.length !== 64)) return null;
-      return { type: 'gateway-token', requestId: msg.requestId, token: msg.token as string | null };
+      if (msg.token === null && msg.gatewayUrl === null) return { type: 'gateway-token', requestId: msg.requestId, token: null, gatewayUrl: null };
+      const connection = parseGatewayConnection(msg);
+      return connection ? { type: 'gateway-token', requestId: msg.requestId, ...connection } : null;
     }
     default:
       return null;

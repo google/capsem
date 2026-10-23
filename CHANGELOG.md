@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Bind embedded app HTTP, event streams and terminal frames to the same private
+  local gateway connection, rejecting cross-origin authority refreshes.
+
 - Preserve active OCI image generations and their lock files during cache
   retention instead of treating hidden lease controls as removable payloads.
 
