@@ -12,7 +12,6 @@ import pytest
 from helpers.service import (
     exec_output_text,
 )
-
 from ironbank.approval_fixture import resolve_original_operation
 from ironbank.approval_native import (
     assert_approval_audit,
