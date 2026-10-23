@@ -679,12 +679,14 @@ fn maybe_build_model_call_with_hints(
         usage_details = resp_details;
     }
 
-    let estimated_cost_usd = pricing.estimate_cost(
+    let timestamp = SystemTime::now();
+    let estimated_cost_usd = pricing.estimate_cost_at(
         provider.as_str(),
         effective_model.as_deref(),
         input_tokens,
         output_tokens,
         &usage_details,
+        timestamp,
     );
 
     // Trace correlation: tool_response IDs index into the live
@@ -739,7 +741,7 @@ fn maybe_build_model_call_with_hints(
 
     let model_call = ModelCall {
         event_id: None,
-        timestamp: SystemTime::now(),
+        timestamp,
         provider: provider.as_str().to_string(),
         protocol: Some(protocol.as_str().to_string()),
         model: effective_model,

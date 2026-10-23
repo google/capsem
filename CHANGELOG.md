@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Estimate model costs using the call's UTC date and published input-size tiers,
+  including dated price changes and case-insensitive model matching.
+
 - Consume handled TUI browser handoffs once per client and suppress duplicate
   opens across polls; restore the pending shortcut after an opener failure.
 

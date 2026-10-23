@@ -5,6 +5,88 @@ fn no_details() -> BTreeMap<String, u64> {
     BTreeMap::new()
 }
 
+fn at(year: i32, month: u8, day: u8) -> std::time::SystemTime {
+    time::Date::from_calendar_date(year, month.try_into().unwrap(), day)
+        .unwrap()
+        .midnight()
+        .assume_utc()
+        .into()
+}
+
+#[test]
+fn dated_rates_use_the_event_date_instead_of_the_first_or_current_price() {
+    let table = PricingTable::load();
+    let price = |date| {
+        table
+            .estimate_cost_at(
+                "openai",
+                Some("o3"),
+                Some(1_000_000),
+                Some(1_000_000),
+                &no_details(),
+                date,
+            )
+            .unwrap()
+    };
+    assert_eq!(price(at(2025, 6, 9)), 50.0);
+    assert_eq!(price(at(2025, 6, 10)), 10.0);
+    assert_eq!(price(at(2026, 10, 23)), 10.0);
+}
+
+#[test]
+fn invalid_or_unsupported_date_constraints_fail_closed() {
+    for constraint in [
+        r#"{"start_date":"2026-02-30"}"#,
+        r#"{"start_date":"123é-1-12"}"#,
+        r#"{"service_tier":"priority"}"#,
+    ] {
+        let text = format!(r#"[{{"constraint":{constraint},"prices":{{"input_mtok":2,"output_mtok":10}}}}]"#);
+        assert!(serde_json::from_str::<PriceSpec>(&text).is_err());
+    }
+    let prices: PriceSpec = serde_json::from_str(
+        r#"[{"constraint":{"start_date":"2026-12-01"},"prices":{"input_mtok":4,"output_mtok":20}}]"#,
+    )
+    .unwrap();
+    assert!(prices
+        .price(time::Date::from_calendar_date(2026, time::Month::November, 30).unwrap())
+        .is_none());
+}
+
+#[test]
+fn compiled_regex_and_ascii_case_follow_the_upstream_match_contract() {
+    let clause: MatchClause = serde_json::from_str(r#"{"regex":"^gemini-3\\.5-flash-\\d"}"#).unwrap();
+    assert!(clause.matches("GEMINI-3.5-FLASH-1"));
+    assert!(!clause.matches("gemini-3.5-flash-lite"));
+    assert!(MatchClause::Equals { equals: "o3".into() }.matches("O3"));
+}
+
+#[test]
+fn prompt_size_tiers_price_the_entire_call_and_include_cached_input() {
+    let table = PricingTable::load();
+    let before = table
+        .estimate_cost_at(
+            "google",
+            Some("gemini-1.5-pro"),
+            Some(128_000),
+            Some(1_000_000),
+            &no_details(),
+            at(2026, 10, 23),
+        )
+        .unwrap();
+    let after = table
+        .estimate_cost_at(
+            "google",
+            Some("gemini-1.5-pro"),
+            Some(128_001),
+            Some(1_000_000),
+            &no_details(),
+            at(2026, 10, 23),
+        )
+        .unwrap();
+    assert!((before - 5.16).abs() < 1e-9);
+    assert!((after - 10.3200025).abs() < 1e-9);
+}
+
 fn cache_details(cache_read: u64) -> BTreeMap<String, u64> {
     BTreeMap::from([("cache_read".into(), cache_read)])
 }
