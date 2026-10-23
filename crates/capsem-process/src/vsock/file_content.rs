@@ -3,7 +3,7 @@ use std::sync::Arc;
 use capsem_logger::{DbWriter, FileAction};
 
 use crate::ipc::file_boundary::{
-    emit_explicit_file_security_event, file_content_preview, FileSecurityBoundary, PluginPolicyHandle,
+    emit_explicit_file_security_event, rewritten_file_content, FileSecurityBoundary, PluginPolicyHandle,
     SecurityRulesHandle,
 };
 use crate::job_store::{ActiveFileOp, JobResult, JobStore};
@@ -31,13 +31,7 @@ pub(super) async fn complete(
         &db,
         &security_rules,
         &plugin_policy,
-        FileSecurityBoundary {
-            action,
-            path,
-            size: Some(data.len() as u64),
-            content: Some(file_content_preview(&data)),
-            mime_type: None,
-        },
+        FileSecurityBoundary::new(action, path, &data, data.len() as u64, None),
         state.approvals.as_deref(),
         data.len().saturating_mul(4),
     );
@@ -67,6 +61,12 @@ pub(super) async fn complete(
             error: Some(format!("file export refused: {reason}")),
         }
     } else {
+        let data = boundary
+            .as_ref()
+            .ok()
+            .and_then(Option::as_ref)
+            .and_then(|emission| rewritten_file_content(&data, data.len() as u64, &emission.event))
+            .unwrap_or(data);
         JobResult::ReadFile {
             data: Some(data),
             error: None,

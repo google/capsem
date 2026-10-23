@@ -70,16 +70,16 @@ pub(super) async fn spawn(
             &db,
             &rules,
             &plugins,
-            FileSecurityBoundary {
-                action: match action {
+            FileSecurityBoundary::new(
+                match action {
                     FileBoundaryAction::Import => capsem_logger::FileAction::Imported,
                     FileBoundaryAction::Export => capsem_logger::FileAction::Exported,
                 },
                 path,
-                size: Some(size),
-                content: Some(file_content_preview(&data)),
+                &data,
+                size,
                 mime_type,
-            },
+            ),
             approvals.as_deref(),
             held_bytes,
         );
@@ -123,11 +123,33 @@ pub(super) async fn spawn(
 pub(crate) const FILE_SECURITY_CONTENT_PREVIEW_MAX: usize = 64 * 1024;
 
 pub(crate) struct FileSecurityBoundary {
-    pub(crate) action: capsem_logger::FileAction,
-    pub(crate) path: String,
-    pub(crate) size: Option<u64>,
-    pub(crate) content: Option<String>,
-    pub(crate) mime_type: Option<String>,
+    action: capsem_logger::FileAction,
+    path: String,
+    size: Option<u64>,
+    content: Option<String>,
+    mime_type: Option<String>,
+    complete_text: bool,
+}
+
+impl FileSecurityBoundary {
+    pub(crate) fn new(
+        action: capsem_logger::FileAction,
+        path: String,
+        data: &[u8],
+        size: u64,
+        mime_type: Option<String>,
+    ) -> Self {
+        Self {
+            action,
+            path,
+            size: Some(size),
+            content: Some(file_content_preview(data)),
+            mime_type,
+            complete_text: data.len() as u64 == size
+                && data.len() <= FILE_SECURITY_CONTENT_PREVIEW_MAX
+                && std::str::from_utf8(data).is_ok(),
+        }
+    }
 }
 
 pub(crate) fn file_content_preview(data: &[u8]) -> String {
@@ -162,6 +184,11 @@ pub(crate) async fn emit_explicit_file_security_event(
     else {
         return Ok(None);
     };
+    // A bounded/lossy forensic preview cannot reconstruct a complete file.
+    // Refuse before asking a human to approve an impossible safe rewrite.
+    if mutating_file_rewrite(&emission.event) && !boundary.complete_text {
+        return Err("file rewrite requires complete UTF-8 inspection within the content limit".into());
+    }
     let held_bytes = if emission.enforcement.action == capsem_core::security_engine::SecurityEnforcementAction::Ask {
         // Include semantic metadata and plugin-produced content as well as
         // original bytes. A tiny preview or expanding rewrite cannot buy a
@@ -186,18 +213,7 @@ pub(crate) fn rewritten_file_content(
     if original_preview.len() as u64 != original_size {
         return None;
     }
-    let mutating_rewrite = event.plugin_executions.iter().any(|execution| {
-        execution.applied
-            && !matches!(
-                execution.stage,
-                capsem_core::security_engine::SecurityPluginStage::Logging
-            )
-            && event.detections.iter().any(|detection| {
-                detection.plugin_id.as_deref() == Some(execution.plugin_id.as_str())
-                    && detection.plugin_mode == Some(capsem_core::net::policy_config::SecurityPluginMode::Rewrite)
-            })
-    });
-    if !mutating_rewrite {
+    if !mutating_file_rewrite(event) {
         return None;
     }
     let file = event.file.as_ref()?;
@@ -215,6 +231,20 @@ pub(crate) fn rewritten_file_content(
     } else {
         Some(content.as_bytes().to_vec())
     }
+}
+
+fn mutating_file_rewrite(event: &capsem_core::security_engine::SecurityEvent) -> bool {
+    event.plugin_executions.iter().any(|execution| {
+        execution.applied
+            && !matches!(
+                execution.stage,
+                capsem_core::security_engine::SecurityPluginStage::Logging
+            )
+            && event.detections.iter().any(|detection| {
+                detection.plugin_id.as_deref() == Some(execution.plugin_id.as_str())
+                    && detection.plugin_mode == Some(capsem_core::net::policy_config::SecurityPluginMode::Rewrite)
+            })
+    })
 }
 
 #[cfg(test)]

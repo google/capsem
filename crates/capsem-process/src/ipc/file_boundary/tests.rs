@@ -2,6 +2,7 @@ use crate::ipc::{tests::Dispatcher, *};
 use std::collections::BTreeMap;
 
 mod approval;
+mod completeness;
 
 async fn channel(
     dispatcher: &Dispatcher,

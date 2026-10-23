@@ -7,6 +7,7 @@ use std::time::Duration;
 
 mod capacity;
 mod lifecycle;
+mod rewrites;
 
 #[tokio::test]
 async fn original_guest_export_holds_its_bytes_for_the_bound_approval() {

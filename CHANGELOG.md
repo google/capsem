@@ -183,6 +183,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Hold original guest file exports for scoped approval without repeating reads;
   caller cancellation and session shutdown discard held bytes safely.
 
+- Refuse mutating file rewrites from incomplete or lossy previews and apply
+  complete UTF-8 export rewrites before returning guest bytes.
+
 - Hold original host file imports and exports for scoped security approval,
   cancelling on caller disconnect and refusing stale policy or oversized waits.
 
