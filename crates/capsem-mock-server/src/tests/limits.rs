@@ -37,6 +37,7 @@ async fn start_http_server() -> SocketAddr {
         State {
             request_log: None,
             dns_answers: DnsAnswers::default(),
+            otlp: None,
         },
         false,
     ));

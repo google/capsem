@@ -27,6 +27,9 @@ mod anthropic;
 mod content;
 mod dns;
 mod limits;
+mod otlp;
+mod request;
+use request::handle_request;
 mod responses;
 mod responses_mcp;
 mod targets;
@@ -101,12 +104,16 @@ struct Args {
     /// workload, which cannot reach the VM's loopback.
     #[arg(long, value_enum, default_value_t)]
     dns_answers: DnsAnswers,
+    /// Enable synthetic authenticated OTLP collection for native acceptance.
+    #[arg(long)]
+    otlp_http_fixture: bool,
 }
 
 #[derive(Clone)]
 struct State {
     request_log: Option<Arc<Mutex<File>>>,
     dns_answers: DnsAnswers,
+    otlp: Option<Arc<otlp::Collector>>,
 }
 
 #[derive(Serialize)]
@@ -155,6 +162,7 @@ async fn main() -> Result<()> {
     let state = State {
         request_log,
         dns_answers: args.dns_answers,
+        otlp: args.otlp_http_fixture.then(|| Arc::new(otlp::Collector::default())),
     };
 
     let http_listener = TcpListener::bind(args.addr).await.context("bind HTTP")?;
@@ -180,7 +188,12 @@ async fn main() -> Result<()> {
         dns_tcp_addr: dns_tcp_addr.to_string(),
         dns_fixtures,
         dns_answer_ip: args.dns_answers.provider_answer(),
-        endpoints: ENDPOINTS.iter().chain(content::ENDPOINTS).copied().collect(),
+        endpoints: ENDPOINTS
+            .iter()
+            .chain(content::ENDPOINTS)
+            .chain(args.otlp_http_fixture.then_some(otlp::ENDPOINTS).into_iter().flatten())
+            .copied()
+            .collect(),
         request_log: args.request_log.as_ref().map(|path| path.display().to_string()),
     };
     println!("{}", serde_json::to_string(&ready)?);
@@ -251,42 +264,6 @@ fn tls_acceptor() -> Result<TlsAcceptor> {
         .with_single_cert(vec![cert_der], key_der)
         .context("build mock TLS config")?;
     Ok(TlsAcceptor::from(Arc::new(config)))
-}
-
-async fn handle_request(mut req: Request<Incoming>, state: State, tls: bool) -> Result<Response<RespBody>, Infallible> {
-    let method = req.method().clone();
-    let path = req.uri().path().to_string();
-    if path.starts_with("/ws/")
-        || (method == Method::GET
-            && path == "/v1/responses"
-            && req
-                .headers()
-                .get(UPGRADE)
-                .is_some_and(|value| value.as_bytes().eq_ignore_ascii_case(b"websocket")))
-    {
-        let response = websocket::upgrade(req, path, state).await;
-        return Ok(response);
-    }
-
-    let headers = req.headers().clone();
-    let query = req.uri().query().map(str::to_owned);
-    let request_body = req
-        .body_mut()
-        .collect()
-        .await
-        .map(|body| body.to_bytes())
-        .unwrap_or_default();
-    let response = route(&method, &path, query.as_deref(), &headers, request_body.clone(), tls).await;
-    log_request(
-        &state,
-        &method,
-        &path,
-        query.as_deref(),
-        &headers,
-        &request_body,
-        &response,
-    );
-    Ok(response)
 }
 
 async fn route(

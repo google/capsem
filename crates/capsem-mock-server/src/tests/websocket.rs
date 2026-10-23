@@ -13,6 +13,7 @@ async fn connect() -> TcpStream {
         State {
             request_log: None,
             dns_answers: DnsAnswers::default(),
+            otlp: None,
         },
         false,
     ));

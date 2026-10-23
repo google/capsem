@@ -18,6 +18,9 @@ capsem-crypto = { path = "../capsem-crypto", default-features = false, features 
 anyhow.workspace = true
 base64.workspace = true
 bytes.workspace = true
+capsem-telemetry = { path = "../capsem-telemetry", features = ["export"] }
+opentelemetry-proto = { version = "0.33", default-features = false, features = ["gen-tonic-messages", "metrics"] }
+prost = "0.14"
 capsem-guard = { path = "../capsem-guard" }
 clap.workspace = true
 flate2 = "1"
