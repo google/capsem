@@ -269,6 +269,12 @@ fn run_loop(
                 }
             }
         }
+        if control_bridge.is_none() {
+            if let Some(ControlAction::ListApprovals { id }) = app.take_approval_request() {
+                app.apply_approval_list(&id, Err("approval requests unavailable in fixture mode".into()));
+                needs_draw = true;
+            }
+        }
         if let Some(bridge) = &terminal_bridge {
             let events = bridge.drain_events();
             if !events.is_empty() {

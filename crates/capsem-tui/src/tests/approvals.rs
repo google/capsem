@@ -1,6 +1,19 @@
 use super::*;
 use capsem_sdk::models::{SecurityAskDecision, SecurityAskListResponse, SecurityAskRequest, SecurityAskStatus};
 
+#[test]
+fn pending_approval_badge_comes_from_the_live_count_and_clears_after_resolution() {
+    let mut response: serde_json::Value = serde_json::from_str(gateway_status_body()).unwrap();
+    response["vms"][0]["pending_approval_count"] = 2.into();
+    let state = state_from_status_json_for_test(&response.to_string(), std::time::Duration::ZERO).unwrap();
+    assert!(state.sessions[0].attention.contains(&Attention::ApprovalRequired));
+    assert!(render_snapshot(&state, 150, 42).unwrap().contains("Alt+A approvals"));
+    response["vms"][0]["pending_approval_count"] = 0.into();
+    let state = state_from_status_json_for_test(&response.to_string(), std::time::Duration::ZERO).unwrap();
+    assert!(!state.sessions[0].attention.contains(&Attention::ApprovalRequired));
+    assert!(!render_snapshot(&state, 150, 42).unwrap().contains("Alt+A approvals"));
+}
+
 fn list(vm_id: &str) -> SecurityAskListResponse {
     SecurityAskListResponse {
         vm_id: vm_id.into(),

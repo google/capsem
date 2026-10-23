@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Mark terminal sessions with live approval requests and show Alt+A only when
+  the selected session has requests waiting for a decision.
+
 - Configure HTTP PII types and direction, outbound secret-pattern inspection,
   and UTF-8 validation separately, with their buffering and coverage limits shown.
 

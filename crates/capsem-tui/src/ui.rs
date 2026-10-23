@@ -165,7 +165,15 @@ fn render_status_bar(frame: &mut Frame<'_>, state: &AppState, area: Rect) {
         .and_then(|session| session.browser_request.as_ref())
         .is_some();
     let full = format!(
-        "Manager: Alt+M  {}Help: Alt+?",
+        "Manager: Alt+M  {}{}Help: Alt+?",
+        if state
+            .active_session()
+            .is_some_and(|session| session.attention.contains(&crate::model::Attention::ApprovalRequired))
+        {
+            "Alt+A approvals  "
+        } else {
+            ""
+        },
         if pending_browser { "Alt+b browser  " } else { "" }
     );
     let shortcuts = if area.width as usize >= full.chars().count() + spans_width(&left) {

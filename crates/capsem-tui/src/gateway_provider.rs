@@ -383,6 +383,9 @@ fn attention_from_vm(vm: &VmSummary, lifecycle: SessionLifecycle) -> Vec<Attenti
     if vm.denied_requests.unwrap_or_default() > 0 {
         attention.push(Attention::PolicyDeny);
     }
+    if vm.pending_approval_count > 0 {
+        attention.push(Attention::ApprovalRequired);
+    }
     attention
 }
 

@@ -28,7 +28,18 @@ pub(super) fn home_lines(state: &AppState) -> Vec<Line<'static>> {
             index + 1,
             truncate(&session.title, 18),
             session.lifecycle.label(),
-            truncate(activity.unwrap_or("unavailable"), 28),
+            truncate(
+                &format!(
+                    "{}{}",
+                    if session.attention.contains(&crate::model::Attention::ApprovalRequired) {
+                        "approval · "
+                    } else {
+                        ""
+                    },
+                    activity.unwrap_or("unavailable")
+                ),
+                28
+            ),
         );
         if session.id == state.active_session_id {
             lines.push(focus_line(&row));
