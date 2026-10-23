@@ -96,6 +96,7 @@ BOUNDARY_FILES = frozenset(
         "build_system/tests/gate/runtime_content.py",
         "build_system/tests/gate/test_host_docker_ownership.py",
         "build_system/tests/gate/test_host_apt_prefetch.py",
+        "build_system/tests/gate/test_linux_workspace_apt_bounds.py",
         "build_system/tests/gate/test_machine_cache_bound.py",
         "build_system/tests/gate/test_private_image_cache.py",
         "build_system/tests/gate/test_rust_coverage_ratchet.py",
