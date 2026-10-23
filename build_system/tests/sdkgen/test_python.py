@@ -126,11 +126,19 @@ def test_keyword_aliases_preserve_wire_names_and_null_validation(models: ModuleT
             models.KeywordRecord.model_validate(value)
 
 
+def test_inventory_schema_preserves_base_model_method_and_wire_name(models: ModuleType) -> None:
+    value = {"schema": "capsem.packages.v1", "subject": "sha256:abc", "architecture": "arm64", "packages": [], "tools": []}
+    parsed = models.ImagePackageInventory.model_validate(value)
+    assert parsed.schema_ == value["schema"]
+    assert callable(type(parsed).schema)
+    assert parsed.model_dump(by_alias=True) == value
+
+
 def test_generation_is_deterministic_and_compact() -> None:
     first = render_models(SCHEMAS)
     assert first == render_models(dict(reversed(list(SCHEMAS.items()))))
     assert max(len(source.splitlines()) for source in first.values()) <= 300
-    assert len(first) == len(SCHEMAS) + 2
+    assert len(first) == len(SCHEMAS) + 2 + (len(SCHEMAS) + 79) // 80
 
 
 def test_ipv4_is_a_validated_address_value() -> None:

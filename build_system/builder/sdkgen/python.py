@@ -6,6 +6,8 @@ import json
 import keyword
 import re
 
+from pydantic import BaseModel
+
 from .schema import Schema, schema_order
 
 HEADER = '"""Generated from Capsem OpenAPI. Do not edit."""\n\n'
@@ -166,6 +168,13 @@ def _contains_private(schema: Schema, schemas: dict[str, Schema]) -> bool:
     return False
 
 
+def _attribute(key: str, properties: dict[str, Schema]) -> str:
+    attr = key + "_" if keyword.iskeyword(key) or hasattr(BaseModel, key) else key
+    if attr != key and attr in properties:
+        raise ValueError(f"colliding field alias: {key}")
+    return attr
+
+
 def _body(name: str, schema: Schema, private: bool) -> str:
     if schema.enum is not None:
         members = [re.sub(r"\W", "_", value).upper() for value in schema.enum]
@@ -180,14 +189,14 @@ def _body(name: str, schema: Schema, private: bool) -> str:
         lines.append("    private_input = True")
     optional = [alias for key, field in schema.properties.items()
                 if key not in schema.required and not nullable(field)
-                for alias in ((key, key + "_") if keyword.iskeyword(key) else (key,))]
+                for alias in ((key, _attribute(key, schema.properties)) if _attribute(key, schema.properties) != key else (key,))]
     if optional:
         lines.append(f"    nonnullable_optional = frozenset({optional!r})")
     if schema.additional_properties is False:
         privacy = ", hide_input_in_errors=True" if private else ""
         lines.append(f'    model_config = ConfigDict(strict=True, populate_by_name=True, extra="forbid"{privacy})')
     for key, field in schema.properties.items():
-        attr = key + "_" if keyword.iskeyword(key) else key
+        attr = _attribute(key, schema.properties)
         if not attr.isidentifier() or attr.startswith("_") or attr in {"nonnullable_optional", "private_input"}:
             raise ValueError(f"unsupported field identifier: {key}")
         annotation = type_name(field)
@@ -245,9 +254,24 @@ def render_models(schemas: dict[str, Schema]) -> dict[str, str]:
         if filename in files:
             raise ValueError(f"colliding schema module: {filename}")
         files[filename] = source
-        exported = f"from .{module_name(name)} import {name} as {name}"
+        exported = f"from .{module_name(name)} import {name}"
         if len(exported) > 88:
-            exported = f"from .{module_name(name)} import (\n    {name} as {name},\n)"
+            exported = f"from .{module_name(name)} import (\n    {name},\n)"
         exports.append(exported)
-    files["__init__.py"] = HEADER + "\n".join(exports) + "\n"
+    # Keep both the imports and public barrel below the source ceiling as
+    # the API grows. Every re-export stays explicit for static SDK consumers.
+    public = []
+    names = sorted(schemas)
+    for index, start in enumerate(range(0, len(exports), 80)):
+        group = f"_exports_{index}"
+        group_names = names[start:start + 80]
+        files[group + ".py"] = HEADER + "\n".join(exports[start:start + 80]) + "\n\n__all__ = [\n" + "\n".join(
+            f"    {name!r}," for name in group_names
+        ) + "\n]\n"
+        for name in sorted(group_names, key=str.casefold):
+            exported = f"from .{group} import {name} as {name}"
+            if len(exported) > 88:
+                exported = f"from .{group} import (\n    {name} as {name},\n)"
+            public.append(exported)
+    files["__init__.py"] = HEADER + "\n".join(public) + "\n"
     return files
