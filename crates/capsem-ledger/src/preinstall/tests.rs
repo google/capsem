@@ -9,6 +9,17 @@ fn private_parser_is_explicit_and_cannot_accept_worker_paths() {
         "synthetic-user"
     ])
     .is_ok());
+    assert!(
+        Args::try_parse_from([
+            "ledger",
+            "--preinstall-ledger-admission",
+            "--target-user",
+            "synthetic-user",
+            "--require-current-host"
+        ])
+        .unwrap()
+        .require_current_host
+    );
     for args in [
         vec!["ledger", "--target-user", "synthetic-user"],
         vec!["ledger", "--preinstall-ledger-admission"],

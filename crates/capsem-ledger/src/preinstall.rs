@@ -13,6 +13,8 @@ struct Args {
     preinstall_ledger_admission: bool,
     #[arg(long, hide = true)]
     target_user: String,
+    #[arg(long, hide = true)]
+    require_current_host: bool,
 }
 
 pub(super) fn requested() -> bool {
@@ -36,7 +38,8 @@ pub(super) fn run() -> Result<()> {
         let remaining = deadline
             .checked_duration_since(Instant::now())
             .context("preinstall admission deadline exceeded")?;
-        admit_preinstall_host_state(&target.home, remaining)?;
+        let host = admit_preinstall_host_state(&target.home, remaining)?;
+        saved_state::admit(&target.home, host, args.require_current_host, deadline)?;
         Ok(())
     })
 }
@@ -80,3 +83,5 @@ fn bounded(timeout: Duration, operation: impl FnOnce(Instant) -> Result<()> + Se
 
 #[cfg(test)]
 mod tests;
+
+mod saved_state;

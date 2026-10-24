@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Refuse legacy installation activation when the default installed home retains
+  session or unknown registry state; in-service updates require a current HOST ledger.
+
 - Require native Capsem VM qualification of each original official image and
   prepared root before publishing its evidence and advancing the image catalog.
   Missing native virtualization devices stop publication instead of substituting
