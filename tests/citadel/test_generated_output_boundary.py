@@ -460,6 +460,37 @@ def test_non_rust_repository_asset_owners_use_the_canonical_target_root() -> Non
     assert "assets" not in config["prefix"]["exports"]
 
 
+def _uses_package_cache(source: str) -> bool:
+    for node in ast.walk(ast.parse(source)):
+        match node:
+            case ast.Call(
+                func=ast.Attribute(
+                    value=ast.Call(func=ast.Name(id="load_paths"), args=[ast.Name()]),
+                    attr="stage",
+                ),
+                args=[ast.Constant(value="packages")],
+                keywords=[],
+            ):
+                return True
+    return False
+
+
+@pytest.mark.parametrize("variable", ["ROOT", "root", "checkout"])
+def test_package_cache_guard_accepts_local_root_bindings(variable: str) -> None:
+    assert _uses_package_cache(f'print(load_paths({variable}).stage("packages"))')
+
+
+@pytest.mark.parametrize("source", [
+    'print(Path("cache/target/packages"))',
+    'print(foreign_cache(root).stage("packages"))',
+    'print(load_paths(root).stage("assets"))',
+    'print(load_paths("foreign").stage("packages"))',
+    repr('load_paths(ROOT).stage("packages")'),
+])
+def test_package_cache_guard_rejects_bypasses_and_inert_text(source: str) -> None:
+    assert not _uses_package_cache(source)
+
+
 def test_native_package_owners_use_the_canonical_target_root() -> None:
     policy = tomllib.loads(POLICY.read_text(encoding="utf-8"))
     observed = _observe(policy["approved_output_probes"])
@@ -490,7 +521,7 @@ def test_native_package_owners_use_the_canonical_target_root() -> None:
     assert "cache/target/packages/Capsem-$VERSION.pkg" in workflow
     assert "cp cache/target/packages/*.deb" in workflow
     resolver = (ROOT / "build_system/scripts/release/package-output-directory.py").read_text()
-    assert 'load_paths(ROOT).stage("packages")' in resolver
+    assert _uses_package_cache(resolver)
     for builder in (macos_builder, local_macos_builder):
         assert 'PACKAGE_DIR="$(python3 "$SCRIPT_DIR/../../scripts/release/package-output-directory.py")"' in builder
         assert '$PACKAGE_DIR/Capsem-$VERSION.pkg' in builder
