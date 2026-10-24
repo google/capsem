@@ -163,6 +163,12 @@ helper Dockerfiles under `build_system/docker/` and dependency templates under
 `config/docker/`; add any new network-open helper to the single inventory and
 the repository-source-label guard.
 
+Keep the verified registry alias when retagging an imported helper. BuildKit
+can fetch inherited lazy layers from that origin; a local-only FROM name can
+redirect those fetches to Docker Hub. Resolve the registry digest through the
+shared Docker boundary and retain exact image-ID/platform checks. Cache
+retirement removes all owned aliases and accounts for the image bytes once.
+
 Templates use Jinja2 with variables from the admin-materialized image
 workspace. Do not add a second preview rail for product truth; if a build input
 needs validation, add it to the normal admin validation path.

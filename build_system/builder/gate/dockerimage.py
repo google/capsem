@@ -226,6 +226,23 @@ class ImageOperations:
         raw, candidates, matches = self._repository_references(tag)
         if not candidates:
             return tag
+        # Retagging an imported image can add a local RepoDigest. Using that
+        # name as FROM redirects lazy layer fetches to Docker Hub. Keep the
+        # actual registry origin; exact_image_reference checks its ID/platform.
+        origins = {
+            candidate for candidate in candidates
+            if isinstance(candidate, str)
+            and re.fullmatch(r"[^@\s]+@sha256:[0-9a-f]{64}", candidate)
+            and "/" in candidate
+            and ("." in candidate.split("/", 1)[0] or ":" in candidate.split("/", 1)[0] or candidate.startswith("localhost/"))
+        }
+        if origins:
+            qualified_matches = matches & origins
+            if len(qualified_matches) == 1:
+                return qualified_matches.pop()
+            if len(origins) != 1:
+                raise GateError(f"docker image {tag} has ambiguous registry origins; found {raw!r}")
+            return origins.pop()
         if len(matches) != 1:
             raise GateError(
                 f"docker image {tag} has no unique matching repository digest; found {raw!r}"

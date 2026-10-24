@@ -35,7 +35,8 @@ def try_import(runner: Runner, config: GateConfig, image: PrivateImage) -> bool:
         docker.remove_image(image.local, remote)
         runner.note(f"private image generation failed identity validation: {remote}")
         return False
-    docker.remove_image(remote)
+    # BuildKit needs the registry origin for inherited lazy layers. The cache
+    # inventories and retires both owned aliases as one image generation.
     runner.note(f"reused private image generation: {remote}")
     return True
 

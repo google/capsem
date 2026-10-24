@@ -234,6 +234,36 @@ def test_exact_build_reference_accepts_a_locally_built_image_without_repo_digest
     )
 
 
+def test_exact_build_reference_retains_the_registry_origin_of_a_local_alias(tmp_path: Path) -> None:
+    from capsem_builder.gate.imageidentity import exact_image_reference
+
+    digest = "sha256:" + "0" * 64
+    origin = f"ghcr.io/example/host-builder@{digest}"
+    runner = RecordingRunner(
+        tmp_path,
+        replies={
+            "{{json .RepoDigests}}": f'["capsem-host-builder@{digest}", "{origin}"]',
+            "{{.Os}}/{{.Architecture}}": f"linux/amd64\t{digest}",
+        },
+    )
+    assert exact_image_reference(
+        Docker(runner), "capsem-host-builder:latest", platform="linux/amd64",
+        expected_id=digest, subject="imported build",
+    ) == origin
+
+
+def test_local_alias_cannot_choose_between_distinct_registry_origins(tmp_path: Path) -> None:
+    digest = "sha256:" + "0" * 64
+    runner = RecordingRunner(tmp_path, replies={
+        "{{json .RepoDigests}}": (
+            f'["capsem-host-builder@{digest}", "ghcr.io/example/host@{digest}", '
+            f'"registry.example/host@{digest}"]'
+        ),
+    })
+    with pytest.raises(GateError, match="origin"):
+        Docker(runner).build_reference("capsem-host-builder:latest")
+
+
 def test_platform_image_identity_does_not_require_inspect_platform_flag(tmp_path: Path) -> None:
     runner = RecordingRunner(
         tmp_path,

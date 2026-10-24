@@ -151,6 +151,15 @@ def test_private_pull_retags_and_validates_both_identity_labels() -> None:
     assert any(SOURCE_LABEL in command for command in runner.rendered)
 
 
+def test_valid_private_import_keeps_the_original_registry_alias() -> None:
+    runner = _runner()
+    assert try_import(runner, CONFIG, IMAGE)
+    assert not any(
+        command.startswith("docker image rm ") and HOST_REMOTE in command
+        for command in runner.rendered
+    ), "Retagging must not discard the registry origin BuildKit needs for inherited layers"
+
+
 def test_prior_manifest_generation_is_imported_as_a_validated_build_cache(
     tmp_path: Path,
 ) -> None:
