@@ -40,6 +40,9 @@ def test_guest_binary_identity_names_only_its_output_inputs() -> None:
         "Cargo.toml",
         "Cargo.lock",
         "rust-toolchain.toml",
+        # Cargo resolves the workspace's patched vte path during guest builds;
+        # the guest builder copies these sources for offline dependency fetch.
+        "third_party/rust",
         "crates/capsem-agent",
         "crates/capsem-bench",
         "crates/capsem-crypto",
