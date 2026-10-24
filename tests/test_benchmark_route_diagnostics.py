@@ -7,6 +7,7 @@ from urllib.parse import urlencode
 import pytest
 from helpers.http_measurement import MeasuredResponse
 from helpers.http_transport import Transport
+from log_streams import read_log_stream
 
 from benchmarks.helpers import route_diagnostics as subject
 from benchmarks.helpers.route_cases import measured_cases
@@ -29,7 +30,7 @@ def test_static_corpus_is_exclusive_bounded_and_preserves_active_writers(tmp_pat
     assert all('SYNTHETIC-LOG-INPUT' in row['fields']['message'] for row in rows)
     assert path.stat().st_size <= cfg['max_file_bytes']
     assert path.stat().st_mode & 0o777 == 0o600
-    assert active.read_bytes() == b'live sink'
+    assert read_log_stream(active) == 'live sink'
     with pytest.raises(AssertionError, match='existing'):
         seed_diagnostics(service, corpus_config())
 
