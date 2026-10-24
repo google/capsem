@@ -67,6 +67,7 @@ BOUNDARY_FILES = frozenset(
         "build_system/tests/cache/test_runtime_disk_release.py",
         "build_system/tests/cache/test_scratch_runs.py",
         "build_system/tests/cache/test_signed_copy_contract.py",
+        "build_system/tests/cache/test_signedreceipt.py",
         "build_system/tests/cache/test_source_keyed_bound.py",
         "build_system/tests/cache/test_stats.py",
         "build_system/tests/cache/test_telemetry.py",

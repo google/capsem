@@ -141,6 +141,18 @@ prepare_signed_copy() {
     die "Cargo kept replacing $original while capturing its executable"
 }
 
+# Private benchmark preparation uses the caller's existing project interpreter.
+# Normal Cargo runner invocations gain no Python dependency or behavior change.
+prepare_only=0
+if [[ "$1" == "--prepare-only" ]]; then
+    [[ $# == 4 ]] || die "prepare-only requires interpreter, byte budget and one executable"
+    prepare_only=1
+    prepare_python="$2"
+    prepare_maximum="$3"
+    shift 3
+    [[ -f "$1" ]] || die "prepare-only executable is missing"
+fi
+
 # Platform check
 if [[ "$(uname -s)" != "Darwin" ]]; then
     die "codesign requires macOS. VM features need macOS + Apple Silicon."
@@ -150,6 +162,11 @@ fi
 if [ -f "$1" ]; then
     original="$1"
     staging=""
+
+    if [[ "$prepare_only" == 1 ]]; then
+        source_stamp=$("$prepare_python" -m capsem_builder.cache.signedreceipt capture "$prepare_maximum" \
+            "$original" "$ENTITLEMENTS" "${BASH_SOURCE[0]}") || die "cannot capture signing inputs"
+    fi
 
     # Apply entitlements. Ad-hoc signing (-) is sufficient for local dev.
     if [ -f "$ENTITLEMENTS" ]; then
@@ -161,6 +178,16 @@ if [ -f "$1" ]; then
         prepare_signed_copy
     else
         die "entitlements.plist not found at $ENTITLEMENTS. Run 'just doctor' to diagnose."
+    fi
+
+    if [[ "$prepare_only" == 1 ]]; then
+        copy_stamp=$("$prepare_python" -m capsem_builder.cache.signedreceipt capture "$prepare_maximum" \
+            "$binary") || die "cannot capture prepared signed copy"
+        signature_receipt_current || die "prepared signature receipt changed"
+        "$prepare_python" -m capsem_builder.cache.signedreceipt emit "$prepare_maximum" \
+            "$original" "$binary" "$ROOT_DIR/assets" "$source_stamp" "$copy_stamp" || \
+            die "prepared executable changed before handoff"
+        exit 0
     fi
 
     shift
