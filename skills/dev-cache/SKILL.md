@@ -122,6 +122,13 @@ after usage crosses `max_size_bytes`. `enforce` is an applied preflight and
 fails if protected state prevents compliance. `clean` is the explicit cold
 operation; it still preserves active leases and protected generations.
 
+Docker's per-repository generation retention refines the total capacity
+contract; it does not exempt inactive images from pressure. After ordinary
+reclamation, total-pressure eviction selects owned, inactive, noncurrent,
+unprotected images by last use until warm size is reached. Retire all owned
+aliases and count image bytes once; active/current/protected images retain
+their protection, and an unavoidable overage remains an error.
+
 Cargo's ordinary retention selects whole compilation units under each
 `cargo_target_roots` entry: a unit's fingerprint, build output, libraries,
 dep-info, executables and verified signed copies share one metadata hash and

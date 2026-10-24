@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Enforce Docker cache capacity across inactive image repositories while
+  preserving active, current, and protected generations.
 - Preserve verified registry origins for imported build helpers so inherited
   layers resolve from the original registry during local qualification.
 - Record proxy approval audit admission through the shared security emission

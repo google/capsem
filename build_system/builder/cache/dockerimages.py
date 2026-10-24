@@ -101,7 +101,8 @@ def _bounded_actions(
         pressure = over_max and projected > policy.warm_size_bytes
         over_count = position >= keep
         if (
-            resource.protected
+            resource.active
+            or resource.protected
             or resource.current
             or position == 0
             or not (expired or pressure or over_count)
@@ -145,7 +146,7 @@ def plan_docker_images(
         actions.extend(
             action
             for position, resource in enumerate(ordered)
-            if position >= default_keep and not (resource.protected or resource.current)
+            if position >= default_keep and not (resource.active or resource.protected or resource.current)
             for action in image_removals(
                 resource, inventory.runtime_id,
                 f"superseded owned image generation; retain newest {default_keep}",
@@ -193,7 +194,7 @@ def plan_image_clean(
     actions = tuple(
         action
         for item in _groups(inventory).get(image.repository, ())
-        if not item.protected
+        if not (item.active or item.protected)
         for action in image_removals(
             item, control.runtime_id, "explicit clean of an inactive Docker image cache",
         )
@@ -246,7 +247,7 @@ def plan_repository_reclaim(
     actions, previous = [], 0
     for item in resources:
         names = tuple(name for name in item.names if repository_name(name) == image.repository)
-        if any(name in pinned for name in names) or item.protected or item.current:
+        if any(name in pinned for name in names) or item.active or item.protected or item.current:
             continue
         if previous < image.keep_previous:
             previous += 1

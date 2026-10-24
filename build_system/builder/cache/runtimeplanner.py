@@ -120,6 +120,36 @@ def _docker_actions(
                 )
             )
             projected -= min(projected, volume.logical_bytes)
+    if inventory.owned_bytes > policy.max_size_bytes and projected > policy.warm_size_bytes:
+        # Per-repository warm generations are refinements of the total cap,
+        # not an exemption from it. Current and live generations stay pinned.
+        images = sorted(
+            (
+                item for item in inventory.resources
+                if item.kind is ResourceKind.IMAGE and item.owned and item.names
+                and not (item.active or item.protected or item.current)
+                and not any(name in selected for name in item.names)
+            ),
+            key=lambda item: (item.last_used_ns, item.created_ns, item.identity),
+        )
+        for image in images:
+            if projected <= policy.warm_size_bytes:
+                break
+            actions.extend(image_removals(
+                image, inventory.runtime_id,
+                "Docker total cache exceeded max size; retire inactive images to warm size",
+            ))
+            selected.update(image.names)
+            projected -= min(projected, image.logical_bytes)
+        if image_violations:
+            remaining = inventory.model_copy(update={"resources": tuple(
+                item for item in inventory.resources
+                if item.kind is not ResourceKind.IMAGE
+                or not any(name in selected for name in item.names)
+            )})
+            _, image_violations = plan_docker_images(
+                remaining, cache_policy, default_keep=policy.keep_image_generations,
+            )
     violations = [*image_violations]
     if projected > policy.max_size_bytes:
         violations.append(
@@ -189,7 +219,7 @@ def plan_runtime_clean(snapshot: RuntimeSnapshot, policy: CachePolicy) -> Runtim
                 violations.append(f"{inventory.runtime_id} unavailable: {inventory.error}")
             continue
         for item in inventory.resources:
-            if not item.owned or item.protected:
+            if not item.owned or item.active or item.protected:
                 continue
             if item.kind is ResourceKind.IMAGE:
                 actions.extend(image_removals(
