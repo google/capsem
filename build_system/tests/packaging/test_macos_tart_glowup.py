@@ -890,7 +890,6 @@ def test_local_package_proof_uses_ad_hoc_payload_signing_without_release_keys() 
     assert "--signing-identity" not in build
     assert "Developer ID Installer" not in build
     assert "codesign --verify --strict" in guest
-    assert 'grep -F "Signature=adhoc"' in guest
 
     # Production publication still owns Developer ID signing and package proof.
     assert "APPLE_SIGNING_IDENTITY" in release

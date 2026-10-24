@@ -15,13 +15,24 @@ capsem_require_transition_inputs() {
 }
 
 verify_binary_cohort() {
-    local binary path
+    local binary path failure_status
     for binary in "${BINARIES[@]}"; do
         path="$CAPSEM_BIN_DIR/$binary"
-        test -x "$path"
-        "$path" --version | grep -F "$VERSION"
-        codesign --verify --strict "$path"
-        codesign -d --verbose=4 "$path" 2>&1 | grep -F "Signature=adhoc"
+        test -x "$path" || {
+            echo "ERROR: installed cohort role=$binary stage=executable failed" >&2
+            return 1
+        }
+        "$path" --version | grep -F "$VERSION" || {
+            failure_status=$?
+            echo "ERROR: installed cohort role=$binary stage=version failed" >&2
+            return "$failure_status"
+        }
+        # Strict verification accepts both preserved Developer ID and local ad-hoc signatures.
+        codesign --verify --strict "$path" || {
+            failure_status=$?
+            echo "ERROR: installed cohort role=$binary stage=strict-signature failed" >&2
+            return "$failure_status"
+        }
     done
 }
 

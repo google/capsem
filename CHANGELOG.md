@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Preserve valid Developer ID and local ad-hoc signatures in installed-package
+  verification, with explicit per-role strict-signature failure propagation.
+
 - Validate shared multi-platform package SBOM references by their exact installed
   paths, retaining unique-reference and payload integrity checks.
 

@@ -1,6 +1,7 @@
 """Exercise the local candidate's real disposable macOS bundle seal."""
 
 import json
+import os
 import plistlib
 import shutil
 import subprocess
@@ -76,3 +77,94 @@ def test_valid_developer_id_bundle_is_verified_without_resigning() -> None:
     assert "--test-requirement =anchor apple generic" in result.stdout
     assert "--sign" not in result.stdout
     assert result.stdout.count("--verify --strict") == 2
+
+
+def _installed_cohort_probe(tmp_path: Path, signature: str, strict_status: int = 0,
+                            damage: str = "", conditional: bool = False) -> tuple[subprocess.CompletedProcess[str], str]:
+    """Actual sourced probe, with controlled external codesign outcomes; no signing."""
+    binary_dir = tmp_path / "bin"
+    binary_dir.mkdir()
+    for role in ("capsem", "capsem-service"):
+        if damage == "missing_role" and role == "capsem":
+            continue
+        version = "wrong-version" if damage == "version" else "0.6.6"
+        path = binary_dir / role
+        path.write_text(f'#!/bin/bash\nprintf "%s\\n" "{role} {version}"\n')
+        path.chmod(0o755)
+    if damage == "missing_verifier":
+        grep = shutil.which("grep")
+        assert grep is not None
+        (binary_dir / "grep").symlink_to(grep)
+    metadata = ("Signature=adhoc" if signature == "adhoc" else
+                "Authority=Developer ID Application: Elie Bursztein (L8EGK4X86T)\n"
+                "Authority=Developer ID Certification Authority\n"
+                "Authority=Apple Root CA\nTeamIdentifier=L8EGK4X86T")
+    # Reduced public066 display grammar from preserved S113 diagnosis. It is
+    # diagnostic text only; strict verification, never a text match, decides trust.
+    (tmp_path / "display").write_text(metadata + "\n")
+    script = r'''
+set -euo pipefail
+SHARE="$1"
+source "$2"
+CAPSEM_BIN_DIR="$SHARE/bin"
+VERSION=0.6.6
+BINARIES=(capsem capsem-service)
+codesign() {
+    printf '%s\n' "$*" >> "$SHARE/codesign-calls"
+    case "$1" in
+        --verify) test "$2" = --strict; return "$STRICT_STATUS" ;;
+        -d) cat "$SHARE/display" ;;
+        *) return 97 ;;
+    esac
+}
+if test "$MISSING_VERIFIER" = 1; then unset -f codesign; PATH="$SHARE/bin"; fi
+if test "$CONDITIONAL" = 1; then
+    if verify_binary_cohort; then exit 0; else exit "$?"; fi
+else
+    verify_binary_cohort
+fi
+'''
+    result = _run(["bash", "-c", script, "probe", str(tmp_path),
+                   str(ROOT / "build_system/packaging/macos/macos-tart-regression-probes.sh")],
+                  env={**os.environ, "STRICT_STATUS": str(strict_status),
+                       "CONDITIONAL": "1" if conditional else "0",
+                       "MISSING_VERIFIER": "1" if damage == "missing_verifier" else "0"})
+    calls = (tmp_path / "codesign-calls").read_text() if (tmp_path / "codesign-calls").exists() else ""
+    return result, calls
+
+
+@pytest.mark.parametrize("signature", ["developer_id", "adhoc"])
+def test_installed_cohort_preserves_valid_signatures(tmp_path: Path, signature: str) -> None:
+    result, calls = _installed_cohort_probe(tmp_path, signature)
+    assert result.returncode == 0, result.stderr
+    assert calls.count("--verify --strict") == 2
+    assert "--sign" not in calls
+    assert "Authority=" not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("signature", ["developer_id", "adhoc"])
+@pytest.mark.parametrize("status", [1, 42, 43], ids=["missing", "corrupt", "verifier_failure"])
+def test_installed_cohort_propagates_strict_failure_even_in_conditional(
+    tmp_path: Path, signature: str, status: int,
+) -> None:
+    result, calls = _installed_cohort_probe(tmp_path, signature, status, conditional=True)
+    assert result.returncode == status
+    assert calls.count("--verify --strict") == 1
+    assert "capsem-service" not in calls
+    assert "role=capsem stage=strict-signature failed" in result.stderr
+
+
+@pytest.mark.parametrize("damage", ["missing_role", "version"])
+def test_installed_cohort_keeps_role_and_version_refusals(tmp_path: Path, damage: str) -> None:
+    result, calls = _installed_cohort_probe(tmp_path, "adhoc", damage=damage, conditional=True)
+    assert result.returncode != 0
+    assert not calls
+    stage = "executable" if damage == "missing_role" else "version"
+    assert f"role=capsem stage={stage} failed" in result.stderr
+
+
+def test_installed_cohort_requires_codesign_tool(tmp_path: Path) -> None:
+    result, calls = _installed_cohort_probe(tmp_path, "adhoc", damage="missing_verifier", conditional=True)
+    assert result.returncode == 127
+    assert not calls
+    assert "role=capsem stage=strict-signature failed" in result.stderr
