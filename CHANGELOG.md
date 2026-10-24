@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Keep local-only Docker parents local during sealed builds, even when the
+  engine records local repository digests; retain verified registry origins
+  for imported helpers and exact image/platform checks for both.
+
 - Enforce Docker cache capacity across inactive image repositories while
   preserving active, current, and protected generations.
 - Preserve verified registry origins for imported build helpers so inherited

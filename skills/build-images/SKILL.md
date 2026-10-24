@@ -170,6 +170,9 @@ shared Docker boundary and retain exact image-ID/platform checks. Cache
 retirement removes all owned aliases and accounts for the image bytes once.
 Every child build includes the Linux parity base and source lane: use the
 shared exact-reference check before building and verify the identity afterward.
+Without a qualified registry origin, keep the verified local tag even if Docker
+records local RepoDigests. BuildKit can resolve those digests through Docker Hub
+instead of the local image store, breaking sealed source builds.
 
 Templates use Jinja2 with variables from the admin-materialized image
 workspace. Do not add a second preview rail for product truth; if a build input

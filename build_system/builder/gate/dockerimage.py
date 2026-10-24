@@ -243,11 +243,10 @@ class ImageOperations:
             if len(origins) != 1:
                 raise GateError(f"docker image {tag} has ambiguous registry origins; found {raw!r}")
             return origins.pop()
-        if len(matches) != 1:
-            raise GateError(
-                f"docker image {tag} has no unique matching repository digest; found {raw!r}"
-            )
-        return matches.pop()
+        # Local RepoDigests are not portable FROM references: BuildKit may
+        # resolve them through Docker Hub even when every layer is local.
+        # The caller verifies this tag's exact ID/platform before and after.
+        return tag
 
     def image_label(self, tag: str, label: str) -> str:
         """Read the label used to reject accidental warm-tag poisoning."""

@@ -209,15 +209,18 @@ def test_image_reference_refuses_a_digest_for_a_different_repository(tmp_path: P
         Docker(runner).image_reference("capsem-host-builder:latest")
 
 
-def test_exact_build_reference_accepts_a_locally_built_image_without_repo_digests(
-    tmp_path: Path,
+@pytest.mark.parametrize("repository", [None, "capsem-host-builder", "another-local-alias"])
+def test_exact_build_reference_uses_the_local_tag_without_a_registry_origin(
+    tmp_path: Path, repository: str | None,
 ) -> None:
     from capsem_builder.gate.imageidentity import exact_image_reference
 
     runner = RecordingRunner(
         tmp_path,
         replies={
-            "{{json .RepoDigests}}": "[]",
+            "{{json .RepoDigests}}": (
+                "[]" if repository is None else f'["{repository}@sha256:{"0" * 64}"]'
+            ),
             "{{.Os}}/{{.Architecture}}": f"linux/amd64\tsha256:{'0' * 64}",
         },
     )
