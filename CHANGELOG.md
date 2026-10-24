@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   preserving active, current, and protected generations.
 - Preserve verified registry origins for imported build helpers so inherited
   layers resolve from the original registry during local qualification.
+- Bind both Linux parity builds to verified registry origins and image identities,
+  refusing platform mismatches or parent movement before consuming their output.
 - Record proxy approval audit admission through the shared security emission
   metrics and tracing path while preserving original failures and flush ordering.
 

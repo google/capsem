@@ -31,14 +31,19 @@ from .docker import Docker
 from .errors import GateError
 from .execution import Kind, Needs, Speed, Step, step
 from .filesystem import make_dir
-from .imageidentity import require_input_key
+from .imageidentity import (
+    exact_image_id,
+    exact_image_reference,
+    require_exact_image,
+    require_input_key,
+)
 from .plan import Plan
 from .privateimagecache import PrivateImage, try_import
 
 INPUT_KEY_LABEL = "org.capsem.linux-rust-base.input-key"
 
 
-def base_tag(config: GateConfig, docker: Docker) -> str:
+def base_tag(config: GateConfig, docker: Docker, *, parent_id: str | None = None) -> str:
     """The base image's identity: everything that defines it, hashed.
 
     Keyed by content rather than by channel or date, so a change cannot reuse a
@@ -66,7 +71,10 @@ def base_tag(config: GateConfig, docker: Docker) -> str:
         if not path.is_file():
             raise GateError(f"{name} is missing, so the base image has no identity")
         digest.update(path.read_bytes())
-    digest.update(docker.image_id(settings.tag).encode())
+    parent_id = parent_id or exact_image_id(
+        docker, settings.tag, platform=config.host_arch().docker_platform, subject="Linux parity parent",
+    )
+    digest.update(parent_id.encode())
     return settings.base_tag_template.format(digest=digest.hexdigest())
 
 
@@ -89,7 +97,7 @@ def require_base(config: GateConfig, docker: Docker) -> str:
     network, inside a lane that is supposed to have none.
     """
     tag = base_tag(config, docker)
-    if not docker.image_exists(tag):
+    if not docker.image_exists(tag, platform=config.host_arch().docker_platform):
         raise GateError(
             f"no Linux parity base image for {tag}. Its dependencies changed; "
             f"run `just {config.hostimage.warm_recipe}` to build it with "
@@ -107,12 +115,8 @@ class WarmBase(Action, name="linux-rust-warm-base"):
     inside the run would turn a sealed lane into a multi-gigabyte network build
     at minute four. So the refusal names a command, and this is that command.
 
-    It is also where the superseded tags go. Nothing else can retire them:
-    every change to one of the image's defining inputs mints a new ~25 GiB tag,
-    and the automatic GC is forbidden from pruning tagged images -- so a
-    running gate cannot lose the image it is about to use. Once this holds the
-    current tag, no run can want any other one in the repository, because the
-    lane derives its tag the same way and refuses to start when it is missing.
+    Cache policy protects the current and active images while retiring
+    superseded generations through the shared cache authority.
     """
 
     def render(self) -> str:
@@ -122,8 +126,11 @@ class WarmBase(Action, name="linux-rust-warm-base"):
         config = context.config
         settings = config.hostimage
         docker = Docker(context.runner)
-        tag = base_tag(config, docker)
         platform = config.host_arch().docker_platform
+        parent_id = exact_image_id(
+            docker, settings.tag, platform=platform, subject="Linux parity parent",
+        )
+        tag = base_tag(config, docker, parent_id=parent_id)
         cached = PrivateImage(
             local=tag,
             platform=platform,
@@ -137,12 +144,21 @@ class WarmBase(Action, name="linux-rust-warm-base"):
             require_input_key(docker, tag, label=INPUT_KEY_LABEL, subject="Linux parity base")
             context.journal.note(f"Linux parity base image {tag} is already present")
         else:
+            reference = exact_image_reference(
+                docker, settings.tag, platform=platform, expected_id=parent_id,
+                subject="Linux parity parent",
+            )
             docker.build(
                 tag=tag,
                 dockerfile=config.path(settings.base_dockerfile).as_posix(),
                 context=str(config.root),
-                args=[f"BASE={settings.tag}", f"INPUT_IDENTITY={tag}"],
+                args=[f"BASE={reference}", f"INPUT_IDENTITY={tag}"],
+                platform=platform,
                 network=settings.materialize_network,
+            )
+            require_exact_image(
+                docker, reference, platform=platform, expected_id=parent_id,
+                subject="Linux parity parent",
             )
             require_input_key(docker, tag, label=INPUT_KEY_LABEL, subject="Linux parity base")
         # On the already-present path too, not only after a build. A machine
@@ -172,12 +188,21 @@ class RunLane(Action, name="linux-rust-lane"):
         docker = Docker(context.runner)
 
         base = require_base(config, docker)
+        platform = config.host_arch().docker_platform
+        base_id = exact_image_id(docker, base, platform=platform, subject="Linux parity base")
+        reference = exact_image_reference(
+            docker, base, platform=platform, expected_id=base_id, subject="Linux parity base",
+        )
         docker.build(
             tag=settings.lane_tag,
             dockerfile=config.path(settings.lane_dockerfile).as_posix(),
             context=str(config.root),
-            args=[f"BASE={base}"],
+            args=[f"BASE={reference}"],
+            platform=platform,
             network=settings.source_build_network,
+        )
+        require_exact_image(
+            docker, reference, platform=platform, expected_id=base_id, subject="Linux parity base",
         )
 
         container = settings.lane_container

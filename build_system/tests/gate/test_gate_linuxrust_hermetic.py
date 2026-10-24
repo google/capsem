@@ -64,6 +64,59 @@ def test_the_lane_runs_with_no_network(monkeypatch: pytest.MonkeyPatch) -> None:
 PARENT = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
 
 
+@pytest.mark.parametrize("action_name", ["WarmBase", "RunLane"])
+@pytest.mark.parametrize("fault", ["none", "platform", "moved"])
+def test_parity_builds_preserve_the_verified_registry_origin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, action_name: str, fault: str,
+) -> None:
+    import subprocess
+
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate import linuxrust
+    from capsem_builder.gate.context import Context
+    from capsem_builder.gate.docker import Docker
+    from capsem_builder.gate.dockerimage import IMAGE_IDENTITY_FORMAT
+    from capsem_builder.gate.errors import GateError
+    from capsem_builder.gate.invocation import Command
+    from helpers.gate import IMAGE_REPOSITORY_DIGEST_PROBE, RecordingRunner
+
+    monkeypatch.setattr("capsem_builder.gate.host.system", lambda: "Darwin")
+    monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: "arm64")
+    config = gate_config.load(PROJECT_ROOT)
+    config = config.model_copy(update={"hostimage": config.hostimage.model_copy(
+        update={"extract_to": str(tmp_path / "coverage")},
+    )})
+    origin = f"ghcr.io/google/capsem-ci/parity-fixture@{PARENT}"
+    class ImageRunner(RecordingRunner):
+        def execute(self, command: Command) -> subprocess.CompletedProcess[str]:
+            result = super().execute(command)
+            if fault == "moved" and command.argv[:2] == ("docker", "build"):
+                self._replies[IMAGE_IDENTITY_FORMAT] = f"linux/arm64\t{PARENT.replace('1', '2')}"
+            return result
+
+    platform = "linux/amd64" if fault == "platform" else "linux/arm64"
+    runner = ImageRunner(PROJECT_ROOT, replies={
+        IMAGE_IDENTITY_FORMAT: f"{platform}\t{PARENT}",
+        IMAGE_REPOSITORY_DIGEST_PROBE: f'["{origin}"]',
+    })
+    monkeypatch.setattr(Docker, "image_exists", lambda _self, tag, **_kw:
+        action_name == "RunLane" or tag == config.hostimage.tag)
+    monkeypatch.setattr(linuxrust, "try_import", lambda *_args: False)
+
+    if fault != "none":
+        with pytest.raises(GateError, match="platform" if fault == "platform" else "moved"):
+            getattr(linuxrust, action_name)().perform(Context(runner, config))
+        assert not any(command.argv[:2] == ("docker", "create") for command in runner.commands)
+        return
+    getattr(linuxrust, action_name)().perform(Context(runner, config))
+    builds = [command.argv for command in runner.commands if command.argv[:2] == ("docker", "build")]
+    assert len(builds) == 1
+    assert f"BASE={origin}" in builds[0], builds[0]
+    assert "--platform" in builds[0] and "linux/arm64" in builds[0]
+    inspections = [command.argv for command in runner.commands if IMAGE_IDENTITY_FORMAT in command.argv]
+    assert sum(argv[-1] == origin for argv in inspections) >= 2, inspections
+
+
 def _staged(tmp_path: Path):
     """A checkout holding only what the base image's identity is made of.
 
