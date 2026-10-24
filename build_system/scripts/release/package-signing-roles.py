@@ -4,13 +4,18 @@
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT / "build_system" / "builder"))
-from bootstrap import mount_builder_package, reexec_project_python  # noqa: E402
 
-reexec_project_python(ROOT, Path(__file__).resolve(), sys.argv[1:])
-mount_builder_package(ROOT)
-from capsem_builder.gate.config import load  # noqa: E402
+def main() -> None:
+    root = Path(__file__).resolve().parents[3]
+    sys.path.insert(0, str(root / "build_system" / "builder"))
+    from bootstrap import mount_builder_package, reexec_project_python
+
+    reexec_project_python(root, Path(__file__).resolve(), sys.argv[1:])
+    mount_builder_package(root)
+    from capsem_builder.gate.config import load
+
+    print("\n".join(Path(binary).name for binary in load(root).signing.binaries))
+
 
 if __name__ == "__main__":
-    print("\n".join(Path(binary).name for binary in load(ROOT).signing.binaries))
+    main()
