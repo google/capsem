@@ -285,13 +285,14 @@ def test_staged_guest_commands_need_no_checkout_or_installed_packages(
 
 
 def test_tart_share_inputs_are_copied_not_hard_linked(tmp_path: Path) -> None:
-    module = _load_harness()
+    _load_harness()
+    from macos_candidate_content import stage_file
     source = tmp_path / "source"
     destination = tmp_path / "destination"
     source.write_text("release input\n")
     source.chmod(0o755)
 
-    module.stage_file(source, destination)
+    stage_file(source, destination)
 
     assert destination.read_bytes() == source.read_bytes()
     assert destination.stat().st_ino != source.stat().st_ino
@@ -421,8 +422,10 @@ def test_tart_harness_requires_preserved_rejection_evidence() -> None:
     assert '"--tampered-manifest-file"' in source
     assert '"--updated-manifest-file"' in source
     assert '"--incompatible-manifest-file"' in source
-    assert '"tampered-manifest.json"' in source
-    assert '"original-manifest.json"' in source
+    assert "stage_tart_inputs(args, package, manifest_file, asset_share, candidate_files)" in source
+    staging = (MACOS_PACKAGING / "macos_candidate_content.py").read_text()
+    assert '"tampered-manifest.json"' in staging
+    assert '"original-manifest.json"' in staging
     assert 'guest_report["preserved_installed"]' in source
     assert 'guest_report["tamper_rejection"]' in source
     assert 'guest_report["update_transition"]' in source

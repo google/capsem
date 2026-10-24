@@ -59,6 +59,8 @@ EXPECTED_MODES = {
     "macos_candidate_content.py": 0o644,
     "macos_release_glowup.py": 0o755,
     "macos_tart_cleanup.py": 0o644,
+    "macos_host_admission.py": 0o644,
+    "macos-tart-host-admission.sh": 0o644,
     "macos_tart_glowup.py": 0o755,
     "macos_tart_guest.sh": 0o755,
     "macos_tart_transition_support.py": 0o644,

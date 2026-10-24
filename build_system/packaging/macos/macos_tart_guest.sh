@@ -70,13 +70,9 @@ if test -f "$SHARE/binary-apply-pair.json"; then
     ORIGINAL_MANIFEST="$SHARE/before/manifest.json"
 fi
 test -s "$ORIGINAL_MANIFEST"
-test -s "$UPDATED_MANIFEST"
-test -s "$TAMPERED_MANIFEST"
-test -s "$INCOMPATIBLE_MANIFEST"
+capsem_require_transition_inputs
 test -s "$REMOTE_MANIFEST"
 cmp -s "$ORIGINAL_MANIFEST" "$REMOTE_MANIFEST"
-test "$(python3 "$TRANSITION_SUPPORT" sha256 "$ORIGINAL_MANIFEST")" != \
-    "$(python3 "$TRANSITION_SUPPORT" sha256 "$UPDATED_MANIFEST")"
 rm -f "$REPORT"
 rm -f "$INSTALLED_EVIDENCE"
 rm -f "$FRESH_INSTALLED_EVIDENCE"
@@ -163,11 +159,21 @@ if test -f "$SHARE/binary-apply-pair.json"; then
 fi
 
 echo "=== Installing exact shared package ==="
+if test -f "$SHARE/host-admission-inputs.json"; then
+    mkdir -p "$CAPSEM_HOME"
+    printf '%s\n' '[settings."app.auto_update"]' 'value = false' \
+        'modified = "Tart host admission fixture"' > "$CAPSEM_HOME/settings.toml"
+fi
 bash "$INSTALL_USER_REQUEST" write admin
 bash "$INSTALL_MANIFEST_REQUEST" write "$REMOTE_MANIFEST" "$MANIFEST_URL"
 sudo /usr/sbin/installer -pkg "$PKG" -target /
 clear_install_user_request
 capsem_finish_install_hydration
+if test -f "$SHARE/host-admission-inputs.json"; then
+    source "$SHARE/macos-tart-host-admission.sh"
+    capsem_prove_host_admission_refusal
+    exit 0
+fi
 
 echo "=== Verifying package receipt and app bundle ==="
 RECEIPT=$(/usr/sbin/pkgutil --pkg-info com.capsem.pkg)

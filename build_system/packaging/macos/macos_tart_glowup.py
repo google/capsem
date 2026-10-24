@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TextIO, cast
 
 import macos_binary_apply
+import macos_host_admission
 from capsem_builder import crypto as hashlib
 from capsem_builder.cache.config import load_policy
 from capsem_builder.cache.runtimemodels import TartRuntimePolicy
@@ -29,7 +30,7 @@ from capsem_builder.release.tools.release_glowup import (
 from capsem_builder.release.tools.release_transition_candidates import (
     validate_macos_guest_report,
 )
-from macos_candidate_content import stage_file, stage_guest_scripts, stage_release_site
+from macos_candidate_content import stage_guest_scripts, stage_tart_inputs, transition_inputs
 from macos_tart_cleanup import finish_cleanup, remove_vm
 from macos_tart_transition_support import failure_diagnostic_script, local_tart_capabilities
 
@@ -325,9 +326,9 @@ def main() -> int:
     parser.add_argument("--version", required=True)
     parser.add_argument("--manifest-url", required=True)
     parser.add_argument("--manifest-file", required=True, type=Path)
-    parser.add_argument("--updated-manifest-file", required=True, type=Path)
-    parser.add_argument("--tampered-manifest-file", required=True, type=Path)
-    parser.add_argument("--incompatible-manifest-file", required=True, type=Path)
+    parser.add_argument("--updated-manifest-file", type=Path)
+    parser.add_argument("--tampered-manifest-file", type=Path)
+    parser.add_argument("--incompatible-manifest-file", type=Path)
     parser.add_argument("--sbom", required=True, type=Path)
     parser.add_argument("--asset-share", required=True, type=Path)
     parser.add_argument("--channel", choices=("stable", "nightly"), required=True)
@@ -336,8 +337,13 @@ def main() -> int:
         default=os.environ.get("CAPSEM_TART_IMAGE", DEFAULT_IMAGE),
     )
     parser.add_argument("--work-dir", type=Path, required=True)
+    macos_host_admission.add_arguments(parser)
     args = parser.parse_args()
-    macos_binary_apply.validate_options(args)
+    try:
+        macos_binary_apply.validate_options(args)
+        host_refusal = macos_host_admission.enabled(args)
+    except ValueError as error:
+        parser.error(str(error))
 
     validate_host()
     run_cache_control("macos-glowup-preflight")
@@ -356,42 +362,13 @@ def main() -> int:
         raise RuntimeError(f"candidate asset share is missing: {asset_share}")
     manifest = load_manifest_bytes(manifest_file.read_bytes())
     assert_manifest_artifact(manifest, artifact)
-    candidate_files = (
-        args.updated_manifest_file.resolve(),
-        args.tampered_manifest_file.resolve(),
-        args.incompatible_manifest_file.resolve(),
-    )
-    candidate_bytes = (manifest_file.read_bytes(), *(path.read_bytes() for path in candidate_files))
-    if len(candidate_bytes) != len(set(candidate_bytes)):
-        raise RuntimeError("Tart transition manifests must contain four distinct payloads")
-    for path in candidate_files:
-        assert_manifest_artifact(load_manifest_bytes(path.read_bytes()), artifact)
+    candidate_files, candidate_bytes = transition_inputs(args, artifact, host_refusal)
 
     work_dir = args.work_dir.resolve()
-    share = work_dir / "share"
-    if share.exists():
-        shutil.rmtree(share)
-    share.mkdir(parents=True, exist_ok=True)
-    (work_dir / "report.json").unlink(missing_ok=True)
-    (work_dir / "guest-diagnostics.log").unlink(missing_ok=True)
+    share, guest_package = stage_tart_inputs(args, package, manifest_file, asset_share, candidate_files)
     report_path = share / "report.json"
-    report_path.unlink(missing_ok=True)
-    candidate_dir = share / "candidate"
-    if candidate_dir.exists():
-        shutil.rmtree(candidate_dir)
-    release_dir = candidate_dir / "releases" / "download" / args.channel / f"v{args.version}"
-    guest_package = release_dir / package.name
-    stage_file(package, guest_package)
-    stage_file(args.sbom.resolve(), release_dir / "capsem-sbom.spdx.json")
-    stage_release_site(manifest_file, asset_share, candidate_dir, args.channel)
-    stage_file(manifest_file, share / "original-manifest.json")
-    for source, name in zip(
-        candidate_files,
-        ("updated-manifest.json", "tampered-manifest.json", "incompatible-manifest.json"),
-        strict=True,
-    ):
-        stage_file(source, share / name)
     stage_guest_scripts(PROJECT_ROOT, share)
+    refusal_spec = macos_host_admission.prepare(args, root=PROJECT_ROOT, share=share, guest_package=guest_package)
     binary_pair = macos_binary_apply.prepare(
         args, root=PROJECT_ROOT, share=share, guest_package=guest_package
     )
@@ -438,6 +415,9 @@ def main() -> int:
             ]
         )
         run_authenticated_guest(ip, remote, timeout=1800)
+        if refusal_spec is not None:
+            macos_host_admission.finish_host(share, work_dir, refusal_spec)
+            return 0
         if binary_pair is not None:
             macos_binary_apply.finish_host(share, work_dir, binary_pair, source=args.manifest_url)
             return 0

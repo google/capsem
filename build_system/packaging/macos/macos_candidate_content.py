@@ -8,6 +8,11 @@ import os
 import shutil
 from pathlib import Path
 
+from capsem_builder.release.tools.release_glowup import (
+    assert_manifest_artifact,
+    load_manifest_bytes,
+)
+
 
 def hardlink_or_copy(source: Path, destination: Path) -> None:
     """Stage immutable bytes cheaply, copying only across filesystems."""
@@ -88,6 +93,7 @@ def stage_guest_scripts(root: Path, share: Path) -> None:
         "release/tools/release_apply_receipt.py",
         "release/tools/release_macos_apply.py",
         "release/tools/release_macos_pairing.py",
+        "release/tools/release_admission_refusal.py",
         "release/tools/package_payload.py",
         "release/tools/generate_host_binary_sbom.py",
         "release/tools/verify_installed_release.py",
@@ -118,5 +124,39 @@ def stage_guest_scripts(root: Path, share: Path) -> None:
         "macos_tart_transition_support.py",
         "macos-tart-regression-probes.sh",
         "macos-tart-binary-apply.sh",
+        "macos-tart-host-admission.sh",
     ):
         stage_file(root / "build_system/packaging/macos" / name, share / name)
+
+
+def stage_tart_inputs(args, package: Path, manifest_file: Path, asset_share: Path, candidate_files: tuple[Path, ...]) -> tuple[Path, Path]:
+    """One existing Tart staging owner for normal, paired and refusal probes."""
+    share = args.work_dir.resolve() / "share"
+    if share.exists():
+        shutil.rmtree(share)
+    share.mkdir(parents=True)
+    for name in ("report.json", "guest-diagnostics.log"):
+        (args.work_dir.resolve() / name).unlink(missing_ok=True)
+    candidate_dir = share / "candidate"
+    release_dir = candidate_dir / "releases/download" / args.channel / f"v{args.version}"
+    guest_package = release_dir / package.name
+    stage_file(package, guest_package)
+    stage_file(args.sbom.resolve(), release_dir / "capsem-sbom.spdx.json")
+    stage_release_site(manifest_file, asset_share, candidate_dir, args.channel)
+    stage_file(manifest_file, share / "original-manifest.json")
+    for source, name in zip(candidate_files, ("updated-manifest.json", "tampered-manifest.json", "incompatible-manifest.json")[:len(candidate_files)], strict=True):
+        stage_file(source, share / name)
+    return share, guest_package
+
+
+def transition_inputs(args, artifact, host_refusal: bool) -> tuple[tuple[Path, ...], tuple[bytes, ...]]:
+    candidates = () if host_refusal else (
+        args.updated_manifest_file.resolve(), args.tampered_manifest_file.resolve(),
+        args.incompatible_manifest_file.resolve(),
+    )
+    contents = (args.manifest_file.read_bytes(), *(path.read_bytes() for path in candidates))
+    if len(contents) != len(set(contents)):
+        raise RuntimeError("Tart transition manifests must contain four distinct payloads")
+    for path in candidates:
+        assert_manifest_artifact(load_manifest_bytes(path.read_bytes()), artifact)
+    return candidates, contents

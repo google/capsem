@@ -4,6 +4,15 @@
 ASSET_HYDRATION_EVIDENCE="$SHARE/asset-hydration-evidence.json"
 STALE_HELPER_EVIDENCE="$SHARE/stale-helper-evidence.json"
 
+capsem_require_transition_inputs() {
+    if test -f "$SHARE/host-admission-inputs.json"; then return; fi
+    test -s "$UPDATED_MANIFEST"
+    test -s "$TAMPERED_MANIFEST"
+    test -s "$INCOMPATIBLE_MANIFEST"
+    test "$(python3 "$TRANSITION_SUPPORT" sha256 "$ORIGINAL_MANIFEST")" != \
+        "$(python3 "$TRANSITION_SUPPORT" sha256 "$UPDATED_MANIFEST")"
+}
+
 verify_binary_cohort() {
     local binary path
     for binary in "${BINARIES[@]}"; do
