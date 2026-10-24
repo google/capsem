@@ -46,7 +46,7 @@ capsem_pair_verify() {
     python3 "$VERIFY" --capsem "$CAPSEM" --manifest-url "$MANIFEST_URL" \
         --metadata-manifest-url "$metadata_url" --channel "$CHANNEL" \
         --package-version "$version" --artifact "$package" --platform macos \
-        --architecture arm64 --evidence-out "$SHARE/binary-apply-$phase-installed.json" "${extra[@]}"
+        --architecture arm64 --evidence-out "$SHARE/binary-apply-$phase-installed.json" ${extra[@]+"${extra[@]}"}
 }
 
 capsem_public_state() {

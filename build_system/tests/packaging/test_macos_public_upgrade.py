@@ -142,3 +142,48 @@ def test_scope_uses_one_existing_apply_and_explicit_original_feed_selection():
     assert "launchctl kickstart" not in tail
     assert "capsem_public_state preserved" in tail
     assert 'capsem_wait_for_assets "$SHARE/public-upgrade-runtime-status.json"' in tail
+
+
+@pytest.mark.parametrize("scope,phase,legacy", [
+    ("binary_apply_only", "before", False),
+    ("public_predecessor_upgrade", "before", True),
+    ("public_predecessor_upgrade", "after", False),
+])
+def test_actual_bash_pair_verification_preserves_optional_argv(tmp_path, scope, phase, legacy):
+    import shlex
+    import subprocess
+
+    source = Path(__file__).resolve().parents[3] / "build_system/packaging/macos/macos-tart-binary-apply.sh"
+    capture = tmp_path / "verify-argv"
+    script = f'''
+set -euo pipefail
+source {shlex.quote(str(source))}
+SHARE={shlex.quote(str(tmp_path))}
+CAPSEM=synthetic_capsem
+VERIFY=synthetic-verifier.py
+MANIFEST_URL=http://source-fixture.invalid/manifest.json
+CHANNEL=stable
+capsem_pair_field() {{
+    case "$*" in
+        *'--field scope') echo {shlex.quote(scope)} ;;
+        *'--field version') echo 0.7.1 ;;
+        *'--field package') echo /source-fixture.pkg ;;
+        *'--field metadata_manifest_url') echo http://source-fixture.invalid/manifest.json ;;
+        *) return 1 ;;
+    esac
+}}
+python3() {{
+    if [ "$1" = -m ]; then echo capsem; else printf '%s\\n' "$@" > {shlex.quote(str(capture))}; fi
+}}
+verify_binary_cohort() {{ return 0; }}
+synthetic_capsem() {{ echo 0.7.1; }}
+function /usr/sbin/pkgutil {{ echo 'version: 0.7.1'; }}
+function /usr/libexec/PlistBuddy {{ echo 0.7.1; }}
+capsem_pair_verify {shlex.quote(phase)}
+'''
+    result = subprocess.run(["/bin/bash", "-c", script], capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    argv = capture.read_text().splitlines()
+    assert "" not in argv
+    assert ("--legacy-profile-predecessor" in argv) is legacy
+    assert argv[0] == "synthetic-verifier.py" and "--artifact" in argv
