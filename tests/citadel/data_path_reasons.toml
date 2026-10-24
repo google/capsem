@@ -33,6 +33,12 @@ hash-removal-journal = "Current cache receipt generations, removal witness token
 hash-mixed-package = "Release package contents retain published SHA-256/BLAKE3 verification against trusted manifests. Only disposable extraction-directory path fingerprints use XXH3-128; they do not authorize a package or replace content verification."
 hash-mixed-asset-cache = "Actual VM content verification retains BLAKE3 against the trusted asset digest; XXH3-128 only selects a cache filename from its path. Cache-entry metadata and the expected security digest are still checked before reuse."
 
+oci-inventory = "The bounded package viewer verifies exact OCI subject/referrer manifests and parses the producer-owned package inventory JSON artifact; no runtime event or arbitrary browser-selected reference is serialized."
+mcp-memory = "The external MCP JSON-RPC contract already owns serde_json::Value bodies. This helper borrows those existing trees and sums typed capacities without serializing, cloning or constructing JSON for admission."
+forensic-mcp = "The security engine serializes existing durable rule/event forensic records and parses external MCP request/response previews into typed CEL facts. It does not encode internal binary forwarding or compute JSON envelope sizes."
+forensic-oracle = "The logger counter oracle reads persisted provider usage and forensic JSON records through its DB owner to independently compare committed counters; it is not an event transport or an encoded-size admission check."
+metric-fixture = "The opt-in mock collector exposes a bounded normalized summary as its test HTTP JSON response. Original OTLP ingestion remains protobuf through the production admission owner; raw payloads and headers are never converted to JSON."
+
 [sources."crates/capsem/src/client/gateway.rs"]
 json = { count = 5, reason = "http" }
 
@@ -164,7 +170,7 @@ json = { count = 1, reason = "oci" }
 hash = { count = 1, reason = "hash-identity" }
 
 [sources."crates/capsem-assets/src/oci/pull.rs"]
-json = { count = 8, reason = "oci" }
+json = { count = 7, reason = "oci" }
 hash = { count = 2, reason = "hash-oci" }
 
 [sources."crates/capsem-assets/src/oci/receipts.rs"]
@@ -297,9 +303,6 @@ json = { count = 1, reason = "provider" }
 [sources."crates/capsem-core/src/net/mitm_proxy/mcp_observe.rs"]
 json = { count = 11, reason = "mcp" }
 
-[sources."crates/capsem-core/src/net/mitm_proxy/mod.rs"]
-json = { count = 2, reason = "provider" }
-
 [sources."crates/capsem-core/src/net/mitm_proxy/telemetry_hook.rs"]
 json = { count = 1, reason = "provider" }
 
@@ -333,7 +336,7 @@ hash = { count = 1, reason = "hash-policy" }
 json = { count = 14, reason = "forensic" }
 
 [sources."crates/capsem-core/src/security_engine/mod.rs"]
-json = { count = 13, reason = "forensic" }
+json = { count = 11, reason = "forensic-mcp" }
 
 [sources."crates/capsem-core/src/service_uds.rs"]
 json = { count = 10, reason = "http" }
@@ -424,7 +427,7 @@ json = { count = 2, reason = "db-json" }
 json = { count = 13, reason = "db-json" }
 
 [sources."crates/capsem-logger/src/counters/oracle.rs"]
-json = { count = 3, reason = "db-json" }
+json = { count = 4, reason = "forensic-oracle" }
 
 [sources."crates/capsem-logger/src/counters.rs"]
 json = { count = 1, reason = "db-json" }
@@ -446,7 +449,7 @@ json = { count = 3, reason = "db-json" }
 json = { count = 1, reason = "db-json" }
 
 [sources."crates/capsem-logger/src/ledger_server/queries.rs"]
-json = { count = 12, reason = "db-json" }
+json = { count = 13, reason = "db-json" }
 
 [sources."crates/capsem-logger/src/lib.rs"]
 hash = { count = 2, reason = "hash-archive" }
@@ -505,9 +508,6 @@ json = { count = 2, reason = "benchmark" }
 
 [sources."crates/capsem-mock-server/src/websocket.rs"]
 json = { count = 9, reason = "benchmark" }
-
-[sources."crates/capsem-process/src/ipc.rs"]
-json = { count = 8, reason = "mcp" }
 
 [sources."crates/capsem-process/src/mcp_runtime.rs"]
 json = { count = 9, reason = "mcp" }
@@ -841,3 +841,42 @@ json = { count = 8, reason = "logging" }
 
 [sources."crates/capsem/src/update/asset_install/http.rs"]
 hash = { count = 2, reason = "hash-asset" }
+
+[sources."crates/capsem-assets/src/oci/pull/inventory.rs"]
+json = { count = 3, reason = "oci-inventory" }
+
+[sources."crates/capsem-assets/src/oci/pull/metadata.rs"]
+json = { count = 1, reason = "oci" }
+
+[sources."crates/capsem-core/src/net/mitm_proxy/mcp_frame/memory.rs"]
+json = { count = 1, reason = "mcp-memory" }
+
+[sources."crates/capsem-core/src/net/mitm_proxy/request_security.rs"]
+json = { count = 2, reason = "provider" }
+
+[sources."crates/capsem-core/src/security_engine/ask_events.rs"]
+json = { count = 2, reason = "forensic" }
+
+[sources."crates/capsem-core/src/security_engine/rule_emission.rs"]
+json = { count = 1, reason = "forensic" }
+
+[sources."crates/capsem-mock-server/src/otlp.rs"]
+json = { count = 1, reason = "metric-fixture" }
+
+[sources."crates/capsem-process/src/ipc/mcp_call.rs"]
+json = { count = 8, reason = "mcp" }
+
+[sources."crates/capsem-service/src/approval_runtime.rs"]
+json = { count = 1, reason = "db-json" }
+
+[sources."sdk/rust/src/operations/generated/acknowledge_browser_request.rs"]
+json = { count = 2, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/get_image_inventory.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/list_security_asks.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/resolve_security_ask.rs"]
+json = { count = 2, reason = "http" }
