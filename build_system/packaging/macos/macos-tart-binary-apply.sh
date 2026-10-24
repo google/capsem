@@ -8,8 +8,12 @@ capsem_pair_field() {
 capsem_pair_http() {
     local command="$1"
     shift
+    local transport=(--socket "$CAPSEM_HOME/run/service.sock")
+    if [ "$command" = request ]; then
+        transport=(--gateway-run-dir "$CAPSEM_HOME/run")
+    fi
     python3 -m helpers.installed_apply_probe "$command" \
-        --socket "$CAPSEM_HOME/run/service.sock" \
+        "${transport[@]}" \
         --timeout "$(capsem_pair_field --field timeout)" \
         --maximum "$(capsem_pair_field --field maximum)" "$@"
 }

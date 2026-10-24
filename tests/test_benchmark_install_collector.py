@@ -67,7 +67,7 @@ def test_runtime_minimum_cannot_be_lowered_to_manufacture_a_before_pair(tmp_path
 def test_original_request_outcome_is_distinct_from_verified_activation(outcome):
     from benchmarks.helpers.install_metrics import metrics
 
-    request = {"outcome": outcome, "elapsed_ns": 123000000}
+    request = {"outcome": outcome, "elapsed_ns": 123000000, "transport": "service_uds"}
     report = {
         "activation": "verified",
         "original_request": request,
@@ -88,7 +88,11 @@ def test_unverified_or_impossible_receipts_cannot_become_samples(damage):
 
     report = {
         "activation": "verified",
-        "original_request": {"outcome": "transport_failure", "elapsed_ns": 100},
+        "original_request": {
+            "outcome": "transport_failure",
+            "elapsed_ns": 100,
+            "transport": "service_uds",
+        },
         "activation_verified_elapsed_ns": 200,
     }
     if damage == "missing_activation":

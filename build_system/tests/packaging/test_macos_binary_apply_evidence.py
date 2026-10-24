@@ -34,6 +34,7 @@ def evidence(root: Path, raw_inputs):
         "after_line": 0,
         "attempts": 1,
         "outcome": "transport_failure",
+        "transport": "service_uds",
         "error_type": "ConnectionError",
         "started_ns": time.monotonic_ns(),
         "elapsed_ns": 0,

@@ -65,6 +65,7 @@ def arguments(tmp_path):
         output=tmp_path / "request.json",
         timeout=0.05,
         maximum=4096,
+        transport="service_uds",
     )
 
 

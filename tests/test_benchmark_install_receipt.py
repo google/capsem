@@ -19,6 +19,23 @@ def test_genuine_shape_and_failed_original_remain_separate(tmp_path, monkeypatch
     stored = json.loads(sidecar(selected, result))
     assert stored["before"]["package_sha256"] != stored["after"]["package_sha256"]
     assert stored["after"]["source_commit"] == "b" * 40
+    assert stored["transport"] == "service_uds"
+
+
+def test_install_projection_never_infers_missing_transport(tmp_path, monkeypatch):
+    path, inputs = prepared(tmp_path, monkeypatch, platform="linux")
+    selected = load(path, inputs)
+    native = tmp_path / "native"
+    report = linux_receipt(native, selected)
+    request = report["adapter_evidence"]["explicit_apply"]["original_request"]
+    request.pop("transport", None)
+    (native / "candidate-apply-request.json").write_text(json.dumps(request))
+    (native / "candidate-apply.json").write_text(
+        json.dumps(report["adapter_evidence"]["explicit_apply"])
+    )
+    (native / "report.json").write_text(json.dumps(report))
+    with pytest.raises(ValueError, match="transport"):
+        verified_receipt(native, selected, maximum=1048576)
 
 
 @pytest.mark.parametrize(

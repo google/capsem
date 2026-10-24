@@ -99,6 +99,7 @@ def stage_guest_scripts(root: Path, share: Path) -> None:
         "http_measurement.py",
         "http_transport.py",
         "installed_apply_probe.py",
+        "installed_gateway.py",
     ):
         stage_file(root / "tests/helpers" / name, share / "helpers" / name)
     stage_file(root / "build_system/packaging/macos" / "macos_tart_guest.sh", share / "guest.sh")

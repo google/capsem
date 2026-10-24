@@ -16,6 +16,7 @@ def metrics(report: dict, *, host_wall_ns: int) -> dict:
     )
     if (
         report.get("activation") != "verified"
+        or request.get("transport") not in {"service_uds", "gateway_http"}
         or request.get("outcome") not in outcomes
         or any(type(value) is not int or value < 0 for value in (elapsed, activation, host_wall_ns))
         or activation < elapsed

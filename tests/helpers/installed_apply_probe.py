@@ -14,6 +14,7 @@ from capsem_builder.release.tools.release_transition import load_update_audit
 
 from helpers.http_measurement import validate_limits
 from helpers.http_transport import Transport
+from helpers.installed_gateway import GatewayTransport
 
 
 def _json(owner, args, method, path, body=None):
@@ -55,6 +56,8 @@ def set_automatic(owner, args, enabled):
 
 
 def request_apply(owner, args):
+    if args.transport not in {"service_uds", "gateway_http"}:
+        raise ValueError("original Apply requires explicit transport provenance")
     if automatic_value(_json(owner, args, "GET", "/settings/info")):
         raise ValueError("automatic updates must be disabled before original Apply")
     rows = load_update_audit(args.audit, after_line=args.after_line, max_bytes=args.maximum)
@@ -71,6 +74,7 @@ def request_apply(owner, args):
         "source_commit": args.source_commit,
         "after_line": args.after_line,
         "attempts": 1,
+        "transport": args.transport,
         "started_ns": started,
     }
     try:
@@ -118,7 +122,9 @@ def request_apply(owner, args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("disable-automatic", "restore-automatic", "request"))
-    parser.add_argument("--socket", required=True)
+    address = parser.add_mutually_exclusive_group(required=True)
+    address.add_argument("--socket")
+    address.add_argument("--gateway-run-dir", type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--state", type=Path)
     parser.add_argument("--audit", type=Path)
@@ -130,7 +136,12 @@ def main():
     parser.add_argument("--maximum", required=True, type=int)
     args = parser.parse_args()
     validate_limits(args.timeout, args.maximum)
-    owner = Transport(socket_path=args.socket)
+    args.transport = "gateway_http" if args.gateway_run_dir is not None else "service_uds"
+    owner = (
+        GatewayTransport(args.gateway_run_dir, maximum=args.maximum)
+        if args.gateway_run_dir is not None
+        else Transport(socket_path=args.socket)
+    )
     try:
         if args.command == "disable-automatic":
             previous = automatic_value(_json(owner, args, "GET", "/settings/info"))

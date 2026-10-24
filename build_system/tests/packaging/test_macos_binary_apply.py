@@ -189,6 +189,8 @@ def test_staged_original_apply_helper_needs_only_standard_library(tmp_path, monk
     )
     assert result.returncode == 0, result.stderr
     assert "usage:" in result.stdout
+    if module == "helpers.installed_apply_probe":
+        assert "--gateway-run-dir" in result.stdout
 
 
 def test_existing_tart_owner_stages_pair_as_separate_mode(inputs, tmp_path, monkeypatch):
@@ -242,6 +244,7 @@ def test_paired_mode_uses_same_tart_owner_and_never_kickstarts_after_apply():
     )
     source = (root / "build_system/packaging/macos/macos-tart-binary-apply.sh").read_text()
     assert source.count("capsem_pair_http request") == 1
+    assert 'transport=(--gateway-run-dir "$CAPSEM_HOME/run")' in source
     after_request = source.split("capsem_pair_http request", 1)[1]
     assert "launchctl kickstart" not in after_request
     assert 'capsem_wait_for_service "$old_service_pid"' in after_request

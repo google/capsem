@@ -45,6 +45,7 @@ def verified_receipt(native: Path, prepared: Prepared, *, maximum: int) -> dict:
             {**pair, "limits": {"maximum": maximum}},
             source=inputs.tart.manifest_url,
         )
+        original_transport(checked)
         share = native / "share"
         spec = read_object(share / "binary-apply-pair.json", maximum)
         if any(
@@ -87,6 +88,7 @@ def verified_receipt(native: Path, prepared: Prepared, *, maximum: int) -> dict:
     if adapter.get("release_pairing") != expected:
         raise ValueError("Install native predecessor/candidate pairing is foreign")
     receipt = read_object(native / "candidate-apply.json", maximum)
+    original_transport(receipt)
     if adapter.get("explicit_apply") != receipt or receipt.get("candidate") != expected["after"]:
         raise ValueError("Install native report lacks the exact original Apply receipt")
     source = adapter["polled_manifest_url"]
@@ -148,12 +150,20 @@ def original_files(
         raise ValueError("Install original request/transition files changed")
 
 
+def original_transport(receipt: dict) -> str:
+    value = receipt["original_request"].get("transport")
+    if value not in {"service_uds", "gateway_http"}:
+        raise ValueError("Install requires explicit original transport provenance")
+    return value
+
+
 def sidecar(prepared: Prepared, receipt: dict) -> str:
     return json.dumps(
         {
             "schema": "capsem.bench.install.v1",
             "scope": "binary_apply_only",
             "source_commit": prepared.inputs.source_commit,
+            "transport": original_transport(receipt),
             "owner": "macos-tart"
             if prepared.inputs.platform == "macos"
             else "linux-docker-systemd",
