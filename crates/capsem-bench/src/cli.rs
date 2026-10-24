@@ -68,6 +68,9 @@ pub(crate) struct RunArgs {
     pub(crate) cohort_config: PathBuf,
     /// Dimensions to measure. Every one when omitted.
     pub(crate) dimensions: Vec<String>,
+    /// Exclude named dimensions from an implicit full selection.
+    #[arg(long)]
+    pub(crate) exclude: Vec<String>,
     /// Directory holding one executable per dimension.
     #[arg(long, default_value = "benchmarks/collectors")]
     pub(crate) collectors: PathBuf,

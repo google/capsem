@@ -130,7 +130,7 @@ async fn main() -> Result<()> {
         Command::Verify(args) => return comparison::verify(&args.records, &args.evidence, args.runs, args.thresholds),
         #[cfg(feature = "host")]
         Command::Run(args) => {
-            let wanted = commands::select_dimensions(&args.dimensions)?;
+            let wanted = commands::select_run_dimensions(&args.dimensions, &args.exclude)?;
             return commands::run_dimensions(
                 &wanted,
                 &args.collectors,

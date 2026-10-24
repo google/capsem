@@ -303,6 +303,22 @@ pub(crate) fn select_dimensions(names: &[String]) -> Result<Vec<schema::Dimensio
         .collect()
 }
 
+/// Partition a full run without a second registry of available dimensions.
+pub(crate) fn select_run_dimensions(names: &[String], exclusions: &[String]) -> Result<Vec<schema::Dimension>> {
+    let mut selected = select_dimensions(names)?;
+    if !exclusions.is_empty() {
+        let excluded = select_dimensions(exclusions)?;
+        if !names.is_empty() && selected.iter().any(|name| excluded.contains(name)) {
+            bail!("explicit dimensions conflict with exclusions");
+        }
+        selected.retain(|name| !excluded.contains(name));
+    }
+    if selected.is_empty() {
+        bail!("dimension selection must not be empty");
+    }
+    Ok(selected)
+}
+
 /// What every measured subject currently reads, and how it has moved.
 ///
 /// The question the old layout could not answer without globbing filenames

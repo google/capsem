@@ -28,6 +28,8 @@ pub const SCHEMA: &str = "capsem.bench.v2";
 pub enum Dimension {
     // Host, driving the service and gateway.
     Routes,
+    /// Managed native restart, isolated from ordinary confined route reads.
+    Restart,
     Websocket,
     Lifecycle,
     /// Terminal and streaming exec over `/vms/{id}/stream` through the gateway.
@@ -61,6 +63,7 @@ impl Dimension {
     /// Every dimension, for `capsem-bench list` and for a full sweep.
     pub const ALL: &'static [Dimension] = &[
         Dimension::Routes,
+        Dimension::Restart,
         Dimension::Websocket,
         Dimension::Lifecycle,
         Dimension::Stream,
@@ -87,6 +90,7 @@ impl Dimension {
     pub fn as_str(self) -> &'static str {
         match self {
             Dimension::Routes => "routes",
+            Dimension::Restart => "restart",
             Dimension::Websocket => "websocket",
             Dimension::Lifecycle => "lifecycle",
             Dimension::Stream => "stream",
@@ -115,7 +119,12 @@ impl Dimension {
     pub fn needs_vm(self) -> bool {
         !matches!(
             self,
-            Dimension::Criterion | Dimension::Crypto | Dimension::Protocol | Dimension::Routes | Dimension::Websocket
+            Dimension::Criterion
+                | Dimension::Crypto
+                | Dimension::Protocol
+                | Dimension::Routes
+                | Dimension::Restart
+                | Dimension::Websocket
         )
     }
 
