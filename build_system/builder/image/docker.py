@@ -492,6 +492,53 @@ def _try_import_asset_dependencies(
     return True
 
 
+def _can_export_asset_dependencies(runtime: str, tag: str, platform: str, repo_root: Path) -> bool:
+    """Reject lazy registry layers that pass inspect but fail a sealed build."""
+    import tempfile
+
+    build_tmp = repo_root / "cache" / "tmp"
+    build_tmp.mkdir(parents=True, exist_ok=True)
+    probe_tag = f"{tag}-export-probe"
+    with tempfile.TemporaryDirectory(prefix="capsem-dependency-probe-", dir=build_tmp) as tmpdir:
+        context = Path(tmpdir)
+        dockerfile = context / "Dockerfile"
+        dockerfile.write_text(
+            "# check=skip=InvalidDefaultArgInFrom\nARG BASE\nFROM ${BASE}\nRUN /bin/true\n"
+        )
+        try:
+            result = run_cmd(
+                [
+                    runtime,
+                    "build",
+                    "--platform",
+                    platform,
+                    "--network",
+                    "none",
+                    "--build-arg",
+                    f"BASE={tag}",
+                    "-t",
+                    probe_tag,
+                    "-f",
+                    str(dockerfile),
+                    str(context),
+                ],
+                capture=True,
+                echo=False,
+                check=False,
+                timeout=30,
+            )
+        except subprocess.TimeoutExpired:
+            print(f"  dependency image export probe timed out; rebuilding locally: {tag}")
+            return False
+    if result.returncode != 0:
+        print(
+            f"  dependency image cannot export; rebuilding locally: {tag}: {result.stderr.strip()[-240:]}"
+        )
+        return False
+    remove_image(runtime, probe_tag)
+    return True
+
+
 def materialize_asset_dependencies(
     config: GuestImageConfig,
     arch_name: str,
@@ -508,14 +555,17 @@ def materialize_asset_dependencies(
         repo_root = Path.cwd()
     runtime = detect_runtime()
     tag = asset_dependency_tag(config, arch_name, template)
+    arch = config.build.architectures[arch_name]
     try:
         run_cmd([runtime, "image", "inspect", tag], capture=True)
     except subprocess.CalledProcessError:
         pass
     else:
-        return require_asset_dependencies(runtime, config, arch_name, template)
+        resolved = require_asset_dependencies(runtime, config, arch_name, template)
+        if _can_export_asset_dependencies(runtime, tag, arch.docker_platform, repo_root):
+            return resolved
+        remove_image(runtime, tag)
 
-    arch = config.build.architectures[arch_name]
     cached = PrivateImage(
         local=tag,
         platform=arch.docker_platform,
@@ -529,7 +579,10 @@ def materialize_asset_dependencies(
         registry=private_registry,
         source=private_source,
     ):
-        return require_asset_dependencies(runtime, config, arch_name, template)
+        resolved = require_asset_dependencies(runtime, config, arch_name, template)
+        if _can_export_asset_dependencies(runtime, tag, arch.docker_platform, repo_root):
+            return resolved
+        remove_image(runtime, tag)
     build_tmp = repo_root / "cache" / "tmp"
     build_tmp.mkdir(parents=True, exist_ok=True)
     dependency_template = _asset_dependency_template(config, template)

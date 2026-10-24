@@ -427,12 +427,36 @@ def _write_fake_sudo(bin_dir: Path, log_path: Path) -> None:
     bin_dir.mkdir(parents=True, exist_ok=True)
     sudo.write_text(
         "#!/bin/sh\n"
-        "printf '%s\\n' \"$*\" >> \"$CAPSEM_FAKE_SUDO_LOG\"\n"
+        "printf '%s\\0' \"$@\" >> \"$CAPSEM_FAKE_SUDO_LOG\"\n"
         "exit 0\n",
         encoding="utf-8",
     )
     sudo.chmod(0o755)
     log_path.write_text("", encoding="utf-8")
+
+
+def _assert_privileged_package_install(
+    sudo_log: Path, cached: Path, payload: bytes, layout: str
+) -> None:
+    logged = sudo_log.read_bytes()
+    assert logged.endswith(b"\0"), logged
+    args = [arg.decode("utf-8") for arg in logged[:-1].split(b"\0")]
+    assert args[:2] == ["/bin/sh", "-c"]
+    assert args[3:] == [
+        "capsem-update",
+        str(cached),
+        hashlib.sha256(payload).hexdigest(),
+        str(len(payload)),
+        layout,
+    ]
+    script = args[2]
+    assert "umask 077" in script
+    assert "stage=$(/usr/bin/mktemp -d /var/tmp/capsem-install." in script
+    assert 'if [ "$actual_hash" != "$expected_hash" ] || [ "$actual_size" != "$expected_size" ]' in script
+    if layout == "macos_pkg":
+        assert '/usr/sbin/installer -pkg "$package" -target /' in script
+    else:
+        assert '/usr/bin/apt-get install --yes --allow-downgrades "$package"' in script
 
 
 def _read_update_log(capsem_home: Path) -> list[dict]:
@@ -1267,9 +1291,7 @@ def test_macos_update_yes_applies_verified_pkg_with_package_manager(
     )
     cached = _installer_cache_path(capsem_home, installer_name, payload)
     assert cached.read_bytes() == payload
-    assert f"/usr/sbin/installer -pkg {cached} -target /\n" == sudo_log.read_text(
-        encoding="utf-8"
-    )
+    _assert_privileged_package_install(sudo_log, cached, payload, "macos_pkg")
     assert "Binary update applied." in result.stdout
 
 
@@ -1311,9 +1333,7 @@ def test_linux_update_yes_applies_verified_deb_with_package_manager(
     )
     cached = _installer_cache_path(capsem_home, installer_name, payload)
     assert cached.read_bytes() == payload
-    assert f"apt-get install --yes --allow-downgrades {cached}\n" == sudo_log.read_text(
-        encoding="utf-8"
-    )
+    _assert_privileged_package_install(sudo_log, cached, payload, "linux_deb")
     assert "Binary update applied." in result.stdout
     events = _read_update_log(capsem_home)
     assert [event["event"] for event in events[-6:]] == [
@@ -1403,7 +1423,7 @@ def test_linux_update_yes_records_failed_installer_verification(
 
     assert result.returncode != 0
     assert "mismatch" in (result.stdout + result.stderr).lower()
-    assert sudo_log.read_text(encoding="utf-8") == ""
+    assert sudo_log.read_bytes() == b""
     events = _read_update_log(capsem_home)
     assert [event["event"] for event in events[-4:]] == [
         "release_candidate_fetched",

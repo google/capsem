@@ -191,11 +191,13 @@ id = "20260810T000000Z"
 configure_script = "build_system/scripts/build/configure-apt-snapshot.sh"
 # Snapshot requests occasionally return a transient 5xx. Every image
 # materializer uses these finite request and operation bounds with persistent
-# BuildKit caches, so a retry resumes downloaded archives.
+# BuildKit caches. The host builder prefetches authenticated archives in bounded
+# parallel batches before a no-download install within the same operation bound.
 update_timeout_seconds = 300
 install_timeout_seconds = 1800
 request_timeout_seconds = 15
 retries = 3
+download_concurrency = 4
 
 [private_images]
 # Network-open dependency helpers are private build inputs, never release
@@ -435,6 +437,7 @@ run_dir = "CAPSEM_RUN_DIR"
 assets_dir = "CAPSEM_ASSETS_DIR"
 benchmark_root = "CAPSEM_BENCHMARK_OUTPUT_ROOT"
 mcp_package_archives = "CAPSEM_MCP_PACKAGE_ARCHIVES"
+sdk_package_archives = "CAPSEM_SDK_PACKAGE_ARCHIVES"
 coverage_file = "COVERAGE_FILE"
 # Set by the parent that built a private checkout, and read by the child that
 # runs inside it. This is what stops the re-exec recursing: a process that
@@ -487,6 +490,7 @@ command_sandbox_mode = "CAPSEM_GATE_COMMAND_SANDBOX_MODE"
 [environment.install]
 test_output_root = "CAPSEM_TEST_OUTPUT_ROOT"
 project_environment = "UV_PROJECT_ENVIRONMENT"
+sudo_user = "SUDO_USER"
 # pnpm asks before purging a `node_modules` it did not create, and refuses when
 # it cannot ask: `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`. The install
 # proof reaches that state legitimately now -- `/src/build_system/release_site` comes from
@@ -1122,24 +1126,24 @@ must_stay_below_lines = 3000
 "crates/capsem-assets/src/asset_manager.rs" = 1210
 "crates/capsem-core/src/hypervisor/kvm/mod.rs" = 1039
 "crates/capsem-core/src/hypervisor/kvm/sys.rs" = 1895
-"crates/capsem-core/src/hypervisor/kvm/virtio_blk.rs" = 1768
-"crates/capsem-core/src/hypervisor/kvm/virtio_blk/tests.rs" = 1059
+"crates/capsem-core/src/hypervisor/kvm/virtio_blk.rs" = 1707
+"crates/capsem-core/src/hypervisor/kvm/virtio_blk/tests.rs" = 1018
 "crates/capsem-core/src/hypervisor/kvm/virtio_fs/tests.rs" = 2041
-"crates/capsem-core/src/net/mitm_proxy/mod.rs" = 2507
+"crates/capsem-core/src/net/mitm_proxy/mod.rs" = 2492
 "crates/capsem-core/src/net/policy_config/security_rule_profile/tests.rs" = 1549
 "crates/capsem-core/src/security_engine/mod.rs" = 2046
-"crates/capsem-core/tests/mitm_integration.rs" = 2087
+"crates/capsem-core/tests/mitm_integration.rs" = 2085
 "crates/capsem-logger/src/writer/tests.rs" = 1237
 "crates/capsem-mock-server/src/main.rs" = 1167
-"crates/capsem-process/src/vsock.rs" = 1239
+"crates/capsem-process/src/vsock.rs" = 1025
 "crates/capsem-proto/src/tests.rs" = 1446
 "crates/capsem-service/src/tests/assets_registry.rs" = 1070
 "crates/capsem-service/src/tests/lifecycle.rs" = 1315
 "crates/capsem/src/main.rs" = 1972
 "crates/capsem/src/tests.rs" = 1241
-"crates/capsem/src/update.rs" = 2142
-"crates/capsem/src/update/asset_install.rs" = 1125
-"crates/capsem/src/update/tests.rs" = 2301
+"crates/capsem/src/update.rs" = 2041
+"crates/capsem/src/update/asset_install.rs" = 1104
+"crates/capsem/src/update/tests.rs" = 2206
 
 # The benchmark collectors. Their whole contract is that they print raw
 # samples and compute nothing, so one growing past this ceiling means
@@ -2124,6 +2128,7 @@ source_contract = [
     "build_system/tests/gate/test_gate_hostimage_composition.py",
     "build_system/tests/gate/test_linux_workspace_prerequisites.py",
     "build_system/tests/gate/test_host_builder_materializer.py",
+    "build_system/tests/gate/test_host_apt_prefetch.py",
     "build_system/tests/image/test_image_build_backend.py",
     "build_system/tests/image/test_image_module_boundary.py",
     "build_system/tests/gate/test_gate_install_container.py",
@@ -2756,7 +2761,9 @@ network_reason = "No mid-run fetch. This is the rule the whole profile exists fo
 cargo_offline_probe = ["cargo", "fetch", "--locked", "--offline"]
 socket_reason = "`(deny network*)` covers AF_UNIX too, so these come back explicitly."
 self_confinement_reason = "Seatbelt cannot be nested. These trusted children replace the inherited gate profile with their stricter worker profile before handling data; ordinary test children retain the gate network denial."
-self_confined_executables = ["capsem-ledger", "capsem-proxy", "capsem-router", "capsem-router-confinement-test"]
+# Native MCP workers attest their descriptor-only role confinement before
+# readiness. External MCP commands continue inheriting their worker sandbox.
+self_confined_executables = ["capsem-gateway", "capsem-ledger", "capsem-mcp-aggregator", "capsem-mcp-builtin", "capsem-process", "capsem-proxy", "capsem-router", "capsem-router-confinement-test"]
 
 # Absolute or `~`-relative. Denying the Docker socket makes a running daemon
 # look absent -- `permission denied ... docker.sock` -- which is how the first
@@ -3365,6 +3372,12 @@ timeout_secs = 1800
 # dimensions that need no guest and finish in seconds; the ceiling is the
 # promise, not an estimate.
 quick_timeout_secs = 60
+# Earlier VM work contributes to the one-minute load average after it stops.
+# Wait for the unchanged doctor predicate, retaining every observation; permanent
+# objections still fail immediately and a continuously busy host fails boundedly.
+fitness_timeout_secs = 120
+fitness_poll_interval_secs = 1.0
+doctor_timeout_secs = 15
 
 [benchmark.protocol]
 # Raw samples need enough p99 tail observations to expose drift while keeping
@@ -3601,12 +3614,6 @@ digest = "a651a24dcdbf"
 where = "build_system/packaging/linux/deb-postinst.sh"
 subject = "su $TARGET_USER -c XDG_RUNTIME_DIR=$XDG_DIR journalctl --user-unit capsem.service --no-pager -n 100"
 reason = "diagnostics; there may be no journal yet on a first install"
-
-[[boundary.discarded_verdicts]]
-digest = "30e2e243eea1"
-where = "build_system/packaging/linux/deb-preinst.sh"
-subject = "chown -R $TARGET_USER:$(id -gn $TARGET_USER) $CAPSEM_DIR/logs"
-reason = "the log directory may not exist before the first run"
 
 [[boundary.discarded_verdicts]]
 digest = "d52766736735"

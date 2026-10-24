@@ -497,6 +497,29 @@ fn user_http_upstream_ports_override_network_policy() {
 }
 
 #[test]
+fn invalid_http_upstream_ports_fail_closed() {
+    for invalid in [vec![80, -1], vec![80, 65_536], vec![0]] {
+        let user = file_with(vec![(
+            "security.web.http_upstream_ports",
+            SettingValue::IntList(invalid),
+        )]);
+        let resolved = resolve_settings(&user, &empty_file());
+        assert!(build_network_policy(&resolved).http_upstream_ports.is_empty());
+    }
+}
+
+#[test]
+fn empty_http_upstream_ports_survive_active_policy_compilation() {
+    let user = file_with(vec![(
+        "security.web.http_upstream_ports",
+        SettingValue::IntList(vec![]),
+    )]);
+    let active = ActivePolicyFile::from_settings_and_corp(&user, &empty_file()).expect("active policy");
+    let runtime = active.compile_runtime().expect("compiled policy");
+    assert!(runtime.network.http_upstream_ports.is_empty());
+}
+
+#[test]
 fn corp_http_upstream_ports_override_user_network_policy() {
     let user = file_with(vec![(
         "security.web.http_upstream_ports",

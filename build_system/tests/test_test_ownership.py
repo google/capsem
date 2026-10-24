@@ -28,6 +28,7 @@ PACKAGE_LOCAL_TEST_SOURCES = frozenset({"build_system/release_site/src/lib/relea
 # exactly instead of weakening reconciliation for the 176 inventoried files.
 BOUNDARY_FILES = frozenset(
     {
+        "build_system/tests/gate/test_benchmark_host_readiness.py",
         "build_system/tests/gate/test_ci_tool_module_boundary.py",
         "build_system/tests/gate/test_fixture_cargo_leases.py",
         "build_system/tests/gate/test_gate_incomplete_reports.py",
@@ -45,9 +46,11 @@ BOUNDARY_FILES = frozenset(
         "build_system/tests/cache/test_docker_anchor_inventory.py",
         "build_system/tests/cache/test_docker_current.py",
         "build_system/tests/cache/test_failure_artifacts.py",
+        "build_system/tests/cache/test_generation_lease_control.py",
         "build_system/tests/cache/test_gitimpact.py",
         "build_system/tests/cache/test_hardlink_protection.py",
         "build_system/tests/cache/test_inventory.py",
+        "build_system/tests/cache/test_image_generation_leases.py",
         "build_system/tests/cache/test_measure.py",
         "build_system/tests/cache/test_module_size.py",
         "build_system/tests/cache/test_objects.py",
@@ -91,6 +94,8 @@ BOUNDARY_FILES = frozenset(
         "build_system/tests/gate/test_candidate_runtime_content.py",
         "build_system/tests/gate/runtime_content.py",
         "build_system/tests/gate/test_host_docker_ownership.py",
+        "build_system/tests/gate/test_host_apt_prefetch.py",
+        "build_system/tests/gate/test_linux_workspace_apt_bounds.py",
         "build_system/tests/gate/test_machine_cache_bound.py",
         "build_system/tests/gate/test_private_image_cache.py",
         "build_system/tests/gate/test_rust_coverage_ratchet.py",
@@ -111,6 +116,7 @@ BOUNDARY_FILES = frozenset(
         "build_system/tests/image/test_kernel_defconfig.py",
         "build_system/tests/image/test_runtime_packages.py",
         "build_system/tests/packaging/test_deb_platform_support.py",
+        "build_system/tests/packaging/test_linux_maintainer_home_boundary.py",
         "build_system/tests/packaging/test_linux_packaging_boundary.py",
         "build_system/tests/packaging/test_macos_packaging_boundary.py",
         "build_system/tests/packaging/test_shared_packaging_boundary.py",

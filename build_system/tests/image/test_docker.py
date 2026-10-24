@@ -592,6 +592,44 @@ def test_asset_dependency_materializer_is_the_only_network_open_build(
     }
 
 
+@patch("capsem_builder.image.docker.require_asset_dependencies")
+@patch("capsem_builder.image.docker.docker_build")
+def test_unexportable_cached_dependency_falls_back_to_local_build(
+    docker_build_mock, require_mock, real_config, monkeypatch: pytest.MonkeyPatch
+):
+    tag = asset_dependency_tag(real_config, "arm64", "rootfs")
+    resolved = assetdependencies.AssetDependencyImage(reference=tag, image_id="sha256:" + "e" * 64)
+    require_mock.return_value = resolved
+    seen: list[list[str]] = []
+
+    def command(argv, **_kwargs):
+        seen.append(argv)
+        if argv[1:3] == ["image", "inspect"]:
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+        if argv[1] == "build":
+            return subprocess.CompletedProcess(argv, 1, stdout="", stderr="insufficient_scope")
+        raise AssertionError(f"unexpected Docker command: {argv}")
+
+    monkeypatch.setattr("capsem_builder.image.docker.detect_runtime", lambda: "docker")
+    monkeypatch.setattr("capsem_builder.image.docker.run_cmd", command)
+    monkeypatch.setattr(
+        "capsem_builder.image.docker._try_import_asset_dependencies",
+        lambda *_args, **_kwargs: False,
+    )
+    removed = MagicMock()
+    monkeypatch.setattr("capsem_builder.image.docker.remove_image", removed)
+
+    assert (
+        materialize_asset_dependencies(
+            real_config, "arm64", template="rootfs", repo_root=PROJECT_ROOT
+        )
+        == resolved
+    )
+    assert any(command[1] == "build" for command in seen), "cached layers were never tested"
+    removed.assert_called_with("docker", tag)
+    docker_build_mock.assert_called_once()
+
+
 # ---------------------------------------------------------------------------
 # Kernel Dockerfile
 # ---------------------------------------------------------------------------

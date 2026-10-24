@@ -12,7 +12,11 @@ use std::collections::{BTreeMap, HashMap};
 // ---------------------------------------------------------------------------
 
 fn parse_http_upstream_ports(values: &[i64]) -> Vec<u16> {
-    values.iter().filter_map(|port| u16::try_from(*port).ok()).collect()
+    values
+        .iter()
+        .map(|port| u16::try_from(*port).ok().filter(|port| *port != 0))
+        .collect::<Option<Vec<_>>>()
+        .unwrap_or_default()
 }
 
 /// Extract guest config from resolved settings.
@@ -335,9 +339,7 @@ pub fn apply_network_config(config: &NetworkConfig, mechanics: &mut crate::net::
     if let Some(max_body_capture) = config.max_body_capture {
         mechanics.max_body_capture = max_body_capture;
     }
-    if !config.http_upstream_ports.is_empty() {
-        mechanics.http_upstream_ports = config.http_upstream_ports.clone();
-    }
+    mechanics.http_upstream_ports = config.http_upstream_ports.clone();
     if !config.upstream_overrides.is_empty() {
         mechanics.upstream_overrides = config
             .upstream_overrides

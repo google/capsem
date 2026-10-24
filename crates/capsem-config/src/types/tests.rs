@@ -196,6 +196,16 @@ fn settings_file_default_has_empty_settings_and_no_mcp() {
 }
 
 #[test]
+fn stored_http_upstream_ports_reject_invalid_entries() {
+    let id = "security.web.http_upstream_ports";
+    for ports in [vec![-1], vec![0], vec![80, 65_536]] {
+        assert!(validate_stored_setting_contract(id, &SettingValue::IntList(ports)).is_err());
+    }
+    assert!(validate_stored_setting_contract(id, &SettingValue::IntList(vec![])).is_ok());
+    assert!(validate_stored_setting_contract(id, &SettingValue::IntList(vec![80, 65_535])).is_ok());
+}
+
+#[test]
 fn setting_value_round_trips_through_json() {
     let cases = vec![
         SettingValue::Bool(true),

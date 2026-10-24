@@ -125,18 +125,15 @@ async fn catalog_and_oci_create_use_authenticated_typed_gateway_calls() {
     let pin = catalog().images[0].image.clone().unwrap();
     let expected = pin.clone();
     let server = tokio::spawn(async move {
-        for path in ["/token", "/status", "/images?refresh=false", "/vms/create"] {
+        for path in ["/status", "/images?refresh=false", "/vms/create"] {
             let (mut stream, _) = listener.accept().await.unwrap();
             let request = read_http_request(&mut stream).await;
             let method = if path == "/vms/create" { "POST" } else { "GET" };
             assert!(request.starts_with(&format!("{method} {path} ")), "{request}");
-            if path != "/token" {
-                assert!(request
-                    .to_ascii_lowercase()
-                    .contains("authorization: bearer test-token"));
-            }
+            assert!(request
+                .to_ascii_lowercase()
+                .contains("authorization: bearer test-token"));
             match path {
-                "/token" => write_json_response(&mut stream, r#"{"token":"test-token"}"#).await,
                 "/status" => write_json_response(&mut stream, gateway_status_body()).await,
                 "/images?refresh=false" => {
                     write_json_response(&mut stream, &serde_json::to_string(&catalog()).unwrap()).await
@@ -157,7 +154,7 @@ async fn catalog_and_oci_create_use_authenticated_typed_gateway_calls() {
             }
         }
     });
-    let provider = GatewayProvider::new(url);
+    let provider = GatewayProvider::with_test_token(url, "test-token");
     let mut app = App::new(provider.load_async().await.unwrap());
     app.handle_key(key(KeyCode::Char('n'), KeyModifiers::ALT));
     let generation = app.take_catalog_request().unwrap();
@@ -184,23 +181,19 @@ async fn catalog_errors_are_bounded_and_redact_gateway_credentials() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move {
-        for path in ["/token", "/images?refresh=false"] {
+        for path in ["/images?refresh=false"] {
             let (mut stream, _) = listener.accept().await.unwrap();
             let request = read_http_request(&mut stream).await;
             assert!(request.starts_with(&format!("GET {path} ")));
-            if path == "/token" {
-                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
-            } else {
-                write_response(
-                    &mut stream,
-                    "403 Forbidden",
-                    &format!("catalog refused test-token\u{1b}\n{}", "x".repeat(1000)),
-                )
-                .await;
-            }
+            write_response(
+                &mut stream,
+                "403 Forbidden",
+                &format!("catalog refused test-token\u{1b}\n{}", "x".repeat(1000)),
+            )
+            .await;
         }
     });
-    let error = GatewayProvider::new(url)
+    let error = GatewayProvider::with_test_token(url, "test-token")
         .list_images_async()
         .await
         .unwrap_err()

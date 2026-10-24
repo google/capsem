@@ -30,11 +30,11 @@
 "crates/capsem-core/src/hypervisor/kvm/virtio_blk/fd_util.rs" = "380483007d81c4751ff3e79c5867ee4688a7e3a5ecdd11ee5be91235a85cd1c2"
 "crates/capsem-core/src/hypervisor/kvm/virtio_console.rs" = "b0a92055b6ed9190b992f25a16b92b2aa0242b3c4be245d474410b0b2fa6cdeb"
 "crates/capsem-core/src/hypervisor/kvm/virtio_fs/mod.rs" = "f3ce99ec68343009ffcab5ba74802fc3527361ee646109157d9ad55f443976be"
-"crates/capsem-core/src/hypervisor/kvm/virtio_fs/ops_dir.rs" = "1c2723207e04d0be3594c7ba21fdc13d6ff761e6f6d4dbff85ab2fc06da3f4c4"
+"crates/capsem-core/src/hypervisor/kvm/virtio_fs/ops_dir.rs" = "d1609f82667342a7f591030a22432f431c11cf6b5d6d20c065d6950ad2a4701d"
 "crates/capsem-core/src/hypervisor/kvm/virtio_fs/ops_file.rs" = "9f99917b8f9e273f2de49df5c515f41e154cb5ba2284c7b8e74f5dd80caf4a20"
-"crates/capsem-core/src/hypervisor/kvm/virtio_fs/ops_meta.rs" = "b933aa796bce77d6bf0face797a38163ce4c473dacc149c23c5baa3390166a4c"
+"crates/capsem-core/src/hypervisor/kvm/virtio_fs/ops_meta.rs" = "06c982d6cbb275581389236e768d6c1e0f8ae1a6be80fd64d8fe6652a5ddb1bd"
 "crates/capsem-core/src/hypervisor/kvm/virtio_mmio.rs" = "f9797a518c8d6273151bc775f9a176a72f3b0a62e09cd4cd4fb636477b58627b"
-"crates/capsem-core/src/hypervisor/kvm/virtio_vsock.rs" = "e8497a3dd53669d1e463c69a098214ece6257555c2a11d10a3d5642027e0a56a"
+"crates/capsem-core/src/hypervisor/kvm/virtio_vsock.rs" = "aca9188c7c4e56c0e15e8e4e420ed829cfe60306d0d64e4db67007e833f28bf5"
 "crates/capsem-core/src/hypervisor/kvm/virtio_vsock/lifecycle.rs" = "83c7ec268765e594bebe53715a3d148a37e0cd9ad3dd9bb58f1d15a4eaba093b"
 
 [domain_abi.manifest]
@@ -160,6 +160,10 @@ reason = "Linux pidfd_open and pidfd_send_signal retain original process identit
 [foundation.raw_calls."crates/capsem-foundation/src/unix/process/pinned_macos.rs::proc_pidinfo"]
 fingerprint = "33ed8bd6a7cea2e0bef25a259110c71112d2e9e0bcebaef0297bf64e85b8af63"
 reason = "Darwin combined native BSD status and immutable process identity including zombies; nix has no libproc query for this fixed ABI"
+
+[foundation.raw_calls."crates/capsem-foundation/src/unix/process/pinned_macos.rs::proc_pidpath"]
+fingerprint = "1b6ef8b4f25702437b6a4f4d2fad2f267b47ca27e2381e42c777b4abd8f290e9"
+reason = "Read the Darwin executable path for a pinned PID version before authorizing installed helper retirement; nix has no libproc path query"
 
 [foundation.raw_calls."crates/capsem-foundation/src/unix/process/pinned_macos.rs::dlsym"]
 fingerprint = "806c2d3062055d3c1bf7a97779715cbadc6d136ffae2fa2c59141886d0222b3e"

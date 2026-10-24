@@ -21,9 +21,13 @@ from helpers.gate import RECORDED_IMAGE_ID, RecordingRunner
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 CONFIG = gate_config.load(PROJECT_ROOT)
+HOST_PLATFORM = CONFIG.host_arch().docker_platform
+HOST_PLATFORM_TAG = HOST_PLATFORM.replace("/", "-")
+HOST_PACKAGE = f"google/capsem-ci/capsem-host-builder-{HOST_PLATFORM_TAG}"
+HOST_REMOTE = f"ghcr.io/{HOST_PACKAGE}:input-key"
 IMAGE = PrivateImage(
     local="capsem-host-builder:latest",
-    platform="linux/amd64",
+    platform=HOST_PLATFORM,
     generation="input-key",
     identity_label="org.capsem.host-builder.input-key",
     identity="input-key",
@@ -42,12 +46,8 @@ def _runner(*, failures: tuple[str, ...] = ()) -> RecordingRunner:
 
 
 def test_private_reference_is_platform_scoped_for_three_generation_retention() -> None:
-    assert IMAGE.remote(CONFIG.private_images.registry) == (
-        "ghcr.io/google/capsem-ci/capsem-host-builder-linux-amd64:input-key"
-    )
-    assert IMAGE.package(CONFIG.private_images.registry) == (
-        "google/capsem-ci/capsem-host-builder-linux-amd64"
-    )
+    assert IMAGE.remote(CONFIG.private_images.registry) == HOST_REMOTE
+    assert IMAGE.package(CONFIG.private_images.registry) == HOST_PACKAGE
 
 
 def test_every_private_helper_dockerfile_links_the_owning_repository() -> None:
@@ -106,8 +106,7 @@ def test_private_pull_is_the_normal_path_and_falls_back_without_a_generation() -
     missing = _runner(failures=("docker pull",))
     assert not try_import(missing, CONFIG, IMAGE)
     assert missing.rendered == [
-        "docker pull --platform linux/amd64 "
-        "ghcr.io/google/capsem-ci/capsem-host-builder-linux-amd64:input-key"
+        f"docker pull --platform {HOST_PLATFORM} {HOST_REMOTE}"
     ]
 
 
@@ -115,7 +114,7 @@ def test_private_pull_retags_and_validates_both_identity_labels() -> None:
     runner = _runner()
 
     assert try_import(runner, CONFIG, IMAGE)
-    assert runner.index_of(r"docker pull --platform linux/amd64") < runner.index_of(
+    assert runner.index_of(rf"docker pull --platform {HOST_PLATFORM}") < runner.index_of(
         r"docker tag .* capsem-host-builder:latest"
     )
     assert any(IMAGE.identity_label in command for command in runner.rendered)
@@ -131,7 +130,7 @@ def test_prior_manifest_generation_is_imported_as_a_validated_build_cache(
     local = f"{repository}:{generation}"
     image = PrivateImage(
         local=local,
-        platform="linux/amd64",
+        platform=HOST_PLATFORM,
         generation=generation,
         identity_label="org.capsem.package-builder.input-key",
         identity=local,
@@ -193,9 +192,9 @@ def test_publish_is_append_only_and_writes_retention_manifest(tmp_path: Path) ->
         "images": [
             {
                 "generation": "input-key",
-                "package": "google/capsem-ci/capsem-host-builder-linux-amd64",
-                "platform": "linux/amd64",
-                "reference": ("ghcr.io/google/capsem-ci/capsem-host-builder-linux-amd64:input-key"),
+                "package": HOST_PACKAGE,
+                "platform": HOST_PLATFORM,
+                "reference": HOST_REMOTE,
             }
         ],
     }
@@ -234,5 +233,5 @@ def test_publish_retries_a_transient_final_manifest_denial(tmp_path: Path) -> No
     assert runner.pushes == 2
     assert runner.notes == [
         "private image manifest publication failed (attempt 1/3): "
-        "ghcr.io/google/capsem-ci/capsem-host-builder-linux-amd64:input-key"
+        f"{HOST_REMOTE}"
     ]

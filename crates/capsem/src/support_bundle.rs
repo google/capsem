@@ -93,15 +93,22 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
     let _max_session_bytes = max_session_bytes; // consumed in the session-include loop below
     let home = capsem_foundation::paths::capsem_home();
     let support_dir = home.join("support");
-    fs::create_dir_all(&support_dir).with_context(|| format!("create {}", support_dir.display()))?;
+    capsem_foundation::unix::fs::ensure_private_dir_restrict_existing(&support_dir)
+        .with_context(|| format!("secure {}", support_dir.display()))?;
 
     let timestamp = ts_filename();
     let host = host_label();
     let bundle_root = format!("capsem-support-{timestamp}-{host}");
     let output = output.unwrap_or_else(|| support_dir.join(format!("{bundle_root}.tar.gz")));
+    let output_path = if output.parent().is_some_and(|parent| !parent.as_os_str().is_empty()) {
+        output.clone()
+    } else {
+        Path::new(".").join(&output)
+    };
 
-    let file = fs::File::create(&output).with_context(|| format!("create {}", output.display()))?;
-    let gz = GzEncoder::new(file, Compression::default());
+    let mut sibling = capsem_foundation::unix::fs::create_private_sibling(&output_path)
+        .with_context(|| format!("create private bundle near {}", output.display()))?;
+    let gz = GzEncoder::new(sibling.file(), Compression::default());
     let mut tar = TarBuilder::new(gz);
 
     let mut sections: Vec<Section> = Vec::new();
@@ -538,8 +545,9 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
     }
     {
         let proxy = serde_json::json!({
-            "HTTP_PROXY":  std::env::var("HTTP_PROXY").unwrap_or_default(),
-            "HTTPS_PROXY": std::env::var("HTTPS_PROXY").unwrap_or_default(),
+            "HTTP_PROXY":  proxy_presence("HTTP_PROXY"),
+            "HTTPS_PROXY": proxy_presence("HTTPS_PROXY"),
+            "ALL_PROXY": proxy_presence("ALL_PROXY"),
             "NO_PROXY":    std::env::var("NO_PROXY").unwrap_or_default(),
             "gateway_port_file": run_dir.join("gateway.port").display().to_string(),
         });
@@ -690,6 +698,9 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
 
     let gz = tar.into_inner().context("finalize tar")?;
     gz.finish().context("finalize gzip")?;
+    sibling.file().sync_all().context("sync private support bundle")?;
+    capsem_foundation::unix::fs::rename_private_sibling(sibling, &output_path)
+        .with_context(|| format!("publish private support bundle {}", output.display()))?;
 
     // Print a one-line summary to stderr (not stdout -- stdout reserved
     // for scripts that wrap the command and pipe stdout).
@@ -703,6 +714,14 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
         missing,
     );
     Ok(output)
+}
+
+fn proxy_presence(name: &str) -> &'static str {
+    if std::env::var_os(name).is_some_and(|value| !value.is_empty()) {
+        "configured"
+    } else {
+        ""
+    }
 }
 
 fn read_tail(path: &Path, max_bytes: u64) -> Option<Vec<u8>> {

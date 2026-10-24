@@ -134,20 +134,12 @@ impl ServiceState {
         configure_resume_storage(&mut child_cmd, &entry)?;
 
         // Inject VM identity so the guest knows its own name/ID.
-        child_cmd.arg("--env").arg(format!("CAPSEM_VM_ID={}", vm_id));
-        child_cmd.arg("--env").arg(format!("CAPSEM_VM_NAME={}", name));
+        guest_env::stage(&entry.session_dir, &vm_id, &name, entry.env.as_ref())?;
         child_cmd.arg("--vm-name").arg(&name);
         crate::service_runtime::telemetry_export::grant_metric_broker(
             &mut child_cmd,
             &capsem_core::net::policy_config::load_settings_and_corp_files().1,
         );
-
-        // Replay user-provided env vars so they survive stop/resume cycles.
-        if let Some(ref env_vars) = entry.env {
-            for (k, v) in env_vars {
-                child_cmd.arg("--env").arg(format!("{}={}", k, v));
-            }
-        }
 
         // Refresh a legacy staged controller before deciding whether its old
         // VM memory is safe to restore. A changed ownership map needs one cold
@@ -218,6 +210,8 @@ impl ServiceState {
                 .arg(&entry.session_dir)
                 .arg("--active-policy")
                 .arg(&active_policy_path)
+                .arg("--retention-days")
+                .arg(crate::session_housekeeping::retention_days().to_string())
                 .arg("--cpus")
                 .arg(cpus.to_string())
                 .arg("--ram-mb")
@@ -342,6 +336,7 @@ impl ServiceState {
             session_dir,
             retirement,
         );
+        guest_lifecycle::spawn_suspend_listener(Arc::clone(self), vm_id.clone(), generation);
         // A resumed member's networks get their links back.
         switches::plug_memberships(Arc::clone(self), vm_id.clone());
         Ok(vm_id)

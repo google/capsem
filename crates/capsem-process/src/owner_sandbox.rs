@@ -215,7 +215,7 @@ pub(super) async fn attest_owner(
         "change host modes directly",
     )?;
     require_denied(
-        std::process::Command::new("/bin/true").status().map(|_| ()),
+        std::process::Command::new("/usr/bin/true").status().map(|_| ()),
         "execute arbitrary processes",
     )?;
 

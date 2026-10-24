@@ -88,6 +88,9 @@ impl FuseProcessor {
             Some(p) => p.clone(),
             None => return fuse::error_response(header.unique, -libc::ENOENT),
         };
+        if !self.inodes.is_contained_entry(&path) {
+            return fuse::error_response(header.unique, -libc::EACCES);
+        }
         let meta = match std::fs::symlink_metadata(&path) {
             Ok(m) => m,
             Err(e) => return fuse::error_response(header.unique, -fuse::io_error_to_errno(&e)),

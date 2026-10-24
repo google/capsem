@@ -7,21 +7,21 @@ fn allowed(origin: &str) -> bool {
     is_allowed_origin(&HeaderValue::from_str(origin).expect("valid header bytes"))
 }
 
-// --- Positive cases: same-machine origins we trust ---
+// --- Only the app webview and gateway origin are trusted ---
 
 #[test]
-fn allows_http_localhost_with_port() {
-    assert!(allowed("http://localhost:4321"));
+fn rejects_http_localhost_with_port() {
+    assert!(!allowed("http://localhost:4321"));
 }
 
 #[test]
-fn allows_https_localhost_with_port() {
-    assert!(allowed("https://localhost:4321"));
+fn rejects_https_localhost_with_port() {
+    assert!(!allowed("https://localhost:4321"));
 }
 
 #[test]
-fn allows_http_localhost_no_port() {
-    assert!(allowed("http://localhost"));
+fn rejects_http_localhost_no_port() {
+    assert!(!allowed("http://localhost"));
 }
 
 #[test]
@@ -30,13 +30,14 @@ fn allows_http_127_0_0_1_with_port() {
 }
 
 #[test]
-fn allows_https_127_0_0_1() {
-    assert!(allowed("https://127.0.0.1:19222"));
+fn rejects_other_127_0_0_1_ports() {
+    assert!(!allowed("http://127.0.0.1:63575"));
+    assert!(!allowed("https://127.0.0.1:19222"));
 }
 
 #[test]
-fn allows_http_ipv6_loopback_bracketed() {
-    assert!(allowed("http://[::1]:19222"));
+fn rejects_http_ipv6_loopback_bracketed() {
+    assert!(!allowed("http://[::1]:19222"));
 }
 
 #[test]
@@ -45,8 +46,8 @@ fn allows_tauri_localhost() {
 }
 
 #[test]
-fn allows_localhost_case_insensitive() {
-    assert!(allowed("http://LocalHost:4321"));
+fn rejects_localhost_case_insensitive() {
+    assert!(!allowed("http://LocalHost:4321"));
 }
 
 // --- Negative cases: AB-001 ---

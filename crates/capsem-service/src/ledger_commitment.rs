@@ -83,6 +83,24 @@ pub(crate) struct CheckpointSnapshot {
 }
 
 impl CheckpointSnapshot {
+    async fn append<T: Send + 'static>(
+        self,
+        record: CheckpointRecord,
+        update: impl FnOnce(&mut State) -> T + Send + 'static,
+    ) -> Result<T> {
+        tokio::task::spawn_blocking(move || {
+            // Retain the fence through both disk publication and the memory
+            // update, even if the async caller is canceled while we queue.
+            append(&self.path, &record)?;
+            let mut state = self.state;
+            let result = update(&mut state);
+            drop(state);
+            Ok(result)
+        })
+        .await
+        .context("join ledger commitment append")?
+    }
+
     pub(crate) async fn copy_to(self, session_id: &str) -> Result<()> {
         let source = self.path.clone();
         let root = source
@@ -205,7 +223,8 @@ impl CommitmentAuthority {
             reservation.validate()?;
         }
         let key = ProducerKey::from_grant(grant);
-        let mut state = self.state.lock().await;
+        let snapshot = self.snapshot().await;
+        let state: &State = &snapshot.state;
         let tail = state.pending.get(&key).and_then(|pending| pending.last()).map_or_else(
             || state.anchored.get(&key).copied().unwrap_or_default(),
             |commitment| ProducerTail {
@@ -242,11 +261,27 @@ impl CommitmentAuthority {
                 .checked_add(1)
                 .context("producer sequence exhausted")?;
         }
-        state.next_global_sequence = global_sequence;
-        state.global_sequences.extend(global_sequences.iter().copied());
-        state.pending.entry(key).or_default().extend(commitments);
-        drop(state);
-        Ok(global_sequences)
+        let checkpoint_sequence = state
+            .next_checkpoint_sequence
+            .checked_add(1)
+            .context("checkpoint sequence exhausted")?;
+        let record = CheckpointRecord {
+            checkpoint_sequence,
+            commitments: Vec::new(),
+            // Rows may become durable before their producer anchors them.
+            // Persist the allocation, without trusting those rows, before
+            // allowing a producer to send them to the ledger worker.
+            reserved_through: Some(global_sequence),
+        };
+        snapshot
+            .append(record, move |state| {
+                state.next_checkpoint_sequence = checkpoint_sequence;
+                state.next_global_sequence = global_sequence;
+                state.global_sequences.extend(global_sequences.iter().copied());
+                state.pending.entry(key).or_default().extend(commitments);
+                global_sequences
+            })
+            .await
     }
 
     async fn cancel(&self, grant: LedgerChannelGrant, global_sequence: u64) -> Result<()> {
@@ -273,7 +308,8 @@ impl CommitmentAuthority {
             bail!("commitment checkpoint batch is empty or exceeds its bound");
         }
         let key = ProducerKey::from_grant(grant);
-        let mut state = self.state.lock().await;
+        let snapshot = self.snapshot().await;
+        let state: &State = &snapshot.state;
         let pending = state
             .pending
             .get(&key)
@@ -293,27 +329,25 @@ impl CommitmentAuthority {
             commitments: commitments.clone(),
             reserved_through: None,
         };
-        let path = self.path.clone();
-        tokio::task::spawn_blocking(move || append(&path, &record))
+        snapshot
+            .append(record, move |state| {
+                let tail = commitments.last().expect("nonempty commitments checked");
+                state.anchored.insert(
+                    key,
+                    ProducerTail {
+                        sequence: tail.producer_sequence(),
+                        hash: tail.commitment_hash(),
+                    },
+                );
+                let pending = state.pending.get_mut(&key).expect("pending prefix checked");
+                pending.drain(..commitments.len());
+                if pending.is_empty() {
+                    state.pending.remove(&key);
+                }
+                state.next_checkpoint_sequence = checkpoint_sequence;
+                checkpoint_sequence
+            })
             .await
-            .context("join ledger commitment checkpoint append")??;
-
-        let tail = commitments.last().expect("nonempty commitments checked");
-        state.anchored.insert(
-            key,
-            ProducerTail {
-                sequence: tail.producer_sequence(),
-                hash: tail.commitment_hash(),
-            },
-        );
-        let pending = state.pending.get_mut(&key).expect("pending prefix checked");
-        pending.drain(..commitments.len());
-        if pending.is_empty() {
-            state.pending.remove(&key);
-        }
-        state.next_checkpoint_sequence = checkpoint_sequence;
-        drop(state);
-        Ok(checkpoint_sequence)
     }
 
     async fn abandon(&self, grant: LedgerChannelGrant) {

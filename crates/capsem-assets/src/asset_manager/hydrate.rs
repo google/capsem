@@ -102,40 +102,27 @@ where
         }
         let total = resp.content_length().or(Some(entry.size));
 
-        let tmp = arch_dir.join(format!("{hname}.tmp"));
-        // Best-effort: clean up any stale tmp from a prior aborted run.
-        let _ = std::fs::remove_file(&tmp);
-
-        let mut file = tokio::fs::File::create(&tmp)
-            .await
-            .with_context(|| format!("create {}", tmp.display()))?;
+        // A second hydrator may be downloading this same digest. Give each
+        // writer its own private sibling; its guard removes partial bytes on
+        // every error path, and the final rename is atomic.
+        let mut sibling = capsem_foundation::unix::fs::create_private_sibling(&target)
+            .with_context(|| format!("create temporary asset beside {}", target.display()))?;
+        let mut file = tokio::fs::File::from_std(sibling.file().try_clone()?);
         let mut hasher = capsem_crypto::blake3::Hasher::new();
         let mut bytes_done: u64 = 0;
         let mut stream = resp.bytes_stream();
 
-        let cleanup_tmp = |tmp: &Path| {
-            let _ = std::fs::remove_file(tmp);
-        };
-
         while let Some(chunk) = stream.next().await {
-            let chunk = match chunk {
-                Ok(c) => c,
-                Err(e) => {
-                    cleanup_tmp(&tmp);
-                    return Err(anyhow::Error::new(e).context(format!("stream {url}")));
-                }
-            };
-            if let Err(e) = file.write_all(&chunk).await {
-                cleanup_tmp(&tmp);
-                return Err(anyhow::Error::new(e).context(format!("write {}", tmp.display())));
-            }
+            let chunk = chunk.with_context(|| format!("stream {url}"))?;
+            file.write_all(&chunk)
+                .await
+                .with_context(|| format!("write {}", sibling.path().display()))?;
             hasher.update(&chunk);
             bytes_done += chunk.len() as u64;
             // The manifest size is a hard cap, not a progress hint: the origin
             // is manifest-controlled, and without this an endless body filled
             // the disk before the hash check could ever run.
             if bytes_done > entry.size {
-                cleanup_tmp(&tmp);
                 bail!(
                     "{}: origin sent more than the manifest size ({} > {} bytes); download refused",
                     name,
@@ -151,7 +138,6 @@ where
             });
         }
         if bytes_done != entry.size {
-            cleanup_tmp(&tmp);
             bail!(
                 "{}: origin sent {} bytes, manifest says {}",
                 name,
@@ -159,19 +145,18 @@ where
                 entry.size
             );
         }
-        if let Err(e) = file.flush().await {
-            cleanup_tmp(&tmp);
-            return Err(anyhow::Error::new(e).context(format!("flush {}", tmp.display())));
-        }
+        file.sync_all()
+            .await
+            .with_context(|| format!("sync {}", sibling.path().display()))?;
         drop(file);
 
         let actual = hasher.finalize().to_hex().to_string();
         if actual != entry.hash {
-            cleanup_tmp(&tmp);
             bail!("{}: hash mismatch (expected {}, got {})", name, entry.hash, actual);
         }
 
-        std::fs::rename(&tmp, &target).with_context(|| format!("rename {} -> {}", tmp.display(), target.display()))?;
+        capsem_foundation::unix::fs::rename_private_sibling(sibling, &target)
+            .with_context(|| format!("install {}", target.display()))?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

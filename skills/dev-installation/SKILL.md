@@ -101,7 +101,14 @@ retry after failure; postinstall removes both only after success.
   `build_system/packaging/macos/pkg-scripts/postinstall` copies binaries, hydrates assets, registers
   the service, waits for service/gateway readiness, and opens the app.
 - Linux `.deb`: `build_system/packaging/linux/deb-preinst.sh` is packaged as `DEBIAN/preinst`. It
-  normally runs `systemctl --user stop capsem.service` when a user systemd
+  requires a non-root installing account from sudo's `SUDO_USER` (or an explicit
+  non-root `USER` in the package environment). A root-only unattended install
+  fails rather than choosing UID 1000. Both maintainer scripts run every
+  `~/.capsem` write, log append, and deletion as that account; root handles
+  only package-owned paths and VM-device setup. The preinstall helper also
+  drops to that account before signalling a checked process, closing PID-reuse
+  races across users. Preinstall normally runs
+  `systemctl --user stop capsem.service` when a user systemd
   session is available, then kills the stale helper cohort before package replacement
   so old service/gateway/tray/process binaries cannot survive from
   old inodes. A self-update started by an older installed service is the one

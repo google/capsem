@@ -24,7 +24,7 @@ def lease_active(directory: Path, template: str | None, key: str) -> bool:
     return active_path(lease)
 
 
-def _lease_files(template: str | None, children: list[Path], stage_policy) -> dict[str, str]:
+def _lease_files(template: str | None, children: list[Path]) -> dict[str, str]:
     """Map each lease file's name to the generation key it holds."""
     if template is None:
         return {}
@@ -33,7 +33,6 @@ def _lease_files(template: str | None, children: list[Path], stage_policy) -> di
         key = lease_key(template, child.name)
         if (
             key is not None
-            and not managed(stage_policy, child.name)
             and not child.is_symlink()
             and child.is_file()
         ):
@@ -65,8 +64,11 @@ def directory_entries(
     template = stage_policy.lease_template
     children = sorted(directory.iterdir(), key=lambda item: item.name)
     names = {child.name for child in children}
-    managed_names = {name for name in names if managed(stage_policy, name)}
-    leases = _lease_files(template, children, stage_policy)
+    # Lease names are control metadata, even when a permissive policy also
+    # matches dotfiles. Treating one as a generation locks its invented
+    # second-order lease and unlinks the actual owner's still-held inode.
+    leases = _lease_files(template, children)
+    managed_names = {name for name in names if name not in leases and managed(stage_policy, name)}
     entries: list[CacheEntry] = []
     for child in children:
         key = leases.get(child.name)

@@ -8,12 +8,7 @@ mod tests;
 
 pub(super) async fn run_service() -> Result<()> {
     let args = Args::parse();
-
-    let mut run_dir = capsem_foundation::paths::capsem_run_dir();
-    let _ = std::fs::create_dir_all(&run_dir);
-    if let Ok(resolved) = run_dir.canonicalize() {
-        run_dir = resolved;
-    }
+    let run_dir = private_run_dir(&capsem_foundation::paths::capsem_run_dir())?;
 
     let _telemetry_guard = capsem_foundation::telemetry::init(capsem_foundation::telemetry::TelemetryConfig {
         service: "capsem-service",
@@ -28,6 +23,13 @@ pub(super) async fn run_service() -> Result<()> {
     start_and_serve(args, run_dir)
         .await
         .inspect_err(|error| error!(error = format!("{error:#}"), "capsem-service failed"))
+}
+
+fn private_run_dir(path: &std::path::Path) -> Result<PathBuf> {
+    capsem_foundation::unix::fs::ensure_private_dir_restrict_existing(path)
+        .with_context(|| format!("restrict service runtime directory {}", path.display()))?;
+    path.canonicalize()
+        .with_context(|| format!("resolve service runtime directory {}", path.display()))
 }
 
 async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {

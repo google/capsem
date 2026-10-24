@@ -8,6 +8,20 @@ use super::{duplicate, retry_eintr, set_close_on_exec, set_nonblocking, shutdown
 use nix::errno::Errno;
 
 #[test]
+fn receive_timeout_bounds_blocked_read_and_can_be_cleared() {
+    let (mut reader, mut writer) = UnixStream::pair().unwrap();
+    super::set_receive_timeout(reader.as_fd(), Some(std::time::Duration::from_millis(25))).unwrap();
+    let error = reader.read(&mut [0u8; 1]).unwrap_err();
+    assert!(matches!(
+        error.kind(),
+        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+    ));
+    super::set_receive_timeout(reader.as_fd(), None).unwrap();
+    writer.write_all(b"x").unwrap();
+    reader.read_exact(&mut [0u8; 1]).unwrap();
+}
+
+#[test]
 fn inherited_descriptor_policy_keeps_only_stdio_and_explicit_grants() {
     for descriptor in 0..=2 {
         assert!(!super::should_close_inherited_descriptor(descriptor, &[]));

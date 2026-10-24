@@ -9,6 +9,7 @@
   import { getTheme, DEFAULT_THEME } from '../../terminal/themes';
   import { TerminalInputCoalescer, TerminalOutputCoalescer } from '../../terminal/io-coalescer';
   import { parseParentMessage } from '../../terminal/postmessage';
+  import { readGatewayToken } from '../../gateway-token';
   import { STREAM_SUBPROTOCOL, decodeServerFrame, encodeControl, encodeStdin, streamUrl } from '../../terminal/stream-protocol';
 
   initTauriLog();
@@ -71,10 +72,7 @@
 
   async function fetchToken(): Promise<string | null> {
     try {
-      const resp = await fetch(`${GATEWAY_HTTP}/token`);
-      if (!resp.ok) return null;
-      const data = await resp.json();
-      return typeof data.token === 'string' ? data.token : null;
+      return await readGatewayToken(GATEWAY_HTTP);
     } catch (e) {
       console.error('[terminal] token fetch failed', e);
       return null;

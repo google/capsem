@@ -25,6 +25,7 @@ mod mcp_observe;
 pub mod pipeline;
 mod pipeline_factory;
 pub mod protocol;
+mod semantic_body;
 pub mod spans;
 pub mod sse_parser_hook;
 pub mod telemetry_hook;
@@ -62,6 +63,7 @@ use body::{BodyStats, ProxyBoxBody, TrackedBody};
 use fd_stream::{AsyncFdStream, ReplayReader};
 use mcp_observe::{observed_mcp_http_request_for_body, should_sniff_mcp_http_body, ObservedMcpHttpRequest};
 use protocol::Protocol;
+use semantic_body::UpstreamRequestBody;
 use telemetry_hook::TelemetryRequestContext;
 use upstream::{CachedUpstream, UpstreamCache, UpstreamPolicy};
 use util::{
@@ -356,17 +358,6 @@ impl SecurityBoundaryDecisionFields {
     }
 }
 
-fn maybe_decompress_gzip_body(body: Bytes, is_gzip: bool) -> anyhow::Result<Bytes> {
-    if !is_gzip {
-        return Ok(body);
-    }
-    // Bounded: a hostile upstream can send a small gzip body that decompresses
-    // to tens of GB. Reject past the cap rather than OOM the host.
-    let decompressed =
-        crate::net::decompress::decompress_gzip_capped(&body, crate::net::decompress::MAX_DECOMPRESSED_BODY)?;
-    Ok(Bytes::from(decompressed))
-}
-
 /// Build the upstream TLS client config (trusts standard webpki roots).
 pub fn make_upstream_tls_config() -> Arc<rustls::ClientConfig> {
     let mut root_store = rustls::RootCertStore::empty();
@@ -453,13 +444,13 @@ pub async fn handle_standalone_connection(
 ) {
     ::metrics::gauge!(m::ACTIVE_CONNECTIONS).increment(1.0);
     let _gauge_guard = ConnectionGauge;
-
     let std_fd = std::fs::File::from(client_fd);
     if let Err(error) = capsem_foundation::unix::fd::set_nonblocking(std_fd.as_fd(), true) {
         warn!(%error, "standalone proxy could not configure client socket");
         return;
     }
-    let async_fd = match tokio::io::unix::AsyncFd::new(std_fd) {
+    // SAFETY: AsyncFdStream retains this owned file unchanged until deregistration.
+    let async_fd = match unsafe { tokio::io::unix::AsyncFd::register(std_fd) } {
         Ok(fd) => fd,
         Err(error) => {
             warn!(%error, "standalone proxy could not adopt client socket");
@@ -475,8 +466,6 @@ pub async fn handle_standalone_connection(
     .await;
 }
 
-/// Inner handler. Returns Ok(domain) on success, Err((domain, decision, reason))
-/// on connection-level failure. Per-request telemetry is emitted by `TelemetryHook`.
 /// Deadline for each pre-classification read from a freshly-accepted guest
 /// connection. The guest is the adversary here: one that connects and then
 /// stalls without sending a ClientHello must not pin the handler task and its
@@ -498,11 +487,13 @@ where
     }
 }
 
+/// Returns the domain, or (domain, decision, reason); TelemetryHook records requests.
 async fn handle_inner(vsock_fd: OwnedFd, config: &Arc<MitmProxyConfig>) -> Result<String, (String, Decision, String)> {
     let std_fd = std::fs::File::from(vsock_fd);
     capsem_foundation::unix::fd::set_nonblocking(std_fd.as_fd(), true)
         .map_err(|e| (String::new(), Decision::Error, format!("set nonblocking: {e}")))?;
-    let async_fd = tokio::io::unix::AsyncFd::new(std_fd)
+    // SAFETY: AsyncFdStream retains this owned file unchanged until deregistration.
+    let async_fd = unsafe { tokio::io::unix::AsyncFd::register(std_fd) }
         .map_err(|e| (String::new(), Decision::Error, format!("async fd: {e}")))?;
     let mut vsock_stream = AsyncFdStream(async_fd);
     let classify_span = tracing::debug_span!(
@@ -1570,22 +1561,27 @@ async fn handle_request(
 
     let should_evaluate_model_request =
         sniffed_model_request || effective_ai_protocol.is_some_and(|protocol| is_llm_api_path(protocol, &path));
-    enum UpstreamRequestBody {
-        Replayable(Bytes),
-        Streaming(ProxyBoxBody),
-    }
-
-    impl UpstreamRequestBody {
-        fn into_body(self) -> ProxyBoxBody {
-            match self {
-                UpstreamRequestBody::Replayable(body) => Full::new(body)
-                    .map_err(|never| -> anyhow::Error { match never {} })
-                    .boxed(),
-                UpstreamRequestBody::Streaming(body) => body,
+    // A connected client is much cheaper than a semantic body. Keep the
+    // body permit through both request and response evaluation, and refuse
+    // excess work before collecting an attacker-controlled upload.
+    let _semantic_body_permit = if should_evaluate_model_request || observed_mcp_request.is_some() {
+        match Arc::clone(&config.semantic_body_budget).try_acquire_owned() {
+            Ok(permit) => Some(permit),
+            Err(error) => {
+                return Ok(make_502(
+                    &error,
+                    &method,
+                    &path,
+                    &query,
+                    &req_hdrs,
+                    start_time,
+                    &request_security_decision,
+                ));
             }
         }
-    }
-
+    } else {
+        None
+    };
     let upstream_req_body: UpstreamRequestBody = if should_evaluate_model_request {
         let model_request_span = tracing::debug_span!(
             target: "capsem.mitm",
@@ -1598,30 +1594,23 @@ async fn handle_request(
         );
         let body_bytes = match request_body_source {
             RequestBodySource::Collected(body_bytes) => body_bytes,
-            RequestBodySource::Incoming(body) => {
-                let collected = match http_body_util::Limited::new(body, 100 * 1024 * 1024)
-                    .collect()
-                    .instrument(model_request_span.clone())
-                    .await
-                {
-                    Ok(collected) => collected,
-                    Err(error) => {
-                        model_request_span.record("decision", "error");
-                        model_request_span.record("status", "error");
-                        model_request_span.record("error_kind", "collect_model_request_body");
-                        return Ok(make_502(
-                            &error,
-                            &method,
-                            &path,
-                            &query,
-                            &req_hdrs,
-                            start_time,
-                            &request_security_decision,
-                        ));
-                    }
-                };
-                collected.to_bytes()
-            }
+            RequestBodySource::Incoming(body) => match semantic_body::collect(body, model_request_span.clone()).await {
+                Ok(body_bytes) => body_bytes,
+                Err(error) => {
+                    model_request_span.record("decision", "error");
+                    model_request_span.record("status", "error");
+                    model_request_span.record("error_kind", "collect_model_request_body");
+                    return Ok(make_502(
+                        &error,
+                        &method,
+                        &path,
+                        &query,
+                        &req_hdrs,
+                        start_time,
+                        &request_security_decision,
+                    ));
+                }
+            },
         };
         let mut body_for_upstream = body_bytes.clone();
         {
@@ -2237,12 +2226,8 @@ async fn handle_request(
             status = tracing::field::Empty,
             error_kind = tracing::field::Empty,
         );
-        let collected = match http_body_util::Limited::new(resp_body, 100 * 1024 * 1024)
-            .collect()
-            .instrument(model_response_span.clone())
-            .await
-        {
-            Ok(collected) => collected,
+        let collected = match semantic_body::collect(resp_body, model_response_span.clone()).await {
+            Ok(body_bytes) => body_bytes,
             Err(error) => {
                 model_response_span.record("decision", "error");
                 model_response_span.record("status", "error");
@@ -2258,7 +2243,7 @@ async fn handle_request(
                 ));
             }
         };
-        let mut response_body = match maybe_decompress_gzip_body(collected.to_bytes(), is_gzip) {
+        let mut response_body = match semantic_body::decompress_gzip(collected, is_gzip) {
             Ok(body) => body,
             Err(error) => {
                 model_response_span.record("decision", "error");

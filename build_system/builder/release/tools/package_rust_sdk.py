@@ -62,6 +62,18 @@ def cargo_metadata(root: Path) -> dict[str, Any]:
     ))
 
 
+def local_patch_args(packages: list[dict[str, Any]]) -> list[str]:
+    """Verify unpublished siblings from this candidate, not older registry releases."""
+    return [
+        value
+        for package in packages
+        for value in (
+            "--config",
+            f'patch.crates-io.{package["name"]}.path={json.dumps(str(Path(package["manifest_path"]).parent))}',
+        )
+    ]
+
+
 def main() -> None:
     config = load(Path.cwd())
     metadata = cargo_metadata(config.root)
@@ -69,7 +81,11 @@ def main() -> None:
     selected = [argument for package in packages for argument in ("--package", package["name"])]
     # Developer feedback may package recorded uncommitted work. Cargo preserves
     # its dirty bit; publication requires the exact clean source below.
-    subprocess.run(["cargo", "package", "--locked", "--offline", "--allow-dirty", *selected], cwd=config.root, check=True)
+    subprocess.run(
+        ["cargo", *local_patch_args(packages), "package", "--locked", "--offline", "--allow-dirty", *selected],
+        cwd=config.root,
+        check=True,
+    )
     output = config.path(config.sdk_rust.build_output)
     output.mkdir(parents=True, exist_ok=True)
     for package in packages:

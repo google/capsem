@@ -102,6 +102,23 @@ def run_host_build(
             cfg_dir.mkdir(parents=True, exist_ok=True)
             (cfg_dir / "config.json").write_text('{"auths":{}}', encoding="utf-8")
 
+        docker_env = os.environ.copy()
+        docker_host = docker_env.get("DOCKER_HOST")
+        if not docker_host:
+            context_cmd = [docker_bin]
+            if explicit_cfg:
+                context_cmd.extend(["--config", str(cfg_dir)])
+            context_cmd.extend(["context", "inspect", "--format", "{{.Endpoints.docker.Host}}"])
+            try:
+                context = subprocess.run(context_cmd, capture_output=True, text=True, timeout=10, check=False)
+            except (OSError, subprocess.TimeoutExpired):
+                docker_host = None
+            else:
+                docker_host = context.stdout.strip() if context.returncode == 0 else None
+        docker_env.pop("DOCKER_CONTEXT", None)
+        if docker_host:
+            docker_env["DOCKER_HOST"] = docker_host
+
         build_ctx, build_df = prepare_build_inputs(spec, tmp_root)
         cmd = [
             docker_bin,
@@ -130,6 +147,7 @@ def run_host_build(
                 text=True,
                 timeout=timeout,
                 check=False,
+                env=docker_env,
             )
             if proc.returncode != 0:
                 detail = (proc.stderr or proc.stdout or "").strip()[-2000:]
@@ -151,6 +169,7 @@ def run_host_build(
                 text=True,
                 timeout=timeout,
                 check=False,
+                env=docker_env,
             )
             if save_proc.returncode != 0:
                 detail = (save_proc.stderr or save_proc.stdout or "").strip()[-2000:]
@@ -170,6 +189,7 @@ def run_host_build(
                     capture_output=True,
                     timeout=30,
                     check=False,
+                    env=docker_env,
                 )
 
 

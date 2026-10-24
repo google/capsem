@@ -525,9 +525,9 @@ pub(super) struct QueueMemoryRange {
 ///
 /// Shared by the warm-restore path and the cold DRIVER_OK path so both enforce
 /// the same rules: a size within the device maximum, a power-of-two non-zero
-/// size for every ready queue, all three rings backed by RAM, and no two rings
-/// overlapping. Without this on the cold path a guest could hand an oversized,
-/// non-power-of-two, or out-of-bounds queue to the ring accessors.
+/// size for every queue with nonzero size, all three rings backed by RAM, and
+/// no two rings overlapping. Devices activate based on size, even when the
+/// guest leaves READY clear, so that case needs the same validation.
 fn validate_queue_geometry(
     mem: &GuestMemoryRef,
     max_sizes: &[u16],
@@ -546,7 +546,7 @@ fn validate_queue_geometry(
         if require_ready && !queue.ready {
             bail!("activated virtio-mmio queue {index} is not ready");
         }
-        if queue.ready {
+        if queue.ready || queue.num > 0 {
             if queue.num == 0 {
                 bail!("ready virtio-mmio queue {index} has zero size");
             }

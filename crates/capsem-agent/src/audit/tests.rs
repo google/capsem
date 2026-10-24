@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::io::Cursor;
+use std::io::{BufRead, BufReader, Cursor, Write};
 
 use super::*;
 
@@ -14,6 +14,78 @@ fn group(id: u32, exe: &str) -> String {
 
 fn decode(frame: &[u8]) -> AuditRecord {
     capsem_proto::decode_audit_record(&frame[4..]).unwrap()
+}
+
+#[test]
+fn rotation_drains_the_old_audit_log_then_opens_the_new_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("audit.log");
+    std::fs::write(&path, b"old\n").unwrap();
+    let mut reader = BufReader::new(std::fs::File::open(&path).unwrap());
+    let mut line = String::new();
+    reader.read_line(&mut line).unwrap();
+    assert_eq!(line, "old\n");
+
+    let rotated = dir.path().join("audit.log.1");
+    std::fs::rename(&path, &rotated).unwrap();
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&rotated)
+        .unwrap()
+        .write_all(b"late\n")
+        .unwrap();
+    line.clear();
+    reader.read_line(&mut line).unwrap();
+    assert_eq!(line, "late\n", "drain the old descriptor before reopening");
+    std::fs::write(&path, b"new\n").unwrap();
+    assert!(refresh_audit_log(&mut reader, &path).unwrap());
+    line.clear();
+    reader.read_line(&mut line).unwrap();
+    assert_eq!(line, "new\n");
+}
+
+#[test]
+fn copytruncated_audit_log_rewinds_to_new_content() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("audit.log");
+    std::fs::write(&path, b"an older and longer record\n").unwrap();
+    let mut reader = BufReader::new(std::fs::File::open(&path).unwrap());
+    let mut line = String::new();
+    reader.read_line(&mut line).unwrap();
+    std::fs::write(&path, b"new\n").unwrap();
+    assert!(refresh_audit_log(&mut reader, &path).unwrap());
+    line.clear();
+    reader.read_line(&mut line).unwrap();
+    assert_eq!(line, "new\n");
+}
+
+#[test]
+fn rotation_keeps_an_audit_record_split_across_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("audit.log");
+    let record = group(17, "/bin/rotated");
+    let split = record.find("type=PROCTITLE").unwrap();
+    std::fs::write(&path, &record[..split]).unwrap();
+    let mut reader = BufReader::new(std::fs::File::open(&path).unwrap());
+    let mut pending = HashMap::new();
+    let mut frames = Vec::new();
+    tail_audit_log(&mut reader, &mut pending, &mut |frame| {
+        frames.push(frame.to_vec());
+        true
+    })
+    .unwrap();
+    assert!(frames.is_empty());
+
+    std::fs::rename(&path, dir.path().join("audit.log.1")).unwrap();
+    std::fs::write(&path, &record[split..]).unwrap();
+    assert!(refresh_audit_log(&mut reader, &path).unwrap());
+    tail_audit_log(&mut reader, &mut pending, &mut |frame| {
+        frames.push(frame.to_vec());
+        true
+    })
+    .unwrap();
+    assert_eq!(frames.len(), 1);
+    assert_eq!(decode(&frames[0]).exe, "/bin/rotated");
 }
 
 #[test]

@@ -1,5 +1,6 @@
 mod aggregator;
 mod cables;
+mod guest_env;
 mod helpers;
 mod ipc;
 mod job_store;
@@ -9,6 +10,7 @@ mod owner;
 mod owner_sandbox;
 mod private_seats;
 mod proxy_mcp;
+mod retention;
 mod runtime_config;
 mod terminal;
 mod trace_hints;
@@ -45,6 +47,7 @@ use vsock::VsockOptions;
 pub(crate) struct Shutdown {
     publisher: Option<Arc<capsem_core::container::publish::Publisher>>,
     db: Option<Arc<DbWriter>>,
+    retention_days: Option<u64>,
     fs_monitor: Option<FsMonitor>,
     proxy_mcp: Option<tokio::task::JoinHandle<()>>,
     proxy_trace_hints: Option<tokio::task::JoinHandle<()>>,
@@ -117,6 +120,14 @@ pub(crate) async fn drain_background_owners(shutdown: &Arc<Mutex<Shutdown>>) {
     if let Some(publisher) = owned.publisher.take() {
         publisher.shutdown().await;
     }
+    if let Some(fs_monitor) = owned.fs_monitor.take() {
+        if let Err(error) = tokio::task::spawn_blocking(move || fs_monitor.shutdown_and_join()).await {
+            error!(%error, "filesystem monitor drain failed");
+        }
+    }
+    if let (Some(db), Some(days)) = (&owned.db, owned.retention_days) {
+        retention::retain_session_bodies(db, days).await;
+    }
     if let Err(error) = tokio::task::spawn_blocking(move || owned.drain_blocking()).await {
         error!(%error, "background owner drain failed");
     }
@@ -161,6 +172,9 @@ struct Args {
     session_dir: PathBuf,
     #[arg(long)]
     active_policy: PathBuf,
+    /// Archive retention resolved by the service for this VM launch.
+    #[arg(long)]
+    retention_days: Option<u64>,
     #[arg(long, default_value_t = 2)]
     cpus: u32,
     #[arg(long, default_value_t = 2048)]
@@ -191,9 +205,6 @@ struct Args {
     metric_broker: bool,
     #[arg(long)]
     checkpoint_path: Option<PathBuf>,
-    /// Environment variables to inject into guest (repeatable: --env KEY=VALUE)
-    #[arg(long = "env")]
-    env: Vec<String>,
 }
 
 /// Generate a short (16-hex-char) correlation id for this
@@ -310,6 +321,7 @@ fn main() -> Result<()> {
     }
     let _owner_singleton = capsem_guard::Singleton::try_acquire(&session_dir.join("process.lock"))?
         .context("this session already has a running VM owner")?;
+    let guest_env = guest_env::load(&session_dir)?;
 
     // A current-thread runtime creates no worker before confinement. Tasks
     // queued during preparation start only after the sandbox is installed.
@@ -491,7 +503,10 @@ fn main() -> Result<()> {
         );
     }
 
-    let shutdown: Arc<Mutex<Shutdown>> = Arc::new(Mutex::new(Shutdown::default()));
+    let shutdown: Arc<Mutex<Shutdown>> = Arc::new(Mutex::new(Shutdown {
+        retention_days: args.retention_days,
+        ..Shutdown::default()
+    }));
 
     let session_dir_for_loop = session_dir;
     let shutdown_for_loop = Arc::clone(&shutdown);
@@ -501,6 +516,7 @@ fn main() -> Result<()> {
     rt.spawn(async move {
         if let Err(e) = Box::pin(run_async_main_loop(
             args,
+            guest_env,
             controller,
             vm_arc,
             vsock_rx,
@@ -583,6 +599,7 @@ fn main() -> Result<()> {
 #[allow(clippy::too_many_arguments)]
 async fn run_async_main_loop(
     args: Args,
+    cli_env: Vec<(String, String)>,
     controller: capsem_foundation::unix::peer::PeerIdentity,
     vm: Arc<tokio::sync::Mutex<Box<dyn capsem_core::hypervisor::VmHandle>>>,
     vsock_rx: mpsc::UnboundedReceiver<VsockConnection>,
@@ -773,13 +790,6 @@ async fn run_async_main_loop(
 
     let net_state_clone = Arc::clone(&net_state);
     let upstream_grants_for_vsock = Arc::clone(&upstream_grants);
-
-    // Parse --env KEY=VALUE pairs for guest injection
-    let cli_env: Vec<(String, String)> = args
-        .env
-        .iter()
-        .filter_map(|kv| kv.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
-        .collect();
 
     let vm_ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
 

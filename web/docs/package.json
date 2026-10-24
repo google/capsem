@@ -13,12 +13,14 @@
     "@astrojs/starlight-tailwind": "^5.0.0",
     "@capsem/diagrams": "file:../diagrams",
     "@tailwindcss/vite": "^4.3.3",
-    "astro": "^7.2.8",
+    "astro": "^7.3.3",
     "sharp": "^0.35.5",
     "tailwindcss": "^4.3.3"
   },
   "pnpm": {
     "overrides": {
+      "undici": "8.12.2",
+      "zod": "4.6.7",
       "vite": "8.3.3",
       "nanoid": "^3.3.17",
       "js-yaml": "^4.3.2",

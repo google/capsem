@@ -38,3 +38,13 @@ export function surfaceMayAppear(status: ContainerStatusResponse | null | undefi
 export function surfaceLauncherUrl(gatewayUrl: string, vmId: string): string {
   return `${gatewayUrl.replace(/\/+$/, '')}/vms/${encodeURIComponent(vmId)}/surface/`;
 }
+
+/** Carry only a single-use preview bootstrap to the external browser. */
+export function surfaceLaunchUrl(
+  gatewayUrl: string,
+  vmId: string,
+  session: { url: string; bootstrap_token: string },
+): string {
+  const fragment = encodeURIComponent(JSON.stringify(session));
+  return `${surfaceLauncherUrl(gatewayUrl, vmId)}#${fragment}`;
+}

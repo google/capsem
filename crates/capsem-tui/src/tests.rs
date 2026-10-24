@@ -702,12 +702,10 @@ async fn gateway_provider_loads_status_over_http_gateway() {
     let addr = listener.local_addr().expect("local addr");
     let body = gateway_status_body().to_string();
     let server = tokio::spawn(async move {
-        for _ in 0..2 {
+        for _ in 0..1 {
             let (mut stream, _) = listener.accept().await.expect("accept request");
             let request = read_http_request(&mut stream).await;
-            if request.contains("GET /token ") {
-                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
-            } else {
+            {
                 assert!(request.contains("GET /status "), "unexpected request: {request:?}");
                 assert!(
                     request.contains("authorization: Bearer test-token")
@@ -719,7 +717,7 @@ async fn gateway_provider_loads_status_over_http_gateway() {
         }
     });
 
-    let state = GatewayProvider::new(format!("http://{addr}"))
+    let state = GatewayProvider::with_test_token(format!("http://{addr}"), "test-token")
         .load_async()
         .await
         .expect("load state over gateway");
@@ -737,12 +735,10 @@ async fn gateway_provider_loads_update_status_over_http_gateway() {
         .expect("bind test gateway");
     let addr = listener.local_addr().expect("local addr");
     let server = tokio::spawn(async move {
-        for _ in 0..2 {
+        for _ in 0..1 {
             let (mut stream, _) = listener.accept().await.expect("accept request");
             let request = read_http_request(&mut stream).await;
-            if request.contains("GET /token ") {
-                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
-            } else {
+            {
                 assert!(request.contains("GET /status "), "unexpected request: {request:?}");
                 assert!(request
                     .to_ascii_lowercase()
@@ -754,7 +750,7 @@ async fn gateway_provider_loads_update_status_over_http_gateway() {
         }
     });
 
-    let state = GatewayProvider::new(format!("http://{addr}"))
+    let state = GatewayProvider::with_test_token(format!("http://{addr}"), "test-token")
         .load_async()
         .await
         .expect("load state over gateway");
@@ -775,30 +771,23 @@ async fn gateway_provider_reuses_token_across_status_refreshes() {
     let addr = listener.local_addr().expect("local addr");
     let body = gateway_status_body().to_string();
     let server = tokio::spawn(async move {
-        let mut token_requests = 0;
         let mut status_requests = 0;
-        for _ in 0..3 {
+        for _ in 0..2 {
             let (mut stream, _) = listener.accept().await.expect("accept request");
             let request = read_http_request(&mut stream).await;
-            if request.contains("GET /token ") {
-                token_requests += 1;
-                write_json_response(&mut stream, r#"{"token":"test-token"}"#).await;
-            } else {
-                status_requests += 1;
-                assert!(request.contains("GET /status "), "unexpected request: {request:?}");
-                assert!(
-                    request.contains("authorization: Bearer test-token")
-                        || request.contains("Authorization: Bearer test-token"),
-                    "missing bearer auth: {request:?}"
-                );
-                write_json_response(&mut stream, &body).await;
-            }
+            status_requests += 1;
+            assert!(request.contains("GET /status "), "unexpected request: {request:?}");
+            assert!(
+                request.contains("authorization: Bearer test-token")
+                    || request.contains("Authorization: Bearer test-token"),
+                "missing bearer auth: {request:?}"
+            );
+            write_json_response(&mut stream, &body).await;
         }
-        assert_eq!(token_requests, 1, "token should be cached across refreshes");
         assert_eq!(status_requests, 2);
     });
 
-    let provider = GatewayProvider::new(format!("http://{addr}"));
+    let provider = GatewayProvider::with_test_token(format!("http://{addr}"), "test-token");
     provider.load_async().await.expect("initial load");
     let refreshed = provider.load_async().await.expect("refresh load");
     assert_eq!(refreshed.sessions.len(), 2);

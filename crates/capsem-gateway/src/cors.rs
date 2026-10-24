@@ -1,21 +1,17 @@
 //! CORS origin allowlist.
 //!
-//! The gateway is bound to 127.0.0.1 but the CORS predicate decides whether a
-//! cross-origin browser caller is allowed to read responses (including the
-//! gateway token at `/token`, which is otherwise gated only by loopback peer
-//! IP -- a check that passes for any browser running on the user's machine).
-//! A loose prefix match (e.g. `starts_with("http://localhost")`) approves
-//! attacker-controlled hosts like `http://localhostevil.com`, so we parse the
-//! Origin and require an exact loopback host with an allowed scheme.
+//! A guest can publish its own HTTP server on a host loopback port. Its browser
+//! origin is therefore not trusted merely because it names localhost. Only the
+//! bundled Tauri webview and the gateway's own fixed origin may read responses.
 
 #[cfg(test)]
 mod tests;
 
-/// Returns true iff the Origin header value is a same-machine origin we trust:
-/// `http`/`https` to `localhost`, `127.0.0.1`, or `::1`, or `tauri://localhost`.
+/// Returns true iff the Origin header names the bundled Tauri webview or the
+/// gateway's own fixed HTTP origin.
 ///
-/// Any port is accepted on loopback. The Origin must be only scheme + host +
-/// optional port (no path beyond `""`/`"/"`, no userinfo, no query, no
+/// The Origin must be only scheme + host + optional port (no path beyond
+/// `""`/`"/"`, no userinfo, no query, no
 /// fragment) -- anything else is malformed and rejected.
 pub fn is_allowed_origin(value: &http::HeaderValue) -> bool {
     value.to_str().map(is_allowed_origin_str).unwrap_or(false)
@@ -45,8 +41,8 @@ fn is_allowed_origin_str(s: &str) -> bool {
     let Some(host) = uri.host() else { return false };
 
     match scheme {
-        "http" | "https" => is_loopback_host(host),
-        "tauri" => host.eq_ignore_ascii_case("localhost"),
+        "http" => host == "127.0.0.1" && uri.port_u16() == Some(19222),
+        "tauri" => host.eq_ignore_ascii_case("localhost") && uri.port().is_none(),
         _ => false,
     }
 }

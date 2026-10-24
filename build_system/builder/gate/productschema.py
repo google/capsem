@@ -16,7 +16,7 @@ from __future__ import annotations
 from pathlib import PurePosixPath
 from typing import Literal
 
-from pydantic import PositiveInt, model_validator
+from pydantic import Field, PositiveInt, model_validator
 
 from ..policy.dockerpolicy import BuildNetwork, ContainerNetwork
 from .configschema import SafeToken, Strict
@@ -90,6 +90,7 @@ class AptSnapshotConfig(Strict):
     install_timeout_seconds: PositiveInt
     request_timeout_seconds: PositiveInt
     retries: PositiveInt
+    download_concurrency: PositiveInt = Field(le=16)
 
 
 class InstallBuilderConfig(Strict):

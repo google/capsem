@@ -173,7 +173,10 @@ fn spawn_owner_subprocess_holds_native_lifetime_until_actual_exit() {
             .unwrap(),
     );
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-    while read(&root).unwrap().unwrap().pid != Some(child.0.id()) {
+    // A reader may open the old inode just before the child's atomic rename;
+    // its link count then drops to zero and the private-file check rejects
+    // that single observation. Poll for the newly published witness.
+    while !matches!(read(&root), Ok(Some(record)) if record.pid == Some(child.0.id())) {
         assert!(
             std::time::Instant::now() < deadline,
             "native child did not publish its witness"

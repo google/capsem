@@ -3,7 +3,7 @@
 from pathlib import Path
 
 import pytest
-from capsem_builder.release.tools.package_rust_sdk import publication_order
+from capsem_builder.release.tools.package_rust_sdk import local_patch_args, publication_order
 
 
 def package(name: str, *dependencies: str, kind: str | None = None) -> dict:
@@ -34,6 +34,14 @@ def test_local_sdk_graph_is_dependency_ordered_and_excludes_applications() -> No
 def test_dev_only_local_dependencies_are_not_published() -> None:
     sdk = package("sdk", "private-fixture", kind="dev")
     assert publication_order([sdk], Path(sdk["manifest_path"]), Path("/repo")) == [sdk]
+
+
+def test_package_verification_uses_candidate_local_crates() -> None:
+    args = local_patch_args([package("proto"), package("sdk", "proto")])
+    assert args == [
+        "--config", 'patch.crates-io.proto.path="/repo/proto"',
+        "--config", 'patch.crates-io.sdk.path="/repo/sdk"',
+    ]
 
 
 @pytest.mark.parametrize("mutation", ["missing", "private", "version", "cycle", "outside"])

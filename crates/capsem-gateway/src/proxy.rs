@@ -9,12 +9,15 @@ use axum::http::{
     HeaderMap, HeaderName, HeaderValue, Method, StatusCode,
 };
 use axum::response::{IntoResponse, Response};
-use http_body_util::BodyExt;
+use http_body_util::{BodyExt, Limited};
 
 use crate::AppState;
 
 /// Maximum request body size. Prevents OOM from malicious oversized payloads.
 const MAX_BODY_SIZE: usize = capsem_api::MAX_REQUEST_BODY_BYTES;
+/// Unsized JSON GET responses need a Content-Length for the desktop WebView,
+/// but buffering them without a ceiling lets one response exhaust the gateway.
+const MAX_BUFFERED_JSON_RESPONSE_SIZE: usize = 32 * 1024 * 1024;
 
 /// Default request timeout. Long enough for suspend (quiescence up to 10s +
 /// pause/save up to 15s).
@@ -167,7 +170,6 @@ async fn forward(state: &AppState, mut req: Request) -> anyhow::Result<Response>
     // 413. It used to fail mid-stream on the upstream connection instead and
     // surface as a 502 "service unavailable", so the client never learned
     // the body was the problem.
-    use http_body_util::Limited;
     let body = if parts.headers.contains_key(http::header::CONTENT_LENGTH) {
         axum::body::Body::new(Limited::new(body, MAX_BODY_SIZE))
     } else {
@@ -193,10 +195,14 @@ async fn forward(state: &AppState, mut req: Request) -> anyhow::Result<Response>
 
     let (mut parts, body) = res.into_parts();
     if should_buffer_json_response(should_buffer_json, &parts.headers) {
-        let body = tokio::time::timeout(REQUEST_TIMEOUT, body.collect())
-            .await
-            .map_err(|_| anyhow::anyhow!("response body read timed out"))??
-            .to_bytes();
+        let body = tokio::time::timeout(
+            REQUEST_TIMEOUT,
+            Limited::new(body, MAX_BUFFERED_JSON_RESPONSE_SIZE).collect(),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("response body read timed out"))?
+        .map_err(|error| anyhow::anyhow!("JSON response body exceeded buffer limit or failed: {error}"))?
+        .to_bytes();
         parts.headers.remove(TRANSFER_ENCODING);
         parts
             .headers

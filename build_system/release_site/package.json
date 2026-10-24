@@ -12,17 +12,18 @@
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.3",
-    "astro": "^7.2.8",
+    "astro": "^7.3.3",
     "tailwindcss": "^4.3.3"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
-    "@vitest/coverage-v8": "4.1.11",
+    "@vitest/coverage-v8": "4.1.12",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.12"
   },
   "pnpm": {
     "overrides": {
+      "undici": "8.12.2",
       "vite": "8.3.3",
       "sharp": "^0.35.5",
       "nanoid": "^3.3.17",

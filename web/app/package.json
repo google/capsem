@@ -18,7 +18,6 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-webgl": "^0.19.0",
     "@xterm/xterm": "^6.0.0",
-    "layerchart": "^1.0.13",
     "phosphor-svelte": "^3.1.0",
     "shiki": "^4.0.2"
   },
@@ -26,20 +25,21 @@
     "@astrojs/check": "^0.9.9",
     "@sveltejs/vite-plugin-svelte": "^7.2.0",
     "@tailwindcss/vite": "^4.2.2",
-    "@vitest/coverage-v8": "4.1.11",
-    "astro": "^7.2.8",
+    "@vitest/coverage-v8": "4.1.12",
+    "astro": "^7.3.3",
     "marked": "^18.0.2",
     "svelte": "^5.56.2",
     "svelte-check": "^4.4.6",
     "tailwindcss": "^4.2.2",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.12"
   },
   "pnpm": {
     "overrides": {
       "vite": "8.3.3",
       "sharp": "^0.35.5",
-      "fast-uri": "^3.1.8",
+      "fast-uri": "3.1.9",
+      "undici": "8.12.2",
       "nanoid": "^3.3.17",
       "js-yaml": "^4.3.2",
       "svgo": "^4.1.0",

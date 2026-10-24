@@ -18,11 +18,20 @@ capsem_install_report_failure() {
         "Tester action: copy the output of this command into the bug report:" \
         "  cat \"$run_log\"")
 
-    mkdir -p "$(dirname "$failure_file")" 2>/dev/null || true
-    if printf '%s\n' "$report" > "$failure_file" 2>/dev/null; then
-        chmod 0600 "$failure_file" 2>/dev/null || true
-        if [ -n "$install_user" ] && [ "$install_user" != "root" ]; then
-            chown "$install_user" "$failure_file" 2>/dev/null || true
+    if [ "${CAPSEM_INSTALL_FAILURE_AS_USER:-0}" = "1" ] \
+        && [ -n "$install_user" ] && [ "$install_user" != "root" ]; then
+        # HOME expands in the installing user's shell.
+        # shellcheck disable=SC2016
+        printf '%s\n' "$report" | su "$install_user" -c \
+            'umask 077; mkdir -p "$HOME/.capsem/logs" && cat > "$HOME/.capsem/logs/install-failure.txt"' \
+            2>/dev/null || true
+    else
+        mkdir -p "$(dirname "$failure_file")" 2>/dev/null || true
+        if printf '%s\n' "$report" > "$failure_file" 2>/dev/null; then
+            chmod 0600 "$failure_file" 2>/dev/null || true
+            if [ -n "$install_user" ] && [ "$install_user" != "root" ]; then
+                chown "$install_user" "$failure_file" 2>/dev/null || true
+            fi
         fi
     fi
     printf '%s\n' "$report" >&2
@@ -32,7 +41,12 @@ capsem_install_report_failure() {
         && [ -n "$install_user" ] \
         && [ "$install_user" != "root" ] \
         && [ -x /usr/bin/open ]; then
-        su "$install_user" -c "/usr/bin/open -a TextEdit \"$failure_file\"" 2>/dev/null || true
+        if [ "${CAPSEM_INSTALL_FAILURE_AS_USER:-0}" = "1" ]; then
+            # shellcheck disable=SC2016
+            su "$install_user" -c '/usr/bin/open -a TextEdit "$HOME/.capsem/logs/install-failure.txt"' 2>/dev/null || true
+        else
+            su "$install_user" -c "/usr/bin/open -a TextEdit \"$failure_file\"" 2>/dev/null || true
+        fi
     fi
 }
 

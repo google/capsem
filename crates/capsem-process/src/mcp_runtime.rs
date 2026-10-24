@@ -54,9 +54,9 @@ impl ScopedMcpTools for GuestExposureTools {
                     "host_port": {
                         "type": "integer",
                         "minimum": 0,
-                        "maximum": 65535,
+                        "maximum": 0,
                         "default": 0,
-                        "description": "Host loopback port, or zero to allocate one."
+                        "description": "Must be zero: the host allocates the loopback port."
                     },
                     "target": {
                         "type": "string",
@@ -90,6 +90,9 @@ impl ScopedMcpTools for GuestExposureTools {
             }
             let request: GuestExposureRequest =
                 serde_json::from_value(arguments).map_err(|error| format!("invalid exposure request: {error}"))?;
+            if request.host_port != 0 {
+                return Err("host_port must be zero for guest-initiated exposure".to_string());
+            }
             let publication = self
                 .publisher
                 .publish_saved(

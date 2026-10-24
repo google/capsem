@@ -1,6 +1,6 @@
 // PostMessage protocol between parent frame (trusted) and VM iframe (sandboxed).
 // Initial state (vmId, initial theme) flows via iframe URL params -- this
-// contract covers only runtime signals, which are fire-and-forget.
+// contract covers runtime signals and a scoped terminal token request.
 
 const MAX_TITLE_LENGTH = 128;
 const MAX_CLIPBOARD_SIZE = 1_048_576; // 1 MB
@@ -25,10 +25,17 @@ export interface MsgClipboardPaste {
   text: string;
 }
 
+export interface MsgGatewayToken {
+  type: 'gateway-token';
+  requestId: number;
+  token: string | null;
+}
+
 export type ParentToIframeMsg =
   | MsgThemeChange
   | MsgFocus
-  | MsgClipboardPaste;
+  | MsgClipboardPaste
+  | MsgGatewayToken;
 
 // -- Iframe -> Parent --
 
@@ -44,6 +51,11 @@ export interface MsgClipboardCopy {
 
 export interface MsgClipboardRequest {
   type: 'clipboard-request';
+}
+
+export interface MsgGatewayTokenRequest {
+  type: 'gateway-token-request';
+  requestId: number;
 }
 
 export interface MsgConnected {
@@ -67,6 +79,7 @@ export type IframeToParentMsg =
   | MsgTitleUpdate
   | MsgClipboardCopy
   | MsgClipboardRequest
+  | MsgGatewayTokenRequest
   | MsgConnected
   | MsgDisconnected
   | MsgError;
@@ -90,6 +103,9 @@ export function parseIframeMessage(data: unknown): IframeToParentMsg | null {
     }
     case 'clipboard-request':
       return { type: 'clipboard-request' };
+    case 'gateway-token-request':
+      if (typeof msg.requestId !== 'number' || !Number.isSafeInteger(msg.requestId) || msg.requestId < 0) return null;
+      return { type: 'gateway-token-request', requestId: msg.requestId };
     case 'connected':
       return { type: 'connected' };
     case 'disconnected': {
@@ -133,6 +149,11 @@ export function parseParentMessage(data: unknown): ParentToIframeMsg | null {
       if (typeof msg.text !== 'string') return null;
       if (msg.text.length > MAX_CLIPBOARD_SIZE) return null;
       return { type: 'clipboard-paste', text: msg.text };
+    }
+    case 'gateway-token': {
+      if (typeof msg.requestId !== 'number' || !Number.isSafeInteger(msg.requestId) || msg.requestId < 0) return null;
+      if (msg.token !== null && (typeof msg.token !== 'string' || msg.token.length !== 64)) return null;
+      return { type: 'gateway-token', requestId: msg.requestId, token: msg.token as string | null };
     }
     default:
       return null;

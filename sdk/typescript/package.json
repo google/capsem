@@ -30,16 +30,16 @@
     "test": "vitest run --coverage",
     "test:sdk": "vitest run --coverage"
   },
-  "dependencies": {"zod": "4.6.1"},
+  "dependencies": {"zod": "4.6.7"},
   "devDependencies": {
     "@eslint/js": "10.0.1",
     "@types/node": "^24.0.0",
-    "@vitest/coverage-v8": "4.1.11",
+    "@vitest/coverage-v8": "4.1.12",
     "eslint": "10.10.0",
     "openai": "7.31.0",
     "typescript": "5.9.3",
     "typescript-eslint": "8.70.0",
-    "vitest": "4.1.11"
+    "vitest": "4.1.12"
   },
   "pnpm": {"overrides": {"vite": "8.3.3"}}
 }

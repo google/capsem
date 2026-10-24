@@ -35,36 +35,14 @@ pub async fn run_uninstall(yes: bool) -> Result<()> {
         eprintln!("Warning: service uninstall failed: {}. Continuing anyway.", e);
     }
 
-    // Kill any running processes (SIGKILL to prevent respawn by KeepAlive).
-    //
-    // Scope the match to this binary's install dir so `capsem uninstall`
-    // from ~/.capsem/bin never touches unrelated capsem-* processes running
-    // from other locations (for example dev services under cache/target/cargo/debug/, or
-    // parallel pytest workers). Users uninstalling the installation should
-    // only affect the installation -- `-x <name>` matches too broadly.
+    // Retire only native helpers whose kernel executable path belongs to this
+    // installation. A command line containing that path proves nothing.
     let install_dir = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|p| p.to_path_buf()));
-    for name in [
-        "capsem-service",
-        "capsem-process",
-        "capsem-ledger",
-        "capsem-proxy",
-        "capsem-gateway",
-        "capsem-tray",
-    ] {
-        let pattern = match install_dir.as_ref() {
-            Some(dir) => format!("{}/{name}", dir.display()),
-            None => name.to_string(),
-        };
-        let _ = tokio::process::Command::new("pkill")
-            .args(["-9", "-f", &pattern])
-            .status()
-            .await;
+    if let Some(dir) = install_dir {
+        crate::service_install::retire_installed_helpers(&dir).await?;
     }
-
-    // Brief wait for processes to die before removing files
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
     // Remove binaries from the detected install location
     const CAPSEM_BINARIES: &[&str] = &[

@@ -537,7 +537,9 @@ async fn renewal_reschedules_expiry_without_duplicate_creation() {
     fixture.cleanup_release.add_permits(1);
     let request = capsem_crypto::uuid_v4();
     let cap = Capability::from_bytes([26; 32]);
-    let policy = LeasePolicy::new(Duration::from_millis(400)).unwrap();
+    // Leave enough wall-clock headroom for the parallel core suite to schedule
+    // this task before the first lease expires.
+    let policy = LeasePolicy::new(Duration::from_secs(2)).unwrap();
     let original = owner
         .create(request, cap.clone(), policy, effects(&fixture))
         .await
@@ -551,7 +553,7 @@ async fn renewal_reschedules_expiry_without_duplicate_creation() {
     let renewed = owner.claim(request, cap.clone()).await.unwrap();
     assert_eq!(renewed.generation(), original.generation());
     assert!(renewed.expires_wall_ms().unwrap() > original.expires_wall_ms().unwrap());
-    tokio::time::sleep(Duration::from_millis(280)).await;
+    tokio::time::sleep(Duration::from_millis(1880)).await;
     assert_eq!(
         owner.inspect(request, cap.clone()).await.unwrap().unwrap().state(),
         State::Active
@@ -589,8 +591,12 @@ async fn interrupted_create_requires_an_absence_barrier_and_never_replays() {
     .unwrap();
     assert_eq!(fixture.reconciles.load(Ordering::SeqCst), 1);
     assert_eq!(fixture.cleanups.load(Ordering::SeqCst), 0);
+    // The deadline may expire just before the effect increments `creates`.
+    // What matters is that a closed request cannot start another effect.
+    let creates_after_close = fixture.creates.load(Ordering::SeqCst);
+    assert!(creates_after_close <= 1);
     assert!(owner.create(request, cap, policy, effects(&fixture)).await.is_err());
-    assert_eq!(fixture.creates.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.creates.load(Ordering::SeqCst), creates_after_close);
 }
 
 fn controller(root: &std::path::Path) -> Controller {

@@ -18,6 +18,22 @@ fn root_is_1() {
 }
 
 #[test]
+fn root_entry_is_contained_until_replaced_by_an_outside_symlink() {
+    let base = tempfile::tempdir().unwrap();
+    let root = base.path().join("root");
+    let outside = base.path().join("outside");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::create_dir(&outside).unwrap();
+    let root = root.canonicalize().unwrap();
+    let table = InodeTable::new(&root).unwrap();
+
+    assert!(table.is_contained_entry(&root), "the share root is its own boundary");
+    std::fs::remove_dir(&root).unwrap();
+    std::os::unix::fs::symlink(&outside, &root).unwrap();
+    assert!(!table.is_contained_entry(&root), "a replaced root must be refused");
+}
+
+#[test]
 fn lookup_creates_inode() {
     let dir = temp_share("inode-lookup");
     std::fs::write(dir.join("hello.txt"), b"world").unwrap();
@@ -35,6 +51,21 @@ fn lookup_same_name_same_inode() {
     let ino1 = table.lookup(1, b"file.txt").unwrap();
     let ino2 = table.lookup(1, b"file.txt").unwrap();
     assert_eq!(ino1, ino2);
+}
+
+#[test]
+fn invalidated_name_gets_a_new_inode_after_recreation() {
+    let dir = temp_share("inode-recreate");
+    std::fs::write(dir.join("file.txt"), b"first").unwrap();
+    let mut table = InodeTable::new(&dir).unwrap();
+    let old = table.lookup(1, b"file.txt").unwrap();
+    std::fs::remove_file(dir.join("file.txt")).unwrap();
+    table.invalidate_path(&dir.join("file.txt"));
+    std::fs::write(dir.join("file.txt"), b"second").unwrap();
+    let new = table.lookup(1, b"file.txt").unwrap();
+    assert_ne!(old, new);
+    assert!(table.get(old).is_none());
+    assert_eq!(table.get(new).unwrap(), &dir.join("file.txt"));
 }
 
 #[test]

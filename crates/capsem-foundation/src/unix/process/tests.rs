@@ -5,6 +5,16 @@ use nix::errno::Errno;
 use super::*;
 
 #[test]
+fn pinned_process_names_its_real_executable() {
+    let handle = ProcessHandle::open(ProcessId::try_from(std::process::id()).unwrap()).unwrap();
+    let observed = handle.executable_path().unwrap();
+    assert_eq!(
+        std::fs::canonicalize(observed).unwrap(),
+        std::fs::canonicalize(std::env::current_exe().unwrap()).unwrap()
+    );
+}
+
+#[test]
 fn native_system_load_is_available_and_nonnegative() {
     let load = load_average().expect("native Unix host must expose its load average");
     assert!(load.is_finite() && load >= 0.0);

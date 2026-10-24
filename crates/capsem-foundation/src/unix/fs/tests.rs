@@ -3,8 +3,8 @@ use std::sync::{Arc, Barrier};
 
 use super::{
     atomic_write_private, create_private_sibling, durable_sync_directory, durable_sync_file, ensure_private_dir,
-    filesystem_space, open_private_append_no_follow, open_regular_file_no_follow, read_regular_file_no_follow,
-    rename_private_sibling, write_new_regular_file_no_follow,
+    ensure_private_dir_restrict_existing, filesystem_space, open_private_append_no_follow, open_regular_file_no_follow,
+    read_regular_file_no_follow, rename_private_sibling, write_new_regular_file_no_follow,
 };
 
 #[test]
@@ -46,6 +46,27 @@ fn private_directory_refuses_symlinks_and_permissive_modes() {
     std::fs::create_dir(&unusable).unwrap();
     std::fs::set_permissions(&unusable, std::fs::Permissions::from_mode(0o600)).unwrap();
     assert!(ensure_private_dir(&unusable).is_err());
+}
+
+#[test]
+fn private_directory_migration_restricts_existing_directory_without_following_links() {
+    let root = tempfile::tempdir().unwrap();
+    let run = root.path().join("run");
+    std::fs::create_dir(&run).unwrap();
+    std::fs::set_permissions(&run, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::write(run.join("sentinel"), b"keep").unwrap();
+
+    ensure_private_dir_restrict_existing(&run).unwrap();
+
+    assert_eq!(
+        std::fs::symlink_metadata(&run).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+    assert_eq!(std::fs::read(run.join("sentinel")).unwrap(), b"keep");
+
+    let link = root.path().join("link");
+    symlink(&run, &link).unwrap();
+    assert!(ensure_private_dir_restrict_existing(&link).is_err());
 }
 
 #[test]

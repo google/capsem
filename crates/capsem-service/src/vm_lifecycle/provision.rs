@@ -193,20 +193,12 @@ impl ServiceState {
         // sessions have a generated display name for UI lists, but the guest
         // hostname must remain the opaque route id.
         let guest_name = if persistent { name } else { id };
-        child_cmd.arg("--env").arg(format!("CAPSEM_VM_ID={}", id));
-        child_cmd.arg("--env").arg(format!("CAPSEM_VM_NAME={}", guest_name));
+        guest_env::stage(&session_dir, id, guest_name, env.as_ref())?;
         child_cmd.arg("--vm-name").arg(guest_name);
         crate::service_runtime::telemetry_export::grant_metric_broker(
             &mut child_cmd,
             &capsem_core::net::policy_config::load_settings_and_corp_files().1,
         );
-
-        // Add --env KEY=VALUE args for each user-specified env var
-        if let Some(ref env_vars) = env {
-            for (k, v) in env_vars {
-                child_cmd.arg("--env").arg(format!("{}={}", k, v));
-            }
-        }
 
         // Clear inherited env to prevent API key/token leakage, then
         // re-add only the minimal set needed for the process to function.
@@ -263,6 +255,8 @@ impl ServiceState {
                 .arg(&session_dir)
                 .arg("--active-policy")
                 .arg(&active_policy_path)
+                .arg("--retention-days")
+                .arg(crate::session_housekeeping::retention_days().to_string())
                 .arg("--cpus")
                 .arg(cpus.to_string())
                 .arg("--ram-mb")
@@ -430,6 +424,7 @@ impl ServiceState {
             session_dir,
             retirement,
         );
+        guest_lifecycle::spawn_suspend_listener(Arc::clone(self), id.to_string(), generation);
 
         Ok(())
     }

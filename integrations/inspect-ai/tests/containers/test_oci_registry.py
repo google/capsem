@@ -24,6 +24,15 @@ _DOCKER_MT = "application/vnd.docker.distribution.manifest.v2+json"
 _INDEX_MT = "application/vnd.oci.image.index.v1+json"
 
 
+def test_invalid_cached_tls_material_is_rotated(tmp_path: Path) -> None:
+    cert, _, old_ca = reg_mod.ensure_localhost_tls(tmp_path)
+    cert.write_text("invalid certificate", encoding="utf-8")
+
+    new_cert, new_key, new_ca = reg_mod.ensure_localhost_tls(tmp_path)
+    assert new_ca != old_ca
+    ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(new_cert, new_key)
+
+
 def _make_oci_tar(
     tar_path: Path,
     *,
@@ -112,6 +121,7 @@ def test_oci_ingest_and_registry_https_serving(
             ["openssl", "x509", "-in", str(crt), "-noout", "-text"], text=True
         )
         assert "X509v3 Subject Key Identifier" in txt and "X509v3 Authority Key Identifier" in txt
+        assert "ecdsa-with-SHA256" in txt
 
     tar1, tar_v2, tar_legacy = tmp_path / "oci1.tar", tmp_path / "v2.tar", tmp_path / "leg.tar"
     m_hex = _make_oci_tar(tar1, nested_index=True)

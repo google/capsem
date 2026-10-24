@@ -1,6 +1,7 @@
 """Shell environment, VM configuration, and mount tests."""
 
 import os
+from pathlib import Path
 
 from .boot_timing import MAX_BOOT_STAGE_MS, assess_boot_timing
 from .diagnostic_support import run
@@ -106,6 +107,16 @@ def test_dev_pts_mounted():
     assert result.returncode == 0, "/dev/pts not mounted"
 
 
+def test_runtime_paths_are_tmpfs():
+    """Boot scratch and logs must not survive a persistent VM restart or fork."""
+    mounts = {}
+    for line in Path("/proc/mounts").read_text().splitlines():
+        fields = line.split()
+        mounts[fields[1]] = fields[2]
+    for path in ("/run", "/tmp", "/var/log"):
+        assert mounts.get(path) == "tmpfs", f"{path} is {mounts.get(path)!r}, not tmpfs"
+
+
 # -- Tmpfs sizes --
 
 
@@ -126,7 +137,7 @@ def test_root_workspace_writable():
 
 
 def test_tmp_is_writable():
-    """/tmp must be writable (writes go through overlayfs to tmpfs upper)."""
+    """/tmp must be writable on its runtime tmpfs."""
     test_file = "/tmp/.capsem_write_test"
     result = run(f'echo "writable" > {test_file} && cat {test_file}')
     assert result.returncode == 0, "/tmp is not writable"

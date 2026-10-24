@@ -3,6 +3,9 @@ use std::path::{Path, PathBuf};
 
 use crate::paths;
 
+mod cohort;
+pub(crate) use cohort::retire_installed_helpers;
+
 const EXPLICIT_STOP_MARKER: &str = "service.explicitly-stopped";
 
 pub fn explicit_stop_marker_path() -> PathBuf {
@@ -532,7 +535,7 @@ async fn install_launchagent(capsem_paths: &paths::CapsemPaths, home: &str) -> R
     let uid = capsem_foundation::unix::process::current_uid();
     let domain = format!("gui/{}", uid);
 
-    // Stop existing launchd jobs and kill ALL capsem processes.
+    // Stop existing launchd jobs and retire this installation's helpers.
     // 1. Bootout (tells launchd to stop managing + kills managed processes)
     for label in ["com.capsem.service", "com.capsem.tray"] {
         let _ = tokio::process::Command::new("launchctl")
@@ -544,56 +547,13 @@ async fn install_launchagent(capsem_paths: &paths::CapsemPaths, home: &str) -> R
     //    during the bootstrap of other services.
     let _ = std::fs::remove_file(plist_dir.join("com.capsem.service.plist"));
     let _ = std::fs::remove_file(plist_dir.join("com.capsem.tray.plist"));
-    // 3. Kill strays not managed by launchd (dev _ensure-service, test crashes,
-    //    manual launches). Must cover every binary the service may have spawned
-    //    so the (re)install starts from a clean slate -- otherwise orphan
-    //    capsem-process instances hold Apple VZ memory across reinstalls.
-    //
-    // Scope by the installed prefix so we only kill processes from this
-    // installation -- `-x <name>` matches every capsem-service on the box,
-    // including parallel pytest workers running cache/target/cargo/debug binaries.
-    let install_dir = capsem_paths.service_bin.parent().map(|p| p.to_path_buf());
-    let scoped_name = |name: &str| -> String {
-        install_dir
-            .as_ref()
-            .map(|d| format!("{}/{name}", d.display()))
-            .unwrap_or_else(|| name.to_string())
-    };
-    let names = [
-        "capsem-service",
-        "capsem-tray",
-        "capsem-gateway",
-        "capsem-process",
-        "capsem-ledger",
-        "capsem-proxy",
-    ];
-    for name in names {
-        let pattern = scoped_name(name);
-        let _ = tokio::process::Command::new("pkill")
-            .args(["-9", "-f", &pattern])
-            .output()
-            .await;
-    }
-    // 4. Wait until all are dead (prevents stale socket EADDRINUSE on bootstrap)
-    for _ in 0..30 {
-        let mut any_alive = false;
-        for name in names {
-            let pattern = scoped_name(name);
-            let out = tokio::process::Command::new("pgrep")
-                .args(["-f", &pattern])
-                .output()
-                .await;
-            if out.map(|o| !o.stdout.is_empty()).unwrap_or(false) {
-                any_alive = true;
-                break;
-            }
-        }
-        if !any_alive {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
-    // 5. Remove stale socket so the new service can bind cleanly
+    // 3. Retire orphan helpers by native executable identity and wait for exit.
+    let install_dir = capsem_paths
+        .service_bin
+        .parent()
+        .context("service binary has no parent")?;
+    retire_installed_helpers(install_dir).await?;
+    // 4. Remove stale socket so the new service can bind cleanly
     let sock_path = capsem_foundation::paths::service_socket_path();
     let _ = std::fs::remove_file(&sock_path);
 

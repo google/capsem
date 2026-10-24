@@ -1,10 +1,68 @@
 use super::*;
 use capsem_core::net::dns::session::emit_dns_security_write_and_rules;
+use std::io::Write;
 
 mod ports;
 
 mod ack;
 mod audit;
+
+#[tokio::test]
+async fn stalled_control_handshake_has_a_deadline() {
+    let (host, mut guest) = std::os::unix::net::UnixStream::pair().unwrap();
+    let fd = std::fs::File::from(std::os::fd::OwnedFd::from(host));
+    let result = tokio::time::timeout(
+        std::time::Duration::from_millis(200),
+        handshake::perform_handshake_bounded(fd, false, Vec::new(), None, std::time::Duration::from_millis(40)),
+    )
+    .await;
+    assert!(
+        matches!(result, Ok(Err(_))),
+        "a silent guest kept its handshake task alive"
+    );
+    guest.set_nonblocking(true).unwrap();
+    let mut byte = [0];
+    assert_eq!(guest.read(&mut byte).unwrap(), 0, "stalled socket was not shut down");
+}
+
+#[test]
+fn unhandled_guest_frame_log_excludes_guest_payload() {
+    #[derive(Clone)]
+    struct CapturedLog(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl Write for CapturedLog {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let captured = CapturedLog(Arc::new(std::sync::Mutex::new(Vec::new())));
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_writer({
+            let captured = captured.clone();
+            move || captured.clone()
+        })
+        .finish();
+    tracing::subscriber::with_default(subscriber, || {
+        warn_unhandled_guest_msg(&GuestToHost::FileCreated {
+            path: "PRIVATE_GUEST_FRAME_CANARY".into(),
+            size: 1,
+        });
+    });
+
+    let output = String::from_utf8(captured.0.lock().unwrap().clone()).unwrap();
+    assert!(output.contains("unknown variant"), "warning was not emitted");
+    assert!(
+        !output.contains("PRIVATE_GUEST_FRAME_CANARY"),
+        "guest payload reached process log"
+    );
+}
 
 struct InterruptedThenData {
     interrupted: bool,
@@ -317,6 +375,34 @@ async fn collect_parks_sni_but_ignores_removed_legacy_mcp_port() {
 }
 
 #[tokio::test]
+async fn aux_connection_collection_is_bounded_before_control_handshake() {
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    for _ in 0..MAX_DEFERRED_AUX_CONNECTIONS + 20 {
+        tx.send(make_conn(capsem_proto::VSOCK_PORT_AUDIT)).unwrap();
+    }
+    tx.send(make_conn(capsem_proto::VSOCK_PORT_TERMINAL)).unwrap();
+    tx.send(make_conn(capsem_proto::VSOCK_PORT_CONTROL)).unwrap();
+    let mut deferred = Vec::new();
+    collect_terminal_control_pair(&mut rx, &mut deferred).await.unwrap();
+    assert_eq!(deferred.len(), MAX_DEFERRED_AUX_CONNECTIONS);
+}
+
+#[test]
+fn aux_connection_workers_hold_bounded_service_permits() {
+    let limits = AuxConnectionLimits::default();
+    for (service, maximum) in [
+        (HostVsockService::Exec, aux::MAX_EXEC_CONNECTIONS),
+        (HostVsockService::Audit, aux::MAX_AUDIT_CONNECTIONS),
+        (HostVsockService::Lifecycle, aux::MAX_LIFECYCLE_CONNECTIONS),
+    ] {
+        let permits: Vec<_> = (0..maximum).map(|_| limits.try_acquire(service).unwrap()).collect();
+        assert!(limits.try_acquire(service).is_none());
+        drop(permits);
+        assert!(limits.try_acquire(service).is_some());
+    }
+}
+
+#[tokio::test]
 async fn collect_errors_when_channel_closes_early() {
     let (tx, mut rx) = mpsc::unbounded_channel();
     tx.send(make_conn(capsem_proto::VSOCK_PORT_TERMINAL)).unwrap();
@@ -530,6 +616,57 @@ async fn concurrent_exec_completions_keep_each_stdout() {
     };
     assert_eq!(stdout(first_rx.await.unwrap()), b"first\n");
     assert_eq!(stdout(second_rx.await.unwrap()), b"second\n");
+}
+
+#[tokio::test]
+async fn unsolicited_file_content_cannot_create_a_file_security_event() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("session.db");
+    let db = Arc::new(capsem_logger::DbWriter::open(&db_path, 16).unwrap());
+    let rules = Arc::new(std::sync::RwLock::new(Arc::new(
+        capsem_core::net::policy_config::SecurityRuleSet::new(Vec::new()),
+    )));
+    let js = Arc::new(JobStore::new());
+    handle_guest_msg(
+        capsem_proto::GuestToHost::FileContent {
+            id: 990,
+            path: "/host/forged.txt".to_string(),
+            data: b"forged bytes".to_vec(),
+        },
+        &js,
+        &db,
+        &rules,
+        &empty_plugin_policy(),
+    )
+    .await;
+    js.active_file_ops.lock().unwrap().insert(
+        991,
+        ActiveFileOp::Write {
+            path: "/workspace/write.txt".to_string(),
+            data: b"original".to_vec(),
+        },
+    );
+    handle_guest_msg(
+        capsem_proto::GuestToHost::FileContent {
+            id: 991,
+            path: "/host/forged.txt".to_string(),
+            data: b"forged bytes".to_vec(),
+        },
+        &js,
+        &db,
+        &rules,
+        &empty_plugin_policy(),
+    )
+    .await;
+    assert!(matches!(
+        js.active_file_ops.lock().unwrap().get(&991),
+        Some(ActiveFileOp::Write { .. })
+    ));
+    db.shutdown_blocking();
+    let reader = capsem_logger::DbReader::open(&db_path).unwrap();
+    let rows: serde_json::Value =
+        serde_json::from_str(&reader.query_raw("SELECT COUNT(*) FROM fs_events").unwrap()).unwrap();
+    assert_eq!(rows["rows"][0][0].as_i64(), Some(0));
 }
 
 #[tokio::test]

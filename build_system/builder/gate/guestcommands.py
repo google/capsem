@@ -21,7 +21,7 @@ class ShellCommand(GateCommand, name="shell", help="start the service and enter 
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
-        prepared = runtimeprepare.prepare(plan, self._config)
+        prepared = runtimeprepare.prepare(plan, self._config, permission=self.rebuild_permission)
         started = service.fragment(plan, self._config, after=(prepared.ready,))
         plan.add(
             step(
@@ -59,7 +59,7 @@ class ExecCommand(GateCommand, name="exec", help="run one command in a fresh tem
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
-        prepared = runtimeprepare.prepare(plan, self._config)
+        prepared = runtimeprepare.prepare(plan, self._config, permission=self.rebuild_permission)
         started = service.fragment(plan, self._config, after=(prepared.ready,))
         plan.add(
             step(

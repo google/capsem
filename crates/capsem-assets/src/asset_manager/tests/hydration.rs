@@ -494,3 +494,28 @@ async fn download_accepts_bodies_that_match_the_manifest() {
     assert_eq!(downloaded.len(), 3);
     assert_eq!(std::fs::read(&downloaded[2]).unwrap(), b"kernel");
 }
+
+#[tokio::test]
+async fn download_does_not_delete_another_hydrators_temporary_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let bodies = DECLARED_ASSETS
+        .iter()
+        .map(|(name, bytes)| (*name, bytes.to_vec()))
+        .collect();
+    let manifest = declared_manifest(serve_asset_bodies(bodies).await);
+    let arch_dir = dir.path().join("arm64");
+    std::fs::create_dir(&arch_dir).unwrap();
+    let entry = &manifest.assets.releases["2030.0101.1"].arches["arm64"]["initrd.img"];
+    let occupied = arch_dir.join(format!("{}.tmp", hash_filename("initrd.img", &entry.hash)));
+    std::fs::write(&occupied, b"another hydrator owns this").unwrap();
+
+    download_missing_assets(&manifest, "9.9.9", "arm64", dir.path(), |_| {})
+        .await
+        .expect("download must use its own temporary file");
+
+    assert_eq!(std::fs::read(&occupied).unwrap(), b"another hydrator owns this");
+    assert_eq!(
+        std::fs::read(arch_dir.join(hash_filename("initrd.img", &entry.hash))).unwrap(),
+        b"initrd"
+    );
+}

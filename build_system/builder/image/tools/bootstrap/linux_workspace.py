@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import platform
 import re
@@ -198,6 +199,41 @@ def verify(config_path: Path) -> None:
     )
 
 
+def _apt_command(config_path: Path, operation: str, *arguments: str) -> list[str]:
+    """Bound APT's whole process group without changing repositories or locks."""
+    try:
+        document = tomllib.loads(config_path.read_text(encoding="utf-8"))
+        limits = document["apt_snapshot"]
+        names = (
+            "update_timeout_seconds",
+            "install_timeout_seconds",
+            "request_timeout_seconds",
+            "retries",
+        )
+        if any(type(limits[name]) is not int or limits[name] <= 0 for name in names):
+            raise ValueError("APT limits must be positive integers")
+        grace = document["execution"]["cancellation_grace_seconds"]
+        if type(grace) not in (int, float) or not math.isfinite(grace) or grace <= 0:
+            raise ValueError("cancellation grace must be finite and positive")
+    except (OSError, KeyError, TypeError, ValueError) as exc:
+        raise ProvisionError(f"cannot load APT bounds from {config_path}: {exc}") from exc
+    return [
+        "timeout",
+        "--signal=TERM",
+        f"--kill-after={grace}s",
+        f"{limits[f'{operation}_timeout_seconds']}s",
+        "apt-get",
+        "-o",
+        f"Acquire::http::Timeout={limits['request_timeout_seconds']}",
+        "-o",
+        f"Acquire::https::Timeout={limits['request_timeout_seconds']}",
+        "-o",
+        f"Acquire::Retries={limits['retries']}",
+        operation,
+        *arguments,
+    ]
+
+
 def install_and_verify(
     config_path: Path,
     manager: PackageManager,
@@ -214,9 +250,9 @@ def install_and_verify(
     selected = packages(config_path, manager)
     if manager is PackageManager.APT:
         selected += cross_compiler_packages(config_path, selected_architecture)
-        subprocess.run(["apt-get", "update"], check=True)
+        subprocess.run(_apt_command(config_path, "update"), check=True)
         subprocess.run(
-            ["apt-get", "install", "-y", "--no-install-recommends", *selected],
+            _apt_command(config_path, "install", "-y", "--no-install-recommends", *selected),
             check=True,
         )
     else:

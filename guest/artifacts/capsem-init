@@ -283,6 +283,20 @@ mount -t devtmpfs devtmpfs /newroot/dev
 mkdir -p /newroot/dev/pts
 mount -t devpts   devpts   /newroot/dev/pts
 
+# Runtime state must not enter the persistent system overlay. In particular,
+# /tmp receives injected boot values and /var/log receives guest proxy logs.
+mount_runtime_tmpfs() {
+    local path="$1" mode="$2"
+    mkdir -p "/newroot$path"
+    mount -t tmpfs -o "nosuid,nodev,mode=$mode" tmpfs "/newroot$path" || {
+        echo "[capsem-init] FATAL: cannot mount runtime tmpfs on $path" >&2
+        exit 1
+    }
+}
+mount_runtime_tmpfs /run 0755
+mount_runtime_tmpfs /tmp 1777
+mount_runtime_tmpfs /var/log 0755
+
 # Kernel hardening that is runtime state rather than build configuration, set
 # before any service starts. A value the kernel refuses stops the boot: a
 # guest that silently runs without one is not the guest capsem-doctor proves.

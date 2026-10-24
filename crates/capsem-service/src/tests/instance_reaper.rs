@@ -148,7 +148,7 @@ async fn generation_retirement_waits_for_reaper_after_instance_map_removal() {
         id.into(),
         Arc::clone(&state),
         uds.clone(),
-        session,
+        session.clone(),
         retirement,
     );
     tokio::time::timeout(std::time::Duration::from_secs(2), async {
@@ -173,6 +173,7 @@ async fn generation_retirement_waits_for_reaper_after_instance_map_removal() {
         "a later reconciliation sees the same completed generation"
     );
     assert!(!uds.with_extension("ready").exists());
+    assert!(!session.exists(), "clean guest exit must delete an ephemeral session");
 }
 
 #[tokio::test]

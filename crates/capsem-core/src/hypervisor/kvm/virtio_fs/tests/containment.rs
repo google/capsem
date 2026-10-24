@@ -132,6 +132,41 @@ fn rename_through_a_symlinked_parent_does_not_steal_outside_files() {
 }
 
 #[test]
+fn rename2_flags_cannot_silently_overwrite_or_exchange_files() {
+    let mut a = attack("rename2-flags");
+    std::fs::write(a.share.join("source"), b"source").unwrap();
+    std::fs::write(a.share.join("target"), b"target").unwrap();
+    for flags in [1, 2, 4, u32::MAX] {
+        let mut body = fuse::as_bytes(&FuseRename2In {
+            newdir: 1,
+            flags,
+            padding: 0,
+        })
+        .to_vec();
+        body.extend(two_names("source", "target"));
+        assert_eq!(request(&mut a.proc, FUSE_RENAME2, 1, &body), -libc::ENOSYS);
+        assert_eq!(std::fs::read(a.share.join("source")).unwrap(), b"source");
+        assert_eq!(std::fs::read(a.share.join("target")).unwrap(), b"target");
+    }
+}
+
+#[test]
+fn unlink_then_recreate_does_not_reuse_a_fuse_nodeid() {
+    let mut a = attack("inode-recreate");
+    std::fs::write(a.share.join("file"), b"first").unwrap();
+    let old = lookup(&mut a.proc, 1, "file").unwrap();
+    assert_eq!(request(&mut a.proc, FUSE_UNLINK, 1, &name_body("file")), 0);
+    assert_eq!(
+        request(&mut a.proc, FUSE_CREATE, 1, &create_body(libc::O_WRONLY as u32, "file")),
+        0
+    );
+    let new = lookup(&mut a.proc, 1, "file").unwrap();
+    assert_ne!(old, new);
+    assert_eq!(request(&mut a.proc, FUSE_GETATTR, old, &[]), -libc::ENOENT);
+    assert_eq!(request(&mut a.proc, FUSE_GETATTR, new, &[]), 0);
+}
+
+#[test]
 fn mkdir_create_mknod_symlink_and_link_through_a_symlinked_parent_are_refused() {
     let mut a = attack("create");
     let parent = dirlink(&mut a);
@@ -258,11 +293,16 @@ fn open_and_truncate_refuse_fifos_without_blocking() {
 fn a_parent_replaced_by_a_symlink_after_lookup_is_refused() {
     let mut a = attack("swap");
     std::fs::create_dir_all(a.share.join("sub")).unwrap();
+    std::fs::write(a.share.join("sub/authorized_keys"), b"safe").unwrap();
     let sub = lookup(&mut a.proc, 1, "sub").unwrap();
+    let file = lookup(&mut a.proc, sub, "authorized_keys").unwrap();
+    assert_eq!(request(&mut a.proc, FUSE_GETATTR, file, &[]), 0);
     // The guest (or anything) swaps the directory for a link after lookup.
+    std::fs::remove_file(a.share.join("sub/authorized_keys")).unwrap();
     std::fs::remove_dir(a.share.join("sub")).unwrap();
     std::os::unix::fs::symlink(&a.outside, a.share.join("sub")).unwrap();
 
+    assert!(request(&mut a.proc, FUSE_GETATTR, file, &[]) < 0);
     assert!(request(&mut a.proc, FUSE_UNLINK, sub, &name_body("authorized_keys")) < 0);
     assert!(
         request(

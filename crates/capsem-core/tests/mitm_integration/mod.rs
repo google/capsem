@@ -8,4 +8,5 @@ mod host_normalization;
 mod mcp_gateway_route;
 mod mcp_over_http;
 mod resolved_upstream;
+mod semantic_body;
 mod websocket_policy;

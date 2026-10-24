@@ -814,6 +814,35 @@ fn cold_activation_rejects_oversized_queue() {
 }
 
 #[test]
+fn cold_activation_rejects_nonready_nonzero_queues_with_invalid_geometry() {
+    use std::sync::atomic::Ordering;
+
+    for (size, desc_addr) in [(7, RAM_BASE), (8, RAM_BASE + 4096 - 16)] {
+        let (transport, activated, _) = make_transport();
+        write_u32(&transport, QUEUE_SEL, 0);
+        write_u32(&transport, QUEUE_NUM, size);
+        write_u32(&transport, QUEUE_DESC_LOW, desc_addr as u32);
+        write_u32(&transport, QUEUE_DESC_HIGH, (desc_addr >> 32) as u32);
+        write_u32(&transport, QUEUE_DRIVER_LOW, (RAM_BASE + 256) as u32);
+        write_u32(&transport, QUEUE_DRIVER_HIGH, (RAM_BASE >> 32) as u32);
+        write_u32(&transport, QUEUE_DEVICE_LOW, (RAM_BASE + 512) as u32);
+        write_u32(&transport, QUEUE_DEVICE_HIGH, (RAM_BASE >> 32) as u32);
+        // The guest leaves QUEUE_READY=0. Device activation still receives
+        // every queue config, so its nonzero ring must be checked first.
+        write_u32(
+            &transport,
+            STATUS,
+            STATUS_ACKNOWLEDGE | STATUS_DRIVER | STATUS_FEATURES_OK | STATUS_DRIVER_OK,
+        );
+        assert!(
+            !activated.load(Ordering::SeqCst),
+            "invalid non-ready queue size={size} must not activate"
+        );
+        assert_ne!(read_u32(&transport, STATUS) & STATUS_FAILED, 0);
+    }
+}
+
+#[test]
 fn cold_activation_accepts_a_valid_ready_queue() {
     use std::sync::atomic::Ordering;
     let (t, activated, _) = make_transport();
