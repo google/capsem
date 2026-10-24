@@ -192,13 +192,13 @@ for bin in capsem capsem-service capsem-process capsem-ledger capsem-proxy capse
     fi
 done
 
-# Entitlements (needed by postinstall for codesigning)
 if [ -f "$SCRIPT_DIR/entitlements.plist" ]; then
     cp "$SCRIPT_DIR/entitlements.plist" "$SHARE_DIR/"
 fi
 
-# VM manifest source. The package carries only the selected manifest URL and
-# provenance. Postinstall hydrates assets from that live channel URL.
+python3 "$SCRIPT_DIR/../../scripts/release/package-signing-roles.py" > "$SHARE_DIR/virtualization-roles"
+
+# VM manifest URL/provenance only; postinstall hydrates from the live channel.
 mkdir -p "$SHARE_DIR/assets"
 if [ -n "$MANIFEST_PATH" ]; then
     SELECTED_MANIFEST_SOURCE="$MANIFEST_PATH"

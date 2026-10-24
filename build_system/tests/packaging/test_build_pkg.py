@@ -246,7 +246,7 @@ def test_macos_pkg_payload_is_closed_and_manifest_only_for_assets(tmp_path: Path
                 continue
             if rel == "assets/manifest-metadata.json":
                 continue
-            if rel == "entitlements.plist":
+            if rel in {"entitlements.plist", "virtualization-roles"}:
                 continue
             unexpected.append(rel)
 

@@ -419,9 +419,10 @@ jobs:
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
+          VM_SIGNING_ROLES="$(python3 build_system/scripts/release/package-signing-roles.py)"
           for bin in capsem capsem-service capsem-process capsem-ledger capsem-proxy capsem-tui capsem-router capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin capsem-mock-server capsem-bench-rs; do
             entitlement_args=()
-            if [[ "$bin" != capsem-router && "$bin" != capsem-ledger && "$bin" != capsem-proxy ]]; then
+            if printf '%s\n' "$VM_SIGNING_ROLES" | grep -Fxq "$bin"; then
               entitlement_args=(--entitlements build_system/packaging/macos/entitlements.plist)
             fi
             codesign --sign "$APPLE_SIGNING_IDENTITY" \

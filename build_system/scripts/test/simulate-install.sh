@@ -83,6 +83,7 @@ codesign_identifier_for_bin() {
 # shell-script binaries used by install tests are intentionally skipped.
 if [[ "$(uname -s)" == "Darwin" ]]; then
     ENTITLEMENTS="$REPO_ROOT/build_system/packaging/macos/entitlements.plist"
+    VM_SIGNING_ROLES="$(python3 "$REPO_ROOT/build_system/scripts/release/package-signing-roles.py")"
     for bin in "$INSTALL_DIR"/capsem*; do
         [[ -f "$bin" ]] || continue
         if file "$bin" | grep -q "Mach-O"; then
@@ -92,14 +93,11 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
             fi
             identifier="$(codesign_identifier_for_bin "$bin")"
             # As the package installs them: confined workers get no VM entitlement.
-            case "$(basename "$bin")" in
-                capsem-router|capsem-ledger|capsem-proxy)
-                    codesign --sign - --identifier "$identifier" --force "$bin"
-                    ;;
-                *)
-                    codesign --sign - --identifier "$identifier" --entitlements "$ENTITLEMENTS" --force "$bin"
-                    ;;
-            esac
+            if printf '%s\n' "$VM_SIGNING_ROLES" | grep -Fxq "$(basename "$bin")"; then
+                codesign --sign - --identifier "$identifier" --entitlements "$ENTITLEMENTS" --force "$bin"
+            else
+                codesign --sign - --identifier "$identifier" --force "$bin"
+            fi
         fi
     done
 fi

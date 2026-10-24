@@ -130,6 +130,7 @@ codesign_identifier_for_bin() {
 # Apple-anchored production signature is preserved; development workers are
 # signed with the exact authority their role needs.
 CAPSEM_INSTALL_PHASE="codesign_binaries"
+[ -s "$PKG_SHARE/virtualization-roles" ] || { echo "capsem: packaged signing roles missing" >&2; exit 1; }
 if [ -f "$PKG_SHARE/entitlements.plist" ]; then
     for bin in "$CAPSEM_DIR/bin"/capsem*; do
         identifier=$(codesign_identifier_for_bin "$bin" || true)
@@ -137,14 +138,11 @@ if [ -f "$PKG_SHARE/entitlements.plist" ]; then
             if codesign --verify --strict --test-requirement '=anchor apple generic' "$bin" 2>/dev/null; then
                 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=binary_signature_preserved bin=$(basename "$bin")"
             else
-                case "$(basename "$bin")" in
-                    capsem-router|capsem-ledger|capsem-proxy)
-                        codesign --sign - --identifier "$identifier" --force "$bin"
-                        ;;
-                    *)
-                        codesign --sign - --identifier "$identifier" --entitlements "$PKG_SHARE/entitlements.plist" --force "$bin"
-                        ;;
-                esac
+                if grep -Fxq "$(basename "$bin")" "$PKG_SHARE/virtualization-roles"; then
+                    codesign --sign - --identifier "$identifier" --entitlements "$PKG_SHARE/entitlements.plist" --force "$bin"
+                else
+                    codesign --sign - --identifier "$identifier" --force "$bin"
+                fi
                 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=binary_signed_ad_hoc bin=$(basename "$bin")"
             fi
         fi
