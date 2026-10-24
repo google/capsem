@@ -183,3 +183,43 @@ match = 'file.import.content == "CAPSEM_REWRITTEN_EICAR"'
     ));
     handler.abort();
 }
+
+#[test]
+fn approval_memory_accounts_for_retained_capacity_not_json_length() {
+    let mut event = capsem_core::security_engine::SecurityEvent::new(
+        capsem_core::security_engine::RuntimeSecurityEventType::FileImport,
+    );
+    let mut content = String::with_capacity(64 * 1024);
+    content.push_str("ok");
+    let capacity = content.capacity();
+    event.file = Some(capsem_core::security_engine::FileSecurityEvent {
+        import_content: Some(content),
+        ..Default::default()
+    });
+    assert!(super::approval_held_bytes(&event, 8) >= 8 + capacity * 4);
+    assert_eq!(super::approval_held_bytes(&event, usize::MAX), usize::MAX);
+}
+
+#[test]
+fn approval_memory_bounds_expanded_file_slots_metadata_and_unexpected_contexts() {
+    let mut event = capsem_core::security_engine::SecurityEvent::new(
+        capsem_core::security_engine::RuntimeSecurityEventType::FileImport,
+    );
+    let initial = super::approval_held_bytes(&event, 0);
+    event.file = Some(capsem_core::security_engine::FileSecurityEvent {
+        export_content: Some("x".repeat(4096)),
+        read_content: Some("y".repeat(4096)),
+        ..Default::default()
+    });
+    event
+        .plugin_executions
+        .push(capsem_core::security_engine::SecurityPluginExecution {
+            plugin_id: "p".repeat(1024),
+            stage: capsem_core::security_engine::SecurityPluginStage::Preprocess,
+            applied: true,
+            duration_us: 0,
+        });
+    assert!(super::approval_held_bytes(&event, 0) >= initial + (8192 + 1024) * 4);
+    event.http = Some(Default::default());
+    assert_eq!(super::approval_held_bytes(&event, 0), usize::MAX);
+}

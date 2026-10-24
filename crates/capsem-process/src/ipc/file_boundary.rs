@@ -193,8 +193,7 @@ pub(crate) async fn emit_explicit_file_security_event(
         // Include semantic metadata and plugin-produced content as well as
         // original bytes. A tiny preview or expanding rewrite cannot buy a
         // larger live continuation than the shared retained-memory admission.
-        let semantic = serde_json::to_vec(&emission.event.serializable()).map_err(|error| error.to_string())?;
-        held_bytes.saturating_add(semantic.len().saturating_mul(4))
+        approval_held_bytes(&emission.event, held_bytes)
     } else {
         held_bytes
     };
@@ -245,6 +244,138 @@ fn mutating_file_rewrite(event: &capsem_core::security_engine::SecurityEvent) ->
                     && detection.plugin_mode == Some(capsem_core::net::policy_config::SecurityPluginMode::Rewrite)
             })
     })
+}
+
+// This boundary retains only file facts. Reject unexpected protocol contexts
+// rather than silently under-accounting an expanded plugin result.
+fn approval_held_bytes(event: &capsem_core::security_engine::SecurityEvent, original: usize) -> usize {
+    if event.container.is_some()
+        || event.network.is_some()
+        || event.http_request.is_some()
+        || event.http.is_some()
+        || event.dns.is_some()
+        || event.mcp.is_some()
+        || event.model.is_some()
+        || event.process.is_some()
+        || event.ip.is_some()
+        || event.tcp.is_some()
+        || event.udp.is_some()
+        || !event.credential_observations.is_empty()
+        || !event.credential_injections.is_empty()
+    {
+        return usize::MAX;
+    }
+    let mut bytes = std::mem::size_of_val(event)
+        .saturating_add(event.trace_id.as_ref().map_or(0, String::capacity))
+        .saturating_add(event.credential_ref.as_ref().map_or(0, String::capacity))
+        .saturating_add(
+            event
+                .action_trace
+                .capacity()
+                .saturating_mul(std::mem::size_of::<capsem_core::net::policy_config::PolicyActionId>()),
+        )
+        .saturating_add(
+            event
+                .detections
+                .capacity()
+                .saturating_mul(std::mem::size_of::<capsem_core::security_engine::SecurityDetectionEvent>()),
+        )
+        .saturating_add(
+            event
+                .plugin_executions
+                .capacity()
+                .saturating_mul(std::mem::size_of::<capsem_core::security_engine::SecurityPluginExecution>()),
+        );
+    for detection in &event.detections {
+        for value in [&detection.rule_id, &detection.plugin_id, &detection.reason]
+            .into_iter()
+            .flatten()
+        {
+            bytes = bytes.saturating_add(value.capacity());
+        }
+    }
+    for execution in &event.plugin_executions {
+        bytes = bytes.saturating_add(execution.plugin_id.capacity());
+    }
+    if let Some(file) = &event.file {
+        // Exhaustive destructuring makes new file slots require an accounting review.
+        let capsem_core::security_engine::FileSecurityEvent {
+            import_path,
+            import_name,
+            import_ext,
+            import_mime_type,
+            import_content,
+            export_path,
+            export_name,
+            export_ext,
+            export_mime_type,
+            export_content,
+            read_path,
+            read_name,
+            read_ext,
+            read_mime_type,
+            read_content,
+            create_path,
+            create_name,
+            create_ext,
+            create_mime_type,
+            create_content,
+            write_path,
+            write_name,
+            write_ext,
+            write_mime_type,
+            write_content,
+            delete_path,
+            delete_name,
+            delete_ext,
+            delete_mime_type,
+            delete_content,
+            content,
+            kind,
+        } = file;
+        for value in [
+            import_path,
+            import_name,
+            import_ext,
+            import_mime_type,
+            import_content,
+            export_path,
+            export_name,
+            export_ext,
+            export_mime_type,
+            export_content,
+            read_path,
+            read_name,
+            read_ext,
+            read_mime_type,
+            read_content,
+            create_path,
+            create_name,
+            create_ext,
+            create_mime_type,
+            create_content,
+            write_path,
+            write_name,
+            write_ext,
+            write_mime_type,
+            write_content,
+            delete_path,
+            delete_name,
+            delete_ext,
+            delete_mime_type,
+            delete_content,
+            content,
+            kind,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            bytes = bytes.saturating_add(value.capacity());
+        }
+    }
+    // Cover retained policy/forensic copies conservatively without allocating
+    // or cloning the event simply to estimate its memory.
+    original.saturating_add(bytes.saturating_mul(4))
 }
 
 #[cfg(test)]
