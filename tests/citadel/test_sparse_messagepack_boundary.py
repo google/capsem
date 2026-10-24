@@ -14,6 +14,8 @@ ROOT = Path(__file__).resolve().parents[2]
 PROTOCOL = ROOT / "crates/capsem-proto/src"
 ENCODER_OWNERS = {
     Path("crates/capsem-proto/src/lib.rs"),
+    # Shared bounded final-frame/record encoder, reused by foundation IPC.
+    Path("crates/capsem-proto/src/framing.rs"),
     Path("crates/capsem-proto/src/exec_stream.rs"),
     Path("crates/capsem-proto/src/stream.rs"),
     Path("crates/capsem-proto/src/mcp_aggregator.rs"),
@@ -51,7 +53,8 @@ silently evade that contract. Keep transport framing in its existing owners.
 def wire_type_sources(root: Path) -> list[Path]:
     """Include future production protocol modules, not only today's file list."""
     return sorted(
-        path for path in root.rglob("*.rs")
+        path
+        for path in root.rglob("*.rs")
         if "tests" not in path.relative_to(root).parts and path.name != "tests.rs"
     )
 
@@ -70,7 +73,7 @@ def default_field_violations(source: str) -> list[str]:
         if depth == 0:
             if line.startswith("#[") or type_attribute_open:
                 type_attributes.append(line)
-                type_attribute_open = not line.endswith(")]" )
+                type_attribute_open = not line.endswith(")]")
                 continue
             if TYPE_START.search(line):
                 depth = line.count("{") - line.count("}")
@@ -89,7 +92,8 @@ def default_field_violations(source: str) -> list[str]:
             attrs = " ".join(attributes)
             missing_pair = "default" not in attrs or "skip_serializing_if" not in attrs
             if inspect_type and (
-                (FIELD.search(line) and missing_pair) or ("default" in attrs and "skip_serializing_if" not in attrs)
+                (FIELD.search(line) and missing_pair)
+                or ("default" in attrs and "skip_serializing_if" not in attrs)
             ):
                 violations.append(f"line {number}: {line}")
             attributes.clear()
@@ -101,15 +105,25 @@ def encoder_violations(relative: Path, source: str) -> list[str]:
     if "/tests/" in f"/{relative.as_posix()}/" or relative.name == "tests.rs":
         return []
     if relative not in ENCODER_OWNERS and relative not in DURABLE_ENCODER_OWNERS:
-        return [f"{relative}: MessagePack codec outside protocol/framing owner"] if "rmp_serde" in source else []
+        return (
+            [f"{relative}: MessagePack codec outside protocol/framing owner"]
+            if "rmp_serde" in source
+            else []
+        )
     calls = ENCODER.findall(source)
-    return [f"{relative}: positional MessagePack encoder" for call in calls if call in ("rmp_serde::to_vec", "rmp_serde::encode::write")]
+    return [
+        f"{relative}: positional MessagePack encoder"
+        for call in calls
+        if call in ("rmp_serde::to_vec", "rmp_serde::encode::write")
+    ]
 
 
 def test_guard_rejects_missing_omission_and_wild_encoding() -> None:
     missing = "#[derive(Serialize)]\npub struct Event {\n    pub value: Option<String>,\n}"
     assert default_field_violations(missing) == ["line 3: pub value: Option<String>,"]
-    default_scalar = "#[derive(Deserialize)]\npub struct Event {\n    #[serde(default)]\n    pub count: u64,\n}"
+    default_scalar = (
+        "#[derive(Deserialize)]\npub struct Event {\n    #[serde(default)]\n    pub count: u64,\n}"
+    )
     assert default_field_violations(default_scalar) == ["line 4: pub count: u64,"]
     multiline = (
         "#[derive(\n    Serialize,\n)]\n"
@@ -123,19 +137,35 @@ def test_guard_rejects_missing_omission_and_wild_encoding() -> None:
     assert encoder_violations(Path("crates/capsem-proto/src/lib.rs"), "rmp_serde::to_vec(&event)")
 
 
+def test_canonical_shared_framing_owner_is_exact_and_named_only() -> None:
+    owner = Path("crates/capsem-proto/src/framing.rs")
+    assert not encoder_violations(owner, "rmp_serde::encode::write_named(&mut bounded, value)")
+    assert encoder_violations(owner, "rmp_serde::encode::write(&mut bounded, value)")
+    assert encoder_violations(
+        owner.with_name("framing_other.rs"), "rmp_serde::encode::write_named(&mut bounded, value)"
+    )
+    assert encoder_violations(
+        owner.parent / "framing/other.rs", "rmp_serde::encode::write_named(&mut bounded, value)"
+    )
+
+
 def test_new_protocol_modules_are_scanned(tmp_path: Path) -> None:
     (tmp_path / "new_wire.rs").write_text(
         "#[derive(serde::Serialize)]\npub struct NewWire {\n    pub value: Option<String>,\n}\n"
     )
     sources = wire_type_sources(tmp_path)
     assert [path.name for path in sources] == ["new_wire.rs"]
-    assert default_field_violations(sources[0].read_text()) == ["line 3: pub value: Option<String>,"]
+    assert default_field_violations(sources[0].read_text()) == [
+        "line 3: pub value: Option<String>,"
+    ]
 
 
 def test_durable_engine_checkpoint_has_one_explicit_owner() -> None:
     path = Path("crates/capsem-core/src/terminal/checkpoint.rs")
     assert len(DURABLE_ENCODER_OWNERS[path]) > 100
-    assert not encoder_violations(path, "rmp_serde::Serializer::new(&mut bounded).with_struct_map()")
+    assert not encoder_violations(
+        path, "rmp_serde::Serializer::new(&mut bounded).with_struct_map()"
+    )
     assert encoder_violations(path.with_name("other.rs"), "rmp_serde::to_vec_named(&state)")
     assert encoder_violations(path, "rmp_serde::to_vec(&state)")
 
