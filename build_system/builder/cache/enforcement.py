@@ -6,6 +6,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt, StrictStr
 
+from .capacity import RequiredCapacity
 from .inventory import scan_inventory, select_inventory
 from .models import CachePolicy
 from .operations import apply_prune
@@ -36,13 +37,18 @@ def enforce_repository(
     *,
     reason: str,
     checkout: Path | None = None,
+    required: RequiredCapacity | None = None,
 ) -> EnforcementResult:
-    """Prune one repository owner, or all owners, when a maximum is crossed.
+    """Prune actual pressure, or admit bounded upcoming usage for one owner.
 
     `checkout` is the calling checkout: with the cache authority it is the
-    working set whose Cargo units go last.
+    working set whose Cargo units go last. `required` is intent; the reported
+    before/after inventory and reclaim bytes remain actual measurements.
     """
+    if required is not None and cache_id == "all":
+        raise ValueError("incoming capacity must name one configured owner")
     stage_ids = None if cache_id == "all" else frozenset({cache_id})
+    headroom = {cache_id: required} if required is not None else None
 
     def scan():
         return select_inventory(
@@ -51,13 +57,13 @@ def enforce_repository(
         )
 
     inventory = scan()
-    plan = plan_prune(inventory, policy)
+    plan = plan_prune(inventory, policy, headroom=headroom)
     if plan.actions:
         apply_prune(paths, plan, reason=reason)
         after = scan()
     else:
         after = inventory
-    violations = plan_prune(after, policy).violations
+    violations = plan_prune(after, policy, headroom=headroom).violations
     return EnforcementResult(
         cache_id=cache_id,
         before_size_bytes=inventory.logical_bytes,
@@ -80,14 +86,18 @@ def enforce_runtime(
     """Prune one native runtime cache and prove its owned bytes are bounded."""
     if runtime_id not in policy.runtimes:
         raise ValueError(f"unknown runtime cache {runtime_id!r}")
-    before_snapshot = scan_runtimes(policy, paths=paths, runner=runner, runtime_ids=frozenset({runtime_id}))
+    before_snapshot = scan_runtimes(
+        policy, paths=paths, runner=runner, runtime_ids=frozenset({runtime_id})
+    )
     before = before_snapshot.runtimes[0]
     plan = plan_runtime_prune(before_snapshot, policy)
     failures = []
     if plan.actions:
         applied = apply_runtime_prune(paths, policy, plan, reason=reason, runner=runner)
         failures.extend(item.output for item in applied.results if item.returncode != 0)
-    after_snapshot = scan_runtimes(policy, paths=paths, runner=runner, runtime_ids=frozenset({runtime_id}))
+    after_snapshot = scan_runtimes(
+        policy, paths=paths, runner=runner, runtime_ids=frozenset({runtime_id})
+    )
     after = after_snapshot.runtimes[0]
     contract = policy.runtimes[runtime_id]
     violations = list(failures)

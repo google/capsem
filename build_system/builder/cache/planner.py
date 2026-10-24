@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
+from .capacity import RequiredCapacity
 from .contract import PruneStrategy
 from .inventorymodels import RetentionInventory
 from .models import CacheEntry, CacheInventory, CachePolicy, PruneAction, PrunePlan, StageInventory
 
 NANOSECONDS_PER_HOUR = 3_600_000_000_000
+_NO_CAPACITY = RequiredCapacity()
 
 
 def _retention_key(strategy: PruneStrategy, entry: CacheEntry) -> tuple[int, int, str]:
@@ -50,11 +54,24 @@ def _unselectable(stage: StageInventory) -> str:
     return f"{stage.unselectable_bytes} bytes are outside every generation (largest: {largest})"
 
 
-def plan_prune(inventory: CacheInventory | RetentionInventory, policy: CachePolicy) -> PrunePlan:
+def plan_prune(
+    inventory: CacheInventory | RetentionInventory,
+    policy: CachePolicy,
+    *,
+    headroom: Mapping[str, RequiredCapacity] | None = None,
+) -> PrunePlan:
     """Select expired, surplus, and pressure candidates without touching pinned state."""
     actions: list[PruneAction] = []
     violations: list[str] = []
     selected: dict[str, set[str]] = {stage.stage_id: set() for stage in inventory.stages}
+    if headroom is not None and set(headroom) - set(selected):
+        raise ValueError("incoming capacity requires one inventoried cache owner")
+    for stage_id, required in (headroom or {}).items():
+        configured = policy.stages[stage_id]
+        if required.bytes > configured.max_size_bytes or (
+            configured.maximum_count is not None and required.entries > configured.maximum_count
+        ):
+            raise ValueError("incoming capacity cannot fit the configured owner maximum")
 
     def choose(stage, entry, reason: str) -> None:
         actions.extend(_actions(stage, entry, reason))
@@ -62,12 +79,19 @@ def plan_prune(inventory: CacheInventory | RetentionInventory, policy: CachePoli
 
     for stage in inventory.stages:
         stage_policy = policy.stages[stage.stage_id]
-        remaining = stage.budget_bytes
-        remaining_count = sum(entry.managed and not entry.lease_only for entry in stage.entries)
+        required = (
+            headroom.get(stage.stage_id, _NO_CAPACITY) if headroom is not None else _NO_CAPACITY
+        )
+        projected = "projected " if required.bytes or required.entries else ""
+        remaining = stage.budget_bytes + required.bytes
+        remaining_count = (
+            sum(entry.managed and not entry.lease_only for entry in stage.entries)
+            + required.entries
+        )
         if stage_policy.prune_strategy is PruneStrategy.NONE:
             if remaining > stage_policy.max_size_bytes:
                 violations.append(
-                    f"{stage.stage_id} uses {remaining} bytes above max size "
+                    f"{stage.stage_id} {projected}uses {remaining} bytes above max size "
                     f"{stage_policy.max_size_bytes}"
                 )
             if (
@@ -75,7 +99,7 @@ def plan_prune(inventory: CacheInventory | RetentionInventory, policy: CachePoli
                 and remaining_count > stage_policy.maximum_count
             ):
                 violations.append(
-                    f"{stage.stage_id} remains at {remaining_count} entries above count cap "
+                    f"{stage.stage_id} {projected}remains at {remaining_count} entries above count cap "
                     f"{stage_policy.maximum_count}"
                 )
             continue
@@ -127,6 +151,8 @@ def plan_prune(inventory: CacheInventory | RetentionInventory, policy: CachePoli
                 if recover_to_warm
                 else "over count cap"
             )
+            if projected:
+                reason += f"; admit {required.bytes} owned bytes and {required.entries} entries"
             choose(stage, entry, reason)
             remaining -= entry.budget_bytes
             remaining_count -= 1
@@ -140,12 +166,12 @@ def plan_prune(inventory: CacheInventory | RetentionInventory, policy: CachePoli
             )
         if remaining > stage_policy.max_size_bytes:
             violations.append(
-                f"{stage.stage_id} remains {remaining} bytes above max size "
+                f"{stage.stage_id} {projected}remains {remaining} bytes above max size "
                 f"{stage_policy.max_size_bytes}: {_pinned(stage)}"
             )
         if stage_policy.maximum_count is not None and remaining_count > stage_policy.maximum_count:
             violations.append(
-                f"{stage.stage_id} remains at {remaining_count} entries above count cap "
+                f"{stage.stage_id} {projected}remains at {remaining_count} entries above count cap "
                 f"{stage_policy.maximum_count}"
             )
     return PrunePlan(
