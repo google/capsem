@@ -290,3 +290,5 @@ fn separate_candidate_reads_snapshots_during_actual_row_writes() {
     admit_separately(&home, true);
     assert_ledger_payload_unchanged(&home, &before);
 }
+
+mod physical;

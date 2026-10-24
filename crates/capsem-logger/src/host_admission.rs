@@ -13,6 +13,9 @@ use capsem_foundation::unix::{
 };
 use rusqlite::{Connection, OpenFlags};
 
+/// Existing reader budget also bounds the complete fresh preinstall invocation.
+pub const PREINSTALL_ADMISSION_TIMEOUT: Duration = crate::schema::READER_BUSY_TIMEOUT;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostSchemaAdmission {
     Absent,
@@ -29,6 +32,10 @@ pub enum HostSchemaAdmission {
 /// the validated host path. Atomic containment against deliberately racing
 /// replacement by this same account is not a guarantee of this API.
 pub fn admit_preinstall_host_schema(home: &Path, timeout: Duration) -> anyhow::Result<HostSchemaAdmission> {
+    admit(home, timeout, false)
+}
+
+fn admit(home: &Path, timeout: Duration, physical_archive: bool) -> anyhow::Result<HostSchemaAdmission> {
     ensure!(
         !timeout.is_zero() && timeout <= crate::schema::READER_BUSY_TIMEOUT,
         "invalid host admission budget"
@@ -58,6 +65,12 @@ pub fn admit_preinstall_host_schema(home: &Path, timeout: Duration) -> anyhow::R
             held_files.push(handle);
         }
     }
+    if physical_archive {
+        if let Some(handle) = file(&sessions, "host.db-archive.lock", uid)? {
+            ensure!(main.is_some(), "partial host archive lock state");
+            held_files.push(handle);
+        }
+    }
     if main.is_none() {
         // The archive owner names this directory with db_path.with_extension("bodies").
         ensure!(
@@ -68,7 +81,19 @@ pub fn admit_preinstall_host_schema(home: &Path, timeout: Duration) -> anyhow::R
         return Ok(HostSchemaAdmission::Absent);
     }
     remaining(deadline)?;
-    let uri = readonly_uri(&sessions.path().join("host.db"));
+    let db_path = sessions.path().join("host.db");
+    // Rotation's acquisition lock precedes the SQLite snapshot, like ordinary
+    // captured archive reads. Never create or repair a missing lock.
+    let archive_lock = if physical_archive {
+        Some(capsem_foundation::unix::lock::acquire_existing_until(
+            &crate::writer::archive_lock_path_for_db(&db_path),
+            capsem_foundation::unix::lock::LockMode::Shared,
+            deadline,
+        )?)
+    } else {
+        None
+    };
+    let uri = readonly_uri(&db_path);
     let conn = Connection::open_with_flags(
         uri,
         OpenFlags::SQLITE_OPEN_READ_ONLY
@@ -80,11 +105,29 @@ pub fn admit_preinstall_host_schema(home: &Path, timeout: Duration) -> anyhow::R
     conn.progress_handler(1_000, Some(move || Instant::now() >= deadline));
     let transaction = conn.unchecked_transaction()?;
     crate::schema::validate_existing_host_schema(&transaction)?;
+    let archive_reader = if physical_archive {
+        let state = crate::schema::archive_state(&transaction)?;
+        let directory = sessions.descend(OsStr::new("host.bodies"))?;
+        directory.validate_private()?;
+        let name = state.header.generation_id.file_name();
+        let descriptor = file(&directory, &name, uid)?.context("selected host archive generation is missing")?;
+        // Existing archive owner checks only its bounded header and physical
+        // extent here; no body decompression, scanning or tail recovery.
+        Some(capsem_archive::BodyLogReader::from_descriptor(
+            descriptor,
+            state.header,
+            state.committed_end,
+        )?)
+    } else {
+        None
+    };
     remaining(deadline)?;
     transaction.commit()?;
     remaining(deadline)?;
     // Keep validated descriptors alive until SQLite closes, including failures.
     drop(conn);
+    drop(archive_reader);
+    drop(archive_lock);
     drop(held_files);
     drop(main);
     Ok(HostSchemaAdmission::Current)
@@ -131,6 +174,14 @@ fn readonly_uri(path: &Path) -> String {
     }
     uri.push_str("?mode=ro");
     uri
+}
+
+/// Admit host schema plus its selected physical archive header/generation and
+/// committed extent in the same bounded snapshot, under the shared acquisition
+/// lock. This does not scan body blocks or admit retained session ledgers.
+/// The account/path/SQLite-coordination contract is the schema API's contract.
+pub fn admit_preinstall_host_state(home: &Path, timeout: Duration) -> anyhow::Result<HostSchemaAdmission> {
+    admit(home, timeout, true)
 }
 
 #[cfg(test)]
