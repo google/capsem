@@ -115,3 +115,169 @@ def test_pulled_native_roles_must_equal_selected_package_payload_bytes(tmp_path,
     (binary_dir / "capsem-process").write_bytes(b"different selected bytes")
     with pytest.raises(ValueError, match="differs from selected package"):
         verify_host_roles(config, binary_dir, tmp_path / "unit-package.deb")
+
+
+@pytest.fixture
+def assembly(tmp_path, monkeypatch):
+    from capsem_builder import crypto
+    from capsem_builder.cache.config import load_policy
+    from capsem_builder.cache.paths import CachePaths
+    from capsem_builder.gate.tools import native_file_content as owner
+
+    config = load(PROJECT_ROOT).model_copy(update={"root": tmp_path})
+    settings = config.functional.native_file_content
+    bins = config.path(config.modules.default_bin_dir)
+    bins.mkdir(parents=True)
+    rows = []
+    sources = {}
+    for name in config.signing.built:
+        path = bins / name
+        path.write_bytes(b"synthetic executable " + name.encode())
+        path.chmod(0o555)
+        sources[name] = path
+        entry = row(tmp_path, tests=False, features=())
+        entry["target"]["name"] = name
+        entry["executable"] = str(path)
+        rows.append(entry)
+    feature = tmp_path / "cache/target/capsem-service-test"
+    feature.write_bytes(b"synthetic feature executable")
+    feature.chmod(0o555)
+    sources[settings.artifact_name] = feature
+    config.path(settings.host_log).parent.mkdir(parents=True, exist_ok=True)
+    write(config.path(settings.host_log), [*rows, {"reason": "build-finished", "success": True}])
+    write(
+        config.path(settings.cargo_log),
+        [row(tmp_path), {"reason": "build-finished", "success": True}],
+    )
+    identity = {"source_commit": "synthetic-source", "source_tree": "synthetic-tree"}
+    config.path(settings.source_receipt).write_text(json.dumps(identity))
+    monkeypatch.setattr(owner, "source_identity", lambda _: identity)
+    policy = load_policy(PROJECT_ROOT)
+    paths = CachePaths(repository_root=tmp_path, policy=policy)
+    monkeypatch.setattr(owner, "load_paths", lambda _: paths)
+    receipt = {
+        "schema": "capsem.native-file-content.v1",
+        **identity,
+        "binaries": {name: crypto.digest_file(path) for name, path in sources.items()},
+        "cohort_package": None,
+    }
+    encoded = json.dumps(receipt, sort_keys=True).encode()
+    key = settings.generation_prefix + crypto.blake3(encoded).hexdigest()
+    directory = paths.stage(settings.cache_stage) / key
+    expected = sum(path.stat().st_size for path in sources.values()) + len(encoded)
+    expected += sum(
+        config.path(log).stat().st_size for log in (settings.cargo_log, settings.host_log)
+    )
+
+    def limit(**values):
+        nonlocal paths
+        stages = dict(policy.stages)
+        stages[settings.cache_stage] = stages[settings.cache_stage].model_copy(update=values)
+        paths = paths.model_copy(update={"policy": policy.model_copy(update={"stages": stages})})
+
+    return config, bins, paths, directory, expected, limit
+
+
+@pytest.mark.parametrize("pressure", ["entries", "bytes"])
+def test_protected_capacity_refuses_before_any_native_generation_write(assembly, pressure):
+    from capsem_builder.cache.leases import release_path, retain_generation
+    from capsem_builder.gate.tools.native_file_content import assemble
+
+    config, bins, paths, directory, expected, limit = assembly
+    stage = config.functional.native_file_content.cache_stage
+    limit(
+        max_size_bytes=expected if pressure == "bytes" else 100000,
+        warm_size_bytes=0,
+        maximum_count=4,
+    )
+    leases = []
+    try:
+        for index in range(4):
+            key = f"foreign-{index}"
+            foreign = paths.stage(stage) / key
+            foreign.mkdir(parents=True)
+            (foreign / "original").write_bytes(b"held")
+            retain_generation(paths, stage, key)
+            leases.append(foreign.parent / f".{key}.lock")
+        with pytest.raises(ValueError, match=r"native.*capacity"):
+            assemble(config, bins, None)
+        assert not directory.exists(), "admission must precede generation mkdir and every copy"
+        assert not config.path(config.functional.native_file_content.selection).exists()
+        assert all(
+            (paths.stage(stage) / f"foreign-{i}/original").read_bytes() == b"held" for i in range(4)
+        )
+    finally:
+        for lease in leases:
+            release_path(lease)
+
+
+def test_exact_byte_admission_and_equal_generation_reuse(assembly, monkeypatch):
+    from capsem_builder.gate.tools import native_file_content as owner
+
+    config, bins, _, directory, expected, limit = assembly
+    limit(max_size_bytes=expected, warm_size_bytes=0, maximum_count=1)
+    assert owner.assemble(config, bins, None) == directory
+    assert sum(path.stat().st_size for path in directory.iterdir()) == expected
+    before = {
+        path.name: (path.read_bytes(), path.stat().st_mtime_ns) for path in directory.iterdir()
+    }
+    monkeypatch.setattr(owner.shutil, "copy2", lambda *_: pytest.fail("equal files must be reused"))
+    assert owner.assemble(config, bins, None) == directory
+    assert before == {
+        path.name: (path.read_bytes(), path.stat().st_mtime_ns) for path in directory.iterdir()
+    }
+
+
+def test_wrong_existing_role_refused_before_missing_roles_are_copied(assembly):
+    from capsem_builder.gate.tools.native_file_content import assemble
+
+    config, bins, _, directory, _, _ = assembly
+    directory.mkdir(parents=True)
+    wrong = directory / config.functional.native_file_content.artifact_name
+    wrong.write_bytes(b"foreign executable")
+    with pytest.raises(ValueError, match="generation changed"):
+        assemble(config, bins, None)
+    assert list(directory.iterdir()) == [wrong]
+    assert wrong.read_bytes() == b"foreign executable"
+
+
+@pytest.mark.parametrize("fits", [False, True])
+def test_partial_generation_projects_missing_receipt_role_and_log_growth(
+    assembly, monkeypatch, fits
+):
+    from capsem_builder.gate.tools import native_file_content as owner
+
+    config, bins, _, directory, expected, limit = assembly
+    owner.assemble(config, bins, None)
+    settings = config.functional.native_file_content
+    removed = directory / config.signing.built[0]
+    removed_bytes = removed.stat().st_size
+    removed.unlink()
+    receipt = directory / settings.receipt_name
+    receipt_bytes = receipt.stat().st_size
+    receipt.unlink()
+    log = config.path(settings.host_log)
+    previous = log.stat().st_size
+    rows = [json.loads(line) for line in log.read_text().splitlines()]
+    write(log, [*rows[:-1], {"reason": "compiler-message", "message": "new diagnostic"}, rows[-1]])
+    growth = log.stat().st_size - previous
+    limit(max_size_bytes=expected + growth - (0 if fits else 1), warm_size_bytes=0, maximum_count=1)
+    enforce = owner.enforce_repository
+    intents = []
+
+    def admit(*args, **kwargs):
+        intents.append(kwargs["required"])
+        return enforce(*args, **kwargs)
+
+    monkeypatch.setattr(owner, "enforce_repository", admit)
+    before = {path.name: path.read_bytes() for path in directory.iterdir()}
+    if fits:
+        owner.assemble(config, bins, None)
+        assert sum(path.stat().st_size for path in directory.iterdir()) == expected + growth
+    else:
+        with pytest.raises(ValueError, match=r"native.*capacity"):
+            owner.assemble(config, bins, None)
+        assert before == {path.name: path.read_bytes() for path in directory.iterdir()}
+    assert len(intents) == 1
+    assert intents[0].entries == 0
+    assert intents[0].bytes == removed_bytes + receipt_bytes + growth

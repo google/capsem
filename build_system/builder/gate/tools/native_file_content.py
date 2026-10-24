@@ -12,8 +12,11 @@ import sys
 from pathlib import Path
 
 from capsem_builder import crypto
+from capsem_builder.cache.capacity import RequiredCapacity
 from capsem_builder.cache.config import load_paths
+from capsem_builder.cache.enforcement import enforce_repository
 from capsem_builder.cache.leases import release_path, retain_generation
+from capsem_builder.gate.boundedlease import leased
 from capsem_builder.gate.config import GateConfig, load
 from capsem_builder.gate.qualification import from_environment
 from capsem_builder.gate.sourcecommit import source_commit_for_checkout, tree_of
@@ -147,6 +150,14 @@ def assemble(config: GateConfig, bin_dir: Path, package: Path | None) -> Path:
         settings.generation_prefix
         + crypto.blake3(json.dumps(receipt, sort_keys=True).encode()).hexdigest()
     )
+    compiler_logs = {}
+    for configured in (settings.cargo_log, settings.host_log):
+        log = config.path(configured)
+        if log.stat().st_size:
+            if log.name in sources or log.name == settings.receipt_name:
+                raise ValueError("native compiler log collides with an artifact role")
+            sources[log.name] = log
+            compiler_logs[log.name] = crypto.digest_file(log)
     paths = load_paths(config.root)
     stage = paths.policy.stages[settings.cache_stage]
     if stage.lease_template is None:
@@ -155,27 +166,56 @@ def assemble(config: GateConfig, bin_dir: Path, package: Path | None) -> Path:
     retain_generation(paths, settings.cache_stage, key)
     try:
         directory = paths.stage(settings.cache_stage) / key
-        if directory.is_symlink():
-            raise ValueError("native artifact generation is a symlink")
-        directory.mkdir(exist_ok=True)
+        if directory.is_symlink() or (directory.exists() and not directory.is_dir()):
+            raise ValueError("native artifact generation is not a real directory")
+        hashes = {**binaries, **compiler_logs}
+        missing = {}
+        incoming = 0
         for name, path in sources.items():
             target = directory / name
-            if target.is_symlink():
-                raise ValueError(f"native artifact role is a symlink: {target}")
-            if not target.exists():
-                shutil.copy2(path, target)
-            if target.is_symlink() or crypto.digest_file(target) != binaries[name]:
+            if target.is_symlink() or (target.exists() and not target.is_file()):
+                raise ValueError(f"native artifact role is not a real file: {target}")
+            present = target.exists()
+            equal = present and crypto.digest_file(target) == hashes[name]
+            if present and name in binaries and not equal:
+                raise ValueError(f"native artifact generation changed: {target}")
+            if not equal:
+                size = path.stat().st_size
+                missing[name] = size
+                # copy2 truncates the destination in place: no second/temp copy.
+                incoming += max(0, size - (target.stat().st_size if present else 0))
+        encoded = json.dumps(receipt, sort_keys=True).encode()
+        receipt_path = directory / settings.receipt_name
+        if receipt_path.is_symlink() or (
+            receipt_path.exists()
+            and (not receipt_path.is_file() or receipt_path.read_bytes() != encoded)
+        ):
+            raise ValueError("native artifact receipt changed")
+        receipt_missing = not receipt_path.exists()
+        incoming += len(encoded) if receipt_missing else 0
+        admitted = enforce_repository(
+            paths,
+            paths.policy,
+            settings.cache_stage,
+            reason="native FileContent artifact needs original binaries, receipt and compiler logs",
+            required=RequiredCapacity(bytes=incoming, entries=0 if directory.exists() else 1),
+        )
+        if admitted.violations:
+            raise ValueError(
+                "native artifact capacity unavailable: " + "; ".join(admitted.violations)
+            )
+        directory.mkdir(exist_ok=True)
+        for name, size in missing.items():
+            path, target = sources[name], directory / name
+            if path.stat().st_size != size:
+                raise ValueError("native artifact source changed after capacity admission")
+            shutil.copy2(path, target)
+            if target.is_symlink() or crypto.digest_file(target) != hashes[name]:
                 raise ValueError(f"native artifact generation changed: {target}")
         if source != source_identity(config):
             raise ValueError("source changed while freezing the native owner")
-        (directory / settings.receipt_name).write_text(json.dumps(receipt, sort_keys=True))
-        compiler_logs = {}
-        for configured in (settings.cargo_log, settings.host_log):
-            log = config.path(configured)
-            if log.stat().st_size:
-                target = directory / log.name
-                shutil.copy2(log, target)
-                compiler_logs[log.name] = crypto.digest_file(target)
+        if receipt_missing:
+            receipt_path.write_bytes(encoded)
         selection = config.path(settings.selection)
         selection.parent.mkdir(parents=True, exist_ok=True)
         selection.write_text(
@@ -219,5 +259,8 @@ def main(root: Path) -> int:
         parser.error("assembly requires the plan-selected --bin-dir")
     else:
         directory = args.bin_dir if args.bin_dir.is_absolute() else config.path(str(args.bin_dir))
-        assemble(config, directory, args.package)
+        with leased(
+            (sys.executable, str(Path(__file__)), "assemble"), root, os.environ, force=True
+        ):
+            assemble(config, directory, args.package)
     return 0
