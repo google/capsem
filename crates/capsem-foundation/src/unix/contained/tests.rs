@@ -722,8 +722,8 @@ fn directory_emptiness_observes_names_without_filtering_metadata() {
     let observed = tree.root.is_empty();
     std::fs::set_permissions(&tree.root_path, std::fs::Permissions::from_mode(0o700)).unwrap();
     assert!(
-        !observed.unwrap(),
-        "entry stat permission is irrelevant to a name-presence probe"
+        !matches!(observed, Ok(true)),
+        "a denied independent directory scan must never certify absence"
     );
 }
 
@@ -735,4 +735,21 @@ fn directory_emptiness_stays_with_the_opened_directory_after_replacement() {
     std::fs::create_dir(&tree.root_path).unwrap();
     assert!(!tree.root.is_empty().unwrap());
     assert!(ContainedDir::open_root(&tree.root_path).unwrap().is_empty().unwrap());
+}
+
+#[test]
+fn reentrant_directory_observation_never_shares_the_outer_scan_offset() {
+    let tree = tree();
+    std::fs::write(tree.root_path.join("one"), b"one").unwrap();
+    std::fs::write(tree.root_path.join("two"), b"two").unwrap();
+    let mut visits = 0;
+    tree.root
+        .visit_entries(|_| {
+            visits += 1;
+            assert!(!tree.root.is_empty()?);
+            assert_eq!(tree.root.entries()?.len(), 2);
+            Ok(true)
+        })
+        .unwrap();
+    assert_eq!(visits, 2);
 }

@@ -6,7 +6,7 @@
 use std::ffi::{OsStr, OsString};
 use std::fs::File;
 use std::io;
-use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
@@ -667,12 +667,20 @@ impl ContainedDir {
         File::from(self.fd.try_clone()?).sync_all()
     }
 
+    fn directory_stream(&self) -> io::Result<nix::dir::Dir> {
+        // dup shares the directory offset: nested or concurrent scans could
+        // otherwise see a false EOF or rewind one another. Reopen the SAME
+        // held directory, never its replaceable path, with an independent offset.
+        let fd = openat(Some(self.fd.as_raw_fd()), Path::new("."), dir_flags(), Mode::empty())?;
+        nix::dir::Dir::from_fd(fd).map_err(Into::into)
+    }
+
     /// Observe whether this opened directory has any child name, without
     /// following links or filtering entries whose metadata cannot be read.
     /// Stops on the first name. Concurrent creators can change the namespace
     /// after this observation; this grants no deletion or mutation authority.
     pub fn is_empty(&self) -> io::Result<bool> {
-        let mut directory = nix::dir::Dir::from_fd(self.fd.try_clone()?.into_raw_fd())?;
+        let mut directory = self.directory_stream()?;
         for entry in directory.iter() {
             let entry = entry?;
             let name = entry.file_name().to_bytes();
@@ -699,7 +707,7 @@ impl ContainedDir {
     /// potentially large managed directory can therefore keep constant
     /// memory rather than materializing every name first.
     pub fn visit_entries(&self, mut visit: impl FnMut(ContainedEntry) -> io::Result<bool>) -> io::Result<()> {
-        let mut directory = nix::dir::Dir::from_fd(self.fd.try_clone()?.into_raw_fd())?;
+        let mut directory = self.directory_stream()?;
         for entry in directory.iter() {
             let entry = entry?;
             let name = OsStr::from_bytes(entry.file_name().to_bytes());
