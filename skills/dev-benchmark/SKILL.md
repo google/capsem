@@ -233,6 +233,16 @@ Unseen children, final-interval CPU, atomic/continuous peaks, and out-of-tree
 Apple VZ helpers are not certified. Resource selection is independent of
 `LOAD_MODES`, so disk/storage keep their existing guest CPU allocation.
 
+Network uses that same original-service observation for each bulk lane,
+TCP latency and UDP trial. Original Rust client bytes/elapsed/latency/loss and
+guest SNMP retransmit counters remain distinct from host CPU/RSS/FD samples.
+Each guest retransmit delta must be monotonic independently; their original
+before/after facts are retained in the bounded sidecar. Switch drops cover the
+owned network's close rows across setup/trials/unlink, not individual requests.
+Global Apple VZ name matches and `pgrep`/assumed-HZ guest pump CPU are not
+evidence. Both unsupported attribution scopes are explicit in the sidecar;
+no CPU-per-throughput ratio substitutes for original observed counters.
+
 ## Is the move real?
 
 `compare` and `verify` report `delta_abs`, `delta_pct`, `ratio`, and

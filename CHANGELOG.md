@@ -25,6 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Restrict macOS companion virtualization entitlements to the existing five
   configured VM roles; preserve valid production signatures during installation.
+
+- Attribute network benchmark host resources to the original live service for
+  each lane/trial, retaining original bytes/loss counters and refusing counter
+  resets; replace global process-name and guessed guest-pump CPU attribution
+  with explicit unavailable scopes.
+
 - Observe bounded host-service CPU lower bounds and sampled RSS/descriptor
   high-water during guest disk/storage execution, with exact-root receipts
   requiring the original service owner to remain alive throughout.
