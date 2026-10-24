@@ -9,7 +9,7 @@ from pathlib import Path
 from capsem_builder.gate import config as gate_config
 from capsem_builder.release.tools.release_apply_receipt import activation_receipt
 from capsem_builder.release.tools.release_macos_apply import validate_native
-from capsem_builder.release.tools.release_macos_pairing import validate_pair
+from capsem_builder.release.tools.release_macos_pairing import validate_pair, validate_public_pair
 from macos_candidate_content import stage_file
 
 
@@ -17,6 +17,7 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--before-package", type=Path)
     parser.add_argument("--before-manifest-file", type=Path)
     parser.add_argument("--before-sbom", type=Path)
+    parser.add_argument("--public-predecessor-upgrade", action="store_true")
 
 
 def argument_parser(**kwargs) -> argparse.ArgumentParser:
@@ -32,6 +33,8 @@ def validate_options(args) -> bool:
     ]
     if any(supplied) and not all(supplied):
         raise ValueError("before package/manifest/SBOM must be supplied together")
+    if getattr(args, "public_predecessor_upgrade", False) and not all(supplied):
+        raise ValueError("public predecessor requires complete original before inputs")
     return all(supplied)
 
 
@@ -39,10 +42,11 @@ def prepare(args, *, root: Path, share: Path, guest_package: Path) -> dict | Non
     values = (args.before_package, args.before_manifest_file, args.before_sbom)
     if not validate_options(args):
         return None
-    pair = validate_pair(
+    public = getattr(args, "public_predecessor_upgrade", False)
+    pair = (validate_public_pair if public else validate_pair)(
         before=values, after=(args.package, args.manifest_file, args.sbom), channel=args.channel
     )
-    if any(
+    if not public and any(
         pair[phase]["metadata_manifest_url"] != args.manifest_url for phase in ("before", "after")
     ):
         raise ValueError(
@@ -81,10 +85,9 @@ def validate_report(path: Path, pair: dict, *, source: str) -> dict:
     if len(raw) > maximum:
         raise ValueError("Tart binary Apply report exceeds configured byte budget")
     report = json.loads(raw)
-    if (
-        report.get("schema") != "capsem.macos_binary_apply.v1"
-        or report.get("scope") != "binary_apply_only"
-    ):
+    public = pair["scope"] == "public_predecessor_upgrade"
+    schema = "capsem.macos_public_upgrade.v1" if public else "capsem.macos_binary_apply.v1"
+    if report.get("schema") != schema or report.get("scope") != pair["scope"]:
         raise ValueError("Tart binary Apply report has wrong scope")
     if report.get("pair") != {key: pair[key] for key in ("channel", "before", "after")}:
         raise ValueError("Tart binary Apply report has foreign package/source/SBOM pairing")
@@ -99,7 +102,7 @@ def validate_report(path: Path, pair: dict, *, source: str) -> dict:
     activation_receipt(
         report["original_request"],
         report["transition"],
-        kind="binary_only",
+        kind="public_predecessor_upgrade" if public else "binary_only",
         source=source,
         digest=pair["after"]["manifest_sha256"],
         source_commit=pair["after"]["source_commit"],
@@ -107,6 +110,14 @@ def validate_report(path: Path, pair: dict, *, source: str) -> dict:
     if report.get("activation") != "verified":
         raise ValueError("Tart binary Apply did not verify native activation")
     validate_native(report["installed"], report["retirement"], pair, source=source)
+    if public:
+        from capsem_builder.release.tools.release_macos_public_upgrade import (
+            require_original_success,
+            validate_evidence,
+        )
+
+        require_original_success(report["original_request"])
+        validate_evidence(report["public_predecessor"], pair, source=source)
     return report
 
 
@@ -120,7 +131,9 @@ def run_paired(args, command: list[str], *, runner) -> Path | None:
         return None
     paired = list(command)
     position = paired.index("--work-dir") + 1
-    work = Path(paired[position]) / "binary-apply"
+    work = Path(paired[position]) / (
+        "public-upgrade" if getattr(args, "public_predecessor_upgrade", False) else "binary-apply"
+    )
     paired[position] = str(work)
     paired.extend(
         [
@@ -132,6 +145,8 @@ def run_paired(args, command: list[str], *, runner) -> Path | None:
             str(args.before_sbom),
         ]
     )
+    if getattr(args, "public_predecessor_upgrade", False):
+        paired.append("--public-predecessor-upgrade")
     runner(paired)
     return work / "report.json"
 
@@ -149,7 +164,11 @@ def attach(
 ) -> None:
     if paired_path is None:
         return
-    pair = validate_pair(
+    pair = (
+        validate_public_pair
+        if getattr(args, "public_predecessor_upgrade", False)
+        else validate_pair
+    )(
         before=(args.before_package, args.before_manifest_file, args.before_sbom),
         after=(package, manifest, sbom),
         channel=args.channel,
@@ -158,5 +177,10 @@ def attach(
     pair["limits"] = {"timeout": limits.timeout_seconds, "maximum": limits.max_response_bytes}
     paired = validate_report(paired_path, pair, source=source)
     report = json.loads(report_path.read_text())
-    report["adapter_evidence"]["binary_apply"] = paired
+    key = (
+        "public_predecessor_upgrade"
+        if pair["scope"] == "public_predecessor_upgrade"
+        else "binary_apply"
+    )
+    report["adapter_evidence"][key] = paired
     report_path.write_text(json.dumps(report, sort_keys=True) + "\n")

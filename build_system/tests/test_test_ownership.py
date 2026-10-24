@@ -145,6 +145,8 @@ BOUNDARY_FILES = frozenset(
         "build_system/tests/packaging/test_host_admission_refusal.py",
         "build_system/tests/packaging/test_macos_binary_apply.py",
         "build_system/tests/packaging/test_macos_binary_apply_evidence.py",
+        "build_system/tests/packaging/test_macos_public_upgrade.py",
+        "build_system/tests/packaging/test_macos_public_upgrade_evidence.py",
         "build_system/tests/packaging/test_local_install_sbom.py",
         "build_system/tests/packaging/test_macos_install_signatures.py",
         "build_system/tests/packaging/test_macos_tart_cleanup.py",

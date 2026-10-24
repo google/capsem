@@ -169,7 +169,12 @@ def test_pairing_refuses_foreign_metadata_payload_or_runtime(inputs, damage):
 
 
 @pytest.mark.parametrize(
-    "module", ["helpers.installed_apply_probe", "capsem_builder.release.tools.release_macos_apply"]
+    "module",
+    [
+        "helpers.installed_apply_probe",
+        "capsem_builder.release.tools.release_macos_apply",
+        "capsem_builder.release.tools.release_macos_public_upgrade",
+    ],
 )
 def test_staged_original_apply_helper_needs_only_standard_library(tmp_path, monkeypatch, module):
     root = Path(__file__).resolve().parents[3]

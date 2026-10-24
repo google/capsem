@@ -91,8 +91,13 @@ def main() -> int:
     parser.add_argument("--platform")
     parser.add_argument("--architecture")
     parser.add_argument("--evidence-out", type=Path)
+    parser.add_argument("--legacy-profile-predecessor", action="store_true")
     args = parser.parse_args()
     args.capsem_home = args.capsem_home or Path.home() / ".capsem"
+    if args.legacy_profile_predecessor and (
+        args.artifact is None or args.platform != "macos" or args.architecture != "arm64"
+    ):
+        fail("legacy predecessor requires exact original macOS package identity")
     metadata_manifest_url = args.metadata_manifest_url or args.manifest_url
     artifact_options = (args.artifact, args.platform, args.architecture)
     if any(value is not None for value in artifact_options) and not all(
@@ -224,7 +229,11 @@ def main() -> int:
     version_match = re.search(r"(?m)^Version:\s+(\S+)$", status)
     if version_match is None or version_match.group(1) != args.package_version:
         fail(f"capsem status does not report package version {args.package_version}")
-    if not isinstance(manifest.get("runtime"), dict):
+    if args.legacy_profile_predecessor:
+        from .release_macos_pairing import legacy_profile_identity
+
+        legacy_profile_identity(manifest, architecture=args.architecture)
+    elif not isinstance(manifest.get("runtime"), dict):
         fail("selected release manifest has no runtime")
     verify_failed_session_logs(args.capsem, args.capsem_home)
     if args.evidence_out is not None:

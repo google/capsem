@@ -6,6 +6,7 @@ STALE_HELPER_EVIDENCE="$SHARE/stale-helper-evidence.json"
 
 capsem_require_transition_inputs() {
     if test -f "$SHARE/host-admission-inputs.json"; then return; fi
+    if test -f "$SHARE/binary-apply-pair.json" && test "$(PYTHONPATH="$SHARE" python3 -m capsem_builder.release.tools.release_macos_apply field --root "$SHARE" --field scope)" = public_predecessor_upgrade; then return; fi
     test -s "$UPDATED_MANIFEST"
     test -s "$TAMPERED_MANIFEST"
     test -s "$INCOMPATIBLE_MANIFEST"

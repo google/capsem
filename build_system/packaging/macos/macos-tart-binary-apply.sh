@@ -23,6 +23,14 @@ capsem_pair_verify() {
     version=$(capsem_pair_field --phase "$phase" --field version)
     package=$(capsem_pair_field --phase "$phase" --field package)
     metadata_url=$(capsem_pair_field --phase "$phase" --field metadata_manifest_url)
+    local extra=()
+    if [ "$(capsem_pair_field --field scope)" = public_predecessor_upgrade ]; then
+        if [ "$phase" = before ]; then
+            extra=(--legacy-profile-predecessor)
+        else
+            metadata_url="$MANIFEST_URL"
+        fi
+    fi
     binary_names=$(python3 -m capsem_builder.release.tools.release_macos_apply binaries \
         --root "$SHARE" --phase "$phase")
     test -n "$binary_names"
@@ -38,7 +46,12 @@ capsem_pair_verify() {
     python3 "$VERIFY" --capsem "$CAPSEM" --manifest-url "$MANIFEST_URL" \
         --metadata-manifest-url "$metadata_url" --channel "$CHANNEL" \
         --package-version "$version" --artifact "$package" --platform macos \
-        --architecture arm64 --evidence-out "$SHARE/binary-apply-$phase-installed.json"
+        --architecture arm64 --evidence-out "$SHARE/binary-apply-$phase-installed.json" "${extra[@]}"
+}
+
+capsem_public_state() {
+    python3 -m capsem_builder.release.tools.release_macos_public_upgrade "$1" \
+        --root "$SHARE" --home "$CAPSEM_HOME" --source "$MANIFEST_URL"
 }
 
 capsem_prove_binary_apply() {
@@ -61,6 +74,14 @@ capsem_prove_binary_apply() {
     capsem_pair_http disable-automatic --output "$SHARE/binary-apply-automatic-state.json"
     launchctl kickstart -k "gui/$(id -u)/com.capsem.service"
     capsem_wait_for_service
+    local scope
+    scope=$(capsem_pair_field --field scope)
+    if [ "$scope" = public_predecessor_upgrade ]; then
+        # Ordinary original CLI selection of EXACT public BEFORE bytes. This
+        # deliberate fixture configuration is not package metadata rewriting.
+        "$CAPSEM" update --assets --manifest "$MANIFEST_URL"
+        capsem_public_state capture
+    fi
     old_service_pid=$(cat "$CAPSEM_HOME/run/service.pid")
     case "$old_service_pid" in ''|*[!0-9]*) return 1 ;; esac
     test "$old_service_pid" -gt 0
@@ -68,6 +89,10 @@ capsem_prove_binary_apply() {
     audit_line > "$SHARE/binary-apply-audit-line"
     python3 "$TRANSITION_SUPPORT" promote "$SHARE/original-manifest.json" "$REMOTE_MANIFEST"
     python3 "$TRANSITION_SUPPORT" assert-url "$MANIFEST_URL" "$SHARE/original-manifest.json"
+    if [ "$scope" = public_predecessor_upgrade ]; then
+        # SAME candidate bytes will be consumed by NEW package postinstall/CLI.
+        bash "$INSTALL_MANIFEST_REQUEST" write "$SHARE/original-manifest.json" "$MANIFEST_URL"
+    fi
     capsem_pair_http request --output "$SHARE/binary-apply-request.json" \
         --source "$MANIFEST_URL" --digest "$(capsem_pair_field --phase after --field manifest_sha256)" \
         --source-commit "$(capsem_pair_field --phase after --field source_commit)" \
@@ -81,9 +106,17 @@ capsem_prove_binary_apply() {
         echo "ERROR: old launchd service survived original Apply" >&2
         return 1
     fi
-    observe_update_transition binary_only activated \
-        "$(capsem_pair_field --phase after --field manifest_sha256)" \
-        "$(cat "$SHARE/binary-apply-audit-line")" "$SHARE/binary-apply-transition.json"
+    if [ "$scope" = public_predecessor_upgrade ]; then
+        capsem_wait_for_assets "$SHARE/public-upgrade-runtime-status.json"
+        capsem_public_state preserved
+        observe_update_transition public_predecessor_upgrade activated \
+            "$(capsem_pair_field --phase after --field manifest_sha256)" \
+            "$(cat "$SHARE/binary-apply-audit-line")" "$SHARE/binary-apply-transition.json"
+    else
+        observe_update_transition binary_only activated \
+            "$(capsem_pair_field --phase after --field manifest_sha256)" \
+            "$(cat "$SHARE/binary-apply-audit-line")" "$SHARE/binary-apply-transition.json"
+    fi
     capsem_pair_verify after
     python3 -m capsem_builder.release.tools.release_macos_apply retirement --root "$SHARE" \
         --old-pid "$old_service_pid" --new-pid "$new_service_pid"

@@ -10,7 +10,7 @@ from pathlib import Path
 
 from .release_apply_receipt import activation_receipt
 from .release_glowup import validate_installed_evidence
-from .release_macos_pairing import validate_pair
+from .release_macos_pairing import validate_pair, validate_public_pair
 
 
 def inputs(root: Path, spec: dict, phase: str) -> tuple[Path, Path, Path]:
@@ -29,7 +29,9 @@ def inputs(root: Path, spec: dict, phase: str) -> tuple[Path, Path, Path]:
 
 
 def validate_staged(root: Path, spec: dict) -> None:
-    checked = validate_pair(
+    checked = (
+        validate_public_pair if spec.get("scope") == "public_predecessor_upgrade" else validate_pair
+    )(
         before=inputs(root, spec, "before"),
         after=inputs(root, spec, "after"),
         channel=spec["channel"],
@@ -58,11 +60,16 @@ def validate_native(installed: dict, retirement: dict, spec: dict, *, source: st
     for phase in ("before", "after"):
         value = installed[phase]
         validate_installed_evidence(value)
+        expected_metadata = (
+            source
+            if spec["scope"] == "public_predecessor_upgrade" and phase == "after"
+            else spec[phase]["metadata_manifest_url"]
+        )
         if (
             value["package_version"] != spec[phase]["artifact"]["version"]
             or value["channel"] != spec["channel"]
             or value["manifest_url"] != source
-            or value.get("metadata_manifest_url") != spec[phase]["metadata_manifest_url"]
+            or value.get("metadata_manifest_url") != expected_metadata
         ):
             raise ValueError("paired installed evidence does not identify its exact phase")
     if (
@@ -81,10 +88,11 @@ def finish(root: Path, spec: dict, *, source: str, maximum: int) -> dict:
     marker = int((root / "binary-apply-audit-line").read_text().strip())
     if marker < 0 or request.get("after_line") != marker:
         raise ValueError("paired original request has a foreign audit marker")
+    public = spec["scope"] == "public_predecessor_upgrade"
     result = activation_receipt(
         request,
         _read(root, "binary-apply-transition.json", maximum),
-        kind="binary_only",
+        kind="public_predecessor_upgrade" if public else "binary_only",
         source=source,
         digest=spec["after"]["manifest_sha256"],
         source_commit=spec["after"]["source_commit"],
@@ -104,8 +112,8 @@ def finish(root: Path, spec: dict, *, source: str, maximum: int) -> dict:
     if elapsed < request["elapsed_ns"]:
         raise ValueError("paired activation predates original request")
     result.update(
-        schema="capsem.macos_binary_apply.v1",
-        scope="binary_apply_only",
+        schema="capsem.macos_public_upgrade.v1" if public else "capsem.macos_binary_apply.v1",
+        scope=spec["scope"],
         pair={key: spec[key] for key in ("channel", "before", "after")},
         installed=installed,
         retirement=retirement,
@@ -118,6 +126,13 @@ def finish(root: Path, spec: dict, *, source: str, maximum: int) -> dict:
             "installed_winterfell": False,
         },
     )
+    if public:
+        from .release_macos_public_upgrade import require_original_success, validate_evidence
+
+        require_original_success(request)
+        original = _read(root, "public-upgrade-state.json", maximum)
+        validate_evidence(original, spec, source=source)
+        result["public_predecessor"] = original
     return result
 
 
@@ -136,7 +151,11 @@ def main() -> int:
         validate_staged(args.root, spec)
     elif args.command == "field":
         if args.phase is None:
-            value = spec["limits"][args.field]
+            value = (
+                spec[args.field]
+                if args.field in ("scope", "channel")
+                else spec["limits"][args.field]
+            )
         elif args.field in ("package", "manifest", "sbom"):
             value = str(
                 inputs(args.root, spec, args.phase)[

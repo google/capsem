@@ -93,6 +93,7 @@ def stage_guest_scripts(root: Path, share: Path) -> None:
         "release/tools/release_apply_receipt.py",
         "release/tools/release_macos_apply.py",
         "release/tools/release_macos_pairing.py",
+        "release/tools/release_macos_public_upgrade.py",
         "release/tools/release_admission_refusal.py",
         "release/tools/package_payload.py",
         "release/tools/generate_host_binary_sbom.py",
@@ -129,7 +130,9 @@ def stage_guest_scripts(root: Path, share: Path) -> None:
         stage_file(root / "build_system/packaging/macos" / name, share / name)
 
 
-def stage_tart_inputs(args, package: Path, manifest_file: Path, asset_share: Path, candidate_files: tuple[Path, ...]) -> tuple[Path, Path]:
+def stage_tart_inputs(
+    args, package: Path, manifest_file: Path, asset_share: Path, candidate_files: tuple[Path, ...]
+) -> tuple[Path, Path]:
     """One existing Tart staging owner for normal, paired and refusal probes."""
     share = args.work_dir.resolve() / "share"
     if share.exists():
@@ -144,15 +147,28 @@ def stage_tart_inputs(args, package: Path, manifest_file: Path, asset_share: Pat
     stage_file(args.sbom.resolve(), release_dir / "capsem-sbom.spdx.json")
     stage_release_site(manifest_file, asset_share, candidate_dir, args.channel)
     stage_file(manifest_file, share / "original-manifest.json")
-    for source, name in zip(candidate_files, ("updated-manifest.json", "tampered-manifest.json", "incompatible-manifest.json")[:len(candidate_files)], strict=True):
+    for source, name in zip(
+        candidate_files,
+        ("updated-manifest.json", "tampered-manifest.json", "incompatible-manifest.json")[
+            : len(candidate_files)
+        ],
+        strict=True,
+    ):
         stage_file(source, share / name)
     return share, guest_package
 
 
-def transition_inputs(args, artifact, host_refusal: bool) -> tuple[tuple[Path, ...], tuple[bytes, ...]]:
-    candidates = () if host_refusal else (
-        args.updated_manifest_file.resolve(), args.tampered_manifest_file.resolve(),
-        args.incompatible_manifest_file.resolve(),
+def transition_inputs(
+    args, artifact, host_refusal: bool
+) -> tuple[tuple[Path, ...], tuple[bytes, ...]]:
+    candidates = (
+        ()
+        if host_refusal or getattr(args, "public_predecessor_upgrade", False)
+        else (
+            args.updated_manifest_file.resolve(),
+            args.tampered_manifest_file.resolve(),
+            args.incompatible_manifest_file.resolve(),
+        )
     )
     contents = (args.manifest_file.read_bytes(), *(path.read_bytes() for path in candidates))
     if len(contents) != len(set(contents)):

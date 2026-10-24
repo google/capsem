@@ -33,6 +33,8 @@ def enabled(args) -> bool:
         ):
             raise ValueError("host admission refusal cannot enter binary Apply mode")
         return True
+    if getattr(args, "public_predecessor_upgrade", False):
+        return False
     if any(
         getattr(args, key, None) is None
         for key in ("updated_manifest_file", "tampered_manifest_file", "incompatible_manifest_file")

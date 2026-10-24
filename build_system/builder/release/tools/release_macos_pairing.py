@@ -27,6 +27,7 @@ def cohort(
     channel: str,
     platform: str = "macos",
     architecture: str = "arm64",
+    legacy_profiles: bool = False,
 ) -> dict:
     document = json.loads(manifest.read_text())
     rows = [row for row in document["packages"] if row["name"] == package.name]
@@ -43,8 +44,14 @@ def cohort(
     source = row.get("source_commit", "")
     if re.fullmatch(r"[0-9a-f]{40}", source) is None:
         raise ValueError("paired package has no exact source commit")
-    pairing = PairingIdentity.from_manifest_bytes(
-        manifest.read_bytes(), artifact=artifact, channel=channel
+    content_binding = (
+        {"content_identity": legacy_profile_identity(document, architecture=architecture)}
+        if legacy_profiles
+        else {
+            "runtime_sha256": PairingIdentity.from_manifest_bytes(
+                manifest.read_bytes(), artifact=artifact, channel=channel
+            ).runtime_sha256
+        }
     )
     evidence = [item for item in row.get("evidence", []) if item.get("kind") == "sbom"]
     if len(evidence) != 1 or evidence[0].get("status") != "current":
@@ -113,10 +120,84 @@ def cohort(
         "artifact": artifact.as_report(),
         "source_commit": source,
         "sbom_sha256": sbom_sha,
-        "manifest_sha256": pairing.manifest_sha256,
-        "runtime_sha256": pairing.runtime_sha256,
+        "manifest_sha256": _sha(manifest),
+        **content_binding,
         "metadata_manifest_url": packaged_metadata["manifest_url"],
         "binaries": [name for name in names if name != "capsem-app"],
+    }
+
+
+def legacy_profile_identity(document: dict, *, architecture: str) -> dict:
+    """Tag the ORIGINAL profile graph, never serialize it as a runtime or null."""
+    profiles = document.get("profiles")
+    if "runtime" in document or not isinstance(profiles, dict) or not profiles:
+        raise ValueError("public predecessor requires profiles and no runtime")
+    identities = {}
+    for name, profile in profiles.items():
+        if not isinstance(profile, dict) or profile.get("status") != "current":
+            raise ValueError("legacy profile is missing or inactive")
+        revision = profile.get("revision")
+        if not isinstance(revision, str) or not revision:
+            raise ValueError("legacy profile has no original revision")
+        arches = [
+            row
+            for row in profile.get("architectures", [])
+            if row.get("architecture") == architecture
+        ]
+        if len(arches) != 1:
+            raise ValueError("legacy profile lacks exact selected architecture")
+        for group in ("images", "config"):
+            rows = arches[0].get(group)
+            if not isinstance(rows, list) or not rows:
+                raise ValueError("legacy profile lacks original images/config")
+            for row in rows:
+                if (
+                    row.get("status") != "current"
+                    or type(row.get("bytes")) is not int
+                    or row["bytes"] <= 0
+                    or not row.get("url")
+                    or any(
+                        re.fullmatch(r"[0-9a-f]{64}", row.get("digest", {}).get(key, "")) is None
+                        for key in ("sha256", "blake3")
+                    )
+                ):
+                    raise ValueError("legacy profile descriptor is incomplete or inactive")
+        identities[name] = {"revision": revision, "architecture": architecture}
+    return {
+        "domain": "legacy_profiles",
+        "sha256": crypto.sha256(
+            json.dumps(profiles, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+        "profiles": identities,
+    }
+
+
+def validate_public_pair(
+    *, before: tuple[Path, Path, Path], after: tuple[Path, Path, Path], channel: str
+) -> dict:
+    previous = cohort(*before, channel=channel, legacy_profiles=True)
+    candidate = cohort(*after, channel=channel)
+    document = json.loads(after[1].read_text())
+    if document.get("profiles"):
+        raise ValueError("public upgrade candidate must use only the modern runtime domain")
+    versions = [row["artifact"]["version"] for row in (previous, candidate)]
+    stable = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
+    if any(re.fullmatch(stable, value) is None for value in versions) or tuple(
+        map(int, versions[1].split("."))
+    ) <= tuple(map(int, versions[0].split("."))):
+        raise ValueError("public upgrade requires genuinely newer stable semver")
+    if (
+        previous["source_commit"] == candidate["source_commit"]
+        or previous["artifact"]["sha256"] == candidate["artifact"]["sha256"]
+    ):
+        raise ValueError("public upgrade requires distinct original package/source bytes")
+    candidate["content_identity"] = {"domain": "runtime", "sha256": candidate["runtime_sha256"]}
+    return {
+        "schema": "capsem.macos_public_upgrade_pair.v1",
+        "scope": "public_predecessor_upgrade",
+        "channel": channel,
+        "before": previous,
+        "after": candidate,
     }
 
 
