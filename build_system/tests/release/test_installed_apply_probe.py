@@ -7,6 +7,7 @@ import json
 import socketserver
 import subprocess
 import sys
+import tempfile
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -235,13 +236,17 @@ def test_real_uds_original_exchange_is_never_replayed(tmp_path, mode, outcome):
                 self.wfile.write(b"{}")
             self.close_connection = True
 
-    socket = str(tmp_path / "s")
-    with socketserver.UnixStreamServer(socket, Handler) as server:
+    # Pytest's worker/node basetemp can exceed sockaddr_un's path limit.
+    # Keep evidence there, but own a short-lived socket beside the temp root.
+    with (
+        tempfile.TemporaryDirectory(prefix="apply-") as directory,
+        socketserver.UnixStreamServer(str(Path(directory) / "s"), Handler) as server,
+    ):
         worker = threading.Thread(
             target=lambda: server.serve_forever(poll_interval=0.01), daemon=True
         )
         worker.start()
-        transport = RealTransport(socket_path=socket)
+        transport = RealTransport(socket_path=server.server_address)
         try:
             args = arguments(tmp_path)
             args.timeout = 1

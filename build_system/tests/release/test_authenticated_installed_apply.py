@@ -10,9 +10,9 @@ import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 
 import pytest
-
 from build_system.tests.release.test_installed_apply_probe import arguments, probe
 
 TOKEN = "A0b1C2d3" * 8
@@ -204,6 +204,7 @@ raise SystemExit(2)
 """
         result = subprocess.run(
             [sys.executable, "-c", script, str(runtime)],
+            cwd=Path(__file__).resolve().parents[3] / "tests",
             capture_output=True,
             text=True,
             timeout=1,
