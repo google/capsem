@@ -39,5 +39,19 @@ pub(crate) fn isolated_test_command(program: impl AsRef<std::ffi::OsStr>) -> std
     command
 }
 
+#[cfg(all(test, feature = "runtime"))]
+pub(crate) fn sandbox_test_executable(directory: &std::path::Path, name: &str) -> std::path::PathBuf {
+    let executable = std::env::current_exe().unwrap();
+    if cfg!(target_os = "macos") {
+        // Seatbelt cannot stack. Only this exact named child gets the gate
+        // handoff; it installs its own policy before the adversarial probe.
+        let child = directory.join(name);
+        std::fs::copy(executable, &child).unwrap();
+        child
+    } else {
+        executable
+    }
+}
+
 #[cfg(test)]
 mod tests;

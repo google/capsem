@@ -17,15 +17,7 @@ fn confinement_denies_ambient_authority_but_preserves_inherited_tcp() {
     let port = listener.local_addr().unwrap().port();
     let mut client = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
     let (socket, _) = listener.accept().unwrap();
-    let executable = std::env::current_exe().unwrap();
-    #[cfg(target_os = "macos")]
-    let executable = {
-        // Seatbelt cannot stack. The gate hands off only this named child;
-        // the parent test stays inside the gate's network sandbox.
-        let child = directory.path().join("capsem-router-confinement-test");
-        std::fs::copy(executable, &child).unwrap();
-        child
-    };
+    let executable = crate::sandbox_test_executable(directory.path(), "capsem-router-confinement-test");
     let mut child = crate::isolated_test_command(executable)
         .args(["--exact", "unix::router_sandbox::tests::sandbox_child", "--nocapture"])
         .env("ROUTER_SANDBOX_TEST", &secret)

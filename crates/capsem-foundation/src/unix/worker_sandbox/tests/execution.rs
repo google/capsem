@@ -18,7 +18,8 @@ fn denied_execution_preserves_cwd_signal_disposition_and_granted_io() {
     let root = tempfile::tempdir().unwrap();
     let (mut parent, child) = UnixStream::pair().unwrap();
     parent.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-    let mut child = crate::isolated_test_command(std::env::current_exe().unwrap())
+    let executable = crate::sandbox_test_executable(root.path(), "capsem-worker-confinement-test");
+    let mut child = crate::isolated_test_command(executable)
         .env("EXECUTION_ATTESTATION_CHILD", root.path())
         .stdin(Stdio::from(std::os::fd::OwnedFd::from(child)))
         .spawn()

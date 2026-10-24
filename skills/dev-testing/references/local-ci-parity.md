@@ -4,6 +4,12 @@ Reference for /dev-testing: every portable release gate must be owned by just te
 
 ## Local/CI execution parity
 
+Native macOS confinement probes use `sandbox_test_executable` and an exact
+test-only alias in the gate handoff inventory. Seatbelt cannot stack: the
+parent retains gate confinement while that child installs the worker policy.
+Keep unconfined negative controls on the ordinary inherited launch path; never
+escape the whole test runner or exempt external MCP executables.
+
 ### Ironbank parity rule
 
 Native supervisor restart belongs to `glowup.pytest.managed-restart` in both

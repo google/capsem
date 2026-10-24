@@ -78,9 +78,10 @@ fn mcp_roles_keep_granted_io_and_deny_files_sockets_execution_and_signals() {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
     let control = directory.path().join("other-session-control.sock");
     let _control = UnixListener::bind(&control).unwrap();
+    let executable = crate::sandbox_test_executable(directory.path(), "capsem-worker-confinement-test");
     for role in ["aggregator", "builtin", "external"] {
         let (mut report, granted) = UnixStream::pair().unwrap();
-        let mut child = crate::isolated_test_command(std::env::current_exe().unwrap())
+        let mut child = crate::isolated_test_command(&executable)
             .args([
                 "--exact",
                 "unix::worker_sandbox::tests::mcp::mcp_denial_child",

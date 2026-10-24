@@ -306,7 +306,8 @@ fn macos_policy_preserves_grants_and_denies_ambient_authority() {
     let mut client = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
     let (socket, _) = listener.accept().unwrap();
 
-    let mut child = crate::isolated_test_command(std::env::current_exe().unwrap())
+    let executable = crate::sandbox_test_executable(directory.path(), "capsem-worker-confinement-test");
+    let mut child = crate::isolated_test_command(executable)
         .args([
             "--exact",
             "unix::worker_sandbox::tests::macos_sandbox_child",
