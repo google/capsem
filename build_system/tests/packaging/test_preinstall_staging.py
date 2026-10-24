@@ -30,6 +30,7 @@ def invoke(
     decode_status: int = 0,
     candidate_status: int = 0,
     timeout_status: int = 0,
+    platform: str = "Linux",
 ) -> subprocess.CompletedProcess[str]:
     source = root / "source"
     source.write_bytes(payload)
@@ -39,6 +40,7 @@ def invoke(
     # SHA still executes the real OS implementation (shasum on macOS).
     script = f"""
 set -euo pipefail
+function /usr/bin/uname {{ echo {q(platform)}; }}
 function /usr/bin/id {{ if [ "$#" -eq 1 ]; then echo {current_uid}; else echo {target_uid}; fi; }}
 function /usr/bin/mktemp {{ /bin/mkdir -m 0700 {q(root / 'stage')}; printf '%s\\n' {q(root / 'stage')}; }}
 function /usr/bin/sha256sum {{
@@ -54,6 +56,12 @@ function /usr/sbin/runuser {{
     printf '%s\\n' "$@" > {q(root / 'runuser-argv')}
     /bin/ls -ld "$4" "$(dirname "$4")" > {q(root / 'modes')}
     /bin/cat "$4" > {q(root / 'observed-bytes')}
+    return {candidate_status}
+}}
+function /usr/bin/su {{
+    printf '%s\\n' "$@" > {q(root / 'su-argv')}
+    /bin/ls -ld "$5" "$(dirname "$5")" > {q(root / 'modes')}
+    /bin/cat "$5" > {q(root / 'observed-bytes')}
     return {candidate_status}
 }}
 source {q(HELPER)}
@@ -91,10 +99,14 @@ def test_verified_stage_executes_exact_future_mode_as_resolved_user_then_disappe
         {"target": "fixture;invalid"},
     ],
 )
-def test_invalid_binding_or_transport_never_reaches_candidate_and_cleans_stage(tmp_path: Path, changes: dict) -> None:
-    result = invoke(tmp_path, **changes)
+@pytest.mark.parametrize("platform", ["Linux", "Darwin"])
+def test_invalid_binding_or_transport_never_reaches_candidate_and_cleans_stage(
+    tmp_path: Path, changes: dict, platform: str,
+) -> None:
+    result = invoke(tmp_path, platform=platform, **changes)
     assert result.returncode != 0
     assert not (tmp_path / "runuser-argv").exists()
+    assert not (tmp_path / "su-argv").exists()
     assert not (tmp_path / "stage").exists()
 
 
@@ -108,6 +120,20 @@ def test_candidate_refusal_or_missing_runtime_propagates_and_cleans(tmp_path: Pa
 def test_deadline_refusal_cleans_before_any_candidate_effect(tmp_path: Path) -> None:
     result = invoke(tmp_path, timeout_status=124)
     assert result.returncode == 124
+    assert not (tmp_path / "runuser-argv").exists()
+    assert not (tmp_path / "stage").exists()
+
+
+@pytest.mark.parametrize("status", [0, 23])
+def test_mac_exact_su_argv_identity_and_cleanup_without_gnu_timeout(tmp_path: Path, status: int) -> None:
+    result = invoke(tmp_path, platform="Darwin", candidate_status=status)
+    assert result.returncode == status, result.stderr
+    assert (tmp_path / "su-argv").read_text().splitlines() == [
+        "fixture-user", "-c", 'exec "$1" --preinstall-ledger-admission --target-user "$2"',
+        "capsem-preinstall", str(tmp_path / "stage/capsem-ledger"), "fixture-user",
+    ]
+    assert (tmp_path / "observed-bytes").read_bytes() == PAYLOAD
+    assert not (tmp_path / "timeout-argv").exists()
     assert not (tmp_path / "runuser-argv").exists()
     assert not (tmp_path / "stage").exists()
 

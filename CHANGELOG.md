@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Verify and run the macOS package's original signed candidate ledger as the
+  selected user before stopping or removing an existing installation.
+
 - Restrict macOS package retirement to the selected account and exact installed
   app/helper paths, without globally terminating other users' Capsem apps.
 

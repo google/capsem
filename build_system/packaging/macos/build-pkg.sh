@@ -11,16 +11,13 @@
 #   signing_identity  Optional: Developer ID Installer identity for productsign
 #   --manifest        Optional manifest URL to record for postinstall hydration.
 #
-# Output: cache/target/packages/Capsem-<version>.pkg in the repository output root
-#
 # The .pkg installs:
 #   /Applications/Capsem.app           -- Tauri GUI
-#   /usr/local/share/capsem/bin/       -- 6 companion binaries
+#   /usr/local/share/capsem/bin/       -- companion binaries
 #   /usr/local/share/capsem/assets/    -- selected manifest URL provenance
 #   /usr/local/share/capsem/entitlements.plist
 #
-# A postinstall script copies binaries to ~/.capsem/bin/, codesigns them,
-# registers the LaunchAgent, and waits for service readiness.
+# Postinstall owns user installation and readiness.
 set -euo pipefail
 export COPYFILE_DISABLE=1
 
@@ -219,7 +216,10 @@ echo "=== Building component package ==="
 PKG_SCRIPTS="$WORK_DIR/pkg-scripts"
 mkdir -p "$PKG_SCRIPTS"
 for package_script in preinstall postinstall install-user; do install -m 0755 "$SCRIPT_DIR/pkg-scripts/$package_script" "$PKG_SCRIPTS/$package_script"; done
-for package_script in install-diagnostics install-manifest retire-cohort; do install -m 0755 "$SCRIPT_DIR/../shared/$package_script" "$PKG_SCRIPTS/$package_script"; done
+for package_script in install-diagnostics install-manifest retire-cohort preinstall-ledger; do install -m 0755 "$SCRIPT_DIR/../shared/$package_script" "$PKG_SCRIPTS/$package_script"; done
+codesign --verify --strict "$SHARE_DIR/bin/capsem-ledger"
+uv run --project "$SCRIPT_DIR/../.." --frozen --no-sync python -m capsem_builder.release.tools.preinstall_resource macos \
+    "$WORK_DIR/payload" --scripts "$PKG_SCRIPTS"
 
 # Strip macOS extended attributes in the temporary staging area. Otherwise
 # pkgbuild serializes AppleDouble `._*` sidecars into Payload/Scripts.

@@ -67,6 +67,10 @@ def _seed_binaries(bin_dir: Path) -> None:
     for name in REQUIRED_BINARIES:
         path = bin_dir / name
         path.write_text(f"#!/bin/sh\necho {name}\n")
+        if name == "capsem-ledger":
+            # Package-format fixture uses an existing signed executable as an
+            # opaque byte resource; this does not execute/admit a candidate.
+            shutil.copyfile("/usr/bin/true", path)
         path.chmod(0o755)
 
 

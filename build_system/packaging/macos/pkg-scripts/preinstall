@@ -6,6 +6,7 @@ set -euo pipefail
 source "$(dirname "$0")/install-diagnostics"
 source "$(dirname "$0")/install-user"
 source "$(dirname "$0")/retire-cohort"
+source "$(dirname "$0")/preinstall-ledger"
 
 USER=$(capsem_resolve_install_user "/var/run/capsem/install-user")
 
@@ -43,6 +44,13 @@ else
     exec > >(tee -a "$INSTALL_LOG" "$INSTALL_RUN_LOG") 2>&1
 fi
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=preinstall event=start user=${USER:-unknown} install_run_id=$INSTALL_RUN_ID install_run_log=$INSTALL_RUN_LOG"
+
+CAPSEM_INSTALL_PHASE="admit_candidate_ledger"
+if ! declare -F capsem_run_preinstall_ledger_admission >/dev/null; then
+    echo 'capsem: package is missing its candidate preinstall ledger resource' >&2
+    exit 1
+fi
+capsem_run_preinstall_ledger_admission "$USER"
 
 CAPSEM_INSTALL_PHASE="stop_existing_install"
 if [ -n "${USER:-}" ] && [ "$USER" != "root" ]; then

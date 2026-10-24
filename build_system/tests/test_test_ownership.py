@@ -140,6 +140,7 @@ BOUNDARY_FILES = frozenset(
         "build_system/tests/packaging/test_linux_maintainer_home_boundary.py",
         "build_system/tests/packaging/test_linux_packaging_boundary.py",
         "build_system/tests/packaging/test_macos_packaging_boundary.py",
+        "build_system/tests/packaging/test_macos_preinstall_resource.py",
         "build_system/tests/packaging/test_macos_binary_apply.py",
         "build_system/tests/packaging/test_macos_binary_apply_evidence.py",
         "build_system/tests/packaging/test_local_install_sbom.py",

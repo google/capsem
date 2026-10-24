@@ -1,11 +1,11 @@
-"""Embed the stripped package-owned ledger before dpkg unpacks its payload.
+"""Bind the original package-owned ledger before installed payload retirement.
 
-Base64 is a generated package transport, not an internal runtime protocol.
+Debian base64 is package transport; macOS keeps the original signed resource.
 The package config owns budgets; only the candidate logger decides admission.
 This module stays stdlib-only for the existing offline package builder.
 
-The original stripped payload supplies the resource; verification rejects a
-changed payload/helper before dpkg builds the archive. SHA-256 is the existing
+The original payload supplies the resource; verification rejects a changed
+payload/helper before the package is built. SHA-256 is the existing
 native-package integrity mechanism, reused solely to detect decoding/staging
 byte changes, not to grant authority or decide ledger compatibility. The
 root-owned stage executes the candidate's private admission mode as the same
@@ -124,16 +124,59 @@ def embed(package: Path, *, repository: Path, limits: Limits) -> None:
     if not original.startswith(SHEBANG):
         raise ValueError("preinstall resource requires the canonical bash script header")
     generated = _prefix(package, repository, limits) + original[len(SHEBANG):]
+    _publish(package / "DEBIAN/preinst", generated, limits)
+
+
+def _publish(destination: Path, generated: bytes, limits: Limits) -> None:
     if len(generated) > limits.max_script_bytes:
         raise ValueError("generated preinstall script exceeds its byte budget")
     with ExitStack() as lifetime:
-        temporary = lifetime.enter_context(tempfile.NamedTemporaryFile(dir=package / "DEBIAN", delete=False))
+        temporary = lifetime.enter_context(tempfile.NamedTemporaryFile(dir=destination.parent, delete=False))
         pending = Path(temporary.name)
         lifetime.callback(pending.unlink, missing_ok=True)
         temporary.write(generated)
         temporary.flush()
         pending.chmod(0o755)
-        os.replace(pending, package / "DEBIAN/preinst")
+        os.replace(pending, destination)
+
+
+def stage_macos(package: Path, *, scripts: Path, limits: Limits) -> None:
+    """Bind the original signed payload, not a second compiled validator.
+
+    The package owner verifies codesign before this call; the protected Scripts
+    copy is verified again at installation before root staging. No build-time
+    code-signature parser or guest/runtime Python is introduced here.
+    """
+    member = "usr/local/share/capsem/bin/capsem-ledger"
+    binary = _regular(package, member, limits.max_binary_bytes)
+    mode = (package / member).stat().st_mode
+    if not mode & 0o111 or mode & 0o6000:
+        raise ValueError("preinstall resource must be executable without set-id authority")
+    original = _regular(scripts, "preinstall", limits.max_script_bytes)
+    if not original.startswith(SHEBANG) or BEGIN in original:
+        raise ValueError("preinstall resource requires an original canonical bash script")
+    # Fixed name, no shell interpolation of package/resource paths at build time.
+    prefix = (
+        SHEBANG + BEGIN + b'capsem_run_preinstall_ledger_admission() {\n'
+        b'    local resource="$(dirname "$0")/capsem-ledger"\n'
+        b'    [ -f "$resource" ] && [ ! -L "$resource" ] && [ -x "$resource" ] || return 1\n'
+        b'    /usr/bin/codesign --verify --strict "$resource" || return 1\n'
+        b'    capsem_write_preinstall_resource() { /bin/cat "$resource"; }\n'
+        + f'    capsem_admit_preinstall_ledger "$1" {crypto.sha256(binary).hexdigest()} '
+        f'{len(binary)} {limits.timeout_seconds} {limits.terminate_grace_seconds}\n'.encode()
+        + b'}\n' + END
+    )
+    destination = scripts / "capsem-ledger"
+    if destination.exists() or destination.is_symlink():
+        raise ValueError("preinstall candidate resource is already staged")
+    with destination.open("xb") as output:
+        output.write(binary)
+    destination.chmod(0o555)
+    try:
+        _publish(scripts / "preinstall", prefix + original[len(SHEBANG):], limits)
+    except BaseException:
+        destination.unlink()
+        raise
 
 
 def verify(package: Path, *, repository: Path, limits: Limits) -> None:
@@ -157,12 +200,17 @@ def check_control(source: BinaryIO, *, maximum: int) -> int:
 
 def main(argv: Sequence[str] | None = None, *, repository: Path) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("embed", "verify", "check-control"))
+    parser.add_argument("operation", choices=("embed", "verify", "check-control", "macos"))
     parser.add_argument("package", nargs="?", type=Path)
+    parser.add_argument("--scripts", type=Path)
     args = parser.parse_args(argv)
     limits = load_limits(repository)
     try:
-        if args.operation == "check-control":
+        if args.operation == "macos":
+            if args.package is None or args.scripts is None:
+                parser.error("macos requires package payload and Scripts staging roots")
+            stage_macos(args.package, scripts=args.scripts, limits=limits)
+        elif args.operation == "check-control":
             if args.package is not None:
                 parser.error("check-control reads only its dpkg pipe")
             print(f"Debian control archive: {check_control(sys.stdin.buffer, maximum=limits.max_control_bytes)} bytes")
@@ -173,3 +221,7 @@ def main(argv: Sequence[str] | None = None, *, repository: Path) -> int:
     except (OSError, ValueError) as error:
         parser.exit(1, f"capsem: preinstall resource refused: {error}\n")
     return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(repository=Path(__file__).resolve().parents[4]))

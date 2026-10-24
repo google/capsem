@@ -15,7 +15,9 @@ capsem_admit_preinstall_ledger() (
         exit 1
     fi
     [ "$(/usr/bin/id -u)" -eq 0 ] || { echo 'capsem: preinstall admission requires root staging' >&2; exit 1; }
-    local target_uid actual_sha actual_size
+    local target_uid actual_sha actual_size platform
+    platform=$(/usr/bin/uname -s) || exit 1
+    case "$platform" in Darwin|Linux) ;; *) echo 'capsem: unsupported preinstall platform' >&2; exit 1 ;; esac
     # EXIT runs after function-local scope unwinds; this subshell owns these
     # bindings so cleanup retains its exact stage and original exit status.
     stage=""
@@ -37,7 +39,11 @@ capsem_admit_preinstall_ledger() (
     stage=$(/usr/bin/mktemp -d /var/tmp/capsem-preinstall.XXXXXXXXXX) || exit 1
     capsem_write_preinstall_resource > "$stage/capsem-ledger" || exit 1
     actual_size=$(/usr/bin/wc -c < "$stage/capsem-ledger" | /usr/bin/tr -d '[:space:]') || exit 1
-    actual_sha=$(/usr/bin/sha256sum "$stage/capsem-ledger") || exit 1
+    if [ "$platform" = Darwin ]; then
+        actual_sha=$(/usr/bin/shasum -a 256 "$stage/capsem-ledger") || exit 1
+    else
+        actual_sha=$(/usr/bin/sha256sum "$stage/capsem-ledger") || exit 1
+    fi
     actual_sha=${actual_sha%% *}
     if [ "$actual_size" != "$expected_size" ] || [ "$actual_sha" != "$expected_sha" ]; then
         echo 'capsem: preinstall candidate resource identity mismatch' >&2
@@ -45,7 +51,14 @@ capsem_admit_preinstall_ledger() (
     fi
     /bin/chmod 0555 "$stage/capsem-ledger" || exit 1
     /bin/chmod 0711 "$stage" || exit 1
-    /usr/bin/timeout --signal=TERM --kill-after="${grace}s" "${deadline}s" \
-        /usr/sbin/runuser -u "$target_user" -- "$stage/capsem-ledger" \
-        --preinstall-ledger-admission --target-user "$target_user"
+    if [ "$platform" = Darwin ]; then
+        # Candidate owns its complete five-second operation bound. OS su/PAM
+        # startup is Installer-owned, not covered by that candidate deadline.
+        /usr/bin/su "$target_user" -c 'exec "$1" --preinstall-ledger-admission --target-user "$2"' \
+            capsem-preinstall "$stage/capsem-ledger" "$target_user"
+    else
+        /usr/bin/timeout --signal=TERM --kill-after="${grace}s" "${deadline}s" \
+            /usr/sbin/runuser -u "$target_user" -- "$stage/capsem-ledger" \
+            --preinstall-ledger-admission --target-user "$target_user"
+    fi
 )
