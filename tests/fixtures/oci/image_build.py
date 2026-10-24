@@ -10,7 +10,7 @@ from pathlib import Path
 from .pinned_image import ROOT, _publish, verify
 
 
-def build(image, selected: str | None = None) -> str:
+def build(image, selected: str | None = None, *, base_image: str | None = None, validate=None) -> str:
     """Build into the digest stage and load the configured owned local Docker tag.
 
     An image built FROM a base (`base_context`) gets that base built first
@@ -29,7 +29,7 @@ def build(image, selected: str | None = None) -> str:
         "--provenance=false",
         "--sbom=false",
     ]
-    if settings.base_context:
+    if settings.base_context and base_image is None:
         base = f"{settings.local_name}-base:{arch}"
         subprocess.run(
             [*common, "--load", "--tag", base, str(ROOT / settings.base_context)],
@@ -37,6 +37,8 @@ def build(image, selected: str | None = None) -> str:
             timeout=3600,
         )
         common += ["--build-arg", f"BASE={base}"]
+    elif base_image is not None:
+        common += ["--build-arg", f"BASE={base_image}"]
     context = str(ROOT / settings.context)
     image.stage().mkdir(parents=True, exist_ok=True)
     from images.ci.rootfs import main as build_rootfs
@@ -57,8 +59,12 @@ def build(image, selected: str | None = None) -> str:
             # an excuse to regenerate a different filesystem under this subject.
             producer_evidence.ready(layout, settings.repository, arch, maximum=settings.evidence_max_bytes)
             subprocess.run([*common, "--load", "--tag", tag, context], check=True, timeout=3600)
+            if validate is not None:
+                validate(staged, digest, platform, tag)
         else:
             subprocess.run([*common, "--load", "--tag", tag, context], check=True, timeout=3600)
+            if validate is not None:
+                validate(staged, digest, platform, tag)
             filesystem = Path(tmp) / "filesystem"
             filesystem.mkdir()
             build_rootfs(["--image", tag, "--arch", arch, "--repository", settings.repository,
