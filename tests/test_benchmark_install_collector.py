@@ -22,6 +22,16 @@ def test_install_dimension_has_a_configured_existing_owner_collector():
     assert settings.inputs.startswith("cache/target/")
 
 
+def test_install_benchmark_cannot_override_the_canonical_native_owner():
+    from capsem_builder.gate.benchmarkinstallschema import InstallBenchmarkConfig
+    from pydantic import ValidationError
+
+    config = gate_config.load(ROOT)
+    assert config.install.suite.macos_tart_glowup_script == "build_system/packaging/macos/macos_tart_glowup.py"
+    with pytest.raises(ValidationError):
+        InstallBenchmarkConfig.model_validate(config.benchmark.install.model_dump() | {"macos_owner": "foreign.py"})
+
+
 def test_missing_genuine_inputs_refuses_before_owner_invocation(tmp_path):
     from benchmarks.helpers.install_inputs import load_inputs
 

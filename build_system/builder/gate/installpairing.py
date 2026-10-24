@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..release.releasechannel import FirstPartyChannel
+
 
 @dataclass(frozen=True)
 class NativePairing:
@@ -14,10 +16,9 @@ class NativePairing:
     after_inputs: Path
 
     def __post_init__(self) -> None:
-        if self.channel not in {"stable", "nightly"}:
-            raise ValueError("installed pairing requires an existing release channel")
+        FirstPartyChannel.parse(self.channel)
         if any(
-            not path.is_absolute() or ".." in path.parts or path.resolve() == Path("/")
+            not path.is_absolute() or ".." in path.parts or path.resolve().parent == path.resolve()
             for path in self.mounts
         ):
             raise ValueError("installed pairing must name exact absolute artifact inputs")

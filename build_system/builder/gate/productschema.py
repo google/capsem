@@ -71,6 +71,7 @@ class GuestUser(Strict):
 class InstallSuite(Strict):
     path: str
     glowup_script: str
+    macos_tart_glowup_script: str
     macos_report_check: str
     serve_script: str
     sbom_script: str

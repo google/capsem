@@ -56,6 +56,24 @@ class ImageBuildConfig(Strict):
     evidence_max_bytes: PositiveInt
 
 
+class NativeRecipePolicy(Strict):
+    """One configured authority for the fixed native recipe family."""
+
+    context_root: str
+    repository_root: str
+    local_prefix: SafeToken
+    cache_stage: SafeToken
+    script: str
+
+    @field_validator("context_root", "script")
+    @classmethod
+    def contained_path(cls, value: str) -> str:
+        path = PurePosixPath(value)
+        if path.is_absolute() or ".." in path.parts or not path.parts:
+            raise ValueError("native recipe paths must stay relative and contained")
+        return value
+
+
 class NativeImagesConfig(Strict):
     """CI evidence only; fixed native platform and bounded owned artifacts."""
 
@@ -74,6 +92,7 @@ class NativeImagesConfig(Strict):
     artifact_max_bytes: PositiveInt
     artifact_max_files: PositiveInt
     transfer: NativeTransferConfig
+    recipe: NativeRecipePolicy
     base: ImageBuildConfig
     apps: dict[NativeAppName, ImageBuildConfig]
 
@@ -82,14 +101,15 @@ class NativeImagesConfig(Strict):
         if set(self.apps) != {"codex-cli", "claude-code", "agy", "antigravity-desktop"}:
             raise ValueError("native apps must contain every supported non-development AMD recipe")
         for name, spec in {"base": self.base, **self.apps}.items():
+            recipe = self.recipe
             if (
                 spec.name != name
-                or spec.local_name != "capsem-native-" + name
-                or spec.context != "images/" + name
-                or spec.base_context != (None if name == "base" else "images/base")
-                or spec.repository != "ghcr.io/google/capsem/" + name
-                or spec.cache_stage != "test-images"
-                or spec.script != "tests/fixtures/oci/pinned_image.py"
+                or spec.local_name != f"{recipe.local_prefix}-{name}"
+                or spec.context != str(PurePosixPath(recipe.context_root) / name)
+                or spec.base_context != (None if name == "base" else self.base.context)
+                or spec.repository != f"{recipe.repository_root}/{name}"
+                or spec.cache_stage != recipe.cache_stage
+                or spec.script != recipe.script
             ):
                 raise ValueError("native candidate recipe differs from the fixed original owner")
         return self

@@ -36,7 +36,7 @@ def verified_receipt(native: Path, prepared: Prepared, *, maximum: int) -> dict:
     inputs, pair = prepared.inputs, prepared.pair
     if inputs.platform == "macos":
         config = gate_config.load(ROOT)
-        sys.path.insert(0, str(config.path(config.benchmark.install.macos_owner).parent))
+        sys.path.insert(0, str(config.path(config.install.suite.macos_tart_glowup_script).parent))
         from macos_binary_apply import validate_report
 
         assert inputs.tart is not None

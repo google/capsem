@@ -110,7 +110,7 @@ def invoke(root: Path, prepared: Prepared, work: Path, runner: Runner) -> Path:
         read_bytes(source / marker, config.benchmark.install.max_receipt_bytes)
         shutil.copyfile(source / marker, work / marker)
         return work / "report.json"
-    owner_path = config.path(config.benchmark.install.macos_owner)
+    owner_path = config.path(config.install.suite.macos_tart_glowup_script)
     sys.path.insert(0, str(owner_path.parent))
     spec = importlib.util.spec_from_file_location("capsem_owned_tart", owner_path)
     if spec is None or spec.loader is None:

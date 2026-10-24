@@ -40,6 +40,8 @@ def test_fixed_apps_extend_native_builds_without_changing_functional_pins():
         "pin",
         "base-context",
         "tag",
+        "script",
+        "cache",
     ],
 )
 def test_native_specs_reject_missing_foreign_or_unpinned_substitutes(fault):
@@ -59,7 +61,20 @@ def test_native_specs_reject_missing_foreign_or_unpinned_substitutes(fault):
         app["digests"] = {"linux/amd64": "sha256:" + "a" * 64}
     elif fault == "tag":
         app["local_name"] = "foreign"
+    elif fault == "script":
+        app["script"] = "foreign.py"
+    elif fault == "cache":
+        app["cache_stage"] = "foreign"
     else:
         data["base"]["context"] = "images/dev"
+    with pytest.raises(ValidationError):
+        NativeImagesConfig.model_validate(data)
+
+
+@pytest.mark.parametrize("field", ["context_root", "script"])
+@pytest.mark.parametrize("value", ["/foreign", "../foreign", ""])
+def test_native_recipe_policy_rejects_escaping_paths(field, value):
+    data = deepcopy(load(ROOT).functional.native_images.model_dump())
+    data["recipe"][field] = value
     with pytest.raises(ValidationError):
         NativeImagesConfig.model_validate(data)

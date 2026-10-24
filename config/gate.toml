@@ -413,6 +413,7 @@ asset_manifest = "/home/capsem/.capsem/assets/manifest.json"
 [install.suite]
 path = "tests/capsem_install/"
 glowup_script = "build_system/scripts/release/local-release-glowup.py"
+macos_tart_glowup_script = "build_system/packaging/macos/macos_tart_glowup.py"
 macos_report_check = "build_system/scripts/build/check-macos-native-glowup.py"
 serve_script = "build_system/release_site/scripts/serve-release-test-root.py"
 sbom_script = "build_system/scripts/release/generate-host-binary-sbom.py"
@@ -2429,6 +2430,13 @@ journal_max_runs = 128
 artifact_max_bytes = 17179869184
 artifact_max_files = 512
 
+[functional.native_images.recipe]
+context_root = "images"
+repository_root = "ghcr.io/google/capsem"
+local_prefix = "capsem-native"
+cache_stage = "test-images"
+script = "tests/fixtures/oci/pinned_image.py"
+
 [functional.native_images.transfer]
 stage = "ironbank"
 prefix = "native-transfer"
@@ -4137,7 +4145,6 @@ python3 = 100
 # Prepared genuine before/after artifacts, never a cached functional receipt.
 inputs = "cache/target/tests/benchmarks/install-inputs.json"
 work_root = "cache/target/tests/benchmarks/install"
-macos_owner = "build_system/packaging/macos/macos_tart_glowup.py"
 owner_timeout_seconds = 1200
 cleanup_timeout_seconds = 120
 max_input_bytes = 1048576
