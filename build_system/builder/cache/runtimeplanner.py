@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .dockerimages import plan_docker_images
+from .dockerimages import image_removals, plan_docker_images
 from .models import CachePolicy
 from .runtimemodels import (
     DockerRuntimePolicy,
@@ -192,9 +192,12 @@ def plan_runtime_clean(snapshot: RuntimeSnapshot, policy: CachePolicy) -> Runtim
             if not item.owned or item.protected:
                 continue
             if item.kind is ResourceKind.IMAGE:
-                operation = RuntimeOperation.REMOVE_IMAGE
-                targets = item.names
-            elif item.kind is ResourceKind.CONTAINER:
+                actions.extend(image_removals(
+                    item, inventory.runtime_id,
+                    "explicit cold cleanup of an inactive Capsem-owned cache",
+                ))
+                continue
+            if item.kind is ResourceKind.CONTAINER:
                 operation = RuntimeOperation.REMOVE_CONTAINER
                 targets = (item.identity,)
             elif item.kind is ResourceKind.VOLUME:

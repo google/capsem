@@ -27,6 +27,22 @@ def repository_name(name: str) -> str:
     return without_digest[:tag] if tag > without_digest.rfind("/") else without_digest
 
 
+def image_removals(
+    resource: RuntimeResource, runtime_id: str, reason: str
+) -> tuple[RuntimePruneAction, ...]:
+    """Retire every inventoried owned alias, accounting for one image once."""
+    return tuple(
+        RuntimePruneAction(
+            runtime_id=runtime_id,
+            operation=RuntimeOperation.REMOVE_IMAGE,
+            target=name,
+            logical_bytes=resource.logical_bytes if index == 0 else 0,
+            reason=reason,
+        )
+        for index, name in enumerate(resource.names)
+    )
+
+
 def _runtime(snapshot: RuntimeSnapshot, runtime_id: str) -> RuntimeInventory:
     try:
         return next(item for item in snapshot.runtimes if item.runtime_id == runtime_id)
@@ -98,15 +114,7 @@ def _bounded_actions(
             if pressure
             else f"superseded image generation; retain newest {keep}"
         )
-        actions.append(
-            RuntimePruneAction(
-                runtime_id=inventory.runtime_id,
-                operation=RuntimeOperation.REMOVE_IMAGE,
-                target=resource.names[0],
-                logical_bytes=resource.logical_bytes,
-                reason=reason,
-            )
-        )
+        actions.extend(image_removals(resource, inventory.runtime_id, reason))
         projected -= resource.logical_bytes
     violations = (
         [
@@ -135,15 +143,13 @@ def plan_docker_images(
             continue
         ordered = sorted(resources, key=lambda item: (item.created_ns, item.identity), reverse=True)
         actions.extend(
-            RuntimePruneAction(
-                runtime_id=inventory.runtime_id,
-                operation=RuntimeOperation.REMOVE_IMAGE,
-                target=resource.names[0],
-                logical_bytes=resource.logical_bytes,
-                reason=f"superseded owned image generation; retain newest {default_keep}",
-            )
+            action
             for position, resource in enumerate(ordered)
             if position >= default_keep and not (resource.protected or resource.current)
+            for action in image_removals(
+                resource, inventory.runtime_id,
+                f"superseded owned image generation; retain newest {default_keep}",
+            )
         )
     return tuple(actions), tuple(violations)
 
@@ -185,15 +191,12 @@ def plan_image_clean(
     inventory = _runtime(snapshot, control.runtime_id)
     image = control.images[cache_id]
     actions = tuple(
-        RuntimePruneAction(
-            runtime_id=control.runtime_id,
-            operation=RuntimeOperation.REMOVE_IMAGE,
-            target=item.names[0],
-            logical_bytes=item.logical_bytes,
-            reason="explicit clean of an inactive Docker image cache",
-        )
+        action
         for item in _groups(inventory).get(image.repository, ())
         if not item.protected
+        for action in image_removals(
+            item, control.runtime_id, "explicit clean of an inactive Docker image cache",
+        )
     )
     return RuntimePrunePlan(
         generated_ns=snapshot.generated_ns,
@@ -248,15 +251,7 @@ def plan_repository_reclaim(
         if previous < image.keep_previous:
             previous += 1
             continue
-        actions.append(
-            RuntimePruneAction(
-                runtime_id=control.runtime_id,
-                operation=RuntimeOperation.REMOVE_IMAGE,
-                target=names[0],
-                logical_bytes=item.logical_bytes,
-                reason=f"superseded generation of {image.repository}",
-            )
-        )
+        actions.extend(image_removals(item, control.runtime_id, f"superseded generation of {image.repository}"))
     selected = tuple(sorted(actions, key=lambda item: item.target))
     return RuntimePrunePlan(
         generated_ns=snapshot.generated_ns,
