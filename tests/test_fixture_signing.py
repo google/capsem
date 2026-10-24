@@ -168,10 +168,15 @@ def test_cohort_and_release_authorities_cannot_mix(binary, monkeypatch):
     assert not binary.with_suffix(".sign.lock").exists()
 
 
-def test_malformed_vm_entitlement_receipt_is_not_signed(binary, monkeypatch):
+@pytest.mark.parametrize("receipt", [
+    "not a plist",
+    "[Dict]\n[Key] com.apple.security.virtualization\n[Bool] true\n"
+    "[Key] com.apple.security.network.client\n[Bool] true\n",
+])
+def test_malformed_vm_entitlement_receipt_is_not_signed(binary, monkeypatch, receipt):
     target = binary.with_name("capsem-service")
     binary.rename(target)
-    codesign(monkeypatch, entitlements="not a plist")
+    codesign(monkeypatch, entitlements=receipt)
     assert not sign.verify_signed(target)
 
 
@@ -191,3 +196,34 @@ def test_real_valid_non_vm_frozen_binary_keeps_original_bytes(binary, monkeypatc
     sign.sign_binary(binary)
     assert digest_file(binary) == before
     assert not binary.with_suffix(".sign.lock").exists()
+
+
+@pytest.mark.skipif(os.uname().sysname != "Darwin", reason="real Apple codesign boundary")
+@pytest.mark.parametrize("role", [Path(path).name for path in sign.load(sign.PROJECT_ROOT).signing.binaries])
+def test_real_vm_release_role_uses_native_xml_without_mutation(binary, monkeypatch, role):
+    target = binary.with_name(role)
+    binary.rename(target)
+    shutil.copyfile("/usr/bin/true", target)
+    target.chmod(0o755)
+    settings = sign.load(sign.PROJECT_ROOT)
+    subprocess.run(
+        ["codesign", "--sign", "-", "--force", "--entitlements",
+         str(settings.path(settings.signing.entitlements)), str(target)],
+        check=True, capture_output=True, timeout=15,
+    )
+    before = (target.stat(), digest_file(target))
+    original_run = subprocess.run
+    calls = []
+
+    def observe(argv, **kwargs):
+        calls.append(argv)
+        return original_run(argv, **kwargs)
+
+    monkeypatch.setattr(sign.subprocess, "run", observe)
+    monkeypatch.setenv("CAPSEM_RELEASE_INPUT_DIR", "synthetic-release-fixture")
+    sign.sign_binary(target)
+    assert (target.stat(), digest_file(target)) == before
+    assert not target.with_suffix(".sign.lock").exists()
+    assert not any("--sign" in call for call in calls)
+    display = [call for call in calls if "--entitlements" in call]
+    assert len(display) == 1 and "--xml" in display[0]

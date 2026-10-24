@@ -49,8 +49,9 @@ def test_fresh_local_candidate_seals_bundle_without_vm_authority(tmp_path: Path)
     verified = _run(["codesign", "--verify", "--strict", str(app)])
     assert verified.returncode == 0, verified.stderr
     assert (app / "Contents/_CodeSignature/CodeResources").is_file()
-    entitlements = _run(["codesign", "-d", "--entitlements", ":-", str(app)])
-    assert "com.apple.security.virtualization" not in entitlements.stdout + entitlements.stderr
+    entitlements = _run(["codesign", "-d", "--entitlements", "-", "--xml", str(app)])
+    actual = plistlib.loads(entitlements.stdout.encode()) if entitlements.stdout else {}
+    assert "com.apple.security.virtualization" not in actual
     assert "--deep" not in boundary and "--entitlements" not in boundary
     # The owned resource seal must actually detect a post-sign mutation.
     (app / "Contents/Resources/owned.txt").write_text("tampered")

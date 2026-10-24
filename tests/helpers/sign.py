@@ -96,10 +96,10 @@ def verify_signed(binary_path: Path) -> bool:
     if not _needs_entitlements(binary_path):
         return True
 
-    # 2. Entitlement check (codesign -d --entitlements -)
+    # 2. Explicit XML is required: the native default may be a human dictionary.
     # This ensures the virtualization entitlement is actually baked in.
     result = subprocess.run(
-        ["codesign", "-d", "--entitlements", "-", str(binary_path)],
+        ["codesign", "-d", "--entitlements", "-", "--xml", str(binary_path)],
         capture_output=True, text=True, check=False,
     )
     if result.returncode != 0:
