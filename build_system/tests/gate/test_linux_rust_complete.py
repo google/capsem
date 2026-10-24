@@ -17,7 +17,7 @@ def test_linux_uses_canonical_coverage_ratchet_and_doctests() -> None:
     rendered = [action.render() for action in actions(config, ROOT / 'proof-output')]
     coverage = rendered[0]
     assert all(flag in coverage.split() for flag in ('--workspace', '--bins', '--lib', '--tests', '--no-clean', '--no-fail-fast', '--locked'))
-    assert all(floor in coverage for floor in config.modules.rust_coverage_floors)
+    assert all(floor in rendered[1] for floor in config.modules.rust_coverage_floors)
     assert any(config.modules.rust_coverage_ratchet in command for command in rendered)
     assert any('cargo test --workspace --doc' in command for command in rendered)
     assert any('codecov.json' in command for command in rendered)
@@ -62,3 +62,22 @@ def test_native_linux_reports_use_the_configured_coverage_owner(monkeypatch) -> 
     for action in owner.actions:
         action.perform(Context(runner=runner, config=config, observing=True))
     assert runner.commands[-1].env[config.environment.linux_rust.output_dir] == str(config.path(config.hostimage.extract_to))
+
+
+def test_failed_linux_tests_still_render_lcov_before_judging_crate_floors() -> None:
+    from capsem_builder.gate.config import load
+    from helpers.linux_rust import coverage_commands
+
+    config = load(ROOT)
+    issued = coverage_commands(ROOT)
+    execution = next(command for command in issued if command.argv[:3] == ('cargo', 'llvm-cov', 'nextest'))
+    assert '--no-report' in execution.argv, 'failed test execution must not suppress report production'
+    assert '--lcov' not in execution.argv and '--output-path' not in execution.argv
+    report_index = next(index for index, command in enumerate(issued) if command.argv[:3] == ('cargo', 'llvm-cov', 'report') and '--lcov' in command.argv)
+    ratchet_index = next(index for index, command in enumerate(issued) if any(config.modules.rust_coverage_ratchet in part for part in command.argv))
+    assert report_index < ratchet_index
+    report = issued[report_index]
+    assert set(config.modules.rust_coverage_floors) <= set(report.argv)
+    path = report.argv[report.argv.index('--output-path') + 1]
+    assert Path(path).parent == config.path(config.hostimage.extract_to)
+    assert path in issued[ratchet_index].argv

@@ -19,14 +19,23 @@ from .proc import Runner
 
 
 def actions(config: GateConfig, output: Path) -> tuple[Action, ...]:
-    coverage = rustchecks.coverage(config)
+    settings = config.modules
+    execution = list(settings.rust_coverage)
+    # llvm-cov does not render its implicit report after a failed test run.
+    # Preserve the canonical test selectors but render exactly once separately.
+    position = execution.index('--output-path')
+    if execution[position + 1] != settings.rust_coverage_report:
+        raise GateError('canonical Rust coverage report path disagrees with its command')
+    del execution[position:position + 2]
+    execution.remove('--lcov')
+    report = output / Path(settings.rust_coverage_report).name
     checks: list[Action] = [
         Run(
-            [*config.modules.rust_coverage, '--no-clean', '--no-fail-fast', '--locked',
-             *config.modules.rust_coverage_floors],
+            [*execution, '--no-report', '--no-clean', '--no-fail-fast', '--locked'],
             env=rustchecks.environment(config),
         ),
-        *coverage.actions[1:],
+        Run([*settings.rust_coverage_report_command, str(report), *settings.rust_coverage_floors]),
+        rustchecks.coverage_ratchet(config, report=report),
         *rustchecks.doctests(config).actions,
     ]
     for filename, argv in config.hostimage.coverage_reports.items():

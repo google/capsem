@@ -13,6 +13,8 @@ Nextest and doctests is held by
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from .actions import Run, Script
 from .config import GateConfig
 from .execution import SATURATES, Kind, Needs, Speed, Step, step
@@ -40,19 +42,25 @@ def coverage(config: GateConfig) -> Step:
             [*settings.rust_coverage, *settings.rust_coverage_floors],
             env=environment(config),
         ),
-        Script(
-            config,
-            settings.rust_coverage_ratchet,
-            "--report",
-            settings.rust_coverage_report,
-            "--workspace-manifest",
-            settings.rust_coverage_workspace_manifest,
-        ),
+        coverage_ratchet(config),
         contends=(config.exclusive("workspace_binaries"),),
         kind=Kind.UNIT_TEST,
         needs=frozenset({Needs.DISK}),
         speed=Speed.SLOW,
         concurrency=SATURATES,
+    )
+
+
+def coverage_ratchet(config: GateConfig, *, report: Path | None = None) -> Script:
+    """Judge the same crate policy against the owning lane's actual report."""
+    settings = config.modules
+    return Script(
+        config,
+        settings.rust_coverage_ratchet,
+        "--report",
+        report if report is not None else settings.rust_coverage_report,
+        "--workspace-manifest",
+        settings.rust_coverage_workspace_manifest,
     )
 
 

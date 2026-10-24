@@ -31,6 +31,7 @@ class ModulesConfig(Strict):
     rust_coverage: tuple[str, ...]
     rust_coverage_floors: tuple[str, ...]
     rust_coverage_report: str
+    rust_coverage_report_command: tuple[str, ...]
     rust_coverage_ratchet: str
     rust_coverage_workspace_manifest: str
     rust_coverage_crate_minimum: PositiveFloat
