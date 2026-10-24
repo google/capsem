@@ -25,7 +25,6 @@ fn choose_test_image(app: &mut App) {
     let request = app.take_catalog_request().unwrap();
     app.apply_image_catalog(request, Ok(image_creation::catalog()));
     app.handle_key(key(KeyCode::Tab, KeyModifiers::NONE));
-    app.handle_key(key(KeyCode::Down, KeyModifiers::NONE));
 }
 
 #[test]

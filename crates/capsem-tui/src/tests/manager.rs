@@ -149,6 +149,8 @@ fn chooser_has_spaced_table_and_bottom_legend_and_direct_arrow_navigation() {
         let request = app.take_catalog_request().unwrap();
         app.apply_image_catalog(request, Ok(image_creation::catalog()));
         app.handle_key(key(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.create_draft().unwrap().selected_image().unwrap().name, "other");
+        app.handle_key(key(KeyCode::Up, KeyModifiers::NONE));
         assert_eq!(app.create_draft().unwrap().selected_image().unwrap().name, "code");
         let buffer = render_app_test_buffer(&app, width, height).unwrap();
         let (_, name_y) = find_cell(&buffer, "Name");

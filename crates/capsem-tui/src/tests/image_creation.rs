@@ -1,6 +1,28 @@
 use super::*;
 
 #[test]
+fn first_arrow_moves_from_the_visibly_selected_compatible_image() {
+    for (direction, expected) in [(KeyCode::Down, "second"), (KeyCode::Up, "third")] {
+        let mut app = App::new(fixture_state());
+        app.handle_key(key(KeyCode::Char('n'), KeyModifiers::ALT));
+        let request = app.take_catalog_request().unwrap();
+        let mut response = catalog();
+        response.images.truncate(1);
+        for name in ["second", "third"] {
+            let mut image = response.images[0].clone();
+            image.name = name.into();
+            response.images.push(image);
+        }
+        app.apply_image_catalog(request, Ok(response));
+        let name = app.create_draft().unwrap().name.clone();
+        assert_eq!(app.create_draft().unwrap().selected_image().unwrap().name, "code");
+        app.handle_key(key(direction, KeyModifiers::NONE));
+        assert_eq!(app.create_draft().unwrap().selected_image().unwrap().name, expected);
+        assert_eq!(app.create_draft().unwrap().name, name);
+    }
+}
+
+#[test]
 fn successful_create_waits_for_its_session_through_stale_empty_refreshes() {
     let mut empty = fixture_state();
     let mut created = empty.sessions[0].clone();
@@ -63,7 +85,6 @@ fn periodic_state_refresh_follows_pending_image_verification() {
     assert!(generation.refresh);
     app.apply_image_catalog(generation, Ok(catalog()));
     app.handle_key(key(KeyCode::Tab, KeyModifiers::NONE));
-    app.handle_key(key(KeyCode::Down, KeyModifiers::NONE));
     let name = app.create_draft().unwrap().name.clone();
     app.replace_state(app.state().clone());
     let poll = app
@@ -106,7 +127,6 @@ fn active_cache_and_transfer_progress_keep_the_existing_draft_observed() {
     response.images[0].cached = ImageCacheState::Missing;
     app.apply_image_catalog(generation, Ok(response.clone()));
     app.handle_key(key(KeyCode::Tab, KeyModifiers::NONE));
-    app.handle_key(key(KeyCode::Down, KeyModifiers::NONE));
     app.replace_state(app.state().clone());
     assert!(
         app.take_catalog_request().is_none(),
@@ -170,7 +190,6 @@ fn selected_image_can_be_cached_without_creating_a_session() {
     let generation = app.take_catalog_request().unwrap();
     app.apply_image_catalog(generation, Ok(catalog()));
     app.handle_key(key(KeyCode::Tab, KeyModifiers::NONE));
-    app.handle_key(key(KeyCode::Down, KeyModifiers::NONE));
     assert_eq!(
         app.handle_key(key(KeyCode::Char('p'), KeyModifiers::CONTROL)),
         AppAction::Invoke(ControlAction::CacheImage {
@@ -198,7 +217,6 @@ fn catalog_retry_preserves_the_choice_and_never_silently_creates_a_plain_vm() {
     let generation = app.take_catalog_request().unwrap();
     app.apply_image_catalog(generation, Ok(catalog()));
     app.handle_key(key(KeyCode::Tab, KeyModifiers::NONE));
-    app.handle_key(key(KeyCode::Down, KeyModifiers::NONE));
     app.handle_key(key(KeyCode::Char('r'), KeyModifiers::CONTROL));
     let refreshed = app.take_catalog_request().expect("retry request");
     assert_ne!(generation, refreshed);
@@ -224,6 +242,7 @@ fn successful_cache_refreshes_readiness_without_losing_the_selected_image() {
     app.apply_image_catalog(generation, Ok(catalog()));
     app.handle_key(key(KeyCode::Tab, KeyModifiers::NONE));
     app.handle_key(key(KeyCode::Down, KeyModifiers::NONE));
+    app.handle_key(key(KeyCode::Up, KeyModifiers::NONE));
     app.handle_key(key(KeyCode::Char('p'), KeyModifiers::CONTROL));
     app.complete_image_cache(true);
     let fresh = app.take_catalog_request().unwrap();
@@ -285,7 +304,6 @@ fn image_selection_blocks_incompatible_entries_and_preserves_failed_drafts() {
     assert!(app.take_catalog_request().is_none());
     app.apply_image_catalog(generation, Ok(catalog()));
     app.handle_key(key(KeyCode::Tab, KeyModifiers::NONE));
-    app.handle_key(key(KeyCode::Down, KeyModifiers::NONE));
     let snapshot = render_app_snapshot(&app, 100, 30).unwrap();
     for text in ["code", "Checking", "Owner", "Status", "Development tools"] {
         assert!(snapshot.contains(text), "{text}");
@@ -346,7 +364,6 @@ fn pending_create_keeps_its_catalog_result_and_prevents_duplicate_dialogs() {
     let generation = app.take_catalog_request().unwrap();
     app.apply_image_catalog(generation, Ok(catalog()));
     app.handle_key(key(KeyCode::Tab, KeyModifiers::NONE));
-    app.handle_key(key(KeyCode::Down, KeyModifiers::NONE));
     assert!(matches!(
         app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
         AppAction::Invoke(_)
@@ -403,7 +420,6 @@ async fn catalog_and_oci_create_use_authenticated_typed_gateway_calls() {
     let generation = app.take_catalog_request().unwrap();
     app.apply_image_catalog(generation, Ok(provider.list_images_async(false).await.unwrap()));
     app.handle_key(key(KeyCode::Tab, KeyModifiers::NONE));
-    app.handle_key(key(KeyCode::Down, KeyModifiers::NONE));
     let AppAction::Invoke(action) = app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)) else {
         panic!("create intent")
     };

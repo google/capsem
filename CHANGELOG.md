@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Move the TUI image chooser from its visible default on the first arrow press.
+
 - Preserve the active terminal viewer's queued input when a VM suspend is
   rejected, while continuing to reject stale viewers and fenced focus changes.
 

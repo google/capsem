@@ -203,7 +203,8 @@ impl App {
                     let selection = draft
                         .image_name
                         .as_ref()
-                        .and_then(|name| images.iter().position(|image| &image.name == name));
+                        .and_then(|name| images.iter().position(|image| &image.name == name))
+                        .or_else(|| images.iter().position(|image| image.image.is_some()));
                     let selection = match (selection, key.code) {
                         (None, KeyCode::Down) => 0,
                         (None, _) => count - 1,
