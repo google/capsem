@@ -106,6 +106,26 @@ class Transport:
         for conn in connections:
             conn.close()
 
+    def expect_peer_close(self, *, timeout: float) -> None:
+        """Observe EOF/reset on the existing original socket, never reconnect.
+
+        Used after an owned preview revoke/delete. Missing socket, timeout or
+        any unread data cannot establish retirement of an admitted flow.
+        """
+        validate_limits(timeout, 1)
+        with self._connections_lock:
+            conn = self._connections.get(threading.get_ident())
+        assert conn is not None and conn.sock is not None, "no original HTTP socket to observe"
+        try:
+            conn.sock.settimeout(timeout)
+            try:
+                data = conn.sock.recv(1)
+            except ConnectionResetError:
+                data = b""
+            assert data == b"", "original peer returned data instead of closing"
+        finally:
+            self._close_current()
+
     def __del__(self) -> None:
         # Tests create clients ad hoc and drop them; closing here keeps a
         # kept-alive socket from surfacing as a ResourceWarning at collection.
