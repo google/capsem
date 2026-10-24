@@ -22,7 +22,7 @@ fn socket_drops_truncated_malformed_and_non_browser_records_then_recovers() {
     client.send(&capsem_proto::encode_guest_msg(&message).unwrap()).unwrap();
     super::receive(&server, &sender, &mut buffer).unwrap();
     assert!(matches!(
-        receiver.lock().unwrap().try_recv().unwrap().message,
+        receiver.lock().unwrap().try_recv().unwrap().message(),
         capsem_proto::GuestToHost::OpenUrl { .. }
     ));
 }
@@ -35,7 +35,7 @@ fn browser_producer_has_one_credit_and_validates_before_queueing() {
     assert!(sender.send_browser("https://example.org/second").is_err());
     let queued = receiver.lock().unwrap().try_recv().unwrap();
     assert!(
-        matches!(&queued.message, capsem_proto::GuestToHost::OpenUrl { url } if url.0 == "https://example.org/login")
+        matches!(&queued.message(), capsem_proto::GuestToHost::OpenUrl { url } if url.0 == "https://example.org/login")
     );
     drop(queued);
     sender.send_browser("https://example.org/second").unwrap();

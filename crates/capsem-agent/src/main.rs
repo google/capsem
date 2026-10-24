@@ -18,9 +18,9 @@ use snapshot::thaw_system_filesystem;
 mod terminal_bridge;
 mod tun_supervisor;
 mod venv;
-use control_writer::{control_writer_loop, heartbeat_loop, BridgeShared, CtrlSender, PendingResponses};
 #[cfg(test)]
-use control_writer::{frame_or_drop, SharedCtrlReceiver};
+use control_writer::SharedCtrlReceiver;
+use control_writer::{control_writer_loop, heartbeat_loop, BridgeShared, CtrlSender, PendingResponses};
 use exec::{run_exec, ExecCancellation};
 #[cfg(test)]
 use shutdown::HostShutdown;

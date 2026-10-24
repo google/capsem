@@ -44,11 +44,9 @@ impl Reports {
                 "duplicate network close report",
             ));
         };
-        let queued = Queued {
-            message: capsem_proto::GuestToHost::PortClosed { flow, report },
-            credit: Some(credit),
-            acknowledged: Some(Arc::new(tokio::sync::Notify::new())),
-        };
+        let mut queued = Queued::prepare(&capsem_proto::GuestToHost::PortClosed { flow, report })?;
+        queued.credit = Some(credit);
+        queued.acknowledged = Some(Arc::new(tokio::sync::Notify::new()));
         entry.insert(queued.clone());
         drop(pending);
         Ok(queued)

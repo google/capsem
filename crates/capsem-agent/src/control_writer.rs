@@ -7,7 +7,7 @@
 use std::os::unix::io::RawFd;
 use std::thread;
 
-use capsem_proto::{encode_guest_msg, GuestToHost};
+use capsem_proto::{framing::PreparedFrame, GuestToHost};
 use nix::libc;
 
 use crate::ackable_response_id;
@@ -19,25 +19,7 @@ mod network;
 #[cfg(test)]
 mod tests;
 
-/// Frame `msg` for the control channel. A message that cannot be framed (over
-/// `MAX_FRAME_SIZE`) is logged, evicted from the replay map, and dropped:
-/// the host would never decode or ack it, and replaying it on every
-/// reconnect is how one oversized response wedged the channel for good.
-pub(crate) fn frame_or_drop(msg: &GuestToHost, pending: &PendingResponses) -> Option<Vec<u8>> {
-    match encode_guest_msg(msg) {
-        Ok(frame) => Some(frame),
-        Err(e) => {
-            eprintln!("[capsem-agent] control writer: dropping unframeable message: {e}");
-            if let Some(id) = ackable_response_id(msg) {
-                pending.lock().unwrap().remove(&id);
-            }
-            None
-        }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) type PendingResponses = std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, GuestToHost>>>;
+pub(crate) type PendingResponses = std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, Queued>>>;
 
 pub(crate) type SharedCtrlReceiver = std::sync::Arc<std::sync::Mutex<std::sync::mpsc::Receiver<Queued>>>;
 
@@ -45,9 +27,75 @@ pub(crate) type SharedCtrlReceiver = std::sync::Arc<std::sync::Mutex<std::sync::
 /// delivery. Reconnects cannot free slots ahead of queue drain.
 #[derive(Debug, Clone)]
 pub(crate) struct Queued {
-    pub(crate) message: GuestToHost,
+    pub(crate) frame: Result<PreparedFrame<GuestToHost>, std::sync::Arc<Rejected>>,
+    id: Option<u64>,
+    shutdown: bool,
     credit: Option<std::sync::Arc<tokio::sync::OwnedSemaphorePermit>>,
     acknowledged: Option<std::sync::Arc<tokio::sync::Notify>>,
+}
+
+#[derive(Debug)]
+pub(crate) struct Rejected;
+
+impl Queued {
+    pub(crate) fn prepare(message: &GuestToHost) -> std::io::Result<Self> {
+        Ok(Self {
+            frame: Ok(PreparedFrame::new(message, capsem_proto::MAX_FRAME_SIZE)?),
+            id: ackable_response_id(message),
+            shutdown: matches!(message, GuestToHost::ShutdownComplete),
+            credit: None,
+            acknowledged: None,
+        })
+    }
+
+    // Preserve the writer's existing nonfatal drop and real channel-close
+    // result without retaining an unframeable body in either queue or replay.
+    fn rejected(message: &GuestToHost) -> Self {
+        Self {
+            frame: Err(std::sync::Arc::new(Rejected)),
+            id: ackable_response_id(message),
+            shutdown: false,
+            credit: None,
+            acknowledged: None,
+        }
+    }
+
+    fn bytes_or_drop<'a>(&'a self, pending: &PendingResponses) -> Option<&'a [u8]> {
+        match &self.frame {
+            Ok(frame) => Some(frame.bytes()),
+            Err(rejected) => {
+                if let Some(id) = self.id {
+                    let mut pending = pending.lock().unwrap_or_else(|error| error.into_inner());
+                    if pending
+                        .get(&id)
+                        .and_then(|queued| queued.frame.as_ref().err())
+                        .is_some_and(|current| std::sync::Arc::ptr_eq(current, rejected))
+                    {
+                        pending.remove(&id);
+                    }
+                    drop(pending);
+                }
+                None
+            }
+        }
+    }
+
+    fn admit(self, sender: &CtrlSender) -> Result<(), std::sync::mpsc::SendError<Self>> {
+        if let Some(id) = self.id.filter(|_| self.frame.is_ok()) {
+            let mut pending = sender.pending.lock().unwrap_or_else(|e| e.into_inner());
+            if pending.len() >= 4096 {
+                pending.clear();
+            }
+            pending.insert(id, self.clone());
+            drop(pending);
+        }
+        sender.tx.send(self)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn message(&self) -> GuestToHost {
+        capsem_proto::decode_guest_msg(&self.frame.as_ref().unwrap().bytes()[4..]).unwrap()
+    }
 }
 
 /// Producer side of the serialized control-channel writer.
@@ -85,26 +133,38 @@ impl CtrlSender {
         (sender, std::sync::Arc::new(std::sync::Mutex::new(rx)))
     }
 
-    pub(crate) fn send(&self, msg: GuestToHost) -> Result<(), std::sync::mpsc::SendError<GuestToHost>> {
+    pub(crate) fn send(&self, mut msg: GuestToHost) -> Result<(), std::sync::mpsc::SendError<GuestToHost>> {
         if matches!(msg, GuestToHost::PortClosed { .. } | GuestToHost::OpenUrl { .. }) {
             return Err(std::sync::mpsc::SendError(msg));
         }
-        if let Some(id) = ackable_response_id(&msg) {
-            let mut p = self.pending.lock().unwrap_or_else(|e| e.into_inner());
-            // Bound the map at 4096 to match the exec_done cap -- under
-            // transport pathology it could otherwise grow without limit.
-            if p.len() >= 4096 {
-                p.clear();
+        let queued = match Queued::prepare(&msg) {
+            Ok(queued) => queued,
+            Err(error) => {
+                if let GuestToHost::FileContent { id, path, .. } = &msg {
+                    msg = GuestToHost::Error {
+                        id: *id,
+                        message: format!(
+                            "failed to read {path}: file too large for one control frame ({} bytes)",
+                            capsem_proto::MAX_FRAME_SIZE
+                        ),
+                    };
+                    Queued::prepare(&msg).unwrap_or_else(|_| Queued::rejected(&msg))
+                } else {
+                    eprintln!("[capsem-agent] refusing unframeable control message: {error}");
+                    Queued::rejected(&msg)
+                }
             }
-            p.insert(id, msg.clone());
-        }
-        self.tx
-            .send(Queued {
-                message: msg,
-                credit: None,
-                acknowledged: None,
-            })
-            .map_err(|error| std::sync::mpsc::SendError(error.0.message))
+        };
+        queued.admit(self).map_err(|_| std::sync::mpsc::SendError(msg))
+    }
+
+    fn pending_snapshot(&self) -> Vec<Queued> {
+        self.pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+            .cloned()
+            .collect()
     }
 
     pub(crate) fn send_browser(&self, url: &str) -> std::io::Result<()> {
@@ -114,14 +174,12 @@ impl CtrlSender {
             .clone()
             .try_acquire_owned()
             .map_err(|_| std::io::Error::from(std::io::ErrorKind::WouldBlock))?;
+        let mut queued = Queued::prepare(&GuestToHost::OpenUrl {
+            url: capsem_proto::browser::BrowserUrl(url),
+        })?;
+        queued.credit = Some(std::sync::Arc::new(credit));
         self.tx
-            .send(Queued {
-                message: GuestToHost::OpenUrl {
-                    url: capsem_proto::browser::BrowserUrl(url),
-                },
-                credit: Some(std::sync::Arc::new(credit)),
-                acknowledged: None,
-            })
+            .send(queued)
             .map_err(|_| std::io::Error::from(std::io::ErrorKind::BrokenPipe))
     }
 
@@ -188,34 +246,28 @@ pub(crate) fn control_writer_loop(
     // previous control conn went silent (Apple VZ post-restoreState pattern:
     // write returned success, bytes never propagated). The host's
     // handle_guest_msg is idempotent for already-handled ids.
-    let snap: Vec<GuestToHost> = sender
-        .pending
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .values()
-        .cloned()
-        .collect();
-    if !snap.is_empty() {
-        eprintln!(
-            "[capsem-agent] control writer: replaying {} pending unacked responses",
-            snap.len()
-        );
-        for msg in &snap {
-            let Some(frame) = frame_or_drop(msg, &sender.pending) else {
-                continue;
-            };
-            if write_all_fd(control_fd, &frame).is_err() {
-                mark_dead();
-                return;
-            }
+    let mut replayed = false;
+    for queued in sender.pending_snapshot() {
+        if !replayed {
+            eprintln!("[capsem-agent] control writer: replaying pending unacked responses");
+            replayed = true;
+        }
+        let Some(frame) = queued.bytes_or_drop(&sender.pending) else {
+            continue;
+        };
+        if write_all_fd(control_fd, frame).is_err() {
+            mark_dead();
+            return;
         }
     }
 
     // At most one report per reserved network credit. A replay never appends
     // another queue entry; its snapshot retains the original credit.
     for queued in sender.network.snapshot() {
-        let frame = encode_guest_msg(&queued.message).expect("fixed-size network report");
-        if write_all_fd(control_fd, &frame).is_err() {
+        let Some(frame) = queued.bytes_or_drop(&sender.pending) else {
+            continue;
+        };
+        if write_all_fd(control_fd, frame).is_err() {
             mark_dead();
             return;
         }
@@ -235,21 +287,17 @@ pub(crate) fn control_writer_loop(
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
         };
-        let msg = &queued.message;
-        // Frame first: a message that cannot be framed is a bug in the
-        // producer, not a transport loss, and must not tear the connection
-        // down.
-        let Some(frame) = frame_or_drop(msg, &sender.pending) else {
+        let Some(frame) = queued.bytes_or_drop(&sender.pending) else {
             continue;
         };
-        if write_all_fd(control_fd, &frame).is_err() {
+        if write_all_fd(control_fd, frame).is_err() {
             mark_dead();
-            if (ackable_response_id(msg).is_some() || queued.credit.is_some()) && sender.tx.send(queued).is_err() {
+            if (queued.id.is_some() || queued.credit.is_some()) && sender.tx.send(queued).is_err() {
                 tracing::error!("control replay queue closed after transport failure");
             }
             return;
         }
-        if matches!(msg, GuestToHost::ShutdownComplete) {
+        if queued.shutdown {
             sender.shutdown.mark_reported();
         }
         drop(queued);

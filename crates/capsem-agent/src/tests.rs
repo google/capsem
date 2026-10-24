@@ -515,30 +515,12 @@ fn file_read_reply_for_an_oversized_file_is_an_error_that_fits_a_frame() {
         path: path.clone(),
         data: vec![0xFF; MAX_FRAME_SIZE as usize],
     };
-    assert!(!capsem_proto::guest_msg_fits_frame(&too_big));
+    assert!(!capsem_proto::encode_guest_msg(&too_big).is_ok());
     let reply = GuestToHost::Error {
         id: 7,
         message: format!("failed to read {path}: file too large for one control frame ({MAX_FRAME_SIZE} bytes)"),
     };
-    assert!(capsem_proto::guest_msg_fits_frame(&reply));
-}
-
-#[test]
-fn frame_or_drop_evicts_an_unframeable_reply_from_the_replay_map() {
-    let pending = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
-    let too_big = GuestToHost::FileContent {
-        id: 7,
-        path: "/root/blob.bin".to_string(),
-        data: vec![0xFF; MAX_FRAME_SIZE as usize],
-    };
-    pending.lock().unwrap().insert(7, too_big.clone());
-    assert!(frame_or_drop(&too_big, &pending).is_none());
-    assert!(
-        pending.lock().unwrap().is_empty(),
-        "a frame the host would never ack must not be replayed on every reconnect"
-    );
-    let ack = GuestToHost::Ack { id: 7 };
-    assert!(frame_or_drop(&ack, &pending).is_some());
+    assert!(capsem_proto::encode_guest_msg(&reply).is_ok());
 }
 
 #[test]

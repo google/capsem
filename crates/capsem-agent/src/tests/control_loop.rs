@@ -35,10 +35,7 @@ fn run_control_loop_with_messages_and_sender(messages: Vec<HostToGuest>) -> (Vec
 fn run_control_loop_with_messages_and_pending(
     messages: Vec<HostToGuest>,
     seed: Option<Vec<(u64, GuestToHost)>>,
-) -> (
-    Vec<GuestToHost>,
-    std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, GuestToHost>>>,
-) {
+) -> (Vec<GuestToHost>, PendingResponses) {
     let (responses, pending, _) = run_control_loop_full(messages, seed);
     (responses, pending)
 }
@@ -74,7 +71,7 @@ fn run_control_loop_full(
     if let Some(entries) = seed {
         let mut p = pending.lock().unwrap();
         for (id, msg) in entries {
-            p.insert(id, msg);
+            p.insert(id, crate::control_writer::Queued::prepare(&msg).unwrap());
         }
     }
     let pending_for_loop = std::sync::Arc::clone(&pending);
@@ -104,7 +101,7 @@ fn run_control_loop_full(
     // Drain the channel.
     let mut responses = Vec::new();
     while let Ok(msg) = ctrl_rx.lock().unwrap().try_recv() {
-        responses.push(msg.message);
+        responses.push(msg.message());
     }
     (responses, pending, sender)
 }
@@ -382,7 +379,7 @@ fn control_loop_shutdown_returns_once_the_writer_confirms_the_report() {
     let confirm = ctrl_tx.clone();
     let writer = thread::spawn(move || {
         let msg = ctrl_rx.lock().unwrap().recv().expect("the report");
-        assert!(matches!(msg.message, GuestToHost::ShutdownComplete), "{msg:?}");
+        assert!(matches!(msg.message(), GuestToHost::ShutdownComplete), "{msg:?}");
         drop(msg);
         confirm.shutdown.mark_reported();
         std::time::Instant::now()

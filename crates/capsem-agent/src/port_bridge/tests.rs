@@ -39,7 +39,7 @@ fn destination_reset_reports_reason_and_bytes_before_releasing_admission() {
     assert_eq!(read_frame(&mut host, 5), b"reply");
     capsem_foundation::unix::fd::reset_tcp(client.as_fd()).unwrap();
     let queued = reports.lock().unwrap().recv_timeout(Duration::from_secs(1)).unwrap();
-    assert!(matches!(queued.message, capsem_proto::GuestToHost::PortClosed {
+    assert!(matches!(queued.message(), capsem_proto::GuestToHost::PortClosed {
         flow, report: capsem_proto::router::CloseReport {
             reason: CloseReason::Reset, from_source: 7, to_source: 5,
         }

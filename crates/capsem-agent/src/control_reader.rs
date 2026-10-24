@@ -218,23 +218,7 @@ pub(crate) fn control_loop(
                     }
                 } else {
                     match read_nofollow(&path, MAX_FRAME_SIZE as usize) {
-                        Ok(data) => {
-                            let reply = GuestToHost::FileContent {
-                                id,
-                                path: path.clone(),
-                                data,
-                            };
-                            if capsem_proto::guest_msg_fits_frame(&reply) {
-                                reply
-                            } else {
-                                GuestToHost::Error {
-                                    id,
-                                    message: format!(
-                                        "failed to read {path}: file too large for one control frame ({MAX_FRAME_SIZE} bytes)"
-                                    ),
-                                }
-                            }
-                        }
+                        Ok(data) => GuestToHost::FileContent { id, path, data },
                         Err(e) => GuestToHost::Error {
                             id,
                             message: format!("failed to read {path}: {e}"),

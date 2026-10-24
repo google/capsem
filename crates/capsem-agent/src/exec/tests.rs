@@ -47,7 +47,7 @@ fn recv_exec_done(rx: &SharedCtrlReceiver) -> (u64, i32) {
         .unwrap()
         .recv_timeout(std::time::Duration::from_secs(10))
         .unwrap();
-    match received.message {
+    match received.message() {
         GuestToHost::ExecDone { id, exit_code } => (id, exit_code),
         other => panic!("expected ExecDone, got {other:?}"),
     }

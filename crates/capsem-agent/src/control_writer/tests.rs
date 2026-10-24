@@ -77,7 +77,64 @@ fn draining_does_not_release_reports_until_the_matching_generation_is_acked() {
     // Legacy control remains independently admissible under network saturation.
     sender.send(GuestToHost::Pong).unwrap();
     assert!(matches!(
-        receiver.lock().unwrap().try_recv().unwrap().message,
+        receiver.lock().unwrap().try_recv().unwrap().message(),
         GuestToHost::Pong
+    ));
+}
+
+#[test]
+fn rejected_replay_evicts_only_its_original_marker_not_a_valid_replacement() {
+    let (sender, _receiver) = CtrlSender::new(Default::default());
+    let rejected = Queued::rejected(&GuestToHost::Error {
+        id: 71,
+        message: "rejected".into(),
+    });
+    sender.pending.lock().unwrap().insert(71, rejected.clone());
+    assert!(rejected.bytes_or_drop(&sender.pending).is_none());
+    assert!(!sender.pending.lock().unwrap().contains_key(&71));
+    sender.send(GuestToHost::ExecDone { id: 71, exit_code: 0 }).unwrap();
+    assert!(rejected.bytes_or_drop(&sender.pending).is_none());
+    assert!(matches!(
+        sender.pending.lock().unwrap().get(&71).unwrap().message(),
+        GuestToHost::ExecDone { id: 71, .. }
+    ));
+    let newer = Queued::rejected(&GuestToHost::Error {
+        id: 71,
+        message: "newer".into(),
+    });
+    sender.pending.lock().unwrap().insert(71, newer);
+    assert!(rejected.bytes_or_drop(&sender.pending).is_none());
+    assert!(sender.pending.lock().unwrap().contains_key(&71));
+    drop(rejected);
+}
+
+#[test]
+fn unframeable_reply_still_reports_a_genuinely_closed_receiver() {
+    let (sender, receiver) = CtrlSender::new(Default::default());
+    drop(receiver);
+    let error = sender
+        .send(GuestToHost::Error {
+            id: 72,
+            message: "x".repeat(capsem_proto::MAX_FRAME_SIZE as usize),
+        })
+        .unwrap_err();
+    assert!(
+        matches!(error.0, GuestToHost::Error { id: 72, message } if message.len() == capsem_proto::MAX_FRAME_SIZE as usize)
+    );
+}
+
+#[test]
+fn rejecting_a_duplicate_id_never_replaces_a_valid_pending_response() {
+    let (sender, _receiver) = CtrlSender::new(Default::default());
+    sender.send(GuestToHost::ExecDone { id: 73, exit_code: 0 }).unwrap();
+    sender
+        .send(GuestToHost::Error {
+            id: 73,
+            message: "x".repeat(capsem_proto::MAX_FRAME_SIZE as usize),
+        })
+        .unwrap();
+    assert!(matches!(
+        sender.pending.lock().unwrap().get(&73).unwrap().message(),
+        GuestToHost::ExecDone { id: 73, .. }
     ));
 }
