@@ -3552,6 +3552,30 @@ target_scope = "both"
 reason = "Actual two-connect one-close private link corpus joins original cable identity and positive frame counts; no fabricated per-flow record."
 cases = {"populated-private-links" = "cycles"}
 
+[benchmark.routes.credentials]
+cycles = 2
+quick_cycles = 1
+timeout_seconds = 180.0
+exec_timeout_seconds = 30
+max_response_bytes = 1048576
+max_log_bytes = 1048576
+max_store_bytes = 16384
+poll_seconds = 0.05
+ram_mb = 1024
+cpus = 2
+
+[benchmark.routes.credentials.endpoints."POST /credentials/inject"]
+collector = "routes"
+target_scope = "both"
+reason = "Fresh synthetic memory and file credentials reach the original owner; exact opaque inventory, persistence and allowed mock header with refused body/unrelated binding."
+cases = {memory = "cycles", file = "cycles"}
+
+[benchmark.routes.credentials.endpoints."POST /plugins/credential_broker/credentials/reload"]
+collector = "routes"
+target_scope = "both"
+reason = "Changed owned durable account already observed by guest flips service memory-only replay availability and exact hydration counts after the original reload."
+cases = {"changed-store" = "cycles"}
+
 [benchmark.routes.unmeasured]
 "DELETE /connections/authorizations/{transaction_id}" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
 "DELETE /connections/{connection_id}" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
@@ -3562,10 +3586,8 @@ cases = {"populated-private-links" = "cycles"}
 "GET /connections/{connection_id}" = { owner = "crates/capsem-service/src/connection_routes.rs", reason = "Production Runtime constructs only disabled unconfigured agy-native profile; successful enrollment metadata needs an implemented provider contract, never fabricated authority." }
 "POST /connections/google/authorize" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
 "POST /corp/reload" = { owner = "tests/ironbank/test_managed_policy.py", reason = "Needs real running-owner policy publication and acknowledgement, with isolated policy files restored afterwards." }
-"POST /credentials/inject" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
 "POST /mcp/servers/{server_id}/refresh" = { owner = "tests/ironbank/test_mcp_protocol_ledger.py", reason = "Needs configured MCP server lifecycle and bounded tool fixture; no live vendor calls." }
 "POST /mcp/servers/{server_id}/tools/{tool_id}/call" = { owner = "tests/ironbank/test_mcp_protocol_ledger.py", reason = "Needs configured MCP server lifecycle and bounded tool fixture; no live vendor calls." }
-"POST /plugins/credential_broker/credentials/reload" = { owner = "tests/ironbank/test_credential_store_lifecycle.py", reason = "Needs isolated synthetic durable credential store and broker reload; never time real user credential storage." }
 "POST /purge" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
 "POST /restart" = { owner = "tests/ironbank/test_sdk_restart.py", reason = "Needs disposable supervisor and real client reconnection; accepted restart is distinct from ready completion." }
 "POST /run" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
@@ -3582,6 +3604,8 @@ cases = {"populated-private-links" = "cycles"}
 
 # A timed idle/read case does not certify every state of the same operation.
 [benchmark.routes.unmeasured_cases]
+"POST /credentials/inject [physical-broker-ledger]" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Public inventory and exact mock bytes do not replace physical substitution/security/archive privacy joins after original producer drain in canonical Ironbank." }
+"POST /plugins/credential_broker/credentials/reload [physical-store-ledger]" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Public changed-store cache and replay transition timing does not certify physical ledger/archive joins; canonical store/broker Ironbank retains that proof." }
 "POST /vms/{id}/files/content [physical-import-archive]" = { owner = "tests/ironbank/test_files_process_ledger.py", reason = "Public import event/counter proof is sourced after drain; physical fs/security/archive joins remain canonical FilesProcessLedger proof, never direct collector DB reads." }
 "POST /vms/{id}/stop [physical-producer-ledger-drain]" = { owner = "tests/ironbank/test_policy_mutation_routes.py", reason = "Public stop promises process exit; physical producer ledger flush/drain proof remains canonical Ironbank and is not inferred from status or path presence." }
 "POST /vms/{id}/exec [per-request-cpu-limits]" = { owner = "tests/ironbank/kingslanding/test_workload_exec.py", reason = "Finite known workload output does not certify per-request CPU limit enforcement, saturation or cancellation behavior." }

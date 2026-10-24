@@ -20,7 +20,7 @@ def fixture_inputs():
 
 
 @contextlib.contextmanager
-def lifecycle_target(label):
+def lifecycle_target(label, *, prepare=None):
     reference_image, ready, grant_exact, layout_registry = fixture_inputs()
     layout = reference_image.ready()
     ready(layout)  # Existing immutable producer receipt is mandatory; never build/fetch.
@@ -32,6 +32,8 @@ def lifecycle_target(label):
         try:
             catalog = reference.split('/', 1)[0] + '/library/catalog:stable'
             grant_exact(service.home_dir, reference, catalog=catalog, certificate=certificate)
+            if prepare is not None:
+                prepare(service)
             service.start()
             yield service_target(service, label), service, reference, certificate
         finally:

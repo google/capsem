@@ -14,6 +14,7 @@ from typing import Annotated, Literal
 from pydantic import Field, PositiveFloat, PositiveInt, field_validator
 
 from .benchmarkcontrolschema import WorkloadControlConfig
+from .benchmarkcredentialschema import CredentialRouteConfig
 from .benchmarkerrorschema import ConnectionErrorConfig
 from .benchmarkimageschema import ImageRouteConfig
 from .benchmarklifecycleschema import LifecycleRouteConfig
@@ -79,6 +80,7 @@ class RouteCoverageConfig(Strict):
     workload_controls: WorkloadControlConfig
     connection_errors: ConnectionErrorConfig
     network_members: NetworkMemberConfig
+    credentials: CredentialRouteConfig
     unmeasured: dict[str, RouteDebtConfig]
     internal: dict[str, RouteDebtConfig]
     unmeasured_cases: dict[str, RouteDebtConfig]

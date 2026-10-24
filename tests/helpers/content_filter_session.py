@@ -22,13 +22,13 @@ FIXTURE_HOST = "fixture.capsem.test"
 OAUTH_HOST = "oauth2.googleapis.com"
 
 
-def upstream_records(text: str, *, required_hosts=(FIXTURE_HOST,)) -> list[dict]:
+def upstream_records(text: str, *, required_hosts=(FIXTURE_HOST,), allowed_hosts=(FIXTURE_HOST, OAUTH_HOST)) -> list[dict]:
     """Validate DNS exchanges explicitly, then return HTTP rows for byte proofs."""
     dns, http = [], []
     for line in text.splitlines():
         row = json.loads(line)
         if row.get("kind") == "dns":
-            assert row["qname"].rstrip(".") in (FIXTURE_HOST, OAUTH_HOST), row
+            assert row["qname"].rstrip(".") in allowed_hosts, row
             assert row["qtype"] in (1, 28) and row["qclass"] == 1, row
             assert row["rcode"] == 0 and row["source_proto"] in ("udp", "tcp"), row
             assert row["request_bytes"] > 0 and row["response_bytes"] > 0, row

@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Keep optional metric exporter initialization and shutdown off the async service
   runtime so enabling telemetry cannot panic before the service becomes ready.
+
+- Add finite synthetic credential injection and changed-store reload benchmark
+  source cases with independent broker binding and service-cache effects.
+  Physical ledger proof and measured performance remain separate gates.
+
 - Add finite benchmark source cases for network member attach/detach and real
   private link history, with independent guest cable, switch and packet effects.
   No per-flow logging or measured performance result is implied.
