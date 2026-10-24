@@ -36,6 +36,7 @@ fn success(output: Output) -> String {
 
 fn session(persistent: bool) -> Value {
     json!({"id": "vm-canonical", "name": "work", "pid": 17, "available_actions": [], "status": "Stopped", "persistent": persistent,
+        "pending_approval_count": 3,
         "ram_mb": 12288, "cpus": 4, "version": "0.7.0", "forked_from": "seed", "description": "project",
         "created_at": "2026-10-09T12:00:00Z", "uptime_secs": 3660, "total_input_tokens": 11,
         "total_output_tokens": 19, "total_estimated_cost": 0.12, "total_tool_calls": 3,
