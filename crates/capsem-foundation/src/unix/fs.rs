@@ -44,6 +44,18 @@ fn bytes_for_blocks<T: Into<u64>>(blocks: T, block_size: u64) -> u64 {
     blocks.into().saturating_mul(block_size)
 }
 
+/// Validate an already-open descriptor's owner and absence of external write access.
+pub fn validate_owner_no_external_write(file: &File, uid: u32) -> io::Result<()> {
+    let metadata = file.metadata()?;
+    if metadata.uid() != uid || metadata.permissions().mode() & 0o022 != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "descriptor has a foreign owner or group/other write authority",
+        ));
+    }
+    Ok(())
+}
+
 /// Open a regular file for reading without following a link or blocking on a
 /// special file.
 ///

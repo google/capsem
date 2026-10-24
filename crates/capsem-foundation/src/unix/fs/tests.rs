@@ -284,3 +284,25 @@ fn a_private_sibling_removes_itself_unless_it_is_renamed() {
         "and nothing is left beside it"
     );
 }
+
+#[test]
+fn descriptor_owner_no_external_write_validation_accepts0755_without_chmod() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("state");
+    std::fs::write(&path, b"preserve").unwrap();
+    let uid = super::super::process::current_uid();
+    for mode in [0o600, 0o644, 0o755, 0o700] {
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+        let file = open_regular_file_no_follow(&path).unwrap();
+        super::validate_owner_no_external_write(&file, uid).unwrap();
+        assert_eq!(file.metadata().unwrap().mode() & 0o777, mode);
+        assert!(super::validate_owner_no_external_write(&file, uid.wrapping_add(1)).is_err());
+    }
+    for mode in [0o620, 0o602, 0o777] {
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+        let file = open_regular_file_no_follow(&path).unwrap();
+        assert!(super::validate_owner_no_external_write(&file, uid).is_err());
+        assert_eq!(file.metadata().unwrap().mode() & 0o777, mode);
+    }
+    assert_eq!(std::fs::read(path).unwrap(), b"preserve");
+}

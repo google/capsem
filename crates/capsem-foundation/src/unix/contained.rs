@@ -244,6 +244,33 @@ impl ContainedDir {
         Ok(Self { fd: owned(fd), path })
     }
 
+    /// Open an absolute root without following symlinks in any component.
+    pub fn open_root_no_follow(root: &Path) -> io::Result<Self> {
+        if !root.is_absolute() {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "root must be absolute"));
+        }
+        let mut directory = Self::open_root(Path::new("/"))?;
+        for component in root.components() {
+            match component {
+                Component::RootDir => {}
+                Component::Normal(name) => directory = directory.descend(name)?,
+                _ => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "root must not traverse parents",
+                    ))
+                }
+            }
+        }
+        Ok(directory)
+    }
+
+    /// Require the held directory's expected owner and no group/other write bits.
+    /// Existing 0755 state is accepted without creating or restricting it.
+    pub fn validate_owner_no_external_write(&self, uid: u32) -> io::Result<()> {
+        super::fs::validate_owner_no_external_write(&File::from(self.fd.try_clone()?), uid)
+    }
+
     pub fn path(&self) -> &Path {
         &self.path
     }

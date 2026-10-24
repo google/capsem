@@ -673,3 +673,34 @@ fn relative_mode_changes_refuse_links_and_traversal() {
     }
     assert_eq!(std::fs::metadata(secret).unwrap().mode() & 0o7777, 0o600);
 }
+
+#[test]
+fn explicit_no_follow_root_refuses_final_and_ancestor_links_without_creating_paths() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    std::fs::create_dir(root.join("home")).unwrap();
+    std::fs::create_dir(root.join("home/state")).unwrap();
+    symlink(root.join("home"), root.join("alias")).unwrap();
+    assert!(ContainedDir::open_root_no_follow(&root.join("home/state")).is_ok());
+    assert!(ContainedDir::open_root_no_follow(&root.join("alias")).is_err());
+    assert!(ContainedDir::open_root_no_follow(&root.join("alias/state")).is_err());
+    assert!(ContainedDir::open_root_no_follow(&root.join("missing")).is_err());
+    assert!(!root.join("missing").exists());
+    assert!(ContainedDir::open_root_no_follow(Path::new("relative")).is_err());
+    assert!(ContainedDir::open_root_no_follow(&root.join("home/../home")).is_err());
+}
+
+#[test]
+fn owned_directory_validation_does_not_require_or_create0700() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let held = ContainedDir::open_root_no_follow(&root).unwrap();
+    let uid = super::super::process::current_uid();
+    held.validate_owner_no_external_write(uid).unwrap();
+    assert!(held.validate_owner_no_external_write(uid.wrapping_add(1)).is_err());
+    assert_eq!(held.mode().unwrap(), 0o755);
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o777)).unwrap();
+    assert!(held.validate_owner_no_external_write(uid).is_err());
+    assert_eq!(held.mode().unwrap(), 0o777);
+}
