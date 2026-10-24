@@ -225,6 +225,7 @@ export type { TriageResponse } from "./TriageResponse.js";
 export type { UpdateActionResponse } from "./UpdateActionResponse.js";
 export { UpdateActionStatus } from "./UpdateActionStatus.js";
 export type { UpdateApplyRequest } from "./UpdateApplyRequest.js";
+export type { UpdateCheckRequest } from "./UpdateCheckRequest.js";
 export type { UpdateCommandPlan } from "./UpdateCommandPlan.js";
 export { UpdateCompatibilityState } from "./UpdateCompatibilityState.js";
 export type { UpdateStatusResponse } from "./UpdateStatusResponse.js";

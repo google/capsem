@@ -225,6 +225,7 @@ export {TriageResponseSchema} from "./TriageResponse.js";
 export {UpdateActionResponseSchema} from "./UpdateActionResponse.js";
 export {UpdateActionStatusSchema} from "./UpdateActionStatus.js";
 export {UpdateApplyRequestSchema} from "./UpdateApplyRequest.js";
+export {UpdateCheckRequestSchema} from "./UpdateCheckRequest.js";
 export {UpdateCommandPlanSchema} from "./UpdateCommandPlan.js";
 export {UpdateCompatibilityStateSchema} from "./UpdateCompatibilityState.js";
 export {UpdateStatusResponseSchema} from "./UpdateStatusResponse.js";
