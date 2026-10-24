@@ -12,11 +12,15 @@ replaced had ten producers each computing its own `p99`.
 ## Quick start
 
 ```bash
-just bench-quick routes          # diagnostic dev loop; no guest
+just bench-quick routes          # diagnostic dev loop; includes guest fixtures
 just bench-report                # what each subject reads, and how it has moved
 source_commit=$(git rev-parse HEAD)
 uv run --project build_system --frozen capsem-gate bench --commit "$source_commit" "routes criterion"
 ```
+
+Quick routes reduces sample and cycle counts; lifecycle, network membership,
+credential and MCP cases still boot owned guest fixtures. It requires their
+matching host/guest/image inputs and is not a host-only or fixture-free shortcut.
 
 Authoritative runs need an explicit exact source SHA and matching host/guest/image
 receipts. The gate's ordinary `just bench` defaults to `unknown`; use its explicit
