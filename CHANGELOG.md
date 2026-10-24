@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Record proxy approval audit admission through the shared security emission
+  metrics and tracing path while preserving original failures and flush ordering.
+
 - Preserve exact LaunchAgent stop and state-query exit codes in installer refusal
   diagnostics without exposing service-manager details or relaxing drain checks.
 

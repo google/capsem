@@ -4,6 +4,71 @@
 use super::decision_ledger::archived_payload_of;
 use super::*;
 
+#[tokio::test]
+async fn proxy_pending_approval_is_flushed_and_emitted_through_shared_telemetry() {
+    use capsem_telemetry::security::SECURITY_EVENT_EMIT_TOTAL;
+    use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+    let recorder = DebuggingRecorder::new();
+    let snapshots = recorder.snapshotter();
+    let _guard = ::metrics::set_default_local_recorder(&recorder);
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("session.db");
+    let writer = DbWriter::open(&path, 16).unwrap();
+    let rules = security_rule_set(
+        r#"
+[profiles.rules.ask_proxy]
+name = "ask_proxy"
+action = "ask"
+match = 'http.host == "proxy.example"'
+"#,
+    );
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
+        .with_http(HttpSecurityEvent {
+            host: Some("proxy.example".into()),
+            ..Default::default()
+        })
+        .with_http_request(HttpRequestSecurityEvent::new(
+            "proxy.example",
+            None,
+            http::HeaderMap::new(),
+            None,
+        ));
+    let mut evaluation = evaluate_security_boundary(&rules, BTreeMap::new(), event).unwrap();
+    crate::security_engine::approval::enforcement::resolve_proxy(&writer, None, &rules, &mut evaluation, 0, None, None)
+        .await
+        .unwrap();
+    assert_eq!(evaluation.enforcement.action, SecurityEnforcementAction::Block);
+    writer.shutdown_blocking();
+    let reader = capsem_logger::DbReader::open(&path).unwrap();
+    let rows = reader.recent_security_ask_events(10).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].ask_id, evaluation.enforcement.ask_id.unwrap().as_str());
+    assert_eq!(rows[0].event_id, evaluation.approval_event_id.unwrap().as_str());
+    assert_eq!(rows[0].rule_id, "profiles.rules.ask_proxy");
+    assert_eq!(rows[0].status, capsem_logger::SecurityAskStatus::Pending);
+    let emitted = snapshots
+        .snapshot()
+        .into_vec()
+        .into_iter()
+        .find_map(|(key, _, _, value)| match value {
+            DebugValue::Counter(count)
+                if key.key().name() == SECURITY_EVENT_EMIT_TOTAL
+                    && key
+                        .key()
+                        .labels()
+                        .any(|label| label.key() == "event_type" && label.value() == "security.ask") =>
+            {
+                Some(count)
+            }
+            _ => None,
+        });
+    assert_eq!(
+        emitted,
+        Some(1),
+        "the original pending ask must enter shared emission telemetry exactly once"
+    );
+}
+
 async fn observer_does_not_invent_a_continuation(blocking: bool) {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("session.db");

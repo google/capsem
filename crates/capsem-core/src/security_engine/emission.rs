@@ -59,6 +59,18 @@ pub async fn admit_within<T>(
 }
 
 pub async fn emit_security_write(db: &DbWriter, op: WriteOp) -> Option<SecurityEventId> {
+    emit_security_write_with(op, |op| db.write_checked(op))
+        .await
+        .ok()
+        .flatten()
+}
+
+/// Keep capability-scoped writers on the same trace/metrics admission path,
+/// while preserving their original failure for fail-closed callers.
+pub(crate) async fn emit_security_write_with<F: std::future::Future<Output = Result<(), String>>>(
+    op: WriteOp,
+    write: impl FnOnce(WriteOp) -> F,
+) -> Result<Option<SecurityEventId>, String> {
     let event = RuntimeSecurityEvent::from_logger_write(op);
     let event_type = event.event_type.as_str();
     let event_family = event.event_family.as_str();
@@ -73,10 +85,7 @@ pub async fn emit_security_write(db: &DbWriter, op: WriteOp) -> Option<SecurityE
     let started = Instant::now();
     span.in_scope(|| trace_runtime_security_event(&event));
     let event_id = event.event_id.clone();
-    let result = db
-        .write_checked(event.into_logger_write())
-        .instrument(span.clone())
-        .await;
+    let result = write(event.into_logger_write()).instrument(span.clone()).await;
     finish_emission(event_type, event_family, span, started, result, event_id)
 }
 
@@ -97,6 +106,8 @@ pub fn emit_security_write_blocking(db: &DbWriter, op: WriteOp) -> Option<Securi
     let event_id = event.event_id.clone();
     let result = span.in_scope(|| db.write_blocking_checked(event.into_logger_write()));
     finish_emission(event_type, event_family, span, started, result, event_id)
+        .ok()
+        .flatten()
 }
 
 fn finish_emission(
@@ -106,7 +117,7 @@ fn finish_emission(
     started: Instant,
     result: Result<(), String>,
     event_id: Option<SecurityEventId>,
-) -> Option<SecurityEventId> {
+) -> Result<Option<SecurityEventId>, String> {
     let (status, queue_result) = if result.is_ok() {
         ("ok", "queued")
     } else {
@@ -126,10 +137,10 @@ fn finish_emission(
     span.record("status", status);
     span.record("queue_result", queue_result);
     match result {
-        Ok(()) => event_id,
+        Ok(()) => Ok(event_id),
         Err(error) => {
             tracing::warn!(parent: &span, error = %error, "security audit event was not accepted");
-            None
+            Err(error)
         }
     }
 }

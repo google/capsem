@@ -68,7 +68,7 @@ pub(crate) async fn resolve_proxy(
     evaluation.enforcement.ask_id = Some(ask_id);
     // No upstream descriptor or side effect exists here. Persist the pending
     // event before the coordinator can offer a decision to a client.
-    ledger.write(WriteOp::SecurityAskEvent(pending)).await?;
+    super::super::emission::emit_security_write_with(WriteOp::SecurityAskEvent(pending), |op| ledger.write(op)).await?;
     ledger.flush().await?;
     let outcome = if let Some(capability) = capability {
         let decision = capability.decide_registered(

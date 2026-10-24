@@ -2,6 +2,42 @@ use super::*;
 use capsem_telemetry::security::{SECURITY_EVENT_EMIT_DURATION_MS, SECURITY_EVENT_EMIT_TOTAL};
 
 #[tokio::test]
+async fn capability_audit_admission_preserves_original_error_and_emits_once() {
+    use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+    let recorder = DebuggingRecorder::new();
+    let snapshots = recorder.snapshotter();
+    let _guard = ::metrics::set_default_local_recorder(&recorder);
+    for outcome in [Ok(()), Err("original capability admission refused".to_owned())] {
+        let expected = outcome.clone();
+        let calls = std::cell::Cell::new(0);
+        let actual = crate::security_engine::emission::emit_security_write_with(file_write(None), |op| {
+            calls.set(calls.get() + 1);
+            assert!(matches!(op, WriteOp::FileEvent(_)));
+            std::future::ready(outcome)
+        })
+        .await;
+        assert_eq!(calls.get(), 1, "audit admission must not replay a capability write");
+        match expected {
+            Ok(()) => assert!(actual.unwrap().is_some()),
+            Err(error) => assert_eq!(actual.unwrap_err(), error),
+        }
+    }
+    let outcomes = snapshots
+        .snapshot()
+        .into_vec()
+        .into_iter()
+        .filter_map(|(key, _, _, value)| match value {
+            DebugValue::Counter(count) if key.key().name() == SECURITY_EVENT_EMIT_TOTAL => {
+                let status = key.key().labels().find(|label| label.key() == "status").unwrap();
+                Some((status.value().to_owned(), count))
+            }
+            _ => None,
+        })
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(outcomes, BTreeMap::from([("ok".into(), 1), ("error".into(), 1)]));
+}
+
+#[tokio::test]
 async fn closed_audit_emission_reports_failure_instead_of_an_accepted_identity() {
     use metrics_util::debugging::{DebugValue, DebuggingRecorder};
     let recorder = DebuggingRecorder::new();
