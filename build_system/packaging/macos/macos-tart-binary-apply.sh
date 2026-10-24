@@ -107,7 +107,7 @@ capsem_prove_binary_apply() {
         return 1
     fi
     if [ "$scope" = public_predecessor_upgrade ]; then
-        capsem_wait_for_assets "$SHARE/public-upgrade-runtime-status.json"
+        capsem_wait_for_assets "$SHARE/public-upgrade-assets-readiness.json"
         capsem_public_state preserved
         observe_update_transition public_predecessor_upgrade activated \
             "$(capsem_pair_field --phase after --field manifest_sha256)" \

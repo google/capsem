@@ -4455,12 +4455,6 @@ subject = "su $TARGET_USER -c XDG_RUNTIME_DIR=$XDG_DIR journalctl --user-unit ca
 reason = "diagnostics; there may be no journal yet on a first install"
 
 [[boundary.discarded_verdicts]]
-digest = "d52766736735"
-where = "build_system/packaging/linux/deb-preinst.sh"
-subject = "su $TARGET_USER -c XDG_RUNTIME_DIR=$XDG_DIR systemctl --user stop capsem.service"
-reason = "stopping a service that is not running is the normal upgrade path"
-
-[[boundary.discarded_verdicts]]
 digest = "23dd11c8481d"
 where = "build_system/scripts/build/generate-settings.sh"
 subject = "tail -200 $LOG"

@@ -141,7 +141,7 @@ def test_scope_uses_one_existing_apply_and_explicit_original_feed_selection():
     tail = source.split("capsem_pair_http request", 1)[1]
     assert "launchctl kickstart" not in tail
     assert "capsem_public_state preserved" in tail
-    assert 'capsem_wait_for_assets "$SHARE/public-upgrade-runtime-status.json"' in tail
+    assert 'capsem_wait_for_assets "$SHARE/public-upgrade-assets-readiness.json"' in tail
 
 
 @pytest.mark.parametrize("scope,phase,legacy", [
