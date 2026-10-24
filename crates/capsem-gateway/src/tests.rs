@@ -5,6 +5,8 @@ use tower::ServiceExt;
 
 use crate::status::StatusCache;
 
+#[cfg(target_os = "macos")]
+mod attestation;
 mod hostile;
 mod http_metrics;
 mod route_forwarding;
