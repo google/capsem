@@ -2209,6 +2209,8 @@ source_contract = [
     "build_system/tests/gate/test_just_argument_boundary.py",
     "build_system/tests/gate/test_gate_testmodules.py",
     "build_system/tests/gate/test_gate_node_lock.py",
+    "build_system/tests/gate/test_gate_bench_restart.py",
+    "build_system/tests/gate/test_native_transfer_config.py",
     "build_system/tests/gate/test_gate_transition.py",
     "build_system/tests/gate/test_gate_test_admission.py",
     "build_system/tests/gate/test_gate_timing.py",
