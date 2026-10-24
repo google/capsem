@@ -13,6 +13,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field, PositiveFloat, PositiveInt, field_validator
 
+from .benchmarkaskschema import AskRouteConfig
 from .benchmarkcontrolschema import WorkloadControlConfig
 from .benchmarkcredentialschema import CredentialRouteConfig
 from .benchmarkerrorschema import ConnectionErrorConfig
@@ -89,6 +90,7 @@ class RouteCoverageConfig(Strict):
     preview_controls: PreviewRouteConfig
     run_purge: RunPurgeConfig
     save_controls: SaveRouteConfig
+    ask_controls: AskRouteConfig
     unmeasured: dict[str, RouteDebtConfig]
     internal: dict[str, RouteDebtConfig]
     unmeasured_cases: dict[str, RouteDebtConfig]

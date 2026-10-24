@@ -3614,6 +3614,22 @@ target_scope = "both"
 reason = "Narrow explicitly allowed builtin headers/raw fetch calls return fixed mock bytes and independently deliver exactly one original nonce-bound upstream request each."
 cases = {headers = "cycles", "raw-body" = "cycles"}
 
+[benchmark.routes.ask_controls]
+cycles = 2
+quick_cycles = 1
+timeout_seconds = 120.0
+exec_timeout_seconds = 30
+max_response_bytes = 1048576
+max_log_bytes = 1048576
+poll_seconds = 0.05
+ram_mb = 1024
+cpus = 2
+[benchmark.routes.ask_controls.endpoints."POST /vms/{id}/security/asks/{ask_id}/resolve"]
+collector = "routes"
+target_scope = "both"
+reason = "Real private HTTP Ask holds one original mapped workload request; generation-bound approve/deny, duplicate refusal and independent mock bytes. Pending dwell and original completion are separate clocks; stopped physical ledger remains acceptance-owned."
+cases = {"approve-original" = "cycles", "deny-original" = "cycles"}
+
 [benchmark.routes.save_controls]
 cycles = 2
 quick_cycles = 1
@@ -3707,10 +3723,10 @@ cases = {"declared-port-wiring" = "cycles"}
 "POST /vms/{id}/credential-grants" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
 "POST /vms/{id}/pause" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
 "POST /vms/{id}/resume" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
-"POST /vms/{id}/security/asks/{ask_id}/resolve" = { owner = "crates/capsem-service/src/approval_routes.rs", reason = "Needs live boot-generation approval waiter; resolution is a real control mutation." }
 
 # A timed idle/read case does not certify every state of the same operation.
 [benchmark.routes.unmeasured_cases]
+"POST /vms/{id}/security/asks/{ask_id}/resolve [physical-original-audit]" = { owner = "tests/ironbank/test_security_approval_lifecycle.py", reason = "Public terminal receipt and independent upstream bytes do not replace exact pending-to-terminal security_ask_events/net_events joins after original producer stop/drain in canonical Ironbank." }
 "POST /vms/{id}/surface/session [actual-xpra-native-render]" = { owner = "tests/ironbank/kingslanding/test_workload_browser.py", reason = "Labelled plain HTTP responder proves capability/client/port wiring only; actual Xpra protocol, editor rendering and native input/paint need the real UI image and driver." }
 "DELETE /vms/{id}/exposures/{exposure_id}/preview-session [physical-preview-ledger]" = { owner = "tests/ironbank/kingslanding/test_preview.py", reason = "Original socket EOF and independent guest hits are live effect checks, not physical network/security/archive joins after original producer drain; canonical Ironbank retains ledger ownership." }
 "POST /mcp/servers/{server_id}/refresh [physical-discovery-pin]" = { owner = "tests/ironbank/test_mcp_settings_ledger.py", reason = "Public tool metadata and opaque pin shape do not independently certify inputSchema pin bytes or physical discovery/security/archive joins; existing canonical MCP/core pin owners retain proof." }

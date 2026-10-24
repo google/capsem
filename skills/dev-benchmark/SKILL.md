@@ -353,3 +353,6 @@ see [run and purge route evidence](references/run-purge-routes.md).
 
 For original ephemeral save claims and mandatory normal cold retention checks,
 see [save route evidence](references/save-routes.md).
+
+For original HTTP Ask resolution and separate pending/completion clocks,
+see [Ask route evidence](references/ask-routes.md).

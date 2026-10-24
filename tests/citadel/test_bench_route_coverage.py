@@ -36,7 +36,7 @@ def validate(registered: set[str], coverage: dict) -> None:
         assert entry["cases"] and (ROOT / "benchmarks/collectors/stream").exists(), RATIONALE
         for case in entry["cases"].values():
             assert case["sample_key"] and case["metrics"], RATIONALE
-    for domain in ("images", "policy", "lifecycle", "networks", "proxies", "workload_controls", "network_members", "credentials", "mcp_controls", "run_purge", "save_controls"):
+    for domain in ("images", "policy", "lifecycle", "networks", "proxies", "workload_controls", "network_members", "credentials", "mcp_controls", "run_purge", "save_controls", "ask_controls"):
         finite = coverage.get(domain, {}).get("endpoints", {})
         assert not (measured & set(finite)), RATIONALE
         for entry in finite.values():
@@ -226,10 +226,10 @@ def test_finite_empty_network_and_synthetic_diagnostics_bind_exact_four_operatio
     assert {case['case'] for case in diagnostics} == {'synthetic-populated', 'synthetic-limited', 'synthetic-later-since'}, RATIONALE
     assert set(coverage['network_members']['endpoints']) == {'GET /networks/{id}/logs', 'PUT /networks/{id}/members/{vm_id}', 'DELETE /networks/{id}/members/{vm_id}'}, RATIONALE
     operations = measured_operations(coverage) | set(coverage['streaming'])
-    for domain in ('images', 'policy', 'lifecycle', 'networks', 'proxies', 'workload_controls', 'network_members', 'credentials', 'mcp_controls', 'preview_controls', 'run_purge', 'save_controls'):
+    for domain in ('images', 'policy', 'lifecycle', 'networks', 'proxies', 'workload_controls', 'network_members', 'credentials', 'mcp_controls', 'preview_controls', 'run_purge', 'save_controls', 'ask_controls'):
         operations |= set(coverage[domain]['endpoints'])
-    assert len(operations) == 102 and len(coverage['unmeasured']) == 14, RATIONALE
-    assert len(coverage['internal']) == 7 and len(coverage['unmeasured_cases']) == 18, RATIONALE
+    assert len(operations) == 103 and len(coverage['unmeasured']) == 13, RATIONALE
+    assert len(coverage['internal']) == 7 and len(coverage['unmeasured_cases']) == 19, RATIONALE
     del coverage['networks']['endpoints']['POST /networks']
     with pytest.raises(AssertionError, match='POST /networks'):
         validate(registered_operations(), coverage)
@@ -284,3 +284,13 @@ def test_run_purge_save_are_finite_original_mutations_not_missing_or_read_polls(
         coverage['measured'].append({'method':'POST','path':operation.split(' ',1)[1],'case':'fake-concurrent-mutation'})
         with pytest.raises(AssertionError):
             validate(registered_operations(),coverage)
+
+
+def test_original_ask_decision_cannot_disappear_or_inherit_a_read_poll():
+    import copy
+    operation = 'POST /vms/{id}/security/asks/{ask_id}/resolve'
+    coverage = copy.deepcopy(config())
+    assert coverage['ask_controls']['endpoints'][operation]['cases'] == {'approve-original':'cycles','deny-original':'cycles'}, RATIONALE
+    del coverage['ask_controls']['endpoints'][operation]
+    with pytest.raises(AssertionError,match='Missing'):
+        validate(registered_operations(),coverage)

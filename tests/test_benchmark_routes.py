@@ -57,6 +57,7 @@ def test_fixture_diagnostics_do_not_corrupt_collector_json(
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
 ) -> None:
+    original_ask_collector = collector.collect_ask_controls
     stopped = []
     service = SimpleNamespace(
         tmp_dir=tmp_path,
@@ -92,6 +93,12 @@ def test_fixture_diagnostics_do_not_corrupt_collector_json(
     monkeypatch.setattr(collector, "collect_preview_controls", lambda *_: {})
     monkeypatch.setattr(collector, "collect_run_purge", lambda *_: {})
     monkeypatch.setattr(collector, "collect_save_controls", lambda *_: {})
+    monkeypatch.setattr(collector, "collect_ask_controls", lambda *_: {})
+    # This is a collector-output wiring test, never an implicit product/native
+    # launcher when a future finite collector is added without its double.
+    def unexpected_child(*args,**kwargs):
+        raise AssertionError('source collector wiring test attempted a child launch')
+    monkeypatch.setattr('subprocess.Popen',unexpected_child)
     monkeypatch.setattr(collector, "collect_images", lambda *_: (print("IMAGE PREPARATION: untimed") or {}))
     monkeypatch.setattr(collector, "preflight", lambda *_: None)
     monkeypatch.setattr(collector, "seed_metadata", lambda *_: None)
@@ -108,7 +115,18 @@ def test_fixture_diagnostics_do_not_corrupt_collector_json(
     monkeypatch.setattr(sys, "argv", ["routes", "--samples", "1"])
 
     try:
-        assert collector.main() == 0
+        # Keep one genuine finite collector unmocked. Its fixture owner is a
+        # sentinel so this adversary itself cannot launch native preparation,
+        # even when the source-only preflight is broken.
+        from benchmarks.helpers import route_asks
+        def unexpected_fixture(*args,**kwargs):
+            raise AssertionError('native fixture preparation reached')
+        with monkeypatch.context() as missing:
+            missing.setattr(collector,'collect_ask_controls',original_ask_collector)
+            missing.setattr(route_asks,'ask_target',unexpected_fixture)
+            with pytest.raises(AssertionError,match='collect_ask_controls'):
+                source_collector_main()
+        assert source_collector_main() == 0
     finally:
         # psutil is shared with the process-leak fixture, which tears down
         # before monkeypatch's automatic undo.
@@ -118,6 +136,15 @@ def test_fixture_diagnostics_do_not_corrupt_collector_json(
     assert len(payload["metrics"]) == 26
     assert "SERVICE LOG:" in captured.err
     assert stopped == ["service"]
+
+
+def source_collector_main():
+    # Fail before main constructs any resource, not after a missed double has
+    # entered its native fixture. New finite imports inherit this exact rule.
+    unmocked = [name for name,value in vars(collector).items()
+        if name.startswith('collect_') and callable(value) and value.__module__ != __name__]
+    assert not unmocked, f'source wiring requires test-owned collectors: {unmocked}'
+    return collector.main()
 
 
 def test_missing_prepared_image_inputs_fail_before_product_children(monkeypatch) -> None:

@@ -59,6 +59,7 @@ from benchmarks.helpers.route_proxies import collect_proxies
 from benchmarks.helpers.route_requests import Target, request, request_input, route_load_config
 from benchmarks.helpers.route_run_purge import collect_run_purge
 from benchmarks.helpers.route_save import collect_save_controls
+from benchmarks.helpers.route_asks import collect_ask_controls
 from benchmarks.helpers.route_validation import validate_snapshot, validate_wire
 from benchmarks.helpers.route_workload_controls import collect_workload_controls
 from benchmarks.helpers.stream_measurements import service_gateway
@@ -197,6 +198,7 @@ def main() -> int:
         metrics.update(collect_preview_controls(args.quick))
         metrics.update(collect_run_purge(args.quick))
         metrics.update(collect_save_controls(args.quick))
+        metrics.update(collect_ask_controls(args.quick))
 
     service = ServiceInstance()
     service.assets_dir = clone_benchmark_assets(
