@@ -1,11 +1,11 @@
 """Producer keys cannot include their own mutable functional digest pins."""
 
 import shutil
+import tomllib
 from pathlib import Path
 
 import pytest
 import tomli_w
-import tomllib
 from capsem_builder.gate.errors import GateError
 
 from images.ci import inputkey
@@ -263,7 +263,7 @@ def test_native_declaration_cannot_diverge_from_original_workflow_producer(
         selected = selected[component]
     selected[field] = value
     path.write_text(tomli_w.dumps(data))
-    with pytest.raises((ValueError, GateError), match="producer|fixed original owner"):
+    with pytest.raises((ValueError, GateError), match=r"producer|fixed original owner"):
         key(source)
 
 
