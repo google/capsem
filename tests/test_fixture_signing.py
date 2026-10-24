@@ -1,6 +1,5 @@
 """Fixture consumers must not rewrite the artifact they are qualifying."""
 
-import hashlib
 import os
 import plistlib
 import shutil
@@ -8,6 +7,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from capsem_builder.crypto import digest_file
 from helpers import sign
 
 
@@ -181,13 +181,13 @@ def test_real_valid_non_vm_frozen_binary_keeps_original_bytes(binary, monkeypatc
     binary.chmod(0o755)
     subprocess.run(["codesign", "--sign", "-", "--force", str(binary)], check=True, capture_output=True)
     subprocess.run(["codesign", "--verify", "--strict", str(binary)], check=True, capture_output=True)
-    before = hashlib.sha256(binary.read_bytes()).hexdigest()
+    before = digest_file(binary)
     monkeypatch.setenv("CAPSEM_LOCAL_TEST_BINARY_COHORT", "original.json")
 
     def validate_original(path, *args):
-        assert hashlib.sha256(path.read_bytes()).hexdigest() == before
+        assert digest_file(path) == before
 
     monkeypatch.setattr(sign, "verify_frozen_binary", validate_original, raising=False)
     sign.sign_binary(binary)
-    assert hashlib.sha256(binary.read_bytes()).hexdigest() == before
+    assert digest_file(binary) == before
     assert not binary.with_suffix(".sign.lock").exists()
