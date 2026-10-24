@@ -399,7 +399,7 @@ pub fn set_stream_buffers(fd: BorrowedFd<'_>, bytes: usize) -> io::Result<()> {
     Ok(())
 }
 
-/// Size a datagram receive queue for a known bounded burst.
+/// Request a datagram receive queue size; the kernel may clamp it to its limit.
 pub fn set_receive_buffer(fd: BorrowedFd<'_>, bytes: usize) -> io::Result<()> {
     validate_socket_buffer_size(bytes)?;
     socket::setsockopt(&fd, socket::sockopt::RcvBuf, &bytes).map_err(errno::io)

@@ -237,11 +237,30 @@ fn stream_buffer_limits_replace_large_kernel_queues() {
 }
 
 #[test]
-fn datagram_receive_buffer_can_hold_a_concurrent_burst() {
-    use nix::sys::socket::{getsockopt, sockopt};
+fn datagram_receive_buffer_requests_kernel_supported_capacity() {
+    use nix::sys::socket::{getsockopt, setsockopt, sockopt};
     let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let control = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    setsockopt(&socket, sockopt::RcvBuf, &4096).unwrap();
+    // A successful SO_RCVBUF request may be clamped by the host's rmem_max.
+    // Compare with the kernel's direct result, not the requested byte count.
+    setsockopt(&control, sockopt::RcvBuf, &(512 * 1024)).unwrap();
     super::set_receive_buffer(socket.as_fd(), 512 * 1024).unwrap();
-    assert!(getsockopt(&socket, sockopt::RcvBuf).unwrap() >= 512 * 1024);
+    assert_eq!(
+        getsockopt(&socket, sockopt::RcvBuf).unwrap(),
+        getsockopt(&control, sockopt::RcvBuf).unwrap()
+    );
+    socket
+        .set_read_timeout(Some(std::time::Duration::from_secs(1)))
+        .unwrap();
+    for sequence in 0..16u8 {
+        control.send_to(&[sequence; 512], socket.local_addr().unwrap()).unwrap();
+    }
+    for sequence in 0..16u8 {
+        let mut packet = [0; 512];
+        assert_eq!(socket.recv_from(&mut packet).unwrap().0, packet.len());
+        assert_eq!(packet, [sequence; 512]);
+    }
 }
 
 #[test]
