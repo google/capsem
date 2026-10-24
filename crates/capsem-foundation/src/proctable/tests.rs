@@ -51,10 +51,14 @@ fn process_records_preserve_native_argument_boundaries_and_empty_values() {
     let observed = processes()
         .unwrap()
         .into_iter()
-        .find(|process| process.pid == child.id())
-        .unwrap();
-    child.kill().unwrap();
+        .find(|process| process.pid == child.id());
+    let status = child.try_wait().unwrap();
+    if status.is_none() {
+        child.kill().unwrap();
+    }
     child.wait().unwrap();
+    let observed =
+        observed.unwrap_or_else(|| panic!("argument fixture pid {} absent; child status {status:?}", child.id()));
     assert_eq!(
         observed.argv.iter().skip(1).collect::<Vec<_>>(),
         expected.iter().map(std::ffi::OsStr::new).collect::<Vec<_>>()
