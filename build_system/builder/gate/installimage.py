@@ -61,6 +61,7 @@ def source_image_tag(
         config.host_arch().docker_platform,
         config.install.builder.source_build_network,
         config.install.smoke_network,
+        config.install.smoke_hostname,
         config.install.runtime_network,
         config.install.source_cli,
     ):
@@ -86,6 +87,7 @@ def _smoke(runner: Runner, config: GateConfig, *, image: str) -> None:
         image=image,
         command=["bash", "-lc", command],
         network=settings.smoke_network,
+        options=("--hostname", settings.smoke_hostname),
         user=settings.guest_user.name,
         console=ConsoleMode.STREAM,
         env={

@@ -118,6 +118,7 @@ class InstallConfig(Strict):
     dockerfile: str
     context: str
     smoke_network: Literal[ContainerNetwork.NONE]
+    smoke_hostname: Literal["localhost"]
     venv: str
     source_cli: str
     mount: str

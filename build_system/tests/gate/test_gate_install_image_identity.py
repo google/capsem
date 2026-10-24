@@ -17,6 +17,18 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 CONFIG = gate_config.load(PROJECT_ROOT)
 
 
+def test_smoke_uses_a_resolvable_hostname_without_network_access() -> None:
+    from capsem_builder.gate import installimage
+
+    runner = RecordingRunner(PROJECT_ROOT)
+    installimage._smoke(runner, CONFIG, image="capsem-install-test:fixture")
+    command, = runner.commands
+    assert command.argv[:3] == ("docker", "run", "--rm")
+    assert "--hostname" in command.argv
+    assert command.argv[command.argv.index("--hostname") + 1] == "localhost"
+    assert command.argv[command.argv.index("--network") + 1] == "none"
+
+
 def test_the_observer_knows_the_exact_source_replica_root() -> None:
     assert CONFIG.runlog.source_replica_roots == (CONFIG.candidate.source_snapshot_dir,)
 

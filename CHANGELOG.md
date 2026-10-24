@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Give sealed install qualification probes a locally resolvable hostname,
+  preserving disabled networking and passwordless-sudo validation.
+
 - Keep local-only Docker parents local during sealed builds, even when the
   engine records local repository digests; retain verified registry origins
   for imported helpers and exact image/platform checks for both.

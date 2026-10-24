@@ -246,6 +246,8 @@ dockerfile = "build_system/docker/Dockerfile.install-test"
 # from it; named here so the wrapper is told rather than assuming.
 context = "."
 smoke_network = "none"
+# Docker's random hostname is absent from /etc/hosts with network=none.
+smoke_hostname = "localhost"
 venv = "/home/capsem/.venv-install-test"
 # A current-source CLI compiled once while the source image is still being
 # built. Update/channel tests need behavior newer than the package under test,

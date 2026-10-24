@@ -170,6 +170,8 @@ before VM, package, or asset work consumes hours. Keep an ordering contract.
 It is fail-fast infrastructure
 validation only: the later Docker/systemd install E2E remains mandatory and
 must still exercise the installed package and post-install behavior.
+Use the configured localhost hostname for sealed install probes: Docker's
+random hostname is absent from `/etc/hosts` with `network=none`, so sudo warns.
 
 Copied macOS system executables need `sign_binary(path, relocated=True)` from
 `tests/helpers/sign.py`. Their original Apple signature may verify strictly
