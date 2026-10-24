@@ -150,6 +150,8 @@ BOUNDARY_FILES = frozenset(
         "build_system/tests/packaging/test_preinstall_resource.py",
         "build_system/tests/packaging/test_preinstall_resource_config.py",
         "build_system/tests/packaging/test_preinstall_staging.py",
+        "build_system/tests/packaging/test_deb_preunpack_probe.py",
+        "build_system/tests/packaging/test_platform_probe_lifetime.py",
         "build_system/tests/policy/test_policy_modules.py",
         "build_system/tests/release/test_channel_source_credentials.py",
         "build_system/tests/release/test_client_consumers.py",
