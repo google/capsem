@@ -65,6 +65,16 @@ docker info | grep -E 'Total Memory|CPUs'
 
 ### Colima recovery discipline
 
+The Linux parity tests run on Colima's kernel, not the kernel packaged for the
+Capsem guest. That kernel must satisfy the same Landlock ABI requirement as
+native Linux hosts (see `web/docs/src/content/docs/getting-started/installation.md`).
+An older Ubuntu Colima VM supplied ABI 4 while the workers require ABI 6; five
+real confinement tests correctly refused it. Update the build VM through its
+distribution's maintained kernel packages, retaining the previous boot entry,
+then restart it only while Docker has no active containers. Verify the actual
+confinement tests afterwards; rebuilding the Docker image cannot update its
+host kernel. Never lower the sandbox requirement or skip those tests.
+
 If Docker-dependent recipes fail on macOS, do not report Docker/Colima as
 unavailable until you have checked for the common half-running Colima state.
 The signature is:
