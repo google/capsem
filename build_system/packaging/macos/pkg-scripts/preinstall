@@ -54,8 +54,7 @@ capsem_run_preinstall_ledger_admission "$USER"
 
 CAPSEM_INSTALL_PHASE="stop_existing_install"
 if [ -n "${USER:-}" ] && [ "$USER" != "root" ]; then
-    PLIST="$USER_HOME/Library/LaunchAgents/com.capsem.service.plist"
-    capsem_stop_launch_agent "gui/$(id -u "$USER")" "$PLIST"
+    capsem_stop_launch_agent "gui/$(id -u "$USER")"
     capsem_retire_native_cohort "$CAPSEM_DIR" "$(id -u "$USER")" "$USER"
 fi
 

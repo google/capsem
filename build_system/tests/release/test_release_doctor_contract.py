@@ -4883,9 +4883,9 @@ def test_binary_update_installer_scripts_replace_and_restart_full_helper_cohort(
         "capsem-mcp-builtin",
     ]
 
-    assert 'capsem_stop_launch_agent "gui/$(id -u "$USER")" "$PLIST"' in preinstall
+    assert 'capsem_stop_launch_agent "gui/$(id -u "$USER")"' in preinstall
     assert 'launchctl bootout "$domain/com.capsem.service"' in retire_cohort
-    assert "launchctl unload" in retire_cohort
+    assert "launchctl unload" not in retire_cohort
     for name in stale_companions:
         assert name in retire_cohort
     for caller in (preinstall, deb_preinst):

@@ -123,12 +123,11 @@ capsem_retire_named_cohort() {
 # Confirm manager quiescence, including ordinary already-stopped reinstalls.
 # Never interpret a generic query failure as absence of the target service.
 capsem_stop_launch_agent() {
-    local domain="$1" plist="$2" uid="${1#gui/}" state status expected
+    local domain="$1" uid="${1#gui/}" state status expected
     case "$uid" in ''|0|*[!0-9]*) return 1 ;; esac
     [ "$domain" = "gui/$uid" ] || return 1
-    /bin/launchctl bootout "$domain/com.capsem.service" 2>/dev/null || {
-        if [ -f "$plist" ]; then /bin/launchctl unload "$plist" 2>/dev/null || true; fi
-    }
+    # Never let a user-writable plist choose a root/implicit-domain unload target.
+    /bin/launchctl bootout "$domain/com.capsem.service" 2>/dev/null || true
     if state=$(LC_ALL=C /bin/launchctl print "$domain/com.capsem.service" 2>&1 >/dev/null); then
         echo 'capsem: selected LaunchAgent remains loaded' >&2
         return 1

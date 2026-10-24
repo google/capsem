@@ -87,3 +87,29 @@ def test_linux_failed_query_stderr_is_not_copied_to_install_log() -> None:
     assert result.returncode != 0
     assert canary not in result.stdout + result.stderr
     assert "cannot verify selected systemd service state" in result.stderr
+
+
+def test_failed_bootout_never_unloads_a_user_writable_foreign_label(tmp_path: Path) -> None:
+    plist = tmp_path / "user-writable.plist"
+    original = b'<plist><dict><key>Label</key><string>foreign.root.service</string></dict></plist>'
+    plist.write_bytes(original)
+    actions = tmp_path / "actions"
+    script = f'''
+set -euo pipefail
+source {shlex.quote(str(RETIRE))}
+function /bin/launchctl {{
+    printf '%s\\n' "$*" >> {shlex.quote(str(actions))}
+    if [ "$1" = print ]; then
+        printf '%s' {shlex.quote(absent())} >&2
+        return 113
+    fi
+    return 1
+}}
+capsem_stop_launch_agent gui/12345 {shlex.quote(str(plist))}
+'''
+    result = subprocess.run(["bash", "-c", script], text=True, capture_output=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    assert actions.read_text().splitlines() == [
+        "bootout gui/12345/com.capsem.service", "print gui/12345/com.capsem.service",
+    ]
+    assert plist.read_bytes() == original

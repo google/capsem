@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Limit macOS preinstall service-manager control to the selected account's
+  fixed Capsem target, without trusting labels from a user-writable plist.
+
 - Keep service-manager query diagnostics out of installer logs when verifying
   selected-service quiescence; unverifiable state still refuses replacement.
 
