@@ -45,9 +45,7 @@ def native_approval_session(policy: str = ""):
     gateway = mock = client = session_id = None
     old_corp = os.environ.get("CAPSEM_CORP_CONFIG")
     try:
-        mock, ready = start_mock_server(
-            request_log=service.tmp_dir / "approval-upstream.jsonl"
-        )
+        mock, ready = start_mock_server(request_log=service.tmp_dir / "approval-upstream.jsonl")
         corp = service.tmp_dir / "corp.toml"
         corp.write_text(
             textwrap.dedent(f"""
@@ -109,37 +107,43 @@ def upstream_records(ready: dict) -> list[dict]:
     )
 
 
-def assert_approval_audit(
-    service, client, session_id, receipt, *, cancelled=False, table=None
-):
+def assert_approval_audit(service, client, session_id, receipt, *, cancelled=False, table=None):
+    return assert_approval_audits(service, client, session_id, [(receipt, cancelled)], table=table)
+
+
+def assert_approval_audits(service, client, session_id, receipts, *, table=None):
     """Stop our named fixture to drain all operation producers before disk reads."""
     path = vm_session_db_path(service.tmp_dir, client, session_id)
     stop_session_for_ledger_read(client, session_id, path)
     with closing(open_session_ledger(path)) as conn:
         conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            "SELECT status,resolver,reason,event_id FROM security_ask_events "
-            "WHERE ask_id=? ORDER BY id",
-            (receipt["ask_id"],),
-        ).fetchall()
-        terminal = "denied" if cancelled else receipt["status"]
-        assert [row["status"] for row in rows] == ["pending", terminal], [
-            dict(row) for row in rows
-        ]
-        assert rows[0]["event_id"] == rows[1]["event_id"] == receipt["event_id"]
-        assert rows[1]["resolver"] == "authenticated_client"
-        assert rows[1]["reason"] == (
-            "request_cancelled" if cancelled else "human_decision"
-        )
-        if table is not None:
-            assert table in {
-                "dns_events",
-                "tool_calls",
-                "exec_events",
-                "fs_events",
-                "net_events",
-            }
-            count = conn.execute(
-                f"SELECT COUNT(*) FROM {table} WHERE event_id=?", (receipt["event_id"],)
-            ).fetchone()[0]
-            assert count == 1, (table, receipt, count)
+        for receipt, cancelled in receipts:
+            _assert_approval_rows(conn, receipt, cancelled=cancelled, table=table)
+
+
+def _assert_approval_rows(conn, receipt, *, cancelled, table):
+    rows = conn.execute(
+        "SELECT status,resolver,reason,event_id FROM security_ask_events "
+        "WHERE ask_id=? ORDER BY id",
+        (receipt["ask_id"],),
+    ).fetchall()
+    expired = receipt["status"] == "expired"
+    terminal = "denied" if cancelled or expired else receipt["status"]
+    assert [row["status"] for row in rows] == ["pending", terminal], [dict(row) for row in rows]
+    assert rows[0]["event_id"] == rows[1]["event_id"] == receipt["event_id"]
+    assert rows[1]["resolver"] == "authenticated_client"
+    assert rows[1]["reason"] == (
+        "request_cancelled" if cancelled else "deadline" if expired else "human_decision"
+    )
+    if table is not None:
+        assert table in {
+            "dns_events",
+            "tool_calls",
+            "exec_events",
+            "fs_events",
+            "net_events",
+        }
+        count = conn.execute(
+            f"SELECT COUNT(*) FROM {table} WHERE event_id=?", (receipt["event_id"],)
+        ).fetchone()[0]
+        assert count == 1, (table, receipt, count)
