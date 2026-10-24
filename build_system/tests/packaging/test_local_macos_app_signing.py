@@ -80,14 +80,17 @@ def test_valid_developer_id_bundle_is_verified_without_resigning() -> None:
 
 
 def _installed_cohort_probe(tmp_path: Path, signature: str, strict_status: int = 0,
-                            damage: str = "", conditional: bool = False) -> tuple[subprocess.CompletedProcess[str], str]:
+                            damage: str = "", conditional: bool = False,
+                            expected_version: str = "0.6.6", reported_version: str | None = None) -> tuple[subprocess.CompletedProcess[str], str]:
     """Actual sourced probe, with controlled external codesign outcomes; no signing."""
     binary_dir = tmp_path / "bin"
     binary_dir.mkdir()
     for role in ("capsem", "capsem-service"):
         if damage == "missing_role" and role == "capsem":
             continue
-        version = "wrong-version" if damage == "version" else "0.6.6"
+        version = reported_version if reported_version is not None else (
+            "wrong-version" if damage == "version" else expected_version
+        )
         path = binary_dir / role
         path.write_text(f'#!/bin/bash\nprintf "%s\\n" "{role} {version}"\n')
         path.chmod(0o755)
@@ -107,7 +110,7 @@ set -euo pipefail
 SHARE="$1"
 source "$2"
 CAPSEM_BIN_DIR="$SHARE/bin"
-VERSION=0.6.6
+VERSION="$EXPECTED_VERSION"
 BINARIES=(capsem capsem-service)
 codesign() {
     printf '%s\n' "$*" >> "$SHARE/codesign-calls"
@@ -128,7 +131,8 @@ fi
                    str(ROOT / "build_system/packaging/macos/macos-tart-regression-probes.sh")],
                   env={**os.environ, "STRICT_STATUS": str(strict_status),
                        "CONDITIONAL": "1" if conditional else "0",
-                       "MISSING_VERIFIER": "1" if damage == "missing_verifier" else "0"})
+                       "MISSING_VERIFIER": "1" if damage == "missing_verifier" else "0",
+                       "EXPECTED_VERSION": expected_version})
     calls = (tmp_path / "codesign-calls").read_text() if (tmp_path / "codesign-calls").exists() else ""
     return result, calls
 
@@ -168,3 +172,22 @@ def test_installed_cohort_requires_codesign_tool(tmp_path: Path) -> None:
     assert result.returncode == 127
     assert not calls
     assert "role=capsem stage=strict-signature failed" in result.stderr
+
+
+@pytest.mark.parametrize("reported", ["0.7.10", "0.7.1-foreign"])
+def test_installed_cohort_rejects_version_prefixes(tmp_path: Path, reported: str) -> None:
+    result, calls = _installed_cohort_probe(
+        tmp_path, "adhoc", expected_version="0.7.1", reported_version=reported, conditional=True,
+    )
+    assert result.returncode != 0
+    assert not calls
+    assert "role=capsem stage=version failed" in result.stderr
+
+
+def test_installed_cohort_accepts_exact_version_with_build_annotation(tmp_path: Path) -> None:
+    result, calls = _installed_cohort_probe(
+        tmp_path, "developer_id", expected_version="0.7.1",
+        reported_version="0.7.1 (build abc123 ts=20261024)",
+    )
+    assert result.returncode == 0, result.stderr
+    assert calls.count("--verify --strict") == 2

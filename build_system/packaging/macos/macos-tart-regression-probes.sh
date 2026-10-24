@@ -15,17 +15,24 @@ capsem_require_transition_inputs() {
 }
 
 verify_binary_cohort() {
-    local binary path failure_status
+    local binary path failure_status version_output _reported_role reported_version _build_annotation
     for binary in "${BINARIES[@]}"; do
         path="$CAPSEM_BIN_DIR/$binary"
         test -x "$path" || {
             echo "ERROR: installed cohort role=$binary stage=executable failed" >&2
             return 1
         }
-        "$path" --version | grep -F "$VERSION" || {
+        version_output=$("$path" --version) || {
             failure_status=$?
             echo "ERROR: installed cohort role=$binary stage=version failed" >&2
             return "$failure_status"
+        }
+        printf '%s\n' "$version_output"
+        # Clap's output is ROLE VERSION, optionally followed by a build annotation.
+        read -r _reported_role reported_version _build_annotation <<< "$version_output"
+        test "$reported_version" = "$VERSION" || {
+            echo "ERROR: installed cohort role=$binary stage=version failed" >&2
+            return 1
         }
         # Strict verification accepts both preserved Developer ID and local ad-hoc signatures.
         codesign --verify --strict "$path" || {
