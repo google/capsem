@@ -12,6 +12,8 @@ def test_fixture_validates_existing_pin_then_grants_exact_isolated_owner(monkeyp
     layout.mkdir()
     home = tmp_path / 'home'
     home.mkdir()
+    assets = tmp_path / 'assets'
+    monkeypatch.setattr(fixture, 'ASSETS_DIR', assets, raising=False)
     calls = []
     reference = '127.0.0.1/library/dev@sha256:' + 'a' * 64
     certificate = tmp_path / 'certificate'
@@ -24,7 +26,8 @@ def test_fixture_validates_existing_pin_then_grants_exact_isolated_owner(monkeyp
         calls.append('registry-close')
     service = SimpleNamespace(home_dir=home, start=lambda: calls.append('start'), stop=lambda: calls.append('stop'))
     def create(**kwargs):
-        assert kwargs == {'isolated_corp_config': True}
+        assert kwargs == {'assets_dir': assets, 'isolated_corp_config': True}
+        service.assets_dir = kwargs['assets_dir']
         return service
     monkeypatch.setattr(fixture, 'ServiceInstance', create)
     def grant(owner, selected, **kwargs):
@@ -33,15 +36,18 @@ def test_fixture_validates_existing_pin_then_grants_exact_isolated_owner(monkeyp
         calls.append('grant')
     monkeypatch.setattr(fixture, 'fixture_inputs', lambda: (image, lambda value: calls.append(('verify', value)), grant, registry))
     monkeypatch.setattr(fixture, 'service_target', lambda owner, label: (owner, label))
+    def prepare(owner):
+        assert owner.assets_dir == assets
+        calls.append('prepare')
     with (
         pytest.raises(RuntimeError, match='synthetic failure'),
-        fixture.lifecycle_target('gateway') as (target, owner, selected, ca),
+        fixture.lifecycle_target('gateway', prepare=prepare) as (target, owner, selected, ca),
     ):
         assert target == (service, 'gateway') and owner is service
         assert selected == reference and ca == certificate
         raise RuntimeError('synthetic failure')
     # Contextmanager body failure still closes service; registry outer owner unwinds.
-    assert calls[:4] == [('verify', layout), 'registry', 'grant', 'start']
+    assert calls[:5] == [('verify', layout), 'registry', 'grant', 'prepare', 'start']
     assert 'stop' in calls
 
 

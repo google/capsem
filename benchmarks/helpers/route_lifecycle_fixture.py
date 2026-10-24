@@ -5,6 +5,7 @@ import contextlib
 import tempfile
 from pathlib import Path
 
+from helpers.constants import ASSETS_DIR
 from helpers.service import ServiceInstance
 
 from .route_requests import service_target
@@ -28,7 +29,7 @@ def lifecycle_target(label, *, prepare=None):
         tempfile.TemporaryDirectory(prefix='capsem-lifecycle-routes-') as temporary,
         layout_registry(Path(temporary), layout, reference_image.settings().name) as (reference, certificate, _),
     ):
-        service = ServiceInstance(isolated_corp_config=True)
+        service = ServiceInstance(assets_dir=ASSETS_DIR, isolated_corp_config=True)
         try:
             catalog = reference.split('/', 1)[0] + '/library/catalog:stable'
             grant_exact(service.home_dir, reference, catalog=catalog, certificate=certificate)
