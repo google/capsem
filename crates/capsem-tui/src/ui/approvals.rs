@@ -1,4 +1,5 @@
 use super::*;
+use capsem_sdk::models::SecurityAskStatus;
 use ratatui::widgets::{List, ListItem, ListState, Wrap};
 
 pub(super) fn render(frame: &mut Frame<'_>, area: Rect, view: Option<&crate::app::ApprovalView>) {
@@ -52,7 +53,11 @@ pub(super) fn render(frame: &mut Frame<'_>, area: Rect, view: Option<&crate::app
                         &format!("{:?} · {}", request.status, request.rule_name),
                         usize::from(area.width),
                     ),
-                    Style::default().fg(ACTIVE),
+                    Style::default().fg(match request.status {
+                        SecurityAskStatus::Pending | SecurityAskStatus::Approved => ACTIVE,
+                        SecurityAskStatus::Denied => Color::Magenta,
+                        SecurityAskStatus::Expired | SecurityAskStatus::Cancelled => MUTED,
+                    }),
                 )),
                 Line::from(truncate(&request.summary, usize::from(area.width))),
                 Line::from(Span::styled(

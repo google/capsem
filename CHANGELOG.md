@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Distinguish denied TUI approvals in purple and expired or cancelled requests
+  in muted text while keeping pending and approved requests blue.
+
 - Show structured terminal titles, last notification titles and observed bell
   counts beneath existing session names without inferring agent activity.
 
