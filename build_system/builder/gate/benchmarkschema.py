@@ -22,6 +22,7 @@ from .benchmarkmcpschema import McpRouteConfig
 from .benchmarkmemberschema import NetworkMemberConfig
 from .benchmarknetworkschema import DiagnosticCorpusConfig, NetworkRouteConfig
 from .benchmarkpolicyschema import PolicyRouteConfig
+from .benchmarkpreviewschema import PreviewRouteConfig
 from .benchmarkproxyschema import ProxyRouteConfig
 from .benchmarkstreamschema import StreamConfig, StreamEndpointEvidence
 from .configschema import Strict
@@ -83,6 +84,7 @@ class RouteCoverageConfig(Strict):
     network_members: NetworkMemberConfig
     credentials: CredentialRouteConfig
     mcp_controls: McpRouteConfig
+    preview_controls: PreviewRouteConfig
     unmeasured: dict[str, RouteDebtConfig]
     internal: dict[str, RouteDebtConfig]
     unmeasured_cases: dict[str, RouteDebtConfig]

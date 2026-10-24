@@ -43,6 +43,13 @@ def validate(registered: set[str], coverage: dict) -> None:
             assert entry["collector"] == "routes" and entry["target_scope"] == "both", RATIONALE
             assert entry["cases"] and len(entry["reason"]) >= 20, RATIONALE
         measured |= set(finite)
+    preview = coverage.get('preview_controls',{}).get('endpoints',{})
+    assert not measured & set(preview), RATIONALE
+    gateway_mints = {'POST /vms/{id}/surface/session','POST /vms/{id}/exposures/{exposure_id}/preview-session'}
+    for operation,entry in preview.items():
+        assert entry['collector'] == 'routes' and entry['target_scope'] == ('gateway' if operation in gateway_mints else 'both'), RATIONALE
+        assert entry['cases'] and len(entry['reason']) >= 20, RATIONALE
+    measured |= set(preview)
     debt, internal = set(coverage["unmeasured"]), set(coverage["internal"])
     errors = coverage.get('connection_errors',{})
     if errors:
@@ -90,7 +97,7 @@ def test_gateway_method_topology_matches_service() -> None:
 
 
 def test_unmeasured_operations_remain_explicit_debt() -> None:
-    assert len(config()["unmeasured"]) <= 22, RATIONALE
+    assert len(config()["unmeasured"]) <= 17, RATIONALE
     assert len(config()["internal"]) == 7, RATIONALE
 
 
@@ -217,10 +224,10 @@ def test_finite_empty_network_and_synthetic_diagnostics_bind_exact_four_operatio
     assert {case['case'] for case in diagnostics} == {'synthetic-populated', 'synthetic-limited', 'synthetic-later-since'}, RATIONALE
     assert set(coverage['network_members']['endpoints']) == {'GET /networks/{id}/logs', 'PUT /networks/{id}/members/{vm_id}', 'DELETE /networks/{id}/members/{vm_id}'}, RATIONALE
     operations = measured_operations(coverage) | set(coverage['streaming'])
-    for domain in ('images', 'policy', 'lifecycle', 'networks', 'proxies', 'workload_controls', 'network_members', 'credentials', 'mcp_controls'):
+    for domain in ('images', 'policy', 'lifecycle', 'networks', 'proxies', 'workload_controls', 'network_members', 'credentials', 'mcp_controls', 'preview_controls'):
         operations |= set(coverage[domain]['endpoints'])
-    assert len(operations) == 94 and len(coverage['unmeasured']) == 22, RATIONALE
-    assert len(coverage['internal']) == 7 and len(coverage['unmeasured_cases']) == 16, RATIONALE
+    assert len(operations) == 99 and len(coverage['unmeasured']) == 17, RATIONALE
+    assert len(coverage['internal']) == 7 and len(coverage['unmeasured_cases']) == 18, RATIONALE
     del coverage['networks']['endpoints']['POST /networks']
     with pytest.raises(AssertionError, match='POST /networks'):
         validate(registered_operations(), coverage)

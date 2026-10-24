@@ -344,3 +344,6 @@ For finite image/catalogue and runtime preparation route cases, see
 
 For finite host-only policy/settings edits and their separate VM/ledger limits,
 see [policy route evidence](references/policy-routes.md).
+
+For finite exposure/surface controls and their gateway-only minting scope,
+see [preview route evidence](references/preview-routes.md).

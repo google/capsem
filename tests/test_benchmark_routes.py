@@ -89,6 +89,7 @@ def test_fixture_diagnostics_do_not_corrupt_collector_json(
     monkeypatch.setattr(collector, "collect_network_members", lambda *_: {})
     monkeypatch.setattr(collector, "collect_credentials", lambda *_: {})
     monkeypatch.setattr(collector, "collect_mcp_controls", lambda *_: {})
+    monkeypatch.setattr(collector, "collect_preview_controls", lambda *_: {})
     monkeypatch.setattr(collector, "collect_images", lambda *_: (print("IMAGE PREPARATION: untimed") or {}))
     monkeypatch.setattr(collector, "preflight", lambda *_: None)
     monkeypatch.setattr(collector, "seed_metadata", lambda *_: None)
