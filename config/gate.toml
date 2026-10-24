@@ -1876,6 +1876,8 @@ cache_stage = "audit-results"
 # stays beside this as the strict RustSec rail.
 lockfiles = [
     "Cargo.lock",
+    "third_party/rust/alacritty_terminal/Cargo.lock",
+    "third_party/rust/vte/Cargo.lock",
     "build_system/uv.lock",
     "integrations/inspect-ai/uv.lock",
     "mcp/typescript/pnpm-lock.yaml",
