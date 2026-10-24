@@ -12,10 +12,20 @@ import selectors
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
+from typing import Protocol
 
 from . import cancellation, processstop
 from .commandtimeout import Deadline
 from .processstop import ForegroundProcess, OwnedTree, StopPolicy, terminate
+
+
+class ForegroundObserver(Protocol):
+    """Optional resource observer; the process owner keeps all lifecycle authority."""
+
+    def started(self, process: ForegroundProcess) -> None: ...
+    def before_wait(self, process: ForegroundProcess) -> None: ...
+    def retired(self, process: ForegroundProcess) -> None: ...
+    def close(self) -> None: ...
 
 
 def run(
@@ -28,6 +38,7 @@ def run(
     timeout_seconds: float | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run a foreground command and keep its whole process group owned."""
+    deadline = Deadline.start(timeout_seconds)
     process = subprocess.Popen(
         list(argv),
         cwd=str(cwd),
@@ -38,7 +49,6 @@ def run(
         start_new_session=True,
     )
     owned: OwnedTree = {}
-    deadline = Deadline.start(timeout_seconds)
     try:
         if capture:
             stdout, stderr = _communicate(process, policy, owned, deadline)
@@ -66,6 +76,7 @@ def tee(
     executable: Path | None = None,
     policy: StopPolicy,
     timeout_seconds: float | None = None,
+    observer: ForegroundObserver | None = None,
 ) -> int:
     """File output through exactly one callback, with unchanged text semantics.
 
@@ -77,6 +88,9 @@ def tee(
         raise ValueError("tee requires exactly one text or byte callback")
     if stderr not in (None, subprocess.STDOUT):
         raise ValueError("tee diagnostics must be inherited or merged, never an undrained pipe")
+    if observer is not None and not policy.refuse_survivors:
+        raise ValueError("observed workloads require strict descendant settlement")
+    deadline = Deadline.start(timeout_seconds)
     process = subprocess.Popen(
         list(argv),
         cwd=str(cwd),
@@ -89,12 +103,15 @@ def tee(
         start_new_session=True,
     )
     owned: OwnedTree = {}
-    deadline = Deadline.start(timeout_seconds)
     assert process.stdout is not None
     try:
+        if observer is not None:
+            observer.started(process)
         with selectors.DefaultSelector() as ready:
             ready.register(process.stdout, selectors.EVENT_READ)
             while ready.get_map():
+                if observer is not None and process.returncode is None:
+                    observer.before_wait(process)
                 processstop.remember_descendants(process.pid, owned)
                 events = ready.select(timeout=deadline.poll_seconds(policy.poll_seconds))
                 if not events:
@@ -113,13 +130,19 @@ def tee(
                             write(chunk.decode("utf-8", errors="replace"))
                     else:
                         ready.unregister(key.fileobj)
-        _wait(process, policy, owned, deadline)
+        _wait(process, policy, owned, deadline, observer)
         processstop.refuse_descendants(process, policy, owned)
+        if observer is not None:
+            observer.retired(process)
     except BaseException:
         terminate(process, policy, owned)
         raise
     finally:
-        process.stdout.close()
+        try:
+            if observer is not None:
+                observer.close()
+        finally:
+            process.stdout.close()
     return process.returncode
 
 
@@ -128,9 +151,12 @@ def _wait(
     policy: StopPolicy,
     owned: OwnedTree,
     deadline: Deadline | None = None,
+    observer: ForegroundObserver | None = None,
 ) -> None:
     deadline = deadline or Deadline.start(None)
     while True:
+        if observer is not None and process.returncode is None:
+            observer.before_wait(process)
         processstop.remember_descendants(process.pid, owned)
         try:
             process.wait(timeout=deadline.poll_seconds(policy.poll_seconds))

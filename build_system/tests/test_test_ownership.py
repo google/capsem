@@ -40,6 +40,7 @@ BOUNDARY_FILES = frozenset(
         "build_system/tests/fixtures/criterion_cargo_1_97_1/provenance.json",
         "build_system/tests/fixtures/criterion_cargo_1_97_1/stderr.txt",
         "build_system/tests/gate/test_gate_process_bytes.py",
+        "build_system/tests/gate/test_gate_process_observer.py",
         "build_system/tests/gate/test_gate_transition.py",
         "build_system/tests/cache/test_admission.py",
         "build_system/tests/cache/test_admission_state.py",

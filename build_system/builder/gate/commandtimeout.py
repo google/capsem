@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass
 
@@ -19,7 +20,7 @@ class Deadline:
     def start(cls, seconds: float | None) -> Deadline:
         if seconds is None:
             return cls(None, None)
-        if seconds <= 0:
+        if not math.isfinite(seconds) or seconds <= 0:
             raise ValueError("foreground command timeout must be positive")
         return cls(seconds, time.monotonic() + seconds)
 
