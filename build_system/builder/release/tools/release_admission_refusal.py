@@ -206,9 +206,14 @@ def finish(root: Path, home: Path, spec: dict, maximum: int) -> dict:
         raise ValueError("candidate install log escaped selected fixture")
     with log.open("rb") as stream:
         raw = stream.read(maximum + 1)
-    if len(raw) > maximum or b"obsolete host hash-chain schema" not in raw:
+    if len(raw) > maximum:
+        raise ValueError("candidate install log exceeds existing response budget")
+    # Preserve ONLY the selected candidate's bounded synthetic log before any
+    # assertion, including failure; combined earlier installation logs are not evidence.
+    (root / "host-refusal-candidate-install.log").write_bytes(raw)
+    if b"obsolete host hash-chain schema" not in raw:
         raise ValueError("candidate did not prove incompatible HOST schema refusal")
-    if b"phase=admit_candidate_ledger" not in raw or any(
+    if b"Failed phase: admit_candidate_ledger" not in raw.splitlines() or any(
         marker in raw
         for marker in (
             b"event=unload_launch_agent",

@@ -268,6 +268,12 @@ def test_staged_refusal_module_uses_guest_python39_without_site(tmp_path, monkey
         "phase=admit_candidate_ledger runtime incompatible",
         "phase=admit_candidate_ledger obsolete host hash-chain schema event=remove_old_payload",
         "phase=stop_existing_install obsolete host hash-chain schema",
+        "obsolete host hash-chain schema\nprefix Failed phase: admit_candidate_ledger\n",
+        "obsolete host hash-chain schema\nFailed phase: admit_candidate_ledger_extra\n",
+        "obsolete host hash-chain schema\nFailed phase: stop_existing_install\n",
+        "obsolete host hash-chain schema\nFailed phase: admit_candidate_ledger\nevent=unload_launch_agent\n",
+        "obsolete host hash-chain schema\nFailed phase: admit_candidate_ledger\nevent=remove_user_app_payload\n",
+        "obsolete host hash-chain schema\nFailed phase: admit_candidate_ledger\nevent=remove_old_payload\n",
     ],
 )
 def test_wrong_refusal_or_retirement_log_never_produces_report(tmp_path: Path, text: str) -> None:
@@ -277,6 +283,26 @@ def test_wrong_refusal_or_retirement_log_never_produces_report(tmp_path: Path, t
     _, spec = facts()
     with pytest.raises(ValueError, match=r"HOST|retirement"):
         refusal.finish(tmp_path, home, spec, 4096)
+    assert (tmp_path / "host-refusal-candidate-install.log").read_text() == text
+    assert not (tmp_path / "report.json").exists()
+
+
+def test_recorded_original_candidate_trap_reaches_installed_evidence(tmp_path: Path) -> None:
+    home = tmp_path / "home/.capsem"
+    (home / "logs").mkdir(parents=True)
+    raw = (
+        b"phase=preinstall event=start user=admin\n"
+        b"Error: Invalid parameter name: obsolete host hash-chain schema; a current ledger is required\n"
+        b"Capsem installation failed.\nFailed phase: admit_candidate_ledger\nExit code: 1\n"
+    )
+    (home / "logs/install-latest.log").write_bytes(raw)
+    _, spec = facts()
+    # Parser acceptance is not native/report success: missing independent health
+    # evidence must still fail at its original required input.
+    with pytest.raises(FileNotFoundError) as error:
+        refusal.finish(tmp_path, home, spec, 4096)
+    assert error.value.filename == str(tmp_path / "host-refusal-after-installed.json")
+    assert (tmp_path / "host-refusal-candidate-install.log").read_bytes() == raw
     assert not (tmp_path / "report.json").exists()
 
 
