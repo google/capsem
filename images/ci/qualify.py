@@ -12,8 +12,11 @@ import os
 import stat
 from pathlib import Path
 
+from capsem_builder.cache.capacity import RequiredCapacity
 from capsem_builder.cache.config import load_paths
+from capsem_builder.cache.enforcement import enforce_repository
 from capsem_builder.cache.leases import release_path, retain_generation
+from capsem_builder.gate.boundedlease import leased
 from capsem_builder.gate.config import load
 from capsem_builder.gate.proc import Runner
 
@@ -55,15 +58,18 @@ def qualify(config, image, architecture, repository, digest, output, *, runner=N
         raise ValueError("official qualification needs the existing generation lease")
     retain_generation(paths, stage, key)
     try:
-        layout.parent.mkdir(parents=True, exist_ok=True)
-        capacity(paths, stage, additional_entries=0 if layout.exists() else 1)
-        if not layout.exists():
-            pinned_image.pull(digest, "linux/" + architecture, layout, repository=repository)
-        pinned_image.verify(layout, digest, "linux/" + architecture)
-        producer_evidence.stage(
-            layout, output, repository, architecture, maximum=settings.evidence_max_bytes
-        )
-        capacity(paths, stage)
+        # Only finite admission/copy holds the machine; NEVER the child gate.
+        with leased(("python", "-m", "images.ci.qualify"), config.root, os.environ, force=True):
+            prepare(
+                paths,
+                stage,
+                layout,
+                output,
+                repository,
+                digest,
+                architecture,
+                settings.evidence_max_bytes,
+            )
         # No outer machine lease, nested plan or --native-report: this ordinary
         # owner works on BOTH native arches; AMD transfer remains a separate rail.
         (runner or Runner(config.root)).run(
@@ -91,6 +97,40 @@ def qualify(config, image, architecture, repository, digest, output, *, runner=N
         capacity(paths, stage)
     finally:
         release_path(paths.stage(stage) / template.format(key=key))
+
+
+def prepare(paths, stage, layout, output, repository, digest, architecture, maximum):
+    platform = "linux/" + architecture
+    raw, download = None, 0
+    if layout.exists():
+        pinned_image.verify(layout, digest, platform)
+        subject = published_root.subject(layout)
+    else:
+        raw = pinned_image.download_intent(digest, repository=repository, maximum=maximum)
+        manifest, _, download = pinned_image.manifest_intent(raw, digest, platform, maximum)
+        subject = {"mediaType": manifest["mediaType"], "digest": digest, "size": len(raw)}
+    incoming = download
+    if not (layout / producer_evidence.DIRECTORY).exists():
+        incoming += producer_evidence.required_bytes(
+            subject, output, repository, architecture, maximum=maximum
+        )
+    required = RequiredCapacity(bytes=incoming, entries=0 if layout.exists() else 1)
+    admitted = enforce_repository(
+        paths,
+        paths.policy,
+        stage,
+        reason="original official image/root qualification staging",
+        required=required,
+    )
+    if admitted.violations:
+        raise ValueError("official original bytes cannot fit: " + "; ".join(admitted.violations))
+    capacity(paths, stage, required.bytes, required.entries)
+    layout.parent.mkdir(parents=True, exist_ok=True)
+    if raw is not None:
+        pinned_image.pull(digest, platform, layout, repository=repository, original_manifest=raw)
+    pinned_image.verify(layout, digest, platform)
+    producer_evidence.stage(layout, output, repository, architecture, maximum=maximum)
+    capacity(paths, stage)
 
 
 def main(argv=None):

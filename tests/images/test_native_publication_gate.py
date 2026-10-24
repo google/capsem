@@ -1,13 +1,14 @@
 """Official activation requires original-child Capsem VM qualification."""
 
 import shutil
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 import yaml
 from capsem_builder.cache.config import load_policy
-from capsem_builder.cache.leases import active_path
+from capsem_builder.cache.leases import active_path, release_path, retain_generation
 from capsem_builder.cache.paths import CachePaths
 from capsem_builder.gate.config import load
 
@@ -72,10 +73,26 @@ def test_original_artifact_and_live_lease_through_exact_qualification(
     layout = paths.stage(config.functional.reference_image.cache_stage) / key
     lease = layout.parent / ("." + key + ".lock")
     calls = []
+    copying = False
+
+    @contextmanager
+    def finite(*_, **kwargs):
+        nonlocal copying
+        assert kwargs["force"] is True
+        copying = True
+        try:
+            yield
+        finally:
+            copying = False
+
+    monkeypatch.setattr(qualify, "leased", finite)
     monkeypatch.setattr(qualify, "preflight", lambda _: None)
     monkeypatch.setattr(qualify, "load_paths", lambda _: paths)
+    raw = (source / "blobs/sha256" / digest.split(":")[1]).read_bytes()
+    monkeypatch.setattr(qualify.pinned_image, "download_intent", lambda *_, **__: raw)
 
-    def pull(actual, platform, target, *, repository):
+    def pull(actual, platform, target, *, repository, original_manifest):
+        assert copying and original_manifest == raw
         assert active_path(lease)
         assert actual == selected and repository == config.functional.reference_image.repository
         assert platform == ("linux/amd64" if failure == "platform" else "linux/arm64")
@@ -85,6 +102,7 @@ def test_original_artifact_and_live_lease_through_exact_qualification(
     monkeypatch.setattr(qualify.pinned_image, "pull", pull)
 
     def run(argv, **kwargs):
+        assert not copying, "the child gate must never run under the admission machine lease"
         calls.append("qualify")
         assert active_path(lease)
         assert argv[6:] == ["image-qualify", "--image", "dev", "--layout", str(layout), "--slow"]
@@ -163,3 +181,53 @@ def test_preflight_only_cannot_accept_candidate_inputs(monkeypatch):
     with pytest.raises(SystemExit) as error:
         qualify.main(["--arch", "arm64", "--preflight", "--image", "dev"])
     assert error.value.code == 2
+
+
+def test_nearly_full_protected_stage_refuses_before_any_original_copy(tmp_path, monkeypatch):
+    config = load(ROOT)
+    policy = load_policy(ROOT)
+    settings = config.functional.reference_image
+    stages = dict(policy.stages)
+    stages[settings.cache_stage] = stages[settings.cache_stage].model_copy(
+        update={"max_size_bytes": 5000, "warm_size_bytes": 0}
+    )
+    paths = CachePaths(
+        repository_root=tmp_path, policy=policy.model_copy(update={"stages": stages})
+    )
+    foreign = paths.stage(settings.cache_stage) / "foreign"
+    foreign.mkdir(parents=True)
+    (foreign / "original").write_bytes(b"x" * 4990)
+    retain_generation(paths, settings.cache_stage, "foreign")
+    source, digest, _ = _layout(tmp_path / "source")
+    original = tmp_path / "original"
+    output(original, digest, repository=settings.repository)
+    calls = []
+    monkeypatch.setattr(qualify, "load_paths", lambda _: paths)
+    monkeypatch.setattr(qualify, "leased", lambda *_, **__: nullcontext())
+    monkeypatch.setattr(qualify, "preflight", lambda _: None)
+    raw = (source / "blobs/sha256" / digest.split(":")[1]).read_bytes()
+    monkeypatch.setattr(
+        qualify.pinned_image, "download_intent", lambda *_, **__: raw, raising=False
+    )
+
+    def pull(*args, **kwargs):
+        calls.append("pull")
+        shutil.copytree(source, args[2])
+
+    monkeypatch.setattr(qualify.pinned_image, "pull", pull)
+    try:
+        with pytest.raises(ValueError):
+            qualify.qualify(
+                config,
+                "dev",
+                "arm64",
+                settings.repository,
+                digest,
+                original,
+                runner=SimpleNamespace(run=lambda *_, **__: pytest.fail("qualifier reached")),
+            )
+        assert calls == [], "projected bytes must be refused BEFORE pulling/staging originals"
+        assert active_path(paths.stage(settings.cache_stage) / ".foreign.lock")
+        assert (foreign / "original").read_bytes() == b"x" * 4990
+    finally:
+        release_path(paths.stage(settings.cache_stage) / ".foreign.lock")
