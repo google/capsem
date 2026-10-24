@@ -171,6 +171,9 @@ class BenchmarkRunConfig(Strict):
     interpreter: str
     timeout_secs: int
     quick_timeout_secs: int
+    fitness_timeout_secs: PositiveInt
+    fitness_poll_interval_secs: PositiveFloat
+    doctor_timeout_secs: PositiveInt
 
 
 class CriterionArtifactProfile(Strict):

@@ -16,8 +16,10 @@ import shlex
 import subprocess
 import tempfile
 from pathlib import Path
+from time import monotonic, sleep
 
 import pytest
+from capsem_builder.gate.config import for_root
 from helpers.benchmark_output import benchmark_output_dir
 from helpers.constants import ASSETS_DIR, BIN_DIR, PROJECT_ROOT
 
@@ -57,14 +59,32 @@ def benchmark_evidence(prefix: str) -> Path:
 
 
 def qualify_benchmark_host(output: Path) -> None:
-    """Qualify the idle host before a fixture launches measurement processes."""
-    doctor = subprocess.run(
-        [BENCH, "doctor", "--json"], capture_output=True, timeout=15, check=False
-    )
-    (output / "doctor.json").write_bytes(doctor.stdout)
-    (output / "doctor.stderr").write_bytes(doctor.stderr)
-    (output / "doctor.exit").write_text(f"{doctor.returncode}\n")
-    assert doctor.returncode == 0, doctor.stdout.decode() + doctor.stderr.decode()
+    """Observe a fit host before measuring; only transient load may settle."""
+    settings = for_root(PROJECT_ROOT).benchmark.run
+    started = monotonic()
+    deadline = started + settings.fitness_timeout_secs
+    while True:
+        doctor = subprocess.run(
+            [BENCH, "doctor", "--json"], capture_output=True,
+            timeout=settings.doctor_timeout_secs, check=False,
+        )
+        (output / "doctor.json").write_bytes(doctor.stdout)
+        (output / "doctor.stderr").write_bytes(doctor.stderr)
+        (output / "doctor.exit").write_text(f"{doctor.returncode}\n")
+        fitness = json.loads(doctor.stdout)
+        with (output / "doctor-readiness.jsonl").open("a") as history:
+            history.write(json.dumps({
+                "elapsed_seconds": monotonic() - started,
+                "exit_code": doctor.returncode, "fitness": fitness,
+            }) + "\n")
+        if doctor.returncode == 0:
+            assert not fitness["objections"], fitness
+            return
+        remaining = deadline - monotonic()
+        if (remaining <= 0 or not fitness["objections"]
+                or any(row["what"] != "load" for row in fitness["objections"])):
+            raise AssertionError(doctor.stdout.decode() + doctor.stderr.decode())
+        sleep(min(settings.fitness_poll_interval_secs, remaining))
 
 
 @pytest.fixture
