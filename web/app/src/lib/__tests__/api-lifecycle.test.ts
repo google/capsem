@@ -47,7 +47,12 @@ describe('VM lifecycle', () => {
   });
 
   it('opens a surface with only its single-use preview bootstrap', async () => {
-    const open = vi.fn();
+    const child = {
+      opener: {},
+      document: { createElement: vi.fn(() => ({ name: '', content: '' })), head: { append: vi.fn() } },
+      location: { replace: vi.fn() },
+    };
+    const open = vi.fn().mockReturnValue(child);
     vi.stubGlobal('window', { open });
     const session = {
       url: 'http://preview.localhost:19444/_capsem/bootstrap',
@@ -60,7 +65,10 @@ describe('VM lifecycle', () => {
     const request = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
     expect(String(request[0])).toContain('/vms/vm-1/surface/session');
     expect(request[1].method).toBe('POST');
-    const launch = new URL(open.mock.calls[0][0]);
+    expect(open).toHaveBeenCalledWith('', '_blank');
+    expect(child.opener).toBeNull();
+    expect(child.document.head.append).toHaveBeenCalledWith({ name: 'referrer', content: 'no-referrer' });
+    const launch = new URL(child.location.replace.mock.calls[0][0]);
     expect(launch.pathname).toBe('/vms/vm-1/surface/');
     expect(JSON.parse(decodeURIComponent(launch.hash.slice(1)))).toEqual(session);
     expect(launch.href).not.toContain('Bearer tok');
