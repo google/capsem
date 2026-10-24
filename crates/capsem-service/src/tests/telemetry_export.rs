@@ -740,3 +740,5 @@ async fn metric_relay_drops_the_upstream_connection_when_generation_is_revoked()
     service.abort();
     collector.abort();
 }
+
+mod lifecycle;

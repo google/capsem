@@ -9,6 +9,8 @@
 //! `persistent`.
 
 pub(crate) mod gateway;
+mod lifecycle;
+pub(crate) use lifecycle::install;
 
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
@@ -27,18 +29,18 @@ const REFRESH_INTERVAL: Duration = Duration::from_secs(15);
 /// Install export for the service when the corp config or environment asks
 /// for it. `None` means export is off; a failure to install is logged and
 /// leaves it off -- metrics are never a reason the service does not start.
-pub(crate) fn install() -> Option<Exporter> {
+fn install_sync() -> Option<Exporter> {
     let (_, corp) = capsem_core::net::policy_config::load_settings_and_corp_files();
     let destination = Destination::resolve(corp.corp_rule_files.open_telemetry.as_deref(), |name| {
         std::env::var(name).ok()
     })?;
     match capsem_telemetry::export::install(&destination, "capsem-service", Vec::new()) {
         Ok(exporter) => {
-            info!(?destination, "metric export installed");
+            info!("metric export installed");
             Some(exporter)
         }
-        Err(error) => {
-            warn!(%error, ?destination, "metric export not installed");
+        Err(_) => {
+            warn!("metric export not installed");
             None
         }
     }

@@ -319,7 +319,7 @@ async fn start_and_serve(args: Args, run_dir: PathBuf, on_ready: impl FnOnce(Arc
         .await?;
     // Kept for the life of the service: dropping the exporter flushes and stops
     // export, and dropping the instruments stops observing sessions.
-    let _metric_export = telemetry_export::install().map(|exporter| {
+    let metric_export = telemetry_export::install().await.map(|exporter| {
         let table = telemetry_export::SessionTable::default();
         let instruments = telemetry_export::register(&exporter.meter(), &table);
         telemetry_export::spawn_refresh(Arc::clone(&state), table);
@@ -496,6 +496,10 @@ async fn start_and_serve(args: Args, run_dir: PathBuf, on_ready: impl FnOnce(Arc
     }
     if let Err(error) = state.host_ledger.flush().await {
         warn!(error = %error, "failed to flush the host ledger at shutdown");
+    }
+    if let Some((exporter, instruments)) = metric_export {
+        exporter.shutdown().await;
+        drop(instruments);
     }
     info!("shutdown complete");
     result.context("server error")?;

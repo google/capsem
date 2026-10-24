@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Keep optional metric exporter initialization and shutdown off the async service
+  runtime so enabling telemetry cannot panic before the service becomes ready.
+
 - Add finite gateway benchmark source cases for genuine workload browser
   acknowledgement and bounded file uploads, with independent workspace reads
   and public ledger effects. Physical archive proof remains separately owned.
