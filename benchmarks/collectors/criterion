@@ -10,9 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import os
 import stat
-import subprocess
 import sys
 import tempfile
 import tomllib
@@ -21,7 +19,15 @@ from pathlib import Path
 from capsem_builder.gate import config as gate_config
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+
 SETTINGS = gate_config.load(ROOT).benchmark
+
+
+def prepare(*args, **kwargs):
+    # Resolve source-owned helpers after this script's CLI path bootstrap.
+    from benchmarks.helpers.criterion_process import prepare as prepare_binary
+    return prepare_binary(*args, **kwargs)
 
 
 def declared_targets() -> list[tuple[str, str]]:
@@ -99,20 +105,15 @@ def run_bench(crate: str, target: str, *, sample_size: int | None,
               budget: dict[str, int] | None = None) -> tuple[dict, dict]:
     budget = input_budget() if budget is None else budget
     timeout = SETTINGS.run.quick_timeout_secs if sample_size is not None else SETTINGS.run.timeout_secs
-    command = ["cargo", "bench", "--locked", "-p", crate, "--bench", target, "--"]
     print(f"running {crate}::{target}", file=sys.stderr)
     # Gate/bounded TMPDIR owns this lifetime. Cargo's shared target is untouched.
     with tempfile.TemporaryDirectory(prefix="capsem-criterion-") as temporary:
         generation = Path(temporary)
-        with tempfile.TemporaryFile(dir=generation) as listing:
-            subprocess.run([*command, "--list"], cwd=ROOT, check=True, stdout=listing,
-                timeout=timeout, env={**os.environ, "CRITERION_HOME": str(generation/"list")})
-            listing.seek(0)
-            raw = listing.read(budget["bytes"] + 1)
-        if not raw or len(raw) > budget["bytes"]:
-            raise ValueError("Criterion no case output or listing byte budget exceeded")
-        budget["bytes"] -= len(raw)
-        listed = raw.decode("utf-8")
+        execution = prepare(ROOT, crate, target, timeout=timeout, budget=budget,
+                            settings=SETTINGS.criterion)
+        listed = execution.run(["--list"], generation / "list", "declare")
+        if not listed:
+            raise ValueError("Criterion no case output")
         expected = set()
         for line in listed.splitlines():
             if not line.endswith(": benchmark") or not (name := line.removesuffix(": benchmark")):
@@ -123,11 +124,11 @@ def run_bench(crate: str, target: str, *, sample_size: int | None,
         output = generation / "measured"
         output.mkdir()
         args = ["--sample-size", str(sample_size)] if sample_size is not None else []
-        subprocess.run(command + args, cwd=ROOT, check=True, stdout=sys.stderr, timeout=timeout,
-            env={**os.environ, "CRITERION_HOME": str(output)})
+        diagnostic = execution.run(args, output, "measure")
+        print(diagnostic, file=sys.stderr, end="")
         measured, originals = samples_for(output, target, expected, budget)
         return measured, {"crate": crate, "target": target, "generation": generation.name,
-                          "listing": listed, "cases": originals}
+                          "listing": listed, "cases": originals, "execution": execution.receipt}
 
 
 def main() -> int:

@@ -1,0 +1,23 @@
+{
+  "toolchain": "cargo 1.97.1 (c980f4866 2026-06-30)",
+  "args": [
+    "cargo",
+    "+1.97.1",
+    "bench",
+    "--manifest-path",
+    "/var/tmp/capsem-tests/14358a26/run-87564/capsem-criterion-protocol-949o51lh/Cargo.toml",
+    "--bench",
+    "criterion_protocol",
+    "--no-run",
+    "--message-format=json",
+    "--offline",
+    "--locked"
+  ],
+  "executed": false,
+  "fixture_manifest": "[package]\nname = \"capsem-criterion-protocol-fixture\"\nversion = \"0.0.0\"\nedition = \"2021\"\n[workspace]\n[[bench]]\nname = \"criterion_protocol\"\npath = \"bench.rs\"\nharness = false\n",
+  "fixture_source": "fn main() {}\n",
+  "target_directory": "/Users/elie/git/capsem/cache/target/cargo",
+  "source_root": "/var/tmp/capsem-tests/14358a26/run-87564/capsem-criterion-protocol-949o51lh",
+  "exit_code": 0,
+  "purpose": "actual pinned positive compiler-artifact JSON protocol only; no benchmark executable run"
+}

@@ -4149,6 +4149,18 @@ quick_timeout_secs = 60
 [benchmark.criterion]
 max_cases = 1024
 quick_sample_size = 10
+# Admission expectations for pinned Cargo's existing default bench profile;
+# these do not set compiler flags or change Criterion's optimization/settings.
+profile_directory = "release"
+prepare_runner = "build_system/packaging/macos/run_signed.sh"
+entitlements = "build_system/packaging/macos/entitlements.plist"
+assets_dir = "assets"
+[benchmark.criterion.artifact_profile]
+opt_level = "3"
+debuginfo = 0
+debug_assertions = false
+overflow_checks = false
+test = true
 # Summary-only producers are diagnostic, never Criterion raw evidence.
 [benchmark.criterion.diagnostic_targets]
 "capsem-foundation::ipc_framing_micro" = "manual MessagePack framing summary"

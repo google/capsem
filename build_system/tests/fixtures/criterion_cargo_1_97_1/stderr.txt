@@ -1,0 +1,2 @@
+   Compiling capsem-criterion-protocol-fixture v0.0.0 (/var/tmp/capsem-tests/14358a26/run-87564/capsem-criterion-protocol-949o51lh)
+    Finished `bench` profile [optimized] target(s) in 0.75s

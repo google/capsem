@@ -11,7 +11,7 @@ import math
 from itertools import pairwise
 from typing import Annotated, Literal
 
-from pydantic import Field, PositiveFloat, PositiveInt, field_validator
+from pydantic import Field, PositiveFloat, PositiveInt, StrictBool, StrictInt, field_validator
 
 from .benchmarkaskschema import AskRouteConfig
 from .benchmarkcontrolschema import WorkloadControlConfig
@@ -163,10 +163,23 @@ class BenchmarkRunConfig(Strict):
     quick_timeout_secs: int
 
 
+class CriterionArtifactProfile(Strict):
+    opt_level: str
+    debuginfo: StrictInt
+    debug_assertions: StrictBool
+    overflow_checks: StrictBool
+    test: StrictBool
+
+
 class BenchmarkCriterionConfig(Strict):
     max_cases: PositiveInt
     quick_sample_size: Annotated[int, Field(ge=10)]
     diagnostic_targets: dict[str, str]
+    artifact_profile: CriterionArtifactProfile
+    profile_directory: Annotated[str, Field(pattern=r"^[A-Za-z0-9_-]+$")]
+    prepare_runner: str
+    entitlements: str
+    assets_dir: str
 
 
 class BenchmarkProtocolConfig(Strict):

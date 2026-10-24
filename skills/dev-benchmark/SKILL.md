@@ -119,6 +119,16 @@ sidecar; normalized samples use the existing Rust statistics/store owner.
 Cargo's shared target/cache is unchanged. Reading, parsing and conversion are
 collector work, not established per-child workload CPU/resource receipts.
 
+Criterion prepares with `cargo bench --no-run --message-format=json`, admitting
+one exact local package/target/source/profile executable from Cargo metadata and
+the canonical shared target. It then invokes that same executable with `--bench
+--list` and `--bench` (without `--bench`, pinned Criterion enters test mode).
+On macOS the existing signed-copy runner prepares the actual executable; a
+private bounded typed receipt preserves original argv0/assets/signature ownership
+and rejects replacement between phases. Original bounded Cargo/list/sample inputs
+and distinct preparation/declaration/runtime wall clocks remain in the existing
+sidecar. Those clocks are not workload CPU, exact RSS peaks or statistical results.
+
 Four current targets, `ipc_framing_micro`, `db_read_write_micro`,
 `vsock_framing_micro` and `ledger_codec`, print only manual summary tables.
 Their canonical diagnostic classification is `[benchmark.criterion]` in

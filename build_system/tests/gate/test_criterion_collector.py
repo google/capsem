@@ -11,9 +11,11 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 @pytest.fixture
-def collector():
+def collector(monkeypatch):
     settings = gate_config.load(ROOT).benchmark.run
-    return runpy.run_path(str(ROOT / settings.collectors / "criterion"))["main"].__globals__
+    result = runpy.run_path(str(ROOT / settings.collectors / "criterion"))["main"].__globals__
+    monkeypatch.setitem(result,"prepare",lambda *a,**k:pytest.fail("unmocked Criterion preparation"))
+    return result
 
 
 def write_case(root, case="group/case", *, full_id=None, sample=None, directory=None):
@@ -29,19 +31,23 @@ def write_case(root, case="group/case", *, full_id=None, sample=None, directory=
 
 def process_double(collector, monkeypatch, listing, emit, *, fail=False):
     outputs = []
-    def run(command, **kwargs):
-        assert command[:3] == ["cargo", "bench", "--locked"]
-        assert kwargs["check"] and kwargs["timeout"] > 0
-        assert "CARGO_TARGET_DIR" not in kwargs["env"] or kwargs["env"]["CARGO_TARGET_DIR"] == collector["os"].environ["CARGO_TARGET_DIR"]
-        output = Path(kwargs["env"]["CRITERION_HOME"])
-        outputs.append(output)
-        if command[-1] == "--list":
-            kwargs["stdout"].write(listing.encode())
-        elif fail:
-            raise subprocess.CalledProcessError(1, command)
-        else:
+    class Execution:
+        def __init__(self, budget):
+            self.budget = budget
+            self.receipt = {"source_double": True}
+        def run(self, arguments, output, phase):
+            outputs.append(output)
+            if phase == "declare":
+                assert arguments == ["--list"]
+                if len(listing.encode()) > self.budget["bytes"]:
+                    raise ValueError("budget")
+                self.budget["bytes"] -= len(listing.encode())
+                return listing
+            if fail:
+                raise subprocess.CalledProcessError(1, arguments)
             emit(output)
-    monkeypatch.setattr(collector["subprocess"], "run", run)
+            return ""
+    monkeypatch.setitem(collector,"prepare",lambda *a,**k:Execution(k["budget"]))
     return outputs
 
 
@@ -156,7 +162,6 @@ def test_failed_child_does_not_publish_partial_samples_and_cleans_generation(col
 ])
 def test_unknown_reuse_and_manual_selections_fail_before_children(collector, monkeypatch, arguments):
     monkeypatch.setattr(collector["sys"],"argv",["criterion",*arguments])
-    monkeypatch.setattr(collector["subprocess"],"run",lambda *a,**k:pytest.fail("unexpected child"))
     with pytest.raises(SystemExit) as error:
         collector["main"]()
     assert error.value.code == 2
