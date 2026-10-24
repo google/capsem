@@ -98,6 +98,7 @@ pub fn openapi() -> OpenApi {
     doc.get::<AssetStatus>("/assets/status", "getAssetStatus");
     doc.mcp();
     doc.get::<UpdateStatusResponse>("/update/status", "getUpdateStatus");
+    doc.post::<UpdateCheckRequest, UpdateActionResponse>("/update/check", "checkHypervisorUpdate");
     doc.post::<UpdateApplyRequest, UpdateActionResponse>("/update/apply", "updateHypervisor");
     doc.networks();
     doc.files();
@@ -115,7 +116,7 @@ struct Document {
 /// force every generated SDK to be regenerated, and an SDK built against the
 /// contract keeps working across binary releases. Raise it when the contract
 /// changes in a way clients must notice.
-pub const CONTRACT_VERSION: &str = "3.5.0";
+pub const CONTRACT_VERSION: &str = "3.6.0";
 
 impl Document {
     fn connections(&mut self) {

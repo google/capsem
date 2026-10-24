@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Capsem Gateway",
-    "version": "3.5.0"
+    "version": "3.6.0"
   },
   "paths": {
     "/assets/status": {
@@ -1624,6 +1624,48 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/UpdateApplyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateActionResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/update/check": {
+      "post": {
+        "operationId": "checkHypervisorUpdate",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateCheckRequest"
               }
             }
           },
@@ -9570,6 +9612,15 @@
           "confirmed": {
             "type": "boolean"
           },
+          "dry_run": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "UpdateCheckRequest": {
+        "type": "object",
+        "properties": {
           "dry_run": {
             "type": "boolean"
           }

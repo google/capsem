@@ -1,6 +1,34 @@
 use super::*;
 
 #[test]
+fn existing_update_check_contract_uses_original_typed_request_and_response() {
+    let doc = serde_json::to_value(openapi()).unwrap();
+    let operation = &doc["paths"]["/update/check"]["post"];
+    assert_eq!(operation["operationId"], "checkHypervisorUpdate");
+    assert_eq!(
+        operation["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/UpdateCheckRequest"
+    );
+    assert_eq!(
+        operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/UpdateActionResponse"
+    );
+    assert_eq!(
+        doc["components"]["schemas"]["UpdateCheckRequest"]["additionalProperties"],
+        false
+    );
+    assert_eq!(
+        serde_json::from_value::<UpdateCheckRequest>(serde_json::json!({})).unwrap(),
+        UpdateCheckRequest { dry_run: false }
+    );
+    assert!(serde_json::from_value::<UpdateCheckRequest>(serde_json::json!({"confirmed": true})).is_err());
+    assert!(
+        operation["responses"]["202"].is_null(),
+        "registration must not invent asynchronous update semantics"
+    );
+}
+
+#[test]
 fn provision_response_constructor_preserves_the_supplied_lifecycle_and_actions() {
     let response = ProvisionResponse::new(
         "vm-id".into(),
@@ -273,7 +301,7 @@ fn openapi_describes_standalone_proxy_leases() {
         "heartbeatProxy"
     );
     assert_eq!(paths["/proxies/{id}/stop"]["post"]["operationId"], "stopProxy");
-    assert_eq!(crate::CONTRACT_VERSION, "3.5.0");
+    assert_eq!(crate::CONTRACT_VERSION, "3.6.0");
 }
 
 #[test]
