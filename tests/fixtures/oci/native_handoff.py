@@ -191,20 +191,33 @@ def stage(config):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("select", "stage"))
+    parser.add_argument(
+        "action",
+        choices=("select", "stage", "configure", "hold", "ready", "release", "abort", "finish"),
+    )
     parser.add_argument(
         "section",
         nargs="?",
-        choices=[*SECTIONS, "codex-cli", "claude-code", "agy", "antigravity-desktop"],
+        choices=[*SECTIONS, "codex-cli", "claude-code", "agy", "antigravity-desktop", "base"],
     )
+    parser.add_argument("--run-id")
+    parser.add_argument("--attempt")
+    parser.add_argument("--artifact-id")
     args = parser.parse_args(argv)
     config = load(ROOT)
+    if args.action not in ("select", "stage"):
+        from . import native_actions
+
+        native_actions.command(config, args)
+        return
+    if args.run_id or args.attempt or args.artifact_id:
+        parser.error("select/stage accept no owner controls")
     if args.action == "stage":
         if args.section:
             parser.error("stage accepts no section")
         stage(config)
     else:
-        if not args.section:
+        if not args.section or args.section == "base":
             parser.error("select requires a fixed section")
         # Typed single-line GitHub action output, never parse build stdout.
         from tests.fixtures.oci.native_build import candidate

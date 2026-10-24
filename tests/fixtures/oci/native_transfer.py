@@ -9,6 +9,8 @@ from __future__ import annotations
 import re
 from contextlib import contextmanager
 
+from capsem_builder.cache.capacity import RequiredCapacity
+from capsem_builder.cache.enforcement import enforce_repository
 from capsem_builder.cache.inventory import scan_inventory
 from capsem_builder.cache.leases import release_path, retain_generation
 
@@ -40,6 +42,17 @@ def destination(paths, key, required_bytes):
     target = root / key
     if target.exists() or target.is_symlink():
         raise ValueError("native artifact generation already exists")
+    admitted = enforce_repository(
+        paths,
+        paths.policy,
+        stage_id,
+        reason="native handoff needs two original copies and one owned generation",
+        required=RequiredCapacity(bytes=required_bytes, entries=1),
+    )
+    if admitted.violations:
+        raise ValueError(
+            "native artifact cannot admit projected owned usage: " + "; ".join(admitted.violations)
+        )
     capacity(paths, stage_id, required_bytes, 1)
     retain_generation(paths, stage_id, key)
     try:

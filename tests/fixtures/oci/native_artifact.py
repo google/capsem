@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
-from contextlib import contextmanager
+import os
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
+from capsem_builder.gate.boundedlease import leased
 from capsem_builder.gate.configschema import Strict
 from pydantic import field_validator
 
@@ -121,6 +123,19 @@ def verify(config, directory, *, expected=None):
 
 
 @contextmanager
+def machine(config):
+    # The finite admission/copy phase serializes with every gate. The retained
+    # artifact/base owner does NOT keep this machine lock during action waits.
+    with leased(
+        ("python", "-m", config.functional.native_images.module, "hold"),
+        config.root,
+        os.environ,
+        force=True,
+    ):
+        yield
+
+
+@contextmanager
 def prepare(config, paths, image, key):
     settings = config.functional.native_images
     if candidates.host_platform() != settings.platform:
@@ -151,17 +166,19 @@ def prepare(config, paths, image, key):
         if total > settings.artifact_max_bytes or len(copies) + 1 > settings.artifact_max_files:
             raise ValueError("native artifact byte/file budget exceeded")
         # Upload and independent download coexist under this one retained owner.
-        with native_transfer.destination(paths, key, 2 * total) as root:
-            upload = root / "upload"
-            upload.mkdir()
-            remaining = settings.artifact_max_bytes - len(encoded)
-            for original, relative in copies:
-                target = upload / relative
-                target.parent.mkdir(parents=True, exist_ok=True)
-                remaining = native_handoff.copy_original(original, target, remaining)
-            (upload / "handoff.json").write_bytes(encoded)
-            verify(config, upload, expected=bundle)
-            native_transfer.capacity(paths, settings.transfer.stage, total)
-            if candidates.source(config.root) != source:
-                raise ValueError("source changed during native artifact copy")
+        with ExitStack() as retained:
+            with machine(config):
+                root = retained.enter_context(native_transfer.destination(paths, key, 2 * total))
+                upload = root / "upload"
+                upload.mkdir()
+                remaining = settings.artifact_max_bytes - len(encoded)
+                for original, relative in copies:
+                    target = upload / relative
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    remaining = native_handoff.copy_original(original, target, remaining)
+                (upload / "handoff.json").write_bytes(encoded)
+                verify(config, upload, expected=bundle)
+                native_transfer.capacity(paths, settings.transfer.stage, total)
+                if candidates.source(config.root) != source:
+                    raise ValueError("source changed during native artifact copy")
             yield root, bundle

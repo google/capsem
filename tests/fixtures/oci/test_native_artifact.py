@@ -2,6 +2,7 @@
 
 import json
 import shutil
+from contextlib import nullcontext
 from pathlib import Path
 
 import pytest
@@ -40,6 +41,9 @@ def prepared(monkeypatch, tmp_path):
     journal.write_text("".join(json.dumps(row) + "\n" for row in rows))
     monkeypatch.setattr(native_handoff, "leased", original_lease)
     monkeypatch.setattr(native_handoff, "load_paths", lambda _: cache)
+    # This source fixture never acquires the real shared-machine lease. Its
+    # separate ordering regression observes the actual prepare/copy boundary.
+    monkeypatch.setattr(native_artifact, "machine", lambda _: nullcontext())
     return config, cache, image, receipt, layout
 
 
@@ -130,3 +134,39 @@ def test_actual_cache_cleanup_preserves_both_live_generations_and_lease_inodes(
             layout / "index.json"
         ).read_bytes()
         assert active_path(source_lock) and active_path(target_lock)
+
+
+def test_machine_lease_covers_projected_admission_and_copy_but_not_action_wait(
+    monkeypatch, tmp_path
+):
+    from contextlib import contextmanager
+
+    config, cache, image, _, layout = prepared(monkeypatch, tmp_path)
+    active, copies = [], []
+    original_copy = native_handoff.copy_original
+    original_admit = native_artifact.native_transfer.enforce_repository
+
+    @contextmanager
+    def observed(_):
+        active.append(True)
+        try:
+            yield
+        finally:
+            active.pop()
+
+    def copy(*args):
+        assert active == [True]
+        copies.append(args[0])
+        return original_copy(*args)
+
+    def admit(*args, **kwargs):
+        assert active == [True]
+        return original_admit(*args, **kwargs)
+
+    monkeypatch.setattr(native_artifact, "machine", observed)
+    monkeypatch.setattr(native_handoff, "copy_original", copy)
+    monkeypatch.setattr(native_artifact.native_transfer, "enforce_repository", admit)
+    with native_artifact.prepare(config, cache, image, "native-transfer-machine") as (root, _):
+        assert copies and not active
+        assert active_path(layout.parent / ("." + layout.name + ".lock"))
+        assert active_path(root.parent / ("." + root.name + ".lock"))
