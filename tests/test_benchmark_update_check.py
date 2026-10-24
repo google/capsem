@@ -1,10 +1,12 @@
 """SOURCE doubles for finite check effects; never updater/native performance."""
 import json
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from capsem_builder.crypto import sha256
+from capsem_builder.gate.versions import workspace_version
 from helpers.http_measurement import MeasuredResponse
 from helpers.update_release import _write_manifest_metadata
 
@@ -85,7 +87,7 @@ def test_update_inputs_refuse_fallback_before_any_fixture(tmp_path,monkeypatch):
     asset_directory = tmp_path/'assets'
     asset_directory.mkdir()
     monkeypatch.setenv('CAPSEM_ASSETS_DIR',str(asset_directory))
-    graph = {'packages':[{'status':'current','version':'0.7.1'}],'runtime':{'revision':'2026.0101.1'}}
+    graph = {'packages':[{'status':'current','version':workspace_version(Path(__file__).resolve().parents[1])}],'runtime':{'revision':'2026.0101.1'}}
     (asset_directory/'manifest.json').write_text(json.dumps(graph))
     cli,root,read = subject.require_update_inputs()
     assert cli == binary and root == asset_directory and read == graph
@@ -155,7 +157,7 @@ def test_fixture_teardown_failure_or_late_request_never_certifies_success(tmp_pa
     monkeypatch.setattr(subject,'clone_benchmark_assets',clone)
     monkeypatch.setattr(subject,'_serve_manifest_release',server)
     monkeypatch.setattr(subject,'service_target',lambda service,label:'owned-target')
-    graph = {'packages':[{'status':'current','version':'0.7.1'}],'runtime':{'revision':'2026.0101.1'}}
+    graph = {'packages':[{'status':'current','version':workspace_version(Path(__file__).resolve().parents[1])}],'runtime':{'revision':'2026.0101.1'}}
     with (
         pytest.raises((RuntimeError,AssertionError)),
         subject.update_target('service',cfg,(tmp_path/'selected-cli',tmp_path/'assets',graph)),

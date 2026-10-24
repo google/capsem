@@ -51,10 +51,12 @@ def test_admission_verifies_real_package_sbom_and_runtime_bytes(tmp_path, monkey
 
 def test_runtime_minimum_cannot_be_lowered_to_manufacture_a_before_pair(tmp_path, monkeypatch):
     path, declaration = prepared(tmp_path, monkeypatch)
+    after = json.loads(Path(declaration["after"]["manifest"]).read_text())
+    minimum = after["packages"][0]["version"]
     for phase in ("before", "after"):
         manifest = Path(declaration[phase]["manifest"])
         document = json.loads(manifest.read_text())
-        document["runtime"]["min_capsem_version"] = "0.7.1"
+        document["runtime"]["min_capsem_version"] = minimum
         manifest.write_text(json.dumps(document))
         (Path(declaration[phase]["runtime_inputs"]) / "manifest.json").write_bytes(
             manifest.read_bytes()
