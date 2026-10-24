@@ -14,10 +14,12 @@ import subprocess
 from collections.abc import Iterator
 from pathlib import Path
 
+from capsem_builder import crypto
 from capsem_builder.gate import shellsurfaces
 
 from . import lint_harness as lintharness
 from .lint_harness import Outcome, Tool
+from .vendor_documents import pinned_rust_vendor_documents
 
 SHELLCHECK_LINE = re.compile(
     r"^(?P<file>[^:]+):(?P<line>\d+):\d+: \w+: (?P<message>.*) \[(?P<code>SC\d+)\]$"
@@ -136,9 +138,14 @@ def markdown_links(root: Path) -> Outcome:
     findings: list[lintharness.Finding] = []
     pending: list[tuple[str, str, int]] = []
     checked = 0
+    upstream_documents = pinned_rust_vendor_documents(root)
     for name, text in lintharness.tracked_files(root, "*.md")():
         checked += 1
         source = root / name
+        # Registry provenance uses SHA256. Only unchanged original documents
+        # describe upstream paths; local changes still promise local targets.
+        if not source.is_symlink() and upstream_documents.get(name) == crypto.sha256(source.read_bytes()).hexdigest():
+            continue
         targets = {(m, MARKDOWN_LINK) for m in MARKDOWN_LINK.findall(text)}
         if name.startswith(SKILL_ROOT):
             targets |= {(m, BACKTICK_REFERENCE) for m in BACKTICK_REFERENCE.findall(text)}

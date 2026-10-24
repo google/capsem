@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
+from capsem_builder import crypto
 from capsem_builder.gate.tools.audit import lint_harness as lintharness
+from capsem_builder.gate.tools.audit.surfaces import markdown_links
 
 LINT_PROCESS_RATIONALE = """\
 The shared lint harness must distinguish "the tool found nothing" from "the
@@ -14,6 +18,41 @@ tool could not answer". A nonstandard exit or a findings exit whose output the
 adapter cannot parse is missing evidence, not a clean surface. Treating either
 as clean would make every Citadel lint guard fail open at the process boundary.
 """
+
+UPSTREAM_DOCUMENT_RATIONALE = (
+    "Only byte-identical upstream documents have upstream-relative links. "
+    "First-party, changed, redirected and unpinned documents remain checked; "
+    "a vendor directory alone never exempts a broken promise."
+)
+
+
+@pytest.mark.parametrize("kind", ["pinned", "changed", "unpinned", "first_party", "redirected"])
+def test_markdown_upstream_paths_require_exact_document_provenance(tmp_path: Path, kind: str) -> None:
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "gate.toml").write_text("[lint]\n")
+    vendor = tmp_path / "third_party" / "rust" / "fixture"
+    vendor.mkdir(parents=True)
+    original = "Read the [guide](guide.md).\n"
+    document = vendor / "README.md"
+    document.write_text(original)
+    if kind != "unpinned":
+        (vendor / "UPSTREAM.json").write_text(json.dumps({
+            "files": {"README.md": crypto.sha256(original.encode()).hexdigest()},
+        }))
+    if kind == "changed":
+        document.write_text("Changed. " + original)
+    elif kind == "first_party":
+        (tmp_path / "README.md").write_text(original)
+    elif kind == "redirected":
+        document.unlink()
+        document.symlink_to(tmp_path / "original.md")
+        (tmp_path / "original.md").write_text(original)
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, timeout=10)
+    subprocess.run(["git", "-C", str(tmp_path), "add", "config", "third_party"], check=True, timeout=10)
+    if kind == "first_party":
+        subprocess.run(["git", "-C", str(tmp_path), "add", "README.md"], check=True, timeout=10)
+    findings = markdown_links(tmp_path).findings
+    assert len(findings) == (0 if kind == "pinned" else 1), UPSTREAM_DOCUMENT_RATIONALE
 
 
 def _sources() -> Iterator[tuple[str, str]]:
