@@ -162,7 +162,8 @@ class InstallContainer:
         # a Colima OOM, for instance.
         self._docker.remove(self.name)
         start_systemd_container(
-            self._docker, self._settings,
+            self._docker,
+            self._settings,
             network=self._settings.runtime_network,
             name=self.name,
             image=image,
@@ -222,7 +223,7 @@ class InstallContainer:
         self._docker.shell(self.name, f"mkdir -p {path} && chown -R {uid}:{gid} {path}")
 
     def stop(self) -> None:
-        self._docker.remove(self.name)
+        self._docker.remove(self.name, strict=True)
 
     def capture_storage_failure(self) -> None:
         """Keep filesystem attribution in the run log before scratch teardown."""
@@ -234,22 +235,34 @@ class InstallContainer:
 
 
 def start_systemd_container(
-    docker: Docker, settings: InstallConfig, *, name: str, image: str,
-    command: list[str], network: ContainerNetwork,
-    options: list[str] | None = None, mounts: list[Mount] | None = None,
+    docker: Docker,
+    settings: InstallConfig,
+    *,
+    name: str,
+    image: str,
+    command: list[str],
+    network: ContainerNetwork,
+    options: list[str] | None = None,
+    mounts: list[Mount] | None = None,
     attempts: int | None = None,
     sleep=time.sleep,
 ) -> None:
     """One native-supervisor boot primitive for sealed and public install proofs."""
     tmpfs = [flag for path in settings.tmpfs_paths for flag in ("--tmpfs", path)]
     docker.run_detached(
-        name=name, image=image, command=command, network=network,
+        name=name,
+        image=image,
+        command=command,
+        network=network,
         options=["--privileged", "--cgroupns=host", *(options or []), *tmpfs],
         mounts=[Mount(settings.cgroup_path, settings.cgroup_path, "rw"), *(mounts or [])],
     )
     await_systemd(
-        docker, name, attempts=settings.systemd_ready_attempts if attempts is None else attempts,
-        interval=settings.systemd_ready_interval_seconds, sleep=sleep,
+        docker,
+        name,
+        attempts=settings.systemd_ready_attempts if attempts is None else attempts,
+        interval=settings.systemd_ready_interval_seconds,
+        sleep=sleep,
     )
 
 

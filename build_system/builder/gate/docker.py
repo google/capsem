@@ -28,18 +28,22 @@ class Docker(ImageOperations):
 
     # -- lifecycle ---------------------------------------------------------
 
-    def remove(self, container: str) -> None:
+    def remove(self, container: str, *, strict: bool = False) -> None:
         """Detach a container if it exists, and take its scratch with it.
 
-        Deliberately best-effort and deliberately unconditional: a stable
-        container name plus a preemptive removal is what lets a run recover
-        from a predecessor that died before its own cleanup.
+        Recovery is best-effort by default: a stable name plus preemptive
+        removal recovers a predecessor that died before cleanup. Final owned
+        settlement uses ``strict=True`` and requires successful removal.
 
         `-v` removes the anonymous volumes `create(scratch=...)` made. Without
         it every package build leaves a 356 MB node_modules volume behind, and
         nothing else would ever collect them -- they have no name to reclaim by.
         """
-        self._runner.succeeds(["docker", "rm", "-f", "-v", container])
+        command = ["docker", "rm", "-f", "-v", container]
+        if strict:
+            self._runner.run(command)
+        else:
+            self._runner.succeeds(command)
 
     def run_detached(
         self,
