@@ -46,3 +46,18 @@ async fn a_write_whose_record_is_refused_never_reaches_the_guest() {
         "a write the ledger refused must never be dispatched to the guest"
     );
 }
+
+#[test]
+fn prepared_write_owns_final_frame_and_bounded_audit_facts() {
+    let prepared = crate::control_queue::PreparedWrite::new(61, "/workspace/one".into(), vec![23; 128 * 1024]).unwrap();
+    let retry = prepared.clone();
+    assert_eq!(prepared.frame.bytes().as_ptr(), retry.frame.bytes().as_ptr());
+    assert_eq!(prepared.observation.size, 128 * 1024);
+    assert_eq!(
+        prepared.observation.content.len(),
+        super::super::file_boundary::FILE_SECURITY_CONTENT_PREVIEW_MAX
+    );
+    assert!(
+        matches!(capsem_proto::decode_host_msg(&prepared.frame.bytes()[4..]).unwrap(), HostToGuest::FileWrite { id: 61, data, .. } if data == vec![23; 128 * 1024])
+    );
+}

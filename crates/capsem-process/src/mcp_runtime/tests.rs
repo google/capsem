@@ -1,10 +1,8 @@
 use super::*;
 use capsem_core::net::mitm_proxy::ScopedMcpTools;
-use capsem_proto::ipc::ServiceToProcess;
-use tokio::sync::mpsc;
 
 fn fixture() -> GuestExposureTools {
-    let (control, _requests) = mpsc::channel::<ServiceToProcess>(4);
+    let (control, _requests) = crate::control_queue::channel(4);
     GuestExposureTools::new(Arc::new(capsem_core::container::publish::Publisher::default()), control)
 }
 

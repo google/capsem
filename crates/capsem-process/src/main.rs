@@ -1,6 +1,8 @@
 mod aggregator;
 mod browser;
 mod cables;
+mod control_queue;
+mod guest_control;
 mod guest_env;
 mod helpers;
 mod ipc;
@@ -21,7 +23,7 @@ use capsem_core::net::upstream_grant::{adopt_inherited, UpstreamGrantClient};
 use capsem_core::{prepare_vm, BootOptions, VirtioFsShare, VsockConnection};
 use capsem_foundation::unix::process::ensure_open_file_limit;
 use capsem_logger::DbWriter;
-use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
+use capsem_proto::ipc::ProcessToService;
 use capsem_proto::NETWORK_PROCESS_OPEN_FILE_LIMIT;
 use clap::Parser;
 use std::os::fd::AsFd as _;
@@ -712,7 +714,7 @@ async fn run_async_main_loop(
     shutdown.lock().await.publisher = Some(job_store.publisher.clone());
     let (ipc_tx, _) = broadcast::channel::<ProcessToService>(128);
     let session_browser = Arc::new(browser::SessionBrowser::default());
-    let (ctrl_tx, ctrl_rx) = mpsc::channel::<ServiceToProcess>(32);
+    let (ctrl_tx, ctrl_rx) = crate::control_queue::channel(32);
     let seats = prepared_seats.activate(&job_store, ctrl_tx.clone())?;
     // Held until the process exits: dropping it flushes the last measurements.
     let _metric_export = metric_export::install(&args.id, metric_service, args.metric_broker);

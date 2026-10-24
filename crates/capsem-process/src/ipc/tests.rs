@@ -97,7 +97,7 @@ pub(in crate::ipc) struct Dispatcher {
     job_store: Arc<JobStore>,
     session_terminal: Arc<SessionTerminal>,
     session_browser: Arc<crate::browser::SessionBrowser>,
-    ctrl_tx: mpsc::Sender<ServiceToProcess>,
+    ctrl_tx: crate::control_queue::Sender,
     events_tx: broadcast::Sender<ProcessToService>,
     pub(in crate::ipc) net_state: Arc<capsem_core::SandboxNetworkState>,
     pub(in crate::ipc) mcp_runtime: Arc<McpRuntime>,
@@ -107,14 +107,14 @@ pub(in crate::ipc) struct Dispatcher {
 }
 
 impl Dispatcher {
-    pub(in crate::ipc) fn new(temp: &std::path::Path) -> (Self, mpsc::Receiver<ServiceToProcess>) {
+    pub(in crate::ipc) fn new(temp: &std::path::Path) -> (Self, crate::control_queue::Receiver) {
         Self::with_db(temp, Arc::new(capsem_logger::DbWriter::open_in_memory(64).unwrap()))
     }
 
     pub(in crate::ipc) fn with_db(
         temp: &std::path::Path,
         db: Arc<capsem_logger::DbWriter>,
-    ) -> (Self, mpsc::Receiver<ServiceToProcess>) {
+    ) -> (Self, crate::control_queue::Receiver) {
         let active_policy = temp.join("active_policy.toml");
         std::fs::write(&active_policy, "[user_rules]\n[corp_rules]\n[network]\n").unwrap();
         let initial_digest =
@@ -210,7 +210,7 @@ impl Dispatcher {
         });
         let session_terminal = SessionTerminal::new(8);
         let job_store = Arc::new(JobStore::new());
-        let (ctrl_tx, ctrl_rx) = mpsc::channel(16);
+        let (ctrl_tx, ctrl_rx) = crate::control_queue::channel(16);
         let (events_tx, _) = broadcast::channel(16);
         (
             Self {

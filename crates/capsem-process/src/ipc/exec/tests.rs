@@ -6,7 +6,7 @@ use std::time::Duration;
 async fn owner_cancellation_releases_stream_registration_and_pending_ack() {
     let jobs = Arc::new(JobStore::new());
     let db = Arc::new(capsem_logger::DbWriter::open_in_memory(16).unwrap());
-    let (control, mut commands) = mpsc::channel(1);
+    let (control, mut commands) = crate::control_queue::channel(1);
     let (output, consumer) = mpsc::channel(1);
     let registration = install(11, true, &jobs, &output);
     let task = tokio::spawn(run(
@@ -26,10 +26,11 @@ async fn owner_cancellation_releases_stream_registration_and_pending_ack() {
     ));
     jobs.pending_acks.lock().unwrap().insert(
         11,
-        capsem_proto::HostToGuest::Exec {
+        crate::guest_control::Prepared::new(&capsem_proto::HostToGuest::Exec {
             id: 11,
             command: "sleep 100".into(),
-        },
+        })
+        .unwrap(),
     );
     drop(consumer);
     cancel(11, &jobs, &control).await.unwrap();
@@ -62,7 +63,7 @@ async fn owner_cancellation_releases_stream_registration_and_pending_ack() {
 async fn failed_dispatch_returns_error_and_removes_registration() {
     let jobs = Arc::new(JobStore::new());
     let db = Arc::new(capsem_logger::DbWriter::open_in_memory(16).unwrap());
-    let (control, commands) = mpsc::channel(1);
+    let (control, commands) = crate::control_queue::channel(1);
     let (output, mut consumer) = mpsc::channel(1);
     drop(commands);
     let registration = install(12, true, &jobs, &output);
@@ -90,7 +91,7 @@ async fn duplicate_id_does_not_replace_original_job_or_dispatch_again() {
     let (original, mut original_result) = oneshot::channel();
     jobs.jobs.lock().unwrap().insert(13, original);
     jobs.active_execs.lock().unwrap().insert(13, ActiveExec::new());
-    let (control, mut commands) = mpsc::channel(1);
+    let (control, mut commands) = crate::control_queue::channel(1);
     let (output, mut consumer) = mpsc::channel(1);
     let registration = install(13, true, &jobs, &output);
     assert!(registration.is_none(), "a duplicate id must not be registered again");

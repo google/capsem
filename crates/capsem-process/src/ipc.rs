@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use capsem_foundation::ipc_channel::{channel_from_std, Receiver, Sender};
 use capsem_foundation::unix::peer::PeerIdentity;
 use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
+#[cfg(test)]
 use capsem_proto::HostToGuest;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -55,8 +56,6 @@ const GUEST_PAYLOAD_TIMEOUT: Duration = Duration::from_secs(1);
 /// Maximum number of quick-operation watchdog retries. 16 × 1s = 16s. The bridge
 /// replay layer handles forward-path losses; this covers return-path losses.
 const GUEST_PAYLOAD_MAX_RETRIES: u16 = 16;
-/// The mode the bridge stamps on every guest FileWrite (see vsock.rs).
-const GUEST_FILE_WRITE_MODE: u32 = 0o644;
 
 /// Negotiate the synchronous Hello side-channel away from Tokio's worker
 /// threads, then hand the verified socket to the typed async IPC transport.
@@ -138,7 +137,7 @@ async fn record_guest_write(
 pub(crate) async fn handle_ipc_connection(
     stream: tokio::net::UnixStream,
     controller: PeerIdentity,
-    ctrl_tx: mpsc::Sender<ServiceToProcess>,
+    ctrl_tx: crate::control_queue::Sender,
     ipc_tx: broadcast::Sender<ProcessToService>,
     session_terminal: Arc<SessionTerminal>,
     session_browser: Arc<crate::browser::SessionBrowser>,
@@ -458,57 +457,51 @@ pub(crate) async fn handle_ipc_connection(
             message @ (ServiceToProcess::LinkAttach { .. } | ServiceToProcess::LinkDetach { .. }) => {
                 private::handle(message, Arc::clone(&job_store), ipc_tx_out.clone());
             }
-            ServiceToProcess::WriteFile { id, path, data }
-                if !capsem_proto::host_msg_fits_frame(&HostToGuest::FileWrite {
-                    id,
-                    path: path.clone(),
-                    data: data.clone(),
-                    mode: GUEST_FILE_WRITE_MODE,
-                }) =>
-            {
-                // The guest drops any control frame over MAX_FRAME_SIZE and
-                // never acks it, so the bridge would replay it until the
-                // watchdog gave up. Refuse here, with the reason.
-                warn!(
-                    id,
-                    path,
-                    len = data.len(),
-                    "WriteFile refused: too large for one control frame"
-                );
-                capsem_core::try_send!(
-                    "ipc_write_file_result",
-                    ipc_tx_out
-                        .send(ProcessToService::WriteFileResult {
-                            id,
-                            success: false,
-                            error: Some(format!(
-                                "file too large for the guest control channel: {} bytes do not fit one {} byte frame",
-                                data.len(),
-                                capsem_proto::MAX_FRAME_SIZE
-                            )),
-                        })
-                        .await
-                );
-            }
             ServiceToProcess::WriteFile { id, path, data } => {
+                let size = data.len();
+                let write = match crate::control_queue::PreparedWrite::new(id, path, data) {
+                    Ok(write) => write,
+                    Err(_) => {
+                        warn!(id, size, "WriteFile refused: too large for one control frame");
+                        capsem_core::try_send!("ipc_write_file_result", ipc_tx_out.send(ProcessToService::WriteFileResult {
+                            id, success: false,
+                            error: Some(format!("file too large for the guest control channel: {size} bytes do not fit one {} byte frame", capsem_proto::MAX_FRAME_SIZE)),
+                        }).await);
+                        continue;
+                    }
+                };
                 let job_store = job_store.clone();
                 let ctrl_tx = ctrl_tx.clone();
                 let ipc_tx_out = ipc_tx_out.clone();
                 let net_state = net_state.clone();
                 let mcp_runtime = mcp_runtime.clone();
                 tokio::spawn(async move {
-                    debug!(id, path, len = data.len(), "Received WriteFile command via IPC");
+                    debug!(
+                        id,
+                        path = write.observation.path,
+                        size,
+                        "Received WriteFile command via IPC"
+                    );
                     // Recorded before dispatch, as an export is recorded
                     // before release: a write the session cannot account for
                     // does not happen.
                     if capsem_core::security_engine::admit_within(
                         capsem_core::security_engine::SECURITY_ADMISSION_DEADLINE,
-                        Box::pin(record_guest_write(&net_state, &mcp_runtime, &path, data.len())),
+                        Box::pin(record_guest_write(
+                            &net_state,
+                            &mcp_runtime,
+                            &write.observation.path,
+                            size,
+                        )),
                     )
                     .await
                     .is_none()
                     {
-                        warn!(id, path, "WriteFile refused: its security event could not be recorded");
+                        warn!(
+                            id,
+                            path = write.observation.path,
+                            "WriteFile refused: its security event could not be recorded"
+                        );
                         capsem_core::try_send!(
                             "ipc_write_file_result",
                             ipc_tx_out
@@ -523,16 +516,7 @@ pub(crate) async fn handle_ipc_connection(
                     }
                     let (j_tx, mut j_rx) = oneshot::channel();
                     job_store.jobs.lock().unwrap().insert(id, j_tx);
-                    capsem_core::try_send!(
-                        "ctrl_write_file",
-                        ctrl_tx
-                            .send(ServiceToProcess::WriteFile {
-                                id,
-                                path: path.clone(),
-                                data: data.clone()
-                            })
-                            .await
-                    );
+                    capsem_core::try_send!("ctrl_write_file", ctrl_tx.send_prepared(write.clone()).await);
                     // Watchdog mirrors the quick FileRead retry: if no
                     // FileOpDone arrives within the short response window,
                     // re-send the FileWrite. The agent dedups by id, so a
@@ -554,13 +538,7 @@ pub(crate) async fn handle_ipc_connection(
                                 );
                                 capsem_core::try_send!(
                                     "ctrl_write_file_retry",
-                                    ctrl_tx
-                                        .send(ServiceToProcess::WriteFile {
-                                            id,
-                                            path: path.clone(),
-                                            data: data.clone()
-                                        })
-                                        .await
+                                    ctrl_tx.send_prepared(write.clone()).await
                                 );
                             }
                         }

@@ -35,7 +35,7 @@ use std::os::fd::AsRawFd;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::io::AsyncReadExt;
-use tokio::sync::{mpsc, Notify};
+use tokio::sync::Notify;
 
 /// How long a plug token waits for the service to present it.
 const TOKEN_LIFETIME: Duration = Duration::from_secs(8);
@@ -116,14 +116,14 @@ impl Table {
 pub(crate) struct Cables {
     publisher: Arc<Publisher>,
     /// Where guest instructions go: the control hub forwards them.
-    control: mpsc::Sender<ServiceToProcess>,
+    control: crate::control_queue::Sender,
     table: Mutex<Table>,
     arrived: Notify,
     pending: Mutex<HashMap<u64, PendingPlug>>,
 }
 
 impl Cables {
-    pub(crate) fn new(publisher: Arc<Publisher>, control: mpsc::Sender<ServiceToProcess>) -> Self {
+    pub(crate) fn new(publisher: Arc<Publisher>, control: crate::control_queue::Sender) -> Self {
         Self {
             publisher,
             control,

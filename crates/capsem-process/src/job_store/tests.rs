@@ -294,7 +294,7 @@ fn job_oneshot_dropped_sender() {
 #[tokio::test]
 async fn quiescence_timeout_fires() {
     let job_store = Arc::new(JobStore::new());
-    let (tx, mut _rx) = tokio::sync::mpsc::channel::<HostToGuest>(16);
+    let (tx, mut _rx) = crate::guest_control::channel(16);
 
     // 1. Never send SnapshotReady
     let start = std::time::Instant::now();
@@ -312,7 +312,7 @@ async fn quiescence_timeout_fires() {
 #[tokio::test]
 async fn quiescence_success_runs_operation() {
     let job_store = Arc::new(JobStore::new());
-    let (tx, mut _rx) = tokio::sync::mpsc::channel::<HostToGuest>(16);
+    let (tx, mut _rx) = crate::guest_control::channel(16);
 
     // Acknowledge actual freeze and thaw, not only queue admission.
     {
@@ -343,7 +343,7 @@ async fn quiescence_success_runs_operation() {
 #[tokio::test]
 async fn quiescence_channel_closed_returns_error() {
     let job_store = Arc::new(JobStore::new());
-    let (tx, mut _rx) = tokio::sync::mpsc::channel::<HostToGuest>(16);
+    let (tx, mut _rx) = crate::guest_control::channel(16);
 
     // Drop the sender without sending, simulating channel close
     {
@@ -366,7 +366,7 @@ async fn overlapping_quiescence_sequences_run_one_at_a_time() {
     // `snapshot_transition` holds one waiter. Two overlapping sequences (a fork's
     // clone and a suspend) used to overwrite each other's acknowledgement.
     let job_store = Arc::new(JobStore::new());
-    let (tx, mut guest) = tokio::sync::mpsc::channel::<HostToGuest>(16);
+    let (tx, mut guest) = crate::guest_control::channel(16);
     let acks = Arc::clone(&job_store);
     tokio::spawn(async move {
         while let Some(message) = guest.recv().await {

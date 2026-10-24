@@ -1,4 +1,5 @@
 use anyhow::Result;
+#[cfg(test)]
 use capsem_proto::HostToGuest;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -19,7 +20,7 @@ pub(crate) struct JobStore {
     pub(crate) active_execs: Mutex<HashMap<u64, ActiveExec>>,
     /// In-flight explicit file operations keyed by service job id. The guest
     /// response only carries enough context for reads; writes need the original
-    /// path and payload to emit the security-event ledger row after success.
+    /// path, size and bounded content preview for the security-event ledger row.
     pub(crate) active_file_ops: Mutex<HashMap<u64, ActiveFileOp>>,
     pub(crate) file_memory: Arc<tokio::sync::Semaphore>,
     pub(crate) snapshot_transition: Mutex<Option<snapshot::Waiter>>,
@@ -37,7 +38,7 @@ pub(crate) struct JobStore {
     /// watchdog exhaustion), keeping the map bounded even when the agent
     /// never acks. See `vsock.rs::setup_vsock` for the bridge end and
     /// `ipc.rs::handle_ipc_connection` for the IPC end.
-    pub(crate) pending_acks: Mutex<HashMap<u64, HostToGuest>>,
+    pub(crate) pending_acks: Mutex<HashMap<u64, crate::guest_control::Prepared>>,
     /// Correlation ids for reliable control operations that target an
     /// existing job id. They occupy the upper half so ordinary service job
     /// ids and cancellation acknowledgements cannot replace each other.
@@ -194,8 +195,15 @@ impl JobStore {
 }
 
 #[derive(Debug)]
+pub(crate) struct WriteObservation {
+    pub(crate) path: String,
+    pub(crate) size: u64,
+    pub(crate) content: String,
+}
+
+#[derive(Debug)]
 pub(crate) enum ActiveFileOp {
-    Write { path: String, data: Vec<u8> },
+    Write { observation: Arc<WriteObservation> },
     Read { path: String, state: Arc<FileReadState> },
 }
 

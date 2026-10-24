@@ -58,7 +58,7 @@ pub(super) fn record_boot_timing(stages: Vec<BootStage>) -> Vec<BootStage> {
 /// Non-ackable variants (Resize, Ping, Shutdown, BootConfig, etc.) are
 /// either side-effect-free or fire-and-forget at boot, so we don't
 /// burden the wire with per-message acks for them.
-pub(super) fn ackable_id(msg: &HostToGuest) -> Option<u64> {
+pub(crate) fn ackable_id(msg: &HostToGuest) -> Option<u64> {
     match msg {
         HostToGuest::Exec { id, .. }
         | HostToGuest::FileWrite { id, .. }

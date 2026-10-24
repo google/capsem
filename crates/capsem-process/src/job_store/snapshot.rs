@@ -1,8 +1,8 @@
 //! Correlated guest filesystem barriers, serialized by the lifecycle owner.
 use super::*;
 use anyhow::Context;
+use capsem_proto::HostToGuest;
 use std::time::Duration;
-use tokio::sync::mpsc;
 
 pub(crate) struct Waiter {
     pub(super) id: u64,
@@ -48,7 +48,7 @@ impl JobStore {
 /// The caller holds quiescence through freeze, VM work and thaw. Each phase
 /// has a fresh identity; a late acknowledgement cannot satisfy its successor.
 pub(crate) async fn snapshot_transition(
-    host: &mpsc::Sender<HostToGuest>,
+    host: &crate::guest_control::Sender,
     jobs: &JobStore,
     bound: Duration,
     frozen: bool,
@@ -77,7 +77,7 @@ pub(crate) async fn snapshot_transition(
 /// Copies run while the VM is running. Both successful and rejected copies
 /// must wait for the guest to confirm thaw before returning to the service.
 pub(crate) async fn with_quiescence<T, F, Fut>(
-    host: &mpsc::Sender<HostToGuest>,
+    host: &crate::guest_control::Sender,
     jobs: &Arc<JobStore>,
     bound: Duration,
     operation: F,

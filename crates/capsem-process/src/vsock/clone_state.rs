@@ -7,8 +7,8 @@
 
 use std::sync::Arc;
 
-use capsem_proto::{ipc::ProcessToService, HostToGuest};
-use tokio::sync::{broadcast, mpsc, oneshot};
+use capsem_proto::ipc::ProcessToService;
+use tokio::sync::{broadcast, oneshot};
 
 use crate::job_store::{with_quiescence, JobResult, JobStore};
 
@@ -39,7 +39,7 @@ async fn await_coordinator_copy(
 }
 
 pub(super) fn spawn(
-    hub_tx: &mpsc::Sender<HostToGuest>,
+    hub_tx: &crate::guest_control::Sender,
     job_store: &Arc<JobStore>,
     events: &broadcast::Sender<ProcessToService>,
     id: u64,

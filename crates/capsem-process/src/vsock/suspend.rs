@@ -101,7 +101,7 @@ type SharedVm = Arc<tokio::sync::Mutex<Box<dyn capsem_core::hypervisor::VmHandle
 
 pub(super) struct Suspend {
     pub vm: SharedVm,
-    pub hub: mpsc::Sender<HostToGuest>,
+    pub hub: crate::guest_control::Sender,
     pub jobs: Arc<JobStore>,
     pub ipc: broadcast::Sender<ProcessToService>,
     pub id: String,

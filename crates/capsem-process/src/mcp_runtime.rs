@@ -7,9 +7,8 @@ use capsem_core::net::proxy_engine::ProxyPolicyHandle;
 use capsem_logger::DbWriter;
 use capsem_proto::mcp_aggregator::AggregatorClient;
 use capsem_proto::mcp_contracts::{McpToolDef, ToolAnnotations};
-use capsem_proto::{ipc::ServiceToProcess, PublicationTarget};
+use capsem_proto::PublicationTarget;
 use serde::Deserialize;
-use tokio::sync::mpsc;
 
 const GUEST_EXPOSE_TOOL: &str = "capsem__expose_port";
 
@@ -24,11 +23,11 @@ struct GuestExposureRequest {
 
 pub(crate) struct GuestExposureTools {
     publisher: Arc<Publisher>,
-    control: mpsc::Sender<ServiceToProcess>,
+    control: crate::control_queue::Sender,
 }
 
 impl GuestExposureTools {
-    pub(crate) fn new(publisher: Arc<Publisher>, control: mpsc::Sender<ServiceToProcess>) -> Self {
+    pub(crate) fn new(publisher: Arc<Publisher>, control: crate::control_queue::Sender) -> Self {
         Self { publisher, control }
     }
 }

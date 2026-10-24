@@ -41,7 +41,7 @@ pub(super) async fn run(
     id: u64,
     (command, target): (String, capsem_proto::ipc::ExecTarget),
     jobs: Arc<JobStore>,
-    control: mpsc::Sender<ServiceToProcess>,
+    control: crate::control_queue::Sender,
     output: mpsc::Sender<ProcessToService>,
     db: Arc<capsem_logger::DbWriter>,
     registration: Option<oneshot::Receiver<JobResult>>,
@@ -123,7 +123,7 @@ pub(super) fn input(id: u64, frame: capsem_proto::ExecInputFrame, jobs: &JobStor
     })
 }
 
-pub(super) async fn cancel(id: u64, jobs: &JobStore, control: &mpsc::Sender<ServiceToProcess>) -> Result<(), String> {
+pub(super) async fn cancel(id: u64, jobs: &JobStore, control: &crate::control_queue::Sender) -> Result<(), String> {
     jobs.cancel_exec(id);
     if !jobs.active_execs.lock().unwrap().contains_key(&id) {
         return Ok(());

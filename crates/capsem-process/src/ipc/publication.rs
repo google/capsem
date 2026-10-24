@@ -1,5 +1,5 @@
 use crate::job_store::JobStore;
-use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
+use capsem_proto::ipc::ProcessToService;
 use capsem_proto::{PreviewAdmissionKind, PublicationTarget};
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -7,7 +7,7 @@ use tokio::sync::mpsc;
 #[allow(clippy::too_many_arguments)]
 pub(super) fn spawn_declare(
     jobs: &Arc<JobStore>,
-    control: &mpsc::Sender<ServiceToProcess>,
+    control: &crate::control_queue::Sender,
     output: &mpsc::Sender<ProcessToService>,
     id: u64,
     preview_listener: Option<u16>,

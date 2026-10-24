@@ -7,13 +7,13 @@ struct Bridge {
     _dir: tempfile::TempDir,
     path: std::path::PathBuf,
     dispatch: ExecDispatch,
-    guest: mpsc::Receiver<HostToGuest>,
+    guest: crate::guest_control::Receiver,
 }
 
 fn bridge() -> Bridge {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("session.db");
-    let (hub, guest) = mpsc::channel(4);
+    let (hub, guest) = crate::guest_control::channel(4);
     let dispatch = ExecDispatch {
         vm_id: "vm-under-test".into(),
         db: Arc::new(capsem_logger::DbWriter::open(&path, 16).unwrap()),
@@ -54,7 +54,7 @@ async fn ledger_rows(bridge: &Bridge) -> Vec<(String, String)> {
         .collect()
 }
 
-fn dispatched(guest: &mut mpsc::Receiver<HostToGuest>) -> (u64, String) {
+fn dispatched(guest: &mut crate::guest_control::Receiver) -> (u64, String) {
     match guest.try_recv().expect("an allowed exec reaches the guest") {
         HostToGuest::Exec { id, command } => (id, command),
         other => panic!("expected an exec, got {other:?}"),

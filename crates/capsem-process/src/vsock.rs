@@ -30,7 +30,8 @@ use handshake::{collect_terminal_control_pair, is_retryable_handshake_error, per
 pub(crate) use suspend::Files as SuspendFiles;
 pub(crate) use terminal::TerminalBridge;
 mod guest_report;
-use guest_report::{ackable_id, ackable_response_id, is_guest_liveness_message, warn_unhandled_guest_msg};
+pub(crate) use guest_report::ackable_id;
+use guest_report::{ackable_response_id, is_guest_liveness_message, warn_unhandled_guest_msg};
 mod exec_completion;
 mod exec_dispatch;
 mod exec_input;
@@ -38,9 +39,9 @@ mod exec_output;
 mod file_content;
 mod shutdown;
 
-use crate::ipc::file_boundary::{file_content_preview, PluginPolicyHandle, SecurityRulesHandle};
 #[cfg(test)]
 use crate::ipc::file_boundary::{rewritten_file_content, FILE_SECURITY_CONTENT_PREVIEW_MAX};
+use crate::ipc::file_boundary::{PluginPolicyHandle, SecurityRulesHandle};
 
 /// Maximum attempts for the initial handshake before giving up.
 ///
@@ -68,8 +69,8 @@ pub(crate) struct VsockOptions {
     pub(crate) vm: Arc<tokio::sync::Mutex<Box<dyn capsem_core::hypervisor::VmHandle>>>,
     pub(crate) vsock_rx: mpsc::UnboundedReceiver<VsockConnection>,
     pub(crate) ipc_tx: broadcast::Sender<ProcessToService>,
-    pub(crate) _ctrl_tx: mpsc::Sender<ServiceToProcess>,
-    pub(crate) ctrl_rx: mpsc::Receiver<ServiceToProcess>,
+    pub(crate) _ctrl_tx: crate::control_queue::Sender,
+    pub(crate) ctrl_rx: crate::control_queue::Receiver,
     pub(crate) terminal_output: Arc<capsem_core::terminal::SessionTerminal>,
     pub(crate) session_browser: Arc<crate::browser::SessionBrowser>,
     pub(crate) job_store: Arc<JobStore>,
@@ -207,7 +208,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
     shutdown.lock().await.terminal_bridge = Some(terminal_bridge);
 
     // 2. Stable Control Bridge (Read + Write)
-    let (ctrl_out_tx, mut ctrl_out_rx) = mpsc::channel::<HostToGuest>(128);
+    let (ctrl_out_tx, mut ctrl_out_rx) = crate::guest_control::channel(128);
     let js = Arc::clone(&job_store);
     let db_ctrl = Arc::clone(&db);
     let security_rules_ctrl = Arc::clone(&security_rules);
@@ -253,7 +254,8 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
             // Re-write every pending (unacked) message on the fresh conn.
             // Snapshot under the lock so a concurrent insert during replay
             // doesn't double-replay the same message.
-            let to_replay: Vec<HostToGuest> = pending.pending_acks.lock().unwrap().values().cloned().collect();
+            let to_replay: Vec<crate::guest_control::Prepared> =
+                pending.pending_acks.lock().unwrap().values().cloned().collect();
             if !to_replay.is_empty() {
                 info!(
                     count = to_replay.len(),
@@ -261,15 +263,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                 );
                 let mut replay_failed = false;
                 for msg in &to_replay {
-                    let frame = match proto::encode_host_msg(msg) {
-                        Ok(frame) => frame,
-                        Err(error) => {
-                            error!(%error, "control bridge: invalid replay frame");
-                            replay_failed = true;
-                            break;
-                        }
-                    };
-                    if let Err(e) = control.write(&frame).await {
+                    if let Err(e) = control.write(msg.bytes()).await {
                         error!(error = %e, "control bridge: replay write failed");
                         replay_failed = true;
                         break;
@@ -292,27 +286,17 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     // Outgoing messages -- record ackable ones in `pending`
                     // *before* writing so a write-fail/silent-drop is
                     // recoverable via the next rekey replay.
-                    Some(msg) = ctrl_out_rx.recv() => {
-                        if let HostToGuest::ConnectPort { flow, .. } = &msg {
-                            if !js.publisher.pending_connection(*flow) {
+                    Some(frame) = ctrl_out_rx.recv_prepared() => {
+                        if let Some(flow) = frame.publication() {
+                            if !js.publisher.pending_connection(flow) {
                                 tracing::debug!(?flow, "control bridge: stale publication setup dropped");
                                 continue;
                             }
                         }
-                        // Frame first: a message the guest would drop must
-                        // not be parked for replay or mistaken for a
-                        // transport failure.
-                        let frame = match proto::encode_host_msg(&msg) {
-                            Ok(frame) => frame,
-                            Err(e) => {
-                                error!(error = %e, "control bridge: unframeable message dropped");
-                                continue;
-                            }
-                        };
-                        if let Some(id) = ackable_id(&msg) {
-                            pending.pending_acks.lock().unwrap().insert(id, msg.clone());
+                        if let Some(id) = frame.ack() {
+                            pending.pending_acks.lock().unwrap().insert(id, frame.clone());
                         }
-                        if let Err(e) = control.write(&frame).await {
+                        if let Err(e) = control.write(frame.bytes()).await {
                             error!(error = %e, "control bridge: write failed");
                             break;
                         }
@@ -427,7 +411,20 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
 
     tokio::spawn(async move {
         let mut exec_calls = tokio::task::JoinSet::new();
-        while let Some(msg) = ctrl_rx.recv().await {
+        while let Some(request) = ctrl_rx.recv_request().await {
+            let msg = match request {
+                crate::control_queue::Request::Message(message) => message,
+                crate::control_queue::Request::Write(write) => {
+                    js_for_cmd.active_file_ops.lock().unwrap().insert(
+                        write.id,
+                        ActiveFileOp::Write {
+                            observation: write.observation,
+                        },
+                    );
+                    capsem_core::try_send!("hub_file_write", hub_tx.send_prepared(write.frame).await);
+                    continue;
+                }
+            };
             while exec_calls.try_join_next().is_some() {}
             match msg {
                 ServiceToProcess::TerminalInput { data } => {
@@ -475,26 +472,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                         hub_tx.send(HostToGuest::CancelExec { id, cancellation_id }).await
                     );
                 }
-                ServiceToProcess::WriteFile { id, path, data } => {
-                    js_for_cmd.active_file_ops.lock().unwrap().insert(
-                        id,
-                        ActiveFileOp::Write {
-                            path: path.clone(),
-                            data: data.clone(),
-                        },
-                    );
-                    capsem_core::try_send!(
-                        "hub_file_write",
-                        hub_tx
-                            .send(HostToGuest::FileWrite {
-                                id,
-                                path,
-                                data,
-                                mode: 0o644
-                            })
-                            .await
-                    );
-                }
+                ServiceToProcess::WriteFile { .. } => unreachable!("unprepared local file write"),
                 ServiceToProcess::ReadFile { id, path } => {
                     let state = {
                         let active = js_for_cmd.active_file_ops.lock().unwrap();
@@ -510,11 +488,18 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                         state.cancel();
                         continue;
                     };
+                    let frame = match crate::guest_control::Prepared::new(&HostToGuest::FileRead { id, path }) {
+                        Ok(frame) => frame,
+                        Err(_) => {
+                            state.cancel();
+                            continue;
+                        }
+                    };
                     // Receipt and final delivery share this short gate. A
                     // queued retry cannot re-read an already-received file.
                     let arrived = state.arrived.lock().unwrap();
                     if !*arrived && !state.cancellation.is_cancelled() {
-                        permit.send(HostToGuest::FileRead { id, path });
+                        permit.send(frame);
                     }
                 }
                 ServiceToProcess::CloneState { id } => {
@@ -794,7 +779,7 @@ pub(crate) async fn handle_guest_msg_with_tasks(
             };
             if let Some(context) = context {
                 match context {
-                    ActiveFileOp::Write { path, data } => {
+                    ActiveFileOp::Write { observation } => {
                         let rules = security_rules.read().unwrap().clone();
                         let plugins = plugin_policy.read().unwrap().clone();
                         if let Err(error) = capsem_core::security_engine::emit_observed_explicit_file_security_write_and_rules_with_plugins(
@@ -803,9 +788,9 @@ pub(crate) async fn handle_guest_msg_with_tasks(
                             plugins,
                             capsem_core::security_engine::ExplicitFileSecurityEvent {
                                 action: capsem_logger::FileAction::Modified,
-                                path,
-                                size: Some(data.len() as u64),
-                                content: Some(file_content_preview(&data)),
+                                path: observation.path.clone(),
+                                size: Some(observation.size),
+                                content: Some(observation.content.clone()),
                                 mime_type: None,
                                 trace_id: None,
                                 credential_ref: None,

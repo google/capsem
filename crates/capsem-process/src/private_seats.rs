@@ -4,10 +4,8 @@
 //! It needs the service's socket and the run directory the service named.
 use crate::job_store::JobStore;
 use anyhow::{Context, Result};
-use capsem_proto::ipc::ServiceToProcess;
 use std::path::Path;
 use std::sync::Arc;
-use tokio::sync::mpsc;
 
 pub(crate) struct Seats<'a> {
     pub id: &'a str,
@@ -46,7 +44,7 @@ pub(crate) struct Prepared {
 }
 
 impl Prepared {
-    pub(crate) fn activate(self, job_store: &Arc<JobStore>, control: mpsc::Sender<ServiceToProcess>) -> Result<Bound> {
+    pub(crate) fn activate(self, job_store: &Arc<JobStore>, control: crate::control_queue::Sender) -> Result<Bound> {
         let cables = Arc::new(crate::cables::Cables::new(job_store.publisher.clone(), control));
         let _ = job_store.cables.set(Arc::clone(&cables));
         let _ = job_store.cable_seat.set(self.seat_path);

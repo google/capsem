@@ -6,7 +6,7 @@ use std::sync::Arc;
 use capsem_core::{read_control_msg, VsockConnection};
 use capsem_proto::ipc::{ProcessToService, ServiceToProcess};
 use capsem_proto::{GuestToHost, HostVsockService};
-use tokio::sync::{broadcast, mpsc, OwnedSemaphorePermit, Semaphore};
+use tokio::sync::{broadcast, OwnedSemaphorePermit, Semaphore};
 use tracing::{info, warn};
 
 use super::{audit::serve_audit_records, exec_input, exec_output, streams};
@@ -55,7 +55,7 @@ pub(super) fn dispatch_aux_connection(
     job_store: &Arc<JobStore>,
     db: &Arc<capsem_logger::DbWriter>,
     ipc_tx: &broadcast::Sender<ProcessToService>,
-    ctrl_tx: &mpsc::Sender<ServiceToProcess>,
+    ctrl_tx: &crate::control_queue::Sender,
     vm_id: &str,
     limits: &AuxConnectionLimits,
 ) {

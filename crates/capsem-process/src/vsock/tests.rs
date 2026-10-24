@@ -643,8 +643,11 @@ async fn unsolicited_file_content_cannot_create_a_file_security_event() {
     js.active_file_ops.lock().unwrap().insert(
         991,
         ActiveFileOp::Write {
-            path: "/workspace/write.txt".to_string(),
-            data: b"original".to_vec(),
+            observation: Arc::new(crate::job_store::WriteObservation {
+                path: "/workspace/write.txt".into(),
+                size: 8,
+                content: "original".into(),
+            }),
         },
     );
     handle_guest_msg(

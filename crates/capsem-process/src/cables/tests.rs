@@ -46,15 +46,15 @@ fn network(id: &str) -> NetworkIdentity {
 }
 
 /// Cables whose guest instructions land in a channel the test reads.
-fn cables(action: &str) -> (Arc<Cables>, mpsc::Receiver<ServiceToProcess>) {
-    let (control, instructions) = mpsc::channel(16);
+fn cables(action: &str) -> (Arc<Cables>, crate::control_queue::Receiver) {
+    let (control, instructions) = crate::control_queue::channel(16);
     (
         Arc::new(Cables::new(authorized_publisher(action), control)),
         instructions,
     )
 }
 
-async fn instruction(instructions: &mut mpsc::Receiver<ServiceToProcess>) -> ServiceToProcess {
+async fn instruction(instructions: &mut crate::control_queue::Receiver) -> ServiceToProcess {
     tokio::time::timeout(Duration::from_secs(2), instructions.recv())
         .await
         .expect("the guest is told")
@@ -66,7 +66,7 @@ async fn instruction(instructions: &mut mpsc::Receiver<ServiceToProcess>) -> Ser
 /// grows with it in every test.
 async fn plugged(
     cables: &Cables,
-    instructions: &mut mpsc::Receiver<ServiceToProcess>,
+    instructions: &mut crate::control_queue::Receiver,
     token: u64,
     id: &str,
     address: Ipv4Addr,
@@ -160,7 +160,7 @@ async fn a_blocked_policy_refuses_the_plug_and_a_token_is_expected_once() {
         .unwrap_err();
     assert!(format!("{refused:#}").contains("block"), "{refused:#}");
     assert!(told.try_recv().is_err(), "a refused plug brings no cable up");
-    let (control, _) = mpsc::channel(1);
+    let (control, _) = crate::control_queue::channel(1);
     let unconfigured = Cables::new(Arc::new(Publisher::default()), control);
     assert!(unconfigured
         .expect("00000000000000aa", network(TEAM), IN_TEAM, 24, 1)
@@ -295,7 +295,7 @@ async fn an_unknown_token_gets_no_stream() {
 /// reconnects.
 async fn assert_let_go_and_pluggable_again(
     cables: &Arc<Cables>,
-    instructions: &mut mpsc::Receiver<ServiceToProcess>,
+    instructions: &mut crate::control_queue::Receiver,
     guest: &mut tokio::net::UnixStream,
     token: u64,
 ) {

@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 #[derive(Clone)]
 pub(super) struct ReadFiles {
     jobs: Arc<JobStore>,
-    control: mpsc::Sender<ServiceToProcess>,
+    control: crate::control_queue::Sender,
     output: mpsc::Sender<ProcessToService>,
     approvals: Option<Arc<capsem_core::security_engine::approval::client::ApprovalCapability>>,
     capacity: Arc<Semaphore>,
@@ -32,7 +32,7 @@ impl Drop for ReadLease {
 impl ReadFiles {
     pub(super) fn new(
         jobs: Arc<JobStore>,
-        control: mpsc::Sender<ServiceToProcess>,
+        control: crate::control_queue::Sender,
         output: mpsc::Sender<ProcessToService>,
         runtime: &McpRuntime,
         capacity: Arc<Semaphore>,

@@ -4,7 +4,7 @@ use std::time::Duration;
 #[tokio::test]
 async fn snapshot_replies_require_the_exact_operation_and_phase() {
     let jobs = Arc::new(JobStore::new());
-    let (host, mut guest) = tokio::sync::mpsc::channel(4);
+    let (host, mut guest) = crate::guest_control::channel(4);
     let pending = {
         let jobs = Arc::clone(&jobs);
         tokio::spawn(async move { snapshot_transition(&host, &jobs, Duration::from_secs(1), false).await })
@@ -21,7 +21,7 @@ async fn snapshot_replies_require_the_exact_operation_and_phase() {
 #[tokio::test]
 async fn snapshot_timeout_and_cancellation_release_waiters_and_reject_late_replies() {
     let jobs = Arc::new(JobStore::new());
-    let (host, mut guest) = tokio::sync::mpsc::channel(4);
+    let (host, mut guest) = crate::guest_control::channel(4);
     let first = snapshot_transition(&host, &jobs, Duration::from_millis(10), true).await;
     assert!(first.unwrap_err().to_string().contains("timed out"));
     let HostToGuest::SnapshotTransition { id: old, .. } = guest.recv().await.unwrap() else {
@@ -59,7 +59,7 @@ async fn snapshot_timeout_and_cancellation_release_waiters_and_reject_late_repli
 #[tokio::test]
 async fn snapshot_ack_deadline_includes_a_full_control_queue() {
     let jobs = Arc::new(JobStore::new());
-    let (host, _guest) = tokio::sync::mpsc::channel(1);
+    let (host, _guest) = crate::guest_control::channel(1);
     host.send(HostToGuest::Shutdown).await.unwrap();
     assert!(snapshot_transition(&host, &jobs, Duration::from_millis(10), false)
         .await

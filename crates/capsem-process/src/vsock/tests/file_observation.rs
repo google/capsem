@@ -24,8 +24,11 @@ async fn completed_guest_write_keeps_facts_without_creating_a_fake_pending_appro
     jobs.active_file_ops.lock().unwrap().insert(
         7,
         ActiveFileOp::Write {
-            path: "/workspace/already-written.txt".into(),
-            data: b"already written".to_vec(),
+            observation: Arc::new(crate::job_store::WriteObservation {
+                path: "/workspace/already-written.txt".into(),
+                size: 15,
+                content: "already written".into(),
+            }),
         },
     );
     let (reply, result) = tokio::sync::oneshot::channel();

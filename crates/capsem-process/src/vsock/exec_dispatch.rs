@@ -21,7 +21,7 @@ pub(super) struct ExecDispatch {
     pub(super) rules: SecurityRulesHandle,
     pub(super) plugins: PluginPolicyHandle,
     pub(super) jobs: Arc<JobStore>,
-    pub(super) hub: mpsc::Sender<HostToGuest>,
+    pub(super) hub: crate::guest_control::Sender,
     pub(super) approvals: Option<Arc<capsem_core::security_engine::approval::client::ApprovalCapability>>,
 }
 
@@ -133,6 +133,13 @@ impl ExecDispatch {
             return;
         }
         let command = guest_command(command, target);
+        let frame = match crate::guest_control::Prepared::new(&HostToGuest::Exec { id, command }) {
+            Ok(frame) => frame,
+            Err(error) => {
+                self.refuse(id, &cancellation, format!("execution control frame refused: {error}"));
+                return;
+            }
+        };
         let permit = match tokio::select! {
             biased;
             _ = cancellation.cancelled() => None,
@@ -156,7 +163,7 @@ impl ExecDispatch {
                 if let Ok(Some(emission)) = &boundary {
                     active.event_id = Some(emission.event_id.clone());
                 }
-                permit.send(HostToGuest::Exec { id, command });
+                permit.send(frame);
                 true
             } else {
                 false
