@@ -344,6 +344,7 @@ mod pragmas;
 use columns::READY_SCHEMA_COLUMNS;
 #[cfg(test)]
 pub(crate) use columns::READY_SCHEMA_COLUMNS as REQUIRED_COLUMNS_FOR_TESTS;
+pub(crate) use pragmas::READER_BUSY_TIMEOUT;
 pub use pragmas::{apply_pragmas, apply_reader_pragmas, record_sqlite_mmap_telemetry, SQLITE_MMAP_SIZE_BYTES};
 
 /// Validate that a session DB is structurally ready for ledger routes.

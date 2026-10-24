@@ -75,6 +75,9 @@ BENCHMARK_DB_INTERNALS = {
 }
 
 LOGGER_DB_INTERNALS = {
+    # Candidate preinstall admission owns its short-lived READ_ONLY connection;
+    # it reuses schema validation and never delegates DB opens to package code.
+    Path("crates/capsem-logger/src/host_admission.rs"),
     Path("crates/capsem-logger/src/counters.rs"),
     Path("crates/capsem-logger/src/db.rs"),
     Path("crates/capsem-logger/src/db/bodies.rs"),

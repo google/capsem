@@ -14,7 +14,7 @@ use rusqlite::Connection;
 
 /// How long a disk-only reader waits out an exclusive file lock, matching the
 /// writer's own `busy_timeout`.
-const READER_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+pub(crate) const READER_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// SQLite mmap window for file-backed ledger databases.
 ///
