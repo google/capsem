@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Keep gate dry-run and graph inspection outside cache enforcement, leases and
+  scratch lifecycle while retaining source-keyed gate imports.
+
 - Restrict macOS companion virtualization entitlements to the existing five
   configured VM roles; preserve valid production signatures during installation.
 

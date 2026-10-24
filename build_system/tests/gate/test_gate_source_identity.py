@@ -238,14 +238,14 @@ def test_the_launcher_re_execs_when_the_cache_is_not_isolated(
 
     monkeypatch.delenv(launcher.MARKER, raising=False)  # type: ignore[attr-defined]
     monkeypatch.setattr(os, "execv", _execv)  # type: ignore[attr-defined]
-    monkeypatch.setattr(sys, "argv", ["capsem-gate", "candidate", "--dry-run"])  # type: ignore[attr-defined]
+    monkeypatch.setattr(sys, "argv", ["capsem-gate", "candidate"])  # type: ignore[attr-defined]
     monkeypatch.setattr(launcher, "checkout", lambda: tmp_path)  # type: ignore[attr-defined]
 
     with pytest.raises(Replaced):
         launcher.main()
 
     (argv,) = issued
-    assert argv[1:] == ["-m", "capsem_builder.gate", "candidate", "--dry-run"]
+    assert argv[1:] == ["-m", "capsem_builder.gate", "candidate"]
     assert os.environ[launcher.PYCACHE].startswith(str(tmp_path))
 
 
@@ -325,3 +325,71 @@ def test_a_run_records_what_built_its_plan(tmp_path: Path) -> None:
     (start,) = [e for e in read(directory, config.runlog) if e["event"] == "run.start"]
     assert start["gate_source"] == str(PROJECT_ROOT / "build_system/builder/gate")
     assert start["pycache"] == os.environ.get(PYCACHE, "")
+
+
+@pytest.mark.parametrize("flag", ["--dry-run", "--graph"])
+@pytest.mark.parametrize("entrypoint", ["console", "module"])
+def test_public_inspection_never_enters_cache_lifecycle(
+    tmp_path: Path, flag: str, entrypoint: str,
+) -> None:
+    """The actual console entrypoint must stay inert even on a cold authority."""
+    import tomllib
+
+    policy = tomllib.loads((PROJECT_ROOT / "config/cache.toml").read_text())
+    authority = tmp_path / "cold-authority"
+    authority.mkdir()
+    environment = _hermetic_environment()
+    environment.pop("CAPSEM_GATE_PYCACHE", None)
+    environment[policy["authority_environment"]] = str(authority)
+    console = Path(sys.executable).with_name("capsem-gate")
+    command = [str(console)] if entrypoint == "console" else [
+        sys.executable, "-m", "capsem_builder.gate",
+    ]
+    result = subprocess.run(
+        [*command, "candidate", flag],
+        capture_output=True, text=True, timeout=60, env=environment, cwd=PROJECT_ROOT,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "source.record" in result.stdout
+    assert list(authority.iterdir()) == [], "inspection created cache/lease/journal state"
+
+
+def test_public_inspection_does_not_reexec(monkeypatch: pytest.MonkeyPatch) -> None:
+    from capsem_builder import gatelaunch
+    from capsem_builder.gate import cli
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("inspection entered normal launcher mutation or re-exec")
+
+    monkeypatch.setattr(sys, "argv", ["capsem-gate", "candidate", "--graph"])
+    monkeypatch.setattr(gatelaunch, "contained_environment", forbidden)
+    monkeypatch.setattr(gatelaunch, "hold_environment", forbidden)
+    monkeypatch.setattr(os, "execv", forbidden)
+    monkeypatch.setattr(cli, "main", lambda: 0)
+    monkeypatch.setattr(sys, "dont_write_bytecode", sys.dont_write_bytecode)
+    monkeypatch.setattr(sys, "pycache_prefix", sys.pycache_prefix)
+    assert gatelaunch.main() == 0
+    assert sys.dont_write_bytecode
+
+
+def test_readonly_inspection_ignores_same_timestamp_stale_bytecode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import importlib
+
+    from capsem_builder import gatelaunch
+    from capsem_builder.gate import cli
+
+    _stale_bytecode(tmp_path)
+    before = sorted(str(p.relative_to(tmp_path)) for p in tmp_path.rglob("*"))
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.setattr(gatelaunch, "checkout", lambda: tmp_path)
+    monkeypatch.setattr(sys, "argv", ["capsem-gate", "candidate", "--dry-run"])
+    monkeypatch.setattr(sys, "dont_write_bytecode", sys.dont_write_bytecode)
+    monkeypatch.setattr(sys, "pycache_prefix", sys.pycache_prefix)
+    monkeypatch.setattr(cli, "main", lambda: importlib.import_module("capsem_bytecode_probe").VALUE)
+    try:
+        assert gatelaunch.main() == AFTER
+    finally:
+        sys.modules.pop("capsem_bytecode_probe", None)
+    assert sorted(str(p.relative_to(tmp_path)) for p in tmp_path.rglob("*")) == before

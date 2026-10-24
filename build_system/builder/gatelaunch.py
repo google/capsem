@@ -335,7 +335,19 @@ def _launch(implementation: str, reexec_module: str) -> int:
 
 
 def main() -> int:
-    """Run the build gate beneath the source-keyed cache authority."""
+    """Inspect without writes; execute beneath the source-keyed cache authority."""
+    arguments = sys.argv[1:]
+    if "--" in arguments:
+        arguments = arguments[: arguments.index("--")]
+    if {"--dry-run", "--graph"}.intersection(arguments):
+        # Keep source-keyed reads without populating caches or entering lifecycle.
+        # Changing the live prefix also avoids stale adjacent timestamp bytecode.
+        source = checkout()
+        sys.dont_write_bytecode = True
+        sys.pycache_prefix = str(
+            _stage(source) / f"{sys.implementation.cache_tag}-{_source_key(source)}"
+        )
+        return importlib.import_module("capsem_builder.gate.cli").main()
     return _launch("capsem_builder.gate.cli", "capsem_builder.gate")
 
 
