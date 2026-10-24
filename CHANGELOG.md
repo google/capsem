@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Reject ledger writers missing required schema columns at startup, naming the
+  broken table and column without refilling or migrating the original data.
+
 - Include the existing update-check operation in the typed gateway contract and
   generated SDKs, preserving its current request and response behavior.
 

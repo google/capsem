@@ -28,6 +28,26 @@ pub use memory_sync::{flush_memory_tables_to_disk, reconcile_memory_tables_from_
 pub(crate) use memory_sync::{initial_memory_flush_watermarks, seed_memory_sequences, MemoryFlushWatermarks};
 pub(crate) use memory_sync::{is_disk_only_table, table_column_names};
 
+/// Validate an existing host ledger without transactions, DDL, mutating pragmas or writes.
+///
+/// The caller owns the connection and its read-only/path/locking policy. This
+/// checks the current SQLite schema and archive-state metadata, not physical
+/// archive bytes or retained session compatibility. Empty existing databases
+/// are refused; genuinely absent fresh state is the caller's separate decision.
+pub fn validate_existing_host_schema(conn: &Connection) -> rusqlite::Result<()> {
+    let columns = table_column_names(conn, "main", "host_events")?;
+    if columns.iter().any(|name| name == "prev_hash" || name == "hash") {
+        return Err(contract_error(
+            "obsolete host hash-chain schema; a current ledger is required",
+        ));
+    }
+    transport::assert_current(conn)?;
+    security_event_types::assert_current(conn)?;
+    integrity::validate(conn)?;
+    archive_state(conn)?;
+    validate_required_columns(conn).map_err(|error| contract_error(&error))
+}
+
 /// Create all tables and indexes on the given connection, then assert the shape.
 ///
 /// The transport ledger is stamped once and never recreated. `transport_events`
@@ -55,12 +75,6 @@ pub(crate) fn create_tables_with_archive_header(
     conn.execute_batch("BEGIN IMMEDIATE")?;
     let created = (|| {
         conn.execute_batch(CREATE_SCHEMA)?;
-        let columns = table_column_names(conn, "main", "host_events")?;
-        if columns.iter().any(|name| name == "prev_hash" || name == "hash") {
-            return Err(contract_error(
-                "obsolete host hash-chain schema; a current ledger is required",
-            ));
-        }
         if !has_archive_state {
             let header = prepared.unwrap_or(FileHeader {
                 archive_id: ArchiveId::generate(),
@@ -87,10 +101,7 @@ pub(crate) fn create_tables_with_archive_header(
         if !table_exists(conn, "main", "transport_schema")? {
             stamp_under_lock(conn)?;
         }
-        transport::assert_current(conn)?;
-        security_event_types::assert_current(conn)?;
-        integrity::validate(conn)?;
-        archive_state(conn)?;
+        validate_existing_host_schema(conn)?;
         Ok(())
     })();
     if created.is_err() {
@@ -349,15 +360,20 @@ pub use pragmas::{apply_pragmas, apply_reader_pragmas, record_sqlite_mmap_teleme
 /// reports a corrupt page to the query that reads it, and the ledger copy
 /// runs `quick_check` over the whole file before it is trusted.
 pub fn validate_ready_schema(conn: &Connection) -> Result<(), String> {
-    for (table, required_columns) in READY_SCHEMA_COLUMNS {
-        validate_table_columns(conn, "main", table, required_columns)?;
-    }
+    validate_required_columns(conn)?;
 
     // A CHECK constraint is not a column, so the loop above cannot see a
     // security ledger that was declared against an older list of event types.
     security_event_types::validate_ready(conn, "main")?;
     integrity::validate(conn).map_err(|error| error.to_string())?;
 
+    Ok(())
+}
+
+fn validate_required_columns(conn: &Connection) -> Result<(), String> {
+    for (table, required_columns) in READY_SCHEMA_COLUMNS {
+        validate_table_columns(conn, "main", table, required_columns)?;
+    }
     Ok(())
 }
 

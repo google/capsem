@@ -1,6 +1,7 @@
 use super::*;
 use rusqlite::OpenFlags;
 
+mod admission;
 mod archive;
 mod decision_lookup;
 mod integrity;

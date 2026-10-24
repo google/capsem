@@ -7,8 +7,8 @@ use rusqlite::Connection;
 /// `dns_events.answer_ip` with a discarded `ALTER TABLE`, and the transport
 /// upgrade deliberately waited for it, which is what the old name -- "writer
 /// finishes older column migrations before transport upgrade" -- described.
-/// Nothing migrates now, so the writer opens the file it was given and
-/// readiness names the column that is gone.
+/// Nothing migrates now: both writer admission and reader readiness must
+/// refuse the unchanged missing column by name.
 #[test]
 fn a_writer_does_not_refill_a_column_an_older_build_lacked() {
     let dir = tempfile::tempdir().unwrap();
@@ -22,8 +22,18 @@ fn a_writer_does_not_refill_a_column_an_older_build_lacked() {
         .unwrap();
     drop(conn);
 
-    let writer = crate::DbWriter::open(&path, 8).unwrap();
-    writer.shutdown_blocking();
+    let original = std::fs::read(&path).unwrap();
+    let writer_error = match crate::DbWriter::open(&path, 8) {
+        Ok(writer) => {
+            writer.shutdown_blocking();
+            panic!("writer admission must refuse dns_events without answer_ip");
+        }
+        Err(error) => error.to_string(),
+    };
+    assert!(
+        writer_error.contains("dns_events") && writer_error.contains("answer_ip"),
+        "{writer_error}"
+    );
 
     let error = crate::DbReader::open(&path)
         .unwrap()
@@ -33,6 +43,16 @@ fn a_writer_does_not_refill_a_column_an_older_build_lacked() {
         error.contains("dns_events") && error.contains("answer_ip"),
         "readiness must name the table and column an older build lacked: {error}"
     );
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        original,
+        "refusal must preserve the original ledger"
+    );
+    let conn = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    assert!(!crate::schema::table_column_names(&conn, "main", "dns_events")
+        .unwrap()
+        .iter()
+        .any(|column| column == "answer_ip"));
 }
 
 #[test]
