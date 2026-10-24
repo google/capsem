@@ -225,6 +225,7 @@ from ._exports_2 import TriageResponse as TriageResponse
 from ._exports_2 import UpdateActionResponse as UpdateActionResponse
 from ._exports_2 import UpdateActionStatus as UpdateActionStatus
 from ._exports_2 import UpdateApplyRequest as UpdateApplyRequest
+from ._exports_2 import UpdateCheckRequest as UpdateCheckRequest
 from ._exports_2 import UpdateCommandPlan as UpdateCommandPlan
 from ._exports_2 import UpdateCompatibilityState as UpdateCompatibilityState
 from ._exports_2 import UpdateStatusResponse as UpdateStatusResponse
@@ -239,7 +240,7 @@ from ._exports_2 import VmAiInfo as VmAiInfo
 from ._exports_2 import VmFilesInfo as VmFilesInfo
 from ._exports_2 import VmLifecycleState as VmLifecycleState
 from ._exports_2 import VmNetworkInfo as VmNetworkInfo
-from ._exports_2 import VmStatsDetailResponse as VmStatsDetailResponse
+from ._exports_3 import VmStatsDetailResponse as VmStatsDetailResponse
 from ._exports_3 import VmStatsSummaryResponse as VmStatsSummaryResponse
 from ._exports_3 import VmStatusResponse as VmStatusResponse
 from ._exports_3 import VmSummary as VmSummary

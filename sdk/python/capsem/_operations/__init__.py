@@ -11,6 +11,7 @@ from .call_mcp_tool import call_mcp_tool as call_mcp_tool
 from .cancel_connection_authorization import (
     cancel_connection_authorization as cancel_connection_authorization,
 )
+from .check_hypervisor_update import check_hypervisor_update as check_hypervisor_update
 from .claim_managed_session import claim_managed_session as claim_managed_session
 from .close_managed_session import close_managed_session as close_managed_session
 from .create_network import create_network as create_network

@@ -65,6 +65,7 @@ from .triage_response import TriageResponse
 from .update_action_response import UpdateActionResponse
 from .update_action_status import UpdateActionStatus
 from .update_apply_request import UpdateApplyRequest
+from .update_check_request import UpdateCheckRequest
 from .update_command_plan import UpdateCommandPlan
 from .update_compatibility_state import UpdateCompatibilityState
 from .update_status_response import UpdateStatusResponse
@@ -79,7 +80,6 @@ from .vm_ai_info import VmAiInfo
 from .vm_files_info import VmFilesInfo
 from .vm_lifecycle_state import VmLifecycleState
 from .vm_network_info import VmNetworkInfo
-from .vm_stats_detail_response import VmStatsDetailResponse
 
 __all__ = [
     'PurgeResponse',
@@ -147,6 +147,7 @@ __all__ = [
     'UpdateActionResponse',
     'UpdateActionStatus',
     'UpdateApplyRequest',
+    'UpdateCheckRequest',
     'UpdateCommandPlan',
     'UpdateCompatibilityState',
     'UpdateStatusResponse',
@@ -161,5 +162,4 @@ __all__ = [
     'VmFilesInfo',
     'VmLifecycleState',
     'VmNetworkInfo',
-    'VmStatsDetailResponse',
 ]
