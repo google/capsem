@@ -21,11 +21,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 def test_saved_workload_refreshes_its_controller_and_terminal_after_restarts(service, tmp_path):
     client = service.client()
     current = (PROJECT_ROOT / "guest/artifacts/container/launch.py").read_bytes()
-    # The previous controller inherited the VM serial console as runc stderr,
-    # so runc sized the app from that console instead of the input PTY.
-    # Stage that same old behavior while stopped, then use ordinary resume.
-    legacy = current.replace(b", stderr=subprocess.STDOUT", b"")
-    assert legacy != current
+    # A stopped session's saved controller must be refreshed before execution.
+    # Poison it independently of the current implementation: mutating a source
+    # literal stopped testing resume when the console code moved to a helper.
+    stale = b'raise SystemExit("stale controller executed before refresh")\n'
     with image_session(service, tmp_path, "restart-terminal") as vm_id:
         stage = vm_session_dir(service.tmp_dir, client, vm_id) / "guest/workspace/.capsem-image"
         options = (stage / "options.json").read_bytes()
@@ -33,7 +32,7 @@ def test_saved_workload_refreshes_its_controller_and_terminal_after_restarts(ser
         assert result["exit_code"] == 0, result
         for _ in range(2):
             client.post(f"/vms/{vm_id}/stop", {}, timeout=60)
-            (stage / "launch.py").write_bytes(legacy)
+            (stage / "launch.py").write_bytes(stale)
             client.post(f"/vms/{vm_id}/resume", {}, timeout=120)
             wait_running(client, vm_id)
             assert (stage / "launch.py").read_bytes() == current
