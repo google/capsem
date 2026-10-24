@@ -13,6 +13,11 @@ from helpers.workflow_contract import parsed_commands, workflow_jobs
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKERS = {"capsem-mcp-aggregator", "capsem-mcp-builtin"}
+COVERAGE_MODE_RATIONALE = (
+    "Preserve prepared workers with exactly one supported mode: pinned llvm-cov rejects "
+    "--no-report together with --no-clean before running any workspace tests. "
+    "Catch this in the source phase rather than after an expensive compilation."
+)
 INSTALL_BINFMT_RATIONALE = (
     "The complete install owner builds both architectures. Provision distro QEMU/binfmt "
     "through the existing host bootstrap before entering the gate; CI otherwise fails "
@@ -140,6 +145,22 @@ def test_install_bootstrap_guard_refuses_broken_order_or_ownership(mutation: str
         _assert_install_bootstrap(steps)
 
 
+def _preserves_prepared_worker_coverage(argv) -> bool:
+    # Both modes preserve profiles, but pinned llvm-cov rejects their combination.
+    return ('--no-clean' in argv) != ('--no-report' in argv)
+
+
+def test_coverage_preservation_guard_rejects_both_conflicting_and_missing_modes() -> None:
+    from helpers.linux_rust import coverage_commands
+
+    command = next(command.argv for command in coverage_commands(ROOT) if command.argv[:3] == ('cargo', 'llvm-cov', 'nextest'))
+    plain = tuple(argument for argument in command if argument not in {'--no-clean', '--no-report'})
+    assert _preserves_prepared_worker_coverage((*plain, '--no-clean')), COVERAGE_MODE_RATIONALE
+    assert _preserves_prepared_worker_coverage((*plain, '--no-report')), COVERAGE_MODE_RATIONALE
+    assert not _preserves_prepared_worker_coverage((*plain, '--no-report', '--no-clean')), COVERAGE_MODE_RATIONALE
+    assert not _preserves_prepared_worker_coverage(plain), COVERAGE_MODE_RATIONALE
+
+
 def test_coverage_cleans_before_preparing_workers_and_preserves_them_for_reporting() -> None:
     mac_steps = workflow_jobs(ROOT / ".github/workflows/ci.yaml")["test"]["steps"]
     for source in (
@@ -158,4 +179,4 @@ def test_coverage_cleans_before_preparing_workers_and_preserves_them_for_reporti
             "start one clean coverage cohort before native worker preparation"
         )
         assert "--workspace" in commands[clean[0]]
-        assert "--no-clean" in commands[report], "reporting must not delete its prepared native workers"
+        assert _preserves_prepared_worker_coverage(commands[report]), COVERAGE_MODE_RATIONALE

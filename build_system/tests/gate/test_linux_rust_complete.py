@@ -16,7 +16,7 @@ def test_linux_uses_canonical_coverage_ratchet_and_doctests() -> None:
     config = load(ROOT)
     rendered = [action.render() for action in actions(config, ROOT / 'proof-output')]
     coverage = rendered[0]
-    assert all(flag in coverage.split() for flag in ('--workspace', '--bins', '--lib', '--tests', '--no-clean', '--no-fail-fast', '--locked'))
+    assert all(flag in coverage.split() for flag in ('--workspace', '--bins', '--lib', '--tests', '--no-fail-fast', '--locked'))
     assert all(floor in rendered[1] for floor in config.modules.rust_coverage_floors)
     assert any(config.modules.rust_coverage_ratchet in command for command in rendered)
     assert any('cargo test --workspace --doc' in command for command in rendered)
@@ -72,6 +72,7 @@ def test_failed_linux_tests_still_render_lcov_before_judging_crate_floors() -> N
     issued = coverage_commands(ROOT)
     execution = next(command for command in issued if command.argv[:3] == ('cargo', 'llvm-cov', 'nextest'))
     assert '--no-report' in execution.argv, 'failed test execution must not suppress report production'
+    assert '--no-clean' not in execution.argv, 'pinned llvm-cov rejects --no-clean with --no-report'
     assert '--lcov' not in execution.argv and '--output-path' not in execution.argv
     report_index = next(index for index, command in enumerate(issued) if command.argv[:3] == ('cargo', 'llvm-cov', 'report') and '--lcov' in command.argv)
     ratchet_index = next(index for index, command in enumerate(issued) if any(config.modules.rust_coverage_ratchet in part for part in command.argv))

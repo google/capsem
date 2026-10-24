@@ -23,6 +23,7 @@ def actions(config: GateConfig, output: Path) -> tuple[Action, ...]:
     execution = list(settings.rust_coverage)
     # llvm-cov does not render its implicit report after a failed test run.
     # Preserve the canonical test selectors but render exactly once separately.
+    # --no-report retains profiles; pinned llvm-cov forbids adding --no-clean.
     position = execution.index('--output-path')
     if execution[position + 1] != settings.rust_coverage_report:
         raise GateError('canonical Rust coverage report path disagrees with its command')
@@ -31,7 +32,7 @@ def actions(config: GateConfig, output: Path) -> tuple[Action, ...]:
     report = output / Path(settings.rust_coverage_report).name
     checks: list[Action] = [
         Run(
-            [*execution, '--no-report', '--no-clean', '--no-fail-fast', '--locked'],
+            [*execution, '--no-report', '--no-fail-fast', '--locked'],
             env=rustchecks.environment(config),
         ),
         Run([*settings.rust_coverage_report_command, str(report), *settings.rust_coverage_floors]),
