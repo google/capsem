@@ -120,7 +120,12 @@ def test_an_xpra_image_gets_its_surface_through_the_gateway(service, tmp_path):
         assert script[0] == 200, script
         assert b"location.hash" in script[2] and b"history.replaceState" in script[2], script
         assert b'form.method = "POST"' in script[2] and b"bootstrap_token" in script[2], script
-        for secret_or_authority in (token.encode(), b"/token", b"Authorization", b"/surface/session"):
+        for secret_or_authority in (
+            token.encode(),
+            b"/token",
+            b"Authorization",
+            b"/surface/session",
+        ):
             assert secret_or_authority not in script[2], "the public launcher cannot mint authority"
 
         # Minting a session is not: it needs the gateway token.

@@ -65,24 +65,35 @@ def qualify_benchmark_host(output: Path) -> None:
     deadline = started + settings.fitness_timeout_secs
     while True:
         doctor = subprocess.run(
-            [BENCH, "doctor", "--json"], capture_output=True,
-            timeout=settings.doctor_timeout_secs, check=False,
+            [BENCH, "doctor", "--json"],
+            capture_output=True,
+            timeout=settings.doctor_timeout_secs,
+            check=False,
         )
         (output / "doctor.json").write_bytes(doctor.stdout)
         (output / "doctor.stderr").write_bytes(doctor.stderr)
         (output / "doctor.exit").write_text(f"{doctor.returncode}\n")
         fitness = json.loads(doctor.stdout)
         with (output / "doctor-readiness.jsonl").open("a") as history:
-            history.write(json.dumps({
-                "elapsed_seconds": monotonic() - started,
-                "exit_code": doctor.returncode, "fitness": fitness,
-            }) + "\n")
+            history.write(
+                json.dumps(
+                    {
+                        "elapsed_seconds": monotonic() - started,
+                        "exit_code": doctor.returncode,
+                        "fitness": fitness,
+                    }
+                )
+                + "\n"
+            )
         if doctor.returncode == 0:
             assert not fitness["objections"], fitness
             return
         remaining = deadline - monotonic()
-        if (remaining <= 0 or not fitness["objections"]
-                or any(row["what"] != "load" for row in fitness["objections"])):
+        if (
+            remaining <= 0
+            or not fitness["objections"]
+            or any(row["what"] != "load" for row in fitness["objections"])
+        ):
             raise AssertionError(doctor.stdout.decode() + doctor.stderr.decode())
         sleep(min(settings.fitness_poll_interval_secs, remaining))
 
@@ -118,10 +129,7 @@ def container(service, tmp_path, evidence):
 
             def ready():
                 assert process.poll() is None, (tmp_path / "stderr").read_text()
-                return (
-                    b"Ready to accept connections tcp"
-                    in (tmp_path / "stdout").read_bytes()
-                )
+                return b"Ready to accept connections tcp" in (tmp_path / "stdout").read_bytes()
 
             wait_for(ready, "container startup")
             mappings = re.findall(
@@ -144,9 +152,7 @@ def container(service, tmp_path, evidence):
             # the only record of why: the workload's exit, or the stream error.
             (evidence / "cli-exit.txt").write_text(f"{process.poll()}\n")
             for name in ("stdout", "stderr"):
-                (evidence / f"cli-{name}.log").write_bytes(
-                    (tmp_path / name).read_bytes()
-                )
+                (evidence / f"cli-{name}.log").write_bytes((tmp_path / name).read_bytes())
             print(f"KINGSLANDING EVIDENCE: {evidence}")
             if process.poll() is None:
                 process.terminate()
@@ -182,9 +188,7 @@ def guest(service, vm_id, shell, timeout=40, check=True):
 
 def start_in_guest(service, vm_id, name, shell):
     """Detach a long-lived helper; its log comes back with the evidence."""
-    detached = (
-        f"setsid sh -c {shlex.quote(shell)} </dev/null >/var/tmp/{name}.log 2>&1 &"
-    )
+    detached = f"setsid sh -c {shlex.quote(shell)} </dev/null >/var/tmp/{name}.log 2>&1 &"
     guest(service, vm_id, detached)
 
 
@@ -220,9 +224,7 @@ def test_published_port_transport_samples(container, service, evidence):
             ["git", "rev-parse", "HEAD"], cwd=PROJECT_ROOT, timeout=5, text=True
         ).strip(),
         "source_diff_sha256": hashlib.sha256(
-            subprocess.check_output(
-                ["git", "diff", "HEAD"], cwd=PROJECT_ROOT, timeout=5
-            )
+            subprocess.check_output(["git", "diff", "HEAD"], cwd=PROJECT_ROOT, timeout=5)
         ).hexdigest(),
         "manifest": json.loads((ASSETS_DIR / "manifest.json").read_text()),
         "image": container["reference"],
@@ -269,9 +271,7 @@ def test_published_port_transport_samples(container, service, evidence):
         measure_lane(published, output, identity, metrics)
     finally:
         # The helpers' logs are the evidence when the lane never answers.
-        for name, command in (
-            ("throughput-server", "cat /var/tmp/throughput-server.log"),
-        ):
+        for name, command in (("throughput-server", "cat /var/tmp/throughput-server.log"),):
             log = guest(service, vm_id, command, check=False)
             # The whole response: an exec that never answered is itself the
             # evidence, and an empty log with no exit code said nothing.
@@ -307,9 +307,9 @@ def measure_lane(published, output, identity, metrics):
             )
             for name, metric in document["metrics"].items():
                 key = f"{lane}.{direction}.s{streams}.{name}"
-                metrics.setdefault(key, {"unit": metric["unit"], "samples": []})[
-                    "samples"
-                ].extend(metric["samples"])
+                metrics.setdefault(key, {"unit": metric["unit"], "samples": []})["samples"].extend(
+                    metric["samples"]
+                )
 
 
 def record(output, metrics, source_commit):
