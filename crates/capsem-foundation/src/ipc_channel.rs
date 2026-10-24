@@ -142,8 +142,9 @@ where
 {
     /// Serialize and send one complete bounded frame.
     pub async fn send(&self, message: T) -> io::Result<()> {
-        self.send_prepared(Self::prepare_with_limit(&message, self.limit)?)
-            .await
+        let frame = Self::prepare_with_limit(&message, self.limit)?;
+        drop(message);
+        self.send_prepared(frame).await
     }
 
     /// Encode the final frame without socket I/O. The caller retains ownership
@@ -153,12 +154,7 @@ where
     }
 
     fn prepare_with_limit(message: &T, limit: u32) -> io::Result<PreparedFrame<T>> {
-        // Encode once into the final frame. Reject excess bytes during encode,
-        // before socket I/O; neither preflight serialization nor a payload copy.
-        let mut frame = vec![0; 4];
-        append_record(&mut frame, message, limit as usize)?;
-        let len = (frame.len() - 4) as u32;
-        frame[..4].copy_from_slice(&len.to_be_bytes());
+        let frame = capsem_proto::framing::encode_frame(message, limit)?;
         Ok(PreparedFrame {
             bytes: frame,
             marker: PhantomData,
@@ -187,24 +183,7 @@ where
 
 /// Encode one typed, named record whose boundary is supplied by its atomic file.
 /// The same encoder writes stream payloads directly after their reserved header.
-pub fn encode_record<T: Serialize>(message: &T, limit: usize) -> io::Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    append_record(&mut bytes, message, limit)?;
-    Ok(bytes)
-}
-
-fn append_record<T: Serialize>(bytes: &mut Vec<u8>, message: &T, limit: usize) -> io::Result<()> {
-    let mut writer = crate::limited_writer::LimitedWriter::new(bytes, limit);
-    let encoded = rmp_serde::encode::write_named(&mut writer, message);
-    let exceeded = writer.exceeded();
-    encoded.map_err(|error| {
-        if exceeded {
-            invalid_data("MessagePack frame too large", limit)
-        } else {
-            invalid_data("encode MessagePack record", error)
-        }
-    })
-}
+pub use capsem_proto::framing::encode_record;
 
 /// Decode one bounded record without copying its encoded bytes.
 pub fn decode_record<T: DeserializeOwned>(bytes: &[u8], limit: usize) -> io::Result<T> {

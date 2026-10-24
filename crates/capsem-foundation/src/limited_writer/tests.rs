@@ -29,3 +29,11 @@ fn partial_writes_charge_only_the_bytes_actually_written() {
     assert_eq!(writer.remaining(), 2);
     assert_eq!(writer.write(b"efg").unwrap_err().kind(), io::ErrorKind::InvalidData);
 }
+
+#[test]
+fn foundation_reuses_the_protocol_bounded_writer_type() {
+    let writer = capsem_proto::framing::LimitedWriter::new(Vec::<u8>::new(), 8);
+    let mut writer: LimitedWriter<Vec<u8>> = writer;
+    writer.write_all(b"original").unwrap();
+    assert_eq!(writer.remaining(), 0);
+}

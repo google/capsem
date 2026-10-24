@@ -215,3 +215,31 @@ async fn cancelled_recv_resumes_a_partially_read_frame() {
         assert_eq!(received, message, "split at {split}");
     }
 }
+
+#[tokio::test]
+async fn consumed_message_is_dropped_before_waiting_for_socket_writer() {
+    struct Tracked(Arc<std::sync::atomic::AtomicBool>);
+    impl Serialize for Tracked {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            serializer.serialize_str("original bytes")
+        }
+    }
+    impl Drop for Tracked {
+        fn drop(&mut self) {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    let (left, _right) = UnixStream::pair().unwrap();
+    let (sender, _) = channel_from_std::<Tracked, String>(left).unwrap();
+    let held = sender.inner.lock().await;
+    let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let sending = sender.send(Tracked(dropped.clone()));
+    tokio::pin!(sending);
+    assert!(matches!(
+        std::future::poll_fn(|cx| std::task::Poll::Ready(std::future::Future::poll(sending.as_mut(), cx))).await,
+        std::task::Poll::Pending
+    ));
+    assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
+    drop(held);
+    sending.await.unwrap();
+}
