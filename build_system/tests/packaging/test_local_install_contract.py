@@ -137,6 +137,7 @@ rm -f "{state}/$2"
 """,
     )
     _executable(fake_bin / "sleep", ":")
+    _executable(fake_bin / "id", "echo 501")
 
     completed = subprocess.run(
         [
@@ -193,6 +194,7 @@ esac""",
     )
     _executable(fake_bin / "kill", ":")
     _executable(fake_bin / "sleep", ":")
+    _executable(fake_bin / "id", "echo 501")
 
     completed = subprocess.run(
         [
@@ -418,3 +420,89 @@ def test_a_service_owned_postinstall_schedules_the_restart() -> None:
     branch = postinstall[postinstall.index("if capsem_install_runs_inside_service") :]
     owned = branch[: branch.index("\nfi")]
     assert 'capsem_schedule_replaced_service_restart "$TARGET_USER"' in owned
+
+
+def _selected_user_retirement(tmp_path: Path, mode: str, *, target: str = "selected", refuse_signal: bool = False):
+    """Fake process metadata/adapter only: never signal any real PID or user."""
+    fake = tmp_path / "commands"
+    state = tmp_path / "processes"
+    home = tmp_path / "selected home"
+    capsem = home / ".capsem"
+    fake.mkdir()
+    state.mkdir()
+    (capsem / "run").mkdir(parents=True)
+    table = tmp_path / "table"
+    rows = [
+        ("9410041", 501, f"{capsem}/bin/capsem-service"),
+        ("9410042", 502, "/Applications/Capsem.app/Contents/MacOS/capsem-app"),
+        ("9410043", 501, "/tmp/unrelated/Capsem.app/Contents/MacOS/capsem-app"),
+        ("9410044", 501, "/Applications/Capsem.app/Contents/MacOS/capsem-app"),
+        ("9410045", 501, f"{home}/Applications/Capsem.app/Contents/MacOS/capsem-app"),
+    ]
+    table.write_text("".join(f"{pid}\t{uid}\t{path}\n" for pid, uid, path in rows))
+    for pid, _, _ in rows:
+        (state / pid).touch()
+    _executable(fake / "uname", "echo Darwin")
+    _executable(fake / "id", '[ "$#" != 1 ] || { echo 0; exit; }; [ "$2" != selected ] || { echo 501; exit; }; echo 502')
+    _executable(fake / "pgrep", f'''awk -F '\t' -v name="$4" '$3 ~ ("/" name "$") {{print $1}}' "{table}"''')
+    _executable(fake / "ps", f'''[ -f "{state}/$2" ] || exit 1
+case "${{4:-}}" in
+  uid=) awk -F '\t' -v pid="$2" '$1==pid {{print $2}}' "{table}" ;;
+  comm=) awk -F '\t' -v pid="$2" '$1==pid {{print $3}}' "{table}" ;;
+  "") exit 0 ;;
+  *) exit 2 ;;
+esac''')
+    actor_log = tmp_path / "signals"
+    signal = tmp_path / "signal command with spaces"
+    _executable(signal, f'''[ "$1" = -9 ]
+printf '%s %s\n' "${{CAPSEM_SIGNAL_ACTOR:-root}}" "$2" >> "{actor_log}"
+{'exit 1' if refuse_signal else ':'}
+rm -f "{state}/$2"''')
+    adapter_log = tmp_path / "su"
+    _executable(fake / "su", f'''[ "$1" = selected ] && [ "$2" = -c ]
+printf '%s\n' "$1" >> "{adapter_log}"
+export CAPSEM_SIGNAL_ACTOR="$1"
+command="$3"
+shift 3
+exec /bin/bash -c "$command" "$@"''')
+    _executable(fake / "sleep", ":")
+    function = "capsem_retire_installed_app" if mode == "app" else "capsem_retire_native_cohort"
+    result = subprocess.run(
+        ["bash", "-c", f'source "$1"; {function} "$2" 501 "$3"', "fixture", str(ROOT / "build_system/packaging/shared/retire-cohort"), str(capsem), target],
+        env={**os.environ, "PATH": f"{fake}:/usr/bin:/bin", "CAPSEM_INSTALL_KILL": str(signal)},
+        capture_output=True, text=True, timeout=10,
+    )
+    return result, state, actor_log, adapter_log
+
+
+def test_macos_retirement_drops_signal_authority_and_selects_exact_app_paths(tmp_path: Path) -> None:
+    result, state, signals, adapter = _selected_user_retirement(tmp_path, "full")
+    assert result.returncode == 0, result.stderr
+    assert set(signals.read_text().splitlines()) == {"selected 9410041", "selected 9410044", "selected 9410045"}
+    assert adapter.read_text().splitlines() == ["selected"] * 3
+    assert (state / "9410042").exists(), "foreign user's installed app was signalled"
+    assert (state / "9410043").exists(), "unrelated same-user app path was signalled"
+
+
+def test_postinstall_app_retirement_never_stops_new_service(tmp_path: Path) -> None:
+    result, state, signals, _ = _selected_user_retirement(tmp_path, "app")
+    assert result.returncode == 0, result.stderr
+    assert set(signals.read_text().splitlines()) == {"selected 9410044", "selected 9410045"}
+    assert (state / "9410041").exists()
+    assert (state / "9410042").exists()
+    assert (state / "9410043").exists()
+
+
+@pytest.mark.parametrize("target", ["", "foreign"])
+def test_root_retirement_cannot_signal_without_the_exact_selected_user(tmp_path: Path, target: str) -> None:
+    result, state, signals, _ = _selected_user_retirement(tmp_path, "full", target=target)
+    assert result.returncode != 0
+    assert len(list(state.iterdir())) == 5
+    assert not signals.exists()
+
+
+def test_failed_selected_user_signal_never_falls_back_to_root_after_pid_reuse(tmp_path: Path) -> None:
+    result, state, signals, _ = _selected_user_retirement(tmp_path, "full", refuse_signal=True)
+    assert result.returncode != 0
+    assert signals.read_text().splitlines() == ["selected 9410041"]
+    assert len(list(state.iterdir())) == 5

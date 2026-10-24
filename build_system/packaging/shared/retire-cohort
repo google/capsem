@@ -44,27 +44,61 @@ capsem_process_is_package_owned() {
             return 0
             ;;
     esac
+    if [ "$name" = "capsem-app" ]; then
+        case "$executable" in
+            /Applications/Capsem.app/Contents/MacOS/capsem-app) return 0 ;;
+        esac
+        case "$capsem_dir" in
+            */.capsem)
+                [ "$executable" != "${capsem_dir%/.capsem}/Applications/Capsem.app/Contents/MacOS/capsem-app" ] || return 0
+                ;;
+        esac
+    fi
     capsem_pidfile_owns_process "$capsem_dir" "$name" "$pid"
 }
 
 capsem_retire_native_cohort() {
-    local capsem_dir="$1"
-    local target_uid="$2"
-    local target_user="${3:-}"
+    # Retire the historical router executable when upgrading an older cohort.
+    capsem_retire_named_cohort "$1" "$2" "${3:-}" capsem-service capsem-gateway capsem-tray capsem-process capsem-ledger capsem-proxy capsem-router capsem-port-router capsem-mcp-aggregator capsem-mcp-builtin capsem-app
+}
+
+capsem_retire_installed_app() {
+    # Postinstall must not retire the freshly started service/helper cohort.
+    capsem_retire_named_cohort "$1" "$2" "$3" capsem-app
+}
+
+capsem_signal_as_install_user() {
+    local target_uid="$1" target_user="$2" kill_command="$3" pid="$4"
+    if [ "$(id -u)" = "$target_uid" ]; then
+        "$kill_command" -9 "$pid"
+        return $?
+    fi
+    # Inspection cannot fence PID reuse. Actual signal authority belongs to
+    # the selected account, so a reused foreign-user PID remains protected.
+    case "$(uname -s)" in
+        Darwin) su "$target_user" -c 'exec "$1" -9 "$2"' capsem-retire "$kill_command" "$pid" ;;
+        Linux) /usr/sbin/runuser -u "$target_user" -- "$kill_command" -9 "$pid" ;;
+        *) echo "capsem: unsupported selected-user signal adapter" >&2; return 1 ;;
+    esac
+}
+
+capsem_retire_named_cohort() {
+    local capsem_dir="$1" target_uid="$2" target_user="$3"
+    shift 3
+    case "$target_uid" in ""|0|*[!0-9]*) echo "capsem: retirement requires a non-root UID" >&2; return 1 ;; esac
+    if [ -n "$target_user" ]; then
+        [ "$(id -u "$target_user")" = "$target_uid" ] || { echo "capsem: retirement user/UID mismatch" >&2; return 1; }
+    elif [ "$(id -u)" != "$target_uid" ]; then
+        echo "capsem: privileged retirement requires the selected user" >&2
+        return 1
+    fi
     local kill_command="${CAPSEM_INSTALL_KILL:-/bin/kill}"
     local killed=""
     local name pid
-    # Retire the historical router executable when upgrading an older cohort.
-    for name in capsem-service capsem-gateway capsem-tray capsem-process capsem-ledger capsem-proxy capsem-router capsem-port-router capsem-mcp-aggregator capsem-mcp-builtin; do
+    for name in "$@"; do
         for pid in $(pgrep -u "$target_uid" -f "$name" 2>/dev/null || true); do
             if capsem_process_is_package_owned "$capsem_dir" "$target_uid" "$name" "$pid"; then
-                if [ -n "$target_user" ]; then
-                    # The PID can be reused after inspection. Drop root before
-                    # signalling so a race cannot kill another user's process.
-                    /usr/sbin/runuser -u "$target_user" -- "$kill_command" -9 "$pid"
-                else
-                    "$kill_command" -9 "$pid"
-                fi
+                capsem_signal_as_install_user "$target_uid" "$target_user" "$kill_command" "$pid" || return 1
                 killed="$killed $pid"
                 echo "retired native helper pid=$pid name=$name"
             fi

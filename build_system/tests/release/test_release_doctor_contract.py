@@ -4866,7 +4866,7 @@ def test_binary_update_installer_scripts_replace_and_restart_full_helper_cohort(
     assert "capsem_process_is_package_owned" in retire_cohort
     assert '"$kill_command" -9 "$pid"' in retire_cohort
     assert "retired native helper" in retire_cohort
-    assert "pkill -9 -x capsem-app" in preinstall
+    assert "pkill" not in preinstall and "pkill" not in postinstall
     assert "systemctl --user stop capsem.service" in deb_preinst
     assert "event=stop_systemd_user_service" in deb_preinst
     assert 'cp "$SCRIPT_DIR/deb-preinst.sh" "$WORK_DIR/deb/DEBIAN/preinst"' in repack_deb

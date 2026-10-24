@@ -12,6 +12,7 @@ set -euo pipefail
 source "$(dirname "$0")/install-diagnostics"
 source "$(dirname "$0")/install-user"
 source "$(dirname "$0")/install-manifest"
+source "$(dirname "$0")/retire-cohort"
 
 USER=$(capsem_resolve_install_user "/var/run/capsem/install-user")
 CAPSEM_INSTALL_MANIFEST_REQUEST="/var/run/capsem/install-manifest"
@@ -275,7 +276,7 @@ CAPSEM_INSTALL_PHASE="launch_app"
 if [ "$READY" -eq 1 ] && [ "$(uname)" = "Darwin" ] && [ -d "/Applications/Capsem.app" ]; then
     # Kill stale pre-install GUI instances so Installer.app cannot leave a
     # skipped or cached frontend talking to the freshly installed daemon.
-    pkill -x capsem-app 2>/dev/null || true
+    capsem_retire_installed_app "$CAPSEM_DIR" "$(id -u "$USER")" "$USER"
     su "$USER" -c "open /Applications/Capsem.app" 2>/dev/null || true
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=gui_opened"
 elif [ "$READY" -eq 1 ] && [ "$(uname)" = "Linux" ]; then

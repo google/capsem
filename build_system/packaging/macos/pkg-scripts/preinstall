@@ -52,11 +52,8 @@ if [ -n "${USER:-}" ] && [ "$USER" != "root" ]; then
         launchctl bootout "gui/$(id -u "$USER")" "$PLIST" 2>/dev/null || \
             launchctl unload "$PLIST" 2>/dev/null || true
     fi
-    capsem_retire_native_cohort "$CAPSEM_DIR" "$(id -u "$USER")"
+    capsem_retire_native_cohort "$CAPSEM_DIR" "$(id -u "$USER")" "$USER"
 fi
-
-echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=preinstall event=kill_gui"
-pkill -9 -x capsem-app 2>/dev/null || true
 
 CAPSEM_INSTALL_PHASE="remove_app_payload"
 if [ -n "${USER_HOME:-}" ] && [ "$USER_HOME" != "/" ]; then
