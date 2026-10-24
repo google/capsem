@@ -13,6 +13,7 @@ from typing import Annotated, Literal
 from pydantic import PositiveInt, StringConstraints, field_validator, model_validator
 
 from .configschema import SafeToken, Strict
+from .nativetransferschema import NativeTransferConfig
 
 ManifestDigest = Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
 Platform = Annotated[str, StringConstraints(pattern=r"^linux/[a-z0-9]+$")]
@@ -72,6 +73,7 @@ class NativeImagesConfig(Strict):
     journal_max_runs: PositiveInt
     artifact_max_bytes: PositiveInt
     artifact_max_files: PositiveInt
+    transfer: NativeTransferConfig
     base: ImageBuildConfig
     apps: dict[NativeAppName, ImageBuildConfig]
 

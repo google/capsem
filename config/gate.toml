@@ -2412,6 +2412,18 @@ journal_max_runs = 128
 artifact_max_bytes = 17179869184
 artifact_max_files = 512
 
+[functional.native_images.transfer]
+stage = "ironbank"
+prefix = "native-transfer"
+hold_seconds = 900
+ready_seconds = 120
+release_seconds = 60
+verify_seconds = 120
+outer_seconds = 1200
+upload_minutes = 5
+download_minutes = 5
+poll_seconds = 0.1
+
 [functional.native_images.base]
 name = "base"
 local_name = "capsem-native-base"
