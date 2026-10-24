@@ -22,15 +22,15 @@ from tests.ironbank.test_security_approval_lifecycle import (
 pytestmark = pytest.mark.integration
 
 
-def original_http(client, api, session_id, ready, marker):
-    # This caller deliberately allows the broker's real published expiry to
-    # happen; production deadlines and ordinary request budgets are unchanged.
+def original_http(client, api, session_id, ready, marker, *, request_timeout=30):
+    # Only the expiry case permits the broker's real published deadline to
+    # elapse. The other cases retain an ordinary finite caller budget.
     source = f"""
 import json, urllib.request, urllib.error
 request = urllib.request.Request({json.dumps(ready["base_url"].rstrip("/") + "/echo")},
     data={marker!r}.encode(), headers={{'content-type': 'text/plain'}})
 try:
-    with urllib.request.urlopen(request, timeout=180) as response:
+    with urllib.request.urlopen(request, timeout={request_timeout}) as response:
         result = {{'status': response.status, 'body': response.read().decode()}}
 except urllib.error.HTTPError as response:
     result = {{'status': response.code, 'body': response.read().decode()}}
@@ -43,8 +43,12 @@ print('APPROVAL_RESULT=' + json.dumps(result))
         return api.call_json(
             "POST",
             f"/vms/{session_id}/exec",
-            {"command": f"python3 {uploaded['vm_path']}", "target": "vm", "timeout_secs": 190},
-            timeout=210,
+            {
+                "command": f"python3 {uploaded['vm_path']}",
+                "target": "vm",
+                "timeout_secs": request_timeout + 10,
+            },
+            timeout=request_timeout + 30,
         )
 
     return operation
@@ -83,7 +87,9 @@ def test_original_http_expires_without_dispatch_or_late_authorization(approval_v
     service, client, api, session_id, ready = approval_vm
     marker = uuid.uuid4().hex
     with ThreadPoolExecutor(max_workers=1) as executor:
-        original = executor.submit(original_http(client, api, session_id, ready, marker))
+        original = executor.submit(
+            original_http(client, api, session_id, ready, marker, request_timeout=180)
+        )
         pending = pending_original_operation(api, session_id, original)
         ask = next(row for row in pending["requests"] if row["status"] == "pending")
         assert ask["expires_at_unix_ms"] > time.time_ns() // 1_000_000
