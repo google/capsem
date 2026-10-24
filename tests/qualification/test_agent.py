@@ -23,6 +23,7 @@ from helpers.service import ServiceInstance, vm_session_db_path
 from helpers.session_ledger import open_session_ledger
 
 from tests.qualification import agent_credentials
+from tests.qualification.candidate import agent_process_name
 
 pytestmark = pytest.mark.integration
 
@@ -112,7 +113,7 @@ def test_the_agent_completes_a_turn_and_its_tool_call_lands(model_service, candi
     assert any(
         call["provider"] == expect["provider"]
         and call["path"] == expect["path"]
-        and call["process_name"] == expect["turn"][0]
+        and call["process_name"] == agent_process_name(expect)
         and call["model"]
         for call in calls
     ), calls

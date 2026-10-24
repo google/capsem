@@ -7,6 +7,8 @@ capabilities = ["agent", "ollama"]
 # The shipped MCP configuration remains unchanged.
 [expect]
 turn = ["agy", "--model", "Gemini 3.5 Flash (Medium)", "--print-timeout", "90s", "-p"]
+# The shipped wrapper execs /usr/local/bin/agy-real; the kernel reports that name.
+process_name = "agy-real"
 credential_fixture = "agy_oauth"
 provider = "google"
 path = "/v1internal:streamGenerateContent"

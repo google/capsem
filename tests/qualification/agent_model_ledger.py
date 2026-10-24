@@ -2,6 +2,8 @@
 
 import json
 
+from tests.qualification.candidate import agent_process_name
+
 
 def assert_model_ledger(db, archive, expect, token, contains_prompt):
     models = [
@@ -19,7 +21,7 @@ def assert_model_ledger(db, archive, expect, token, contains_prompt):
             "SELECT event_id, method, status_code, process_name FROM net_events WHERE conn_type='wss-mitm'"
         ):
             assert row["method"] == "GET" and row["status_code"] == 101, dict(row)
-            assert row["process_name"] == expect["turn"][0], dict(row)
+            assert row["process_name"] == agent_process_name(expect), dict(row)
             body = archive.read(row["event_id"], "net_events", "request")
             assert body is not None, dict(row)
             network_requests.add(body)
@@ -69,7 +71,7 @@ def assert_model_ledger(db, archive, expect, token, contains_prompt):
         and model["path"] == expect["path"]
         and model["method"] == ("GET" if websocket else "POST")
         and model["model"]
-        and model["process_name"] == expect["turn"][0]
+        and model["process_name"] == agent_process_name(expect)
         and model["status_code"] == (101 if websocket else 200)
         for model in turns
     ), turns

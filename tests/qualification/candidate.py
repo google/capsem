@@ -87,6 +87,11 @@ def declared(name: str) -> dict:
     return manifest
 
 
+def agent_process_name(expect: dict) -> str:
+    """Shipped wrappers may exec a differently named original binary."""
+    return expect["process_name"]
+
+
 def _validate_agent_expectation(path: Path, expect: dict) -> None:
     """Refuse unsupported agent contracts before collection can start a fixture.
 
@@ -112,6 +117,9 @@ def _validate_agent_expectation(path: Path, expect: dict) -> None:
             raise ValueError(f"{path}: agent credential_fixture must select only the existing Google agy_oauth fixture")
     elif not isinstance(credential, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", credential):
         raise ValueError(f"{path}: agent [expect].credential_env requires a supported synthetic credential environment name")
+    process = expect.get("process_name")
+    if not isinstance(process, str) or not re.fullmatch(r"[A-Za-z0-9_+.-]+", process) or process in {".", ".."}:
+        raise ValueError(f"{path}: agent [expect].process_name requires an explicit executable basename")
     provider = expect.get("provider")
     if not isinstance(provider, str) or not provider.strip():
         raise ValueError(f"{path}: agent [expect].provider requires a nonempty provider identity")

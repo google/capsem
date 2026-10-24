@@ -11,6 +11,7 @@ AGENT_EXPECT = '''
 [expect]
 turn = ["agent", "--print"]
 credential_env = "SYNTHETIC_API_KEY"
+process_name = "agent"
 provider = "openai"
 path = "/v1/responses"
 '''
@@ -97,6 +98,7 @@ def test_a_manifest_may_only_declare_capabilities_and_expectations(tmp_path, mon
         ('capabilities = ["agent"]\n' + AGENT_EXPECT.replace("SYNTHETIC_API_KEY", "KEY=secret"), "credential_env"),
         ('capabilities = ["agent"]\n' + AGENT_EXPECT.replace('provider = "openai"', 'provider = ""'), "provider"),
         ('capabilities = ["agent"]\n' + AGENT_EXPECT.replace('/v1/responses', 'not-a-path'), "path"),
+        ('capabilities = ["agent"]\n' + AGENT_EXPECT.replace('process_name = "agent"\n', ''), "process_name"),
     ],
 )
 def test_agent_contract_fails_before_layout_or_fixture_setup(tmp_path, monkeypatch, declaration, field):
@@ -119,3 +121,18 @@ def test_nonagent_does_not_require_an_invented_credential_contract(tmp_path, mon
     (image / "qualify.toml").write_text('capabilities = ["surface"]\n')
     monkeypatch.setattr(candidate, "ROOT", tmp_path)
     assert candidate.declared_capabilities("desktop") == frozenset({"surface"})
+
+
+def test_shipped_agy_wrapper_declares_the_actual_exec_identity():
+    manifest = candidate.declared("agy")
+    assert manifest["expect"]["turn"][0] == "agy"
+    assert candidate.agent_process_name(manifest["expect"]) == "agy-real"
+    with pytest.raises(KeyError):
+        candidate.agent_process_name({"turn": ["original-agent"]})
+
+
+@pytest.mark.parametrize("process", ["", " ", ".", "..", "../agy-real", "/usr/bin/agy-real", ["agy-real"], 5])
+def test_executable_attribution_refuses_invalid_basename_before_fixtures(tmp_path, process):
+    expect = {"turn": ["agent"], "credential_env": "SYNTHETIC_KEY", "provider": "google", "path": "/model", "process_name": process}
+    with pytest.raises(ValueError, match="process_name"):
+        candidate._validate_agent_expectation(tmp_path / "qualify.toml", expect)

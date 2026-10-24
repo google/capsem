@@ -7,6 +7,7 @@ capabilities = ["agent", "ollama"]
 # api.openai.com to the hermetic mock; the key is a test credential.
 [expect]
 turn = ["codex", "exec", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check"]
+process_name = "codex"
 credential_env = "OPENAI_API_KEY"
 provider = "openai"
 path = "/v1/responses"

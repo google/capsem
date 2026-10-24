@@ -18,6 +18,7 @@ from helpers.session_ledger import open_session_ledger
 
 from tests.qualification import agent_credentials
 from tests.qualification.agent_model_ledger import assert_model_ledger
+from tests.qualification.candidate import agent_process_name
 from tests.qualification.test_agent import model_service
 
 __all__ = ["model_service"]
@@ -133,7 +134,7 @@ def assert_agent_ledger(db_path, expect, token):
         ), call
         assert call["tool_name"] == "local__echo" and call["transport"] == "http", call
         assert call["decision"] == "allowed" and call["status"] == "responded", call
-        assert call["process_name"] == expect["turn"][0], call
+        assert call["process_name"] == agent_process_name(expect), call
         assert call["error_message"] is None, call
         assert call["method"] == "tools/call" and call["server_name"] == "local", call
         assert re.fullmatch("[0-9a-f]{12}", call["event_id"]), call
@@ -179,7 +180,7 @@ def assert_agent_ledger(db_path, expect, token):
             event["event_type"] == "mcp.tool_call"
             and event["decision"]["effective"] == "allow"
         ), event
-        assert event["process"]["name"] == expect["turn"][0], event
+        assert event["process"]["name"] == agent_process_name(expect), event
         assert (
             event["mcp"]["tool_call_name"] == "local__echo"
             and event["mcp"]["server_name"] == "local"

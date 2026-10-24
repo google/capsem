@@ -7,6 +7,7 @@ capabilities = ["agent", "ollama"]
 # api.anthropic.com to the hermetic mock; the key is a test credential.
 [expect]
 turn = ["claude", "--dangerously-skip-permissions", "-p"]
+process_name = "claude"
 credential_env = "ANTHROPIC_API_KEY"
 provider = "anthropic"
 path = "/v1/messages"

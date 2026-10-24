@@ -42,6 +42,7 @@ def test_explicit_existing_oauth_profile_does_not_invent_api_key(tmp_path, monke
     declaration = '''capabilities = ["agent"]
 [expect]
 turn = ["agy", "-p"]
+process_name = "agy-real"
 credential_fixture = "agy_oauth"
 provider = "google"
 path = "/v1internal:streamGenerateContent"
