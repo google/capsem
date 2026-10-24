@@ -78,6 +78,8 @@ BOUNDARY_FILES = frozenset(
         "build_system/tests/gate/test_doctor_session_archive.py",
         "build_system/tests/gate/test_doctor_host_ledger.py",
         "build_system/tests/gate/test_gate_module_boundary.py",
+        "build_system/tests/gate/test_gate_bench_restart.py",
+        "build_system/tests/gate/test_native_app_specs.py",
         "build_system/tests/gate/test_compiler_cache_lifetime.py",
         "build_system/tests/gate/test_gate_node_lock.py",
         "build_system/tests/gate/test_gate_observation_startup.py",
