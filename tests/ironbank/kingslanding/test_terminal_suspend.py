@@ -3,11 +3,13 @@
 import hashlib
 import shlex
 import time
+from pathlib import Path
 
 import msgpack
 import pytest
 from helpers.image_session import image_session, workload_exec
 from helpers.service import exec_output_text, vm_session_dir
+from ironbank.kingslanding import warm_identity
 from ironbank.kingslanding.test_run import service
 from ironbank.kingslanding.test_terminal_state import next_state, terminal_summary
 from ironbank.kingslanding.test_workload_terminal import probe, terminal
@@ -146,10 +148,11 @@ def test_suspend_restores_both_screens_parser_modes_and_effect_identity(service,
             baseline = next(row for row in client.get("/vms/list")["sandboxes"] if row["id"] == vm_id)["terminal"]
             # The app waits in raw mode throughout suspend. It leaves an
             # unfinished CSI, two saved cursors, both screens and one alert.
-            script = r"""
+            script = Path(warm_identity.__file__).read_text() + r"""
 import os, termios, tty
 from pathlib import Path
 before = termios.tcgetattr(0)
+diagnostics = None
 try:
     tty.setraw(0)
     Path('/workspace/terminal-suspend-pid').write_text(str(os.getpid()))
@@ -163,10 +166,16 @@ try:
     original_file = identity(held)
     original_directory = identity(directory)
     image_bytes = os.read(image, 4096)
+    diagnostics = os.open('terminal-suspend-identities.log', os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC, 0o600)
+    descriptors = {'file': held, 'directory': directory, 'image': image}
+    original_identity = capture(diagnostics, 'before', descriptors)
     os.write(1, b'\x1b[0m\x1b[2J\x1b[HPRIMARY-DISPLAY\x1b[4;6H\x1b7')
     os.write(1, b'\x1b[?1049h\x1b[2J\x1b[H\x1b[38;2;23;89;144mALTERNATE-DISPLAY\x1b[4;8H\x1b7')
     os.write(1, b'\x1b[?1h\x1b[?2004h\x07\x1b]777;notify;Suspend;Retained\x07\x1b]0;Persisted terminal\x07\x1b[38;2;10;')
     assert os.read(0, 1) == b'c'
+    # Persist through the SAME original receipt FD before any assertions.
+    # No terminal bytes may interrupt the unfinished CSI under test.
+    capture(diagnostics, 'after', descriptors, original_identity)
     # These are the original foreground's cwd and file descriptions, not
     # newly opened replacements after a bind-mount repair.
     failures = []
@@ -198,6 +207,8 @@ try:
     os.write(1, b'\x1b[?1049l\x1b8Y\x1b]2;Primary restored\x07')
     assert os.read(0, 1) == b'q'
 finally:
+    if diagnostics is not None:
+        os.close(diagnostics)
     os.write(1, b'\x1b[?1049l\x1b[?1l\x1b[?2004l')
     termios.tcsetattr(0, termios.TCSANOW, before)
 """
