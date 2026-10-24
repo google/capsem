@@ -589,8 +589,6 @@ fn help_lines() -> Vec<Line<'static>> {
         ),
         help_row("Alt+n", "new", "global", "create a session"),
         help_row("Alt+f", "fork", "session", "fork active session"),
-        help_row("Alt+s", "suspend", "session", "warm stop active session"),
-        help_row("Alt+c", "checkpoint", "session", "save/checkpoint session"),
         help_row("Alt+r", "resume", "session", "resume inactive session"),
         help_row("Alt+t", "stop", "session", "stop active session"),
         help_row("Alt+d", "delete", "session", "delete active session"),

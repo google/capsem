@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stop/start remains available; existing checkpoints are preserved.
 - Refuse direct VM-owner checkpoint startup and suspend IPC before cancelling
   running jobs or changing guest state.
+- Remove disabled warm-suspend and checkpoint shortcuts from TUI help.
 
 - Measure update activation across processes with the system monotonic clock,
   including macOS package checks running Python 3.9.

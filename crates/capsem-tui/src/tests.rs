@@ -428,7 +428,7 @@ fn create_overlay_default_name_lets_service_assign_id() {
 }
 
 #[test]
-fn help_lists_save_sessions_status_and_fork_shortcuts() {
+fn help_lists_supported_shortcuts_without_disabled_warm_suspend() {
     let mut app = App::new(fixture_state());
     app.handle_key(key(KeyCode::Char('/'), KeyModifiers::ALT));
 
@@ -438,10 +438,10 @@ fn help_lists_save_sessions_status_and_fork_shortcuts() {
     assert!(snapshot.contains("Action"));
     assert!(snapshot.contains("Alt+?"));
     assert!(snapshot.contains("help"));
-    assert!(snapshot.contains("Alt+s"));
-    assert!(snapshot.contains("suspend"));
-    assert!(snapshot.contains("Alt+c"));
-    assert!(snapshot.contains("checkpoint"));
+    assert!(!snapshot.contains("Alt+s"));
+    assert!(!snapshot.contains("suspend"));
+    assert!(!snapshot.contains("Alt+c"));
+    assert!(!snapshot.contains("checkpoint"));
     assert!(snapshot.contains("Alt+M"));
     assert!(snapshot.contains("terminal sessions"));
     assert!(snapshot.contains("Alt+i"));
