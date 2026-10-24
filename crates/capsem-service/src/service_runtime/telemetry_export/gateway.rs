@@ -46,7 +46,7 @@ pub(crate) async fn prepare(
     }
     let (service, gateway) =
         capsem_foundation::unix::fd::connected_unix_pair().map_err(|_| GatewayGrantDenial::Unavailable)?;
-    let generation = *uuid::Uuid::new_v4().as_bytes();
+    let generation = *capsem_crypto::uuid_v4().as_bytes();
     let state = Arc::clone(state);
     let (activate, activated) = tokio::sync::oneshot::channel();
     tokio::spawn(async move {
