@@ -35,7 +35,8 @@ def test_postinstall_repairs_valid_adhoc_entitlements(tmp_path: Path) -> None:
         run("codesign", "--force", "--sign", "-", *extra, str(binary))
         run("codesign", "--verify", "--strict", str(binary))
     source = (ROOT / "build_system/packaging/macos/pkg-scripts/postinstall").read_text()
-    signing = source[source.index("codesign_identifier_for_bin() {") : source.index('CAPSEM_INSTALL_PHASE="install_manifest_provenance"')]
+    start = source.index("codesign_identifier_for_bin() {")
+    signing = source[start : source.index("\nCAPSEM_USER", start)]
     subprocess.run(
         ["bash", "-c", signing], check=True, capture_output=True, timeout=30,
         env={**os.environ, "CAPSEM_DIR": str(installed), "PKG_SHARE": str(tmp_path)},
