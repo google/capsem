@@ -50,6 +50,7 @@ EXISTING_TOOLS = {
     "release_installed_probe",
     "release_manifest_rows",
     "release_package_contract",
+    "release_predecessor_assets",
     "release_transition",
     "release_transition_candidates",
     "release_version_tag",

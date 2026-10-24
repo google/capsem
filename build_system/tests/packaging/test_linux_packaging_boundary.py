@@ -58,8 +58,8 @@ def test_gate_selects_every_linux_packaging_entrypoint_from_its_owner() -> None:
         for row in config["boundary"]["discarded_verdicts"]
         if row["where"].endswith(("deb-preinst.sh", "deb-postinst.sh"))
     }
+    # Preinstall checks its refusal path and needs no discarded-verdict debt.
     assert discarded == {
-        prefix + "deb-preinst.sh",
         prefix + "deb-postinst.sh",
     }
 
