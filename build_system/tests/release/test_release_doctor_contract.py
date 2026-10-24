@@ -6350,24 +6350,25 @@ def test_suspend_snapshot_freezes_ext4_upper_before_ack_and_thaws_first_on_resto
 
     # Snapshot control moved out of main.rs with the guest control reader.
     control = (PROJECT_ROOT / "crates" / "capsem-agent" / "src" / "control_reader.rs").read_text()
-    prepare = control.split("Ok(HostToGuest::PrepareSnapshot) => {", maxsplit=1)[1].split(
-        "Ok(HostToGuest::Unfreeze) => {", maxsplit=1
+    prepare = control.split("Ok(HostToGuest::SnapshotTransition { id, frozen: true }) => {", maxsplit=1)[1].split(
+        "Ok(HostToGuest::SnapshotTransition { id, frozen: false }) => {", maxsplit=1
     )[0]
-    assert "freeze_system_filesystem()" in prepare
-    assert prepare.index("freeze_system_filesystem()") < prepare.index("GuestToHost::SnapshotReady")
-    assert (
-        "continue;"
-        in prepare.split("freeze_system_filesystem()", maxsplit=1)[1].split(
-            "GuestToHost::SnapshotReady", maxsplit=1
-        )[0]
-    )
+    assert prepare.index("let result = freeze_system_filesystem();") < prepare.index(
+        "transition_response(id, true, result)"
+    ) < prepare.index("ctrl_tx.send(response)")
+    assert "error: result.err().map(|error| error.to_string())" in snapshot
+    failed_ack = prepare.split("if ctrl_tx.send(response).is_err()", maxsplit=1)[1]
+    assert failed_ack.index("thaw_system_filesystem()") < failed_ack.index("break;")
 
     reconnect = source.split('eprintln!("[capsem-agent] reconnected successfully")', maxsplit=1)[
         1
-    ].split("// Send BootReady", maxsplit=1)[0]
-    assert reconnect.index("thaw_system_filesystem()") < reconnect.index(
-        "rebind_workspace_after_resume()"
-    )
+    ].split("// Drain abbreviated handshake", maxsplit=1)[0]
+    assert "resume_workspace::ready_after(thaw_system_filesystem, resume_workspace::rebind, ||" in reconnect
+    assert reconnect.index("resume_workspace::ready_after(") < reconnect.index("GuestToHost::Ready")
+    assert 'if let Err(e)' in reconnect and 'process::exit(1)' in reconnect
+    repair = (PROJECT_ROOT / "crates/capsem-agent/src/resume_workspace.rs").read_text()
+    ready_after = repair.split("pub(crate) fn ready_after(", maxsplit=1)[1].split("/// Reconnect", maxsplit=1)[0]
+    assert ready_after.index("thaw()?;") < ready_after.index("rebind()?;") < ready_after.index("ready()")
 
 
 def test_fork_clones_inside_the_owner_under_a_guest_freeze() -> None:
