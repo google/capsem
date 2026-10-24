@@ -8,7 +8,7 @@ so a future "helpful" loosening that reintroduces the bloat surfaces
 in CI rather than on the next `just test` run.
 """
 
-import tomllib
+import time
 from pathlib import Path
 
 import pytest
@@ -62,19 +62,14 @@ def _copied_files(archive_root: Path) -> set[str]:
 
 
 def test_failure_artifact_limits_come_from_cache_policy() -> None:
-    with (svc_mod.PROJECT_ROOT / "config" / "cache.toml").open("rb") as stream:
-        policy = tomllib.load(stream)
-    debug = policy["control"]["failure_artifacts"]
-    stage = policy["stages"][debug["stage"]]
+    from capsem_builder.cache.config import load_paths
 
-    assert (
-        svc_mod.PROJECT_ROOT / policy["root"] / stage["path"]
-        == svc_mod.failures.ARTIFACTS_ROOT
-    )
-    assert debug["minimum_count"] == svc_mod.ARTIFACT_MIN_KEPT_DIRS
-    assert debug["maximum_count"] == svc_mod.ARTIFACT_MAX_KEPT_DIRS
-    assert debug["maximum_bytes"] == svc_mod.ARTIFACT_MAX_TOTAL_BYTES
-    assert debug["maximum_file_bytes"] == svc_mod.ARTIFACT_MAX_FILE_BYTES
+    paths = load_paths(svc_mod.PROJECT_ROOT)
+    assert paths.policy.control is not None
+    debug = paths.policy.control.failure_artifacts
+    assert paths.stage(debug.stage) == svc_mod.failures.ARTIFACTS_ROOT
+    assert debug == svc_mod._DEBUG_ARTIFACT_POLICY
+    assert debug.maximum_file_bytes == svc_mod.ARTIFACT_MAX_FILE_BYTES
 
 
 def test_make_capsem_tmp_dir_honors_configured_parent(tmp_path, monkeypatch):
@@ -354,8 +349,9 @@ def test_preserve_logs_survive_oversize_sibling(artifact_env, tmp_path):
 
 def test_rotation_keeps_only_most_recent_n(artifact_env, tmp_path, monkeypatch):
     # Shrink the cap for a fast test.
-    monkeypatch.setattr(svc_mod, "ARTIFACT_MAX_KEPT_DIRS", 3)
-    monkeypatch.setattr(svc_mod, "ARTIFACT_MIN_KEPT_DIRS", 1)
+    monkeypatch.setattr(svc_mod, "_DEBUG_ARTIFACT_POLICY", svc_mod._DEBUG_ARTIFACT_POLICY.model_copy(
+        update={"maximum_count": 3, "minimum_count": 1}
+    ))
 
     # Seed 5 pre-existing failure dirs with timestamps.
     artifact_env.mkdir(parents=True)
@@ -393,12 +389,12 @@ def test_rotation_size_budget_never_discards_minimum_recent_failures(tmp_path):
         failure.mkdir()
         (failure / "evidence.log").write_bytes(b"x" * 32)
 
-    svc_mod._rotate_artifacts(
+    svc_mod.rotate_failure_evidence(
         root,
-        keep=10,
-        minimum=2,
-        maximum_age_s=10**9,
-        maximum_total_bytes=1,
+        svc_mod._DEBUG_ARTIFACT_POLICY.model_copy(update={
+            "maximum_count": 10, "minimum_count": 2, "maximum_age_hours": 1000000, "maximum_bytes": 1,
+        }),
+        now=time.time(),
     )
 
     remaining = sorted(path.name for path in root.iterdir())

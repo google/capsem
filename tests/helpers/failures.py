@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from capsem_builder.gate import config as gate_config
+from capsem_builder.cache.config import load_paths
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -24,4 +24,11 @@ LIVE_HOMES: set[Path] = set()
 
 #: cache/target/tests/evidence/: gitignored, so service.log,
 #: sessions/<vm>/process.log, serial.log and session.db survive the rmtree.
-ARTIFACTS_ROOT = _PROJECT_ROOT / gate_config.load(_PROJECT_ROOT).outputs.test_artifacts
+def artifact_root(repository_root: Path) -> Path:
+    paths = load_paths(repository_root)
+    if paths.policy.control is None:
+        raise ValueError("cache policy has no failure evidence control")
+    return paths.stage(paths.policy.control.failure_artifacts.stage)
+
+
+ARTIFACTS_ROOT = artifact_root(_PROJECT_ROOT)

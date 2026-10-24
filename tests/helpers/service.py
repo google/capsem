@@ -6,13 +6,14 @@ import subprocess
 import sys
 import tempfile
 import time
-import tomllib
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from capsem_builder.cache.config import load_policy
+from capsem_builder.cache.failureartifacts import rotate_failure_evidence
 from log_streams import read_log_stream
 
 from . import failures
@@ -44,12 +45,13 @@ WINTERFELL_REQUIRED_BINARIES = (
 )
 
 
-with (PROJECT_ROOT / "config" / "cache.toml").open("rb") as _policy_stream:
-    _CACHE_POLICY = tomllib.load(_policy_stream)
-_DEBUG_ARTIFACT_POLICY = _CACHE_POLICY["control"]["failure_artifacts"]
+_CACHE_POLICY = load_policy(PROJECT_ROOT)
+if _CACHE_POLICY.control is None:
+    raise ValueError("cache policy has no failure evidence control")
+_DEBUG_ARTIFACT_POLICY = _CACHE_POLICY.control.failure_artifacts
 
-ARTIFACT_MAX_FILE_BYTES = int(_DEBUG_ARTIFACT_POLICY["maximum_file_bytes"])
-ARTIFACT_SKIP_NAMES = frozenset(_DEBUG_ARTIFACT_POLICY["skip_names"]) | frozenset(
+ARTIFACT_MAX_FILE_BYTES = _DEBUG_ARTIFACT_POLICY.maximum_file_bytes
+ARTIFACT_SKIP_NAMES = frozenset(_DEBUG_ARTIFACT_POLICY.skip_names) | frozenset(
     {
         # Multi-GB VM disk images -- regenerable from the build, would burn
         # disk at ~2 GB per failure and we've been there.
@@ -60,10 +62,6 @@ ARTIFACT_SKIP_NAMES = frozenset(_DEBUG_ARTIFACT_POLICY["skip_names"]) | frozense
         "checkpoint.vzsave",
     }
 )
-ARTIFACT_MIN_KEPT_DIRS = int(_DEBUG_ARTIFACT_POLICY["minimum_count"])
-ARTIFACT_MAX_KEPT_DIRS = int(_DEBUG_ARTIFACT_POLICY["maximum_count"])
-ARTIFACT_MAX_AGE_S = int(_DEBUG_ARTIFACT_POLICY["maximum_age_hours"]) * 60 * 60
-ARTIFACT_MAX_TOTAL_BYTES = int(_DEBUG_ARTIFACT_POLICY["maximum_bytes"])
 DEFAULT_TEST_RUST_LOG = "debug,notify::poll::data=error"
 REQUIRED_TEST_RUST_LOG = "service=info,capsem=debug"
 
@@ -267,7 +265,7 @@ def preserve_tmp_dir_on_failure(
     transient errors so one flaky file doesn't vanish the entire subtree.
 
     Also rotates `cache/target/tests/evidence/` after each preserve, keeping only the
-    most recent `ARTIFACT_MAX_KEPT_DIRS` failure dirs.
+    most recent failure directories allowed by the shared cache policy.
     """
     artifacts_root = Path(
         os.environ.get("CAPSEM_TEST_ARTIFACTS_ROOT", failures.ARTIFACTS_ROOT)
@@ -378,63 +376,9 @@ def preserve_tmp_dir_on_failure(
         )
         for err in errors[:10]:
             print(f"  ! {err}", file=sys.stderr)
-        _rotate_artifacts(
-            artifacts_root,
-            keep=ARTIFACT_MAX_KEPT_DIRS,
-            minimum=ARTIFACT_MIN_KEPT_DIRS,
-            maximum_age_s=ARTIFACT_MAX_AGE_S,
-            maximum_total_bytes=ARTIFACT_MAX_TOTAL_BYTES,
-        )
+        rotate_failure_evidence(artifacts_root, _DEBUG_ARTIFACT_POLICY, now=time.time())
     except Exception as e:
         print(f"ARTIFACT: preserve fatal for {tmp_dir}: {e}", file=sys.stderr)
-
-
-def _artifact_tree_size(path: Path) -> int:
-    total = 0
-    for candidate in path.rglob("*"):
-        try:
-            if candidate.is_file():
-                total += candidate.stat().st_size
-        except OSError:
-            continue
-    return total
-
-
-def _rotate_artifacts(root, keep, minimum, maximum_age_s, maximum_total_bytes):
-    """Bound failure evidence while always retaining the newest minimum."""
-    if not root.exists():
-        return
-    try:
-        dirs = sorted(
-            (p for p in root.iterdir() if p.is_dir()),
-            key=lambda p: (
-                p.name
-            ),  # names begin with YYYYMMDD-HHMMSS so string sort == chronological
-        )
-        protected = set(dirs[-minimum:]) if minimum > 0 else set()
-        now = time.time()
-        stale_dirs = list(dirs[:-keep] if keep > 0 else dirs)
-        stale_dirs.extend(
-            path
-            for path in dirs
-            if path not in protected and now - path.stat().st_mtime > maximum_age_s
-        )
-        for stale in dict.fromkeys(stale_dirs):
-            shutil.rmtree(stale, ignore_errors=True)
-        dirs = [path for path in dirs if path.exists()]
-        sizes = {path: _artifact_tree_size(path) for path in dirs}
-        total = sum(sizes.values())
-        remaining_count = len(dirs)
-        for stale in dirs:
-            if total <= maximum_total_bytes or remaining_count <= minimum:
-                break
-            if stale in protected:
-                continue
-            shutil.rmtree(stale, ignore_errors=True)
-            total -= sizes[stale]
-            remaining_count -= 1
-    except OSError as e:
-        print(f"ARTIFACT: rotation skipped: {e}", file=sys.stderr)
 
 
 class ServiceInstance:
