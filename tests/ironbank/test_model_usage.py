@@ -61,3 +61,24 @@ def test_internal_google_model_without_a_verified_rate_stays_unknown():
                              input_tokens=31, output_tokens=19,
                              usage_details={"thinking": 2},
                              timestamp="2026-10-23T22:45:35Z") is None
+
+
+@pytest.mark.parametrize("usage", [
+    {"input_tokens": 31, "output_tokens": 19,
+     "output_tokens_details": {"reasoning_tokens": 2}},
+    {"input_tokens": 0, "output_tokens": 0,
+     "output_tokens_details": {"reasoning_tokens": 0}},
+])
+def test_openai_responses_stream_uses_completed_usage_not_created_null(usage):
+    payloads = [
+        {"type": "response.created", "response": {"usage": None}},
+        {"type": "response.completed", "response": {"usage": usage}},
+        {"type": "response.output_text.done", "text": "finished"},
+    ]
+    row = {"content_type": "text/event-stream", "response_body":
+           "".join(f"data: {json.dumps(payload)}\n\n" for payload in payloads)}
+    assert _usage_from_upstream(row) == {
+        "input_tokens": usage["input_tokens"],
+        "output_tokens": usage["output_tokens"],
+        "thinking_tokens": usage["output_tokens_details"]["reasoning_tokens"],
+    }

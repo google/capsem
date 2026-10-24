@@ -623,7 +623,10 @@ def _usage_from_upstream(row: dict[str, Any]) -> dict[str, int] | None:
             payload["response"]
             for payload in payloads
             if isinstance(payload.get("response"), dict)
-            and isinstance(payload["response"].get("usageMetadata"), dict)
+            and (
+                isinstance(payload["response"].get("usageMetadata"), dict)
+                or isinstance(payload["response"].get("usage"), dict)
+            )
         ]
         if response_payloads:
             payload = response_payloads[-1]
