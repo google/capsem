@@ -6,12 +6,12 @@ import hashlib
 import json
 import re
 import subprocess
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pytest
-import tomllib
 
 from tests.citadel.source_enum_literals import contract_enums, reference_source
 from tests.citadel.vendor_documents import (
@@ -432,6 +432,31 @@ def test_legacy_reference_fingerprint_changes_for_new_debt() -> None:
 
     assert len(after) == len(before) + 1
     assert _digest(after) != _digest(before)
+
+
+@pytest.mark.parametrize(("path", "prefix"), [
+    ("command.py", ""), ("collector", "#!/usr/bin/env python3\n"),
+    ("collector", "#!/usr/bin/python3\n"),
+])
+@pytest.mark.parametrize("argv", ['["cargo", "bench", "--locked"]', '("cargo", "bench")'])
+def test_exact_python_cargo_bench_argv_is_not_a_legacy_path(path, prefix, argv) -> None:
+    assert not _legacy_references({path: prefix + "command = " + argv})
+    assert _legacy_references({path: prefix + "command = " + argv + '; other = "bench/collectors/x"'})
+
+
+@pytest.mark.parametrize("source", [
+    'argv = ["other", "bench"]', 'argv = [tool, "bench"]',
+    'argv = ["wrapper", "cargo", "bench"]', 'argv = ["cargo", *prefix, "bench"]',
+    'argv = ["cargo", "bench/collectors/../../outside"]', 'value = "bench"',
+    'argv = ["cargo", "bench"',
+])
+def test_cargo_wording_does_not_exempt_actual_or_dynamic_paths(source) -> None:
+    assert _legacy_references({"command.py": source})
+
+
+@pytest.mark.parametrize("prefix", ["", "#!/bin/sh\n", "# python3\n"])
+def test_non_python_suffixless_content_does_not_gain_an_argv_exemption(prefix) -> None:
+    assert _legacy_references({"untyped": prefix + 'argv = ["cargo", "bench"]'})
 
 
 def test_external_documentation_urls_do_not_hide_adjacent_repository_callers() -> None:

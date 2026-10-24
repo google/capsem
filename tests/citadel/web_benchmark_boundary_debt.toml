@@ -15,13 +15,14 @@ lint_mapping_count = 4
 lint_mapping_sha256 = "ac42e4aac5f97bab38e19bf3691343d0f79934dabef4137ac501baa6f164d538"
 coverage_mapping_count = 4
 coverage_mapping_sha256 = "6e6d023b00ea5f0dcdb1f2373c3217907ef1b14075697ad50c4a3ebf5884aee0"
-legacy_reference_count = 186
+legacy_reference_count = 185
+# Exact Python Cargo argv subcommands are not legacy repository paths.
 # Canonical collector/helper file paths are source ownership, not legacy baselines.
 # Includes the runtime benchmark store documented for users and the benchmark
 # helper root recorded by repository surface ownership.
 # The Linux Rust base copies the security docs needed by compile-time include
 # paths; its guard records the same owned input.
-legacy_reference_sha256 = "5e7fb2d6f6d732c969e811c7c934790952e14389effa3a750ba1b107102d5d59"
+legacy_reference_sha256 = "a0d10847b7806730a492e83f629e4e722a4d2c9afd061088d5e20690a2cec360"
 
 # PR372 adds the docs CI surface labels and the owned MCP-reference output path;
 # the Python source-root inventory adds skills. A028 records the exact diff.

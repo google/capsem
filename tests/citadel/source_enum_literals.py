@@ -1,4 +1,4 @@
-"""Remove typed wire enum values before looking for repository path references."""
+"""Distinguish typed enums and exact Cargo argv from repository path references."""
 
 from __future__ import annotations
 
@@ -37,7 +37,9 @@ def reference_source(path: str, text: str, enums: frozenset[str] = frozenset()) 
                     return [without_enums(child) for child in value]
                 return value
             return json.dumps(without_enums(document), indent=2)
-    if path.endswith(".py"):
+    if path.endswith(".py") or text.partition("\n")[0] in (
+        "#!/usr/bin/env python3", "#!/usr/bin/python3"
+    ):
         try:
             tree = ast.parse(text)
         except SyntaxError:
@@ -48,6 +50,13 @@ def reference_source(path: str, text: str, enums: frozenset[str] = frozenset()) 
         lines = text.splitlines(keepends=True)
         values = []
         for node in ast.walk(tree):
+            # Only this argv position is a Cargo subcommand. Keep other
+            # literals, including adjacent legacy paths and traversal, visible.
+            if isinstance(node, (ast.List, ast.Tuple)) and len(node.elts) >= 2 and [
+                value.value if isinstance(value, ast.Constant) else None
+                for value in node.elts[:2]
+            ] == ["cargo", "bench"]:
+                values.append(node.elts[1])
             if not isinstance(node, ast.ClassDef) or node.name not in enums or not any(
                 isinstance(base, ast.Name) and base.id in enum_types for base in node.bases
             ):
