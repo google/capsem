@@ -8,6 +8,39 @@ import pytest
 from tests.fixtures.oci.test_pinned_image import _layout
 
 
+def test_referrer_response_is_closed_before_fallback_request(monkeypatch, tmp_path):
+    import urllib.error
+    from email.message import Message
+
+    from tests.fixtures.oci import pinned_image, published_root
+
+    layout, subject, _ = _layout(tmp_path)
+    response = urllib.error.HTTPError(
+        "https://registry.example/referrers", 404, "missing", Message(), io.BytesIO()
+    )
+    calls = []
+
+    class Client:
+        def __init__(self, context):
+            pass
+
+        def open(self, url, *_args):
+            calls.append(url)
+            if len(calls) == 1:
+                raise response
+            assert response.closed, "release the rejected socket before opening fallback"
+            raise RuntimeError("fallback request observed")
+
+    monkeypatch.setattr(pinned_image, "_Registry", Client)
+    monkeypatch.setattr(pinned_image, "_token", lambda *args: None)
+    with pytest.raises(RuntimeError, match="fallback request observed"):
+        published_root.prepare(layout, "registry.example/fixture")
+    assert calls == [
+        f"https://registry.example/v2/fixture/referrers/{subject}",
+        f"https://registry.example/v2/fixture/manifests/{subject.replace(':', '-', 1)}",
+    ]
+
+
 def test_a_prepared_root_is_bound_to_the_exact_platform_manifest(tmp_path):
     from tests.fixtures.oci.published_root import ready, stage
 
