@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import inspect
 import tomllib
 from pathlib import Path
@@ -41,10 +42,7 @@ def test_every_cache_owner_has_the_common_contract() -> None:
 
 
 def test_cache_budgets_are_sized_for_their_owners() -> None:
-    budgets = {
-        (owner["warm_size_bytes"], owner["max_size_bytes"])
-        for owner in _owners()
-    }
+    budgets = {(owner["warm_size_bytes"], owner["max_size_bytes"]) for owner in _owners()}
 
     assert len(budgets) >= 8, (
         "cache budgets regressed to a blanket placeholder; size each owner from "
@@ -55,10 +53,7 @@ def test_cache_budgets_are_sized_for_their_owners() -> None:
 def test_policy_and_registry_load_every_owner_without_backend_input() -> None:
     policy = load_policy(ROOT)
     registry = CacheRegistry.__new__(CacheRegistry)
-    methods = {
-        name
-        for name, _ in inspect.getmembers(CacheBackend, predicate=inspect.isfunction)
-    }
+    methods = {name for name, _ in inspect.getmembers(CacheBackend, predicate=inspect.isfunction)}
 
     assert policy.root == Path("cache")
     assert methods >= {"contract", "usages", "mutate"}
@@ -66,9 +61,31 @@ def test_policy_and_registry_load_every_owner_without_backend_input() -> None:
     assert not hasattr(registry, "tart_home")
 
 
+def _capacity_declarations(source: str) -> tuple[tuple[str, str], ...]:
+    return tuple(
+        (type(node).__name__, node.name)
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+    )
+
+
+def test_capacity_is_only_typed_producer_intent_not_a_cache_controller() -> None:
+    # This module was deliberately restored for RequiredCapacity, not the old
+    # free-space controller. Enforcement and actual inventory keep their owners.
+    source = (ROOT / "build_system/builder/cache/capacity.py").read_text()
+    expected = (("ClassDef", "RequiredCapacity"),)
+    assert _capacity_declarations(source) == expected
+    for controller in (
+        "def ensure_space(): pass",
+        "async def enforce(): pass",
+        "class CapacityController: pass",
+        "class RequiredCapacity:\n    def prune(self): pass",
+    ):
+        assert _capacity_declarations(controller) != expected
+
+
 def test_legacy_cache_modules_and_commands_cannot_return() -> None:
     removed_modules = (
-        ROOT / "build_system/builder/cache" / ("cap" + "acity.py"),
         ROOT / "build_system/builder/cache" / ("hea" + "lth.py"),
         ROOT / "build_system/builder/gate" / ("asset" + "cache.py"),
         ROOT / "build_system/builder/gate" / ("di" + "sk.py"),
@@ -101,9 +118,7 @@ def test_legacy_cache_modules_and_commands_cannot_return() -> None:
                 continue
             text = path.read_text(encoding="utf-8", errors="replace")
             violations.extend(
-                f"{path.relative_to(ROOT)} contains {token}"
-                for token in forbidden
-                if token in text
+                f"{path.relative_to(ROOT)} contains {token}" for token in forbidden if token in text
             )
     assert not violations, "\n".join(violations)
 
@@ -114,8 +129,5 @@ def test_just_cache_is_only_a_thin_dispatcher() -> None:
 
     assert "capsem-cache dispatch" in recipe
     assert len(recipe.splitlines()) == 1
-    methods = {
-        name
-        for name, _ in inspect.getmembers(CacheRegistry, predicate=inspect.isfunction)
-    }
+    methods = {name for name, _ in inspect.getmembers(CacheRegistry, predicate=inspect.isfunction)}
     assert methods >= {"contract", "mutate", "stats"}

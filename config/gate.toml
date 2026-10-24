@@ -636,7 +636,7 @@ container_output_contents = "/package-output/."
 # across source-isolated gates without mixing incompatible target libraries.
 
 # Product admission budgets; NOT universal dpkg format/support ceilings.
-# S341 proved an 11.59 MB control tar on dpkg 1.22.6. Actual target/minimum
+# S341 proved an 11.59 MB control tar on dpkg 1.22.6. Actual target and minimum
 # supported runtime qualification still owns executable and tool acceptance.
 [package.preinstall_resource]
 max_binary_bytes = 12582912

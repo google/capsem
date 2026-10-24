@@ -116,11 +116,11 @@ pinned Criterion `--list` case set, with matching `benchmark.json` identities.
 Missing, extra, malformed, partial and historical `--reuse` inputs fail.
 Original upstream input text and invocation identity remain in the bounded
 sidecar; normalized samples use the existing Rust statistics/store owner.
-Cargo's shared target/cache is unchanged. Reading, parsing and conversion are
+Cargo's shared build cache is unchanged. Reading, parsing and conversion are
 collector work, not established per-child workload CPU/resource receipts.
 
 Criterion prepares with `cargo bench --no-run --message-format=json`, admitting
-one exact local package/target/source/profile executable from Cargo metadata and
+one exact local executable bound to package, target, source and profile from Cargo metadata and
 the canonical shared target. It then invokes that same executable with `--bench
 --list` and `--bench` (without `--bench`, pinned Criterion enters test mode).
 On macOS the existing signed-copy runner prepares the actual executable; a
@@ -133,7 +133,7 @@ Criterion's measured child also uses the existing stamped process-tree sampler,
 excluding prepare/sign/list and collector parsing. A fresh child has zero CPU
 origin, so its observed startup CPU is retained. Resource keys explicitly say
 `observed_cpu_lower_bound_s` and `sampled_rss_high_water_bytes`; they are one
-job-level observation per target/run, not per-case resource distributions.
+job-level observation for each target invocation, not per-case resource distributions.
 RSS sums come from sequential reads and can double-count shared pages. Optional
 PSS/USS remain absent when unsupported. No continuous or atomic peak is claimed.
 Terminal/zombie and unseen short-lived descendant CPU remain uncertified;

@@ -277,9 +277,11 @@ def test_one_target_without_cases_fails_entire_collection_without_stdout(
 @pytest.mark.parametrize("kind", ["duplicate_id", "metric_collision"])
 def test_case_identity_collisions_fail(collector, tmp_path, kind):
     write_case(tmp_path, "a")
-    write_case(tmp_path, "target/a", full_id="a" if kind == "duplicate_id" else None)
+    write_case(tmp_path, "case-group/a", full_id="a" if kind == "duplicate_id" else None)
     with pytest.raises(ValueError, match="identity"):
-        collector["samples_for"](tmp_path, "target", {"a", "target/a"}, collector["input_budget"]())
+        collector["samples_for"](
+            tmp_path, "case-group", {"a", "case-group/a"}, collector["input_budget"]()
+        )
 
 
 def test_case_and_listing_byte_budgets_fail_closed(collector, tmp_path, monkeypatch):
