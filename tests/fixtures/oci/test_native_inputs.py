@@ -158,3 +158,30 @@ def test_original_metadata_and_current_inputs_are_required(monkeypatch, tmp_path
         native_inputs.BuildBinding(input_key="b" * 64, base=binding).require(
             ROOT, "codex-cli", child, digest, "linux/amd64", 1 if fault == "oversize" else 1 << 20
         )
+
+
+@pytest.mark.parametrize(
+    "fault", ["index-size", "descriptor-path", "negative-size", "subject-path"]
+)
+def test_descriptor_admission_precedes_existing_blob_verification(tmp_path, fault):
+    layout = tmp_path / "layout"
+    subject, manifest, _ = oci(layout)
+    if fault == "subject-path":
+        subject = "sha256:../../outside"
+    elif fault == "index-size":
+        index = json.loads((layout / "index.json").read_bytes())
+        index["manifests"][0]["size"] += 1
+        (layout / "index.json").write_text(json.dumps(index))
+    else:
+        if fault == "descriptor-path":
+            manifest["config"]["digest"] = "sha256:../../outside"
+        else:
+            manifest["layers"][0]["size"] = -1
+        original = json.dumps(manifest).encode()
+        subject = "sha256:" + sha256(original).hexdigest()
+        (layout / "blobs/sha256" / subject[7:]).write_bytes(original)
+        (layout / "index.json").write_text(
+            json.dumps({"manifests": [{"digest": subject, "size": len(original)}]})
+        )
+    with pytest.raises(ValueError):
+        native_inputs.metadata(layout, subject, "linux/amd64", 1048576)

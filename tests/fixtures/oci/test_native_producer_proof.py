@@ -9,6 +9,49 @@ from tests.fixtures.oci.test_native_handoff import fixture
 
 
 @pytest.mark.parametrize(
+    "defect", [None, "wrong-selector", "wrong-process", "missing-selector", "wrong-source"]
+)
+def test_official_app_proof_requires_exact_existing_producer_selector(
+    monkeypatch, tmp_path, defect
+):
+    from tests.fixtures.oci import native_inputs, native_proof
+    from tests.fixtures.oci.test_native_inputs import oci
+
+    config, selected = fixture(monkeypatch, tmp_path)
+    _, receipt, _, _ = selected["reference_image"]
+    base_layout = tmp_path / "synthetic-base"
+    base_digest, _, _ = oci(base_layout)
+    base = native_inputs.BaseBinding.capture(
+        base_layout, base_digest, receipt.platform, "a" * 64, maximum=1048576
+    )
+    receipt = receipt.model_copy(
+        update={
+            "section": "codex-cli",
+            "image": "codex-cli",
+            "build": native_inputs.BuildBinding(input_key="b" * 64, base=base),
+        }
+    )
+    path = config.path(config.runlog.root) / "build-1" / config.runlog.events
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    rows[0]["argv"] += ["--candidate-image", "codex-cli"]
+    rows[1]["argv"] += ["--candidate-image", "codex-cli"]
+    if defect == "wrong-selector":
+        rows[0]["argv"][-1] = "agy"
+    if defect == "wrong-process":
+        rows[1]["argv"][-1] = "agy"
+    if defect == "missing-selector":
+        rows[0]["argv"] = rows[0]["argv"][:-2]
+    if defect == "wrong-source":
+        rows[0]["head"] = "e" * 40
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    if defect:
+        with pytest.raises(ValueError):
+            native_proof.built(config, receipt)
+    else:
+        assert native_proof.built(config, receipt) == path
+
+
+@pytest.mark.parametrize(
     "defect",
     ["missing", "failed", "torn", "wrong-command", "non-native", "foreign-source", "no-receipt"],
 )

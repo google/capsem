@@ -68,11 +68,23 @@ def workflow_key(root: Path, name: str, base: str | None = None) -> str:
 
 def metadata(layout: Path, subject: str, platform: str, maximum: int):
     safe_tree(layout)
-    verify(layout, subject, platform)
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", subject):
+        raise ValueError("native subject is not an immutable SHA256 descriptor")
+    (entry,) = json.loads(read_file(layout / "index.json", maximum))["manifests"]
     blob = layout / "blobs/sha256"
     original = read_file(blob / subject[7:], maximum)
+    if (entry["digest"], entry["size"]) != (subject, len(original)):
+        raise ValueError("native index differs from original subject descriptor")
     manifest = json.loads(original)
+    for descriptor in (manifest["config"], *manifest["layers"]):
+        if (
+            not re.fullmatch(r"sha256:[0-9a-f]{64}", descriptor["digest"])
+            or type(descriptor["size"]) is not int
+            or descriptor["size"] <= 0
+        ):
+            raise ValueError("native blob descriptor is not immutable and bounded")
     config = read_file(blob / manifest["config"]["digest"][7:], maximum)
+    verify(layout, subject, platform)
     return original, config, manifest, json.loads(config)
 
 

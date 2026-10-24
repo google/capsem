@@ -13,6 +13,101 @@ from tests.fixtures.oci.test_pinned_image import _layout
 from tests.fixtures.oci.test_producer_evidence import output
 
 
+def test_new_app_receipts_require_current_original_build_binding(monkeypatch, tmp_path):
+    from tests.fixtures.oci import native_inputs
+    from tests.fixtures.oci.test_native_inputs import oci
+
+    config, image, _, _ = fixture(monkeypatch, tmp_path)
+    layout = tmp_path / "images/official"
+    digest, _, _ = oci(layout)
+    image.layout_path = lambda value: layout
+    image.stage = lambda: layout.parent
+    image.config = config
+    settings = image.settings()
+    settings.name = "codex-cli"
+    settings.repository = "ghcr.io/google/capsem/codex-cli"
+    produced = tmp_path / "official-output"
+    output(produced, digest, repository=settings.repository, architecture="amd64")
+    producer_evidence.stage(layout, produced, settings.repository, "amd64", maximum=1048576)
+    image.section = "codex-cli"
+    image.settings = lambda: settings
+    base = native_inputs.BaseBinding.capture(
+        layout, digest, "linux/amd64", "a" * 64, maximum=1048576
+    )
+
+    def key(root, name, base=None):
+        return ("a" if name == "base" else "b") * 64
+
+    monkeypatch.setattr(native_inputs, "workflow_key", key)
+    original = native.source(config.root)
+    with pytest.raises(ValueError, match="binding"):
+        native.record(config, image, digest, "linux/amd64", original)
+    build = native_inputs.BuildBinding(input_key="b" * 64, base=base)
+    native.record(config, image, digest, "linux/amd64", original, build=build)
+    receipt, found = native.selected(config, image)
+    assert found == layout and receipt.build == build
+    data = json.loads(native.receipt_path(config, image.section).read_text())
+    data["build"]["input_key"] = "e" * 64
+    native.receipt_path(config, image.section).write_text(json.dumps(data))
+    with pytest.raises(ValueError, match="inputs"):
+        native.selected(config, image)
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["debug_image", "build", "--receipt", "--candidate-image", "codex-cli"],
+        ["reference_image", "prepare", "--receipt", "--candidate-image", "codex-cli"],
+        ["reference_image", "build", "--candidate-image", "codex-cli"],
+        ["reference_image", "build", "--receipt", "--candidate-image", "claude-desktop"],
+    ],
+)
+def test_candidate_cli_cannot_substitute_default_prepare_or_debug_pin(args):
+    from tests.fixtures.oci import pinned_image
+
+    with pytest.raises(SystemExit):
+        pinned_image.main(args)
+
+
+def test_candidate_cli_records_actual_producer_inside_its_existing_lease(monkeypatch, tmp_path):
+    from contextlib import contextmanager
+
+    from tests.fixtures.oci import native_build, pinned_image
+
+    config = SimpleNamespace(host_arch=lambda: SimpleNamespace(docker_platform="linux/amd64"))
+    original = native.Source(commit="a" * 40, tree="b" * 40)
+    image, digest, binding = object(), "sha256:" + "c" * 64, object()
+    held = False
+
+    @contextmanager
+    def produce(actual, name, platform):
+        nonlocal held
+        assert actual is config and name == "agy" and platform == "linux/amd64"
+        held = True
+        yield image, digest, binding
+        held = False
+
+    calls = []
+
+    def record(actual, selected, subject, platform, source, *, build):
+        assert held and (actual, selected, subject, platform, source, build) == (
+            config,
+            image,
+            digest,
+            "linux/amd64",
+            original,
+            binding,
+        )
+        calls.append(subject)
+
+    monkeypatch.setattr(pinned_image, "_config", lambda: config)
+    monkeypatch.setattr(native, "source", lambda _: original)
+    monkeypatch.setattr(native_build, "produce", produce)
+    monkeypatch.setattr(native, "record", record)
+    pinned_image.main(["reference_image", "build", "--receipt", "--candidate-image", "agy"])
+    assert calls == [digest] and not held
+
+
 def fixture(monkeypatch, tmp_path):
     layout, digest, _ = _layout(tmp_path / "images" / "candidate", architecture="amd64")
     repository = "ghcr.io/google/capsem/capsem-debug"

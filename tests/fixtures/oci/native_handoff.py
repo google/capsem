@@ -180,7 +180,11 @@ def stage(config):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("select", "stage"))
-    parser.add_argument("section", nargs="?", choices=sorted(SECTIONS))
+    parser.add_argument(
+        "section",
+        nargs="?",
+        choices=[*SECTIONS, "codex-cli", "claude-code", "agy", "antigravity-desktop"],
+    )
     args = parser.parse_args(argv)
     config = load(ROOT)
     if args.action == "stage":
@@ -191,8 +195,11 @@ def main(argv=None):
         if not args.section:
             parser.error("select requires a fixed section")
         # Typed single-line GitHub action output, never parse build stdout.
+        from tests.fixtures.oci.native_build import candidate
+
+        image = SECTIONS.get(args.section) or candidate(config, args.section)
         with (
-            leased(config, SECTIONS[args.section]) as (_, layout),
+            leased(config, image) as (_, layout),
             Path(os.environ["GITHUB_OUTPUT"]).open("a") as stream,
         ):
             stream.write(config.functional.native_images.layout_output + "=" + str(layout) + "\n")

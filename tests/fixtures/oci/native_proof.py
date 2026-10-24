@@ -188,17 +188,25 @@ def built(config, receipt):
     directories = sorted(path for path in root.iterdir() if path.is_dir() and not path.is_symlink())
     if len(directories) > settings.journal_max_runs:
         raise ValueError("native producer journal budget exceeded")
-    command = {"debug_image": "debug-image", "reference_image": "reference-image"}[receipt.section]
-    selected = getattr(config.functional, receipt.section)
+    command = "debug-image" if receipt.section == "debug_image" else "reference-image"
+    selected = (
+        getattr(config.functional, receipt.section)
+        if receipt.section in ("debug_image", "reference_image")
+        else config.functional.native_images.apps[receipt.section]
+    )
+    candidate = ["--candidate-image", receipt.image] if receipt.build is not None else []
+    if receipt.section not in ("debug_image", "reference_image") and not candidate:
+        raise ValueError("native app producer requires original build binding")
     expected = uv_run(
         config,
         "python",
         config.root / selected.script,
-        receipt.section,
+        "reference_image" if candidate else receipt.section,
         "build",
         "--platform",
         receipt.platform,
         "--receipt",
+        *candidate,
     )
     found = []
     for directory in directories:
@@ -223,7 +231,7 @@ def built(config, receipt):
             raise ValueError("native producer journal must contain one complete run")
         if (start.get("platform"), start.get("machine")) != (settings.system, settings.machine):
             raise ValueError("native producer host differs")
-        if start.get("argv") != ["capsem-gate", command, "--candidate-receipt"]:
+        if start.get("argv") != ["capsem-gate", command, "--candidate-receipt", *candidate]:
             raise ValueError("native producer invocation differs")
         executions = [
             row

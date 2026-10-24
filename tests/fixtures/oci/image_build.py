@@ -80,8 +80,11 @@ def build(image, selected: str | None = None, *, base_image: str | None = None, 
     print(f"  layout: {layout}")
     print(f"  docker: {tag}")
     print(f"  original evidence: {layout / producer_evidence.DIRECTORY}")
-    print(f"Pin it in config/gate.toml [functional.{image.section}] digests:")
-    print(f'  "{platform}" = "{digest}"')
+    if validate is None:
+        print(f"Pin it in config/gate.toml [functional.{image.section}] digests:")
+        print(f'  "{platform}" = "{digest}"')
+    else:
+        print("Native candidate only; functional digest pins unchanged.")
     return digest
 
 

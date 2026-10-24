@@ -331,7 +331,18 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("action", choices=("prepare", "build"))
     parser.add_argument("--platform", help="linux/<arch>; this host's by default")
     parser.add_argument('--receipt', action='store_true')
+    parser.add_argument('--candidate-image', choices=('dev', 'codex-cli', 'claude-code', 'agy', 'antigravity-desktop'))
     args = parser.parse_args(argv)
+    if args.candidate_image:
+        if (args.section, args.action, args.receipt) != ('reference_image', 'build', True):
+            parser.error('--candidate-image requires reference_image build --receipt')
+        from tests.fixtures.oci import native_build, native_candidates
+        original = native_candidates.source(ROOT)
+        config = _config()
+        selected = args.platform or config.host_arch().docker_platform
+        with native_build.produce(config, args.candidate_image, selected) as (image, digest, binding):
+            native_candidates.record(config, image, digest, selected, original, build=binding)
+        return
     image = SECTIONS[args.section]
     if args.receipt:
         if args.action != 'build':

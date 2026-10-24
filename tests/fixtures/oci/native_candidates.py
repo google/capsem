@@ -12,11 +12,13 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 from capsem_builder.gate.configschema import Strict
+from capsem_builder.gate.functionalschema import NativeAppName
 from pydantic import StringConstraints
 
 from . import producer_evidence, published_root
+from .native_inputs import BuildBinding
 
-Section = Literal["debug_image", "reference_image"]
+Section = Literal["debug_image", "reference_image", NativeAppName]
 Commit = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{40}$")]
 Digest = Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
 
@@ -36,6 +38,7 @@ class Receipt(Strict):
     config: Digest
     root: Digest
     root_integrity: Annotated[str, StringConstraints(pattern=r"^blake3:[0-9a-f]{64}$")]
+    build: BuildBinding | None = None
 
 
 def source(root: Path) -> Source:
@@ -66,18 +69,46 @@ def contained(root: Path, path: Path) -> Path:
 
 
 def receipt_path(config, section: Section) -> Path:
-    if section not in ("debug_image", "reference_image"):
+    if section not in (
+        "debug_image",
+        "reference_image",
+        "codex-cli",
+        "claude-code",
+        "agy",
+        "antigravity-desktop",
+    ):
         raise ValueError("native candidate section is not allowlisted")
     directory = config.path(config.functional.native_images.receipt_dir)
     return contained(config.root, directory / (section + ".json"))
 
 
-def identity(image, digest: str, selected_platform: str, original: Source) -> Receipt:
+def identity(
+    config,
+    image,
+    digest: str,
+    selected_platform: str,
+    original: Source,
+    *,
+    build: BuildBinding | None = None,
+) -> Receipt:
     settings = image.settings()
     layout = image.layout_path(digest)
     contained(image.stage(), layout)
     if layout.parent != image.stage():
         raise ValueError("native image layout is not a direct managed generation")
+    if image.section not in ("debug_image", "reference_image") and build is None:
+        raise ValueError("native app requires original build binding")
+    if build is not None:
+        if image.section == "debug_image":
+            raise ValueError("debug fixture cannot claim an official base binding")
+        build.require(
+            config.root,
+            settings.name,
+            layout,
+            digest,
+            selected_platform,
+            config.functional.native_images.receipt_max_bytes,
+        )
     producer_evidence.ready(
         layout,
         settings.repository,
@@ -96,17 +127,26 @@ def identity(image, digest: str, selected_platform: str, original: Source) -> Re
         config=manifest["config"]["digest"],
         root=root["layers"][0]["digest"],
         root_integrity=root["annotations"]["org.capsem.rootfs.blake3"],
+        build=build,
     )
 
 
-def record(config, image, digest: str, selected_platform: str, original: Source) -> None:
+def record(
+    config,
+    image,
+    digest: str,
+    selected_platform: str,
+    original: Source,
+    *,
+    build: BuildBinding | None = None,
+) -> None:
     if (
         source(config.root) != original
         or host_platform() != selected_platform
         or selected_platform != config.functional.native_images.platform
     ):
         raise ValueError("native candidate source/platform changed during production")
-    receipt = identity(image, digest, selected_platform, original)
+    receipt = identity(config, image, digest, selected_platform, original, build=build)
     path = receipt_path(config, image.section)
     data = receipt.model_dump_json().encode()
     if len(data) > config.functional.native_images.receipt_max_bytes:
@@ -128,7 +168,9 @@ def selected(config, image) -> tuple[Receipt, Path]:
         raise ValueError("native candidate source/platform differs")
     layout = image.stage() / receipt.layout_key
     contained(image.stage(), layout)
-    expected = identity(image, receipt.subject, receipt.platform, receipt.source)
+    expected = identity(
+        config, image, receipt.subject, receipt.platform, receipt.source, build=receipt.build
+    )
     if receipt != expected or layout != image.layout_path(receipt.subject):
         raise ValueError("native candidate identity differs from original producer")
     return receipt, layout
