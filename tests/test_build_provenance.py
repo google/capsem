@@ -202,3 +202,58 @@ def test_every_package_builder_enforces_exact_provenance() -> None:
         == 1
     ), "the macOS publication builder must reject stale provenance directly"
     assert "uv run --project build_system --frozen capsem-gate cross-compile" in release_workflow
+
+
+@pytest.mark.parametrize("declared,stale", [(True, False), (False, False), (True, True)])
+def test_macos_package_caller_checks_the_revision_it_actually_built(
+    tmp_path: Path, declared: bool, stale: bool
+) -> None:
+    repo = _make_test_repository(tmp_path)
+    (repo / "Cargo.toml").write_text('version = "0.7.1"\n')
+    package_dir = repo / "build_system/packaging/macos"
+    package_dir.mkdir(parents=True)
+    caller = package_dir / "build-test-macos-package.sh"
+    shutil.copy2(REPO_ROOT / "build_system/packaging/macos" / caller.name, caller)
+    checker = repo / "build_system/scripts/build/check-build-provenance.sh"
+    checker.parent.mkdir(parents=True)
+    shutil.copy2(PROVENANCE_CHECK, checker)
+    frontend = repo / "build_system/scripts/web/check-web-surface.sh"
+    frontend.parent.mkdir(parents=True)
+    frontend.write_text("#!/bin/sh\nexit 0\n")
+    # Stop at the first real post-provenance package boundary. No fake native
+    # package/result is produced, and the original checker executes unchanged.
+    (package_dir / "build-pkg.sh").write_text(
+        "#!/bin/sh\necho PACKAGE_STAGE_REACHED\nexit 23\n"
+    )
+    tools = repo / "test-tools"
+    tools.mkdir()
+    for name, body in {"cargo": "exit 0", "uname": "echo Darwin"}.items():
+        tool = tools / name
+        tool.write_text(f"#!/bin/sh\n{body}\n")
+        tool.chmod(0o755)
+    revision = "1" * 40 if declared else _run(
+        ["git", "rev-parse", "--short", "HEAD"], cwd=repo
+    ).stdout.strip()
+    reported = "1" * 39 + "2" if stale else revision
+    release = repo / "cache/target/cargo/release"
+    release.mkdir(parents=True)
+    _fake_capsem(release, f"capsem 0.7.1 (build {reported}.1785231406 ts=dev)")
+    content = repo / "runtime"
+    content.mkdir()
+    env = os.environ.copy()
+    env["PATH"] = str(tools) + os.pathsep + env["PATH"]
+    env.pop("CAPSEM_BUILD_REVISION", None)
+    if declared:
+        env["CAPSEM_BUILD_REVISION"] = revision
+    result = subprocess.run(
+        ["bash", str(caller), "--assets-dir", str(content), "--sbom", str(content / "sbom.json")],
+        cwd=repo, env=env, capture_output=True, text=True, timeout=10, check=False,
+    )
+    if stale:
+        assert result.returncode == 1
+        assert "does not embed exact source revision " + revision in result.stderr
+        assert "PACKAGE_STAGE_REACHED" not in result.stdout
+    else:
+        assert result.returncode == 23, result.stdout + result.stderr
+        assert "Exact build provenance verified: " + revision in result.stdout
+        assert "PACKAGE_STAGE_REACHED" in result.stdout

@@ -75,7 +75,8 @@ cargo build --release \
     -p capsem-admin \
     -p capsem-mock-server \
     -p capsem-bench
-bash build_system/scripts/build/check-build-provenance.sh "$ROOT/cache/target/cargo/release/capsem"
+EXPECTED_REVISION="${CAPSEM_BUILD_REVISION:-$(git -C "$ROOT" rev-parse --short HEAD)}"
+bash build_system/scripts/build/check-build-provenance.sh "$ROOT/cache/target/cargo/release/capsem" "$EXPECTED_REVISION"
 bash "$SCRIPT_DIR/build-pkg.sh" \
     --manifest "$MANIFEST_URL" \
     "$ROOT/cache/target/cargo/release/bundle/macos/Capsem.app" \

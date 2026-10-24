@@ -201,6 +201,8 @@ def test_local_package_consumes_the_binaries_cargo_produced(tmp_path: Path) -> N
     result = subprocess.run(
         [
             "bash", "-c", r'''
+            # This assembly-only fixture models the explicit CI source binding.
+            export CAPSEM_BUILD_REVISION=1111111111111111111111111111111111111111
             cargo() { :; }
             uname() { echo Darwin; }
             bash() {
