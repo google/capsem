@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Preserve the active terminal viewer's queued input when a VM suspend is
+  rejected, while continuing to reject stale viewers and fenced focus changes.
+
 - Give sealed install qualification probes a locally resolvable hostname,
   preserving disabled networking and passwordless-sudo validation.
 

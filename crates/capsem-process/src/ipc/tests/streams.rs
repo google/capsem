@@ -214,3 +214,46 @@ async fn a_stale_view_cannot_resize_or_type_into_the_active_terminal() {
         matches!(controls.recv().await.unwrap(), ServiceToProcess::TerminalInput { data } if data == b"active view")
     );
 }
+
+#[tokio::test]
+async fn sealed_controller_input_survives_rollback_in_the_ordered_command_queue() {
+    let temp = tempfile::tempdir().unwrap();
+    let (dispatcher, mut controls) = Dispatcher::new(temp.path());
+    let (tx, rx) = connect_as(&dispatcher, capsem_proto::handshake::STREAM_PEER_ID).await;
+    tx.send(ServiceToProcess::StartTerminalStream).await.unwrap();
+    tx.send(ServiceToProcess::TerminalFocus { cols: 101, rows: 33 })
+        .await
+        .unwrap();
+    assert!(matches!(
+        controls.recv().await.unwrap(),
+        ServiceToProcess::TerminalResize { .. }
+    ));
+    dispatcher.session_terminal.seal_views();
+    tx.send(ServiceToProcess::TerminalInput {
+        data: b"queued during suspend".to_vec(),
+    })
+    .await
+    .unwrap();
+    // Ping is an ordered IPC barrier: the input was handled while sealed,
+    // rather than merely arriving after rollback happened to reopen the view.
+    tx.send(ServiceToProcess::Ping).await.unwrap();
+    loop {
+        if matches!(
+            tokio::time::timeout(Duration::from_secs(1), rx.recv())
+                .await
+                .unwrap()
+                .unwrap(),
+            ProcessToService::Pong
+        ) {
+            break;
+        }
+    }
+    dispatcher.session_terminal.resume_views();
+    assert!(matches!(
+        tokio::time::timeout(Duration::from_secs(1), controls.recv()).await.unwrap().unwrap(),
+        ServiceToProcess::TerminalInput { data } if data == b"queued during suspend"
+    ));
+    assert!(tokio::time::timeout(Duration::from_millis(20), controls.recv())
+        .await
+        .is_err());
+}

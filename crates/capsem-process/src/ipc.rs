@@ -325,7 +325,10 @@ pub(crate) async fn handle_ipc_connection(
                 }
             }
             ServiceToProcess::TerminalInput { data } => {
-                if stream_role && !terminal_view.is_some_and(|view| session_terminal.controls(view)) {
+                // Keep authorized input in the bounded command queue behind
+                // Suspend. Its fence blocks mutation, not retained identity:
+                // rollback must not silently lose frames read while sealed.
+                if stream_role && !terminal_view.is_some_and(|view| session_terminal.retains_controller(view)) {
                     continue;
                 }
                 capsem_core::try_send!(
