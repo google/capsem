@@ -8,6 +8,26 @@ from tests.fixtures.oci import native_handoff as handoff
 from tests.fixtures.oci.test_native_handoff import fixture
 
 
+def test_same_producer_journal_owner_checks_a_copied_artifact(monkeypatch, tmp_path):
+    import shutil
+
+    from tests.fixtures.oci import native_proof
+
+    config, selected = fixture(monkeypatch, tmp_path)
+    _, receipt, _, _ = selected["reference_image"]
+    directory = tmp_path / "downloaded-proof"
+    directory.mkdir()
+    original = config.path(config.runlog.root) / "build-1" / config.runlog.events
+    copied = directory / config.runlog.events
+    shutil.copyfile(original, copied)
+    assert native_proof.built(config, receipt, directory=directory) == copied
+    rows = [json.loads(line) for line in copied.read_text().splitlines()]
+    rows[1]["argv"][-1] = "--not-the-producer"
+    copied.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    with pytest.raises(ValueError):
+        native_proof.built(config, receipt, directory=directory)
+
+
 @pytest.mark.parametrize(
     "defect", [None, "wrong-selector", "wrong-process", "missing-selector", "wrong-source"]
 )

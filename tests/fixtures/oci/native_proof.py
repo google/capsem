@@ -181,11 +181,15 @@ def completed(config, receipt, layout, outcome):
     return matches[0]
 
 
-def built(config, receipt):
+def built(config, receipt, *, directory=None):
     """The existing producer's completed gate, not a mutable tag inspection."""
     settings = config.functional.native_images
     root = config.path(config.runlog.root)
-    directories = sorted(path for path in root.iterdir() if path.is_dir() and not path.is_symlink())
+    directories = (
+        [directory]
+        if directory is not None
+        else sorted(path for path in root.iterdir() if path.is_dir() and not path.is_symlink())
+    )
     if len(directories) > settings.journal_max_runs:
         raise ValueError("native producer journal budget exceeded")
     command = "debug-image" if receipt.section == "debug_image" else "reference-image"
@@ -210,7 +214,7 @@ def built(config, receipt):
     )
     found = []
     for directory in directories:
-        path = candidates.contained(root, directory / config.runlog.events)
+        path = candidates.contained(directory.parent, directory / config.runlog.events)
         if not path.exists():
             continue
         data = producer_evidence.read_file(path, settings.journal_max_bytes)
