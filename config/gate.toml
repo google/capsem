@@ -3439,6 +3439,31 @@ target_scope = "both"
 reason = "First owned stop closes original listener, retires exact worker identity and settles original session directory, without replay."
 cases = {"original-owner-settled" = "cycles"}
 
+[benchmark.routes.workload_controls]
+cycles = 2
+quick_cycles = 1
+timeout_seconds = 180.0
+exec_timeout_seconds = 15
+max_response_bytes = 2097152
+poll_seconds = 0.05
+ram_mb = 1024
+cpus = 2
+file_sizes = [4096, 1048576]
+timeline_limit = 200
+browser_url = "https://example.invalid/route-browser"
+
+[benchmark.routes.workload_controls.endpoints."POST /vms/{id}/browser/acknowledge"]
+collector = "routes"
+target_scope = "both"
+reason = "Original genuine xdg-open request cleared across info/list, old replay preserves newer request and wrong owner generation refuses with409."
+cases = {"original-request-cleared" = "cycles"}
+
+[benchmark.routes.workload_controls.endpoints."POST /vms/{id}/files/content"]
+collector = "routes"
+target_scope = "both"
+reason = "Original bounded bytes independently verified inside workload and file listing; normal producer drain precedes exact public import events and rule counters."
+cases = {"bytes-4096" = "cycles", "bytes-1048576" = "cycles"}
+
 [benchmark.routes.unmeasured]
 "DELETE /connections/authorizations/{transaction_id}" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
 "DELETE /connections/{connection_id}" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
@@ -3460,11 +3485,9 @@ cases = {"original-owner-settled" = "cycles"}
 "POST /run" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
 "POST /update/apply" = { owner = "crates/capsem-service/src/tests/update_routes.rs", reason = "Needs hermetic update subprocess and isolated runtime; plan-only response must not certify live update performance." }
 "POST /update/check" = { owner = "crates/capsem-service/src/tests/update_routes.rs", reason = "Needs hermetic update subprocess and isolated runtime; plan-only response must not certify live update performance." }
-"POST /vms/{id}/browser/acknowledge" = { owner = "tests/ironbank/kingslanding/test_workload_browser.py", reason = "Needs real forwarded browser request and VM-owner acknowledgement; no borrowed stale handoff metadata." }
 "POST /vms/{id}/credential-grants" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
 "POST /vms/{id}/exposures" = { owner = "tests/ironbank/kingslanding/test_preview.py", reason = "Needs actual exposure ownership and single-use preview capability lifecycle, including revoke/delete cleanup." }
 "POST /vms/{id}/exposures/{exposure_id}/preview-session" = { owner = "tests/ironbank/kingslanding/test_preview.py", reason = "Needs actual exposure ownership and single-use preview capability lifecycle, including revoke/delete cleanup." }
-"POST /vms/{id}/files/content" = { owner = "tests/ironbank/test_files_process_ledger.py", reason = "Needs real guest-owned file and bounded content/forensic ledger proof; uploads mutate state and require isolated cleanup." }
 "POST /vms/{id}/pause" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
 "POST /vms/{id}/resume" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
 "POST /vms/{id}/save" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
@@ -3474,6 +3497,7 @@ cases = {"original-owner-settled" = "cycles"}
 
 # A timed idle/read case does not certify every state of the same operation.
 [benchmark.routes.unmeasured_cases]
+"POST /vms/{id}/files/content [physical-import-archive]" = { owner = "tests/ironbank/test_files_process_ledger.py", reason = "Public import event/counter proof is sourced after drain; physical fs/security/archive joins remain canonical FilesProcessLedger proof, never direct collector DB reads." }
 "POST /vms/{id}/stop [physical-producer-ledger-drain]" = { owner = "tests/ironbank/test_policy_mutation_routes.py", reason = "Public stop promises process exit; physical producer ledger flush/drain proof remains canonical Ironbank and is not inferred from status or path presence." }
 "POST /vms/{id}/exec [per-request-cpu-limits]" = { owner = "tests/ironbank/kingslanding/test_workload_exec.py", reason = "Finite known workload output does not certify per-request CPU limit enforcement, saturation or cancellation behavior." }
 

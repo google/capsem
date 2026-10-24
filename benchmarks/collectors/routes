@@ -53,6 +53,7 @@ from benchmarks.helpers.route_policy import collect_policy
 from benchmarks.helpers.route_proxies import collect_proxies
 from benchmarks.helpers.route_requests import Target, request, request_input, route_load_config
 from benchmarks.helpers.route_validation import validate_snapshot, validate_wire
+from benchmarks.helpers.route_workload_controls import collect_workload_controls
 from benchmarks.helpers.stream_measurements import service_gateway
 
 WARMUP = 2
@@ -181,6 +182,7 @@ def main() -> int:
         metrics.update(collect_lifecycle(args.quick))
         metrics.update(collect_networks(args.quick))
         metrics.update(collect_proxies(args.quick))
+        metrics.update(collect_workload_controls(args.quick))
 
     service = ServiceInstance()
     service.assets_dir = clone_benchmark_assets(

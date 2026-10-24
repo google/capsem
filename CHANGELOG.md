@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Add finite gateway benchmark source cases for genuine workload browser
+  acknowledgement and bounded file uploads, with independent workspace reads
+  and public ledger effects. Physical archive proof remains separately owned.
+
 - Add finite standalone proxy create, original lease renewal and stop cases to
   gateway performance coverage, with independent listener, worker and session
   effects. Source coverage remains distinct from measured release results.

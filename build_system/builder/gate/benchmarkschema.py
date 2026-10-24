@@ -13,6 +13,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field, PositiveFloat, PositiveInt, field_validator
 
+from .benchmarkcontrolschema import WorkloadControlConfig
 from .benchmarkimageschema import ImageRouteConfig
 from .benchmarklifecycleschema import LifecycleRouteConfig
 from .benchmarknetworkschema import DiagnosticCorpusConfig, NetworkRouteConfig
@@ -73,6 +74,7 @@ class RouteCoverageConfig(Strict):
     lifecycle: LifecycleRouteConfig
     networks: NetworkRouteConfig
     proxies: ProxyRouteConfig
+    workload_controls: WorkloadControlConfig
     unmeasured: dict[str, RouteDebtConfig]
     internal: dict[str, RouteDebtConfig]
     unmeasured_cases: dict[str, RouteDebtConfig]

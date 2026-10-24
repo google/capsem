@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shlex
 
 from helpers.image_session import WORKSPACE, workload_exec
@@ -52,3 +53,26 @@ def expected_file_exports(cases, *, samples: int, load_requests: int, concurrenc
         # Preflight + warm setup + warm/cold samples + concurrent worker setup/load.
         total += targets * (1 + warmup + 2 * count + min(requests, workers) + requests)
     return total
+
+
+def verify_import_evidence(read,vm_id,expected,rule,limit):
+    """Public ledger-owner reads after producer drain; never open its DB here."""
+    status = read(f'/vms/{vm_id}/enforcement/status')
+    rules = [row for row in status['by_rule'] if row['rule_id'] == 'profiles.rules.'+rule]
+    assert len(rules) == 1 and rules[0]['count'] == len(expected) and rules[0]['rule_action'] == 'allow'
+    files = read(f'/vms/{vm_id}/info')['files']
+    imports = [row for row in files['actions'] if row['action'] == 'import']
+    # Image startup may import other paths; the exact rule count and selected
+    # original event IDs below isolate this corpus rather than guessing it.
+    assert len(imports) == 1 and imports[0]['count'] >= len(expected)
+    selected = [row for row in read(f'/vms/{vm_id}/stats/detail')['file_events'] if row['action'] == 'import' and row['path'] in expected]
+    assert len(selected) == len(expected), 'import events missing or duplicated'
+    assert {row['path'] for row in selected} == set(expected)
+    assert len({row['event_id'] for row in selected}) == len(expected)
+    for row in selected:
+        assert row['size'] == expected[row['path']] and row['credential_ref'] is None
+        assert re.fullmatch(r'[0-9a-f]{12}',row['event_id']), 'import event identity invalid'
+    timeline = read(f'/vms/{vm_id}/timeline?layers=fs&limit={limit}')['events']
+    for name in expected:
+        matched = [row for row in timeline if row['layer'] == 'fs' and row['summary'] == 'import '+name]
+        assert len(matched) == 1 and matched[0]['ref'] is not None, 'import timeline event missing or duplicated'

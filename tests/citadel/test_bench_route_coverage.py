@@ -36,7 +36,7 @@ def validate(registered: set[str], coverage: dict) -> None:
         assert entry["cases"] and (ROOT / "benchmarks/collectors/stream").exists(), RATIONALE
         for case in entry["cases"].values():
             assert case["sample_key"] and case["metrics"], RATIONALE
-    for domain in ("images", "policy", "lifecycle", "networks", "proxies"):
+    for domain in ("images", "policy", "lifecycle", "networks", "proxies", "workload_controls"):
         finite = coverage.get(domain, {}).get("endpoints", {})
         assert not (measured & set(finite)), RATIONALE
         for entry in finite.values():
@@ -84,7 +84,7 @@ def test_gateway_method_topology_matches_service() -> None:
 
 
 def test_unmeasured_operations_remain_explicit_debt() -> None:
-    assert len(config()["unmeasured"]) <= 31, RATIONALE
+    assert len(config()["unmeasured"]) <= 29, RATIONALE
     assert len(config()["internal"]) == 7, RATIONALE
 
 
@@ -212,10 +212,10 @@ def test_finite_empty_network_and_synthetic_diagnostics_bind_exact_four_operatio
     assert {case['case'] for case in diagnostics} == {'synthetic-populated', 'synthetic-limited', 'synthetic-later-since'}, RATIONALE
     assert {'GET /networks/{id}/logs', 'PUT /networks/{id}/members/{vm_id}', 'DELETE /networks/{id}/members/{vm_id}'} <= set(coverage['unmeasured']), RATIONALE
     operations = measured_operations(coverage) | set(coverage['streaming'])
-    for domain in ('images', 'policy', 'lifecycle', 'networks', 'proxies'):
+    for domain in ('images', 'policy', 'lifecycle', 'networks', 'proxies', 'workload_controls'):
         operations |= set(coverage[domain]['endpoints'])
-    assert len(operations) == 85 and len(coverage['unmeasured']) == 31, RATIONALE
-    assert len(coverage['internal']) == 7 and len(coverage['unmeasured_cases']) == 11, RATIONALE
+    assert len(operations) == 87 and len(coverage['unmeasured']) == 29, RATIONALE
+    assert len(coverage['internal']) == 7 and len(coverage['unmeasured_cases']) == 12, RATIONALE
     del coverage['networks']['endpoints']['POST /networks']
     with pytest.raises(AssertionError, match='POST /networks'):
         validate(registered_operations(), coverage)
@@ -229,3 +229,15 @@ def test_proxy_original_operations_cannot_overlap_polling_or_disappear():
     del endpoints['POST /proxies/{id}/heartbeat']
     with pytest.raises(AssertionError, match=r'POST /proxies/\{id\}/heartbeat'):
         validate(registered_operations(), coverage)
+
+
+def test_genuine_browser_upload_cases_keep_physical_archive_proof_explicit():
+    import copy
+    coverage = copy.deepcopy(config())
+    cases = coverage['workload_controls']['endpoints']
+    assert set(cases) == {'POST /vms/{id}/browser/acknowledge','POST /vms/{id}/files/content'}, RATIONALE
+    assert set(cases['POST /vms/{id}/files/content']['cases']) == {'bytes-4096','bytes-1048576'}, RATIONALE
+    assert coverage['unmeasured_cases']['POST /vms/{id}/files/content [physical-import-archive]']['owner'] == 'tests/ironbank/test_files_process_ledger.py', RATIONALE
+    del cases['POST /vms/{id}/files/content']
+    with pytest.raises(AssertionError,match='files/content'):
+        validate(registered_operations(),coverage)
