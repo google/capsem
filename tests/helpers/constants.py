@@ -4,6 +4,8 @@ Single source of truth for VM resources, timeouts, and other values
 used across capsem-mcp and capsem-service test suites.
 """
 
+from __future__ import annotations
+
 import os
 from collections.abc import Mapping
 from pathlib import Path

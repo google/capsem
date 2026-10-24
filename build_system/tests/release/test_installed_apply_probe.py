@@ -5,6 +5,8 @@ from __future__ import annotations
 import http.server
 import json
 import socketserver
+import subprocess
+import sys
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -282,3 +284,48 @@ def test_automatic_control_rejects_ignored_setting(tmp_path):
 
     with pytest.raises(ValueError, match="did not settle"):
         probe().set_automatic(Ignored(), arguments(tmp_path), False)
+
+
+@pytest.mark.parametrize("interpreter", [sys.executable, "/usr/bin/python3"])
+def test_complete_staged_apply_probe_is_stdlib_importable(tmp_path, interpreter):
+    from build_system.packaging.macos.macos_candidate_content import stage_guest_scripts
+
+    executable = Path(interpreter)
+    if not executable.is_file():
+        pytest.skip("host does not provide the guest-compatible system Python")
+    version = subprocess.run(
+        [interpreter, "-S", "-c", "import sys; print(sys.version.split()[0])"],
+        env={},
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=True,
+    ).stdout.strip()
+    if interpreter == "/usr/bin/python3" and not version.startswith("3.9."):
+        pytest.skip(f"system Python is {version}, not the guest-compatible3.9")
+    share = tmp_path / "share"
+    stage_guest_scripts(Path(__file__).resolve().parents[3], share)
+    result = subprocess.run(
+        [interpreter, "-S", "-m", "helpers.installed_apply_probe", "--help"],
+        cwd=share,
+        env={},
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 0, f"Python {version}: {result.stdout}{result.stderr}"
+    assert "usage:" in result.stdout
+
+
+def test_staged_constants_postpone_annotations_for_guest_python39():
+    import ast
+
+    path = Path(__file__).resolve().parents[3] / "tests/helpers/constants.py"
+    tree = ast.parse(path.read_text(), feature_version=(3, 9))
+    assert any(
+        isinstance(node, ast.ImportFrom)
+        and node.module == "__future__"
+        and any(alias.name == "annotations" for alias in node.names)
+        for node in tree.body
+    ), "guest Python3.9 must not eagerly evaluate modern union annotations"
