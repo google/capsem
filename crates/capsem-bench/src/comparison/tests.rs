@@ -297,6 +297,7 @@ fn installed_record(source: &str, package: &str, predecessor: &str) -> schema::R
         serde_json::json!({
             "schema":"capsem.bench.install.v1", "scope":"binary_apply_only",
             "source_commit":row.release.commit, "owner":"linux-docker-systemd",
+            "transport":"service_uds",
             "before":phase("c",predecessor,"0.6.6"), "after":phase(source,package,"0.7.1"),
             "receipt_sha256":"e".repeat(64)
         })
@@ -343,4 +344,27 @@ fn installed_provenance_rejects_nonactionable_versions_and_foreign_owner() {
         .sidecar
         .map(|value| value.replace("linux-docker-systemd", "macos-tart"));
     assert!(evidence::eligible(&row).is_err());
+}
+
+#[test]
+fn installed_transport_is_explicit_and_comparisons_never_mix_uds_with_gateway() {
+    let original = installed_record("a", "a", "b");
+    let mut gateway = original.clone();
+    gateway.sidecar = gateway
+        .sidecar
+        .map(|value| value.replace("service_uds", "gateway_http"));
+    assert!(evidence::eligible(&original).is_ok());
+    assert!(evidence::eligible(&gateway).is_ok());
+    assert!(evidence::compatible(&original, &gateway).is_err());
+    for transport in [None, Some("missing_transport"), Some("http")] {
+        let mut invalid = original.clone();
+        let mut sidecar: serde_json::Value = serde_json::from_str(invalid.sidecar.as_ref().unwrap()).unwrap();
+        if let Some(transport) = transport {
+            sidecar["transport"] = transport.into();
+        } else {
+            sidecar.as_object_mut().unwrap().remove("transport");
+        }
+        invalid.sidecar = Some(sidecar.to_string());
+        assert!(evidence::eligible(&invalid).is_err());
+    }
 }

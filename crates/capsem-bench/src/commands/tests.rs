@@ -187,7 +187,7 @@ fn install_collector_receives_the_exact_source_recorded_with_fresh_fitness() {
             "manifest_sha256":digest.repeat(64),"runtime_sha256":"c".repeat(64)})
     };
     let sidecar = serde_json::json!({"schema":"capsem.bench.install.v1","scope":"binary_apply_only",
-        "source_commit":SHA,"owner":"linux-docker-systemd","before":phase(&"b".repeat(40),"b"),
+        "source_commit":SHA,"owner":"linux-docker-systemd","transport":"service_uds","before":phase(&"b".repeat(40),"b"),
         "after":phase(SHA,"a"),"receipt_sha256":"d".repeat(64)})
     .to_string();
     let document =

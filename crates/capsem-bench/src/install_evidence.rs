@@ -24,9 +24,17 @@ struct Proof {
     scope: String,
     source_commit: String,
     owner: String,
+    transport: Transport,
     before: Phase,
     after: Phase,
     receipt_sha256: String,
+}
+
+#[derive(Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum Transport {
+    ServiceUds,
+    GatewayHttp,
 }
 
 fn hex(value: &str, length: usize) -> bool {
@@ -103,11 +111,12 @@ pub(crate) fn eligible(record: &Record) -> Result<()> {
 pub(crate) fn compatible(a: &Record, b: &Record) -> Result<()> {
     let (a, b) = (read(a)?, read(b)?);
     if a.owner != b.owner
+        || a.transport != b.transport
         || a.before != b.before
         || a.after.runtime_sha256 != b.after.runtime_sha256
         || (a.source_commit == b.source_commit && a.after != b.after)
     {
-        bail!("Install predecessor/runtime or same-source candidate inputs changed");
+        bail!("Install transport/predecessor/runtime or same-source candidate inputs changed");
     }
     Ok(())
 }
