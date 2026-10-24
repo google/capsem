@@ -35,6 +35,7 @@ BOUNDARY_FILES = frozenset(
         "build_system/tests/gate/test_criterion_collector.py",
         "build_system/tests/gate/test_criterion_artifact.py",
         "build_system/tests/gate/test_criterion_execution.py",
+        "build_system/tests/gate/test_criterion_resources.py",
         "build_system/tests/fixtures/criterion_cargo_1_97_1/cargo-bench-no-run.jsonl",
         "build_system/tests/fixtures/criterion_cargo_1_97_1/metadata.json",
         "build_system/tests/fixtures/criterion_cargo_1_97_1/provenance.json",

@@ -20,6 +20,7 @@ from capsem_builder.gate import config as gate_config
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "tests"))
 
 SETTINGS = gate_config.load(ROOT).benchmark
 
@@ -102,7 +103,7 @@ def samples_for(root: Path, target: str, expected: set[str], budget: dict[str, i
 
 
 def run_bench(crate: str, target: str, *, sample_size: int | None,
-              budget: dict[str, int] | None = None) -> tuple[dict, dict]:
+              budget: dict[str, int] | None = None) -> tuple[dict, dict, dict]:
     budget = input_budget() if budget is None else budget
     timeout = SETTINGS.run.quick_timeout_secs if sample_size is not None else SETTINGS.run.timeout_secs
     print(f"running {crate}::{target}", file=sys.stderr)
@@ -128,7 +129,7 @@ def run_bench(crate: str, target: str, *, sample_size: int | None,
         print(diagnostic, file=sys.stderr, end="")
         measured, originals = samples_for(output, target, expected, budget)
         return measured, {"crate": crate, "target": target, "generation": generation.name,
-                          "listing": listed, "cases": originals, "execution": execution.receipt}
+                          "listing": listed, "cases": originals, "execution": execution.receipt}, execution.runtime_metrics
 
 
 def main() -> int:
@@ -160,10 +161,12 @@ def main() -> int:
     metrics, receipts = {}, []
     budget = input_budget()
     for crate, target in targets:
-        cases, receipt = run_bench(crate, target,
+        cases, receipt, resources = run_bench(crate, target,
             sample_size=SETTINGS.criterion.quick_sample_size if args.quick else None, budget=budget)
         for case, values in cases.items():
             metrics[f"{target}.{case}.ns"] = {"unit": "nanoseconds", "samples": values}
+        for name, metric in resources.items():
+            metrics[f"{target}.runtime.{name}"] = metric
         receipts.append(receipt)
     document = {"metrics": metrics, "sidecar": json.dumps({"criterion_inputs": receipts})}
     encoded = json.dumps(document).encode()

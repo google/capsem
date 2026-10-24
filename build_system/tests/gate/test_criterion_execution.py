@@ -20,8 +20,14 @@ ROOT = Path(__file__).resolve().parents[3]
 def test_collector_help_loads_owned_helpers_without_ambient_pythonpath(tmp_path):
     environment = dict(os.environ)
     environment.pop("PYTHONPATH", None)
-    result = subprocess.run([sys.executable,str(ROOT/"benchmarks/collectors/criterion"),"--help"],
-        cwd=tmp_path,env=environment,capture_output=True,text=True,timeout=10)
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "benchmarks/collectors/criterion"), "--help"],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
     assert result.returncode == 0, result.stderr
     assert "--target" in result.stdout
 
@@ -44,6 +50,19 @@ def execution(protocol, monkeypatch):
         process, "load_paths", lambda root: SimpleNamespace(stage=lambda name: stage)
     )
     monkeypatch.setattr(process.sys, "platform", "linux")
+    observers = []
+
+    def resource_observer(settings):
+        observer = SimpleNamespace(
+            result=lambda: (
+                {"observed_cpu_lower_bound_s": {"unit": "seconds", "samples": [0.5]}},
+                {"source_double": True},
+            )
+        )
+        observers.append(observer)
+        return observer
+
+    monkeypatch.setattr(process, "resource_observer", resource_observer)
 
     def capture(command, **kwargs):
         calls.append((command, kwargs))
@@ -116,6 +135,8 @@ def test_exact_prepared_executable_declares_and_measures_with_explicit_bench(
     assert runtime[0][0] == [str(executable), "--bench", "--list"]
     assert runtime[1][0] == [str(executable), "--bench", "--sample-size", "10"]
     assert runtime[0][1]["executable"] == runtime[1][1]["executable"]
+    assert runtime[0][1]["observer"] is None and runtime[1][1]["observer"] is not None
+    assert ready.runtime_metrics["observed_cpu_lower_bound_s"]["samples"] == [0.5]
     assert all("CRITERION_HOME" not in args["environment"] for _, args in calls[:2])
     assert ready.receipt["metadata"]["elapsed_seconds"] == 1
     assert ready.receipt["prepare"]["elapsed_seconds"] == 2
@@ -147,6 +168,15 @@ def test_artifact_replacement_fails_before_or_after_phase(execution, when):
     with pytest.raises(ValueError, match="replaced"):
         ready.run([], root / "measured", "measure")
     assert len(calls) == before + (when == "after")
+
+
+def test_unknown_phase_cannot_silently_omit_measured_resources(execution):
+    prepare, calls, _, _, root = execution
+    ready = prepare()
+    before = len(calls)
+    with pytest.raises(ValueError, match="phase"):
+        ready.run([], root / "unknown", "unknown")
+    assert len(calls) == before
 
 
 @pytest.mark.parametrize(

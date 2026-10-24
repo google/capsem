@@ -33,6 +33,7 @@ def capture(
     budget: dict[str, int],
     policy: processgroup.StopPolicy,
     executable: Path | None = None,
+    observer: processgroup.ForegroundObserver | None = None,
 ) -> tuple[str, float]:
     remaining = deadline - time.monotonic()
     if remaining <= 0:
@@ -55,6 +56,7 @@ def capture(
         executable=executable,
         policy=policy,
         timeout_seconds=remaining,
+        observer=observer,
     )
     elapsed = time.monotonic() - started
     if status:
@@ -72,6 +74,7 @@ class Execution:
     budget: dict[str, int]
     signed: PreparedExecutable | None = None
     receipt: dict = field(default_factory=dict)
+    runtime_metrics: dict = field(default_factory=dict)
 
     def verify(self) -> None:
         self.artifact.verify()
@@ -86,12 +89,15 @@ class Execution:
             )
 
     def run(self, arguments: list[str], home: Path, phase: str) -> str:
+        if phase not in ('declare','measure'):
+            raise ValueError('unknown Criterion runtime phase')
         self.verify()
         environment = {**os.environ, "CRITERION_HOME": str(home)}
         if self.signed:
             environment["CAPSEM_ASSETS_DIR"] = str(self.signed.assets_dir)
         executable = self.signed.executable.path if self.signed else self.artifact.path
         command = [str(self.artifact.path), "--bench", *arguments]
+        observer = resource_observer(self.settings.resources) if phase == "measure" else None
         text, elapsed = capture(
             command,
             root=self.root,
@@ -100,6 +106,7 @@ class Execution:
             budget=self.budget,
             policy=self.policy,
             executable=executable,
+            observer=observer,
         )
         self.verify()
         self.receipt[phase] = {
@@ -107,7 +114,14 @@ class Execution:
             "executable": str(executable),
             "elapsed_seconds": elapsed,
         }
+        if observer is not None:
+            self.runtime_metrics, self.receipt["runtime_resources"] = observer.result()
         return text
+
+
+def resource_observer(settings):
+    from .criterion_resources import CriterionResources
+    return CriterionResources(settings)
 
 
 def prepare(

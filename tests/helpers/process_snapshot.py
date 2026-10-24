@@ -35,41 +35,68 @@ class TreeSnapshot:
 @dataclass(frozen=True)
 class OwnedProcess:
     """Exact process fingerprint retained by the fixture that created it."""
+
     process: psutil.Process
     pid: int
     started_at: float
 
     @classmethod
     def capture(cls, process: psutil.Process) -> OwnedProcess:
-        return cls(process,process.pid,process.create_time())
+        return cls(process, process.pid, process.create_time())
 
 
-def owned_process_snapshot(roots: tuple[OwnedProcess,...], *, maximum: int) -> TreeSnapshot:
-    if type(maximum) is not int or maximum <= 0 or not isinstance(roots,tuple) or not 0 < len(roots) <= maximum:
-        raise ValueError('owned process root budget invalid')
-    found: dict[tuple[int,float],ProcessUsage] = {}
-    stamps: dict[int,float] = {}
+def owned_process_snapshot(
+    roots: tuple[OwnedProcess, ...], *, maximum: int, maximum_processes: int | None = None
+) -> TreeSnapshot:
+    if maximum_processes is not None and (
+        type(maximum_processes) is not int or maximum_processes <= 0
+    ):
+        raise ValueError("process snapshot budget invalid")
+    if (
+        type(maximum) is not int
+        or maximum <= 0
+        or not isinstance(roots, tuple)
+        or not 0 < len(roots) <= maximum
+    ):
+        raise ValueError("owned process root budget invalid")
+    found: dict[tuple[int, float], ProcessUsage] = {}
+    stamps: dict[int, float] = {}
     for root in roots:
-        if not isinstance(root,OwnedProcess) or root.pid <= 1 or root.pid != root.process.pid or root.started_at != root.process.create_time():
-            raise ValueError('owned process fingerprint forged')
+        if (
+            not isinstance(root, OwnedProcess)
+            or root.pid <= 1
+            or root.pid != root.process.pid
+            or root.started_at != root.process.create_time()
+        ):
+            raise ValueError("owned process fingerprint forged")
         if root.pid in stamps and stamps[root.pid] != root.started_at:
-            raise ValueError('owned process identity ambiguous')
+            raise ValueError("owned process identity ambiguous")
         stamps[root.pid] = root.started_at
         try:
             if psutil.Process(root.pid).create_time() != root.started_at:
-                raise RuntimeError('owned process PID replaced')
+                raise RuntimeError("owned process PID replaced")
         except psutil.NoSuchProcess:
             continue  # Real exit is expected while a supervisor replaces its child.
         # Merge overlapping parent/child roots before accumulation, never sum
         # separate peak summaries or charge a gateway twice.
-        found.update(process_tree_snapshot(root.process).processes)
+        snapshot = (
+            process_tree_snapshot(root.process)
+            if maximum_processes is None
+            else process_tree_snapshot(root.process, maximum=maximum_processes)
+        )
+        found.update(snapshot.processes)
+        if maximum_processes is not None and len(found) > maximum_processes:
+            raise ValueError("owned process snapshot budget exceeded")
     return TreeSnapshot(found)
 
 
 def _linux_rss_breakdown(pid: int) -> tuple[int, int, int] | None:
     """Read Linux RSS categories without walking every memory mapping."""
     try:
-        status = (Path(psutil.PROCFS_PATH) / str(pid) / "status").read_text(encoding="utf-8")
+        procfs_root = getattr(psutil, "PROCFS_PATH", None)
+        if procfs_root is None:
+            return None  # This platform does not expose optional Linux RSS categories.
+        status = (Path(procfs_root) / str(pid) / "status").read_text(encoding="utf-8")
     except (AttributeError, OSError):
         return None
     values = {}
@@ -85,7 +112,7 @@ def _linux_rss_breakdown(pid: int) -> tuple[int, int, int] | None:
     return values["RssAnon"], values["RssFile"], values["RssShmem"]
 
 
-def process_tree_snapshot(root: psutil.Process) -> TreeSnapshot:
+def process_tree_snapshot(root: psutil.Process, *, maximum: int | None = None) -> TreeSnapshot:
     """Keep readable CPU/RSS/FD data when extended memory is unavailable.
 
     A process disappearing is normal during teardown. Permission failures on
@@ -93,12 +120,32 @@ def process_tree_snapshot(root: psutil.Process) -> TreeSnapshot:
     of silently undercounting the tree. macOS commonly denies full memory
     inspection of signed processes while exposing the basic counters.
     """
+    if maximum is not None and (type(maximum) is not int or maximum <= 0):
+        raise ValueError("process snapshot budget invalid")
     found = {}
     with contextlib.suppress(psutil.NoSuchProcess):
-        processes = [root, *root.children(recursive=True)]
+        if maximum is None:
+            processes = [root, *root.children(recursive=True)]
+        else:
+            # Bound expansion before recursively traversing an arbitrary tree.
+            processes = []
+            pending = [root]
+            while pending:
+                process = pending.pop()
+                processes.append(process)
+                children = process.children(recursive=False)
+                if len(processes) + len(pending) + len(children) > maximum:
+                    raise ValueError("process snapshot budget exceeded")
+                pending.extend(children)
         for process in processes:
             with contextlib.suppress(psutil.NoSuchProcess):
                 with process.oneshot():
+                    # Bounded fresh-job samples admit live counters only. A
+                    # zombie can lose its Linux process CPU clock and fall back
+                    # to coarser ticks; that is not a new monotonic observation.
+                    # Retirement is separately acknowledged by the child owner.
+                    if maximum is not None and process.status() == psutil.STATUS_ZOMBIE:
+                        continue
                     try:
                         memory = process.memory_full_info()
                     except (psutil.AccessDenied, NotImplementedError):

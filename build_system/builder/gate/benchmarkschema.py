@@ -36,6 +36,7 @@ from .benchmarkpreviewschema import PreviewRouteConfig
 from .benchmarkproxyschema import ProxyRouteConfig
 from .benchmarkreadschema import RouteCaseConfig, RouteCorpusConfig, RouteDebtConfig
 from .benchmarkreloadschema import ReloadRouteConfig
+from .benchmarkresourceschema import CriterionResourceConfig
 from .benchmarkrestartschema import RestartRouteConfig
 from .benchmarkrunpurgeschema import RunPurgeConfig
 from .benchmarksaveschema import SaveRouteConfig
@@ -189,6 +190,7 @@ class BenchmarkCriterionConfig(Strict):
     prepare_runner: str
     entitlements: str
     assets_dir: str
+    resources: CriterionResourceConfig
 
 
 class BenchmarkProtocolConfig(Strict):

@@ -4172,6 +4172,12 @@ debuginfo = 0
 debug_assertions = false
 overflow_checks = false
 test = true
+[benchmark.criterion.resources]
+interval_seconds = 0.05
+stop_timeout_seconds = 2.0
+max_processes = 256
+max_identities = 4096
+max_observations = 100000
 # Summary-only producers are diagnostic, never Criterion raw evidence.
 [benchmark.criterion.diagnostic_targets]
 "capsem-foundation::ipc_framing_micro" = "manual MessagePack framing summary"

@@ -129,6 +129,21 @@ and rejects replacement between phases. Original bounded Cargo/list/sample input
 and distinct preparation/declaration/runtime wall clocks remain in the existing
 sidecar. Those clocks are not workload CPU, exact RSS peaks or statistical results.
 
+Criterion's measured child also uses the existing stamped process-tree sampler,
+excluding prepare/sign/list and collector parsing. A fresh child has zero CPU
+origin, so its observed startup CPU is retained. Resource keys explicitly say
+`observed_cpu_lower_bound_s` and `sampled_rss_high_water_bytes`; they are one
+job-level observation per target/run, not per-case resource distributions.
+RSS sums come from sequential reads and can double-count shared pages. Optional
+PSS/USS remain absent when unsupported. No continuous or atomic peak is claimed.
+Terminal/zombie and unseen short-lived descendant CPU remain uncertified;
+successful original-child/descendant retirement is a separate lifecycle receipt.
+Sampling interval, process count, identity churn, observations and stop budgets
+belong to `[benchmark.criterion.resources]`. Exceeded budgets/read failures fail
+the run; they never clip data or fabricate a zero. Original f64 metric samples
+still use the sole Rust statistics/raw store, with bounded identity/completeness
+metadata in the existing sidecar (not a retained per-tick memory trace).
+
 Four current targets, `ipc_framing_micro`, `db_read_write_micro`,
 `vsock_framing_micro` and `ledger_codec`, print only manual summary tables.
 Their canonical diagnostic classification is `[benchmark.criterion]` in

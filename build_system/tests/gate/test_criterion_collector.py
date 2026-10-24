@@ -35,6 +35,7 @@ def process_double(collector, monkeypatch, listing, emit, *, fail=False):
         def __init__(self, budget):
             self.budget = budget
             self.receipt = {"source_double": True}
+            self.runtime_metrics = {"observed_cpu_lower_bound_s":{"unit":"seconds","samples":[.5]}}
         def run(self, arguments, output, phase):
             outputs.append(output)
             if phase == "declare":
@@ -59,11 +60,12 @@ def test_target_output_includes_every_exact_listed_case(collector, tmp_path, mon
     originals = []
     outputs = process_double(collector, monkeypatch, case+": benchmark\n",
         lambda output: originals.append(write_case(output, case)))
-    values, receipt = collector["run_bench"]("capsem-core", "security_actions", sample_size=None)
+    values, receipt, resources = collector["run_bench"]("capsem-core", "security_actions", sample_size=None)
     assert values == {case.removeprefix("security_actions/"): [10.0, 15.0]}
     assert receipt["cases"][case] == dict(zip(("benchmark_json","sample_json"), originals[0], strict=True))
     assert receipt["listing"] == case+": benchmark\n"
     assert receipt["target"] == "security_actions" and receipt["crate"] == "capsem-core"
+    assert resources["observed_cpu_lower_bound_s"] == {"unit":"seconds","samples":[.5]}
     assert outputs[0] != outputs[1] and outputs[0].parent == outputs[1].parent
     assert all(not path.parent.exists() for path in outputs)
     assert retained.read_text() == '{"times":[999],"iters":[1]}'
@@ -171,7 +173,7 @@ def test_default_excludes_only_declared_manual_diagnostics(collector, monkeypatc
     called = []
     def run(crate,target,**kwargs):
         called.append((crate,target))
-        return {"case":[1.0]}, {"crate":crate,"target":target}
+        return {"case":[1.0]}, {"crate":crate,"target":target}, {"observed_cpu_lower_bound_s":{"unit":"seconds","samples":[.5]}}
     monkeypatch.setitem(collector,"run_bench",run)
     monkeypatch.setattr(collector["sys"],"argv",["criterion"])
     assert collector["main"]() == 0
@@ -179,7 +181,9 @@ def test_default_excludes_only_declared_manual_diagnostics(collector, monkeypatc
     diagnostic = collector["SETTINGS"].criterion.diagnostic_targets
     assert all(f"{crate}::{target}" not in diagnostic for crate,target in called)
     assert len(called) == len(collector["declared_targets"]())-len(diagnostic)
-    assert len(json.loads(output.out)["metrics"]) == len(called)
+    metrics=json.loads(output.out)["metrics"]
+    assert len(metrics) == 2*len(called)
+    assert all(f"{target}.runtime.observed_cpu_lower_bound_s" in metrics for _,target in called)
     for name in diagnostic:
         assert name in output.err
 
@@ -200,7 +204,7 @@ def test_one_target_without_cases_fails_entire_collection_without_stdout(collect
         calls.append(target)
         if len(calls) == 2:
             raise ValueError("missing current invocation case")
-        return {"case":[1.0]}, {}
+        return {"case":[1.0]}, {}, {}
     monkeypatch.setitem(collector,"run_bench",run)
     monkeypatch.setattr(collector["sys"],"argv",["criterion","--target","security_actions","--target","parser_sse"])
     with pytest.raises(ValueError, match="missing"):
@@ -234,7 +238,7 @@ def test_final_wire_budget_fails_before_any_stdout(collector,monkeypatch,capsys)
     settings=collector["SETTINGS"]
     monkeypatch.setitem(collector,"SETTINGS",settings.model_copy(update={
         "run":settings.run.model_copy(update={"max_collector_bytes":10})}))
-    monkeypatch.setitem(collector,"run_bench",lambda *a,**k:({"case":[1.0]},{}))
+    monkeypatch.setitem(collector,"run_bench",lambda *a,**k:({"case":[1.0]},{},{}))
     monkeypatch.setattr(collector["sys"],"argv",["criterion","--target","security_actions"])
     with pytest.raises(ValueError,match="output budget"):
         collector["main"]()

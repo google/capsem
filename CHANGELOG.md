@@ -45,6 +45,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Keep optional metric exporter initialization and shutdown off the async service
   runtime so enabling telemetry cannot panic before the service becomes ready.
+- Attribute Criterion resource observations to the measured executable rather
+  than compilation or parsing, with bounded sampled memory high-water marks,
+  observed CPU lower bounds and explicit lifecycle/completeness receipts.
+
 - Fixed Criterion benchmark preparation to verify Cargo's exact executable and
   optimization profile, preserve the macOS signed runner contract, and declare
   and measure the same binary in benchmark mode with separate phase receipts.
