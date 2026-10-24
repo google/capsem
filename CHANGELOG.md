@@ -38,6 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keep optional metric exporter initialization and shutdown off the async service
   runtime so enabling telemetry cannot panic before the service becomes ready.
 
+- Add finite pause/resume benchmark source cases that require a completed
+  checkpoint and the original foreground's RAM, cwd and open descriptions,
+  with separate response and verified effect clocks. Native proof remains
+  required; cold start cannot count as warm continuation.
+
 - Bind finite native supervisor restart benchmark source cases with separate
   admission, original retirement, readiness and reconnection clocks; retain
   ordinary route confinement and stopped workspace preservation checks.

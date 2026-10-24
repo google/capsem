@@ -36,7 +36,7 @@ def validate(registered: set[str], coverage: dict) -> None:
         assert entry["cases"] and (ROOT / "benchmarks/collectors/stream").exists(), RATIONALE
         for case in entry["cases"].values():
             assert case["sample_key"] and case["metrics"], RATIONALE
-    for domain in ("images", "policy", "lifecycle", "networks", "proxies", "workload_controls", "network_members", "credentials", "mcp_controls", "run_purge", "save_controls", "ask_controls", "reload_controls"):
+    for domain in ("images", "policy", "lifecycle", "networks", "proxies", "workload_controls", "network_members", "credentials", "mcp_controls", "run_purge", "save_controls", "ask_controls", "reload_controls", "pause_resume"):
         finite = coverage.get(domain, {}).get("endpoints", {})
         assert not (measured & set(finite)), RATIONALE
         for entry in finite.values():
@@ -211,7 +211,7 @@ def test_lifecycle_bindings_are_six_finite_mutations_and_keep_debt():
     coverage = copy.deepcopy(config())
     expected = {'POST /vms/create', 'POST /vms/{id}/exec', 'POST /vms/{id}/fork', 'POST /vms/{id}/start', 'POST /vms/{id}/stop', 'DELETE /vms/{id}/delete'}
     assert set(coverage['lifecycle']['endpoints']) == expected, RATIONALE
-    assert 'POST /vms/{id}/resume' in coverage['unmeasured'], RATIONALE
+    assert 'POST /vms/{id}/resume' in coverage['pause_resume']['endpoints'], RATIONALE
     assert set(coverage['save_controls']['endpoints']) == {'POST /vms/{id}/save'}, RATIONALE
     assert set(coverage['run_purge']['endpoints']) == {'POST /run','POST /purge'}, RATIONALE
     assert 'POST /vms/{id}/stop [physical-producer-ledger-drain]' in coverage['unmeasured_cases'], RATIONALE
@@ -234,10 +234,10 @@ def test_finite_empty_network_and_synthetic_diagnostics_bind_exact_four_operatio
     assert {case['case'] for case in diagnostics} == {'synthetic-populated', 'synthetic-limited', 'synthetic-later-since'}, RATIONALE
     assert set(coverage['network_members']['endpoints']) == {'GET /networks/{id}/logs', 'PUT /networks/{id}/members/{vm_id}', 'DELETE /networks/{id}/members/{vm_id}'}, RATIONALE
     operations = measured_operations(coverage) | set(coverage['streaming'])
-    for domain in ('images', 'policy', 'lifecycle', 'networks', 'proxies', 'workload_controls', 'network_members', 'credentials', 'mcp_controls', 'preview_controls', 'run_purge', 'save_controls', 'ask_controls', 'reload_controls'):
+    for domain in ('images', 'policy', 'lifecycle', 'networks', 'proxies', 'workload_controls', 'network_members', 'credentials', 'mcp_controls', 'preview_controls', 'run_purge', 'save_controls', 'ask_controls', 'reload_controls', 'pause_resume'):
         operations |= set(coverage[domain]['endpoints'])
     operations |= set(coverage['restart_controls']['endpoints'])
-    assert len(operations) == 105 and len(coverage['unmeasured']) == 11, RATIONALE
+    assert len(operations) == 107 and len(coverage['unmeasured']) == 9, RATIONALE
     assert len(coverage['internal']) == 7 and len(coverage['unmeasured_cases']) == 20, RATIONALE
     del coverage['networks']['endpoints']['POST /networks']
     with pytest.raises(AssertionError, match='POST /networks'):
@@ -303,3 +303,17 @@ def test_original_ask_decision_cannot_disappear_or_inherit_a_read_poll():
     del coverage['ask_controls']['endpoints'][operation]
     with pytest.raises(AssertionError,match='Missing'):
         validate(registered_operations(),coverage)
+
+
+def test_warm_pair_cannot_disappear_or_inherit_cold_start_or_read_poll():
+    import copy
+    for operation in ('POST /vms/{id}/pause','POST /vms/{id}/resume'):
+        coverage = copy.deepcopy(config())
+        assert set(coverage['pause_resume']['endpoints']) == {'POST /vms/{id}/pause','POST /vms/{id}/resume'}
+        del coverage['pause_resume']['endpoints'][operation]
+        with pytest.raises(AssertionError,match='Missing'):
+            validate(registered_operations(),coverage)
+        coverage = copy.deepcopy(config())
+        coverage['measured'].append({'method':'POST','path':operation.split(' ',1)[1],'case':'false-concurrent-mutation'})
+        with pytest.raises(AssertionError):
+            validate(registered_operations(),coverage)

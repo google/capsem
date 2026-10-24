@@ -3663,6 +3663,34 @@ target_scope = "both"
 reason = "Narrow explicitly allowed builtin headers/raw fetch calls return fixed mock bytes and independently deliver exactly one original nonce-bound upstream request each."
 cases = {headers = "cycles", "raw-body" = "cycles"}
 
+[benchmark.routes.pause_resume]
+cycles = 2
+quick_cycles = 1
+timeout_seconds = 300
+exec_timeout_seconds = 30
+max_response_bytes = 1048576
+max_metadata_bytes = 65536
+max_checkpoint_bytes = 4294967296
+max_terminal_checkpoint_bytes = 16777216
+max_probe_frames = 512
+max_probe_bytes = 4194304
+close_timeout_seconds = 5
+poll_seconds = 0.05
+ram_mb = 1024
+cpus = 2
+name = "route-original-warm"
+
+[benchmark.routes.pause_resume.endpoints."POST /vms/{id}/pause"]
+collector = "routes"
+target_scope = "both"
+reason = "Original persistent native owner retires with a complete paired native/terminal checkpoint, independent Suspended reads and retained session identity; response alone is not completion."
+cases = { original-checkpoint = "cycles" }
+[benchmark.routes.pause_resume.endpoints."POST /vms/{id}/resume"]
+collector = "routes"
+target_scope = "both"
+reason = "Replacement host owner restores the original guest boot and transient memory; the original foreground proves RAM nonce, cwd and retained file descriptions before independent readback. Cold start cannot pass."
+cases = { original-warm-continuation = "cycles" }
+
 [benchmark.routes.restart_controls]
 dimension = "restart"
 cycles = 2
@@ -3804,8 +3832,6 @@ cases = {"declared-port-wiring" = "cycles"}
 "POST /update/apply" = { owner = "crates/capsem-service/src/tests/update_routes.rs", reason = "Needs hermetic update subprocess and isolated runtime; plan-only response must not certify live update performance." }
 "POST /update/check" = { owner = "crates/capsem-service/src/tests/update_routes.rs", reason = "Needs hermetic update subprocess and isolated runtime; plan-only response must not certify live update performance." }
 "POST /vms/{id}/credential-grants" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
-"POST /vms/{id}/pause" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
-"POST /vms/{id}/resume" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
 
 # A timed idle/read case does not certify every state of the same operation.
 [benchmark.routes.unmeasured_cases]
