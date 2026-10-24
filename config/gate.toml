@@ -2219,6 +2219,8 @@ source_contract = [
     "build_system/tests/gate/test_gate_run_status_agrees.py",
     "build_system/tests/gate/test_gate_complete_gate_policy.py",
     "build_system/tests/gate/test_just_argument_boundary.py",
+    "build_system/tests/gate/test_gate_process_bytes.py",
+    "build_system/tests/gate/test_gate_process_observer.py",
     "build_system/tests/gate/test_gate_testmodules.py",
     "build_system/tests/gate/test_gate_node_lock.py",
     "build_system/tests/gate/test_gate_bench_restart.py",
