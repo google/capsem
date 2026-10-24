@@ -52,6 +52,16 @@ mod wire_bytes;
 /// workspace at this path.
 pub const GUEST_WORKSPACE: &str = "/root";
 
+/// Warm restore loses original VirtioFS file/directory handles after owner
+/// replacement. Keep all clients and owners on the same release capability
+/// until https://github.com/google/capsem/issues/378 is resolved.
+pub fn warm_suspend_available() -> bool {
+    false
+}
+
+pub const WARM_SUSPEND_UNAVAILABLE: &str =
+    "warm suspend is disabled; use persistent stop/start instead (saved checkpoints are preserved)";
+
 pub use exec_stream::{
     read_exec_input, read_exec_output, write_exec_input, write_exec_output, write_exec_output_data, ExecInputFrame,
     ExecOutputChannel, ExecOutputFrame, ExecOutputProtocol, EXEC_STDIN_WINDOW, MAX_EXEC_DATA_BYTES,

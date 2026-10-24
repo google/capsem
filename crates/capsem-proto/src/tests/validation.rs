@@ -1,5 +1,11 @@
 use super::*;
 
+#[test]
+fn warm_suspend_is_unavailable_until_original_workspace_handles_survive_restore() {
+    assert!(!warm_suspend_available());
+    assert!(WARM_SUSPEND_UNAVAILABLE.contains("disabled"));
+}
+
 // -------------------------------------------------------------------
 // Boot handshake validation: env key
 // -------------------------------------------------------------------
