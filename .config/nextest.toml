@@ -2,6 +2,8 @@
 dir = "cache/target/coverage/nextest"
 
 [profile.ci]
+# Report all platform failures in one run; any failure still fails the job.
+fail-fast = false
 slow-timeout = { period = "120s", terminate-after = 3, grace-period = "10s", on-timeout = "fail" }
 
 [profile.ci.junit]

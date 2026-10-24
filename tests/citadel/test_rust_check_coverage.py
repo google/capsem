@@ -110,6 +110,25 @@ def test_the_timeout_profile_is_selected() -> None:
     )
 
 
+FAILURE_REPORTING_RATIONALE = (
+    "The shared CI profile must report all native failures in one run; "
+    "fail-fast hides later defects until another expensive qualification. "
+    "Failure status, bounded timeouts and JUnit output remain mandatory."
+)
+
+
+def test_shared_ci_profile_reports_all_failures() -> None:
+    profiles = tomllib.loads((PROJECT_ROOT / ".config/nextest.toml").read_text())["profile"]
+    ci = profiles[MODULES.rust_test_profile]
+    assert ci.get("fail-fast") is False, FAILURE_REPORTING_RATIONALE
+    assert ci["slow-timeout"]["on-timeout"] == "fail", FAILURE_REPORTING_RATIONALE
+    assert ci["junit"]["store-failure-output"] is True, FAILURE_REPORTING_RATIONALE
+    for name in ("ci-unit", "ci-integration"):
+        profile = profiles[name]
+        assert profile["inherits"] == MODULES.rust_test_profile, FAILURE_REPORTING_RATIONALE
+        assert profile.get("fail-fast", ci["fail-fast"]) is False, FAILURE_REPORTING_RATIONALE
+
+
 def test_doctests_are_run_by_something() -> None:
     """The trap: Nextest does not run them, so the runner swap drops them.
 
