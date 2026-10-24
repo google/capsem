@@ -90,6 +90,36 @@ def test_default_host_roles_require_the_complete_current_cargo_producer(tmp_path
         verify_host_roles(config, binary_dir, None)
 
 
+@pytest.mark.parametrize("foreign", [False, True])
+def test_default_bin_symlink_matches_only_the_current_cargo_files(tmp_path, foreign):
+    config = load(PROJECT_ROOT).model_copy(update={"root": tmp_path})
+    selected = config.path(config.modules.default_bin_dir)
+    shared = tmp_path / "shared-cargo"
+    shared.mkdir()
+    selected.parent.mkdir(parents=True, exist_ok=True)
+    selected.symlink_to(shared, target_is_directory=True)
+    rows = []
+    for name in config.signing.built:
+        (shared / name).write_bytes(b"same synthetic executable")
+        entry = row(tmp_path, tests=False, features=())
+        entry["target"]["name"] = name
+        entry["executable"] = str(shared / name)
+        rows.append(entry)
+    if foreign:
+        other = tmp_path / "foreign-build"
+        other.mkdir()
+        (other / config.signing.built[0]).write_bytes(b"same synthetic executable")
+        rows[0]["executable"] = str(other / config.signing.built[0])
+    log = config.path(config.functional.native_file_content.host_log)
+    log.parent.mkdir(parents=True, exist_ok=True)
+    write(log, [*rows, {"reason": "build-finished", "success": True}])
+    if foreign:
+        with pytest.raises(ValueError, match="not produced"):
+            verify_host_roles(config, selected, None)
+    else:
+        verify_host_roles(config, selected, None)
+
+
 def test_arbitrary_custom_host_directory_does_not_gain_current_source_receipt(
     tmp_path, monkeypatch
 ):

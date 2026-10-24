@@ -112,7 +112,7 @@ def verify_host_roles(config: GateConfig, bin_dir: Path, package: Path | None) -
             config.path(config.functional.native_file_content.host_log), config.root, tests=False
         )
         if set(produced) != set(config.signing.built) or any(
-            produced[name] != bin_dir / name for name in produced
+            produced[name].resolve() != (bin_dir / name).resolve() for name in produced
         ):
             raise ValueError("native host roles were not produced by the current source build")
 
