@@ -199,7 +199,7 @@ fn a_frame_exactly_at_the_limit_encodes_and_one_byte_over_does_not() {
             path: "/p".into(),
             data: vec![b'a'; mid],
         };
-        if guest_msg_fits_frame(&msg) {
+        if encode_guest_msg(&msg).is_ok() {
             lo = mid;
         } else {
             hi = mid - 1;

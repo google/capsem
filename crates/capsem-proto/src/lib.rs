@@ -18,6 +18,7 @@ mod exec_stream;
 mod file_path;
 pub use file_path::{validate_file_path, validate_file_path_safe};
 pub mod forensic;
+pub mod framing;
 pub mod gateway_grant;
 pub mod guest_env;
 pub mod handshake;
@@ -646,13 +647,8 @@ pub fn encode_dns_request(req: &DnsRequest) -> Result<Vec<u8>> {
     if req.id == 0 {
         bail!("DNS query ID must be nonzero");
     }
-    let payload =
-        rmp_serde::to_vec_named(&dns_session::DnsSessionMessage::Query(req)).context("failed to encode DnsRequest")?;
-    let len = payload.len() as u32;
-    let mut frame = Vec::with_capacity(4 + payload.len());
-    frame.extend_from_slice(&len.to_be_bytes());
-    frame.extend_from_slice(&payload);
-    Ok(frame)
+    framing::encode_frame(&dns_session::DnsSessionMessage::Query(req), MAX_FRAME_SIZE)
+        .context("failed to encode DnsRequest")
 }
 
 /// Decode a `DnsRequest` from an RMP payload (without the length prefix).
@@ -669,10 +665,7 @@ pub fn decode_dns_session_message(payload: &[u8]) -> Result<dns_session::DnsSess
 
 pub fn encode_dns_cancellation(cancel: &dns_session::DnsQueryCancellation) -> Result<Vec<u8>> {
     let message = dns_session::DnsSessionMessage::<&DnsRequest>::Cancel(*cancel);
-    length_prefixed(
-        rmp_serde::to_vec_named(&message).context("failed to encode DNS cancellation")?,
-        "DNS cancellation",
-    )
+    framing::encode_frame(&message, MAX_FRAME_SIZE).context("failed to encode DNS cancellation")
 }
 
 /// Encode a `DnsResponse` into a length-prefixed RMP frame.
@@ -680,10 +673,8 @@ pub fn encode_dns_response(resp: &DnsResponse) -> Result<Vec<u8>> {
     if resp.id == 0 {
         bail!("DNS response ID must be nonzero");
     }
-    length_prefixed(
-        rmp_serde::to_vec_named(&dns_session::DnsSessionReply::Answer(resp)).context("failed to encode DnsResponse")?,
-        "DNS response",
-    )
+    framing::encode_frame(&dns_session::DnsSessionReply::Answer(resp), MAX_FRAME_SIZE)
+        .context("failed to encode DnsResponse")
 }
 
 /// Decode a `DnsResponse` from an RMP payload (without the length prefix).
@@ -700,10 +691,7 @@ pub fn encode_dns_pending(id: std::num::NonZeroU32, registration: &approval::App
         id,
         registration: registration.clone(),
     };
-    length_prefixed(
-        rmp_serde::to_vec_named(&message).context("failed to encode DNS pending receipt")?,
-        "DNS pending receipt",
-    )
+    framing::encode_frame(&message, MAX_FRAME_SIZE).context("failed to encode DNS pending receipt")
 }
 
 pub fn decode_dns_session_reply(payload: &[u8]) -> Result<dns_session::DnsSessionReply> {
@@ -829,40 +817,11 @@ pub fn looks_like_ipc_frame(data: &[u8]) -> bool {
 // Framing: [4-byte BE length][RMP payload]
 // ---------------------------------------------------------------------------
 
-/// Prefix an RMP payload with its big-endian length, refusing what the peer
-/// would refuse: both control readers drop any frame whose length prefix is
-/// over `MAX_FRAME_SIZE`, and a frame that was never decoded is never acked,
-/// so the sender would replay it on every reconnect for the life of the VM.
-fn length_prefixed(payload: Vec<u8>, what: &str) -> Result<Vec<u8>> {
-    if payload.len() > MAX_FRAME_SIZE as usize {
-        bail!(
-            "{what} frame of {} bytes exceeds MAX_FRAME_SIZE ({MAX_FRAME_SIZE}); the peer would drop it",
-            payload.len()
-        );
-    }
-    let len = payload.len() as u32;
-    let mut frame = Vec::with_capacity(4 + payload.len());
-    frame.extend_from_slice(&len.to_be_bytes());
-    frame.extend_from_slice(&payload);
-    Ok(frame)
-}
-
-/// Whether `msg` fits one control frame, including its typed envelope.
-pub fn host_msg_fits_frame(msg: &HostToGuest) -> bool {
-    encode_host_msg(msg).is_ok()
-}
-
-/// Whether `msg` fits one control frame. See `host_msg_fits_frame`.
-pub fn guest_msg_fits_frame(msg: &GuestToHost) -> bool {
-    encode_guest_msg(msg).is_ok()
-}
-
 /// Encode a `HostToGuest` message into a length-prefixed RMP frame.
 pub fn encode_host_msg(msg: &HostToGuest) -> Result<Vec<u8>> {
-    length_prefixed(
-        rmp_serde::to_vec_named(msg).context("failed to encode HostToGuest")?,
-        "HostToGuest",
-    )
+    framing::encode_frame(msg, MAX_FRAME_SIZE).map_err(|error| {
+        anyhow::anyhow!("HostToGuest frame exceeds MAX_FRAME_SIZE ({MAX_FRAME_SIZE}) or cannot encode: {error}")
+    })
 }
 
 /// Decode a `HostToGuest` message from an RMP payload (without the length prefix).
@@ -872,10 +831,9 @@ pub fn decode_host_msg(payload: &[u8]) -> Result<HostToGuest> {
 
 /// Encode a `GuestToHost` message into a length-prefixed RMP frame.
 pub fn encode_guest_msg(msg: &GuestToHost) -> Result<Vec<u8>> {
-    length_prefixed(
-        rmp_serde::to_vec_named(msg).context("failed to encode GuestToHost")?,
-        "GuestToHost",
-    )
+    framing::encode_frame(msg, MAX_FRAME_SIZE).map_err(|error| {
+        anyhow::anyhow!("GuestToHost frame exceeds MAX_FRAME_SIZE ({MAX_FRAME_SIZE}) or cannot encode: {error}")
+    })
 }
 
 /// Decode a `GuestToHost` message from an RMP payload (without the length prefix).

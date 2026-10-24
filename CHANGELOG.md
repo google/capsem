@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   retirement and both signed admission checks; booted systemd still requires
   verified selected-user manager quiescence before replacement.
 
+- Encode bounded control and stream frames once into final storage, reusing
+  prepared file-transfer bytes across queues and reconnects without retaining
+  another full file payload.
+
 - Limit macOS preinstall service-manager control to the selected account's
   fixed Capsem target, without trusting labels from a user-writable plist.
 

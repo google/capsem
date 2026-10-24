@@ -1241,13 +1241,13 @@ fn byte_payloads_use_msgpack_binary_without_content_dependent_expansion() {
         path: "/root/blob.bin".to_string(),
         data: vec![b'a'; MAX_FRAME_SIZE as usize - 64],
     };
-    assert!(guest_msg_fits_frame(&ascii));
+    assert!(encode_guest_msg(&ascii).is_ok());
     let binary = GuestToHost::FileContent {
         id: 1,
         path: "/root/blob.bin".to_string(),
         data: vec![0xFF; MAX_FRAME_SIZE as usize - 64],
     };
-    assert!(guest_msg_fits_frame(&binary));
+    assert!(encode_guest_msg(&binary).is_ok());
     let ascii_len = encode_guest_msg(&ascii).unwrap().len();
     let binary_len = encode_guest_msg(&binary).unwrap().len();
     assert_eq!(ascii_len, binary_len, "byte values must not alter frame size");
@@ -1257,6 +1257,6 @@ fn byte_payloads_use_msgpack_binary_without_content_dependent_expansion() {
         data: vec![0xFF; 1024 * 1024 - 64],
         mode: 0o644,
     };
-    assert!(host_msg_fits_frame(&one_mib_binary));
+    assert!(encode_host_msg(&one_mib_binary).is_ok());
 }
 mod ports;

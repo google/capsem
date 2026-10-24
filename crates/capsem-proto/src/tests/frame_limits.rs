@@ -104,3 +104,20 @@ fn all_guest_variants_fit() {
         );
     }
 }
+
+#[test]
+fn final_frame_owner_matches_wire_at_exact_limit_and_rejects_one_over() {
+    let message = HostToGuest::FileWrite {
+        id: 7,
+        path: "/tmp/exact".into(),
+        data: vec![9; 4096],
+        mode: 0o644,
+    };
+    let expected = encode_host_msg(&message).unwrap();
+    let payload_len = expected.len() - 4;
+    assert_eq!(
+        crate::framing::encode_frame(&message, payload_len as u32).unwrap(),
+        expected
+    );
+    assert!(crate::framing::encode_frame(&message, payload_len as u32 - 1).is_err());
+}

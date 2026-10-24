@@ -1,7 +1,7 @@
 //! Shared typed terminal/exec/container stream messages. Transport adapters
 //! own authentication and framing, never a second message vocabulary.
 use std::borrow::Cow;
-use std::io::{Read, Write};
+use std::io::Read;
 
 use crate::terminal::TerminalState;
 use serde::{Deserialize, Serialize};
@@ -128,11 +128,15 @@ impl Message<'_> {
 
 pub fn encode(message: &Message<'_>) -> Result<Vec<u8>, FrameError> {
     message.validate()?;
-    let payload = rmp_serde::to_vec_named(message).map_err(|error| FrameError::Invalid(error.to_string()))?;
-    if payload.len() > MAX_FRAME_BYTES {
-        return Err(FrameError::TooLarge);
+    crate::framing::encode_record(message, MAX_FRAME_BYTES).map_err(encoding_error)
+}
+
+fn encoding_error(error: std::io::Error) -> FrameError {
+    if crate::framing::is_frame_too_large(&error) {
+        FrameError::TooLarge
+    } else {
+        FrameError::Invalid(error.to_string())
     }
-    Ok(payload)
 }
 
 fn decode(payload: &[u8]) -> Result<Message<'_>, FrameError> {
@@ -189,11 +193,8 @@ pub fn decode_server(payload: &[u8]) -> Result<Message<'_>, FrameError> {
 /// Byte-stream transports add the same bounded u32-BE header as other Capsem
 /// IPC. WebSocket transports already delimit records and use `encode`.
 pub fn framed(message: &Message<'_>) -> Result<Vec<u8>, FrameError> {
-    let payload = encode(message)?;
-    let mut frame = Vec::with_capacity(4 + payload.len());
-    frame.write_all(&(payload.len() as u32).to_be_bytes())?;
-    frame.write_all(&payload)?;
-    Ok(frame)
+    message.validate()?;
+    crate::framing::encode_frame(message, MAX_FRAME_BYTES as u32).map_err(encoding_error)
 }
 
 pub fn read_payload(reader: &mut impl Read) -> Result<Vec<u8>, FrameError> {
