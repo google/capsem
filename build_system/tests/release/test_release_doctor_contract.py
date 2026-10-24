@@ -422,9 +422,11 @@ def test_host_sbom_zstd_dependency_has_local_and_binary_lane_parity() -> None:
     linux_doctor = _source_text("build_system/scripts/doctor/doctor-linux.sh")
     release = _workflow_text("release.yaml")
 
-    assert 'confirm "zstd (Debian package/SBOM archive support, via brew)"' in bootstrap
-    assert "brew install zstd" in bootstrap
-    assert "for tool in cargo rustup node python3 uv pnpm sqlite3 git b3sum zstd" in doctor
+    assert "command -v zstd" in bootstrap
+    assert "brew install zstd coreutils" in bootstrap
+    tools = re.search(r"for tool in ([^;]+); do", doctor)
+    assert tools is not None
+    assert {"cargo", "rustup", "node", "python3", "uv", "pnpm", "sqlite3", "git", "b3sum", "zstd"} <= set(tools[1].split())
     assert "zstd)" in macos_doctor
     assert 'echo "brew install zstd"' in macos_doctor
     assert "zstd)" in linux_doctor
@@ -1520,6 +1522,7 @@ def test_cross_surface_update_smoke_prerequisites_are_covered_locally() -> None:
 def test_installed_service_owns_one_serial_automatic_update_path() -> None:
     service = _source_text("crates/capsem-service/src/main.rs")
     router_runtime = _source_text("crates/capsem-service/src/router_runtime.rs")
+    update_owner = _source_text("crates/capsem-service/src/router_runtime/updates.rs")
     service_runtime = _source_text("crates/capsem-service/src/service_runtime.rs")
     update_command = _source_text("crates/capsem-service/src/update_command.rs")
     service_api = _source_text("crates/capsem-service/src/api.rs")
@@ -1533,24 +1536,30 @@ def test_installed_service_owns_one_serial_automatic_update_path() -> None:
         "async fn execute_update_apply(", maxsplit=1
     )[0]
     apply_executor = router_runtime.split("async fn execute_update_apply(", maxsplit=1)[1].split(
-        "async fn execute_update_command_unlocked(", maxsplit=1
+        "#[derive(", maxsplit=1
     )[0]
     automatic_executor = router_runtime.split("async fn run_automatic_update_once(", maxsplit=1)[
         1
     ].split("async fn run_automatic_update_loop(", maxsplit=1)[0]
 
-    assert "update_lock: tokio::sync::Mutex<()>" in service
+    assert "update_lock: Arc<tokio::sync::Mutex<()>>" in service
     assert "run_automatic_update_loop(state_for_updates)" in service_runtime
     assert "automatic_updates_enabled()" in automatic_executor
-    assert "state.update_lock.try_lock()" in automatic_executor
+    assert "Arc::clone(&state.update_lock).try_lock_owned()" in automatic_executor
     assert "CAPSEM_AUTOMATIC_UPDATE_INITIAL_DELAY_SECS" in service
     assert "CAPSEM_AUTOMATIC_UPDATE_POLL_SECS" in service
     assert "automatic_update_delay(" in router_runtime
     assert "AUTOMATIC_UPDATE_INITIAL_DELAY_SECS: u64 = 60" in service
     assert "AUTOMATIC_UPDATE_POLL_SECS: u64 = 60 * 60" in service
-    assert "state.update_lock.lock().await" in check_executor
-    assert "state.update_lock.lock().await" in apply_executor
-    assert router_runtime.count("execute_update_command_unlocked(plan).await") == 3
+    assert "Arc::clone(&state.update_lock).lock_owned().await" in check_executor
+    assert "Arc::clone(&state.update_lock).lock_owned().await" in apply_executor
+    for executor, kind in ((check_executor, "Check"), (apply_executor, "Apply"), (automatic_executor, "Apply")):
+        assert f"plan, guard, UpdateCommandKind::{kind}" in executor
+        assert "updates::settle(" in executor
+    assert "guard: OwnedMutexGuard<()>" in update_owner
+    assert "tokio::spawn(async move" in update_owner
+    assert "let _guard = guard;" in update_owner
+    assert "update_command::execute(plan, kind, cancelled).await" in update_owner
 
     assert "UpdateCommandKind::Apply" in router_runtime
     assert 'vec!["update".to_string(), "--yes".to_string()]' in update_command
