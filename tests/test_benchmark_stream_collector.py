@@ -75,7 +75,7 @@ def test_benchmark_decodes_shared_server_records_and_rejects_invalid_frames():
                 assert payload == bytes(row["expect"]["bytes"])
 
 
-def test_stream_open_uses_header_authentication_and_focuses_terminal():
+def test_stream_open_uses_header_authentication_and_focuses_terminal(monkeypatch):
     module = collector()
     started = next(
         row for row in GOLDEN["server"] if row["expect"].get("status") == {"type": "started"}
@@ -87,7 +87,7 @@ def test_stream_open_uses_header_authentication_and_focuses_terminal():
         calls.append((url, kwargs))
         return socket
 
-    inspect.unwrap(module["open_stream"]).__globals__["connect"] = connect
+    monkeypatch.setitem(inspect.unwrap(module["open_stream"]).__globals__,"connect",connect)
     with module["open_stream"](
         SimpleNamespace(port=12345, token="private-token"),
         "session-id",
@@ -105,10 +105,10 @@ def test_stream_open_uses_header_authentication_and_focuses_terminal():
     assert socket.closed
 
 
-def test_failed_start_releases_the_connection():
+def test_failed_start_releases_the_connection(monkeypatch):
     module = collector()
     socket = Socket(b"not a messagepack frame")
-    inspect.unwrap(module["open_stream"]).__globals__["connect"] = lambda *_, **__: socket
+    monkeypatch.setitem(inspect.unwrap(module["open_stream"]).__globals__,"connect",lambda *_, **__: socket)
     with (
         pytest.raises((ValueError, RuntimeError)),
         module["open_stream"](
