@@ -49,7 +49,7 @@ materialize_archives() {
         uri=${uri#\'}
         uri=${uri%\'}
         if [[ "$uri" != "${APT_SNAPSHOT_BASE%/}/${APT_SNAPSHOT_ID}/"* ||
-              ! "$filename" =~ ^[[:alnum:]_.+%:-]+\.deb$ ||
+              ! "$filename" =~ ^[[:alnum:]_.+%:~-]+\.deb$ ||
               ! "$size" =~ ^[0-9]+$ ||
               ! "$digest" =~ ^SHA256:[a-fA-F0-9]{64}$ || -n "$extra" ]]; then
             echo "invalid authenticated APT archive manifest" >&2

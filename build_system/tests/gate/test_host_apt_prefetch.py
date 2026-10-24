@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 def _run(
-    tmp_path: Path, mode: str, *, fresh_cache: bool = False
+    tmp_path: Path, mode: str, *, fresh_cache: bool = False, archive_name: str = ""
 ) -> subprocess.CompletedProcess[str]:
     """Remap only absolute filesystem/tool locations, keeping the shell intact."""
     root = tmp_path / "root"
@@ -40,6 +40,7 @@ def _run(
         "        base = 'https://snapshot.ubuntu.com/ubuntu/20260810T000000Z'\n"
         "        if os.environ['MODE'] == 'wrong-source': base = 'https://untrusted.invalid'\n"
         "        name = '../escape.deb' if os.environ['MODE'] == 'path' else f'p{i}.deb'\n"
+        "        name = os.environ.get('ARCHIVE_NAME', '').replace('{i}', str(i)) or name\n"
         "        print(f\"'{base}/pool/p{i}.deb' {name} 10 SHA256:{digest}\")\n"
         "    sys.exit(0)\n"
         "assert '--no-download' in args, 'installation may not silently fetch serially'\n"
@@ -83,6 +84,7 @@ def _run(
             "PATH": str(commands) + os.pathsep + os.environ["PATH"],
             "FIXTURE_ROOT": str(root),
             "MODE": mode,
+            "ARCHIVE_NAME": archive_name,
             "WORKSPACE_APT_PACKAGES": "native-dev",
             "WORKSPACE_CROSS_APT_PACKAGES": "cross-dev",
             "APT_SNAPSHOT_BASE": "https://snapshot.ubuntu.com/ubuntu",
@@ -115,6 +117,34 @@ def test_fresh_builder_cache_creates_download_destinations_before_workers(tmp_pa
     assert result.returncode == 0, result.stderr
     assert (tmp_path / "root/var/cache/apt/archives/partial").is_dir()
     assert (tmp_path / "root/installed").is_file()
+
+
+def test_authenticated_debian_tilde_versions_keep_their_verified_archive_names(
+    tmp_path: Path,
+) -> None:
+    result = _run(tmp_path, "valid", archive_name="p{i}_14.2.0-4ubuntu2~24.04.1_amd64.deb")
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "root/installed").is_file()
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "../p{i}.deb",
+        "p{i}/escape.deb",
+        "p{i}\\escape.deb",
+        "p{i};touch${IFS}owned.deb",
+        "p{i} x.deb",
+        "p{i}_x~v.deb/..",
+    ],
+)
+def test_debian_version_support_never_admits_path_or_shell_syntax(
+    tmp_path: Path, name: str
+) -> None:
+    result = _run(tmp_path, "valid", archive_name=name)
+    assert result.returncode != 0
+    assert "invalid authenticated APT archive manifest" in result.stderr
+    assert not (tmp_path / "root/installed").exists()
 
 
 @pytest.mark.parametrize("mode", ["weak", "corrupt", "wrong-source", "path", "planner-error"])

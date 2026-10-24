@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Report saved sessions as unavailable when their recorded boot asset pins do
   not match mutable development assets, instead of offering a resume that fails.
 
+- Accept authenticated Debian package filenames containing tilde version
+  separators without weakening archive origin, size or SHA-256 verification.
+
 - Create the APT archive destination on fresh host-builder caches before
   authenticated parallel downloads, avoiding missing-directory build failures.
 
