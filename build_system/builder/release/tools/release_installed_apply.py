@@ -67,6 +67,7 @@ def complete(
     kind: str,
     source: str,
     digest: str,
+    authoritative_digest: str,
     source_commit: str,
 ) -> None:
     from .local_release_glowup import _probe_report_passed, _validate_exact_installed_state
@@ -85,9 +86,13 @@ def complete(
     result = activation_receipt(
         request, verdict, kind=kind, source=source, digest=digest, source_commit=source_commit
     )
-    if expected.manifest_sha256 != digest:
-        raise ValueError("Apply pairing does not match the exact candidate manifest")
+    # The owning stage verified reversible URL-only projection. Its original
+    # authority and served transport are deliberately different byte streams;
+    # the request/audit joins above bind the latter, this binds the former.
+    if expected.manifest_sha256 != authoritative_digest:
+        raise ValueError("Apply pairing does not match the exact authoritative candidate manifest")
     result["candidate"] = expected.as_report()
+    result["transport_manifest_sha256"] = digest
     # Caller has already validated these through the original installed state,
     # doctor and Winterfell owners. Hash the exact retained proof bytes.
     result["installed_proofs"] = {

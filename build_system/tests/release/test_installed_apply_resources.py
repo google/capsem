@@ -7,6 +7,8 @@ import time
 from pathlib import Path
 
 import pytest
+from capsem_builder import crypto
+from capsem_builder.release.tools import local_release_glowup
 from capsem_builder.release.tools import release_installed_apply as apply
 from capsem_builder.release.tools.release_glowup import PairingIdentity
 from capsem_builder.release.tools.release_update_audit import (
@@ -40,6 +42,7 @@ def proof_files(root: Path):
         "kind": "binary_only",
         "source": "http://127.0.0.1/manifest.json",
         "digest": digest,
+        "authoritative_digest": digest,
         "source_commit": "b" * 40,
     }
     request = {
@@ -132,5 +135,56 @@ def test_activation_cannot_relabel_failed_http_as_original_success(tmp_path):
     data.update(outcome="succeeded", http_status=500)
     request.write_text(json.dumps(data))
     with pytest.raises(ValueError, match="HTTP"):
+        apply.complete(tmp_path, **arguments)
+    assert not (tmp_path / "candidate-apply.json").exists()
+
+
+def test_real_url_projection_does_not_equate_transport_and_authority_bytes(tmp_path):
+    arguments = proof_files(tmp_path)
+    authority = {"runtime": {"url": "https://release.invalid/runtime/rootfs"}}
+    original = json.dumps(authority).encode()
+    projected = json.loads(original)
+    reverse, used = {}, set()
+    local_release_glowup._rewrite_transport_urls(
+        projected,
+        manifest_url="https://release.invalid/manifest.json",
+        replacements={"https://release.invalid/runtime/rootfs": "http://127.0.0.1/runtime/rootfs"},
+        reverse=reverse,
+        used=used,
+    )
+    transported = json.dumps(projected).encode()
+    assert original != transported
+    local_release_glowup._restore_transport_urls(projected, reverse)
+    assert projected == authority
+    authority_digest = crypto.sha256(original).hexdigest()
+    transport_digest = crypto.sha256(transported).hexdigest()
+    previous = arguments["expected"]
+    arguments["expected"] = PairingIdentity(
+        channel=previous.channel,
+        manifest_sha256=authority_digest,
+        package_version=previous.package_version,
+        package_sha256=previous.package_sha256,
+        runtime_sha256=previous.runtime_sha256,
+    )
+    arguments["digest"] = transport_digest
+    arguments["authoritative_digest"] = authority_digest
+    for name in ("candidate-apply-request", "candidate-after-transition"):
+        path = tmp_path / (name + ".json")
+        data = json.loads(path.read_text())
+        data["candidate_manifest_sha256"] = transport_digest
+        if name == "candidate-after-transition":
+            data["installed_manifest_sha256"] = transport_digest
+        path.write_text(json.dumps(data))
+    apply.complete(tmp_path, **arguments)
+    result = json.loads((tmp_path / "candidate-apply.json").read_text())
+    assert result["candidate"]["manifest_sha256"] == authority_digest
+    assert result["transport_manifest_sha256"] == transport_digest
+
+
+@pytest.mark.parametrize("field", ["authoritative_digest", "digest"])
+def test_foreign_authority_or_transport_cannot_complete_apply(tmp_path, field):
+    arguments = proof_files(tmp_path)
+    arguments[field] = "f" * 64
+    with pytest.raises((ValueError, RuntimeError)):
         apply.complete(tmp_path, **arguments)
     assert not (tmp_path / "candidate-apply.json").exists()

@@ -1467,6 +1467,7 @@ probe_installed_transition candidate-after \
                 kind=pairing.transition.value,
                 source=transport.current_manifest_url,
                 digest=file_sha256(transport.after_manifest),
+                authoritative_digest=file_sha256(pairing.after_manifest),
                 source_commit=str(source_commit),
             )
         run(["bash", "-lc", restore_automatic])
