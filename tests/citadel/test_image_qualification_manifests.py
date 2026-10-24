@@ -7,9 +7,8 @@ one naming a capability the harness has no group for, would publish untested
 behavior -- so neither gets past the fast phase.
 """
 
-from pathlib import Path
-
 import tomllib
+from pathlib import Path
 
 from tests.qualification.candidate import declared as qualification_declaration
 

@@ -13,10 +13,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-import tomllib
 from capsem_builder.gate import config as gate_config
 
 from tests.fixtures.oci.pinned_image import PinnedImage, reference_image
