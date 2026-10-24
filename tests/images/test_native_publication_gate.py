@@ -52,10 +52,32 @@ def test_actual_native_devices_and_existing_setup_precede_image_production():
     assert "install-vm-device-access" in text
     assert "prepare-linux-sandbox.py --repair-hosted-runner" in text
     assert "cargo fetch --locked" in text
-    assert "test -c /dev/kvm" in text and "test -c /dev/vhost-vsock" in text
     assert '--arch "$ARCH" --preflight' in text
     names = [step.get("name") for step in steps]
     assert names.index("Enable required KVM and vsock devices") < names.index("Build the image")
+
+
+def test_typed_preflight_is_the_single_named_device_authority_after_grant():
+    document = yaml.safe_load((ROOT / ".github/workflows/images.yaml").read_text())
+    step = next(
+        step
+        for step in document["jobs"]["image-arch"]["steps"]
+        if step.get("name") == "Enable required KVM and vsock devices"
+    )
+    script = step["run"]
+    assert "test -c " not in script, "silent shell device tests must not bypass typed diagnostics"
+    assert script.index("install-vm-device-access") < script.index("--preflight")
+    assert "VM device access grant failed" in script
+    assert "exit 1" in script
+    assert not step.get("continue-on-error", False)
+    assert "|| true" not in script
+
+
+def test_real_absent_device_reports_its_exact_name(tmp_path, monkeypatch):
+    monkeypatch.setattr(qualify, "host_platform", lambda: "linux/arm64")
+    monkeypatch.setattr(qualify, "Path", lambda name: tmp_path / Path(name).name)
+    with pytest.raises(ValueError, match=r"missing /dev/kvm$"):
+        qualify.preflight("arm64")
 
 
 @pytest.mark.parametrize("failure", [None, "qualifier", "root", "platform", "subject"])
@@ -160,8 +182,15 @@ def test_missing_native_devices_are_a_failure_not_a_skip(monkeypatch):
         qualify.preflight("arm64")
 
 
-@pytest.mark.parametrize("fault", ["regular", "inaccessible", "missing-vsock"])
-def test_both_devices_must_be_character_devices_and_accessible(monkeypatch, fault):
+@pytest.mark.parametrize(
+    ("fault", "message"),
+    [
+        ("regular", "requires character device /dev/kvm$"),
+        ("inaccessible", "requires read/write access to /dev/kvm$"),
+        ("missing-vsock", "missing /dev/vhost-vsock$"),
+    ],
+)
+def test_both_devices_must_be_character_devices_and_accessible(monkeypatch, fault, message):
     monkeypatch.setattr(qualify, "host_platform", lambda: "linux/arm64")
     monkeypatch.setattr(
         qualify,
@@ -172,7 +201,7 @@ def test_both_devices_must_be_character_devices_and_accessible(monkeypatch, faul
         ),
     )
     monkeypatch.setattr(qualify.os, "access", lambda *_: fault != "inaccessible")
-    with pytest.raises(ValueError, match="accessible /dev/"):
+    with pytest.raises(ValueError, match=message):
         qualify.preflight("arm64")
 
 

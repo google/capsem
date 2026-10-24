@@ -33,12 +33,12 @@ def preflight(architecture: str) -> None:
         raise ValueError("official qualification requires the actual native Linux architecture")
     for name in ("/dev/kvm", "/dev/vhost-vsock"):
         path = Path(name)
-        if (
-            not path.exists()
-            or not stat.S_ISCHR(path.stat().st_mode)
-            or not os.access(path, os.R_OK | os.W_OK)
-        ):
-            raise ValueError(f"official native qualification requires accessible {name}")
+        if not path.exists():
+            raise ValueError(f"official native qualification missing {name}")
+        if not stat.S_ISCHR(path.stat().st_mode):
+            raise ValueError(f"official native qualification requires character device {name}")
+        if not os.access(path, os.R_OK | os.W_OK):
+            raise ValueError(f"official native qualification requires read/write access to {name}")
 
 
 def qualify(config, image, architecture, repository, digest, output, *, runner=None):

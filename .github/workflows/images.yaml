@@ -212,9 +212,10 @@ jobs:
       - name: Enable required KVM and vsock devices
         if: steps.published.outputs.build == 'true'
         run: |
-          sudo bash build_system/packaging/shared/install-vm-device-access "$USER" build_system/packaging/linux/99-capsem-vm-devices.rules
-          test -c /dev/kvm
-          test -c /dev/vhost-vsock
+          if ! sudo bash build_system/packaging/shared/install-vm-device-access "$USER" build_system/packaging/linux/99-capsem-vm-devices.rules; then
+            echo "VM device access grant failed" >&2
+            exit 1
+          fi
           uv run --project build_system --frozen python -m images.ci.qualify --arch "$ARCH" --preflight
       - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b
         if: steps.published.outputs.build == 'true'
