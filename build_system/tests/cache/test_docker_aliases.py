@@ -7,6 +7,7 @@ import pytest
 from capsem_builder.cache import dockeradapter
 from capsem_builder.cache.config import load_policy
 from capsem_builder.cache.dockerimages import plan_image_clean, plan_repository_reclaim
+from capsem_builder.cache.runtimemodels import DockerRuntimePolicy
 from capsem_builder.cache.runtimeplanner import plan_runtime_clean, plan_runtime_prune
 
 from .test_docker_current import image, removed, snapshot
@@ -46,6 +47,7 @@ def test_default_repository_retirement_removes_every_owned_alias():
 
 def test_inventory_keeps_only_owned_origins_and_counts_one_image():
     policy = load_policy(Path(__file__).resolve().parents[3]).runtimes["docker"]
+    assert isinstance(policy, DockerRuntimePolicy)
     assert "ghcr.io/google/capsem-ci/" in policy.image_prefixes
     names = ["capsem-tool:old", "ghcr.io/google/capsem-ci/tool:old", "ghcr.io/google/unrelated:one"]
 

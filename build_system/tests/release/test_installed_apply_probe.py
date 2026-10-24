@@ -246,6 +246,7 @@ def test_real_uds_original_exchange_is_never_replayed(tmp_path, mode, outcome):
             target=lambda: server.serve_forever(poll_interval=0.01), daemon=True
         )
         worker.start()
+        assert isinstance(server.server_address, str)
         transport = RealTransport(socket_path=server.server_address)
         try:
             args = arguments(tmp_path)
