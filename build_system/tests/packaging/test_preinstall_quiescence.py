@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[3]
 RETIRE = ROOT / "build_system/packaging/shared/retire-cohort"
 
 
-def probe(platform: str, status: int, output: str, *, stop: int = 1) -> subprocess.CompletedProcess[str]:
+def probe(platform: str, status: int, output: str, *, stop: int = 1, diagnostic: str = "") -> subprocess.CompletedProcess[str]:
     if platform == "Darwin":
         command = f'''
 function /bin/launchctl {{
@@ -28,7 +28,7 @@ capsem_stop_launch_agent gui/12345 /absent-source-plist
 su() {{
     case "$3" in
         *'systemctl --user stop'*) return {stop} ;;
-        *'systemctl --user show'*) printf '%s' {shlex.quote(output)}; return {status} ;;
+        *'systemctl --user show'*) printf '%s' {shlex.quote(output)}; printf '%s' {shlex.quote(diagnostic)} >&2; return {status} ;;
         *) return 99 ;;
     esac
 }}
@@ -79,3 +79,11 @@ def test_manager_failure_does_not_disclose_captured_service_details() -> None:
         result = probe(platform, 1, canary)
         assert result.returncode != 0
         assert canary not in result.stdout + result.stderr
+
+
+def test_linux_failed_query_stderr_is_not_copied_to_install_log() -> None:
+    canary = "synthetic-private-stderr-query-canary"
+    result = probe("Linux", 1, "", diagnostic=canary)
+    assert result.returncode != 0
+    assert canary not in result.stdout + result.stderr
+    assert "cannot verify selected systemd service state" in result.stderr

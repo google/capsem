@@ -147,7 +147,7 @@ capsem_stop_systemd_service() {
     su "$target_user" -c 'export LC_ALL=C XDG_RUNTIME_DIR="$1"; exec systemctl --user stop capsem.service' \
         capsem-quiesce "$xdg" 2>/dev/null || true
     state=$(su "$target_user" -c 'export LC_ALL=C XDG_RUNTIME_DIR="$1"; exec systemctl --user show --property=LoadState --property=ActiveState --property=SubState capsem.service' \
-        capsem-quiesce "$xdg") || { echo 'capsem: cannot verify selected systemd service state' >&2; return 1; }
+        capsem-quiesce "$xdg" 2>/dev/null) || { echo 'capsem: cannot verify selected systemd service state' >&2; return 1; }
     while IFS= read -r line; do
         count=$((count + 1))
         case "$line" in

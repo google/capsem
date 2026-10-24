@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Keep service-manager query diagnostics out of installer logs when verifying
+  selected-service quiescence; unverifiable state still refuses replacement.
+
 - Preserve protected inert retired `main.db` files during HOST admission without
   reading or migrating them; incompatible current HOST ledgers still refuse.
   Candidate activation separately fences retained legacy session state.
