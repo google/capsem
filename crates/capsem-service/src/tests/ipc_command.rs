@@ -1,6 +1,34 @@
 use super::*;
 
 #[tokio::test]
+async fn service_fixture_binds_short_instance_socket_without_fallback() {
+    let directory = tempfile::Builder::new()
+        .prefix("capsem-ipc-")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let (state, _directory) = make_test_state_with_tempdir_at(directory);
+    let socket = state.instance_socket_path("fixture").unwrap();
+    assert_eq!(socket, state.run_dir.join("instances/fixture.sock"));
+    let owner = spawn_fake_process(&socket, 1, |message| {
+        assert!(matches!(message, ServiceToProcess::Ping));
+        Box::pin(async { Some(ProcessToService::Pong) })
+    });
+    let stream = tokio::net::UnixStream::connect(&socket)
+        .await
+        .unwrap()
+        .into_std()
+        .unwrap();
+    let (stream, _) =
+        capsem_foundation::ipc_handshake::negotiate_initiator_off_worker(stream, "capsem-service-test", "")
+            .await
+            .unwrap();
+    let (tx, rx): (Sender<ServiceToProcess>, Receiver<ProcessToService>) = channel_from_std(stream).unwrap();
+    tx.send(ServiceToProcess::Ping).await.unwrap();
+    assert!(matches!(rx.recv().await.unwrap(), ProcessToService::Pong));
+    assert_eq!(owner.await.unwrap().len(), 1);
+}
+
+#[tokio::test]
 async fn fixture_owner_serves_commands_while_an_observer_channel_stays_idle() {
     use tokio::io::AsyncReadExt;
     async fn hello(socket: &StdPath, role: &str) -> std::os::unix::net::UnixStream {

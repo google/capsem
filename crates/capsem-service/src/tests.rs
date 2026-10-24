@@ -89,7 +89,8 @@ pub(crate) fn test_state(
     assets_dir: PathBuf,
     test_tempdir: Option<tempfile::TempDir>,
 ) -> ServiceState {
-    std::fs::create_dir_all(&run_dir).unwrap();
+    // Match service startup even when the socket fits without a /tmp fallback.
+    std::fs::create_dir_all(run_dir.join("instances")).unwrap();
     let manifest = capsem_assets::asset_manager::load_manifest_for_assets(&assets_dir).map(Arc::new);
     let managed = managed_routes::Runtime::open(&run_dir, Default::default()).unwrap();
     let connections =
