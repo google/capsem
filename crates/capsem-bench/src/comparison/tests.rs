@@ -281,3 +281,66 @@ fn complete_paired_subject_union_passes_without_changing_regression_verdicts() {
     let error = verify(&after, &before, 2, thresholds()).unwrap_err();
     assert!(error.to_string().contains("1 metric(s) regressed"), "{error}");
 }
+
+fn installed_record(source: &str, package: &str, predecessor: &str) -> schema::Record {
+    let mut row = authoritative("installed");
+    row.dimension = schema::Dimension::Install;
+    row.release.commit = source.repeat(40);
+    let phase = |source: &str, package: &str, version: &str| {
+        serde_json::json!({
+            "source_commit":source.repeat(40), "version":version,
+            "package_sha256":package.repeat(64), "sbom_sha256":package.repeat(64),
+            "manifest_sha256":package.repeat(64), "runtime_sha256":"d".repeat(64)
+        })
+    };
+    row.sidecar = Some(
+        serde_json::json!({
+            "schema":"capsem.bench.install.v1", "scope":"binary_apply_only",
+            "source_commit":row.release.commit, "owner":"linux-docker-systemd",
+            "before":phase("c",predecessor,"0.6.6"), "after":phase(source,package,"0.7.1"),
+            "receipt_sha256":"e".repeat(64)
+        })
+        .to_string(),
+    );
+    row
+}
+
+#[test]
+fn installed_observations_require_source_bound_pair_provenance() {
+    let mut row = installed_record("a", "a", "b");
+    assert!(evidence::eligible(&row).is_ok());
+    row.sidecar = None;
+    assert!(evidence::eligible(&row).is_err());
+    row = installed_record("a", "a", "b");
+    row.release.commit = "b".repeat(40);
+    assert!(evidence::eligible(&row).is_err());
+}
+
+#[test]
+fn installed_repeats_cannot_hide_changed_input_bytes_behind_the_same_config_path() {
+    let first = installed_record("a", "a", "b");
+    let changed_predecessor = installed_record("a", "a", "c");
+    let changed_candidate = installed_record("a", "f", "b");
+    assert!(evidence::compatible(&first, &changed_predecessor).is_err());
+    assert!(evidence::repeats(&[first.clone(), changed_candidate], 2).is_err());
+    assert!(evidence::repeats(&[first.clone(), first], 2).is_ok());
+}
+
+#[test]
+fn installed_comparison_allows_intentionally_different_candidate_sources() {
+    assert!(evidence::compatible(&installed_record("a", "a", "b"), &installed_record("f", "f", "b")).is_ok());
+}
+
+#[test]
+fn installed_provenance_rejects_nonactionable_versions_and_foreign_owner() {
+    for version in ["0.7.1", "0.8.0", "invalid", "00.6.6"] {
+        let mut row = installed_record("a", "a", "b");
+        row.sidecar = row.sidecar.map(|value| value.replace("0.6.6", version));
+        assert!(evidence::eligible(&row).is_err(), "accepted {version}");
+    }
+    let mut row = installed_record("a", "a", "b");
+    row.sidecar = row
+        .sidecar
+        .map(|value| value.replace("linux-docker-systemd", "macos-tart"));
+    assert!(evidence::eligible(&row).is_err());
+}

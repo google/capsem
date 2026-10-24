@@ -10,6 +10,8 @@ mod dns_load;
 mod evidence;
 mod http_load;
 #[cfg(feature = "host")]
+mod install_evidence;
+#[cfg(feature = "host")]
 mod machine;
 mod ping;
 mod protocol;

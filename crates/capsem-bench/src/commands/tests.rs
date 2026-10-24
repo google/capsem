@@ -181,11 +181,22 @@ fn default_dimension_inventory_names_missing_collectors() {
 #[test]
 fn install_collector_receives_the_exact_source_recorded_with_fresh_fitness() {
     let root = tempfile::tempdir().unwrap();
+    let phase = |source: &str, digest: &str| {
+        serde_json::json!({"source_commit":source,"version":if source==SHA {"0.7.1"} else {"0.7.0"},
+            "package_sha256":digest.repeat(64),"sbom_sha256":digest.repeat(64),
+            "manifest_sha256":digest.repeat(64),"runtime_sha256":"c".repeat(64)})
+    };
+    let sidecar = serde_json::json!({"schema":"capsem.bench.install.v1","scope":"binary_apply_only",
+        "source_commit":SHA,"owner":"linux-docker-systemd","before":phase(&"b".repeat(40),"b"),
+        "after":phase(SHA,"a"),"receipt_sha256":"d".repeat(64)})
+    .to_string();
+    let document =
+        serde_json::json!({"metrics":{"activation.seconds":{"unit":"seconds","samples":[1]}},"sidecar":sidecar});
     std::fs::write(
         root.path().join("install"),
         format!(
             "test \"$1\" = --source-commit && test \"$2\" = {SHA} || exit 23; \
-             echo '{{\"metrics\":{{\"activation.seconds\":{{\"unit\":\"seconds\",\"samples\":[1]}}}}}}'"
+             echo '{document}'"
         ),
     )
     .unwrap();

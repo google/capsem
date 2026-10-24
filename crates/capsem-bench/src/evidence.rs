@@ -8,6 +8,9 @@ fn same_machine(a: &Host, b: &Host) -> bool {
 }
 
 pub(crate) fn eligible(record: &Record) -> Result<()> {
+    if record.dimension == crate::schema::Dimension::Install {
+        crate::install_evidence::eligible(record)?;
+    }
     let measurement = record
         .measurement
         .as_ref()
@@ -43,6 +46,9 @@ pub(crate) fn eligible(record: &Record) -> Result<()> {
 pub(crate) fn compatible(a: &Record, b: &Record) -> Result<()> {
     eligible(a)?;
     eligible(b)?;
+    if a.dimension == crate::schema::Dimension::Install && a.dimension == b.dimension {
+        crate::install_evidence::compatible(a, b)?;
+    }
     if a.dimension != b.dimension
         || a.schema != b.schema
         || !same_machine(&a.host, &b.host)
