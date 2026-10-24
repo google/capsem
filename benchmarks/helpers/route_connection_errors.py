@@ -57,8 +57,8 @@ def sample_errors(transport,target,cfg,*,quick):
 
 
 def prepare(service):
-    # Existing stopped-workspace corpus is registry input, not a running VM,
-    # connection, grant, credential or invented enrollment authority.
+    # The registered ledger/workspace corpus has no bootable system overlay.
+    # It is incompatible registry input, not running/enrolled authority.
     seed_stopped_workspace(service.tmp_dir,service.assets_dir,file_count=1)
     (service.home_dir/'corp.toml').write_text(tomli_w.dumps({'refresh_policy':'24h','plugins':{
         'credential_broker':{'mode':'rewrite','detection_level':'informational'}}}))
@@ -75,7 +75,8 @@ def check_empty_authority(transport,target,cfg):
     assert profile['id'] == 'agy-native' and profile['enabled'] is False
     assert profile['capabilities'] and all(entry['supported'] is False for entry in profile['capabilities'])
     rows = read('/vms/list')['sandboxes']
-    assert len(rows) == 1 and rows[0]['id'] == VM_ID and rows[0]['status'] == 'Stopped'
+    assert len(rows) == 1 and rows[0]['id'] == VM_ID and rows[0]['status'] == 'Incompatible', rows
+    assert rows[0]['can_resume'] is False and rows[0]['resume_blocked_reason'], rows
     grants = read(f'/vms/{VM_ID}/credential-grants')
     assert grants == {'session_id':VM_ID,'owner_generation':VM_ID,'grants':[],'denied_capability_ids':[]}
 

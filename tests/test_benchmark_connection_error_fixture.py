@@ -7,7 +7,7 @@ import pytest
 from benchmarks.helpers import route_connection_errors as subject
 
 
-@pytest.mark.parametrize('failure',['','enabled','supported','connection','running','wrong-owner','grant'])
+@pytest.mark.parametrize('failure',['','enabled','supported','connection','running','wrong-owner','grant','resumable','no-reason'])
 def test_preflight_proves_auth_disabled_catalog_and_retained_empty_owner(monkeypatch,failure):
     calls = []
     def request(transport,target,method,path,body,**kwargs):
@@ -21,7 +21,9 @@ def test_preflight_proves_auth_disabled_catalog_and_retained_empty_owner(monkeyp
                     'capabilities':[{'supported':failure == 'supported'}]}]}
         if path == '/vms/list':
             return None,{'sandboxes':[{'id':'wrong' if failure == 'wrong-owner' else subject.VM_ID,
-                'status':'Running' if failure == 'running' else 'Stopped'}]}
+                'status':'Running' if failure == 'running' else 'Incompatible',
+                'can_resume':failure == 'resumable',
+                'resume_blocked_reason':None if failure == 'no-reason' else 'synthetic workspace has no system overlay'}]}
         return None,{'session_id':subject.VM_ID,'owner_generation':subject.VM_ID,
                     'grants':['unexpected'] if failure == 'grant' else [],'denied_capability_ids':[]}
     monkeypatch.setattr(subject,'json_request',request)
