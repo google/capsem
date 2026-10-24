@@ -1,5 +1,17 @@
 use super::*;
 
+#[test]
+fn native_file_fixture_obeys_the_real_guest_workspace_boundary() {
+    let path = guest_file_path();
+    let relative = StdPath::new(&path)
+        .strip_prefix(capsem_proto::GUEST_WORKSPACE)
+        .expect("native fixture must reach FileContent, not the guest path refusal");
+    let workspace = tempfile::tempdir().unwrap();
+    let file = workspace.path().join(relative);
+    std::fs::write(&file, BYTES).unwrap();
+    capsem_proto::validate_file_path_safe(file.to_str().unwrap(), workspace.path()).unwrap();
+}
+
 #[tokio::test]
 async fn native_startup_cannot_substitute_a_unit_proxy_worker() {
     let mut state = crate::tests::make_test_state();

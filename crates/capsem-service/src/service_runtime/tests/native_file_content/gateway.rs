@@ -82,11 +82,17 @@ impl Gateway {
             .unwrap()
     }
 
-    pub(super) async fn pending(&self, id: &str, original: &ReadTask) -> Value {
+    pub(super) async fn pending(&self, id: &str, original: &mut ReadTask) -> Value {
         tokio::time::timeout(Duration::from_secs(10), async {
             loop {
                 let listing = self.list(id).await;
-                assert!(!original.is_finished(), "original returned before approval: {listing}");
+                if original.is_finished() {
+                    let summary = match original.await {
+                        Ok(result) => read_summary(&result),
+                        Err(_) => "original_task_failed".into(),
+                    };
+                    panic!("original returned before approval: {summary}; {listing}");
+                }
                 if listing["pending_count"] == 1 {
                     return listing;
                 }
@@ -162,11 +168,32 @@ impl Gateway {
             .post(
                 &format!("/vms/{id}/exec"),
                 json!({
-                    "command": format!("printf original-private-guest-file-content > {FILE}"),
-                    "target": "vm", "timeout_secs": 5
-                }),
+                "command": format!("printf original-private-guest-file-content > {}", guest_file_path()),
+                        "target": "vm", "timeout_secs": 5
+                    }),
             )
             .await;
         assert_eq!(seeded["exit_code"], 0, "{seeded}");
     }
 }
+
+fn read_summary(result: &Result<ProcessToService, crate::vm_files::ipc_command::IpcCommandError>) -> String {
+    use crate::vm_files::ipc_command::IpcCommandError;
+    match result {
+        Ok(ProcessToService::ReadFileResult { data, error, .. }) => {
+            let outcome = match error.as_deref() {
+                Some(error) if error.starts_with("FileRead rejected:") => "guest_path_refused",
+                Some(error) if error.starts_with("file export refused:") => "security_boundary_refused",
+                Some(_) => "read_refused",
+                None => "read_completed",
+            };
+            format!("{outcome}; data_bytes={:?}", data.as_ref().map(Vec::len))
+        }
+        Ok(_) => "unexpected_reply".into(),
+        Err(IpcCommandError::Timeout { .. }) => "ipc_timeout".into(),
+        Err(IpcCommandError::Failed(_)) => "ipc_failure".into(),
+    }
+}
+
+#[cfg(test)]
+mod tests;

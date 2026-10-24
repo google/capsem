@@ -7,9 +7,12 @@ use std::time::Duration;
 mod cohort;
 mod gateway;
 
-const FILE: &str = "/tmp/capsem-native-approval-boundary.txt";
 const BYTES: &[u8] = b"original-private-guest-file-content";
 type ReadTask = tokio::task::JoinHandle<Result<ProcessToService, crate::vm_files::ipc_command::IpcCommandError>>;
+
+fn guest_file_path() -> String {
+    format!("{}/capsem-native-approval-boundary.txt", capsem_proto::GUEST_WORKSPACE)
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn original_guest_file_content_approve_deny_and_cancel() {
@@ -31,7 +34,7 @@ async fn original_guest_file_content_approve_deny_and_cancel() {
     assert!(!home.join("settings.toml").exists(), "native home must be fresh");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::write(home.join("settings.toml"), format!(
-        "[profiles.rules.native_guest_file_content]\nname = 'native_guest_file_content'\naction = 'ask'\npriority = 10\nmatch = 'file.export.path == \"{FILE}\"'\n"
+        "[profiles.rules.native_guest_file_content]\nname = 'native_guest_file_content'\naction = 'ask'\npriority = 10\nmatch = 'file.export.path == \"{}\"'\n", guest_file_path()
     )).unwrap();
     let run = private_run_dir(&home.join("run")).unwrap();
     let args = Args {
@@ -98,19 +101,19 @@ async fn prove(state: Arc<ServiceState>, run: &StdPath) {
         let original_id = state.next_job_id();
         let owner_state = Arc::clone(&state);
         let owner_path = owner_path.clone();
-        let original = tokio::spawn(async move {
+        let mut original = tokio::spawn(async move {
             crate::vm_files::send_ipc_command(
                 &owner_state,
                 &owner_path,
                 ServiceToProcess::ReadFile {
                     id: original_id,
-                    path: FILE.into(),
+                    path: guest_file_path(),
                 },
                 Some(30),
             )
             .await
         });
-        let listing = api.pending(id, &original).await;
+        let listing = api.pending(id, &mut original).await;
         assert!(
             !listing.to_string().contains(std::str::from_utf8(BYTES).unwrap()),
             "review leaked held bytes"
