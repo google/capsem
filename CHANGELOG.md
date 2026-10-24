@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Add finite standalone proxy create, original lease renewal and stop cases to
+  gateway performance coverage, with independent listener, worker and session
+  effects. Source coverage remains distinct from measured release results.
+
 - Record normalized service HTTP request, response-ready and body-completion
   metrics. Confined gateway export uses a bounded, adopted generation-bound
   channel; collector destinations and authentication remain service-owned.

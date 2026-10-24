@@ -17,6 +17,7 @@ from .benchmarkimageschema import ImageRouteConfig
 from .benchmarklifecycleschema import LifecycleRouteConfig
 from .benchmarknetworkschema import DiagnosticCorpusConfig, NetworkRouteConfig
 from .benchmarkpolicyschema import PolicyRouteConfig
+from .benchmarkproxyschema import ProxyRouteConfig
 from .benchmarkstreamschema import StreamConfig, StreamEndpointEvidence
 from .configschema import Strict
 
@@ -71,6 +72,7 @@ class RouteCoverageConfig(Strict):
     policy: PolicyRouteConfig
     lifecycle: LifecycleRouteConfig
     networks: NetworkRouteConfig
+    proxies: ProxyRouteConfig
     unmeasured: dict[str, RouteDebtConfig]
     internal: dict[str, RouteDebtConfig]
     unmeasured_cases: dict[str, RouteDebtConfig]

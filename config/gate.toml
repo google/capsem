@@ -3406,6 +3406,39 @@ target_scope = "both"
 reason = "Finite owned empty network retirement, public absence, retained audit database and independently recreated same name with new identity."
 cases = {"empty-network-retired" = "cycles"}
 
+[benchmark.routes.proxies]
+cycles = 3
+quick_cycles = 1
+timeout_seconds = 45.0
+max_response_bytes = 1048576
+max_log_bytes = 1048576
+lease_ttl_seconds = 15
+renew_after_seconds = 5.0
+expiry_margin_seconds = 1.0
+poll_seconds = 0.05
+provider = "openai"
+worker_binary = "capsem-proxy"
+model = "gpt-4.1"
+expected_content = "Capsem ironbank poem\nledgers count the sparks\nno secret crosses raw"
+
+[benchmark.routes.proxies.endpoints."POST /proxies"]
+collector = "routes"
+target_scope = "both"
+reason = "Finite fresh VM-free proxy owner and listener, independent known model response and exact hermetic upstream delivery."
+cases = {"original-listener-ready" = "cycles"}
+
+[benchmark.routes.proxies.endpoints."POST /proxies/{id}/heartbeat"]
+collector = "routes"
+target_scope = "both"
+reason = "Original worker and listener survive original fifteen second TTL after one renewal; separate unrenewed control expires outside request timing."
+cases = {"original-lease-renewed" = "cycles"}
+
+[benchmark.routes.proxies.endpoints."POST /proxies/{id}/stop"]
+collector = "routes"
+target_scope = "both"
+reason = "First owned stop closes original listener, retires exact worker identity and settles original session directory, without replay."
+cases = {"original-owner-settled" = "cycles"}
+
 [benchmark.routes.unmeasured]
 "DELETE /connections/authorizations/{transaction_id}" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
 "DELETE /connections/{connection_id}" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
@@ -3422,9 +3455,6 @@ cases = {"empty-network-retired" = "cycles"}
 "POST /mcp/servers/{server_id}/refresh" = { owner = "tests/ironbank/test_mcp_protocol_ledger.py", reason = "Needs configured MCP server lifecycle and bounded tool fixture; no live vendor calls." }
 "POST /mcp/servers/{server_id}/tools/{tool_id}/call" = { owner = "tests/ironbank/test_mcp_protocol_ledger.py", reason = "Needs configured MCP server lifecycle and bounded tool fixture; no live vendor calls." }
 "POST /plugins/credential_broker/credentials/reload" = { owner = "tests/ironbank/test_credential_store_lifecycle.py", reason = "Needs isolated synthetic durable credential store and broker reload; never time real user credential storage." }
-"POST /proxies" = { owner = "tests/ironbank/test_standalone_proxy.py", reason = "Needs the supervised proxy create/heartbeat/stop fixture, with real worker lease and teardown." }
-"POST /proxies/{id}/heartbeat" = { owner = "tests/ironbank/test_standalone_proxy.py", reason = "Needs the supervised proxy create/heartbeat/stop fixture, with real worker lease and teardown." }
-"POST /proxies/{id}/stop" = { owner = "tests/ironbank/test_standalone_proxy.py", reason = "Needs the supervised proxy create/heartbeat/stop fixture, with real worker lease and teardown." }
 "POST /purge" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
 "POST /restart" = { owner = "tests/ironbank/test_sdk_restart.py", reason = "Needs disposable supervisor and real client reconnection; accepted restart is distinct from ready completion." }
 "POST /run" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
