@@ -11,7 +11,15 @@ import math
 from itertools import pairwise
 from typing import Annotated, Literal
 
-from pydantic import Field, PositiveFloat, PositiveInt, StrictBool, StrictInt, field_validator, model_validator
+from pydantic import (
+    Field,
+    PositiveFloat,
+    PositiveInt,
+    StrictBool,
+    StrictInt,
+    field_validator,
+    model_validator,
+)
 
 from .benchmarkaskschema import AskRouteConfig
 from .benchmarkcontrolschema import WorkloadControlConfig

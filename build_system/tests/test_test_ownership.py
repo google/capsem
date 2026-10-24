@@ -31,6 +31,7 @@ BOUNDARY_FILES = frozenset(
         "build_system/tests/gate/test_ci_tool_module_boundary.py",
         "build_system/tests/gate/test_fixture_cargo_leases.py",
         "build_system/tests/gate/test_gate_incomplete_reports.py",
+        "build_system/tests/gate/test_install_cleanup_settlement.py",
         "build_system/tests/gate/test_criterion_collector.py",
         "build_system/tests/gate/test_criterion_artifact.py",
         "build_system/tests/gate/test_criterion_execution.py",
