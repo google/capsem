@@ -19,6 +19,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from capsem_builder import crypto
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -80,6 +81,18 @@ REMOVAL_SITES: dict[str, str] = {
 }
 
 
+# ORIGINAL public release bytes, never current runtime profile support.
+HISTORICAL_DOCUMENTS = {
+    "tests/fixtures/release/public-stable-066-manifest.json":
+        "2b04fb53657ee3146c66054c7bd4177248eec6ba21bb0e51f33482ebb4b966c8",
+}
+
+
+def historical_document(path: str, payload: bytes) -> bool:
+    expected = HISTORICAL_DOCUMENTS.get(path)
+    return expected is not None and crypto.blake3(payload).hexdigest() == expected
+
+
 def tracked() -> list[str]:
     output = subprocess.run(["git", "ls-files"], cwd=PROJECT_ROOT, check=True, capture_output=True, text=True).stdout
     return [path for path in output.splitlines() if (PROJECT_ROOT / path).is_file()]
@@ -109,6 +122,8 @@ def test_the_repository_does_not_name_vm_profiles() -> None:
     offenders: list[str] = []
     for path in tracked():
         if HISTORY.match(path) or path in REMOVAL_SITES:
+            continue
+        if path in HISTORICAL_DOCUMENTS and historical_document(path, (PROJECT_ROOT / path).read_bytes()):
             continue
         text = _read(path)
         if text is not None:
@@ -185,3 +200,14 @@ def test_reintroductions_are_caught(line: str) -> None:
 )
 def test_unrelated_meanings_pass(line: str) -> None:
     assert not violations("x", line), violations("x", line)
+
+
+def test_original_public_predecessor_is_history_only_at_its_exact_bytes_and_path() -> None:
+    path = "tests/fixtures/release/public-stable-066-manifest.json"
+    payload = (PROJECT_ROOT / path).read_bytes()
+    assert historical_document(path, payload)
+    assert not historical_document(path, payload + b"\n")
+    assert not historical_document(path, payload.replace(b"\n", b"\r\n"))
+    assert not historical_document("config/profiles/code/profile.toml", payload)
+    assert not historical_document("tests/fixtures/release/new-manifest.json", payload)
+    assert violations("config/runtime.toml", 'source = "profiles/code/profile.toml"')

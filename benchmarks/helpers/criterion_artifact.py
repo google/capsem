@@ -65,10 +65,10 @@ def select_executable(
 ) -> FileStamp:
     selected = []
     finished = False
-    profile_root = stage / profile_directory
+    artifact_root = stage / profile_directory
     if (
-        not profile_root.resolve().is_relative_to(stage.resolve())
-        or profile_root.resolve() == stage.resolve()
+        not artifact_root.resolve().is_relative_to(stage.resolve())
+        or artifact_root.resolve() == stage.resolve()
     ):
         raise ValueError("Cargo profile directory escapes the shared stage")
     for event in events:
@@ -98,7 +98,7 @@ def select_executable(
             raw = event.get("executable")
             if not isinstance(raw, str) or raw not in event.get("filenames", []):
                 raise ValueError("Cargo benchmark artifact has no declared executable")
-            path = local_file(raw, profile_root)
+            path = local_file(raw, artifact_root)
             stamp = FileStamp.capture(path)
             if not stamp.mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH):
                 raise ValueError("Cargo benchmark artifact is not executable")
