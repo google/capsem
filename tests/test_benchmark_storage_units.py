@@ -43,3 +43,11 @@ def test_true_network_bit_rates_are_not_scaled():
     assert numeric_metrics("mitm-load", {"throughput_mbps": 4.0}) == {
         "throughput_mbps": {"unit": "megabits_per_second", "samples": [4.0]}
     }
+
+
+@pytest.mark.parametrize("mode", ["disk", "rootfs", "storage", "snapshot"])
+def test_iops_are_operation_rates_without_rescaling_original_samples(mode):
+    assert numeric_metrics(mode, {"rand_read.iops": 1234.5, "rand_write.iops": 67.25}) == {
+        "rand_read.iops": {"unit": "operations_per_second", "samples": [1234.5]},
+        "rand_write.iops": {"unit": "operations_per_second", "samples": [67.25]},
+    }

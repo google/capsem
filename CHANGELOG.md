@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Restrict macOS companion virtualization entitlements to the existing five
   configured VM roles; preserve valid production signatures during installation.
 
+- Record guest disk and storage IOPS as operations per second without changing
+  their original observed values.
+
 - Compare benchmark operation rates as higher-is-better throughput, with an
   explicit operations-per-second unit distinct from operation counts.
 

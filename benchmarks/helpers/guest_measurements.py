@@ -9,7 +9,7 @@ UNITS = {
     "_mbit_s": "megabits_per_second",
     "_ms": "milliseconds",
     "_bytes": "bytes",
-    "iops": "operations",
+    "iops": "operations_per_second",
     "rps": "requests_per_second",
 }
 
