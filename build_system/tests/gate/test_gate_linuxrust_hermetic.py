@@ -21,6 +21,17 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
+def test_the_nonroot_lane_owns_its_frontend_build_lock() -> None:
+    """COPY --chown does not repair cache ancestors excluded from the context."""
+    recipe = (PROJECT_ROOT / "build_system/docker/Dockerfile.linux-rust").read_text()
+    lock = "RUN install -d -o 1000 -g 1000 /src/cache/state/locks"
+    assert lock in recipe, "the sealed frontend cannot create its inherited root-owned cache lock"
+    assert recipe.index(lock) < recipe.index("USER 1000:1000")
+    assert 'BUILD_LOCK="$ROOT/cache/state/locks/release-site-build.lock"' in (
+        PROJECT_ROOT / "build_system/scripts/web/check-web-surface.sh"
+    ).read_text()
+
+
 def _macos_issued(monkeypatch: pytest.MonkeyPatch) -> str:
     import sys
 
