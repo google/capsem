@@ -227,7 +227,7 @@ def test_macos_package_caller_checks_the_revision_it_actually_built(
     )
     tools = repo / "test-tools"
     tools.mkdir()
-    for name, body in {"cargo": "exit 0", "uname": "echo Darwin"}.items():
+    for name, body in {"cargo": "exit 0", "uname": "echo Darwin", "codesign": "exit 0"}.items():
         tool = tools / name
         tool.write_text(f"#!/bin/sh\n{body}\n")
         tool.chmod(0o755)

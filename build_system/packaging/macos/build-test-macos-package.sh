@@ -59,6 +59,12 @@ done
 cd "$ROOT"
 bash build_system/scripts/web/check-web-surface.sh frontend-build
 cargo tauri build --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
+# Seal this freshly built thin app; linker-only signatures do not bind resources.
+APP_PATH="$ROOT/cache/target/cargo/release/bundle/macos/Capsem.app"
+if ! codesign --verify --strict --test-requirement '=anchor apple generic' "$APP_PATH" 2>/dev/null; then
+    codesign --sign - --force "$APP_PATH"
+fi
+codesign --verify --strict "$APP_PATH"
 cargo build --release \
     -p capsem \
     -p capsem-service \
