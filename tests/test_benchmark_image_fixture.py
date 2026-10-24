@@ -2,12 +2,50 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
 
 from benchmarks.helpers import route_image_fixture as fixture
 from benchmarks.helpers import route_requests
+
+
+@pytest.mark.parametrize("producer_fails", [False, True])
+def test_registry_producer_scratch_uses_shared_image_stage(monkeypatch, tmp_path, producer_fails):
+    stage = tmp_path / 'configured-image-stage'
+    layout = stage / 'pinned-layout'
+    layout.mkdir(parents=True)
+    reference = '127.0.0.1:12345/library/dev@sha256:pin'
+    roots = []
+    monkeypatch.setattr(fixture, 'reference_image', SimpleNamespace(
+        ready=lambda: layout, stage=lambda: stage))
+
+    def produce(image, selected, output, *, inspect_timeout):
+        assert selected == reference and inspect_timeout == 5
+        assert output.parent.parent == stage, 'Docker scanning must use the configured shared cache'
+        if producer_fails:
+            raise RuntimeError('producer failed')
+        output.mkdir()
+        (output / 'packages.json').write_text(json.dumps({'subject': reference}))
+        return output
+
+    @contextmanager
+    def registry(directory, selected, image, *, official, evidence):
+        assert selected == layout and official
+        roots.append(directory.parent)
+        evidence(reference)
+        yield reference, tmp_path / 'certificate', []
+
+    monkeypatch.setattr(fixture, 'prepare_local_evidence', produce)
+    monkeypatch.setattr(fixture, 'layout_registry', registry)
+    if producer_fails:
+        with pytest.raises(RuntimeError, match='producer failed'), fixture.prepared_registry({'inspect_timeout_seconds': 5}):
+            pytest.fail('failed producer yielded a registry')
+    else:
+        with fixture.prepared_registry({'inspect_timeout_seconds': 5}) as actual:
+            assert actual[0] == reference and roots[0].is_dir()
+    assert len(roots) == 1 and not roots[0].exists()
 
 
 def test_independent_service_homes_keep_real_source_assets_untouched(monkeypatch, tmp_path):

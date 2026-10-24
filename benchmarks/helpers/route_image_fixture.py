@@ -21,7 +21,9 @@ from .route_requests import service_target
 def prepared_registry(cfg):
     # Existing image/cache preparation owns export/scan/repack. This is not a
     # download benchmark and never substitutes metadata from another repository.
-    with tempfile.TemporaryDirectory(prefix='capsem-image-routes-') as temporary:
+    layout = reference_image.ready()
+    # Match OCI producer staging: bounded TMPDIR may be outside Colima's mounts.
+    with tempfile.TemporaryDirectory(prefix='capsem-image-routes-', dir=reference_image.stage()) as temporary:
         root = Path(temporary)
         (root / 'registry').mkdir()
         expected = {}
@@ -29,7 +31,7 @@ def prepared_registry(cfg):
             output = prepare_local_evidence(reference_image, reference, root / 'evidence', inspect_timeout=cfg['inspect_timeout_seconds'])
             expected.update(json.loads((output / 'packages.json').read_bytes()))
             return output
-        with layout_registry(root / 'registry', reference_image.ready(), 'dev', official=True, evidence=evidence) as (reference, certificate, requests):
+        with layout_registry(root / 'registry', layout, 'dev', official=True, evidence=evidence) as (reference, certificate, requests):
             assert expected and expected['subject'] == reference
             yield reference, certificate, requests, expected
 
