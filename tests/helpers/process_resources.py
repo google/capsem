@@ -4,12 +4,18 @@ from __future__ import annotations
 
 import re
 import threading
+from collections.abc import Callable
 from decimal import Decimal
 from typing import cast
 
 import psutil
 
-from .process_snapshot import TreeSnapshot, process_tree_snapshot
+from .process_snapshot import (
+    OwnedProcess,
+    TreeSnapshot,
+    owned_process_snapshot,
+    process_tree_snapshot,
+)
 
 SAMPLE_INTERVAL_SECONDS = 0.05
 TRACKED_PROCESS_NAMES = frozenset(
@@ -38,8 +44,15 @@ class ProcessTreeSampler:
         root: psutil.Process | None,
         *,
         interval_seconds: float = SAMPLE_INTERVAL_SECONDS,
+        roots: Callable[[],tuple[OwnedProcess,...]] | None = None,
+        max_roots: int | None = None,
     ) -> None:
+        if roots is not None and (root is not None or type(max_roots) is not int or max_roots <= 0):
+            raise ValueError('owned roots require exclusive provider and finite budget')
+        if roots is None and max_roots is not None:
+            raise ValueError('root budget requires an owned provider')
         self._root = root
+        self._roots,self._max_roots = roots,max_roots
         self._interval_seconds = interval_seconds
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -130,9 +143,9 @@ class ProcessTreeSampler:
         self._peak_processes = max(self._peak_processes, len(snapshot.processes))
 
     def start(self) -> None:
-        if self._root is None or self._thread is not None:
+        if (self._root is None and self._roots is None) or self._thread is not None:
             raise RuntimeError("process resource sampler needs one live root and one start")
-        self.observe(process_tree_snapshot(self._root))
+        self.observe(self._snapshot())
         if not self._peak_processes:
             raise RuntimeError("process resource sampler found no live processes")
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -140,22 +153,30 @@ class ProcessTreeSampler:
 
     def _run(self) -> None:
         while not self._stop.wait(self._interval_seconds):
-            if self._root is not None:
-                try:
-                    self.observe(process_tree_snapshot(self._root))
-                except (psutil.Error, OSError) as error:
-                    self._error = error
-                    return
+            try:
+                self.observe(self._snapshot())
+            except Exception as error:
+                # Deliver provider/identity/counter errors to the caller;
+                # never let a background exception look like zero usage.
+                self._error = error
+                return
+
+    def _snapshot(self) -> TreeSnapshot:
+        if self._roots is not None:
+            assert self._max_roots is not None
+            return owned_process_snapshot(self._roots(),maximum=self._max_roots)
+        assert self._root is not None
+        return process_tree_snapshot(self._root)
 
     def stop(self) -> dict[str, dict]:
-        if self._root is None or self._thread is None:
+        if (self._root is None and self._roots is None) or self._thread is None:
             raise RuntimeError("process resource sampler was not started")
         self._stop.set()
         self._thread.join()
         self._thread = None
         if self._error is not None:
             raise RuntimeError("process resource observation failed") from self._error
-        self.observe(process_tree_snapshot(self._root))
+        self.observe(self._snapshot())
         return self.metrics()
 
     def metrics(self) -> dict[str, dict]:
