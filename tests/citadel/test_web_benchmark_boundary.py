@@ -459,6 +459,71 @@ def test_non_python_suffixless_content_does_not_gain_an_argv_exemption(prefix) -
     assert _legacy_references({"untyped": prefix + 'argv = ["cargo", "bench"]'})
 
 
+@pytest.mark.parametrize("name", ["metadata.json", "cargo-bench-no-run.jsonl", "provenance.json"])
+def test_actual_cargo_protocol_kind_and_command_tokens_are_not_paths(name) -> None:
+    raw = (ROOT / "build_system/tests/fixtures/criterion_cargo_1_97_1" / name).read_text()
+    assert not _legacy_references({name: raw})
+    if name.endswith(".json"):
+        document = json.loads(raw)
+        document["unrelated_path"] = "bench/collectors/../../outside"
+        assert _legacy_references({name: json.dumps(document)})
+    else:
+        rows = [json.loads(line) for line in raw.splitlines()]
+        rows[0]["target"]["src_path"] = "/bench/collectors/../../outside.rs"
+        assert _legacy_references({name: "\n".join(json.dumps(row) for row in rows)})
+
+
+def test_exact_target_kind_comparison_never_exempts_adjacent_paths() -> None:
+    source = 'targets = [row for row in package["targets"] if row["kind"] == ["bench"]]'
+    assert not _legacy_references({"cargo.py": source})
+    assert _legacy_references({"cargo.py": source + '; extra = "bench/collectors/x"'})
+    enum = 'from enum import StrEnum\nclass CargoProtocolToken(StrEnum):\n BENCH = "bench"\n'
+    owner = "tests/citadel/source_cargo_literals.py"
+    assert not _legacy_references({owner: enum})
+    assert _legacy_references({"foreign.py": enum})
+    assert _legacy_references({owner: enum + enum})
+    assert _legacy_references({owner: enum + 'path = CargoProtocolToken.BENCH + "/collectors/x"'})
+    assert _legacy_references({owner: enum + 'path = f"{CargoProtocolToken.BENCH}/../outside"'})
+    assert _legacy_references({owner: enum.replace('"bench"','"bench/collectors/x"')})
+    assert _legacy_references({owner: enum.replace('from enum import StrEnum','')})
+    assert _legacy_references({owner: enum.replace('CargoProtocolToken','UnknownEnum')})
+
+
+@pytest.mark.parametrize("raw", [
+    '{"kind":["bench"]}', '{"reason":"compiler-artifact","target":{"kind":["bench"]}}',
+    '{"version":1,"packages":[{"targets":[{"kind":["bench"]}]}]}',
+    '{"args":["cargo","bench"]}',
+    'rows = [row for row in package["other"] if row["kind"] == ["bench"]]',
+    'rows = [row for row in package["targets"] if other["kind"] == ["bench"]]',
+    'rows = [row for row in package["targets"] if row["kind"] == ["bench/collectors/x"]]',
+    'value = ["bench"]',
+])
+def test_fake_cargo_protocol_context_is_still_scanned(raw) -> None:
+    assert _legacy_references({"probe.json" if raw.startswith("{") else "probe.py": raw})
+
+
+@pytest.mark.parametrize("change", ["toolchain", "command", "failed", "profile", "profile_scalar"])
+def test_malformed_captured_cargo_protocol_is_not_exempt(change) -> None:
+    root = ROOT / "build_system/tests/fixtures/criterion_cargo_1_97_1"
+    name = "cargo-bench-no-run.jsonl" if change.startswith("profile") else "provenance.json"
+    raw = (root/name).read_text()
+    if change.startswith("profile"):
+        row = json.loads(raw.splitlines()[0])
+        if change == "profile":
+            row.pop("profile")
+        else:
+            row["profile"]["test"] = "not boolean"
+    else:
+        row = json.loads(raw)
+        if change == "toolchain":
+            row["toolchain"] = "cargo 0.0.0 (foreign)"
+        elif change == "command":
+            row["args"][0] = "wrapper"
+        else:
+            row["exit_code"] = 1
+    assert _legacy_references({name:json.dumps(row)})
+
+
 def test_external_documentation_urls_do_not_hide_adjacent_repository_callers() -> None:
     url = "https://github.com/upstream/tool/blob/main/docs/guide.md"
     assert not _legacy_references({"settings.txt": f"# {url}"}), RATIONALE

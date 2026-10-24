@@ -7,6 +7,8 @@ import json
 import re
 from typing import Any
 
+from source_cargo_literals import protocol_source, target_kind_literals
+
 
 def contract_enums(sources: dict[str, str]) -> frozenset[str]:
     names = set()
@@ -24,6 +26,10 @@ def contract_enums(sources: dict[str, str]) -> frozenset[str]:
 
 
 def reference_source(path: str, text: str, enums: frozenset[str] = frozenset()) -> str:
+    if path.endswith((".json", ".jsonl")) and (
+        protocol := protocol_source(text, json_lines=path.endswith(".jsonl"))
+    ) is not None:
+        return protocol
     if path.endswith(".json"):
         try:
             document = json.loads(text)
@@ -48,7 +54,7 @@ def reference_source(path: str, text: str, enums: frozenset[str] = frozenset()) 
                       if isinstance(node, ast.ImportFrom) and node.module == "enum"
                       for alias in node.names if alias.name in {"Enum", "StrEnum"}}
         lines = text.splitlines(keepends=True)
-        values = []
+        values = target_kind_literals(tree, path)
         for node in ast.walk(tree):
             # Only this argv position is a Cargo subcommand. Keep other
             # literals, including adjacent legacy paths and traversal, visible.
@@ -56,6 +62,7 @@ def reference_source(path: str, text: str, enums: frozenset[str] = frozenset()) 
                 value.value if isinstance(value, ast.Constant) else None
                 for value in node.elts[:2]
             ] == ["cargo", "bench"]:
+                assert isinstance(node.elts[1], ast.Constant)
                 values.append(node.elts[1])
             if not isinstance(node, ast.ClassDef) or node.name not in enums or not any(
                 isinstance(base, ast.Name) and base.id in enum_types for base in node.bases
