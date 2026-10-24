@@ -12,11 +12,15 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 
 
-def _run(tmp_path: Path, mode: str) -> subprocess.CompletedProcess[str]:
+def _run(
+    tmp_path: Path, mode: str, *, fresh_cache: bool = False
+) -> subprocess.CompletedProcess[str]:
     """Remap only absolute filesystem/tool locations, keeping the shell intact."""
     root = tmp_path / "root"
-    for relative in ("etc/apt/apt.conf.d", "var/lib/apt/lists", "var/cache/apt/archives"):
+    for relative in ("etc/apt/apt.conf.d", "var/lib/apt/lists", "var/cache/apt"):
         (root / relative).mkdir(parents=True)
+    if not fresh_cache:
+        (root / "var/cache/apt/archives").mkdir()
     commands = tmp_path / "bin"
     commands.mkdir()
     manager = commands / "apt-get"
@@ -102,6 +106,15 @@ def test_archives_download_concurrently_then_install_without_network(tmp_path: P
     counts = [int(value) for value in (tmp_path / "root/concurrency").read_text().split()]
     assert 1 < max(counts) <= 4
     assert (tmp_path / "root/installed").exists()
+
+
+def test_fresh_builder_cache_creates_download_destinations_before_workers(tmp_path: Path) -> None:
+    # BuildKit mounts the entire empty cache over /var/cache/apt. The actual
+    # helper destination write must work without fixture-created ancestors.
+    result = _run(tmp_path, "valid", fresh_cache=True)
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "root/var/cache/apt/archives/partial").is_dir()
+    assert (tmp_path / "root/installed").is_file()
 
 
 @pytest.mark.parametrize("mode", ["weak", "corrupt", "wrong-source", "path", "planner-error"])

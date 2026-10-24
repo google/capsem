@@ -124,7 +124,7 @@ def test_host_builder_mutable_tool_inventory_is_closed() -> None:
             "curl": 1,
             "npm": 1,
             "wget": 1,
-            "apt": 16,
+            "apt": 17,
             "pnpm": 1,
             "uv": 2,
         }
