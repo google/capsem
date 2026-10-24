@@ -76,8 +76,10 @@ def test_local_glowup_requires_the_public_install_command_to_be_discoverable() -
 
 def test_marketing_download_is_discoverable_without_a_second_cta() -> None:
     module = _load_marketing_surface()
-    surface = ('<code>curl -fsSL https://capsem.org/install.sh | sh</code>'
-               '<a href="https://release.capsem.org/channels/stable/">Download</a>')
+    surface = (
+        "<code>curl -fsSL https://capsem.org/install.sh | sh</code>"
+        '<a href="https://release.capsem.org/channels/stable/">Download</a>'
+    )
     module.validate_rendered_marketing_install_surface(surface)
     for required in ("curl -fsSL", "https://release.capsem.org/channels/stable/", "Download"):
         with pytest.raises(SystemExit):
@@ -375,7 +377,7 @@ def test_candidate_artifact_rejects_every_identity_mismatch(
     module = _load_module()
     artifact = _artifact(tmp_path, module)
     manifest = _manifest(artifact)
-    package = manifest["packages"][0]
+    package = cast(list[dict[str, Any]], manifest["packages"])[0]
     if field == "sha256":
         package["digest"]["sha256"] = bad_value
     else:
@@ -389,7 +391,8 @@ def test_candidate_artifact_rejects_ambiguous_package_records(tmp_path: Path) ->
     module = _load_module()
     artifact = _artifact(tmp_path, module)
     manifest = _manifest(artifact)
-    manifest["packages"].append(dict(manifest["packages"][0]))
+    packages = cast(list[dict[str, Any]], manifest["packages"])
+    packages.append(dict(packages[0]))
 
     with pytest.raises(module.GlowupContractError, match="exactly one"):
         module.assert_manifest_artifact(manifest, artifact)
@@ -1064,8 +1067,6 @@ def test_only_cross_channel_pairing_requires_an_explicit_product_switch() -> Non
     assert module.explicit_channel_switch_args(module.TransitionKind.BINARY_ONLY, "stable") == ()
 
 
-
-
 def test_exact_pairing_rejects_manifest_channel_or_package_mismatch(
     tmp_path: Path,
 ) -> None:
@@ -1213,7 +1214,7 @@ def test_exact_release_transport_changes_only_urls_and_reuses_exact_bytes(
     def authority(artifact, package_url: str, runtime_url: str, revision: str):
         manifest = _manifest(artifact)
         manifest["channel"] = "nightly"
-        manifest["packages"][0]["url"] = package_url
+        cast(list[dict[str, Any]], manifest["packages"])[0]["url"] = package_url
         manifest["runtime"] = {
             "revision": revision,
             "architectures": [
@@ -1503,12 +1504,14 @@ def test_exact_installed_glowup_uses_service_poll_and_probes_each_state(
             raise RuntimeError("forced installed transition failure")
 
     monkeypatch.setattr(module, "run", capture)
+    monkeypatch.setattr(module.installed_apply, "complete", lambda *args, **kwargs: None)
     arguments = {
         "pairing": pairing,
         "transport": transport,
         "install_script_url": "http://127.0.0.1:8765/install.sh",
         "release_base_url": "http://127.0.0.1:8765",
         "evidence_dir": tmp_path / "evidence",
+        "source_commit": module.SourceCommit("b" * 40),
     }
     if fail_call is not None:
         with pytest.raises(RuntimeError, match="forced installed transition failure"):
@@ -1518,16 +1521,18 @@ def test_exact_installed_glowup_uses_service_poll_and_probes_each_state(
 
     evidence = module.run_exact_installed_glowup(**arguments)
 
-    assert len(calls) == 6
+    assert len(calls) == 7
     assert calls[-1] == AUTOMATIC_UPDATE_POLL_CLEANUP
     before_script = calls[0][-1]
     after_script = calls[1][-1]
-    tamper_script = calls[2][-1]
-    incompatible_script = calls[3][-1]
-    preserved_script = calls[4][-1]
+    restore_script = calls[2][-1]
+    tamper_script = calls[3][-1]
+    incompatible_script = calls[4][-1]
+    preserved_script = calls[5][-1]
     for script in (
         before_script,
         after_script,
+        restore_script,
         tamper_script,
         incompatible_script,
         preserved_script,
@@ -1539,6 +1544,12 @@ def test_exact_installed_glowup_uses_service_poll_and_probes_each_state(
     assert "CAPSEM_AUTOMATIC_UPDATE_INITIAL_DELAY_SECS=2" in before_script
     assert "CAPSEM_AUTOMATIC_UPDATE_POLL_SECS=2" in before_script
     assert "probe_installed_transition fresh-install" in before_script
+    assert "disable-automatic" in before_script
+    assert before_script.index("disable-automatic") < before_script.rindex(
+        "systemctl --user restart capsem.service"
+    )
+    assert after_script.count("helpers.installed_apply_probe request ") == 1
+    assert "restore-automatic" in restore_script
     assert "observe_update_transition binary_only activated" in after_script
     assert "release_transition.py" in after_script
     assert "probe_installed_transition candidate-after" in after_script
@@ -1690,6 +1701,7 @@ def test_first_runtime_glowup_never_installs_empty_authoring_state(
         install_script_url="http://127.0.0.1:8765/install.sh",
         release_base_url="http://127.0.0.1:8765",
         evidence_dir=tmp_path / "evidence",
+        source_commit=module.SourceCommit("b" * 40),
     )
 
     assert len(calls) == 5
@@ -2564,9 +2576,7 @@ def test_linux_glowup_proves_background_asset_hydration() -> None:
     assert 'assets status --json > "$output"' in staging
     assert 'status.get("ready") and not status.get("downloading")' in staging
     assert 'wait_for_assets "$EVIDENCE_DIR/assets-after-install.json"' in fresh_install
-    assert fresh_install.index("event=manifest_installed") < fresh_install.index(
-        "wait_for_assets"
-    )
+    assert fresh_install.index("event=manifest_installed") < fresh_install.index("wait_for_assets")
     assert fresh_install.index("wait_for_assets") < fresh_install.index(
         "probe_installed_transition fresh-stable"
     )

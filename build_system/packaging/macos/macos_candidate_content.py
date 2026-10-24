@@ -84,6 +84,7 @@ def stage_guest_scripts(root: Path, share: Path) -> None:
         "release/tools/release_fixture_server.py",
         "release/tools/release_glowup.py",
         "release/tools/release_transition.py",
+        "release/tools/release_update_audit.py",
         "release/tools/verify_installed_release.py",
     ):
         stage_file(root / "build_system/builder" / name, share / "capsem_builder" / name)
@@ -96,9 +97,7 @@ def stage_guest_scripts(root: Path, share: Path) -> None:
         "release_transition.py",
     ):
         stage_file(release_script_root / name, share / name)
-    release_site_script = (
-        root / "build_system/release_site/scripts/serve-release-test-root.py"
-    )
+    release_site_script = root / "build_system/release_site/scripts/serve-release-test-root.py"
     stage_file(release_site_script, share / release_site_script.name)
     for name in (
         "macos-install-user-request.sh",

@@ -24,6 +24,7 @@ from capsem_builder.gate.releaseauthoring import author_native_candidate
 from capsem_builder.gate.sourcecommit import SourceCommit
 
 from ... import crypto as hashlib
+from . import release_installed_apply as installed_apply
 from . import release_installed_probe as installed_probe
 from . import repository_root
 from .marketing_install_surface import validate_checked_in_marketing_install_surface
@@ -108,6 +109,7 @@ class ExactInstalledGlowupEvidence:
     preserved_doctor: Path
     preserved_winterfell: Path
     fresh_uses_after: bool = False
+    candidate_apply: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -376,6 +378,7 @@ def main() -> int:
                     install_script_url=install_script_url,
                     release_base_url=base_url,
                     evidence_dir=args.evidence_dir / "exact-transition-evidence",
+                    source_commit=args.source_commit,
                 )
                 installed = json.loads(
                     exact_evidence.candidate_installed.read_text(encoding="utf-8")
@@ -431,6 +434,10 @@ def main() -> int:
                         ),
                     },
                 }
+                if exact_evidence.candidate_apply is not None:
+                    report["adapter_evidence"]["explicit_apply"] = json.loads(
+                        exact_evidence.candidate_apply.read_text(encoding="utf-8")
+                    )
             else:
                 evidence_path = args.evidence_dir / "installed-evidence.json"
                 run_installed_glowup(
@@ -1304,6 +1311,7 @@ def run_exact_installed_glowup(
     install_script_url: str,
     release_base_url: str,
     evidence_dir: Path,
+    source_commit: SourceCommit,
 ) -> ExactInstalledGlowupEvidence:
     try:
         return _run_exact_installed_glowup(
@@ -1312,6 +1320,7 @@ def run_exact_installed_glowup(
             install_script_url=install_script_url,
             release_base_url=release_base_url,
             evidence_dir=evidence_dir,
+            source_commit=source_commit,
         )
     finally:
         installed_probe.clear_accelerated_automatic_update_polling(run)
@@ -1324,6 +1333,7 @@ def _run_exact_installed_glowup(
     install_script_url: str,
     release_base_url: str,
     evidence_dir: Path,
+    source_commit: SourceCommit,
 ) -> ExactInstalledGlowupEvidence:
     before_artifact = (
         None
@@ -1361,6 +1371,15 @@ def _run_exact_installed_glowup(
     fresh_manifest_url = (
         transport.current_manifest_url if first_activation else transport.before_manifest_url
     )
+    automatic_state = evidence_dir / "candidate-automatic-state.json"
+    disable_automatic = (
+        ""
+        if first_activation
+        else (
+            installed_apply.shell(PROJECT_ROOT, "disable-automatic", automatic_state)
+            + "\nsystemctl --user restart capsem.service\nwait_for_service"
+        )
+    )
     fresh_script = f"""
 set -euxo pipefail
 export DEBIAN_FRONTEND=noninteractive
@@ -1389,6 +1408,7 @@ probe_installed_transition fresh-install \
   {shlex.quote(str(fresh_package))} \
   {shlex.quote(fresh_artifact.platform)} \
   {shlex.quote(fresh_artifact.architecture.value)}
+{disable_automatic}
 """
     run(["bash", "-lc", fresh_script])
 
@@ -1406,11 +1426,26 @@ probe_installed_transition fresh-install \
                 '"$HOME/.capsem/bin/capsem" '
                 + " ".join(shlex.quote(argument) for argument in switch)
             )
+        apply_command = (
+            ""
+            if switch_command
+            else installed_apply.request_shell(
+                PROJECT_ROOT,
+                evidence_dir,
+                source=transport.current_manifest_url,
+                digest=file_sha256(transport.after_manifest),
+                source_commit=str(source_commit),
+            )
+        )
+        restore_automatic = installed_apply.shell(
+            PROJECT_ROOT, "restore-automatic", automatic_state, "--state", str(automatic_state)
+        )
         after_script = f"""
 set -euxo pipefail
 export DEBIAN_FRONTEND=noninteractive
 {probe_functions}
 {switch_command}
+{apply_command}
 observe_update_transition {shlex.quote(pairing.transition.value)} activated \
   {shlex.quote(transport.current_manifest_url)} \
   {shlex.quote(file_sha256(transport.after_manifest))} \
@@ -1425,6 +1460,16 @@ probe_installed_transition candidate-after \
   {shlex.quote(after_artifact.architecture.value)}
 """
         run(["bash", "-lc", after_script])
+        if not switch_command:
+            installed_apply.complete(
+                evidence_dir,
+                expected=pairing.after,
+                kind=pairing.transition.value,
+                source=transport.current_manifest_url,
+                digest=file_sha256(transport.after_manifest),
+                source_commit=str(source_commit),
+            )
+        run(["bash", "-lc", restore_automatic])
 
     adversarial = stage_adversarial_exact_candidates(
         pairing,
@@ -1540,6 +1585,9 @@ probe_installed_transition rejection-preserved \
         preserved_doctor=evidence_dir / "rejection-preserved-doctor.json",
         preserved_winterfell=evidence_dir / "rejection-preserved-winterfell.json",
         fresh_uses_after=first_activation,
+        candidate_apply=(
+            None if first_activation or switch_command else evidence_dir / "candidate-apply.json"
+        ),
     )
 
 

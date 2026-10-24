@@ -12,40 +12,12 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import cast
 
+from .release_update_audit import TransitionEvidenceError as TransitionEvidenceError
+from .release_update_audit import load_update_audit as load_update_audit
+
 VERDICT_SCHEMA = "capsem.release_transition_verdict.v1"
 UPDATE_AUDIT_SCHEMA = "capsem.update_audit.v1"
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
-
-
-class TransitionEvidenceError(RuntimeError):
-    """The update audit did not prove the requested exact transition."""
-
-
-def load_update_audit(path: Path, *, after_line: int = 0) -> list[dict[str, object]]:
-    if after_line < 0:
-        raise TransitionEvidenceError("update audit line marker must not be negative")
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except FileNotFoundError:
-        return []
-    except OSError as error:
-        raise TransitionEvidenceError(f"cannot read update audit {path}: {error}") from error
-    rows: list[dict[str, object]] = []
-    for line_number, line in enumerate(lines[after_line:], start=after_line + 1):
-        if not line.strip():
-            continue
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError as error:
-            raise TransitionEvidenceError(
-                f"update audit {path}:{line_number} is invalid JSON: {error}"
-            ) from error
-        if not isinstance(row, dict):
-            raise TransitionEvidenceError(
-                f"update audit {path}:{line_number} must contain an object"
-            )
-        rows.append(cast(dict[str, object], row))
-    return rows
 
 
 def _state_digest(row: Mapping[str, object], field: str) -> str | None:
