@@ -24,6 +24,11 @@ def activation_receipt(
         "transport_failure",
     }:
         raise ValueError("original Apply receipt has no terminal outcome")
+    status = request.get("http_status")
+    if request["outcome"] == "succeeded" and (type(status) is not int or not 200 <= status < 300):
+        raise ValueError("original Apply success has no successful HTTP receipt")
+    if request["outcome"] == "transport_failure" and status is not None:
+        raise ValueError("original transport failure cannot manufacture a complete HTTP status")
     validate_transition_verdict(
         verdict, kind=kind, result="activated", source=source, candidate_manifest_sha256=digest
     )

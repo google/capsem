@@ -7,12 +7,12 @@ import json
 import time
 from pathlib import Path
 
-from capsem_builder.gate import config as gate_config
 from capsem_builder.release.tools.release_apply_receipt import (
     activation_receipt as activation_receipt,
 )
 from capsem_builder.release.tools.release_transition import load_update_audit
 
+from helpers.http_measurement import validate_limits
 from helpers.http_transport import Transport
 
 
@@ -126,9 +126,10 @@ def main():
     parser.add_argument("--source")
     parser.add_argument("--digest")
     parser.add_argument("--source-commit")
+    parser.add_argument("--timeout", required=True, type=float)
+    parser.add_argument("--maximum", required=True, type=int)
     args = parser.parse_args()
-    limits = gate_config.load(Path.cwd()).benchmark.route_load
-    args.timeout, args.maximum = limits.timeout_seconds, limits.max_response_bytes
+    validate_limits(args.timeout, args.maximum)
     owner = Transport(socket_path=args.socket)
     try:
         if args.command == "disable-automatic":

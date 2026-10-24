@@ -4,11 +4,9 @@
 # ruff: noqa: E402
 from __future__ import annotations
 
-import argparse
 import json
 import os
 import platform
-import re
 import shlex
 import shutil
 import subprocess
@@ -17,12 +15,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts"))
+import macos_binary_apply
 from capsem_builder import crypto as hashlib
 from capsem_builder.gate import cachelayout
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate.content import RuntimeContent
 from capsem_builder.gate.releaseauthoring import author_native_candidate
 from capsem_builder.gate.sourcecommit import SourceCommit, source_commit_for_checkout
+from capsem_builder.gate.versions import workspace_version
 from capsem_builder.release.tools import marketing_install_surface
 from capsem_builder.release.tools.release_glowup import (
     ArtifactIdentity,
@@ -53,17 +53,6 @@ def run(command: list[str], *, env: dict[str, str] | None = None) -> None:
         merged.update(env)
     print("+", shlex.join(command), flush=True)
     subprocess.run(command, cwd=ROOT, env=merged, check=True)
-
-
-def project_version() -> str:
-    manifest = (ROOT / "Cargo.toml").read_text()
-    workspace = re.search(r"(?ms)^\[workspace\.package\]\s*(.*?)(?=^\[|\Z)", manifest)
-    if workspace is None:
-        raise RuntimeError("Cargo.toml is missing [workspace.package]")
-    version = re.search(r'(?m)^version\s*=\s*"([^"]+)"\s*$', workspace.group(1))
-    if version is None:
-        raise RuntimeError("Cargo.toml [workspace.package] is missing version")
-    return version.group(1)
 
 
 def prepare_candidate_manifest(
@@ -240,8 +229,8 @@ def finalize_native_report(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--version", default=project_version())
+    parser = macos_binary_apply.argument_parser(description=__doc__)
+    parser.add_argument("--version", default=workspace_version(ROOT))
     parser.add_argument(
         "--content-root",
         required=True,
@@ -253,6 +242,7 @@ def main() -> int:
         default=os.environ.get("CAPSEM_INSTALL_CHANNEL", "stable"),
     )
     args = parser.parse_args()
+    macos_binary_apply.validate_options(args)
 
     if platform.system() != "Darwin":
         raise RuntimeError("the macOS release glow-up requires macOS")
@@ -298,34 +288,34 @@ def main() -> int:
         work_dir=proofs / "macos-release-glowup",
     )
     candidates = stage_transition_candidates(manifest_path, manifest_path.parent)
-    run(
-        [
-            sys.executable,
-            str(Path(__file__).resolve().parent / "macos_tart_glowup.py"),
-            "--package",
-            str(package),
-            "--version",
-            args.version,
-            "--manifest-url",
-            manifest_url,
-            "--manifest-file",
-            str(manifest_path),
-            "--tampered-manifest-file",
-            str(candidates.tampered),
-            "--updated-manifest-file",
-            str(candidates.updated),
-            "--incompatible-manifest-file",
-            str(candidates.incompatible),
-            "--sbom",
-            str(sbom),
-            "--asset-share",
-            str(asset_share),
-            "--channel",
-            args.channel,
-            "--work-dir",
-            str(tart_report_path.parent),
-        ]
-    )
+    tart_command = [
+        sys.executable,
+        str(Path(__file__).resolve().parent / "macos_tart_glowup.py"),
+        "--package",
+        str(package),
+        "--version",
+        args.version,
+        "--manifest-url",
+        manifest_url,
+        "--manifest-file",
+        str(manifest_path),
+        "--tampered-manifest-file",
+        str(candidates.tampered),
+        "--updated-manifest-file",
+        str(candidates.updated),
+        "--incompatible-manifest-file",
+        str(candidates.incompatible),
+        "--sbom",
+        str(sbom),
+        "--asset-share",
+        str(asset_share),
+        "--channel",
+        args.channel,
+        "--work-dir",
+        str(tart_report_path.parent),
+    ]
+    run(tart_command)
+    paired_report = macos_binary_apply.run_paired(args, tart_command, runner=run)
     run(
         [
             "bash",
@@ -348,6 +338,16 @@ def main() -> int:
         package=package,
         version=args.version,
         channel=args.channel,
+    )
+    macos_binary_apply.attach(
+        tart_report_path,
+        paired_report,
+        args,
+        package=package,
+        manifest=manifest_path,
+        sbom=sbom,
+        source=manifest_url,
+        root=ROOT,
     )
     return 0
 

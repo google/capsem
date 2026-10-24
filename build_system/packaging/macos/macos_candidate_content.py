@@ -85,9 +85,22 @@ def stage_guest_scripts(root: Path, share: Path) -> None:
         "release/tools/release_glowup.py",
         "release/tools/release_transition.py",
         "release/tools/release_update_audit.py",
+        "release/tools/release_apply_receipt.py",
+        "release/tools/release_macos_apply.py",
+        "release/tools/release_macos_pairing.py",
+        "release/tools/package_payload.py",
+        "release/tools/generate_host_binary_sbom.py",
         "release/tools/verify_installed_release.py",
     ):
         stage_file(root / "build_system/builder" / name, share / "capsem_builder" / name)
+    for name in (
+        "__init__.py",
+        "constants.py",
+        "http_measurement.py",
+        "http_transport.py",
+        "installed_apply_probe.py",
+    ):
+        stage_file(root / "tests/helpers" / name, share / "helpers" / name)
     stage_file(root / "build_system/packaging/macos" / "macos_tart_guest.sh", share / "guest.sh")
     request = root / "build_system/packaging/shared/install-manifest-request.sh"
     stage_file(request, share / request.name)
@@ -103,5 +116,6 @@ def stage_guest_scripts(root: Path, share: Path) -> None:
         "macos-install-user-request.sh",
         "macos_tart_transition_support.py",
         "macos-tart-regression-probes.sh",
+        "macos-tart-binary-apply.sh",
     ):
         stage_file(root / "build_system/packaging/macos" / name, share / name)

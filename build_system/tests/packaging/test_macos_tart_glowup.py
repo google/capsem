@@ -272,19 +272,30 @@ def test_ip_wait_fails_immediately_when_tart_runner_exits() -> None:
         module.wait_for_guest_ip("capsem-glowup-123", ExitedRunner(), Path("proof/tart-run.log"))
 
 
-@pytest.mark.parametrize("script", [
-    "serve-release-test-root.py", "verify-installed-release.py",
-    "release_transition.py", "macos_tart_transition_support.py",
-])
+@pytest.mark.parametrize(
+    "script",
+    [
+        "serve-release-test-root.py",
+        "verify-installed-release.py",
+        "release_transition.py",
+        "macos_tart_transition_support.py",
+    ],
+)
 def test_staged_guest_commands_need_no_checkout_or_installed_packages(
-    tmp_path: Path, script: str,
+    tmp_path: Path,
+    script: str,
 ) -> None:
     share = tmp_path / "share"
     _load_harness().stage_guest_scripts(PROJECT_ROOT, share)
 
     result = subprocess.run(
         [sys.executable, "-S", str(share / script), "--help"],
-        cwd=tmp_path, env={}, capture_output=True, text=True, check=False, timeout=10,
+        cwd=tmp_path,
+        env={},
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -376,7 +387,6 @@ def test_guest_installs_and_verifies_the_exact_shared_package() -> None:
         "capsem-ledger",
         "capsem-proxy",
         "capsem-tui",
-
         "capsem-mcp-aggregator",
         "capsem-mcp-builtin",
         "capsem-gateway",
@@ -388,7 +398,7 @@ def test_guest_installs_and_verifies_the_exact_shared_package() -> None:
 
 
 def test_guest_activates_update_then_rejects_both_adversarial_candidates() -> None:
-    source = GUEST.read_text()
+    source = GUEST.read_text() + GUEST_REGRESSIONS.read_text()
     glowup = GLOWUP.read_text()
 
     assert 'TAMPERED_MANIFEST="$SHARE/tampered-manifest.json"' in source
@@ -485,9 +495,7 @@ def test_macos_glowup_stages_complete_candidates_without_mutating_authority(
     incompatible = json.loads(candidates.incompatible.read_text())
     assert tampered["packages"] == manifest["packages"]
     assert updated["runtime"] != manifest["runtime"]
-    assert (
-        tampered["runtime"]["architectures"][0]["images"][0]["digest"]["sha256"] != "a" * 64
-    )
+    assert tampered["runtime"]["architectures"][0]["images"][0]["digest"]["sha256"] != "a" * 64
     assert incompatible["runtime"]["min_capsem_version"] == "9999.0.0"
 
 
@@ -758,9 +766,7 @@ def test_native_report_check_rejects_any_missing_full_probe(tmp_path: Path) -> N
 def test_installed_winterfell_runner_loads_without_pytest_path_side_effects() -> None:
     module = _load_script(INSTALLED_WINTERFELL_IMPLEMENTATION, "installed_winterfell_direct")
 
-    assert module.WINTERFELL_TESTS == (
-        "tests/capsem-installed/test_winterfell_gateway.py",
-    )
+    assert module.WINTERFELL_TESTS == ("tests/capsem-installed/test_winterfell_gateway.py",)
 
 
 def test_installed_winterfell_does_not_write_pytest_state_to_source(
@@ -780,18 +786,21 @@ def test_installed_winterfell_does_not_write_pytest_state_to_source(
 
     monkeypatch.setattr(module.subprocess, "run", run)
 
-    assert module.main(
-        [
-            "--bin-dir",
-            str(roots.binary_dir),
-            "--assets-dir",
-            str(roots.assets_dir),
-            "--evidence-out",
-            str(tmp_path / "evidence.json"),
-            "--image-layout",
-            str(tmp_path / "reference-layout"),
-        ]
-    ) == 0
+    assert (
+        module.main(
+            [
+                "--bin-dir",
+                str(roots.binary_dir),
+                "--assets-dir",
+                str(roots.assets_dir),
+                "--evidence-out",
+                str(tmp_path / "evidence.json"),
+                "--image-layout",
+                str(tmp_path / "reference-layout"),
+            ]
+        )
+        == 0
+    )
     assert commands[0][3:5] == ["-o", f"cache_dir={tmp_path / '.pytest_cache'}"]
 
 

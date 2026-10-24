@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import os
 import platform
@@ -16,6 +15,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TextIO, cast
 
+import macos_binary_apply
 from capsem_builder import crypto as hashlib
 from capsem_builder.cache.config import load_policy
 from capsem_builder.cache.runtimemodels import TartRuntimePolicy
@@ -164,14 +164,6 @@ def run_checked(
     )
 
 
-def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def wait_for_ssh(ip: str, timeout: int = GUEST_READY_TIMEOUT) -> None:
     deadline = time.monotonic() + timeout
     last_error = ""
@@ -265,8 +257,7 @@ def wait_for_guest_ip(
         returncode = runner.poll()
         if returncode is not None:
             raise RuntimeError(
-                f"Tart VM runner exited before boot (status {returncode}); "
-                f"inspect {log}"
+                f"Tart VM runner exited before boot (status {returncode}); inspect {log}"
             )
         result = subprocess.run(
             tart_ip_command(vm_name, 5),
@@ -349,7 +340,7 @@ sudo log show --last 15m --style compact \
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser()
+    parser = macos_binary_apply.argument_parser()
     parser.add_argument("--package", required=True, type=Path)
     parser.add_argument("--version", required=True)
     parser.add_argument("--manifest-url", required=True)
@@ -366,6 +357,7 @@ def main() -> int:
     )
     parser.add_argument("--work-dir", type=Path, required=True)
     args = parser.parse_args()
+    macos_binary_apply.validate_options(args)
 
     validate_host()
     run_cache_control("macos-glowup-preflight")
@@ -420,6 +412,9 @@ def main() -> int:
     ):
         stage_file(source, share / name)
     stage_guest_scripts(PROJECT_ROOT, share)
+    binary_pair = macos_binary_apply.prepare(
+        args, root=PROJECT_ROOT, share=share, guest_package=guest_package
+    )
     vm_name = f"{OWNED_VM_PREFIX}{os.getpid()}-{int(time.time())}"
     require_owned_vm(vm_name)
     runner: subprocess.Popen[str] | None = None
@@ -462,6 +457,9 @@ def main() -> int:
             ]
         )
         run_authenticated_guest(ip, remote, timeout=1800)
+        if binary_pair is not None:
+            macos_binary_apply.finish_host(share, work_dir, binary_pair, source=args.manifest_url)
+            return 0
         guest_report = validate_macos_guest_report(
             report_path,
             artifact_sha256=artifact.sha256,

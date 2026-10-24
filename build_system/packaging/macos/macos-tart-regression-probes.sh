@@ -16,13 +16,18 @@ verify_binary_cohort() {
 }
 
 capsem_wait_for_service() {
-    local attempt status
+    local attempt status retired_pid="${1:-}"
     for attempt in $(seq 1 90); do
         status=$("$CAPSEM" status 2>/dev/null || true)
         if grep -Fq "Service:   ok" <<<"$status" \
             && grep -Fq "Gateway:   ok" <<<"$status"
         then
-            return 0
+            if test -z "$retired_pid" || \
+                { test "$(cat "$CAPSEM_HOME/run/service.pid")" != "$retired_pid" \
+                  && ! kill -0 "$retired_pid" 2>/dev/null; }
+            then
+                return 0
+            fi
         fi
         sleep 2
     done
@@ -149,4 +154,33 @@ Path(sys.argv[1]).write_text(
     + "\n"
 )
 PY
+}
+
+audit_line() {
+    test -f "$CAPSEM_HOME/logs/update.log" \
+        && wc -l < "$CAPSEM_HOME/logs/update.log" || printf '0\n'
+}
+
+configure_fast_service_polling() {
+    test -s "$SERVICE_PLIST"
+    cp "$SERVICE_PLIST" "$SERVICE_PLIST_BACKUP"
+    /usr/libexec/PlistBuddy \
+        -c "Add :EnvironmentVariables:CAPSEM_AUTOMATIC_UPDATE_INITIAL_DELAY_SECS string 2" \
+        "$SERVICE_PLIST" \
+        || /usr/libexec/PlistBuddy \
+            -c "Set :EnvironmentVariables:CAPSEM_AUTOMATIC_UPDATE_INITIAL_DELAY_SECS 2" \
+            "$SERVICE_PLIST"
+    /usr/libexec/PlistBuddy \
+        -c "Add :EnvironmentVariables:CAPSEM_AUTOMATIC_UPDATE_POLL_SECS string 2" \
+        "$SERVICE_PLIST" \
+        || /usr/libexec/PlistBuddy \
+            -c "Set :EnvironmentVariables:CAPSEM_AUTOMATIC_UPDATE_POLL_SECS 2" \
+            "$SERVICE_PLIST"
+    launchctl bootout "gui/$(id -u)" "$SERVICE_PLIST"
+    launchctl bootstrap "gui/$(id -u)" "$SERVICE_PLIST"
+    launchctl kickstart -k "gui/$(id -u)/com.capsem.service"
+    launchctl print "gui/$(id -u)/com.capsem.service" \
+        | grep -F "CAPSEM_AUTOMATIC_UPDATE_INITIAL_DELAY_SECS"
+    launchctl print "gui/$(id -u)/com.capsem.service" \
+        | grep -F "CAPSEM_AUTOMATIC_UPDATE_POLL_SECS"
 }

@@ -66,6 +66,9 @@ test -f "$TRANSITION_SUPPORT"
 test -f "$INSTALL_USER_REQUEST"
 test -f "$INSTALL_MANIFEST_REQUEST"
 test -f "$SHARE/macos-tart-regression-probes.sh"
+if test -f "$SHARE/binary-apply-pair.json"; then
+    ORIGINAL_MANIFEST="$SHARE/before/manifest.json"
+fi
 test -s "$ORIGINAL_MANIFEST"
 test -s "$UPDATED_MANIFEST"
 test -s "$TAMPERED_MANIFEST"
@@ -153,6 +156,11 @@ observe_update_transition() {
     "${command[@]}"
 }
 start_release_http_server
+if test -f "$SHARE/binary-apply-pair.json"; then
+    source "$SHARE/macos-tart-binary-apply.sh"
+    capsem_prove_binary_apply
+    exit 0
+fi
 
 echo "=== Installing exact shared package ==="
 bash "$INSTALL_USER_REQUEST" write admin
@@ -202,39 +210,12 @@ echo "=== Reinstalling over a live native helper cohort ==="
 capsem_probe_stale_helper_replacement
 verify_binary_cohort
 
-audit_line() {
-    test -f "$CAPSEM_HOME/logs/update.log" \
-        && wc -l < "$CAPSEM_HOME/logs/update.log" || printf '0\n'
-}
 
 promote_candidate() {
     python3 "$TRANSITION_SUPPORT" promote "$1" "$REMOTE_MANIFEST"
     python3 "$TRANSITION_SUPPORT" assert-url "$MANIFEST_URL" "$1"
 }
 
-configure_fast_service_polling() {
-    test -s "$SERVICE_PLIST"
-    cp "$SERVICE_PLIST" "$SERVICE_PLIST_BACKUP"
-    /usr/libexec/PlistBuddy \
-        -c "Add :EnvironmentVariables:CAPSEM_AUTOMATIC_UPDATE_INITIAL_DELAY_SECS string 2" \
-        "$SERVICE_PLIST" \
-        || /usr/libexec/PlistBuddy \
-            -c "Set :EnvironmentVariables:CAPSEM_AUTOMATIC_UPDATE_INITIAL_DELAY_SECS 2" \
-            "$SERVICE_PLIST"
-    /usr/libexec/PlistBuddy \
-        -c "Add :EnvironmentVariables:CAPSEM_AUTOMATIC_UPDATE_POLL_SECS string 2" \
-        "$SERVICE_PLIST" \
-        || /usr/libexec/PlistBuddy \
-            -c "Set :EnvironmentVariables:CAPSEM_AUTOMATIC_UPDATE_POLL_SECS 2" \
-            "$SERVICE_PLIST"
-    launchctl bootout "gui/$(id -u)" "$SERVICE_PLIST"
-    launchctl bootstrap "gui/$(id -u)" "$SERVICE_PLIST"
-    launchctl kickstart -k "gui/$(id -u)/com.capsem.service"
-    launchctl print "gui/$(id -u)/com.capsem.service" \
-        | grep -F "CAPSEM_AUTOMATIC_UPDATE_INITIAL_DELAY_SECS"
-    launchctl print "gui/$(id -u)/com.capsem.service" \
-        | grep -F "CAPSEM_AUTOMATIC_UPDATE_POLL_SECS"
-}
 
 echo "=== Activating a distinct valid update through automatic polling ==="
 configure_fast_service_polling

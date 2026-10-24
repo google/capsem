@@ -123,3 +123,14 @@ def test_request_and_native_verdict_must_share_original_audit_marker(tmp_path):
     with pytest.raises(ValueError, match="marker"):
         apply.complete(tmp_path, **arguments)
     assert not (tmp_path / "candidate-apply.json").exists()
+
+
+def test_activation_cannot_relabel_failed_http_as_original_success(tmp_path):
+    arguments = proof_files(tmp_path)
+    request = tmp_path / "candidate-apply-request.json"
+    data = json.loads(request.read_text())
+    data.update(outcome="succeeded", http_status=500)
+    request.write_text(json.dumps(data))
+    with pytest.raises(ValueError, match="HTTP"):
+        apply.complete(tmp_path, **arguments)
+    assert not (tmp_path / "candidate-apply.json").exists()

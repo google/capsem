@@ -31,6 +31,10 @@ def shell(root: Path, command: str, output: Path, *arguments: str) -> str:
         str(Path.home() / ".capsem" / "run" / "service.sock"),
         "--output",
         str(output),
+        "--timeout",
+        str(config.benchmark.route_load.timeout_seconds),
+        "--maximum",
+        str(config.benchmark.route_load.max_response_bytes),
         *arguments,
     ]
     return shlex.join(argv)
