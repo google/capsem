@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from capsem_builder.gate import config as gate_config
 from capsem_builder.gate import shellsurfaces
 from capsem_builder.gate.shellnodes import AndOr, Command, Pipeline, walk
@@ -147,3 +148,46 @@ RUN --mount=type=cache,id=apt-lists,target=/var/lib/apt/lists,sharing=locked \\
     assert shellsurfaces.run_instructions(dockerfile) == [
         "apt-get update -qq && apt-get install -y package"
     ]
+
+
+def test_rendered_templates_use_the_declared_repository_owner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from capsem_builder.image import docker
+    from capsem_builder.image.config import load_guest_config
+
+    declared = tmp_path / "declared"
+    decoy = tmp_path / "package-relative"
+    declared.mkdir()
+    decoy.mkdir()
+    name = "Dockerfile.kernel-dependencies.j2"
+    (declared / name).write_text("FROM declared-owner\n")
+    (decoy / name).write_text("FROM wrong-package-owner\n")
+    monkeypatch.setattr(docker, "TEMPLATES_DIR", decoy)
+    guest_path = ROOT / "config" / "docker" / "image"
+    # The ordinary renderer default is unchanged; the scanner's explicit
+    # template source must win even in an installed, non-editable package.
+    guest = load_guest_config(guest_path)
+    assert docker.render_dockerfile(name, guest, "arm64") == "FROM wrong-package-owner\n"
+    rendered = list(shellsurfaces.rendered_templates(declared, guest_path))
+    assert {arch for _, arch, _ in rendered} == set(guest.build.architectures)
+    assert {body for _, _, body in rendered} == {"FROM declared-owner\n"}
+
+
+def test_declared_template_does_not_fall_back_to_package_includes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from capsem_builder.image import docker
+    from jinja2 import TemplateNotFound
+
+    declared = tmp_path / "declared"
+    decoy = tmp_path / "package-relative"
+    declared.mkdir()
+    decoy.mkdir()
+    name = "Dockerfile.kernel-dependencies.j2"
+    (declared / name).write_text('{% include "missing-owner.j2" %}')
+    (decoy / name).write_text("FROM wrong-package-owner\n")
+    (decoy / "missing-owner.j2").write_text("FROM wrong-include\n")
+    monkeypatch.setattr(docker, "TEMPLATES_DIR", decoy)
+    with pytest.raises(TemplateNotFound, match=r"missing-owner\.j2"):
+        list(shellsurfaces.rendered_templates(declared, ROOT / "config" / "docker" / "image"))

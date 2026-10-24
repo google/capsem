@@ -191,4 +191,4 @@ def rendered_templates(templates: Path, guest_config: Path):
     guest = load_guest_config(guest_config)
     for template in sorted(path.name for path in templates.glob("*.j2")):
         for arch in guest.build.architectures:
-            yield template, arch, render_dockerfile(template, guest, arch)
+            yield template, arch, render_dockerfile(template, guest, arch, templates_dir=templates)

@@ -162,6 +162,7 @@ def generate_build_context(
         template_name: Template filename (e.g., "Dockerfile.rootfs.j2").
         config: Guest image configuration.
         arch_name: Architecture name (e.g., "arm64", "x86_64").
+        templates_dir: Explicit source owner for installed-package callers.
     Returns:
         Context dict ready for Jinja rendering.
 
@@ -189,6 +190,8 @@ def render_dockerfile(
     template_name: str,
     config: GuestImageConfig,
     arch_name: str,
+    *,
+    templates_dir: Path | None = None,
 ) -> str:
     """Render a Dockerfile from a Jinja2 template with config context.
 
@@ -205,7 +208,7 @@ def render_dockerfile(
     """
     context = generate_build_context(template_name, config, arch_name)
     env = Environment(
-        loader=FileSystemLoader(str(TEMPLATES_DIR)),
+        loader=FileSystemLoader(str(TEMPLATES_DIR if templates_dir is None else templates_dir)),
         keep_trailing_newline=True,
         trim_blocks=True,
         lstrip_blocks=True,
