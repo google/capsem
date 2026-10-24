@@ -2227,6 +2227,21 @@ def test_installation_skill_documents_full_host_binary_cohort() -> None:
     assert "capsem update --yes" in install_skill
 
 
+def _release_fixture_object(value: object) -> dict[str, object]:
+    assert isinstance(value, dict) and all(isinstance(key, str) for key in value)
+    return value
+
+
+def _release_fixture_items(value: object) -> list[object]:
+    assert isinstance(value, list)
+    return value
+
+
+def _release_fixture_text(value: object) -> str:
+    assert isinstance(value, str)
+    return value
+
+
 def _install_release_graph_contract_fixture(
     checker,
     *,
@@ -2280,7 +2295,7 @@ def _install_release_graph_contract_fixture(
     )
     obom_url = f"{asset_base}/{current_assets}/arm64-obom.cdx.json"
 
-    manifest = {
+    manifest: dict[str, object] = {
         "version": current_binary,
         "status": "current",
         "packages": [
@@ -2413,34 +2428,36 @@ def _install_release_graph_contract_fixture(
             ]
         )
 
-    package = manifest["packages"][0]
-    binary = package["binaries"][0]
-    runtime = manifest["runtime"]
+    package = _release_fixture_object(_release_fixture_items(manifest["packages"])[0])
+    binary = _release_fixture_object(_release_fixture_items(package["binaries"])[0])
+    runtime = _release_fixture_object(manifest["runtime"])
+    package_digest = _release_fixture_object(package["digest"])
+    binary_digest = _release_fixture_object(binary["digest"])
     channel_page_text = " ".join(
         [
             "Stable",
             current_binary,
             manifest_path,
-            package["name"],
-            package["version"],
-            runtime["revision"],
-            runtime["min_capsem_version"],
+            _release_fixture_text(package["name"]),
+            _release_fixture_text(package["version"]),
+            _release_fixture_text(runtime["revision"]),
+            _release_fixture_text(runtime["min_capsem_version"]),
         ]
     )
     package_page_text = " ".join(
         [
-            package["name"],
-            package["version"],
-            package["kind"],
-            checker.hash_label(package["digest"]["sha256"]),
-            checker.hash_label(package["digest"]["blake3"]),
-            binary["name"],
-            binary["version"],
-            binary["description"],
-            binary["installed_path"],
-            binary["sbom_component_ref"],
-            checker.hash_label(binary["digest"]["sha256"]),
-            checker.hash_label(binary["digest"]["blake3"]),
+            _release_fixture_text(package["name"]),
+            _release_fixture_text(package["version"]),
+            _release_fixture_text(package["kind"]),
+            checker.hash_label(_release_fixture_text(package_digest["sha256"])),
+            checker.hash_label(_release_fixture_text(package_digest["blake3"])),
+            _release_fixture_text(binary["name"]),
+            _release_fixture_text(binary["version"]),
+            _release_fixture_text(binary["description"]),
+            _release_fixture_text(binary["installed_path"]),
+            _release_fixture_text(binary["sbom_component_ref"]),
+            checker.hash_label(_release_fixture_text(binary_digest["sha256"])),
+            checker.hash_label(_release_fixture_text(binary_digest["blake3"])),
         ]
     )
     headers = {
@@ -2585,9 +2602,14 @@ def test_remote_readiness_rejects_runtime_artifact_drift() -> None:
     checker = _readiness_checker_module()
 
     def stale_rootfs_digest(manifest: dict[str, object]) -> None:
-        architecture = manifest["runtime"]["architectures"][0]
-        rootfs = next(item for item in architecture["images"] if item["kind"] == "rootfs")
-        rootfs["digest"]["blake3"] = "0" * 64
+        runtime = _release_fixture_object(manifest["runtime"])
+        architecture = _release_fixture_object(_release_fixture_items(runtime["architectures"])[0])
+        rootfs = next(
+            _release_fixture_object(item)
+            for item in _release_fixture_items(architecture["images"])
+            if _release_fixture_object(item)["kind"] == "rootfs"
+        )
+        _release_fixture_object(rootfs["digest"])["blake3"] = "0" * 64
 
     fixture = _install_release_graph_contract_fixture(
         checker,
@@ -2628,8 +2650,13 @@ def test_remote_readiness_rejects_asset_file_metadata_drift() -> None:
     asset_path = "/assets/releases/2030.0101.1/arm64-rootfs.erofs"
 
     def stale_rootfs_size(manifest: dict[str, object]) -> None:
-        architecture = manifest["runtime"]["architectures"][0]
-        rootfs = next(item for item in architecture["images"] if item["kind"] == "rootfs")
+        runtime = _release_fixture_object(manifest["runtime"])
+        architecture = _release_fixture_object(_release_fixture_items(runtime["architectures"])[0])
+        rootfs = next(
+            _release_fixture_object(item)
+            for item in _release_fixture_items(architecture["images"])
+            if _release_fixture_object(item)["kind"] == "rootfs"
+        )
         rootfs["bytes"] = 4
 
     fixture = _install_release_graph_contract_fixture(
