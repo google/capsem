@@ -92,6 +92,44 @@ def test_elf_binaries_that_reference_no_glibc_fail_loudly(tmp_path):
         derive.floor_for(tmp_path)
 
 
+def test_candidate_predepends_uses_actual_symbol_mapping_and_preserves_other_fields(tmp_path, monkeypatch):
+    _write_elf(tmp_path / "usr/bin/capsem-ledger", "GLIBC_2.39")
+    _write_elf(tmp_path / "usr/bin/gui", "GLIBC_2.99")
+    control = tmp_path / "DEBIAN/control"
+    control.parent.mkdir()
+    original = "Package: capsem\nArchitecture: arm64\nDepends: gui-lib (>= 9)\nPre-Depends: original-tool\nDescription: original\n"
+    control.write_text(original)
+
+    def mapping(argv, **kwargs):
+        assert "-dPre-Depends" in argv
+        assert argv[-1] == f"-e{tmp_path / 'usr/bin/capsem-ledger'}"
+        context = Path(kwargs["cwd"])
+        assert "Source: capsem\n" in (context / "debian/control").read_text()
+        return subprocess.CompletedProcess(argv, 0, "shlibs:Pre-Depends=libc6 (>= 2.39), libgcc-s1 (>= 4.2)\n", "")
+
+    monkeypatch.setattr(derive.subprocess, "run", mapping)
+    derive.write_preinstall_dependencies(tmp_path)
+    result = control.read_text()
+    assert "Depends: gui-lib (>= 9)\n" in result
+    assert "Pre-Depends: original-tool, libc6 (>= 2.39), libgcc-s1 (>= 4.2)\n" in result
+    assert "2.99" not in result
+    assert result.startswith("Package: capsem\nArchitecture: arm64\n")
+    assert result.endswith("Description: original\n")
+
+
+@pytest.mark.parametrize("output", ["", "shlibs:Depends=libc6 (>= 2.39)\n", "shlibs:Pre-Depends=libc6 (>= 2.38)\n", "shlibs:Pre-Depends=libc6 (>= 2.39)\nextra\n"])
+def test_unproven_preinstall_dependency_mapping_preserves_original(tmp_path, monkeypatch, output):
+    _write_elf(tmp_path / "usr/bin/capsem-ledger", "GLIBC_2.39")
+    control = tmp_path / "DEBIAN/control"
+    control.parent.mkdir()
+    control.write_text("Package: capsem\nArchitecture: arm64\nDepends: original\n")
+    original = control.read_bytes()
+    monkeypatch.setattr(derive.subprocess, "run", lambda argv, **kw: subprocess.CompletedProcess(argv, 0, output, ""))
+    with pytest.raises(SystemExit, match="candidate|mapping"):
+        derive.write_preinstall_dependencies(tmp_path)
+    assert control.read_bytes() == original
+
+
 @pytest.mark.skipif(not _ELF_SOURCE.is_file(), reason="no /bin/true to read")
 def test_derived_floor_matches_objdump_on_a_real_binary(tmp_path):
     """The regex read of .dynstr must agree with the authoritative tool."""
