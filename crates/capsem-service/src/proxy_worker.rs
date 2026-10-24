@@ -24,17 +24,17 @@ use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::ServiceState;
 
-#[cfg(not(test))]
+#[cfg(any(not(test), feature = "native-acceptance"))]
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
-#[cfg(test)]
+#[cfg(all(test, not(feature = "native-acceptance")))]
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(2);
-#[cfg(not(test))]
+#[cfg(any(not(test), feature = "native-acceptance"))]
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(5);
-#[cfg(test)]
+#[cfg(all(test, not(feature = "native-acceptance")))]
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(2);
-#[cfg(not(test))]
+#[cfg(any(not(test), feature = "native-acceptance"))]
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
-#[cfg(test)]
+#[cfg(all(test, not(feature = "native-acceptance")))]
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(200);
 const COMMAND_QUEUE_CAPACITY: usize = 16;
 
@@ -912,6 +912,10 @@ impl ServiceState {
         }
         #[cfg(test)]
         {
+            #[cfg(feature = "native-acceptance")]
+            if self._test_tempdir.is_none() {
+                return Err("running VM has no registered proxy worker".to_string());
+            }
             Ok(ProxyWorker::test_stub())
         }
         #[cfg(not(test))]

@@ -26,7 +26,7 @@ struct RemoteLedger {
 }
 
 impl SessionLedger {
-    #[cfg(not(test))]
+    #[cfg(any(not(test), feature = "native-acceptance"))]
     fn remote(
         vm_id: String,
         session_dir: PathBuf,
@@ -271,18 +271,25 @@ impl ServiceState {
         vm_id: &str,
         session_dir: &StdPath,
     ) -> anyhow::Result<Arc<SessionLedger>> {
-        #[cfg(test)]
+        #[cfg(all(test, not(feature = "native-acceptance")))]
         return self.register_session_db_handle(vm_id, session_dir);
 
-        #[cfg(not(test))]
+        // Ordinary unit fixtures own embedded ledgers. Native acceptance uses
+        // actual startup (no test tempdir) and the production descriptor grant.
+        #[cfg(all(test, feature = "native-acceptance"))]
+        if self._test_tempdir.is_some() {
+            return self.register_session_db_handle(vm_id, session_dir);
+        }
+
+        #[cfg(any(not(test), feature = "native-acceptance"))]
         let db_path = session_db_path_for_session_dir(session_dir);
-        #[cfg(not(test))]
+        #[cfg(any(not(test), feature = "native-acceptance"))]
         let started = std::time::Instant::now();
-        #[cfg(not(test))]
+        #[cfg(any(not(test), feature = "native-acceptance"))]
         if let Some(handle) = self.registered_session_db_handle(vm_id, &db_path, started) {
             return Ok(handle);
         }
-        #[cfg(not(test))]
+        #[cfg(any(not(test), feature = "native-acceptance"))]
         let opened = self
             .ledger_workers
             .acquire(
@@ -297,7 +304,7 @@ impl ServiceState {
                 let (stream, grant) = channel.into_parts();
                 (stream, grant)
             });
-        #[cfg(not(test))]
+        #[cfg(any(not(test), feature = "native-acceptance"))]
         let opened = match opened {
             Ok((stream, grant)) => capsem_logger::ledger_client::LedgerClient::connect(stream, grant, db_path.clone())
                 .await
@@ -311,7 +318,7 @@ impl ServiceState {
                 }),
             Err(error) => Err(error),
         };
-        #[cfg(not(test))]
+        #[cfg(any(not(test), feature = "native-acceptance"))]
         self.install_session_db_handle(vm_id, db_path, opened, started)
     }
 

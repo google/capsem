@@ -9,6 +9,10 @@ homepage.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+[features]
+# Compiles the real-service native acceptance owner only into the libtest binary.
+native-acceptance = []
+
 [dependencies]
 capsem-mcp-transport = { path = "../capsem-mcp-transport" }
 capsem-crypto = { path = "../capsem-crypto", default-features = false, features = ["random", "secrets"] }

@@ -29,13 +29,13 @@ use tokio::sync::{mpsc, oneshot, watch};
 
 mod retention;
 
-#[cfg(not(test))]
+#[cfg(any(not(test), feature = "native-acceptance"))]
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
-#[cfg(test)]
+#[cfg(all(test, not(feature = "native-acceptance")))]
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(2);
-#[cfg(not(test))]
+#[cfg(any(not(test), feature = "native-acceptance"))]
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(5);
-#[cfg(test)]
+#[cfg(all(test, not(feature = "native-acceptance")))]
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(2);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 const COMMAND_QUEUE_CAPACITY: usize = 64;

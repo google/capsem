@@ -20,7 +20,7 @@ pub(super) async fn run_service() -> Result<()> {
     capsem_foundation::telemetry::install_panic_logger("capsem-service");
     // A detached service's stderr reaches nobody, and the gate and installer
     // send whoever diagnoses a failed start to this log: write the cause here.
-    start_and_serve(args, run_dir)
+    start_and_serve(args, run_dir, |_| {})
         .await
         .inspect_err(|error| error!(error = format!("{error:#}"), "capsem-service failed"))
 }
@@ -32,7 +32,7 @@ fn private_run_dir(path: &std::path::Path) -> Result<PathBuf> {
         .with_context(|| format!("resolve service runtime directory {}", path.display()))
 }
 
-async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
+async fn start_and_serve(args: Args, run_dir: PathBuf, on_ready: impl FnOnce(Arc<ServiceState>) + Send) -> Result<()> {
     let service_launch_span = tracing::info_span!(
         target: "capsem.launch",
         capsem_foundation::telemetry::LAUNCH_SERVICE_SPAN,
@@ -462,6 +462,7 @@ async fn start_and_serve(args: Args, run_dir: PathBuf) -> Result<()> {
     });
     companions.lock().unwrap().spawn_task = Some(spawn_task);
 
+    on_ready(Arc::clone(&state));
     let shutdown_state = state.clone();
     let result = shutdown::serve(uds, app, async move {
         tokio::select! {

@@ -1,5 +1,8 @@
 use super::*;
 
+#[cfg(feature = "native-acceptance")]
+mod native_file_content;
+
 #[test]
 fn private_run_dir_restricts_existing_runtime_before_sockets() {
     use std::os::unix::fs::{symlink, PermissionsExt};
