@@ -10,6 +10,7 @@ mod control_writer;
 use control_reader::control_loop;
 mod exec;
 mod port_bridge;
+mod resume_workspace;
 use boot_timing::{parse_boot_timing, BOOT_TIMING_PATH};
 mod shutdown;
 mod snapshot;
@@ -727,11 +728,7 @@ fn rebind_workspace_after_resume() {
     let mut warmed_attempts = 0;
     let mut warmed = false;
     for attempt in 1..=50 {
-        if std::fs::read_dir(workspace_src)
-            .ok()
-            .and_then(|mut it| it.next())
-            .is_some()
-        {
+        if resume_workspace::enumerate(workspace_src).is_ok() {
             warmed = true;
             warmed_attempts = attempt;
             break;

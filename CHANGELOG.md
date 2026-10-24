@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Report saved sessions as unavailable when their recorded boot asset pins do
   not match mutable development assets, instead of offering a resume that fails.
 
+- Accept a successfully enumerated empty workspace during resume, while
+  preserving directory iteration errors as failures.
+
 - Acknowledge confined proxy shutdown after original HTTP audits and the logger
   flush barrier finish, including connections retained across policy refreshes.
 
