@@ -30,7 +30,7 @@ from capsem_builder.release.tools.release_transition_candidates import (
     validate_macos_guest_report,
 )
 from macos_candidate_content import stage_file, stage_guest_scripts, stage_release_site
-from macos_tart_transition_support import local_tart_capabilities
+from macos_tart_transition_support import failure_diagnostic_script, local_tart_capabilities
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
@@ -306,24 +306,7 @@ def terminate_runner(
 def capture_guest_diagnostics(ip: str, work_dir: Path) -> None:
     """Persist bounded installer evidence before the failed VM is destroyed."""
 
-    remote_script = r"""
-set +e
-echo '=== /var/log/install.log (tail) ==='
-sudo tail -n 300 /var/log/install.log
-echo '=== ~/.capsem/logs/install.log ==='
-cat "$HOME/.capsem/logs/install.log"
-echo '=== ~/.capsem/logs/install-failure.txt ==='
-cat "$HOME/.capsem/logs/install-failure.txt"
-echo '=== ~/.capsem/run/service.log (tail) ==='
-# Rotated stream: tail the name alone and you get nothing.
-cat "$HOME"/.capsem/run/service*.log 2>/dev/null | tail -n 300
-echo '=== ~/.capsem/logs listing ==='
-ls -la "$HOME/.capsem/logs"
-echo '=== package script log events ==='
-sudo log show --last 15m --style compact \
-  --predicate 'process == "installer" OR process == "package_script_service"' \
-  | tail -n 400
-"""
+    remote_script = failure_diagnostic_script()
     command = ssh_command(ip, [shlex.join(["bash", "-lc", remote_script])])
     try:
         result = subprocess.run(

@@ -14,6 +14,41 @@ from typing import cast
 from capsem_builder import crypto as hashlib
 
 
+def failure_diagnostic_script() -> str:
+    """Bounded startup evidence; marker values and credential contents stay private."""
+    return r"""
+set +e
+echo '=== /var/log/install.log (tail) ==='
+sudo tail -n 300 /var/log/install.log
+echo '=== ~/.capsem/logs/install.log ==='
+cat "$HOME/.capsem/logs/install.log"
+echo '=== ~/.capsem/logs/install-failure.txt ==='
+cat "$HOME/.capsem/logs/install-failure.txt"
+echo '=== ~/.capsem/run/service.log (tail) ==='
+# Rotated stream: tail the name alone and you get nothing.
+cat "$HOME"/.capsem/run/service*.log 2>/dev/null | tail -n 300
+echo '=== gateway startup logs (bounded) ==='
+for file in "$HOME/Library/Logs/capsem/gateway.log" "$HOME/.capsem/run/logs/gateway.log" "$HOME/.capsem/run/gateway.log"; do
+  echo "=== $file ==="
+  tail -c 65536 "$file" 2>/dev/null
+done
+echo '=== gateway marker metadata only ==='
+for marker in gateway.port gateway.pid preview.port gateway.token; do
+  stat -f '%N size=%z mode=%Sp uid=%u gid=%g' "$HOME/.capsem/run/$marker" 2>/dev/null
+done
+echo '=== attestation executable existence ==='
+for file in /bin/true /usr/bin/true; do
+  if test -x "$file"; then echo "$file executable=yes"; else echo "$file executable=no"; fi
+done
+echo '=== ~/.capsem/logs listing ==='
+ls -la "$HOME/.capsem/logs"
+echo '=== package script log events ==='
+sudo log show --last 15m --style compact \
+  --predicate 'process == "installer" OR process == "package_script_service"' \
+  | tail -n 400
+"""
+
+
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:

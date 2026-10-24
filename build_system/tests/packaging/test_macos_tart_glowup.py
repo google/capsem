@@ -957,3 +957,39 @@ def test_the_local_release_site_serves_the_runtime_blobs_where_the_service_fetch
     blob = candidate / "assets" / "releases" / "0.7.0-abc" / "arm64-vmlinuz"
     assert blob.read_bytes() == b"kernel"
     assert not blob.is_symlink()
+
+
+def test_failure_diagnostics_capture_gateway_metadata_without_private_values(
+    tmp_path: Path,
+) -> None:
+    module = _load_harness()
+    calls: list[dict] = []
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append({"command": command, **kwargs})
+        return subprocess.CompletedProcess(command, 0, "safe metadata", "")
+
+    original = module.subprocess.run
+    module.subprocess.run = run
+    try:
+        module.capture_guest_diagnostics("192.168.64.7", tmp_path)
+    finally:
+        module.subprocess.run = original
+    assert len(calls) == 1 and calls[0]["timeout"] == 120
+    command = calls[0]["command"]
+    assert isinstance(command, list)
+    script = command[-1]
+    for path in (
+        "$HOME/Library/Logs/capsem/gateway.log",
+        "$HOME/.capsem/run/logs/gateway.log",
+        "$HOME/.capsem/run/gateway.log",
+    ):
+        assert path in script
+    assert "tail -c 65536" in script
+    assert "stat -f" in script and "gateway.token" in script
+    assert "/bin/true" in script and "/usr/bin/true" in script
+    assert "test -x" in script
+    assert 'cat "$marker"' not in script and 'cat "$file"' not in script
+    assert "printenv" not in script and "security " not in script
+    assert "credentials/" not in script
+    assert (tmp_path / "guest-diagnostics.log").read_text().endswith("safe metadata\n")
