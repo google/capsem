@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Validate shared multi-platform package SBOM references by their exact installed
+  paths, retaining unique-reference and payload integrity checks.
+
 - Keep gate dry-run and graph inspection outside cache enforcement, leases and
   scratch lifecycle while retaining source-keyed gate imports.
 

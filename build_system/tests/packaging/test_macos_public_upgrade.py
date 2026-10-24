@@ -187,3 +187,67 @@ capsem_pair_verify {shlex.quote(phase)}
     assert "" not in argv
     assert ("--legacy-profile-predecessor" in argv) is legacy
     assert argv[0] == "synthetic-verifier.py" and "--artifact" in argv
+
+
+def shared_platform_sbom(before):
+    """Original public066 shape: one Mac and two Linux rows share each SPDXID."""
+    spdx = json.loads(before[2].read_text())
+    for item in list(spdx["files"]):
+        for _architecture in ("arm64", "amd64"):
+            spdx["files"].append({
+                **item, "fileName": f"/usr/bin/{Path(item['fileName']).name}",
+                "checksums": [{"algorithm": "SHA256", "checksumValue": "f" * 64}],
+            })
+    return spdx
+
+
+def bind_sbom(before, spdx):
+    before[2].write_text(json.dumps(spdx))
+    document = json.loads(before[1].read_text())
+    evidence = document["packages"][0]["evidence"][0]
+    evidence.update(bytes=before[2].stat().st_size,
+                    digest={"sha256": crypto.sha256(before[2].read_bytes()).hexdigest()})
+    before[1].write_text(json.dumps(document))
+
+
+def test_public_pair_joins_shared_spdxid_to_exact_installed_path(inputs):
+    before, after = public_pair(inputs)
+    spdx = shared_platform_sbom(before)
+    assert len([v for v in spdx["files"] if v["SPDXID"] == spdx["files"][0]["SPDXID"]]) == 3
+    bind_sbom(before, spdx)
+    pair = release_macos_pairing.validate_public_pair(before=before, after=after, channel="nightly")
+    assert pair["before"]["binaries"] == ["capsem", "capsem-service"]
+    assert pair["scope"] == "public_predecessor_upgrade"
+
+
+@pytest.mark.parametrize("damage", [
+    "duplicate_exact", "missing_exact", "foreign_reference", "foreign_path",
+    "checksum", "duplicate_checksum", "length", "payload_digest",
+])
+def test_shared_spdxid_never_relaxes_exact_path_payload_binding(inputs, damage):
+    before, after = public_pair(inputs)
+    spdx = shared_platform_sbom(before)
+    first = spdx["files"][0]
+    if damage == "duplicate_exact":
+        spdx["files"].append(dict(first))
+    elif damage == "missing_exact":
+        spdx["files"].remove(first)
+    elif damage == "foreign_reference":
+        first["SPDXID"] = "SPDXRef-foreign"
+    elif damage == "foreign_path":
+        first["fileName"] = "/foreign/capsem"
+    elif damage == "checksum":
+        first["checksums"][0]["checksumValue"] = "0" * 64
+    elif damage == "duplicate_checksum":
+        first["checksums"].append(dict(first["checksums"][0]))
+    bind_sbom(before, spdx)
+    if damage in {"length", "payload_digest"}:
+        document = json.loads(before[1].read_text())
+        binary = document["packages"][0]["binaries"][0]
+        if damage == "length":
+            binary["bytes"] += 1
+        else:
+            binary["digest"]["sha256"] = "0" * 64
+        before[1].write_text(json.dumps(document))
+    with pytest.raises(ValueError, match=r"SBOM component reference|digest mismatch"):
+        release_macos_pairing.validate_public_pair(before=before, after=after, channel="nightly")

@@ -98,9 +98,11 @@ def cohort(
         if not isinstance(name, str) or re.fullmatch(r"capsem(?:-[a-z0-9]+)*", name) is None:
             raise ValueError("paired package declares an invalid binary role")
         references = [
-            item for item in entries if item.get("SPDXID") == binary.get("sbom_component_ref")
+            item for item in entries
+            if item.get("SPDXID") == binary.get("sbom_component_ref")
+            and item.get("fileName") == binary.get("installed_path")
         ]
-        if len(references) != 1 or references[0].get("fileName") != binary.get("installed_path"):
+        if len(references) != 1:
             raise ValueError("paired binary has no exact SBOM component reference")
         content = payload.get(binary["installed_path"])
         checksums = [
