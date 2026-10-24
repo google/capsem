@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Start the installed macOS gateway using direct execution-denial proof, avoiding
+  unrelated spawn failures while retaining strict confinement checks.
+
 - Preserve worker signal dispositions and granted I/O when proving execution
   confinement, using a direct kernel exec attempt without spawning a child.
 

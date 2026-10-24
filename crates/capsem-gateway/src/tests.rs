@@ -14,7 +14,7 @@ mod route_forwarding;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
 fn attestation_exec_probe_exists_on_target() {
-    assert!(gateway_exec_probe_path().is_file());
+    assert!(std::path::Path::new(EXECUTION_PROBE).is_file());
 }
 
 #[test]

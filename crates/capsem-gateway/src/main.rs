@@ -29,6 +29,7 @@ use crate::auth::{AuthFailureTracker, AuthState};
 use crate::service_client::ServiceClient;
 use crate::status::StatusCache;
 
+#[cfg(test)]
 use capsem_foundation::unix::worker_sandbox::EXECUTION_PROBE;
 
 #[derive(Parser, Debug)]
@@ -264,16 +265,9 @@ fn attest_gateway(uds_path: &std::path::Path, listener: SocketAddr) -> Result<()
         std::os::unix::net::UnixStream::connect(uds_path),
         "dial control sockets by path",
     )?;
-    require_denied(
-        std::process::Command::new(gateway_exec_probe_path()).status(),
-        "execute processes",
-    )?;
+    capsem_foundation::unix::worker_sandbox::attest_execution_denied()
+        .context("prove gateway process execution is denied")?;
     Ok(())
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn gateway_exec_probe_path() -> &'static std::path::Path {
-    std::path::Path::new(EXECUTION_PROBE)
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
