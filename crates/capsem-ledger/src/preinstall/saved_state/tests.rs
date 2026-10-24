@@ -24,20 +24,23 @@ fn genuinely_empty_default_namespace_is_admitted_without_creation() {
 
 #[test]
 fn any_retained_child_or_registry_refuses_even_without_a_legacy_ledger() {
-    for name in [
-        "instances/vm",
-        "sessions/.unknown",
-        "persistent/named",
-        "persistent_registry.json",
+    for (namespace, child) in [
+        ("instances", "vm"),
+        ("sessions", ".unknown"),
+        ("persistent", "named"),
+        ("persistent_registry.json", ""),
     ] {
         let home = tempfile::tempdir().unwrap();
-        let entry = home.path().join(".capsem/run").join(name);
+        let mut entry = home.path().join(".capsem/run").join(namespace);
+        if !child.is_empty() {
+            entry.push(child);
+        }
         fs::create_dir_all(entry.parent().unwrap()).unwrap();
         fs::write(&entry, b"unparsed retained state").unwrap();
         let before = fs::read(&entry).unwrap();
         assert!(
             check(home.path(), HostSchemaAdmission::Absent, false).is_err(),
-            "{name}"
+            "{namespace}"
         );
         assert_eq!(fs::read(entry).unwrap(), before);
     }
