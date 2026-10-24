@@ -48,11 +48,11 @@ def test_inspect_case_uses_real_network_id_and_public_schema() -> None:
             validate_wire(case, json.dumps(changed).encode(), None, ID)
 
 
-def test_network_logs_remain_uncovered_without_real_traffic() -> None:
+def test_network_logs_require_explicit_real_member_link_corpus() -> None:
     import tomllib
     from pathlib import Path
 
     cfg = tomllib.loads((Path(__file__).parents[1] / "config/gate.toml").read_text())["benchmark"]["routes"]
-    assert "GET /networks/{id}/logs" in cfg["unmeasured"]
+    assert "GET /networks/{id}/logs" not in cfg["unmeasured"]
     assert not any(case["path"] == "/networks/{id}/logs" for case in cfg["measured"])
-    assert "transport" in cfg["unmeasured"]["GET /networks/{id}/logs"]["reason"]
+    assert "two-connect one-close" in cfg['network_members']['endpoints']['GET /networks/{id}/logs']['reason']

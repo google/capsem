@@ -50,6 +50,7 @@ from benchmarks.helpers.route_images import collect_images
 from benchmarks.helpers.route_lifecycle import collect_lifecycle
 from benchmarks.helpers.route_measurements import Observations, route_metrics
 from benchmarks.helpers.route_networks import collect_networks
+from benchmarks.helpers.route_network_members import collect_network_members
 from benchmarks.helpers.route_policy import collect_policy
 from benchmarks.helpers.route_proxies import collect_proxies
 from benchmarks.helpers.route_requests import Target, request, request_input, route_load_config
@@ -185,6 +186,7 @@ def main() -> int:
         metrics.update(collect_proxies(args.quick))
         metrics.update(collect_workload_controls(args.quick))
         metrics.update(collect_connection_errors(args.quick))
+        metrics.update(collect_network_members(args.quick))
 
     service = ServiceInstance()
     service.assets_dir = clone_benchmark_assets(

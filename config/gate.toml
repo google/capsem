@@ -3519,16 +3519,47 @@ status = 404
 code = "grant_unavailable"
 reason = "Canonical retained owner and empty approval inventory are proven before matched revocation returns exact unavailable grant refusal."
 
+[benchmark.routes.network_members]
+cycles = 2
+quick_cycles = 1
+timeout_seconds = 180.0
+exec_timeout_seconds = 15
+max_response_bytes = 1048576
+poll_seconds = 0.05
+ram_mb = 1024
+cpus = 2
+name = "route-member-team"
+probe_count = 2
+probe_interval_ms = 20
+probe_timeout_ms = 1000
+log_limit = 16
+
+[benchmark.routes.network_members.endpoints."PUT /networks/{id}/members/{vm_id}"]
+collector = "routes"
+target_scope = "both"
+reason = "Original owned member ready with independent guest cable/address, original switch identity and bidirectional existing-engine zero-loss private probes."
+cases = {"original-cable-ready" = "cycles"}
+
+[benchmark.routes.network_members.endpoints."DELETE /networks/{id}/members/{vm_id}"]
+collector = "routes"
+target_scope = "both"
+reason = "Original member/cable removed while peer and original switch persist, removed private address no longer answers existing-engine probes."
+cases = {"original-cable-removed" = "cycles"}
+
+[benchmark.routes.network_members.endpoints."GET /networks/{id}/logs"]
+collector = "routes"
+target_scope = "both"
+reason = "Actual two-connect one-close private link corpus joins original cable identity and positive frame counts; no fabricated per-flow record."
+cases = {"populated-private-links" = "cycles"}
+
 [benchmark.routes.unmeasured]
 "DELETE /connections/authorizations/{transaction_id}" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
 "DELETE /connections/{connection_id}" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
-"DELETE /networks/{id}/members/{vm_id}" = { owner = "tests/ironbank/test_managed_network_lifecycle.py", reason = "Needs isolated network membership and bounded logs; mutations must measure completed ownership changes." }
 "DELETE /vms/{id}/credential-grants/{grant_id}" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
 "DELETE /vms/{id}/exposures/{exposure_id}" = { owner = "tests/ironbank/kingslanding/test_preview.py", reason = "Needs actual exposure ownership and single-use preview capability lifecycle, including revoke/delete cleanup." }
 "DELETE /vms/{id}/exposures/{exposure_id}/preview-session" = { owner = "tests/ironbank/kingslanding/test_preview.py", reason = "Needs actual exposure ownership and single-use preview capability lifecycle, including revoke/delete cleanup." }
 "GET /connections/authorizations/{transaction_id}" = { owner = "crates/capsem-service/src/connection_routes.rs", reason = "Production Runtime constructs only disabled unconfigured agy-native profile; successful enrollment metadata needs an implemented provider contract, never fabricated authority." }
 "GET /connections/{connection_id}" = { owner = "crates/capsem-service/src/connection_routes.rs", reason = "Production Runtime constructs only disabled unconfigured agy-native profile; successful enrollment metadata needs an implemented provider contract, never fabricated authority." }
-"GET /networks/{id}/logs" = { owner = "tests/ironbank/test_managed_network_lifecycle.py", reason = "Fresh network metadata writes no transport events; populated timing requires actual recorded transport traffic." }
 "POST /connections/google/authorize" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
 "POST /corp/reload" = { owner = "tests/ironbank/test_managed_policy.py", reason = "Needs real running-owner policy publication and acknowledgement, with isolated policy files restored afterwards." }
 "POST /credentials/inject" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
@@ -3548,7 +3579,6 @@ reason = "Canonical retained owner and empty approval inventory are proven befor
 "POST /vms/{id}/save" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
 "POST /vms/{id}/security/asks/{ask_id}/resolve" = { owner = "crates/capsem-service/src/approval_routes.rs", reason = "Needs live boot-generation approval waiter; resolution is a real control mutation." }
 "POST /vms/{id}/surface/session" = { owner = "tests/ironbank/kingslanding/test_workload_browser.py", reason = "Needs real UI exposure and single-use browser capability lifecycle fixture." }
-"PUT /networks/{id}/members/{vm_id}" = { owner = "tests/ironbank/test_managed_network_lifecycle.py", reason = "Needs isolated network membership and bounded logs; mutations must measure completed ownership changes." }
 
 # A timed idle/read case does not certify every state of the same operation.
 [benchmark.routes.unmeasured_cases]

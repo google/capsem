@@ -17,6 +17,7 @@ from .benchmarkcontrolschema import WorkloadControlConfig
 from .benchmarkerrorschema import ConnectionErrorConfig
 from .benchmarkimageschema import ImageRouteConfig
 from .benchmarklifecycleschema import LifecycleRouteConfig
+from .benchmarkmemberschema import NetworkMemberConfig
 from .benchmarknetworkschema import DiagnosticCorpusConfig, NetworkRouteConfig
 from .benchmarkpolicyschema import PolicyRouteConfig
 from .benchmarkproxyschema import ProxyRouteConfig
@@ -77,6 +78,7 @@ class RouteCoverageConfig(Strict):
     proxies: ProxyRouteConfig
     workload_controls: WorkloadControlConfig
     connection_errors: ConnectionErrorConfig
+    network_members: NetworkMemberConfig
     unmeasured: dict[str, RouteDebtConfig]
     internal: dict[str, RouteDebtConfig]
     unmeasured_cases: dict[str, RouteDebtConfig]
