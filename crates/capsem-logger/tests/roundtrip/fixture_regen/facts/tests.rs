@@ -12,9 +12,3 @@ fn fixture_archive_facts_match_independent_original_index_and_bytes() {
         "facts regeneration must be byte reproducible"
     );
 }
-
-#[test]
-#[ignore = "deliberate fixture companion regeneration, never a qualification shortcut"]
-fn regenerate_archive_facts() {
-    regenerate();
-}

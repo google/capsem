@@ -108,7 +108,7 @@ sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
 # Bounded independent benchmark oracle from the same logger-owned index/archive.
 # Binary bodies stay binary. The standing logger test compares every byte/key;
-# regenerate_archive_facts refreshes this companion without invoking WARC export.
+# The declared regenerate_session_fixture refreshes this companion too.
 [[fixture.companion]]
 path = "tests/fixtures/session/test.facts.msgpack"
 sha256 = "74023becf92bac157221c81dbf48eb8e6a5f603749abb6b1aaac66687e1a0d5d"
