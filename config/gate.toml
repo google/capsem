@@ -918,6 +918,7 @@ strict_ty_search_paths = []
 # depending on uv's editable finder.
 ty_search_paths = [
     "build_system/tests/gate",
+    "build_system/packaging/macos",
     "build_system/builder",
     "tests",
     ".",
@@ -946,12 +947,12 @@ error_on_warning = true
 # Reductions must lower the count immediately, so stale exemptions fail too.
 [lint.ty_ratchet]
 call-top-callable = 1
-invalid-argument-type = 33
+invalid-argument-type = 19
 invalid-assignment = 5
 invalid-return-type = 2
-no-matching-overload = 4
-not-subscriptable = 10
-unresolved-attribute = 58
+no-matching-overload = 2
+not-subscriptable = 2
+unresolved-attribute = 54
 unresolved-import = 1
 unsupported-operator = 2
 unused-ignore-comment = 3
@@ -962,7 +963,7 @@ unused-type-ignore-comment = 3
 # and no value may grow.
 [lint.suppression_budget]
 noqa = 214
-type_ignore = 21
+type_ignore = 18
 ty_ignore = 5
 ruff_global_ignore = 1
 ruff_per_file_ignore = 0

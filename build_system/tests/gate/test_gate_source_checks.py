@@ -400,3 +400,9 @@ def test_no_step_forces_a_rebuild_by_touching_tracked_source() -> None:
     assert "crates/capsem-app/build.rs" in tracked, (
         "the file this guard is about stopped being tracked; re-derive the claim"
     )
+
+
+def test_relaxed_type_roots_include_the_actual_staged_macos_helpers() -> None:
+    # Packaging source tests prepend this SAME directory and the Tart stager
+    # copies its modules to the guest import root. Type-check the actual owners.
+    assert "build_system/packaging/macos" in CONFIG.lint.ty_search_paths
