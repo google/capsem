@@ -145,6 +145,8 @@ BOUNDARY_FILES = frozenset(
         "build_system/tests/release/test_release_foundation_tool_boundary.py",
         "build_system/tests/release/test_release_foundation_tools.py",
         "build_system/tests/release/test_installed_failure_logs.py",
+        "build_system/tests/release/test_installed_apply_probe.py",
+        "build_system/tests/release/test_installed_apply_resources.py",
         "build_system/tests/release/test_release_orchestration_tool_boundary.py",
         "build_system/tests/release/test_release_staging_tool_boundary.py",
         "build_system/tests/release/test_release_verification_tool_boundary.py",
