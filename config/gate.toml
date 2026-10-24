@@ -2412,6 +2412,55 @@ journal_max_runs = 128
 artifact_max_bytes = 17179869184
 artifact_max_files = 512
 
+[functional.native_images.base]
+name = "base"
+local_name = "capsem-native-base"
+context = "images/base"
+script = "tests/fixtures/oci/pinned_image.py"
+repository = "ghcr.io/google/capsem/base"
+cache_stage = "test-images"
+evidence_max_bytes = 67108864
+
+[functional.native_images.apps.codex-cli]
+name = "codex-cli"
+local_name = "capsem-native-codex-cli"
+context = "images/codex-cli"
+base_context = "images/base"
+script = "tests/fixtures/oci/pinned_image.py"
+repository = "ghcr.io/google/capsem/codex-cli"
+cache_stage = "test-images"
+evidence_max_bytes = 67108864
+
+[functional.native_images.apps.claude-code]
+name = "claude-code"
+local_name = "capsem-native-claude-code"
+context = "images/claude-code"
+base_context = "images/base"
+script = "tests/fixtures/oci/pinned_image.py"
+repository = "ghcr.io/google/capsem/claude-code"
+cache_stage = "test-images"
+evidence_max_bytes = 67108864
+
+[functional.native_images.apps.agy]
+name = "agy"
+local_name = "capsem-native-agy"
+context = "images/agy"
+base_context = "images/base"
+script = "tests/fixtures/oci/pinned_image.py"
+repository = "ghcr.io/google/capsem/agy"
+cache_stage = "test-images"
+evidence_max_bytes = 67108864
+
+[functional.native_images.apps.antigravity-desktop]
+name = "antigravity-desktop"
+local_name = "capsem-native-antigravity-desktop"
+context = "images/antigravity-desktop"
+base_context = "images/base"
+script = "tests/fixtures/oci/pinned_image.py"
+repository = "ghcr.io/google/capsem/antigravity-desktop"
+cache_stage = "test-images"
+evidence_max_bytes = 67108864
+
 # The chaos suite shares kingslanding's fixture and runs after it.
 [functional.greyjoy]
 suite_path = "tests/ironbank/greyjoy"

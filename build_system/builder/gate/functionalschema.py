@@ -8,7 +8,7 @@ products the gate builds and ships.
 from __future__ import annotations
 
 from pathlib import PurePosixPath
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import PositiveInt, StringConstraints, field_validator, model_validator
 
@@ -39,6 +39,22 @@ class QualificationConfig(Strict):
     layout_variable: str
 
 
+NativeAppName = Literal["codex-cli", "claude-code", "agy", "antigravity-desktop"]
+
+
+class ImageBuildConfig(Strict):
+    """Canonical producer inputs; a candidate need not have a published pin."""
+
+    name: SafeToken
+    local_name: SafeToken
+    context: str
+    base_context: str | None = None
+    script: str
+    repository: str
+    cache_stage: SafeToken
+    evidence_max_bytes: PositiveInt
+
+
 class NativeImagesConfig(Strict):
     """CI evidence only; fixed native platform and bounded owned artifacts."""
 
@@ -56,6 +72,25 @@ class NativeImagesConfig(Strict):
     journal_max_runs: PositiveInt
     artifact_max_bytes: PositiveInt
     artifact_max_files: PositiveInt
+    base: ImageBuildConfig
+    apps: dict[NativeAppName, ImageBuildConfig]
+
+    @model_validator(mode="after")
+    def fixed_native_recipes(self) -> NativeImagesConfig:
+        if set(self.apps) != {"codex-cli", "claude-code", "agy", "antigravity-desktop"}:
+            raise ValueError("native apps must contain every supported non-development AMD recipe")
+        for name, spec in {"base": self.base, **self.apps}.items():
+            if (
+                spec.name != name
+                or spec.local_name != "capsem-native-" + name
+                or spec.context != "images/" + name
+                or spec.base_context != (None if name == "base" else "images/base")
+                or spec.repository != "ghcr.io/google/capsem/" + name
+                or spec.cache_stage != "test-images"
+                or spec.script != "tests/fixtures/oci/pinned_image.py"
+            ):
+                raise ValueError("native candidate recipe differs from the fixed original owner")
+        return self
 
     @field_validator("receipt_dir", "artifact_dir", "report_name")
     @classmethod
@@ -66,7 +101,7 @@ class NativeImagesConfig(Strict):
         return value
 
 
-class PinnedImageConfig(Strict):
+class PinnedImageConfig(ImageBuildConfig):
     """An image the suites serve by digest: capsem-debug, the test-tooling
     image, and the reference image, the official image every runtime test boots.
 
@@ -78,15 +113,6 @@ class PinnedImageConfig(Strict):
     deliberate commit: rebuilding or publishing the image never moves it.
     """
 
-    name: SafeToken
-    #: Producer-local Docker aliases, separate from the catalog/product name.
-    local_name: SafeToken
-    context: str
-    base_context: str | None = None
-    script: str
-    repository: str
-    cache_stage: SafeToken
-    evidence_max_bytes: PositiveInt
     digests: dict[Platform, ManifestDigest]
     #: The variable an installed proof reads the image's layout path from,
     #: for an image the release proofs boot (the reference image).
