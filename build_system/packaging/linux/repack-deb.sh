@@ -245,6 +245,7 @@ strip_packaged_binaries
 echo "=== Deriving glibc floor from the packaged binaries ==="
 ensure_deb_dependency "$WORK_DIR/deb/DEBIAN/control" \
     "$(python3 "$SCRIPT_DIR/derive-deb-libc-floor.py" "$WORK_DIR/deb")"
+python3 "$SCRIPT_DIR/derive-deb-libc-floor.py" "$WORK_DIR/deb" --preinstall-control
 
 echo "=== Adding maintainer scripts ==="
 cp "$SCRIPT_DIR/deb-preinst.sh" "$WORK_DIR/deb/DEBIAN/preinst"

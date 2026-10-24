@@ -37,7 +37,11 @@ def _write_elf(path: Path, *versions: str) -> None:
     """A file that starts with the ELF magic and names ``versions`` inside it."""
     path.parent.mkdir(parents=True, exist_ok=True)
     body = b"\x00".join(version.encode() for version in versions)
-    path.write_bytes(derive.ELF_MAGIC + struct.pack("<4B", 2, 1, 1, 0) + b"\x00" * 8 + body)
+    header = bytearray(64)
+    header[:8] = derive.ELF_MAGIC + struct.pack("<4B", 2, 1, 1, 0)
+    header[16:20] = b"\x03\x00\xb7\x00"
+    path.write_bytes(header + body)
+    path.chmod(0o755)
 
 
 def test_floor_is_the_highest_version_across_every_binary(tmp_path):
@@ -102,8 +106,11 @@ def test_candidate_predepends_uses_actual_symbol_mapping_and_preserves_other_fie
 
     def mapping(argv, **kwargs):
         assert "-dPre-Depends" in argv
-        assert argv[-1] == f"-e{tmp_path / 'usr/bin/capsem-ledger'}"
+        assert kwargs["env"]["DEB_HOST_ARCH"] == "arm64"
         context = Path(kwargs["cwd"])
+        selected = context / "debian/capsem/usr/bin/capsem-ledger"
+        assert argv[-1] == f"-e{selected}"
+        assert selected.resolve() == tmp_path / "usr/bin/capsem-ledger"
         assert "Source: capsem\n" in (context / "debian/control").read_text()
         return subprocess.CompletedProcess(argv, 0, "shlibs:Pre-Depends=libc6 (>= 2.39), libgcc-s1 (>= 4.2)\n", "")
 
@@ -115,6 +122,8 @@ def test_candidate_predepends_uses_actual_symbol_mapping_and_preserves_other_fie
     assert "2.99" not in result
     assert result.startswith("Package: capsem\nArchitecture: arm64\n")
     assert result.endswith("Description: original\n")
+    derive.write_preinstall_dependencies(tmp_path)
+    assert control.read_text() == result
 
 
 @pytest.mark.parametrize("output", ["", "shlibs:Depends=libc6 (>= 2.39)\n", "shlibs:Pre-Depends=libc6 (>= 2.38)\n", "shlibs:Pre-Depends=libc6 (>= 2.39)\nextra\n"])
@@ -125,7 +134,86 @@ def test_unproven_preinstall_dependency_mapping_preserves_original(tmp_path, mon
     control.write_text("Package: capsem\nArchitecture: arm64\nDepends: original\n")
     original = control.read_bytes()
     monkeypatch.setattr(derive.subprocess, "run", lambda argv, **kw: subprocess.CompletedProcess(argv, 0, output, ""))
-    with pytest.raises(SystemExit, match="candidate|mapping"):
+    with pytest.raises(SystemExit, match=r"candidate|mapping"):
+        derive.write_preinstall_dependencies(tmp_path)
+    assert control.read_bytes() == original
+
+
+@pytest.mark.parametrize("architecture,machine", [("arm64", 183), ("amd64", 62)])
+def test_candidate_control_binds_dpkg_target_instead_of_ambient_host(tmp_path, monkeypatch, architecture, machine):
+    binary = tmp_path / "usr/bin/capsem-ledger"
+    _write_elf(binary, "GLIBC_2.39")
+    data = bytearray(binary.read_bytes())
+    data[18:20] = machine.to_bytes(2, "little")
+    binary.write_bytes(data)
+    control = tmp_path / "DEBIAN/control"
+    control.parent.mkdir()
+    control.write_text(f"Package: capsem\nArchitecture: {architecture}\nDepends: gui\n")
+    monkeypatch.setenv("DEB_HOST_ARCH", "foreign-ambient-host")
+
+    def mapping(argv, **kwargs):
+        assert kwargs["env"]["DEB_HOST_ARCH"] == architecture
+        assert "--ignore-missing-info" not in argv
+        return subprocess.CompletedProcess(argv, 0, "shlibs:Pre-Depends=libc6 (>= 2.39), libgcc-s1 (>= 4.2)\n", "")
+
+    monkeypatch.setattr(derive.subprocess, "run", mapping)
+    derive.write_preinstall_dependencies(tmp_path)
+    assert "Pre-Depends: libc6 (>= 2.39), libgcc-s1 (>= 4.2)" in control.read_text()
+    control.write_text(f"Package: capsem\nArchitecture: {'amd64' if architecture == 'arm64' else 'arm64'}\n")
+    with pytest.raises(ValueError, match="matching target"):
+        derive.write_preinstall_dependencies(tmp_path)
+
+
+def test_actual_missing_symbol_information_refuses_before_control_write(tmp_path, monkeypatch):
+    _write_elf(tmp_path / "usr/bin/capsem-ledger", "GLIBC_2.39")
+    control = tmp_path / "DEBIAN/control"
+    control.parent.mkdir()
+    control.write_text("Package: capsem\nArchitecture: arm64\nPre-Depends: preserved (>= 10)\n")
+    original = control.read_bytes()
+
+    def missing(argv, **kwargs):
+        raise subprocess.CalledProcessError(2, argv, stderr="missing actual target symbols")
+
+    monkeypatch.setattr(derive.subprocess, "run", missing)
+    with pytest.raises(SystemExit, match="missing actual target symbols"):
+        derive.write_preinstall_dependencies(tmp_path)
+    assert control.read_bytes() == original
+
+
+def test_candidate_predepends_resolves_after_strip_before_embed_or_package_output() -> None:
+    source = (SCRIPT.parent / "repack-deb.sh").read_text()
+    assert source.index("strip_packaged_binaries\n") < source.index("--preinstall-control")
+    assert source.index("--preinstall-control") < source.index('embed-preinstall-resource.py" embed')
+    assert source.index("--preinstall-control") < source.index('dpkg-deb -b "$WORK_DIR/deb"')
+
+
+@pytest.mark.parametrize("existing", ["", "Pre-Depends: libc6 (>= 2.40), other-tool | alternate\n"])
+def test_predepends_appends_without_weakening_existing_constraints(tmp_path, monkeypatch, existing):
+    _write_elf(tmp_path / "usr/bin/capsem-ledger", "GLIBC_2.39")
+    control = tmp_path / "DEBIAN/control"
+    control.parent.mkdir()
+    control.write_text(f"Package: capsem\nArchitecture: arm64\nDepends: untouched\n{existing}")
+    monkeypatch.setattr(derive.subprocess, "run", lambda argv, **kw: subprocess.CompletedProcess(argv, 0, "shlibs:Pre-Depends=libc6 (>= 2.39), libgcc-s1 (>= 4.2)\n", ""))
+    derive.write_preinstall_dependencies(tmp_path)
+    result = control.read_text()
+    assert "Depends: untouched\n" in result
+    assert "libgcc-s1 (>= 4.2)" in result
+    if existing:
+        assert "libc6 (>= 2.40), other-tool | alternate" in result
+
+
+def test_missing_dpkg_tool_does_not_publish_control(tmp_path, monkeypatch):
+    _write_elf(tmp_path / "usr/bin/capsem-ledger", "GLIBC_2.39")
+    control = tmp_path / "DEBIAN/control"
+    control.parent.mkdir()
+    control.write_text("Package: capsem\nArchitecture: arm64\nDepends: unchanged\n")
+    original = control.read_bytes()
+
+    def missing(*args, **kwargs):
+        raise FileNotFoundError("dpkg-shlibdeps missing")
+
+    monkeypatch.setattr(derive.subprocess, "run", missing)
+    with pytest.raises(SystemExit, match="dpkg-shlibdeps missing"):
         derive.write_preinstall_dependencies(tmp_path)
     assert control.read_bytes() == original
 

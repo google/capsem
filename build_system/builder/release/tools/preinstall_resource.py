@@ -76,7 +76,13 @@ def _regular(root: Path, relative: str, maximum: int, *, unshared: bool = True) 
     return data
 
 
-def _candidate(package: Path, limits: Limits) -> bytes:
+@dataclass(frozen=True)
+class Candidate:
+    data: bytes
+    architecture: str
+
+
+def candidate(package: Path, limits: Limits) -> Candidate:
     data = _regular(package, "usr/bin/capsem-ledger", limits.max_binary_bytes)
     control = _regular(package, "DEBIAN/control", limits.max_control_bytes).decode("utf-8")
     architectures = Parser().parsestr(control).get_all("Architecture", [])
@@ -92,11 +98,11 @@ def _candidate(package: Path, limits: Limits) -> bytes:
     mode = (package / "usr/bin/capsem-ledger").stat().st_mode
     if not mode & 0o111 or mode & 0o6000:
         raise ValueError("preinstall resource must be executable without set-id authority")
-    return data
+    return Candidate(data, architectures[0].strip())
 
 
 def _prefix(package: Path, repository: Path, limits: Limits) -> bytes:
-    binary = _candidate(package, limits)
+    binary = candidate(package, limits).data
     encoded = base64.encodebytes(binary)
     if len(encoded) > limits.max_encoded_bytes:
         raise ValueError("preinstall encoded resource exceeds its byte budget")

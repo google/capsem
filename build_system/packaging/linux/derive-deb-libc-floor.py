@@ -18,8 +18,13 @@ inside the repack step on any builder image.
 from __future__ import annotations
 
 import argparse
+import importlib.util
+import os
 import re
+import subprocess
 import sys
+import tempfile
+from email.parser import Parser
 from pathlib import Path
 
 ELF_MAGIC = b"\x7fELF"
@@ -74,15 +79,82 @@ def clause(version: tuple[int, ...], package: str) -> str:
     return f"{package} (>= {'.'.join(str(part) for part in version)})"
 
 
+def write_preinstall_dependencies(root: Path) -> None:
+    """Map ONLY the validated candidate through dpkg's actual target symbols."""
+    repository = Path(__file__).resolve().parents[3]
+    if importlib.util.find_spec("capsem_builder") is None:
+        sys.path.insert(0, str(repository / "build_system/builder"))
+        from bootstrap import mount_builder_package
+        mount_builder_package(repository)
+    from capsem_builder.release.tools import preinstall_resource
+
+    subject = preinstall_resource.candidate(root, preinstall_resource.load_limits(repository))
+    binary = root / "usr/bin/capsem-ledger"
+    version = required_glibc(binary)
+    if version is None:
+        raise SystemExit("preinstall candidate has no proven glibc version")
+    control = root / "DEBIAN/control"
+    original = control.read_text()
+    fields = Parser().parsestr(original)
+    packages = [value.strip() for value in fields.get_all("Package", [])]
+    if len(packages) != 1 or re.fullmatch(r"[a-z0-9][a-z0-9+.-]+", packages[0]) is None:
+        raise SystemExit("preinstall candidate requires one valid package identity")
+    if len(fields.get_all("Pre-Depends", [])) > 1:
+        raise SystemExit("preinstall candidate has duplicate Pre-Depends fields")
+    with tempfile.TemporaryDirectory(prefix="capsem-preinstall-shlibs-") as temporary:
+        context = Path(temporary)
+        (context / "debian").mkdir()
+        (context / "debian/control").write_text(f"Source: {packages[0]}\n\n{original}")
+        package_directory = context / "debian" / packages[0]
+        package_directory.symlink_to(root.resolve(), target_is_directory=True)
+        selected = package_directory / "usr/bin/capsem-ledger"
+        try:
+            result = subprocess.run(
+                ["dpkg-shlibdeps", "-O", "-dPre-Depends", f"-S{package_directory}", f"-e{selected}"],
+                cwd=context, env={**os.environ, "DEB_HOST_ARCH": subject.architecture},
+                check=True, text=True, capture_output=True,
+            )
+        except (OSError, subprocess.CalledProcessError) as error:
+            detail = error.stderr if isinstance(error, subprocess.CalledProcessError) else str(error)
+            raise SystemExit(f"candidate target dependency mapping failed: {detail}") from error
+    if result.stderr:
+        print(result.stderr, file=sys.stderr, end="")
+    lines = result.stdout.splitlines()
+    prefix = "shlibs:Pre-Depends="
+    if len(lines) != 1 or not lines[0].startswith(prefix):
+        raise SystemExit("unproven preinstall candidate dependency mapping")
+    dependencies = lines[0][len(prefix):].strip()
+    clauses = [value.strip() for value in dependencies.split(",")]
+    if clause(version, "libc6") not in clauses or any(not value for value in clauses):
+        raise SystemExit("candidate glibc floor disagrees with actual target dependency mapping")
+    match = re.search(r"(?ms)^Pre-Depends:[ \t]*(.*?)(?=^[^ \t]|\Z)", original)
+    if match:
+        existing = match.group(1).replace("\n", " ").strip()
+        retained = [value.strip() for value in existing.split(",")]
+        additions = [value for value in clauses if value not in retained]
+        if not additions:
+            return
+        dependencies = ", ".join(additions)
+        replacement = f"Pre-Depends: {existing}, {dependencies}\n" if existing else f"Pre-Depends: {dependencies}\n"
+        updated = original[:match.start()] + replacement + original[match.end():]
+    else:
+        updated = original + ("" if original.endswith("\n") else "\n") + f"Pre-Depends: {dependencies}\n"
+    control.write_text(updated)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", type=Path, help="the packaged tree to scan")
     parser.add_argument("--package", default="libc6", help="the C library package name")
+    parser.add_argument("--preinstall-control", action="store_true", help="write candidate-only target Pre-Depends")
     args = parser.parse_args(argv)
 
     if not args.root.is_dir():
         raise SystemExit(f"packaged tree does not exist: {args.root}")
-    print(clause(floor_for(args.root), args.package))
+    if args.preinstall_control:
+        write_preinstall_dependencies(args.root)
+    else:
+        print(clause(floor_for(args.root), args.package))
     return 0
 
 
