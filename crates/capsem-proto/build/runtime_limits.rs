@@ -185,6 +185,7 @@ pub fn write_runtime_limits() {
             output
         });
     let approval_limits = super::approval_limits::render(&config);
+    let update_limits = super::update_limits::render(&config);
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
     std::fs::write(
         format!("{out_dir}/runtime_limits.rs"),
@@ -249,7 +250,7 @@ pub fn write_runtime_limits() {
              /// Retry delay after an image catalog failure.\n\
              pub const CACHE_IMAGE_CATALOG_RETRY_SECONDS: u64 = {cache_image_catalog_retry_seconds};\n\
              /// Catalog keys admitted to one cache-verification request.\n\
-             pub const CACHE_IMAGE_VERIFICATION_BATCH_KEYS: usize = {cache_image_verification_batch_keys};\n{terminal_limits}{approval_limits}"
+             pub const CACHE_IMAGE_VERIFICATION_BATCH_KEYS: usize = {cache_image_verification_batch_keys};\n{terminal_limits}{approval_limits}{update_limits}"
         ),
     )
     .expect("runtime limits: write generated constants");

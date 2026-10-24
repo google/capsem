@@ -76,6 +76,14 @@ image_catalog_refresh_seconds = 1800
 image_catalog_retry_seconds = 60
 image_verification_batch_keys = 1024
 
+[update]
+# A check fetch already has a 120-second transport budget. The service also
+# bounds process startup and settlement; package apply has no kill deadline.
+check_timeout_seconds = 150
+# Retain complete output only within this ceiling for each pipe. Apply must
+# continue draining an excess stream until the real transaction settles.
+output_bytes_per_stream = 65536
+
 [terminal]
 # Canonical owner grid and retained logical history. Viewers own no byte replay.
 default_cols = 80

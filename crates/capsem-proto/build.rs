@@ -10,6 +10,8 @@
 mod approval_limits;
 #[path = "build/runtime_limits.rs"]
 mod runtime_limits;
+#[path = "build/update_limits.rs"]
+mod update_limits;
 
 use quote::ToTokens;
 use syn::visit_mut::VisitMut;
