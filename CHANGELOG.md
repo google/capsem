@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Create the APT archive destination on fresh host-builder caches before
+  authenticated parallel downloads, avoiding missing-directory build failures.
+
 ### Changed
 
 - Preserve active image generations and their lease-control inodes during

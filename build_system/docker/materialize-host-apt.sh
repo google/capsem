@@ -17,6 +17,8 @@ read -r -a cross_packages <<<"$WORKSPACE_CROSS_APT_PACKAGES"
 
 rm -f /etc/apt/apt.conf.d/docker-clean
 rm -f /var/lib/apt/lists/lock /var/cache/apt/archives/lock
+# A fresh BuildKit parent cache hides the image's archive directories.
+mkdir -p /var/cache/apt/archives/partial
 
 marker="/var/lib/apt/lists/.capsem-${APT_SNAPSHOT_ID}-complete"
 if [[ ! -f "$marker" ]]; then
