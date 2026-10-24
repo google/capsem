@@ -93,7 +93,10 @@ async fn process_drain_stops_the_bridge_and_flushes_transcripts_with_live_sender
     );
     drop(recorder);
     assert_eq!(read_output_bytes(&transcript).unwrap(), shown);
-    assert_eq!(std::fs::read(serial).unwrap(), shown);
+    assert_eq!(
+        capsem_foundation::telemetry::read_log_tail_bytes(&serial, 1024 * 1024).unwrap(),
+        shown
+    );
     let mut byte = [0];
     assert_eq!(
         tokio::time::timeout(Duration::from_secs(2), guest.read(&mut byte))

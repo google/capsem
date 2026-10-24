@@ -322,7 +322,7 @@ async fn full_serial_log_queue_does_not_stall_sync_expiry_or_socket_rekey() {
         .unwrap()
         .unwrap();
     assert_eq!(
-        std::fs::read(path).unwrap(),
+        capsem_foundation::telemetry::read_log_tail_bytes(&path, 1024 * 1024).unwrap(),
         expected,
         "serial output was reordered or lost"
     );

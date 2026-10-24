@@ -34,7 +34,7 @@ async fn checkpoint_drains_socket_and_coalescer_with_replies_logs_and_parser_con
     assert_eq!(replies, b"\x1b[1;5R");
     assert_eq!(terminal.subscribe().1.state.bell_count, 1);
     assert_eq!(
-        std::fs::read(&path).unwrap(),
+        capsem_foundation::telemetry::read_log_tail_bytes(&path, 1024 * 1024).unwrap(),
         [first.as_slice(), final_bytes.as_slice()].concat()
     );
     let restored = capsem_core::terminal::SessionTerminal::from_checkpoint(&terminal.checkpoint().unwrap(), 8).unwrap();
