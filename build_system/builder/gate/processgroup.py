@@ -60,11 +60,23 @@ def tee(
     *,
     cwd: Path,
     env: Mapping[str, str],
-    write: Callable[[str], None],
+    write: Callable[[str], None] | None = None,
+    write_bytes: Callable[[bytes], None] | None = None,
+    stderr: int | None = subprocess.STDOUT,
+    executable: Path | None = None,
     policy: StopPolicy,
     timeout_seconds: float | None = None,
 ) -> int:
-    """Run a foreground command while filing each available output chunk."""
+    """File output through exactly one callback, with unchanged text semantics.
+
+    Protocol owners select original bytes and inherited stderr to keep diagnostic
+    output separate. Their callback enforces its byte budget during this drain.
+    Callback failure uses the same exact-owned tree teardown as timeouts.
+    """
+    if (write is None) == (write_bytes is None):
+        raise ValueError("tee requires exactly one text or byte callback")
+    if stderr not in (None, subprocess.STDOUT):
+        raise ValueError("tee diagnostics must be inherited or merged, never an undrained pipe")
     process = subprocess.Popen(
         list(argv),
         cwd=str(cwd),
@@ -72,7 +84,8 @@ def tee(
         text=False,
         bufsize=0,
         stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+        stderr=stderr,
+        executable=executable,
         start_new_session=True,
     )
     owned: OwnedTree = {}
@@ -93,7 +106,11 @@ def tee(
                 for key, _mask in events:
                     chunk = os.read(key.fd, 65536)
                     if chunk:
-                        write(chunk.decode("utf-8", errors="replace"))
+                        if write_bytes is not None:
+                            write_bytes(chunk)
+                        else:
+                            assert write is not None
+                            write(chunk.decode("utf-8", errors="replace"))
                     else:
                         ready.unregister(key.fileobj)
         _wait(process, policy, owned, deadline)
