@@ -15,8 +15,6 @@ broke when those public artifacts were retired. See `releasegraph`.
 
 from __future__ import annotations
 
-import os
-from collections.abc import Mapping
 from pathlib import Path
 
 from . import cachelayout, installplan, platformproof, referenceimage
@@ -31,7 +29,8 @@ from .errors import GateError
 from .execution import Kind, Needs, Speed, step
 from .fileactions import make_dir, remove
 from .installcontainer import InstallContainer
-from .installproof import InstallProof
+from .installpairing import NativePairing
+from .installproof import InstallProof, macos_report
 from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .plan import Plan
 from .proc import Runner
@@ -50,6 +49,7 @@ class InstallGate:
         content: InstallContent | None = None,
         macos_glowup_report: str | None = None,
         source_commit: SourceCommit,
+        glowup_pairing: NativePairing | None = None,
     ) -> None:
         self._runner = runner
         self._config = gate_config.for_root(runner.root)
@@ -60,12 +60,18 @@ class InstallGate:
         # The installed proof boots the reference image from its verified
         # layout, mounted read-only at its own path.
         self._container = InstallContainer(
-            runner, content=content, inputs=referenceimage.inputs(self._config)
+            runner,
+            content=content,
+            inputs=(
+                *referenceimage.inputs(self._config),
+                *(glowup_pairing.mounts if glowup_pairing else ()),
+            ),
         )
         self._proof = InstallProof(
             runner,
             self._config,
             source_commit=source_commit,
+            pairing=glowup_pairing,
         )
         self._graph = ReleaseGraph(Docker(runner), self._config, source_commit=source_commit)
         self._macos_report = macos_glowup_report or None
@@ -119,10 +125,16 @@ class InstallGate:
             # Ordered: clear the handoff before the container goes, or the next
             # install in this checkout inherits a request pointing at a graph
             # that no longer exists.
-            self._graph.clear_handoff()
-            self._container.return_paths()
-            self._container.stop()
-            self._cache.prune(best_effort=True)
+            try:
+                self._graph.clear_handoff()
+            finally:
+                try:
+                    self._container.return_paths()
+                finally:
+                    try:
+                        self._container.stop()
+                    finally:
+                        self._cache.prune(best_effort=True)
 
         self._container.verify_rosetta_survived()
 
@@ -264,28 +276,6 @@ class InstallCommand(
             content = LocalInstallContent(RuntimeContent.standalone(self._config))
         plan.add(install_step(self._config, content=content), after=(image,))
         return plan
-
-
-def macos_report(config, environ: Mapping[str, str] | None = None) -> str | None:
-    """Where the native macOS glow-up proof left its report, if it ran.
-
-    Two ways in, and it only ever had one. A release lane produces the report
-    in another job and hands it over by variable; a local gate produces it in
-    the `macos-package` step immediately before this one, which writes it at
-    the configured path and exports nothing.
-
-    So the variable was read, nothing set it, and every complete local gate on
-    macOS failed at its very last step with "requires the native glow-up report
-    from this module" -- while the report sat exactly where `[modules]` said it
-    would. Returning `None` when neither exists keeps the refusal for the case
-    it was written for: the proof genuinely did not run.
-    """
-    source = os.environ if environ is None else environ
-    handed = (source.get(config.modules.macos_report_variable) or "").strip()
-    if handed:
-        return handed
-    written = cachelayout.stage_path(config, "release-proofs") / config.modules.macos_glowup_report
-    return str(written) if written.is_file() else None
 
 
 def _install(context, *, content: InstallContent) -> None:

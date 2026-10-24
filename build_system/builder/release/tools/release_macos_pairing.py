@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 
 from ... import crypto
-from .package_payload import pkg_payload_files
+from .package_payload import package_payload_files
 from .release_glowup import ArtifactIdentity, PairingIdentity, assert_manifest_artifact
 
 
@@ -19,14 +19,22 @@ def _sha(path: Path) -> str:
     return digest.hexdigest()
 
 
-def cohort(package: Path, manifest: Path, sbom: Path, *, channel: str) -> dict:
+def cohort(
+    package: Path,
+    manifest: Path,
+    sbom: Path,
+    *,
+    channel: str,
+    platform: str = "macos",
+    architecture: str = "arm64",
+) -> dict:
     document = json.loads(manifest.read_text())
     rows = [row for row in document["packages"] if row["name"] == package.name]
     if len(rows) != 1:
         raise ValueError("paired package must have one manifest descriptor")
     row = rows[0]
     artifact = ArtifactIdentity.from_path(
-        package, version=row["version"], platform="macos", architecture="arm64"
+        package, version=row["version"], platform=platform, architecture=architecture
     )
     try:
         assert_manifest_artifact(document, artifact)
@@ -57,7 +65,7 @@ def cohort(package: Path, manifest: Path, sbom: Path, *, channel: str) -> dict:
         or not {"capsem", "capsem-service"}.issubset(names)
     ):
         raise ValueError("paired package has missing or duplicate binary roles")
-    payload = pkg_payload_files(package)
+    payload = package_payload_files(package)
     metadata = [
         value for name, value in payload.items() if name.endswith("/assets/manifest-metadata.json")
     ]
@@ -75,8 +83,8 @@ def cohort(package: Path, manifest: Path, sbom: Path, *, channel: str) -> dict:
         for field, expected in (
             ("status", "current"),
             ("version", row["version"]),
-            ("platform", "macos"),
-            ("architecture", "arm64"),
+            ("platform", platform),
+            ("architecture", architecture),
         ):
             if binary.get(field) != expected:
                 raise ValueError(f"paired binary has foreign or inactive {field}")
@@ -113,10 +121,15 @@ def cohort(package: Path, manifest: Path, sbom: Path, *, channel: str) -> dict:
 
 
 def validate_pair(
-    *, before: tuple[Path, Path, Path], after: tuple[Path, Path, Path], channel: str
+    *,
+    before: tuple[Path, Path, Path],
+    after: tuple[Path, Path, Path],
+    channel: str,
+    platform: str = "macos",
+    architecture: str = "arm64",
 ) -> dict:
-    previous = cohort(*before, channel=channel)
-    candidate = cohort(*after, channel=channel)
+    previous = cohort(*before, channel=channel, platform=platform, architecture=architecture)
+    candidate = cohort(*after, channel=channel, platform=platform, architecture=architecture)
     versions = [item["artifact"]["version"] for item in (previous, candidate)]
     # This fixture exercises the ordinary Apply route, which selects a newer
     # version. Keep the finite pairing subset stable-only; changed source bytes

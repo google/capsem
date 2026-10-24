@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+"""Fresh genuine installed Apply, with independent request/activation outcomes."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import tempfile
+import time
+from dataclasses import replace
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "tests"))
+
+
+def main() -> int:
+    from capsem_builder.gate import config as gate_config
+    from capsem_builder.gate.proc import Runner
+    from capsem_builder.gate.processstop import StopPolicy
+    from capsem_builder.gate.sourcecommit import SourceCommit, source_commit_for_checkout
+
+    from benchmarks.helpers.install_inputs import load_inputs
+    from benchmarks.helpers.install_metrics import metrics
+    from benchmarks.helpers.install_receipt import sidecar, verified_receipt
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source-commit", type=SourceCommit, required=True)
+    args = parser.parse_args()
+    config = gate_config.load(ROOT)
+    settings = config.benchmark.install
+    input_path = config.path(settings.inputs)
+    platform = "macos" if sys.platform == "darwin" else sys.platform
+    prepared = load_inputs(
+        input_path,
+        maximum=settings.max_input_bytes,
+        package_maximum=settings.max_package_bytes,
+        source_commit=args.source_commit,
+        platform=platform,
+        architecture=config.host_arch().dpkg,
+    )
+    if source_commit_for_checkout(ROOT) != args.source_commit:
+        raise ValueError("Install collector source differs from its recorded source")
+    policy = replace(
+        StopPolicy.from_execution(config.execution),
+        grace_seconds=settings.cleanup_timeout_seconds,
+        refuse_survivors=True,
+    )
+    runner = Runner(ROOT, stream=sys.stderr, stop_policy=policy)
+    if runner.run(
+        ["git", "diff", "--quiet", "HEAD", "--"],
+        check=False,
+        timeout_seconds=settings.owner_timeout_seconds,
+    ):
+        raise ValueError("Install collector refuses dirty source")
+    output = config.path(settings.work_root)
+    output.mkdir(parents=True, exist_ok=True)
+    work = Path(tempfile.mkdtemp(prefix="run-", dir=output))
+    native = work / "native"
+    started = time.monotonic_ns()
+    runner.run(
+        [
+            sys.executable,
+            "-m",
+            "benchmarks.helpers.install_owner",
+            "--inputs",
+            str(input_path),
+            "--source-commit",
+            args.source_commit,
+            "--work-dir",
+            str(native),
+        ],
+        log=work / "owner.log",
+        timeout_seconds=settings.owner_timeout_seconds,
+    )
+    wall = time.monotonic_ns() - started
+    receipt = verified_receipt(native, prepared, maximum=settings.max_receipt_bytes)
+    json.dump(
+        {"metrics": metrics(receipt, host_wall_ns=wall), "sidecar": sidecar(prepared, receipt)},
+        sys.stdout,
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

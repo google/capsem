@@ -11,14 +11,18 @@ over nothing.
 
 from __future__ import annotations
 
+import os
+import shlex
 import time
+from collections.abc import Mapping
 from pathlib import Path
 
+from . import cachelayout, referenceimage
 from . import config as gate_config
-from . import referenceimage
 from .content import RuntimeContent
 from .docker import Docker
 from .errors import GateError
+from .installpairing import NativePairing
 from .proc import Runner
 from .sourcecommit import SourceCommit
 
@@ -34,6 +38,7 @@ class InstallProof:
         source_commit: SourceCommit,
         container: str | None = None,
         sleep=time.sleep,
+        pairing: NativePairing | None = None,
     ) -> None:
         self._runner = runner
         self._docker = Docker(runner)
@@ -47,6 +52,7 @@ class InstallProof:
         self._environment = config.environment.install_proof
         self._source_commit = source_commit
         self._sleep = sleep
+        self._pairing = pairing
 
     # -- staging -----------------------------------------------------------
 
@@ -198,6 +204,8 @@ class InstallProof:
         assembly; it just cannot exercise the nested VM, so it skips the
         install half rather than pretending to have run it.
         """
+        if self._pairing is not None and not boots_a_guest:
+            raise ValueError("exact installed pairing requires a real bootable guest")
         if boots_a_guest:
             self._runner.note(
                 "Running Linux native release glow-up (install, channel switch, upgrade)..."
@@ -215,6 +223,8 @@ class InstallProof:
             f"--evidence-dir {self._layout.glowup_evidence} "
             f"--source-commit {self._source_commit}"
         )
+        if self._pairing is not None:
+            glowup += " " + shlex.join(self._pairing.arguments())
         self._docker.shell(
             self._container,
             glowup if boots_a_guest else f"{glowup} --skip-install",
@@ -243,3 +253,25 @@ class InstallProof:
             "--cargo-toml",
             cargo_toml,
         )
+
+
+def macos_report(config, environ: Mapping[str, str] | None = None) -> str | None:
+    """Where the native macOS glow-up proof left its report, if it ran.
+
+    Two ways in, and it only ever had one. A release lane produces the report
+    in another job and hands it over by variable; a local gate produces it in
+    the `macos-package` step immediately before this one, which writes it at
+    the configured path and exports nothing.
+
+    So the variable was read, nothing set it, and every complete local gate on
+    macOS failed at its very last step with "requires the native glow-up report
+    from this module" -- while the report sat exactly where `[modules]` said it
+    would. Returning `None` when neither exists keeps the refusal for the case
+    it was written for: the proof genuinely did not run.
+    """
+    source = os.environ if environ is None else environ
+    handed = (source.get(config.modules.macos_report_variable) or "").strip()
+    if handed:
+        return handed
+    written = cachelayout.stage_path(config, "release-proofs") / config.modules.macos_glowup_report
+    return str(written) if written.is_file() else None

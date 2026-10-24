@@ -11,13 +11,14 @@ import math
 from itertools import pairwise
 from typing import Annotated, Literal
 
-from pydantic import Field, PositiveFloat, PositiveInt, StrictBool, StrictInt, field_validator
+from pydantic import Field, PositiveFloat, PositiveInt, StrictBool, StrictInt, field_validator, model_validator
 
 from .benchmarkaskschema import AskRouteConfig
 from .benchmarkcontrolschema import WorkloadControlConfig
 from .benchmarkcredentialschema import CredentialRouteConfig
 from .benchmarkerrorschema import ConnectionErrorConfig
 from .benchmarkimageschema import ImageRouteConfig
+from .benchmarkinstallschema import InstallBenchmarkConfig
 from .benchmarklifecycleschema import LifecycleRouteConfig
 from .benchmarkmcpschema import McpRouteConfig
 from .benchmarkmemberschema import NetworkMemberConfig
@@ -273,6 +274,7 @@ class BenchmarkGatesConfig(Strict):
 
 
 class BenchmarkConfig(Strict):
+    install: InstallBenchmarkConfig
     stream: StreamConfig
     routes: RouteCoverageConfig
     route_load: RouteLoadConfig
@@ -283,3 +285,12 @@ class BenchmarkConfig(Strict):
     mitm_scale: BenchmarkMitmScaleConfig
     content_filter: BenchmarkContentFilterConfig
     gates: BenchmarkGatesConfig
+
+    @model_validator(mode="after")
+    def install_settles_before_outer_deadline(self):
+        if (
+            self.install.owner_timeout_seconds + self.install.cleanup_timeout_seconds
+            >= self.run.timeout_secs
+        ):
+            raise ValueError("Install owner and cleanup must settle before the collector deadline")
+        return self
