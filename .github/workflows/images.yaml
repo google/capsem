@@ -147,6 +147,7 @@ jobs:
     name: ${{ matrix.image }} (${{ matrix.arch }})
     needs: base
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 240
     permissions:
       contents: read
       packages: write
@@ -206,6 +207,60 @@ jobs:
           build=false
           if [ "$FORCE" = true ] || [ "$exists" = false ]; then build=true; fi
           printf 'key=%s\nbuild=%s\n' "$key" "$build" >> "$GITHUB_OUTPUT"
+      # Docker smoke is not Capsem VM proof. Refuse missing native devices
+      # before expensive production; hosted ARM KVM is a required capability.
+      - name: Enable required KVM and vsock devices
+        if: steps.published.outputs.build == 'true'
+        run: |
+          sudo bash build_system/packaging/shared/install-vm-device-access "$USER" build_system/packaging/linux/99-capsem-vm-devices.rules
+          test -c /dev/kvm
+          test -c /dev/vhost-vsock
+          uv run --project build_system --frozen python -m images.ci.qualify --arch "$ARCH" --preflight
+      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b
+        if: steps.published.outputs.build == 'true'
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        if: steps.published.outputs.build == 'true'
+        with:
+          toolchain: 1.97.1
+          targets: aarch64-unknown-linux-gnu,x86_64-unknown-linux-gnu,aarch64-unknown-linux-musl,x86_64-unknown-linux-musl
+      - uses: ./.github/actions/rust-cache
+        if: steps.published.outputs.build == 'true'
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
+        if: steps.published.outputs.build == 'true'
+        with:
+          version: 10.34.5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        if: steps.published.outputs.build == 'true'
+        with:
+          node-version: 24
+      - name: Select the declared tool set
+        if: steps.published.outputs.build == 'true'
+        id: gate_tools
+        run: |
+          list=$(python3 build_system/scripts/ci/gate-tool-list.py --sets complete)
+          echo "list=$list" >> "$GITHUB_OUTPUT"
+      - name: Install prebuilt Rust gate tools
+        if: steps.published.outputs.build == 'true'
+        uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b
+        with:
+          tool: ${{ steps.gate_tools.outputs.list }}
+      - name: Bootstrap native image qualification host
+        if: steps.published.outputs.build == 'true'
+        env:
+          CAPSEM_SKIP_ASSET_CHECK: "1"
+        run: sh bootstrap.sh --yes
+      - name: Prove Linux sandbox boundary
+        if: steps.published.outputs.build == 'true'
+        run: python3 build_system/scripts/bootstrap/prepare-linux-sandbox.py --repair-hosted-runner
+      - name: Materialize locked qualification dependencies
+        if: steps.published.outputs.build == 'true'
+        run: |
+          uv sync --project build_system --frozen
+          python3 build_system/scripts/ci/run-bounded-command.py --timeout-seconds 300 -- uv sync --project sdk/python --frozen --no-install-project
+          cargo fetch --locked
+          for workspace in web/app sdk/typescript mcp/typescript build_system/release_site; do
+            pnpm --dir "$workspace" install --frozen-lockfile
+          done
       - name: Build the image
         if: steps.published.outputs.build == 'true'
         run: |
@@ -234,11 +289,24 @@ jobs:
           DIGEST: ${{ steps.push.outputs.digest }}
         run: |
           uv run --project build_system --frozen python images/ci/rootfs.py --image capsem-image:local \
-            --arch "$ARCH" --repository "$REGISTRY/$IMAGE" --digest "$DIGEST" --out rootfs
+            --arch "$ARCH" --repository "$REGISTRY/$IMAGE" --digest "$DIGEST" --out "$RUNNER_TEMP/rootfs"
+      - name: Qualify the original platform image under Capsem
+        if: steps.published.outputs.build == 'true'
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          GITHUB_TOKEN: ${{ github.token }}
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+          CC_aarch64_unknown_linux_musl: musl-gcc
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+          CARGO_NET_OFFLINE: "true"
+        run: |
+          uv run --project build_system --frozen python -m images.ci.qualify \
+            --image "$IMAGE" --arch "$ARCH" --repository "$REGISTRY/$IMAGE" --digest "$DIGEST" --output "$RUNNER_TEMP/rootfs"
       - name: Attach the OBOM, package inventory and the EROFS rootfs
         id: attach
         if: steps.published.outputs.build == 'true'
-        working-directory: rootfs
+        working-directory: ${{ runner.temp }}/rootfs
         env:
           SUBJECT: ${{ env.REGISTRY }}/${{ matrix.image }}@${{ steps.push.outputs.digest }}
         run: |

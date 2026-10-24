@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Require native Capsem VM qualification of each original official image and
+  prepared root before publishing its evidence and advancing the image catalog.
+  Missing native virtualization devices stop publication instead of substituting
+  Docker smoke checks.
+
 - Verify and run the macOS package's original signed candidate ledger as the
   selected user before stopping or removing an existing installation.
 
