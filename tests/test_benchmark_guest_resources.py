@@ -66,7 +66,7 @@ class Sampler:
 def observer(monkeypatch):
     helper = module()
     process = Process()
-    service = SimpleNamespace(proc=SimpleNamespace(pid=process.pid))
+    service = SimpleNamespace(proc=SimpleNamespace(pid=process.pid, poll=lambda: None))
     patch_process(monkeypatch, helper, process)
     monkeypatch.setattr(helper, "ProcessTreeSampler", Sampler)
     return helper.GuestResources(service, SETTINGS), process, service
@@ -109,6 +109,34 @@ def test_adapter_uses_exact_original_root_and_existing_config_budgets(monkeypatc
 def test_missing_service_fails_before_sampler_creation():
     with pytest.raises(RuntimeError, match="original live service"):
         module().GuestResources(SimpleNamespace(proc=None), SETTINGS)
+
+
+@pytest.mark.parametrize("phase", ["before_capture", "during_capture", "refresh"])
+def test_retired_original_popen_cannot_be_rebound_to_a_reused_pid(monkeypatch, phase):
+    helper = module()
+    process = Process()  # A readable replacement at the SAME pid is not authority.
+    service = SimpleNamespace(proc=SimpleNamespace(pid=process.pid, poll=lambda: None))
+    patch_process(monkeypatch, helper, process)
+    monkeypatch.setattr(helper, "ProcessTreeSampler", Sampler)
+    if phase == "before_capture":
+        service.proc.poll = lambda: 0
+    elif phase == "during_capture":
+        def capture(pid):
+            service.proc.poll = lambda: 0
+            return process
+        helper.psutil.Process = capture
+    if phase != "refresh":
+        with pytest.raises(RuntimeError, match=r"original.*service"):
+            helper.GuestResources(service, SETTINGS)
+    else:
+        resources = helper.GuestResources(service, SETTINGS)
+        resources.start()
+        service.proc.poll = lambda: 0
+        with pytest.raises(RuntimeError, match=r"original.*service"):
+            resources.stop()
+        assert not resources.sampler.active
+        with pytest.raises(RuntimeError):
+            resources.receipt()
 
 
 @pytest.mark.parametrize("failure", ["missing", "denied", "changed", "replaced", "pid", "zombie"])
@@ -155,7 +183,7 @@ def test_real_sampler_preserves_existing_service_cpu_origin_and_optional_absence
 
     helper = module()
     process = Process()
-    service = SimpleNamespace(proc=SimpleNamespace(pid=process.pid))
+    service = SimpleNamespace(proc=SimpleNamespace(pid=process.pid, poll=lambda: None))
     patch_process(monkeypatch, helper, process)
     observations = iter((Decimal(10), Decimal("10.25")))
     def snapshot(roots, *, maximum, maximum_processes):

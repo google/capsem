@@ -22,8 +22,11 @@ class GuestResources:
         if service.proc is None:
             raise RuntimeError("guest resource observation requires the original live service")
         self.service, self.process = service, service.proc
+        if self.process.poll() is not None:
+            raise RuntimeError("original guest resource service already retired")
         self.settings = settings
         self.root = OwnedProcess.capture(psutil.Process(self.process.pid))
+        self._roots()
         self._complete = False
         self.sampler = ProcessTreeSampler(
             None, roots=self._roots, max_roots=1, fresh_lifetime=False,
@@ -37,6 +40,7 @@ class GuestResources:
         current = psutil.Process(self.root.pid)
         if (
             self.service.proc is not self.process
+            or self.process.poll() is not None
             or self.process.pid != self.root.pid
             or current.create_time() != self.root.started_at
             or current.status() == psutil.STATUS_ZOMBIE
