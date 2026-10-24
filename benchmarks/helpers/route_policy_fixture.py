@@ -23,7 +23,6 @@ def policy_target(label, cfg):
                          'app.auto_update': {'value': False, 'modified': 'route-fixture'}},
             'images': {'catalog': False},
             'plugins': {cfg['plugin_id']: {'mode': cfg['plugin_baseline'], 'detection_level': 'critical'}},
-            'default': {'mcp': {'action': cfg['default_baseline']}},
         }))
         assert not (service.home_dir / 'corp.toml').exists()
         corpus = corpus_config()
@@ -33,10 +32,14 @@ def policy_target(label, cfg):
         target = service_target(service, label)
         transport = target.transport_factory()
         try:
-            # Canonical route creates its own managed rule. This setup edit is
-            # untimed; the measured edit must change the already-existing rule.
-            _, initialized = call(transport, target, 'PATCH', f'/mcp/servers/{cfg["server_id"]}/tools/{cfg["tool_id"]}/edit', cfg, {'action': cfg['tool_baseline']})
-            assert initialized['action'] == cfg['tool_baseline']
+            # Canonical routes create their complete rules outside the clocks;
+            # measured edits then change those already-existing rules.
+            for path, action in (
+                ('/mcp/default/edit', cfg['default_baseline']),
+                (f'/mcp/servers/{cfg["server_id"]}/tools/{cfg["tool_id"]}/edit', cfg['tool_baseline']),
+            ):
+                _, initialized = call(transport, target, 'PATCH', path, cfg, {'action': action})
+                assert initialized['action'] == action
             validate_baseline(transport, target, service.home_dir, cfg)
         finally:
             transport.close()

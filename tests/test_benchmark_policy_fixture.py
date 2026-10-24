@@ -17,7 +17,11 @@ def test_policy_fixture_isolates_corp_and_never_approves_or_invokes_tools(monkey
     source.mkdir()
     (source / 'manifest.json').write_text('{}')
     calls = []
-    service = SimpleNamespace(home_dir=home, start=lambda: calls.append('start'), stop=lambda: calls.append('stop'))
+    def start():
+        document = tomllib.loads((home / 'settings.toml').read_text())
+        assert 'default' not in document, 'MCP defaults must be initialized by their canonical route'
+        calls.append('start')
+    service = SimpleNamespace(home_dir=home, start=start, stop=lambda: calls.append('stop'))
     def create(**kwargs):
         assert kwargs == {'isolated_corp_config': True}
         return service
@@ -25,11 +29,14 @@ def test_policy_fixture_isolates_corp_and_never_approves_or_invokes_tools(monkey
     monkeypatch.setattr(fixture, 'ServiceInstance', create)
     transport = SimpleNamespace(close=lambda: calls.append('close'))
     monkeypatch.setattr(fixture, 'service_target', lambda owner, label: SimpleNamespace(transport_factory=lambda: transport))
+    expected = [('/mcp/default/edit', {'action': cfg['default_baseline']}),
+                ('/mcp/servers/local/tools/fetch_http/edit', {'action': cfg['tool_baseline']})]
+    initialized = []
     def initialize(_, __, method, path, config, body):
-        assert method == 'PATCH' and path == '/mcp/servers/local/tools/fetch_http/edit'
-        assert body == {'action': cfg['tool_baseline']}
+        assert method == 'PATCH' and (path, body) == expected[len(initialized)]
+        initialized.append((path, body))
         calls.append('initial-permission')
-        return None, {'action': cfg['tool_baseline']}
+        return None, body
     monkeypatch.setattr(fixture, 'call', initialize)
     monkeypatch.setattr(fixture, 'validate_baseline', lambda *args: calls.append('baseline'))
     with fixture.policy_target('gateway', cfg) as (_, owner):
@@ -41,4 +48,5 @@ def test_policy_fixture_isolates_corp_and_never_approves_or_invokes_tools(monkey
         assert not (home / 'corp.toml').exists()
         cache = json.loads((home / 'mcp_tool_cache.json').read_text())
         assert all(tool['approved'] is False and tool['server_name'] == 'local' for tool in cache)
-    assert calls == ['start', 'initial-permission', 'baseline', 'close', 'stop']
+    assert initialized == expected
+    assert calls == ['start', 'initial-permission', 'initial-permission', 'baseline', 'close', 'stop']
