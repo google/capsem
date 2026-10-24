@@ -359,3 +359,6 @@ see [Ask route evidence](references/ask-routes.md).
 
 For live corporate reload and original flow block/restore checks,
 see [reload route evidence](references/reload-routes.md).
+
+For the finite real prepared CLI manifest check and its isolated provenance,
+see [update check evidence](references/update-check-routes.md).

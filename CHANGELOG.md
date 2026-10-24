@@ -45,6 +45,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Keep optional metric exporter initialization and shutdown off the async service
   runtime so enabling telemetry cannot panic before the service becomes ready.
+- Add a finite update-check benchmark source case that requires the real
+  prepared CLI, one original manifest fetch and matching cache/public status.
+  Native execution and package-apply qualification remain separate proof.
 
 - Prepare Antigravity CLI qualification through the existing isolated synthetic
   OAuth session fixture instead of an unsupported API-key guess. Real CLI/MCP

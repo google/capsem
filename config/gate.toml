@@ -2095,6 +2095,8 @@ building = ["frontend-build", "docs", "site"]
 # neither.
 source_contract = [
     "tests/test_benchmark_routes.py",
+    "tests/test_benchmark_update_check.py",
+    "tests/test_update_check_fixture.py",
     "tests/qualification/test_candidate.py",
     "build_system/tests/gate/test_gate_observation.py",
     "build_system/tests/gate/test_gate_observation_startup.py",
@@ -3677,6 +3679,23 @@ target_scope = "both"
 reason = "Narrow explicitly allowed builtin headers/raw fetch calls return fixed mock bytes and independently deliver exactly one original nonce-bound upstream request each."
 cases = {headers = "cycles", "raw-body" = "cycles"}
 
+[benchmark.routes.update_check]
+cycles = 2
+quick_cycles = 1
+timeout_seconds = 60
+max_response_bytes = 1048576
+max_manifest_bytes = 4194304
+max_cli_output_bytes = 65536
+binary_version = "99.99.99"
+runtime_revision = "2030.0101.1"
+manifest_path = "/fixtures/update-check/manifest.json"
+
+[benchmark.routes.update_check.endpoints."POST /update/check"]
+collector = "routes"
+target_scope = "both"
+reason = "Original real prepared UserDir CLI fetches one known graph through isolated provenance, then exact cache hash/tracks agree with independent public status; no Development or plan-only success."
+cases = {"real-cli-manifest-fetch" = "cycles"}
+
 [benchmark.routes.pause_resume]
 cycles = 2
 quick_cycles = 1
@@ -3844,7 +3863,6 @@ cases = {"declared-port-wiring" = "cycles"}
 "GET /connections/{connection_id}" = { owner = "crates/capsem-service/src/connection_routes.rs", reason = "Production Runtime constructs only disabled unconfigured agy-native profile; successful enrollment metadata needs an implemented provider contract, never fabricated authority." }
 "POST /connections/google/authorize" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
 "POST /update/apply" = { owner = "crates/capsem-service/src/tests/update_routes.rs", reason = "Needs hermetic update subprocess and isolated runtime; plan-only response must not certify live update performance." }
-"POST /update/check" = { owner = "crates/capsem-service/src/tests/update_routes.rs", reason = "Needs hermetic update subprocess and isolated runtime; plan-only response must not certify live update performance." }
 "POST /vms/{id}/credential-grants" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
 
 # A timed idle/read case does not certify every state of the same operation.

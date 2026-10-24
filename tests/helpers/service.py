@@ -384,7 +384,10 @@ def preserve_tmp_dir_on_failure(
 class ServiceInstance:
     """A running capsem-service instance on an isolated socket."""
 
-    def __init__(self, *, assets_dir: Path | None = None, sign_binaries: bool = True, isolated_corp_config: bool = False):
+    def __init__(self, *, assets_dir: Path | None = None, sign_binaries: bool = True, isolated_corp_config: bool = False, update_cli: Path | None = None):
+        if update_cli is not None:
+            from .update_release import prepared_cli
+            update_cli = prepared_cli(update_cli)
         # Match the installed layout exactly: CAPSEM_HOME owns a run/
         # directory and sessions/host.db is its sibling.  Using the temporary
         # home itself as CAPSEM_RUN_DIR makes main_db_path_for_run_dir() resolve
@@ -399,8 +402,20 @@ class ServiceInstance:
         self.proc = None
         self._log_file = None
         self._failure_evidence_preserved = False
+        self.update_cli = None
+        if update_cli is not None:
+            from .update_release import _copy_user_dir_capsem
+            try:
+                self.update_cli = _copy_user_dir_capsem(update_cli, self.home_dir)
+            except BaseException:
+                self.stop()
+                raise
 
     def start(self):
+        if self.update_cli is not None and (
+            self.update_cli != self.home_dir/'bin/capsem' or self.update_cli.is_symlink() or not self.update_cli.is_file()
+        ):
+            raise RuntimeError('private prepared CLI binding changed before service start')
         failures.LIVE_HOMES.add(self.home_dir)
         # Sign binaries before spawning (macOS needs virtualization entitlement)
         if self.sign_binaries:
@@ -419,6 +434,11 @@ class ServiceInstance:
             self.home_dir / "credential-store.json"
         )
         env["HOME"] = str(self.home_dir)
+        if self.update_cli is not None:
+            env['CAPSEM_CLI'] = str(self.update_cli)
+            # Installed/UserDir CLI must consume the isolated provenance file.
+            for key in ('CAPSEM_RELEASE_MANIFEST_URL','CAPSEM_RELEASE_HEALTH_URL','CAPSEM_RELEASE_CHANNELS_URL'):
+                env.pop(key,None)
         if self.isolated_corp_config:
             env["CAPSEM_CORP_CONFIG"] = str(self.home_dir / "corp.toml")
 

@@ -162,6 +162,8 @@ def test_routes_reuse_owned_gateway_and_default_product_fixture(monkeypatch, tmp
         "collect_ask_controls": lambda *_: {},
         "collect_reload_controls": lambda *_: {},
         "collect_pause_resume": lambda *_: {},
+        "collect_update_check": lambda *_: {},
+        "require_update_inputs": lambda: None,
         "clone_benchmark_assets": lambda *args: tmp_path,
         "measured_cases": lambda: [module["RouteCase"]("GET", "/vms/{id}/exposures", "default")],
         "preflight": lambda *_: None,

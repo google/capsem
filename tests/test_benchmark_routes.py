@@ -97,6 +97,8 @@ def test_fixture_diagnostics_do_not_corrupt_collector_json(
     monkeypatch.setattr(collector, "collect_ask_controls", lambda *_: {})
     monkeypatch.setattr(collector, "collect_reload_controls", lambda *_: {})
     monkeypatch.setattr(collector, "collect_pause_resume", lambda *_: {})
+    monkeypatch.setattr(collector, "collect_update_check", lambda *_: {})
+    monkeypatch.setattr(collector, "require_update_inputs", lambda: None)
     # This is a collector-output wiring test, never an implicit product/native
     # launcher when a future finite collector is added without its double.
     def unexpected_child(*args,**kwargs):
@@ -152,6 +154,7 @@ def test_missing_prepared_image_inputs_fail_before_product_children(monkeypatch)
     def unavailable(*_):
         raise ValueError('missing exact retained image input')
     monkeypatch.setattr(collector, 'collect_images', unavailable)
+    monkeypatch.setattr(collector, 'require_update_inputs', lambda: None)
     monkeypatch.setattr(collector, 'ServiceInstance', lambda: created.append(True))
     monkeypatch.setattr(sys, 'argv', ['routes', '--samples', '1'])
     with pytest.raises(ValueError, match='retained image'):

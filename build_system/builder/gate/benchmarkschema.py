@@ -31,6 +31,7 @@ from .benchmarkrestartschema import RestartRouteConfig
 from .benchmarkrunpurgeschema import RunPurgeConfig
 from .benchmarksaveschema import SaveRouteConfig
 from .benchmarkstreamschema import StreamConfig, StreamEndpointEvidence
+from .benchmarkupdateschema import UpdateCheckConfig
 from .benchmarkwarmschema import PauseResumeConfig
 from .configschema import Strict
 
@@ -57,6 +58,7 @@ class RouteCoverageConfig(Strict):
     reload_controls: ReloadRouteConfig
     restart_controls: RestartRouteConfig
     pause_resume: PauseResumeConfig
+    update_check: UpdateCheckConfig
     unmeasured: dict[str, RouteDebtConfig]
     internal: dict[str, RouteDebtConfig]
     unmeasured_cases: dict[str, RouteDebtConfig]
