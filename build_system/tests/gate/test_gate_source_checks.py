@@ -406,3 +406,7 @@ def test_relaxed_type_roots_include_the_actual_staged_macos_helpers() -> None:
     # Packaging source tests prepend this SAME directory and the Tart stager
     # copies its modules to the guest import root. Type-check the actual owners.
     assert "build_system/packaging/macos" in CONFIG.lint.ty_search_paths
+
+
+def test_strict_packaged_tools_resolve_their_original_staged_imports() -> None:
+    assert {"build_system/packaging/macos", "tests"} <= set(CONFIG.lint.strict_ty_search_paths)

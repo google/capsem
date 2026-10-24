@@ -911,7 +911,9 @@ key = "version"
 python_roots = ["build_system/builder", "build_system/sdist_command.py", "build_system/packaging", "build_system/scripts", "build_system/tests", "tests", "guest", "images", "skills/use-capsem/scripts"]
 # Already passes every rule, and must keep doing so.
 strict_roots = ["build_system/builder", "build_system/sdist_command.py"]
-strict_ty_search_paths = []
+# Strict release tools import these actual modules after the original Tart
+# staging owner copies them into its private guest root. Never shadow builder.
+strict_ty_search_paths = ["build_system/packaging/macos", "tests"]
 # Match the import roots exercised by the sole pytest project plus the guest
 # trees and script bootstrap paths that are materialized at runtime. Keeping
 # these explicit lets Ty inspect a conventional capsem-builder install without
