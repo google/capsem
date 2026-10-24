@@ -159,6 +159,16 @@ impl capsem_core::net::ai_traffic::TraceHintSink for EmptyTraceHints {
 
 #[tokio::test]
 async fn standalone_http_runtime_pins_provider_without_mcp_capability() {
+    let mut state = ready_standalone_state();
+    let runtime = state.http_runtime().unwrap().expect("standalone runtime is ready");
+
+    assert!(runtime.config.mcp_endpoint.is_none());
+    let target = runtime.target.expect("standalone target");
+    assert_eq!(target.provider_id(), "openai");
+    assert_eq!(target.domain(), "api.openai.com");
+}
+
+fn ready_standalone_state() -> ProxyRuntimeState {
     let active_policy = br#"
 [network]
 [user_rules.profiles.rules.worker_http]
@@ -176,12 +186,21 @@ match = 'http.host == "api.openai.com"'
         capsem_core::net::upstream_grant::UpstreamGrantClient::start(client).unwrap(),
     ));
 
-    let runtime = state.http_runtime().unwrap().expect("standalone runtime is ready");
+    state
+}
 
-    assert!(runtime.config.mcp_endpoint.is_none());
-    let target = runtime.target.expect("standalone target");
-    assert_eq!(target.provider_id(), "openai");
-    assert_eq!(target.domain(), "api.openai.com");
+#[tokio::test]
+async fn refreshed_http_capabilities_preserve_the_original_stop_owner() {
+    let mut state = ready_standalone_state();
+    let original = state.http_runtime().unwrap().unwrap();
+    state.attach_trace_hints(Arc::new(EmptyTraceHints));
+    let refreshed = state.http_runtime().unwrap().unwrap();
+    assert!(!Arc::ptr_eq(&original.config, &refreshed.config));
+    refreshed.config.shutdown.cancel();
+    assert!(
+        original.config.shutdown.is_cancelled(),
+        "a refreshed capability detached live original connections from retirement"
+    );
 }
 
 struct EmptyPrivateNames;

@@ -1318,6 +1318,7 @@ dependencies = [
  "opentelemetry-http",
  "tempfile",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 

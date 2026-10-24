@@ -23,6 +23,7 @@ bytes.workspace = true
 http.workspace = true
 opentelemetry-http = { version = "0.33", default-features = false }
 tokio.workspace = true
+tokio-util.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]

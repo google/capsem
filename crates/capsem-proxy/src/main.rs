@@ -137,239 +137,267 @@ async fn run_control(
         let mut grants = BTreeMap::<ProxyCapability, Vec<u64>>::new();
         let mut grant_ids = HashSet::new();
         let mut tasks = JoinSet::<CapabilityResult>::new();
+        let mut http_tasks = JoinSet::<CapabilityResult>::new();
 
-        loop {
-            let input = if tasks.is_empty() {
-                ControlInput::Frame(frames.recv().await.context("proxy control channel closed")?)
-            } else {
-                tokio::select! {
-                    frame = frames.recv() => {
-                        ControlInput::Frame(frame.context("proxy control channel closed")?)
+        let control_outcome: Result<()> = async {
+            loop {
+                let input = tokio::select! {
+                        frame = frames.recv() => {
+                            ControlInput::Frame(frame.context("proxy control channel closed")?)
+                        }
+                        result = tasks.join_next(), if !tasks.is_empty() => {
+                            ControlInput::Capability(result.expect("nonempty proxy capability task set"))
+                        }
+                        result = http_tasks.join_next(), if !http_tasks.is_empty() => {
+                            ControlInput::Capability(result.expect("nonempty HTTP traffic task set"))
+                        }
+                };
+                match input {
+                    ControlInput::Capability(result) => {
+                        let (capability, grant_id, reason) = result.context("proxy capability task failed")?;
+                        remove_grant(&mut grants, &mut grant_ids, capability, grant_id);
+                        send_event(
+                            &sender,
+                            ProxyControlEvent::Closed {
+                                generation,
+                                grant_id,
+                                reason,
+                            },
+                        )
+                        .await?;
                     }
-                    result = tasks.join_next() => {
-                        ControlInput::Capability(result.expect("nonempty proxy capability task set"))
-                    }
-                }
-            };
-            match input {
-                ControlInput::Capability(result) => {
-                    let (capability, grant_id, reason) = result.context("proxy capability task failed")?;
-                    remove_grant(&mut grants, &mut grant_ids, capability, grant_id);
-                    send_event(
-                        &sender,
-                        ProxyControlEvent::Closed {
-                            generation,
-                            grant_id,
-                            reason,
-                        },
-                    )
-                    .await?;
-                }
-                ControlInput::Frame(frame) => {
-                    let request = decode_proxy_control_request(&frame.bytes)?;
-                    if request.generation() != generation {
-                        bail!("proxy control request names a stale generation");
-                    }
-                    match request {
-                        ProxyControlRequest::Attach(grant) => {
-                            if frame.fds.len() != grant.expected_descriptor_count() {
-                                bail!("proxy capability attach descriptor count does not match its grant");
-                            }
-                            let capability = grant.capability();
-                            let grant_id = grant.grant_id();
-                            let rejection = grant_rejection(&grants, &grant_ids, capability, grant_id);
-                            let rejection = if rejection.is_some() {
-                                rejection
-                            } else if is_traffic(capability)
-                                && !state
-                                    .lock()
-                                    .unwrap_or_else(|error| error.into_inner())
-                                    .traffic_ready(capability)?
-                            {
-                                Some(ProxyControlRejection::NotReady)
-                            } else {
-                                None
-                            };
-                            if let Some(reason) = rejection {
-                                send_event(
-                                    &sender,
-                                    ProxyControlEvent::Rejected {
-                                        generation,
-                                        grant_id,
-                                        reason,
-                                    },
-                                )
-                                .await?;
-                                continue;
-                            }
-                            let mut descriptors = frame.fds.into_iter();
-                            let descriptor = descriptors.next().expect("at least one checked descriptor");
-                            grants.entry(capability).or_default().push(grant_id);
-                            grant_ids.insert(grant_id);
-                            if capability == ProxyCapability::Policy {
-                                let stream = UnixStream::from(descriptor);
-                                let state = Arc::clone(&state);
-                                tasks.spawn(async move {
-                                    let reason = serve_policy(stream, state).await;
-                                    (capability, grant_id, reason)
-                                });
-                            } else if capability == ProxyCapability::Ledger {
-                                let stream = UnixStream::from(descriptor);
-                                let ledger_grant = grant
-                                    .ledger_grant()
-                                    .expect("ledger capability was decoded with exact authority");
-                                let writer = tokio::task::spawn_blocking(move || {
-                                    capsem_logger::DbWriter::from_ledger_channel(
-                                        stream,
-                                        ledger_grant,
-                                        Path::new("capability:session-ledger"),
-                                        capsem_proto::LEDGER_PRODUCER_QUEUE_CAPACITY,
+                    ControlInput::Frame(frame) => {
+                        let request = decode_proxy_control_request(&frame.bytes)?;
+                        if request.generation() != generation {
+                            bail!("proxy control request names a stale generation");
+                        }
+                        match request {
+                            ProxyControlRequest::Attach(grant) => {
+                                if frame.fds.len() != grant.expected_descriptor_count() {
+                                    bail!("proxy capability attach descriptor count does not match its grant");
+                                }
+                                let capability = grant.capability();
+                                let grant_id = grant.grant_id();
+                                let rejection = grant_rejection(&grants, &grant_ids, capability, grant_id);
+                                let rejection = if rejection.is_some() {
+                                    rejection
+                                } else if is_traffic(capability)
+                                    && !state
+                                        .lock()
+                                        .unwrap_or_else(|error| error.into_inner())
+                                        .traffic_ready(capability)?
+                                {
+                                    Some(ProxyControlRejection::NotReady)
+                                } else {
+                                    None
+                                };
+                                if let Some(reason) = rejection {
+                                    send_event(
+                                        &sender,
+                                        ProxyControlEvent::Rejected {
+                                            generation,
+                                            grant_id,
+                                            reason,
+                                        },
                                     )
-                                })
-                                .await
-                                .map_err(|error| anyhow::anyhow!("join proxy ledger handshake: {error}"))?
-                                .context("authenticate proxy ledger capability")?;
-                                state
-                                    .lock()
-                                    .unwrap_or_else(|error| error.into_inner())
-                                    .attach_ledger(Arc::new(writer));
-                            } else if capability == ProxyCapability::Credential {
-                                let stream = UnixStream::from(descriptor);
-                                let (credentials, mut closed) = credential_client::CredentialClient::start(stream)
-                                    .context("open proxy credential capability")?;
-                                state
-                                    .lock()
-                                    .unwrap_or_else(|error| error.into_inner())
-                                    .attach_credentials(Arc::new(credentials));
-                                tasks.spawn(async move {
-                                    while closed.borrow().is_none() && closed.changed().await.is_ok() {}
-                                    let reason = closed.borrow().unwrap_or(ProxyChannelCloseReason::Disconnected);
-                                    (capability, grant_id, reason)
-                                });
-                            } else if capability == ProxyCapability::Upstream {
-                                let stream = UnixStream::from(descriptor);
-                                let grants = Arc::new(
-                                    capsem_core::net::upstream_grant::UpstreamGrantClient::start(stream)
-                                        .context("open proxy upstream capability")?,
-                                );
-                                let mut stopped = grants.stop_receiver();
-                                let mut runtime = state.lock().unwrap_or_else(|error| error.into_inner());
-                                runtime.attach_upstream(grants);
-                                tracing::debug!(
-                                    upstream_capability = runtime.upstream_grants.is_some(),
-                                    "proxy upstream authority attached"
-                                );
-                                drop(runtime);
-                                tasks.spawn(async move {
-                                    while stopped.borrow().is_none() && stopped.changed().await.is_ok() {}
-                                    (capability, grant_id, ProxyChannelCloseReason::Disconnected)
-                                });
-                            } else if capability == ProxyCapability::PrivateNames {
-                                let stream = UnixStream::from(descriptor);
-                                let (private_names, mut closed) =
-                                    private_names_client::PrivateNameClient::start(stream)
-                                        .context("open proxy private-name capability")?;
-                                let mut runtime = state.lock().unwrap_or_else(|error| error.into_inner());
-                                runtime.attach_private_names(Arc::new(private_names));
-                                tracing::debug!(
-                                    private_names_capability = runtime.private_names.is_some(),
-                                    "proxy private-name authority attached"
-                                );
-                                drop(runtime);
-                                tasks.spawn(async move {
-                                    while closed.borrow().is_none() && closed.changed().await.is_ok() {}
-                                    let reason = closed.borrow().unwrap_or(ProxyChannelCloseReason::Disconnected);
-                                    (capability, grant_id, reason)
-                                });
-                            } else if capability == ProxyCapability::Mcp {
-                                let stream = UnixStream::from(descriptor);
-                                let (client, hello, mut closed) =
-                                    mcp_client::start(stream).await.context("open proxy MCP capability")?;
-                                state
-                                    .lock()
-                                    .unwrap_or_else(|error| error.into_inner())
-                                    .attach_mcp(client, hello);
-                                tasks.spawn(async move {
-                                    while !*closed.borrow() && closed.changed().await.is_ok() {}
-                                    (capability, grant_id, ProxyChannelCloseReason::Disconnected)
-                                });
-                            } else if capability == ProxyCapability::Telemetry {
-                                let stream = UnixStream::from(descriptor);
-                                let (client, session_id) = metric_client::start(stream)
+                                    .await?;
+                                    continue;
+                                }
+                                let mut descriptors = frame.fds.into_iter();
+                                let descriptor = descriptors.next().expect("at least one checked descriptor");
+                                grants.entry(capability).or_default().push(grant_id);
+                                grant_ids.insert(grant_id);
+                                if capability == ProxyCapability::Policy {
+                                    let stream = UnixStream::from(descriptor);
+                                    let state = Arc::clone(&state);
+                                    tasks.spawn(async move {
+                                        let reason = serve_policy(stream, state).await;
+                                        (capability, grant_id, reason)
+                                    });
+                                } else if capability == ProxyCapability::Ledger {
+                                    let stream = UnixStream::from(descriptor);
+                                    let ledger_grant = grant
+                                        .ledger_grant()
+                                        .expect("ledger capability was decoded with exact authority");
+                                    let writer = tokio::task::spawn_blocking(move || {
+                                        capsem_logger::DbWriter::from_ledger_channel(
+                                            stream,
+                                            ledger_grant,
+                                            Path::new("capability:session-ledger"),
+                                            capsem_proto::LEDGER_PRODUCER_QUEUE_CAPACITY,
+                                        )
+                                    })
                                     .await
-                                    .context("open proxy metric capability")?;
-                                let exporter = capsem_telemetry::export::install_with_http_client(
-                                    client,
-                                    "capsem-proxy",
-                                    vec![capsem_telemetry::export::KeyValue::new("session.id", session_id)],
-                                )
-                                .context("install proxy metric exporter")?;
-                                state
-                                    .lock()
-                                    .unwrap_or_else(|error| error.into_inner())
-                                    .attach_metric_exporter(exporter);
-                            } else if capability == ProxyCapability::TraceHints {
-                                let client = trace_hint_client::TraceHintClient::start(UnixStream::from(descriptor))
-                                    .context("open proxy trace-hint capability")?;
-                                state
-                                    .lock()
-                                    .unwrap_or_else(|error| error.into_inner())
-                                    .attach_trace_hints(client);
-                            } else if capability == ProxyCapability::HttpTraffic {
-                                let runtime = state
-                                    .lock()
-                                    .unwrap_or_else(|error| error.into_inner())
-                                    .http_runtime()?
-                                    .context("proxy HTTP runtime became unavailable after readiness check")?;
-                                tasks.spawn(async move {
-                                    if let Some(target) = runtime.target {
-                                        capsem_core::net::mitm_proxy::handle_standalone_connection(
+                                    .map_err(|error| anyhow::anyhow!("join proxy ledger handshake: {error}"))?
+                                    .context("authenticate proxy ledger capability")?;
+                                    state
+                                        .lock()
+                                        .unwrap_or_else(|error| error.into_inner())
+                                        .attach_ledger(Arc::new(writer));
+                                } else if capability == ProxyCapability::Credential {
+                                    let stream = UnixStream::from(descriptor);
+                                    let (credentials, mut closed) = credential_client::CredentialClient::start(stream)
+                                        .context("open proxy credential capability")?;
+                                    state
+                                        .lock()
+                                        .unwrap_or_else(|error| error.into_inner())
+                                        .attach_credentials(Arc::new(credentials));
+                                    tasks.spawn(async move {
+                                        while closed.borrow().is_none() && closed.changed().await.is_ok() {}
+                                        let reason = closed.borrow().unwrap_or(ProxyChannelCloseReason::Disconnected);
+                                        (capability, grant_id, reason)
+                                    });
+                                } else if capability == ProxyCapability::Upstream {
+                                    let stream = UnixStream::from(descriptor);
+                                    let grants = Arc::new(
+                                        capsem_core::net::upstream_grant::UpstreamGrantClient::start(stream)
+                                            .context("open proxy upstream capability")?,
+                                    );
+                                    let mut stopped = grants.stop_receiver();
+                                    let mut runtime = state.lock().unwrap_or_else(|error| error.into_inner());
+                                    runtime.attach_upstream(grants);
+                                    tracing::debug!(
+                                        upstream_capability = runtime.upstream_grants.is_some(),
+                                        "proxy upstream authority attached"
+                                    );
+                                    drop(runtime);
+                                    tasks.spawn(async move {
+                                        while stopped.borrow().is_none() && stopped.changed().await.is_ok() {}
+                                        (capability, grant_id, ProxyChannelCloseReason::Disconnected)
+                                    });
+                                } else if capability == ProxyCapability::PrivateNames {
+                                    let stream = UnixStream::from(descriptor);
+                                    let (private_names, mut closed) =
+                                        private_names_client::PrivateNameClient::start(stream)
+                                            .context("open proxy private-name capability")?;
+                                    let mut runtime = state.lock().unwrap_or_else(|error| error.into_inner());
+                                    runtime.attach_private_names(Arc::new(private_names));
+                                    tracing::debug!(
+                                        private_names_capability = runtime.private_names.is_some(),
+                                        "proxy private-name authority attached"
+                                    );
+                                    drop(runtime);
+                                    tasks.spawn(async move {
+                                        while closed.borrow().is_none() && closed.changed().await.is_ok() {}
+                                        let reason = closed.borrow().unwrap_or(ProxyChannelCloseReason::Disconnected);
+                                        (capability, grant_id, reason)
+                                    });
+                                } else if capability == ProxyCapability::Mcp {
+                                    let stream = UnixStream::from(descriptor);
+                                    let (client, hello, mut closed) =
+                                        mcp_client::start(stream).await.context("open proxy MCP capability")?;
+                                    state
+                                        .lock()
+                                        .unwrap_or_else(|error| error.into_inner())
+                                        .attach_mcp(client, hello);
+                                    tasks.spawn(async move {
+                                        while !*closed.borrow() && closed.changed().await.is_ok() {}
+                                        (capability, grant_id, ProxyChannelCloseReason::Disconnected)
+                                    });
+                                } else if capability == ProxyCapability::Telemetry {
+                                    let stream = UnixStream::from(descriptor);
+                                    let (client, session_id) = metric_client::start(stream)
+                                        .await
+                                        .context("open proxy metric capability")?;
+                                    let exporter = capsem_telemetry::export::install_with_http_client(
+                                        client,
+                                        "capsem-proxy",
+                                        vec![capsem_telemetry::export::KeyValue::new("session.id", session_id)],
+                                    )
+                                    .context("install proxy metric exporter")?;
+                                    state
+                                        .lock()
+                                        .unwrap_or_else(|error| error.into_inner())
+                                        .attach_metric_exporter(exporter);
+                                } else if capability == ProxyCapability::TraceHints {
+                                    let client =
+                                        trace_hint_client::TraceHintClient::start(UnixStream::from(descriptor))
+                                            .context("open proxy trace-hint capability")?;
+                                    state
+                                        .lock()
+                                        .unwrap_or_else(|error| error.into_inner())
+                                        .attach_trace_hints(client);
+                                } else if capability == ProxyCapability::HttpTraffic {
+                                    let runtime = state
+                                        .lock()
+                                        .unwrap_or_else(|error| error.into_inner())
+                                        .http_runtime()?
+                                        .context("proxy HTTP runtime became unavailable after readiness check")?;
+                                    http_tasks.spawn(async move {
+                                        if let Some(target) = runtime.target {
+                                            capsem_core::net::mitm_proxy::handle_standalone_connection(
+                                                descriptor,
+                                                runtime.config,
+                                                target,
+                                            )
+                                            .await;
+                                        } else {
+                                            capsem_core::net::mitm_proxy::handle_connection(descriptor, runtime.config)
+                                                .await;
+                                        }
+                                        (capability, grant_id, ProxyChannelCloseReason::Disconnected)
+                                    });
+                                } else if capability == ProxyCapability::DnsTraffic {
+                                    let runtime = state
+                                        .lock()
+                                        .unwrap_or_else(|error| error.into_inner())
+                                        .dns_runtime()
+                                        .context("proxy DNS runtime became unavailable after readiness check")?;
+                                    tasks.spawn(async move {
+                                        capsem_core::net::dns::session::serve_dns_session(
                                             descriptor,
-                                            runtime.config,
-                                            target,
+                                            Arc::clone(&runtime.handler),
+                                            Arc::clone(&runtime.db),
+                                            runtime.policy.clone(),
                                         )
                                         .await;
-                                    } else {
-                                        capsem_core::net::mitm_proxy::handle_connection(descriptor, runtime.config)
-                                            .await;
-                                    }
-                                    (capability, grant_id, ProxyChannelCloseReason::Disconnected)
-                                });
-                            } else if capability == ProxyCapability::DnsTraffic {
-                                let runtime = state
-                                    .lock()
-                                    .unwrap_or_else(|error| error.into_inner())
-                                    .dns_runtime()
-                                    .context("proxy DNS runtime became unavailable after readiness check")?;
-                                tasks.spawn(async move {
-                                    capsem_core::net::dns::session::serve_dns_session(
-                                        descriptor,
-                                        Arc::clone(&runtime.handler),
-                                        Arc::clone(&runtime.db),
-                                        runtime.policy.clone(),
-                                    )
-                                    .await;
-                                    (capability, grant_id, ProxyChannelCloseReason::Disconnected)
-                                });
-                            } else {
-                                bail!("proxy capability {capability:?} has no consumer");
+                                        (capability, grant_id, ProxyChannelCloseReason::Disconnected)
+                                    });
+                                } else {
+                                    bail!("proxy capability {capability:?} has no consumer");
+                                }
+                                send_event(&sender, ProxyControlEvent::Adopted { generation, grant_id }).await?;
                             }
-                            send_event(&sender, ProxyControlEvent::Adopted { generation, grant_id }).await?;
-                        }
-                        ProxyControlRequest::Shutdown { .. } => {
-                            if !frame.fds.is_empty() {
-                                bail!("proxy shutdown must not carry descriptors");
+                            ProxyControlRequest::Shutdown { .. } => {
+                                if !frame.fds.is_empty() {
+                                    bail!("proxy shutdown must not carry descriptors");
+                                }
+                                break;
                             }
-                            break;
                         }
                     }
                 }
             }
+            Ok(())
         }
+        .await;
 
+        let db = {
+            let runtime = state.lock().unwrap_or_else(|error| error.into_inner());
+            runtime.http_shutdown.cancel();
+            runtime.db.clone()
+        };
+        let mut drain_error = None;
+        while let Some(result) = http_tasks.join_next().await {
+            if let Err(error) = result {
+                drain_error = Some(error);
+            }
+        }
         tasks.abort_all();
         while tasks.join_next().await.is_some() {}
         drop(grants);
+        // Stopped acknowledges accepted original-request audits, not merely
+        // aborted sockets. The service retains its existing finite stop bound.
+        if let Some(db) = db {
+            db.flush_checked()
+                .await
+                .map_err(anyhow::Error::msg)
+                .context("flush retired proxy ledger")?;
+        }
+        control_outcome?;
+        if let Some(error) = drain_error {
+            return Err(error).context("drain retired HTTP connections");
+        }
         send_event(&sender, ProxyControlEvent::Stopped { generation }).await
     }
     .await;
@@ -439,6 +467,7 @@ struct ProxyRuntimeState {
         capsem_proto::proxy_mcp::ProxyMcpHello,
     )>,
     http_config: Option<Arc<capsem_core::net::mitm_proxy::MitmProxyConfig>>,
+    http_shutdown: tokio_util::sync::CancellationToken,
     dns_runtime: Option<Arc<DnsRuntime>>,
     metric_exporter: Option<capsem_telemetry::export::Exporter>,
     trace_hints: Option<Arc<dyn capsem_core::net::ai_traffic::TraceHintSink>>,
@@ -471,6 +500,7 @@ impl ProxyRuntimeState {
             mcp: capsem_core::mcp::policy::McpConfig::default(),
             mcp_client: None,
             http_config: None,
+            http_shutdown: Default::default(),
             dns_runtime: None,
             metric_exporter: None,
             trace_hints: None,
@@ -640,6 +670,7 @@ impl ProxyRuntimeState {
             upstream_resolver: capsem_core::net::upstream_address::UpstreamResolver::disabled(),
             upstream_grants: Some(upstream_grants),
             semantic_body_budget: capsem_core::net::mitm_proxy::MitmProxyConfig::new_semantic_body_budget(),
+            shutdown: self.http_shutdown.clone(),
         });
         self.http_config = Some(Arc::clone(&config));
         Ok(Some(config))
