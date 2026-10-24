@@ -22,6 +22,7 @@ def test_actual_public_metadata_has_distinct_legacy_content_domain():
         crypto.digest_file(PUBLIC)
         == "2b04fb53657ee3146c66054c7bd4177248eec6ba21bb0e51f33482ebb4b966c8"
     )
+    assert crypto.digest_file(PUBLIC.with_name("public-stable-066-assets-status.json")) == "d23f8531a2231bc008b701847753e4ce66aec9957df009332bc32f303fef3b26"
     document = json.loads(PUBLIC.read_text())
     identity = release_macos_pairing.legacy_profile_identity(document, architecture="arm64")
     assert identity["domain"] == "legacy_profiles"
@@ -95,7 +96,7 @@ def test_public_pair_does_not_relax_package_or_version_authority(inputs, damage)
 
 
 def test_existing_tart_mode_stages_originals_without_requiring_fake_embedded_url(
-    inputs, tmp_path, monkeypatch
+    inputs, tmp_path, monkeypatch, capsys
 ):
     root = Path(__file__).resolve().parents[3]
     monkeypatch.syspath_prepend(str(root / "build_system/packaging/macos"))
@@ -118,10 +119,17 @@ def test_existing_tart_mode_stages_originals_without_requiring_fake_embedded_url
     package.parent.mkdir(parents=True)
     package.write_bytes(after[0].read_bytes())
     pair = macos_binary_apply.prepare(args, root=root, share=share, guest_package=package)
+    assert pair is not None
+    assert pair["inputs"]["before"]["manifest_blake3"] == crypto.digest_file(before[1])
     assert pair["scope"] == "public_predecessor_upgrade"
     assert (share / "before/manifest.json").read_bytes() == before[1].read_bytes()
     assert (share / "candidate/assets/nightly/manifest.json").read_bytes() == before[1].read_bytes()
     assert pair["before"]["metadata_manifest_url"] != args.manifest_url
+    from capsem_builder.release.tools import release_macos_apply
+
+    monkeypatch.setattr("sys.argv", ["paired", "field", "--root", str(share), "--phase", "before", "--field", "manifest_blake3"])
+    assert release_macos_apply.main() == 0
+    assert capsys.readouterr().out.strip() == crypto.digest_file(before[1])
     args.before_sbom = None
     with pytest.raises(ValueError):
         macos_binary_apply.validate_options(args)
@@ -169,6 +177,9 @@ capsem_pair_field() {{
         *'--field version') echo 0.7.1 ;;
         *'--field package') echo /source-fixture.pkg ;;
         *'--field metadata_manifest_url') echo http://source-fixture.invalid/manifest.json ;;
+        *'--field manifest_blake3') echo {'a' * 64} ;;
+        *'--field manifest_sha256') echo {'b' * 64} ;;
+        *'--field maximum') echo 1048576 ;;
         *) return 1 ;;
     esac
 }}
@@ -187,6 +198,10 @@ capsem_pair_verify {shlex.quote(phase)}
     assert "" not in argv
     assert ("--legacy-profile-predecessor" in argv) is legacy
     assert argv[0] == "synthetic-verifier.py" and "--artifact" in argv
+    assert ("--predecessor-assets-status" in argv) is legacy
+    if legacy:
+        assert argv[argv.index("--predecessor-assets-status") + 1] == str(tmp_path / "assets-after-install.json")
+        assert argv[argv.index("--predecessor-manifest-blake3") + 1] == "a" * 64
 
 
 def shared_platform_sbom(before):

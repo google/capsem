@@ -1,0 +1,45 @@
+{
+  "ready": true,
+  "downloading": false,
+  "manifest": {
+    "origin": "package",
+    "path": "/Users/admin/.capsem/assets/manifest.json",
+    "origin_path": "/Users/admin/.capsem/assets/manifest-metadata.json",
+    "origin_source": "https://release.capsem.org/assets/stable/manifest.json",
+    "packaged_at": "2026-10-06T16:28:42Z",
+    "refreshed_at": "2026-10-24T11:41:39Z",
+    "validation_status": "valid",
+    "validation_error": null,
+    "blake3": "2b04fb53657ee3146c66054c7bd4177248eec6ba21bb0e51f33482ebb4b966c8",
+    "format": 2,
+    "refresh_policy": "24h",
+    "assets_current": "2026.1007.1",
+    "binaries_current": "0.6.6"
+  },
+  "current_asset": null,
+  "bytes_done": null,
+  "bytes_total": null,
+  "asset_version": null,
+  "assets": [
+    {
+      "name": "vmlinuz-42a29605c0302476",
+      "status": "present",
+      "path": "/Users/admin/.capsem/assets/arm64/vmlinuz-42a29605c0302476"
+    },
+    {
+      "name": "initrd-c9c9d2bdb777fcf8.img",
+      "status": "present",
+      "path": "/Users/admin/.capsem/assets/arm64/initrd-c9c9d2bdb777fcf8.img"
+    },
+    {
+      "name": "rootfs-e698cea64cd8f4a3.erofs",
+      "status": "present",
+      "path": "/Users/admin/.capsem/assets/arm64/rootfs-e698cea64cd8f4a3.erofs"
+    }
+  ],
+  "error": null,
+  "ensured": null,
+  "started": null,
+  "downloaded": 0,
+  "reconcile_error": null
+}

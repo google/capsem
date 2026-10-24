@@ -80,7 +80,7 @@ def _installed_status_fixture(tmp_path, monkeypatch, *, legacy, status_line, dam
     (assets / "manifest.json").write_bytes(selected)
     url = "https://source-fixture.invalid/assets/stable/manifest.json"
     metadata = {
-        "schema": verify.METADATA_SCHEMA, "manifest_url": url, "channel": "stable",
+        "schema": verify.METADATA_SCHEMA, "origin": "package", "manifest_url": url, "channel": "stable",
         "package_version": version, "validation_status": "valid", "validation_error": None,
         "checked_url": url, "channel_locked": True, "update_available": False,
         "installed_at": 1, "refreshed_at": 2, "checked_at": 3,
@@ -91,7 +91,9 @@ def _installed_status_fixture(tmp_path, monkeypatch, *, legacy, status_line, dam
         metadata["manifest_url"] = "https://foreign.invalid/manifest.json"
     (assets / "manifest-metadata.json").write_text(json.dumps(metadata))
     status = (f"Installed: true\nRunning:   true\nService:   ok\nGateway:   ok\n"
-              f"{status_line}\nManifest source: {url}\nVersion:   {version}\n")
+              f"Version:   {version}\n")
+    if not legacy:
+        status += f"{status_line}\nManifest source: {url}\n"
     if damage == "service":
         status = status.replace("Service:   ok", "Service:   failed")
     elif damage == "gateway":
@@ -105,6 +107,8 @@ def _installed_status_fixture(tmp_path, monkeypatch, *, legacy, status_line, dam
 from pathlib import Path
 import os
 import sys
+with Path(__file__).with_name('invocations').open('a') as output:
+    print(sys.argv[1], file=output)
 if sys.argv[1] == 'status':
     print(Path(__file__).with_name('status').read_text(), end='')
 else:
@@ -120,7 +124,15 @@ else:
             "--artifact", str(package), "--platform", "macos", "--architecture", "arm64",
             "--evidence-out", str(evidence)]
     if legacy:
-        argv.append("--legacy-profile-predecessor")
+        receipt = json.loads((PUBLIC.parent / "public-stable-066-assets-status.json").read_text())
+        receipt["manifest"].update(path=str(assets / "manifest.json"), origin_path=str(assets / "manifest-metadata.json"), origin_source=url, blake3=crypto.blake3(selected).hexdigest())
+        if damage == "status_source":
+            receipt["manifest"]["origin_source"] = "https://foreign.invalid/manifest.json"
+        for row in receipt["assets"]:
+            row["path"] = str(assets / "arm64" / row["name"])
+        snapshot = tmp_path / "assets-after-install.json"
+        snapshot.write_text(json.dumps(receipt))
+        argv += ["--legacy-profile-predecessor", "--predecessor-assets-status", str(snapshot), "--predecessor-manifest-blake3", crypto.blake3(selected).hexdigest(), "--predecessor-manifest-sha256", crypto.sha256(selected).hexdigest(), "--predecessor-assets-maximum", "1048576"]
     if damage == "artifact":
         package.write_bytes(b"corrupt")
     elif damage == "manifest_bytes":
@@ -134,14 +146,17 @@ else:
     return verify, evidence, crypto.digest_file(PUBLIC)
 
 
-def test_explicit_original_status_literal_passes_all_remaining_verifier_joins(tmp_path, monkeypatch):
+def test_original_status_without_manifest_lines_keeps_all_remaining_verifier_joins(tmp_path, monkeypatch):
     import json
 
     verify, evidence, original_fixture_digest = _installed_status_fixture(
-        tmp_path, monkeypatch, legacy=True, status_line="Manifest status: valid",
+        tmp_path, monkeypatch, legacy=True, status_line="",
     )
     assert verify.main() == 0
     assert json.loads(evidence.read_text())["service"] == "ok"
+    status = (tmp_path / "status").read_text()
+    assert "Manifest source:" not in status and "Manifest status:" not in status
+    assert json.loads(evidence.with_suffix(".diagnostic.json").read_text())["verified"] is True
     assert original_fixture_digest == "2b04fb53657ee3146c66054c7bd4177248eec6ba21bb0e51f33482ebb4b966c8"
 
 
@@ -154,14 +169,10 @@ def test_default_modern_status_literal_stays_strict(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("legacy,line", [
-    (True, "Manifest status: invalid"), (True, "Manifest status: Valid"),
-    (True, "Manifest status: valid-foreign"), (True, "Manifest status: unknown"),
     (False, "Manifest status: valid"), (False, "Manifest status: Invalid"),
     (False, "Manifest status: Valid-foreign"), (False, "Manifest status: unknown"),
-    (True, ""), (False, ""),
-    (True, "Manifest status: valid\nManifest status: invalid"),
+    (False, ""),
     (False, "Manifest status: Valid\nManifest status: Invalid"),
-    (True, "Manifest status: valid\nManifest status: valid"),
 ])
 def test_status_literal_never_accepts_wrong_case_prefix_or_ambiguous_lines(
     tmp_path, monkeypatch, legacy, line,
@@ -177,7 +188,7 @@ def test_status_literal_never_accepts_wrong_case_prefix_or_ambiguous_lines(
 @pytest.mark.parametrize("damage", ["metadata_source", "metadata_validation", "service", "gateway", "status_source", "version", "artifact", "manifest_bytes", "missing_artifact", "platform", "architecture", "profile_domain"])
 def test_explicit_original_mode_keeps_provenance_health_version_guards(tmp_path, monkeypatch, damage):
     verify, evidence, _ = _installed_status_fixture(
-        tmp_path, monkeypatch, legacy=True, status_line="Manifest status: valid", damage=damage,
+        tmp_path, monkeypatch, legacy=True, status_line="", damage=damage,
     )
     expected = ValueError if damage == "profile_domain" else (SystemExit, RuntimeError)
     with pytest.raises(expected):
@@ -185,13 +196,96 @@ def test_explicit_original_mode_keeps_provenance_health_version_guards(tmp_path,
     assert not evidence.exists()
 
 
-def test_manifest_status_failure_exposes_only_fixed_mode_and_count(tmp_path, monkeypatch):
-    verify, evidence, _ = _installed_status_fixture(
-        tmp_path, monkeypatch, legacy=True, status_line="Manifest status: synthetic-secret-canary",
-    )
+
+@pytest.mark.parametrize("damage", ["missing", "corrupt", "oversize", "manifest", "hash", "path", "origin_path", "source", "origin", "invalid", "validation_error", "notready", "downloading", "error", "reconcile_error", "missingasset", "duplicateasset", "foreignasset", "assetpath", "assetstatus", "sha", "expectedhash"])
+def test_original_assets_json_fails_closed_without_reexecution(tmp_path, monkeypatch, damage, capsys):
+    import json
+    import sys
+
+    verify, evidence, _ = _installed_status_fixture(tmp_path, monkeypatch, legacy=True, status_line="")
+    path = tmp_path / "assets-after-install.json"
+    value = json.loads(path.read_text())
+    canary = "unexpected-secret-canary"
+    if damage == "missing":
+        path.unlink()
+    elif damage == "corrupt":
+        path.write_text("{unclosed" + canary)
+    elif damage == "oversize":
+        path.write_bytes(b" " * 1048577)
+    elif damage == "manifest":
+        del value["manifest"]
+    elif damage in {"hash", "path", "origin_path", "source", "origin", "invalid", "validation_error"}:
+        field = {"hash": "blake3", "source": "origin_source", "invalid": "validation_status"}.get(damage, damage)
+        value["manifest"][field] = canary
+    elif damage in {"notready", "downloading", "error", "reconcile_error"}:
+        value[{"notready": "ready"}.get(damage, damage)] = damage != "notready"
+    elif damage == "missingasset":
+        value["assets"].pop()
+    elif damage == "duplicateasset":
+        value["assets"].append(value["assets"][0])
+    elif damage == "foreignasset":
+        value["assets"][0]["name"] = canary
+    elif damage == "assetpath":
+        value["assets"][0]["path"] += "/../foreign"
+    elif damage == "assetstatus":
+        value["assets"][0]["status"] = "missing"
+    else:
+        option = "--predecessor-manifest-sha256" if damage == "sha" else "--predecessor-manifest-blake3"
+        sys.argv[sys.argv.index(option) + 1] = "0" * 64
+    if damage not in {"missing", "corrupt", "oversize"}:
+        path.write_text(json.dumps(value))
     with pytest.raises(SystemExit) as refused:
         verify.main()
-    message = str(refused.value)
-    assert "legacy_predecessor=True, line_count=1" in message
-    assert "synthetic-secret-canary" not in message
+    assert canary not in str(refused.value)
+    assert not evidence.exists()
+    assert (tmp_path / "invocations").read_text().splitlines() == ["status"]
+    diagnostic = json.loads(evidence.with_suffix(".diagnostic.json").read_text())
+    assert diagnostic["command"] == ["assets", "status", "--json"]
+    assert diagnostic["producer"] == "same_fixture_install_hydration"
+    assert canary not in json.dumps(diagnostic) + capsys.readouterr().err
+
+
+def test_complete_staged_original_assets_reader_is_stdlib_only_on_guest_python(tmp_path, monkeypatch):
+    import json
+    import subprocess
+    import sys
+
+    from build_system.packaging.macos.macos_candidate_content import stage_guest_scripts
+
+    _verify, evidence, _ = _installed_status_fixture(tmp_path, monkeypatch, legacy=True, status_line="")
+    root = Path(__file__).resolve().parents[3]
+    share = tmp_path / "share"
+    stage_guest_scripts(root, share)
+    argv = tmp_path / "argv.json"
+    argv.write_text(json.dumps([*sys.argv, "--capsem-home", str(tmp_path / "home")]))
+    code = """
+import importlib.util
+import json
+from pathlib import Path
+import sys
+assert importlib.util.find_spec('blake3') is None
+from capsem_builder.release.tools import verify_installed_release as verify
+sys.argv = json.loads(Path(sys.argv[1]).read_text())
+verify.fetch_bytes = lambda _url: (Path(sys.argv[sys.argv.index('--capsem-home') + 1]) / 'assets/manifest.json').read_bytes()
+raise SystemExit(verify.main())
+"""
+    result = subprocess.run(["/usr/bin/python3", "-S", "-c", code, str(argv)],
+                            cwd=share, env={"PATH": "/usr/bin:/bin"}, capture_output=True,
+                            text=True, timeout=15)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(evidence.read_text())["package_version"] == "0.6.6"
+
+
+def test_failed_status_keeps_only_safe_diagnostics_and_never_reexecutes(tmp_path, monkeypatch):
+    import json
+
+    verify, evidence, _ = _installed_status_fixture(tmp_path, monkeypatch, legacy=True, status_line="")
+    command = tmp_path / "capsem"
+    command.write_text(command.read_text().replace("print(Path(__file__).with_name('status').read_text(), end='')", "print('synthetic-secret-canary'); sys.exit(23)"))
+    with pytest.raises(SystemExit, match="capsem status exited 23") as refused:
+        verify.main()
+    assert "synthetic-secret-canary" not in str(refused.value)
+    assert (tmp_path / "invocations").read_text().splitlines() == ["status"]
+    summary = evidence.with_suffix(".status-diagnostic.json").read_text()
+    assert "synthetic-secret-canary" not in summary and json.loads(summary)["exit"] == 23
     assert not evidence.exists()

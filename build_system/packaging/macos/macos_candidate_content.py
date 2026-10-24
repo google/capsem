@@ -98,6 +98,7 @@ def stage_guest_scripts(root: Path, share: Path) -> None:
         "release/tools/package_payload.py",
         "release/tools/generate_host_binary_sbom.py",
         "release/tools/verify_installed_release.py",
+        "release/tools/release_predecessor_assets.py",
     ):
         stage_file(root / "build_system/builder" / name, share / "capsem_builder" / name)
     for name in (

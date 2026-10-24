@@ -92,6 +92,10 @@ def main() -> int:
     parser.add_argument("--architecture")
     parser.add_argument("--evidence-out", type=Path)
     parser.add_argument("--legacy-profile-predecessor", action="store_true")
+    parser.add_argument("--predecessor-assets-status", type=Path)
+    parser.add_argument("--predecessor-manifest-blake3")
+    parser.add_argument("--predecessor-manifest-sha256")
+    parser.add_argument("--predecessor-assets-maximum", type=int)
     args = parser.parse_args()
     args.capsem_home = args.capsem_home or Path.home() / ".capsem"
     if args.legacy_profile_predecessor and (
@@ -213,32 +217,38 @@ def main() -> int:
         },
     )
     status = f"{result.stdout}\n{result.stderr}"
+    from .release_predecessor_assets import record_status_diagnostic
+
+    record_status_diagnostic(args.evidence_out, status, result.returncode)
     if result.returncode != 0:
-        fail(f"capsem status exited {result.returncode}: {status.strip()}")
+        fail(f"capsem status exited {result.returncode}")
     for required in (
         "Installed: true",
         "Running:   true",
         "Service:   ok",
         "Gateway:   ok",
-        f"Manifest source: {metadata_manifest_url}",
     ):
         if required not in status:
             fail(f"capsem status is missing {required!r}")
-    # Only the explicit original public predecessor has the old string display.
-    expected_status = "valid" if args.legacy_profile_predecessor else "Valid"
-    status_lines = [line for line in status.splitlines() if line.startswith("Manifest status:")]
-    if status_lines != [f"Manifest status: {expected_status}"]:
-        fail(
-            f"Manifest status is not exact {expected_status!r}; "
-            f"legacy_predecessor={args.legacy_profile_predecessor}, line_count={len(status_lines)}"
-        )
+    if not args.legacy_profile_predecessor:
+        sources = [line for line in status.splitlines() if line.startswith("Manifest source:")]
+        if sources != [f"Manifest source: {metadata_manifest_url}"]:
+            fail("capsem status has no selected manifest source")
+        lines = [line for line in status.splitlines() if line.startswith("Manifest status:")]
+        if lines != ["Manifest status: Valid"]:
+            fail("Manifest status is not exact modern Valid")
     version_match = re.search(r"(?m)^Version:\s+(\S+)$", status)
     if version_match is None or version_match.group(1) != args.package_version:
         fail(f"capsem status does not report package version {args.package_version}")
     if args.legacy_profile_predecessor:
         from .release_macos_pairing import legacy_profile_identity
+        from .release_predecessor_assets import verify_predecessor_assets
 
         legacy_profile_identity(manifest, architecture=args.architecture)
+        try:
+            verify_predecessor_assets(args, manifest, metadata, installed_bytes)
+        except ValueError as error:
+            fail(str(error))
     elif not isinstance(manifest.get("runtime"), dict):
         fail("selected release manifest has no runtime")
     verify_failed_session_logs(args.capsem, args.capsem_home)

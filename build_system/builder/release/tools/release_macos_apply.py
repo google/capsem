@@ -162,6 +162,8 @@ def main() -> int:
                     ("package", "manifest", "sbom").index(args.field)
                 ]
             )
+        elif args.field == "manifest_blake3" and args.phase == "before" and spec["scope"] == "public_predecessor_upgrade":
+            value = spec["inputs"]["before"]["manifest_blake3"]
         elif args.field == "version":
             value = spec[args.phase]["artifact"]["version"]
         else:

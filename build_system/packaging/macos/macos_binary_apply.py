@@ -6,6 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
+from capsem_builder import crypto
 from capsem_builder.gate import config as gate_config
 from capsem_builder.release.tools.release_apply_receipt import activation_receipt
 from capsem_builder.release.tools.release_macos_apply import validate_native
@@ -64,6 +65,9 @@ def prepare(args, *, root: Path, share: Path, guest_package: Path) -> dict | Non
             "sbom": (guest_package.parent / "capsem-sbom.spdx.json").relative_to(share).as_posix(),
         },
     }
+    if public:
+        # Host-bound to the same original bytes already verified by the pair owner.
+        inputs["before"]["manifest_blake3"] = crypto.digest_file(args.before_manifest_file)
     for name, source in zip(("package", "manifest", "sbom"), values, strict=True):
         stage_file(source, share / inputs["before"][name])
     stage_file(

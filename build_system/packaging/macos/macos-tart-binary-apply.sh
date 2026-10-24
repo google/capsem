@@ -26,7 +26,13 @@ capsem_pair_verify() {
     local extra=()
     if [ "$(capsem_pair_field --field scope)" = public_predecessor_upgrade ]; then
         if [ "$phase" = before ]; then
-            extra=(--legacy-profile-predecessor)
+            # SAME new-share receipt written by finish_install_hydration before
+            # this BEFORE verification. Never synthesize it or reuse an old share.
+            extra=(--legacy-profile-predecessor
+                --predecessor-assets-status "$SHARE/assets-after-install.json"
+                --predecessor-manifest-blake3 "$(capsem_pair_field --phase before --field manifest_blake3)"
+                --predecessor-manifest-sha256 "$(capsem_pair_field --phase before --field manifest_sha256)"
+                --predecessor-assets-maximum "$(capsem_pair_field --field maximum)")
         else
             metadata_url="$MANIFEST_URL"
         fi
