@@ -220,12 +220,18 @@ def main() -> int:
         "Running:   true",
         "Service:   ok",
         "Gateway:   ok",
-        # The runtime manifest the service selected (capsem `print_asset_status`).
-        "Manifest status: Valid",
         f"Manifest source: {metadata_manifest_url}",
     ):
         if required not in status:
             fail(f"capsem status is missing {required!r}")
+    # Only the explicit original public predecessor has the old string display.
+    expected_status = "valid" if args.legacy_profile_predecessor else "Valid"
+    status_lines = [line for line in status.splitlines() if line.startswith("Manifest status:")]
+    if status_lines != [f"Manifest status: {expected_status}"]:
+        fail(
+            f"Manifest status is not exact {expected_status!r}; "
+            f"legacy_predecessor={args.legacy_profile_predecessor}, line_count={len(status_lines)}"
+        )
     version_match = re.search(r"(?m)^Version:\s+(\S+)$", status)
     if version_match is None or version_match.group(1) != args.package_version:
         fail(f"capsem status does not report package version {args.package_version}")

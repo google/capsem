@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Verify the original public predecessor's exact manifest-status literal only in
+  its explicit qualification mode, retaining strict modern status validation.
+
 - Preserve valid Developer ID and local ad-hoc signatures in installed-package
   verification, with exact package-version tokens and explicit per-role
   strict-signature failure propagation.
