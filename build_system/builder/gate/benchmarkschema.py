@@ -18,6 +18,7 @@ from .benchmarkcredentialschema import CredentialRouteConfig
 from .benchmarkerrorschema import ConnectionErrorConfig
 from .benchmarkimageschema import ImageRouteConfig
 from .benchmarklifecycleschema import LifecycleRouteConfig
+from .benchmarkmcpschema import McpRouteConfig
 from .benchmarkmemberschema import NetworkMemberConfig
 from .benchmarknetworkschema import DiagnosticCorpusConfig, NetworkRouteConfig
 from .benchmarkpolicyschema import PolicyRouteConfig
@@ -81,6 +82,7 @@ class RouteCoverageConfig(Strict):
     connection_errors: ConnectionErrorConfig
     network_members: NetworkMemberConfig
     credentials: CredentialRouteConfig
+    mcp_controls: McpRouteConfig
     unmeasured: dict[str, RouteDebtConfig]
     internal: dict[str, RouteDebtConfig]
     unmeasured_cases: dict[str, RouteDebtConfig]

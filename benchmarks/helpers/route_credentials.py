@@ -121,7 +121,7 @@ def sample_credentials(cycle,vm_id):
         deadline=time.monotonic()+cfg['timeout_seconds'])
 
 
-def require_credential_metrics(metrics,cfg,quick,labels=('service','gateway')):
+def require_credential_metrics(metrics,cfg,quick,labels=('service','gateway'),*,resource_domain='credentials'):
     count = sample_count(cfg,'cycles',quick)
     for label in labels:
         for operation,entry in cfg['endpoints'].items():
@@ -131,7 +131,7 @@ def require_credential_metrics(metrics,cfg,quick,labels=('service','gateway')):
                     if key not in metrics or len(metrics[key]['samples']) != count:
                         raise ValueError('missing or partial credential samples')
         for index in range(count):
-            key = f'{label}.credentials.{index}.wall_s'
+            key = f'{label}.{resource_domain}.{index}.wall_s'
             if key not in metrics or len(metrics[key]['samples']) != 1:
                 raise ValueError('missing or partial credential resources')
 

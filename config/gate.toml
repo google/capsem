@@ -3576,6 +3576,44 @@ target_scope = "both"
 reason = "Changed owned durable account already observed by guest flips service memory-only replay availability and exact hydration counts after the original reload."
 cases = {"changed-store" = "cycles"}
 
+[benchmark.routes.mcp_controls]
+cycles = 2
+quick_cycles = 1
+timeout_seconds = 180.0
+exec_timeout_seconds = 30
+max_response_bytes = 1048576
+max_log_bytes = 1048576
+poll_seconds = 0.05
+ram_mb = 1024
+cpus = 2
+path = "/html/about"
+expected_content_type = "text/html; charset=utf-8"
+expected_body = "<html><body><main><h1>Capsem mock server about page</h1><p>Google fixture content for local MCP extraction.</p></main></body></html>\n"
+
+[benchmark.routes.mcp_controls.tools.echo]
+title = "Echo"
+description = "Return the input text verbatim. Zero I/O, zero policy, no upstream -- exists to benchmark MCP transport overhead (gateway -> aggregator -> server -> response) without any other variable. Use the `text` parameter; the result is the same text wrapped in a tool-call response."
+[benchmark.routes.mcp_controls.tools.fetch_http]
+title = "Fetch URL"
+description = "Fetch a URL and return its content. In 'markdown' mode (default), HTML is converted to markdown. In 'content' mode, plain text. In 'raw' mode, unchanged. Use start_index/max_length for pagination."
+[benchmark.routes.mcp_controls.tools.grep_http]
+title = "Grep URL"
+description = "Fetch a URL and search its content for a regex pattern. Returns matching lines with context. Use start_index/max_length for pagination."
+[benchmark.routes.mcp_controls.tools.http_headers]
+title = "HTTP headers"
+description = "Return HTTP status code and response headers for a URL. Optionally specify the HTTP method (default: GET)."
+
+[benchmark.routes.mcp_controls.endpoints."POST /mcp/servers/{server_id}/refresh"]
+collector = "routes"
+target_scope = "both"
+reason = "Fresh empty cache becomes the exact four shipped builtin definitions after one original live owner refresh; configuration-level running=false is not live proof."
+cases = {"discovered-live" = "cycles"}
+[benchmark.routes.mcp_controls.endpoints."POST /mcp/servers/{server_id}/tools/{tool_id}/call"]
+collector = "routes"
+target_scope = "both"
+reason = "Narrow explicitly allowed builtin headers/raw fetch calls return fixed mock bytes and independently deliver exactly one original nonce-bound upstream request each."
+cases = {headers = "cycles", "raw-body" = "cycles"}
+
 [benchmark.routes.unmeasured]
 "DELETE /connections/authorizations/{transaction_id}" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
 "DELETE /connections/{connection_id}" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
@@ -3586,8 +3624,6 @@ cases = {"changed-store" = "cycles"}
 "GET /connections/{connection_id}" = { owner = "crates/capsem-service/src/connection_routes.rs", reason = "Production Runtime constructs only disabled unconfigured agy-native profile; successful enrollment metadata needs an implemented provider contract, never fabricated authority." }
 "POST /connections/google/authorize" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
 "POST /corp/reload" = { owner = "tests/ironbank/test_managed_policy.py", reason = "Needs real running-owner policy publication and acknowledgement, with isolated policy files restored afterwards." }
-"POST /mcp/servers/{server_id}/refresh" = { owner = "tests/ironbank/test_mcp_protocol_ledger.py", reason = "Needs configured MCP server lifecycle and bounded tool fixture; no live vendor calls." }
-"POST /mcp/servers/{server_id}/tools/{tool_id}/call" = { owner = "tests/ironbank/test_mcp_protocol_ledger.py", reason = "Needs configured MCP server lifecycle and bounded tool fixture; no live vendor calls." }
 "POST /purge" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
 "POST /restart" = { owner = "tests/ironbank/test_sdk_restart.py", reason = "Needs disposable supervisor and real client reconnection; accepted restart is distinct from ready completion." }
 "POST /run" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
@@ -3604,6 +3640,8 @@ cases = {"changed-store" = "cycles"}
 
 # A timed idle/read case does not certify every state of the same operation.
 [benchmark.routes.unmeasured_cases]
+"POST /mcp/servers/{server_id}/refresh [physical-discovery-pin]" = { owner = "tests/ironbank/test_mcp_settings_ledger.py", reason = "Public tool metadata and opaque pin shape do not independently certify inputSchema pin bytes or physical discovery/security/archive joins; existing canonical MCP/core pin owners retain proof." }
+"POST /mcp/servers/{server_id}/tools/{tool_id}/call [physical-tool-net-security]" = { owner = "tests/ironbank/test_mcp_settings_ledger.py", reason = "Independent original mock request and returned text timing do not replace physical tool/net/security/archive joins after original producer drain in canonical Ironbank." }
 "POST /credentials/inject [physical-broker-ledger]" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Public inventory and exact mock bytes do not replace physical substitution/security/archive privacy joins after original producer drain in canonical Ironbank." }
 "POST /plugins/credential_broker/credentials/reload [physical-store-ledger]" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Public changed-store cache and replay transition timing does not certify physical ledger/archive joins; canonical store/broker Ironbank retains that proof." }
 "POST /vms/{id}/files/content [physical-import-archive]" = { owner = "tests/ironbank/test_files_process_ledger.py", reason = "Public import event/counter proof is sourced after drain; physical fs/security/archive joins remain canonical FilesProcessLedger proof, never direct collector DB reads." }

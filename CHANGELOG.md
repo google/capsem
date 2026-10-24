@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keep optional metric exporter initialization and shutdown off the async service
   runtime so enabling telemetry cannot panic before the service becomes ready.
 
+- Add finite live MCP refresh and builtin call benchmark source cases with
+  exact discovered metadata, narrow permissions and independent upstream facts.
+  Native performance and physical ledger proof remain separate gates.
+
 - Add finite synthetic credential injection and changed-store reload benchmark
   source cases with independent broker binding and service-cache effects.
   Physical ledger proof and measured performance remain separate gates.

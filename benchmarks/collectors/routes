@@ -49,6 +49,7 @@ from benchmarks.helpers.route_fixtures import (
 from benchmarks.helpers.route_gateway import GATEWAY_RESPONSES
 from benchmarks.helpers.route_images import collect_images
 from benchmarks.helpers.route_lifecycle import collect_lifecycle
+from benchmarks.helpers.route_mcp import collect_mcp_controls
 from benchmarks.helpers.route_measurements import Observations, route_metrics
 from benchmarks.helpers.route_networks import collect_networks
 from benchmarks.helpers.route_network_members import collect_network_members
@@ -189,6 +190,7 @@ def main() -> int:
         metrics.update(collect_connection_errors(args.quick))
         metrics.update(collect_network_members(args.quick))
         metrics.update(collect_credentials(args.quick))
+        metrics.update(collect_mcp_controls(args.quick))
 
     service = ServiceInstance()
     service.assets_dir = clone_benchmark_assets(
