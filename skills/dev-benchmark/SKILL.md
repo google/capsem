@@ -184,6 +184,20 @@ capacity because summing RSS counts shared pages once per process; use USS to
 show the memory that disappears with that process. Compare two unchanged runs
 before and two changed runs after any performance work.
 
+Disk/storage retain original unrounded per-operation latency arrays in the
+existing guest diagnostic JSON artifact. The host supplies the existing
+`benchmark.run` sample/output budgets; incomplete I/O or malformed/count-mismatched
+artifacts fail. The collector moves each array to the raw metric protocol once,
+retaining completed-byte/count/unrounded elapsed facts in its bounded sidecar.
+Rust computes the recorded distributions. Sequential-write operation latency
+excludes its final flush barrier, while aggregate elapsed includes it; synchronous
+random-write operation latency includes that operation's flush. These are software
+call windows, not physical-device latency. Explicitly selected storage paths must
+succeed; unavailable default optional paths remain named unmeasured skips.
+Human-only diagnostic invocation keeps its existing summaries and cannot supply
+the strict collector's raw contract. Matching guest/harness source must be prepared
+on both sides before paired measurements; no historical aggregate is promoted.
+
 `just bench mitm-scale` is the aggregate HTTPS capacity proof. Its
 `[benchmark.mitm_scale]` config creates a fresh identical cohort at each VM
 count, fixes one keep-alive concurrency level per VM, samples the Capsem tree

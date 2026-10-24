@@ -11,9 +11,9 @@ load modes ended up with committed baselines and no caller.
 `all`, so nothing has ever run them automatically. Naming them here is what
 gives them a caller.
 
-The guest reports one number per operation rather than a sample array, so most
-of these are single-observation metrics. `n` says so rather than implying a
-distribution that was never measured.
+Disk and storage preserve bounded original per-operation sample arrays. Other
+diagnostic modes still report aggregate observations; their `n` never implies
+a distribution that was not measured.
 """
 
 from __future__ import annotations
