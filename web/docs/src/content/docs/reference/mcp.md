@@ -874,7 +874,8 @@ Read structured host panics, newest first.
 
 ### `capsem_pause`
 
-Pause a running VM.
+Warm suspend is disabled in 0.7.1 pending [#378](https://github.com/google/capsem/issues/378).
+Calls are refused without changing the running session. Use persistent stop/start.
 
 <details>
 <summary>Input schema</summary>

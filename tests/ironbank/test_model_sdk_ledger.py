@@ -1620,7 +1620,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             status = client.get(f"/vms/{vm_id}/status", timeout=30)
             assert status is not None
             assert status["status"] == "Running"
-            assert status["available_actions"] == ["pause", "stop", "fork", "delete"]
+            assert status["available_actions"] == ["stop", "fork", "delete"]
 
             security_rows = conn.execute(
                 """

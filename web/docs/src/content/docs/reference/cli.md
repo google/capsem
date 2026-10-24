@@ -44,8 +44,8 @@ applies. See [Build your own image](/guides/enterprise/build-an-image/).
 
 | Command | Effect |
 | --- | --- |
-| `capsem suspend VM` | Save running state and release CPU/RAM; persistent VMs only. |
-| `capsem resume NAME` | Resume saved state, start a retained VM, or attach to one already running. Alias: `capsem attach`. |
+| `capsem suspend VM` | Disabled in 0.7.1 pending [#378](https://github.com/google/capsem/issues/378); existing checkpoints are preserved. |
+| `capsem resume NAME` | Start a stopped persistent VM or attach to one already running. Running programs restart after a stop. Alias: `capsem attach`. |
 | `capsem restart NAME` | Reboot a persistent VM. |
 | `capsem fork VM NAME [-d DESCRIPTION]` | Copy files/setup into another persistent VM; does not copy running programs. |
 | `capsem persist VM NAME` | Give a running temporary VM a persistent name. |

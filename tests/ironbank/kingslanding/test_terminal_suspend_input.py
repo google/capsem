@@ -69,7 +69,7 @@ finally:
                 # The foreground cannot drain it until the independent exec.
                 next_state(socket, lambda state: state["title"] == "Input queued")
                 status, error = client.call_json("POST", f"/vms/{vm_id}/pause", {}, timeout=60)
-                assert status == 500, (status, error)
+                assert status == 501 and "warm suspend is disabled" in error["error"], (status, error)
                 assert client.get(f"/vms/{vm_id}/status")["status"] == "Running"
                 assert client.get(f"/vms/{vm_id}/info")["pid"] == original_pid
                 released = workload_exec(client, vm_id, "touch /workspace/read-terminal-input")

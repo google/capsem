@@ -98,10 +98,14 @@ Manage sessions with:
 ```sh
 capsem list               # show all sessions
 capsem info mybox         # detailed status + telemetry
-capsem suspend mybox      # save state to disk
-capsem resume mybox       # resume from where you left off
+capsem resume mybox       # start a stopped persistent session or attach
 capsem delete mybox       # destroy permanently
 ```
+
+Use **Stop** in Capsem or `Alt+T` in the TUI to release a session's CPU and
+memory. Persistent files survive; programs start afresh when you return.
+Warm suspend is disabled in 0.7.1 while [#378](https://github.com/google/capsem/issues/378)
+is unresolved.
 
 See the [CLI Reference](/usage/cli/) for the full command list.
 

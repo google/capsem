@@ -1,6 +1,6 @@
 ---
 title: How to use Capsem
-description: How do I launch, access, suspend, and duplicate my first Capsem VM?
+description: How do I launch, access, stop, and duplicate my first Capsem VM?
 sidebar:
   order: 2
 prev:
@@ -25,9 +25,8 @@ capsem create -n my-work --image claude-code
 ```
 
 - `-n my-work` names the VM and makes it **persistent**: you can stop and
-  resume it without losing your files or setup. You can also
-  pause and continue running work with [`capsem suspend` and `capsem resume`](#pause-your-work-and-return-later),
-  or duplicate your VM with [`capsem fork`](#fork-your-vm). Use `my-work` to
+  start it again without losing your files or setup, or duplicate your VM with
+  [`capsem fork`](#fork-your-vm). Use `my-work` to
   select this VM in commands.
 - `--image claude-code` chooses the image that provides the VM's software.
   You can use one of Capsem's prebuilt images, such as this one with Claude Code,
@@ -68,16 +67,10 @@ lets you inspect files, logs, and activity.
 
 ## Pause your work and return later
 
-When you are ready to pause your work, use `capsem suspend` to free up its CPU
-and memory while keeping your running programs ready to continue. Run this
-in another terminal on your computer:
-
-```sh
-capsem suspend my-work
-```
-
-Once suspension finishes, your programs are paused. When you are ready to
-work again, use `capsem resume`, then reopen its terminal with `capsem shell`:
+Use **Stop** in Capsem or `Alt+T` in the TUI to free a persistent session's CPU
+and memory. Files and setup survive; running programs restart. Warm suspend is
+disabled in 0.7.1 pending [#378](https://github.com/google/capsem/issues/378).
+When you return, start the session and open its terminal:
 
 ```sh
 capsem resume my-work
@@ -103,8 +96,7 @@ capsem shell experiment
 
 `my-work` is the original VM; `experiment` names the new persistent VM.
 Once the new VM is running, you can change files and try tools there without
-changing `my-work`. Programs start afresh in the new VM; to continue programs
-already running in the original, use [`capsem suspend` and `capsem resume`](#pause-your-work-and-return-later).
+changing `my-work`. Programs start afresh in the new VM.
 
 ## Choose an image for your VM
 

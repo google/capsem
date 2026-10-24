@@ -137,6 +137,7 @@ class TestResumePathPersistence:
         finally:
             client.delete(f"/vms/{name}/delete")
 
+    @pytest.mark.skip(reason="Warm suspend disabled for 0.7.1; original warm persistence acceptance retained for P0 #378")
     def test_files_survive_suspend_resume_across_paths(self, client):
         """Same coverage as the stop test, but using the warm suspend/resume path."""
         name = vm_name("susp")

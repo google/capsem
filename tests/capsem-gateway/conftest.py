@@ -145,7 +145,7 @@ def mock_list_response():
                 "persistent": vm["persistent"],
                 "ram_mb": vm["ram_mb"],
                 "cpus": vm["cpus"],
-                "available_actions": ["pause", "stop", "fork", "delete"],
+                "available_actions": ["stop", "fork", "delete"],
             }
             for vm in MOCK_VMS.values()
         ]
@@ -212,7 +212,7 @@ class MockServiceHandler(BaseHTTPRequestHandler):
                         "status": vm["status"],
                         "pid": vm["pid"],
                         "persistent": vm["persistent"],
-                        "available_actions": ["pause", "stop", "fork", "delete"],
+                        "available_actions": ["stop", "fork", "delete"],
                     }
                 )
             else:

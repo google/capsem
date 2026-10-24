@@ -963,7 +963,7 @@ def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
         assert running_status["status"] == "Running"
         assert running_status["persistent"] is True
         assert running_status["can_resume"] is False
-        assert running_status["available_actions"] == ["pause", "stop", "fork", "delete"]
+        assert running_status["available_actions"] == ["stop", "fork", "delete"]
         running_info = service_client.get(f"/vms/{source_id}/info", timeout=30)
         assert running_info["name"] == source_name
         assert running_info["status"] == "Running"
@@ -1026,26 +1026,16 @@ def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
         _assert_timing_budget(timing, p95_ms=5_000.0, max_ms=5_000.0, cpu_s=1.0)
         _assert_vm_absent(service_client.get("/vms/list", timeout=30), child_id)
 
+        before_pause = service_client.get(f"/vms/{source_id}/info", timeout=30)
         pause_payload, timing = _measure_once(
-            "service /vms/{id}/pause",
-            lambda: service_client.post(f"/vms/{source_id}/pause", {}, timeout=45),
+            "service /vms/{id}/pause disabled",
+            lambda: service_client.call_json("POST", f"/vms/{source_id}/pause", {}, timeout=45),
             service_proc=service_proc,
         )
-        assert pause_payload == {"success": True}
+        assert pause_payload[0] == 501 and "warm suspend is disabled" in pause_payload[1]["error"]
         _assert_timing_budget(timing, p95_ms=20_000.0, max_ms=20_000.0, cpu_s=5.0)
-        suspended_status = service_client.get(f"/vms/{source_id}/status", timeout=30)
-        assert suspended_status["status"] == "Suspended"
-        assert suspended_status["persistent"] is True
-        assert suspended_status["can_resume"] is True
-
-        resume_payload, timing = _measure_once(
-            "service /vms/{id}/resume from suspended",
-            lambda: service_client.post(f"/vms/{source_id}/resume", {}, timeout=HTTP_TIMEOUT),
-            service_proc=service_proc,
-        )
-        assert resume_payload["id"] == source_id
-        _assert_timing_budget(timing, p95_ms=45_000.0, max_ms=45_000.0, cpu_s=10.0)
-        assert wait_exec_ready(service_client, source_id, timeout=EXEC_READY_TIMEOUT)
+        after_pause = service_client.get(f"/vms/{source_id}/info", timeout=30)
+        assert after_pause["status"] == "Running" and after_pause["pid"] == before_pause["pid"]
         _assert_archived_exec_body(service_client, source_id, exec_event_id)
 
         stop_payload, timing = _measure_once(

@@ -29,7 +29,8 @@ from helpers.constants import (
 )
 from helpers.service import exec_output_text, vm_name, wait_exec_ready
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration,
+              pytest.mark.skip(reason="Warm suspend disabled for 0.7.1; original FD/overlay regressions retained for P0 #378")]
 
 
 def _exec(client, name, command):

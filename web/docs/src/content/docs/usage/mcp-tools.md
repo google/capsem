@@ -82,7 +82,7 @@ All VM-scoped tools take the immutable `vm_id` returned by `capsem_create` or
 | `capsem_exec` | `vm_id`, `command`, `timeout_secs?` | Execute in an existing VM. |
 | `capsem_run` | `command`, `cpus?`, `memory?`, `env?`, `timeout_secs?` | Execute once in a temporary VM. |
 | `capsem_start` / `capsem_stop` | `vm_id` | Start or stop a VM. |
-| `capsem_pause` / `capsem_resume` | `vm_id` | Pause or resume a VM. |
+| `capsem_pause` / `capsem_resume` | `vm_id` | Warm pause is disabled in 0.7.1 (#378). Resume starts a stopped persistent VM. |
 | `capsem_delete` | `vm_id` | Delete the VM and its owned state. |
 | `capsem_fork` | `vm_id`, `name`, `description?` | Create a stopped fork. |
 | `capsem_persist` | `vm_id`, `name` | Retain an ephemeral VM under a stable name. |

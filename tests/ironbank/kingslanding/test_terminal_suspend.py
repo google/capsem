@@ -73,7 +73,7 @@ finally:
                 invalid_slot.chmod(0o644)
             try:
                 status, error = client.call_json("POST", f"/vms/{vm_id}/pause", {}, timeout=60)
-                assert status == 500, (status, error)
+                assert status == 501 and "warm suspend is disabled" in error["error"], (status, error)
                 assert client.get(f"/vms/{vm_id}/status")["status"] == "Running"
                 assert client.get(f"/vms/{vm_id}/info")["pid"] == original_pid
                 send(socket, b"k")
@@ -96,12 +96,13 @@ finally:
                     invalid_slot.rmdir()
                 else:
                     invalid_slot.unlink()
-        # Correcting the fault must permit a new checkpoint on the same
-        # owner, with fresh viewer/transport authority and actual guest thaw.
-        assert client.post(f"/vms/{vm_id}/pause", {}, timeout=60) == {"success": True}
-        assert client.get(f"/vms/{vm_id}/status")["status"] == "Suspended"
+        # Correcting the synthetic fault cannot enable the disabled capability.
+        status, error = client.call_json("POST", f"/vms/{vm_id}/pause", {}, timeout=60)
+        assert status == 501 and "warm suspend is disabled" in error["error"], (status, error)
+        assert client.get(f"/vms/{vm_id}/info")["pid"] == original_pid
 
 
+@pytest.mark.skip(reason="Warm suspend disabled for 0.7.1; retain original restore regression for P0 #378")
 def test_failed_restore_preserves_suspended_state_without_cold_boot(service, tmp_path):
     client = service.client()
     with image_session(service, tmp_path, "restore-failure") as vm_id:
@@ -138,6 +139,7 @@ def test_failed_restore_preserves_suspended_state_without_cold_boot(service, tmp
         assert not list(checkpoint.parent.glob("*.failed-restore-*"))
 
 
+@pytest.mark.skip(reason="Warm suspend disabled for 0.7.1; original FD/screens/parser acceptance must pass before closing P0 #378")
 def test_suspend_restores_both_screens_parser_modes_and_effect_identity(service, tmp_path):
     client = service.client()
     with image_session(service, tmp_path, "terminal-suspend") as vm_id:
