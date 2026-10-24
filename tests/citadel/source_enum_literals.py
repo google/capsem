@@ -7,7 +7,7 @@ import json
 import re
 from typing import Any
 
-from source_cargo_literals import protocol_source, target_kind_literals
+from tests.citadel.source_cargo_literals import protocol_source, target_kind_literals
 
 
 def contract_enums(sources: dict[str, str]) -> frozenset[str]:
