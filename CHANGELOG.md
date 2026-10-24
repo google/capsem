@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Allow fixed native AMD image candidates to use the existing reference-image
+  producer with shared-base and exact source-bound qualification receipts,
+  without replacing functional digest pins.
+
 - Report saved sessions as unavailable when their recorded boot asset pins do
   not match mutable development assets, instead of offering a resume that fails.
 

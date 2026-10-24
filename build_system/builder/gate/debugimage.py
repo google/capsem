@@ -17,12 +17,28 @@ import argparse
 from .actions import Script
 from .command import GateCommand
 from .config import GateConfig
+from .errors import GateError
 from .execution import Kind, Needs, Speed, step
 from .plan import Plan
 
 
-def _build(name: str, config: GateConfig, section: str, *, receipt: bool = False) -> Plan:
+def _build(
+    name: str,
+    config: GateConfig,
+    section: str,
+    *,
+    receipt: bool = False,
+    candidate: str | None = None,
+) -> Plan:
     """The one build step both commands plan, for their `[functional.<section>]`."""
+    if candidate is not None and (
+        not receipt
+        or section != "reference_image"
+        or candidate not in ("dev", *config.functional.native_images.apps)
+    ):
+        raise GateError(
+            "native candidate selector requires reference-image receipt and fixed image"
+        )
     plan = Plan(name)
     plan.add(
         step(
@@ -35,6 +51,7 @@ def _build(name: str, config: GateConfig, section: str, *, receipt: bool = False
                 "--platform",
                 config.host_arch().docker_platform,
                 *(["--receipt"] if receipt else []),
+                *(["--candidate-image", candidate] if candidate else []),
                 outside_sandbox=True,
             ),
             contends=(config.exclusive("docker_daemon"),),
@@ -79,7 +96,14 @@ class ReferenceImageCommand(
 ):
     exclusive = True
 
-    add_arguments = DebugImageCommand.add_arguments
+    @classmethod
+    def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
+        DebugImageCommand.add_arguments(parser)
+        parser.add_argument(
+            "--candidate-image",
+            choices=("dev", "codex-cli", "claude-code", "agy", "antigravity-desktop"),
+            help="build a fixed native candidate without replacing functional pins",
+        )
 
     def plan(self) -> Plan:
         return _build(
@@ -87,4 +111,5 @@ class ReferenceImageCommand(
             self._config,
             "reference_image",
             receipt=getattr(self._args, "candidate_receipt", False),
+            candidate=getattr(self._args, "candidate_image", None),
         )
