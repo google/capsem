@@ -104,6 +104,8 @@ def extract(mode, section, limits):
         if not successes:
             raise ValueError('no successful writable storage measurement')
         rootfs=section.get('rootfs',{})
+        if type(rootfs.get('files_found')) is not int or rootfs['files_found']<0 or not isinstance(rootfs.get('seq_reads'),list):
+            raise ValueError('missing or invalid optional rootfs inventory')
         for index,node in enumerate(rootfs.get('seq_reads',[])):
             size=integer(node.get('size_bytes'),'rootfs selected size')
             for kind in ('cold','warm'):

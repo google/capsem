@@ -121,6 +121,13 @@ def test_default_optional_paths_remain_explicit_unmeasured_skips(monkeypatch):
     assert len(metrics)==16 and not any('writable./root.' in key for key in metrics)
 
 
+@pytest.mark.parametrize('value',[None,False,'0',-1])
+def test_optional_rootfs_still_requires_explicit_valid_inventory(monkeypatch,value):
+    document=storage_document(monkeypatch)
+    document['rootfs']['files_found']=value
+    with pytest.raises(ValueError):extract('storage',document,LIMITS)
+
+
 @pytest.mark.parametrize('count', [0,-1,True,1.5])
 def test_operation_reservation_rejects_invalid_count(count):
     with pytest.raises(ValueError):Operations(count)
