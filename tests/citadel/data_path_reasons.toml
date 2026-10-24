@@ -831,6 +831,9 @@ json = { count = 2, reason = "http" }
 [sources."sdk/rust/src/operations/generated/stop_vm.rs"]
 json = { count = 1, reason = "http" }
 
+[sources."sdk/rust/src/operations/generated/check_hypervisor_update.rs"]
+json = { count = 2, reason = "http" }
+
 [sources."sdk/rust/src/operations/generated/update_hypervisor.rs"]
 json = { count = 2, reason = "http" }
 
