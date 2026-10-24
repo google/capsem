@@ -11,8 +11,9 @@ FROM ${BASE}
 
 COPY --chown=1000:1000 . /src
 WORKDIR /src
-# Excluded cache ancestors survive from the root-owned base. Grant only the
-# shared frontend lock directory; the lane still runs entirely as uid 1000.
+# Excluded cache ancestors survive from the root-owned base. The private
+# workspace/cache belongs to the lane; immutable dependency stores do not.
 RUN install -d -o 1000 -g 1000 /src/cache/state/locks
+RUN chown 1000:1000 /src /src/cache /src/cache/state
 USER 1000:1000
 ENV HOME=/home/lane

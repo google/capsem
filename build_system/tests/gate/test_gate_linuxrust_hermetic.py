@@ -32,6 +32,15 @@ def test_the_nonroot_lane_owns_its_frontend_build_lock() -> None:
     ).read_text()
 
 
+def test_the_nonroot_lane_owns_workspace_and_cache_parents() -> None:
+    """Nextest creates new cache descendants, not just the existing lock leaf."""
+    recipe = (PROJECT_ROOT / "build_system/docker/Dockerfile.linux-rust").read_text()
+    ownership = "RUN chown 1000:1000 /src /src/cache /src/cache/state"
+    assert ownership in recipe, "excluded inherited cache parents still belong to root"
+    assert recipe.index(ownership) < recipe.index("USER 1000:1000")
+    assert "chown -R" not in recipe, "dependency stores must not be duplicated by recursive chown"
+
+
 def _macos_issued(monkeypatch: pytest.MonkeyPatch) -> str:
     import sys
 
