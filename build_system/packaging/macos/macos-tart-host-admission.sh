@@ -30,8 +30,9 @@ PY
     capsem_host_admission snapshot
     bash "$INSTALL_USER_REQUEST" write admin
     status=0
-    sudo /usr/sbin/installer -pkg "$SHARE/$candidate" -target / \
-        > "$SHARE/host-refusal-installer.log" 2>&1 || status=$?
+    {
+        sudo /usr/sbin/installer -pkg "$SHARE/$candidate" -target / || status=$?
+    } > "$SHARE/host-refusal-installer.log" 2>&1
     printf '%s\n' "$status" > "$SHARE/host-refusal-status.txt"
     clear_install_user_request
     test "$status" -ne 0
