@@ -7,6 +7,14 @@ import pytest
 
 from tests.qualification import candidate
 
+AGENT_EXPECT = '''
+[expect]
+turn = ["agent", "--print"]
+credential_env = "SYNTHETIC_API_KEY"
+provider = "openai"
+path = "/v1/responses"
+'''
+
 
 def _layout(root, config):
     blobs = root / "blobs" / "sha256"
@@ -50,7 +58,7 @@ def test_half_a_candidate_is_refused(monkeypatch):
 def test_capability_selection_does_not_require_built_image_bytes(tmp_path, monkeypatch):
     image = tmp_path / "images" / "agent"
     image.mkdir(parents=True)
-    (image / "qualify.toml").write_text('capabilities = ["agent", "ollama"]\n')
+    (image / "qualify.toml").write_text('capabilities = ["agent", "ollama"]\n' + AGENT_EXPECT)
     monkeypatch.setattr(candidate, "ROOT", tmp_path)
     monkeypatch.setenv(candidate.NAME_ENV, "agent")
     monkeypatch.setenv(candidate.LAYOUT_ENV, str(tmp_path / "missing-layout"))
@@ -73,5 +81,41 @@ def test_a_manifest_may_only_declare_capabilities_and_expectations(tmp_path, mon
     monkeypatch.setattr(candidate, "ROOT", tmp_path)
     with pytest.raises(ValueError, match="entrypoint"):
         candidate.declared_capabilities("agent")
-    (image / "qualify.toml").write_text('capabilities = ["agent", "ollama"]\n')
+    (image / "qualify.toml").write_text('capabilities = ["agent", "ollama"]\n' + AGENT_EXPECT)
     assert candidate.declared_capabilities("agent") == frozenset({"agent", "ollama"})
+
+
+@pytest.mark.parametrize(
+    "declaration, field",
+    [
+        ('capabilities = ["agent"]\nexpect = []\n', "expect"),
+        ('capabilities = ["agent"]\n', "turn"),
+        ('capabilities = ["agent"]\n[expect]\nturn = []\n', "turn"),
+        ('capabilities = ["agent"]\n[expect]\nturn = "agent --print"\n', "turn"),
+        ('capabilities = ["agent"]\n[expect]\nturn = ["agent", ""]\n', "turn"),
+        ('capabilities = ["agent"]\n[expect]\nturn = ["agent"]\n', "credential_env"),
+        ('capabilities = ["agent"]\n' + AGENT_EXPECT.replace("SYNTHETIC_API_KEY", "KEY=secret"), "credential_env"),
+        ('capabilities = ["agent"]\n' + AGENT_EXPECT.replace('provider = "openai"', 'provider = ""'), "provider"),
+        ('capabilities = ["agent"]\n' + AGENT_EXPECT.replace('/v1/responses', 'not-a-path'), "path"),
+    ],
+)
+def test_agent_contract_fails_before_layout_or_fixture_setup(tmp_path, monkeypatch, declaration, field):
+    image = tmp_path / "images" / "incomplete"
+    image.mkdir(parents=True)
+    manifest = image / "qualify.toml"
+    manifest.write_text(declaration)
+    monkeypatch.setattr(candidate, "ROOT", tmp_path)
+    monkeypatch.setenv(candidate.NAME_ENV, "incomplete")
+    monkeypatch.setenv(candidate.LAYOUT_ENV, str(tmp_path / "absent-layout"))
+    for operation in (candidate.selected_capabilities, candidate.resolve):
+        with pytest.raises((ValueError, TypeError), match=field) as error:
+            operation()
+        assert str(manifest) in str(error.value)
+
+
+def test_nonagent_does_not_require_an_invented_credential_contract(tmp_path, monkeypatch):
+    image = tmp_path / "images" / "desktop"
+    image.mkdir(parents=True)
+    (image / "qualify.toml").write_text('capabilities = ["surface"]\n')
+    monkeypatch.setattr(candidate, "ROOT", tmp_path)
+    assert candidate.declared_capabilities("desktop") == frozenset({"surface"})

@@ -12,10 +12,11 @@ from __future__ import annotations
 
 import json
 import os
-import tomllib
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
+import tomllib
 from capsem_builder.gate import config as gate_config
 
 from tests.fixtures.oci.pinned_image import PinnedImage, reference_image
@@ -56,6 +57,7 @@ def _blob(layout: Path, digest: str) -> bytes:
 def read(name: str, layout: Path) -> Candidate:
     """The candidate at `layout`: its one manifest, its config, and the
     capabilities its qualification manifest declares."""
+    declaration = declared(name)
     (entry,) = json.loads((layout / "index.json").read_text())["manifests"]
     manifest = json.loads(_blob(layout, entry["digest"]))
     image = json.loads(_blob(layout, manifest["config"]["digest"]))
@@ -64,8 +66,8 @@ def read(name: str, layout: Path) -> Candidate:
         layout=layout,
         digest=entry["digest"],
         config=image.get("config") or {},
-        capabilities=declared_capabilities(name),
-        expect=declared(name).get("expect", {}),
+        capabilities=frozenset(declaration.get("capabilities", ())),
+        expect=declaration.get("expect", {}),
     )
 
 
@@ -80,7 +82,36 @@ def declared(name: str) -> dict:
     unknown = set(manifest) - {"capabilities", "expect"}
     if unknown:
         raise ValueError(f"{path}: unsupported keys {sorted(unknown)}")
+    if "agent" in manifest.get("capabilities", ()):
+        _validate_agent_expectation(path, manifest.get("expect", {}))
     return manifest
+
+
+def _validate_agent_expectation(path: Path, expect: dict) -> None:
+    """Refuse unsupported agent contracts before collection can start a fixture.
+
+    The current real-turn owner supports an explicit synthetic API-key
+    environment, not arbitrary vendor enrollment. Never invent a key for an
+    OAuth-only agent merely to make qualification collect.
+    """
+    if not isinstance(expect, dict):
+        raise TypeError(f"{path}: agent [expect] requires a table")
+    turn = expect.get("turn")
+    if not isinstance(turn, list) or not turn or not all(
+        isinstance(argument, str) and argument.strip() for argument in turn
+    ):
+        raise ValueError(f"{path}: agent [expect].turn requires a nonempty argv list")
+    credential = expect.get("credential_env")
+    if not isinstance(credential, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", credential):
+        raise ValueError(f"{path}: agent [expect].credential_env requires a supported synthetic credential environment name")
+    provider = expect.get("provider")
+    if not isinstance(provider, str) or not provider.strip():
+        raise ValueError(f"{path}: agent [expect].provider requires a nonempty provider identity")
+    endpoint = expect.get("path")
+    if not isinstance(endpoint, str) or not endpoint.startswith("/") or any(
+        character.isspace() for character in endpoint
+    ):
+        raise ValueError(f"{path}: agent [expect].path requires an absolute provider request path")
 
 
 def declared_capabilities(name: str) -> frozenset[str]:

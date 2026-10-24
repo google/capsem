@@ -41,6 +41,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keep optional metric exporter initialization and shutdown off the async service
   runtime so enabling telemetry cannot panic before the service becomes ready.
 
+- Reject incomplete agent qualification contracts before fixture startup,
+  including missing turn, synthetic credential, provider and endpoint fields.
+  OAuth-only agents still require a genuine authentication fixture.
+
 - Add finite pause/resume benchmark source cases that require a completed
   checkpoint and the original foreground's RAM, cwd and open descriptions,
   with separate response and verified effect clocks. Native proof remains
