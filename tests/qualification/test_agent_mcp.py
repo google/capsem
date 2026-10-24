@@ -26,9 +26,7 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.mark.capability("agent")
-def test_the_agent_invokes_its_configured_capsem_mcp_echo(
-    model_service, candidate, tmp_path
-):
+def test_the_agent_invokes_its_configured_capsem_mcp_echo(model_service, candidate, tmp_path):
     expect = candidate.expect
     assert expect.get("turn"), f"{candidate.name} declares agent but no [expect] turn"
     token = uuid.uuid4().hex
@@ -68,9 +66,7 @@ def test_the_agent_invokes_its_configured_capsem_mcp_echo(
         assert turn.get("exit_code") == 0, turn
         assert turn["stdout_text"].strip() == token, turn
         client.post(f"/vms/{vm_id}/stop", {}, timeout=60)
-        assert_agent_ledger(
-            vm_session_db_path(model_service.tmp_dir, client, vm_id), expect, token
-        )
+        assert_agent_ledger(vm_session_db_path(model_service.tmp_dir, client, vm_id), expect, token)
 
 
 def assert_agent_ledger(db_path, expect, token):
@@ -78,9 +74,7 @@ def assert_agent_ledger(db_path, expect, token):
         db.row_factory = sqlite3.Row
         calls = [
             dict(row)
-            for row in db.execute(
-                "SELECT * FROM tool_calls WHERE origin = 'mcp' ORDER BY id"
-            )
+            for row in db.execute("SELECT * FROM tool_calls WHERE origin = 'mcp' ORDER BY id")
         ]
         assert len(calls) == 1, calls
         call = calls[0]
@@ -115,10 +109,7 @@ def assert_agent_ledger(db_path, expect, token):
             "turn_id",
             "credential_ref",
         }, call
-        assert (
-            call["id"] > 0
-            and datetime.fromisoformat(call["timestamp"]).tzinfo is not None
-        ), call
+        assert call["id"] > 0 and datetime.fromisoformat(call["timestamp"]).tzinfo is not None, call
         assert (
             call["model_call_id"] is None
             and call["provider"] == ""
@@ -139,17 +130,13 @@ def assert_agent_ledger(db_path, expect, token):
         assert call["method"] == "tools/call" and call["server_name"] == "local", call
         assert re.fullmatch("[0-9a-f]{12}", call["event_id"]), call
         assert call["trace_id"], call
-        assert (
-            call["duration_ms"] >= 0
-            and call["bytes_sent"] > 0
-            and call["bytes_received"] > 0
-        ), call
+        assert call["duration_ms"] >= 0 and call["bytes_sent"] > 0 and call["bytes_received"] > 0, (
+            call
+        )
         request = json.loads(call["arguments"])
         response = json.loads(call["response_preview"])
         assert set(request) <= {"name", "arguments", "_meta"}, request
-        assert request["name"] == "local__echo" and request["arguments"] == {
-            "text": token
-        }, request
+        assert request["name"] == "local__echo" and request["arguments"] == {"text": token}, request
         if expect["provider"] == "anthropic":
             assert request["_meta"] == {
                 "claudecode/toolUseId": "toolu_capsem_mcp_echo",
@@ -160,8 +147,7 @@ def assert_agent_ledger(db_path, expect, token):
             "isError": False,
         }, response
         assert (
-            call["policy_action"] == "allow"
-            and call["policy_rule"] == "profiles.rules.default_mcp"
+            call["policy_action"] == "allow" and call["policy_rule"] == "profiles.rules.default_mcp"
         ), call
         rules = [
             dict(row)
@@ -177,8 +163,7 @@ def assert_agent_ledger(db_path, expect, token):
         ), rules
         event = security_payload(db, call["event_id"])
         assert (
-            event["event_type"] == "mcp.tool_call"
-            and event["decision"]["effective"] == "allow"
+            event["event_type"] == "mcp.tool_call" and event["decision"]["effective"] == "allow"
         ), event
         assert event["process"]["name"] == agent_process_name(expect), event
         assert (
@@ -209,4 +194,26 @@ def contains_proof_prompt(payload, token):
             for block in content
         ):
             return True
+    request = payload.get("request")
+    if not isinstance(request, dict) or not isinstance(request.get("contents"), list):
+        return False
+    # Actual AGY Google requests wrap the original user prompt, followed by
+    # separate metadata. Tool arguments/results and metadata cannot prove a turn.
+    original = (
+        f"<USER_REQUEST>\nCAPSEM_MCP_PROOF={token}. "
+        f"Call the Capsem MCP local echo tool with text {token}. "
+        "Return only the actual text returned by that tool.\n</USER_REQUEST>"
+    )
+    for message in request["contents"]:
+        if not isinstance(message, dict) or message.get("role") != "user":
+            continue
+        parts = message.get("parts")
+        if not isinstance(parts, list):
+            continue
+        for part in parts:
+            text = part.get("text") if isinstance(part, dict) else None
+            if isinstance(text, str) and (
+                text == original or text.startswith(original + "\n<ADDITIONAL_METADATA>\n")
+            ):
+                return True
     return False
