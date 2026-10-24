@@ -62,6 +62,7 @@ fn signal_classifies_disappearance_without_hiding_other_errno() {
 #[test]
 fn current_identity_is_numeric_and_has_a_parent() {
     let _uid: u32 = current_uid();
+    assert_eq!(current_effective_uid(), nix::unistd::geteuid().as_raw());
     assert!(parent_process_id().is_some());
 }
 

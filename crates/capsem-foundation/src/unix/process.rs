@@ -142,6 +142,11 @@ pub fn current_uid() -> u32 {
     nix::unistd::getuid().as_raw()
 }
 
+/// The effective user controlling this process's filesystem authority.
+pub fn current_effective_uid() -> u32 {
+    nix::unistd::geteuid().as_raw()
+}
+
 /// One-minute system load, or `None` if the host cannot provide it.
 ///
 /// The native Unix interface works on macOS as well as Linux, without procfs
