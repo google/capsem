@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Keep image status pending while older cached versions are being verified, so
+  session choosers continue polling and show available updates accurately.
+
 - Move the TUI image chooser from its visible default on the first arrow press.
 
 - Preserve the active terminal viewer's queued input when a VM suspend is

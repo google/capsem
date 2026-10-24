@@ -573,6 +573,7 @@ pub(crate) async fn handle_list_images(
             }
         };
         if image.cached != ImageCacheState::Ready {
+            let mut pending_previous = false;
             let entry = loaded.catalog.entry(&image.name).expect("listed catalog entry");
             let selected = entry
                 .versions()
@@ -593,15 +594,25 @@ pub(crate) async fn handle_list_images(
                 // version alone says nothing about whether this is first use.
                 if matches!(image.cached, ImageCacheState::Missing | ImageCacheState::Partial)
                     && image.previous_image.is_none()
-                    && decision
+                {
+                    let previous_state = decision
                         .setups
                         .source
                         .cache_state(&previous_key, root_binding(&filesystems, version.image().digest())?)
-                        .is_ok_and(|state| state == Some(CacheState::Ready))
-                {
-                    image.previous_image = Some(previous);
+                        .unwrap_or(None)
+                        .unwrap_or(CacheState::Unknown);
+                    if previous_state == CacheState::Ready {
+                        image.previous_image = Some(previous);
+                    }
+                    pending_previous |= previous_state == CacheState::Unknown;
                 }
                 keys.push(previous_key);
+            }
+            // A first-download verdict is incomplete until earlier compatible
+            // candidates settle. Keep clients observing the same background
+            // owner instead of stopping on an intermediate Missing snapshot.
+            if pending_previous && image.previous_image.is_none() {
+                image.cached = ImageCacheState::Unknown;
             }
         }
     }

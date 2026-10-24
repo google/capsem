@@ -420,9 +420,17 @@ async fn catalog_listing_preserves_terminal_and_graphical_metadata() {
 }
 
 #[tokio::test]
-async fn catalog_disk_status_uses_only_the_selected_pins_local_owner_observation() {
+async fn catalog_disk_status_uses_the_selected_pin_after_earlier_candidates_are_missing() {
     use capsem_assets::oci::CacheState;
     let fx = Fixture::default_policy();
+    let previous = capsem_assets::oci::CacheIdentity::new(
+        &format!("ghcr.io/google/capsem/codex-cli@{}", digest('a')),
+        host(),
+        RUNTIME_CONTRACT,
+    )
+    .unwrap()
+    .key();
+    fx.disk_states.lock().unwrap().insert(previous, CacheState::Missing);
     let key = capsem_assets::oci::CacheIdentity::new(
         &format!("ghcr.io/google/capsem/codex-cli@{}", digest('b')),
         host(),
@@ -875,6 +883,13 @@ async fn image_update_requires_a_verified_earlier_compatible_image_and_missing_s
             assert_eq!(
                 row["previous_image"], expected,
                 "selected={selected:?} previous={previous:?}"
+            );
+            let pending_previous =
+                matches!(selected, CacheState::Missing | CacheState::Partial) && previous == CacheState::Unknown;
+            assert_eq!(
+                row["cached"],
+                if pending_previous { "unknown".into() } else { format!("{selected:?}").to_lowercase() },
+                "the chooser must keep observing an unresolved update candidate: selected={selected:?} previous={previous:?}"
             );
         }
     }
