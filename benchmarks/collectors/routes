@@ -37,6 +37,7 @@ from benchmarks.helpers.route_binary_fixture import (
     seed_binary_files,
 )
 from benchmarks.helpers.route_cases import RouteCase, measured_cases
+from benchmarks.helpers.route_connection_errors import collect_connection_errors
 from benchmarks.helpers.route_fixtures import (
     corpus_config,
     network_fixture,
@@ -183,6 +184,7 @@ def main() -> int:
         metrics.update(collect_networks(args.quick))
         metrics.update(collect_proxies(args.quick))
         metrics.update(collect_workload_controls(args.quick))
+        metrics.update(collect_connection_errors(args.quick))
 
     service = ServiceInstance()
     service.assets_dir = clone_benchmark_assets(

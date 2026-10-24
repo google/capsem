@@ -44,6 +44,12 @@ def validate(registered: set[str], coverage: dict) -> None:
             assert entry["cases"] and len(entry["reason"]) >= 20, RATIONALE
         measured |= set(finite)
     debt, internal = set(coverage["unmeasured"]), set(coverage["internal"])
+    errors = coverage.get('connection_errors',{})
+    if errors:
+        assert errors['success_coverage'] is False, RATIONALE
+        error_ops = set(errors['endpoints'])
+        assert error_ops <= debt and not error_ops & (measured | internal), RATIONALE
+        assert all(entry['status'] in {404,503} and entry['classification'] and entry['code'] for entry in errors['endpoints'].values()), RATIONALE
     assert not (measured & debt or measured & internal or debt & internal), RATIONALE
     assert measured | debt | internal == registered, (
         f"Missing: {sorted(registered - measured - debt - internal)}; "
@@ -240,4 +246,19 @@ def test_genuine_browser_upload_cases_keep_physical_archive_proof_explicit():
     assert coverage['unmeasured_cases']['POST /vms/{id}/files/content [physical-import-archive]']['owner'] == 'tests/ironbank/test_files_process_ledger.py', RATIONALE
     del cases['POST /vms/{id}/files/content']
     with pytest.raises(AssertionError,match='files/content'):
+        validate(registered_operations(),coverage)
+
+
+def test_disabled_error_paths_cannot_launder_success_or_auth_failures():
+    import copy
+    coverage = copy.deepcopy(config())
+    errors = coverage['connection_errors']
+    assert len(errors['endpoints']) == 7 and errors['success_coverage'] is False, RATIONALE
+    operation = 'POST /connections/google/authorize'
+    del coverage['unmeasured'][operation]
+    with pytest.raises(AssertionError):
+        validate(registered_operations(),coverage)
+    coverage = copy.deepcopy(config())
+    coverage['connection_errors']['success_coverage'] = True
+    with pytest.raises(AssertionError):
         validate(registered_operations(),coverage)

@@ -10,7 +10,7 @@ from .route_requests import service_target
 
 
 @contextmanager
-def network_target(label):
+def network_target(label,*,prepare=None):
     service = ServiceInstance(isolated_corp_config=True)
     try:
         service.assets_dir = clone_benchmark_assets(ASSETS_DIR, service.home_dir / 'benchmark-assets')
@@ -18,6 +18,8 @@ def network_target(label):
             'settings': {'app.auto_update': {'value': False, 'modified': 'route-fixture'}},
             'images': {'catalog': False},
         }))
+        if prepare is not None:
+            prepare(service)
         service.start()
         yield service_target(service, label), service
     finally:
