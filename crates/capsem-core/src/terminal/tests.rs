@@ -9,10 +9,14 @@ fn suspend_rollback_restores_only_the_retained_view_authority_without_replaying_
         terminal.publish(b"\x07\x1b]777;notify;Pause;Retained\x07\x1b]2;Working\x07");
         terminal.seal_views();
         let (late, _, _) = terminal.subscribe();
+        assert!(terminal.retains_controller(controller));
+        assert!(!terminal.retains_controller(late));
+        assert!(!terminal.controls(controller));
         assert!(terminal.focus(late, 120, 40).is_err());
         if released {
             terminal.release(controller);
         }
+        assert_eq!(terminal.retains_controller(controller), !released);
         // Accepted output and unfinished parser input must remain exact.
         terminal.publish(b"settled\x1b[38;2;10;");
         let before = terminal.checkpoint().unwrap();

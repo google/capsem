@@ -179,6 +179,12 @@ impl SessionTerminal {
         let inner = self.inner.lock().unwrap();
         inner.accepting_views && inner.controller == Some(view)
     }
+    /// Identity check for input queued behind the owner's ordered suspend.
+    /// The fence still rejects focus/resize and stops transport mutation, but
+    /// must not discard the retained controller's input before rollback.
+    pub fn retains_controller(&self, view: u64) -> bool {
+        self.inner.lock().unwrap().controller == Some(view)
+    }
     /// Fence viewer mutation while the owner settles accepted transport
     /// bytes. A restored continuation creates fresh authority; a failed
     /// suspend may reopen the existing views after rolling back the VM.
