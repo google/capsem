@@ -92,7 +92,7 @@ impl Publisher {
     }
 
     /// Re-open every saved publication; returns how many were restored.
-    pub async fn restore(self: &Arc<Self>, control: mpsc::Sender<ServiceToProcess>) -> Result<usize> {
+    pub async fn restore(self: &Arc<Self>, control: impl CommandSender) -> Result<usize> {
         let Some(saved) = &self.saved else {
             return Ok(0);
         };
@@ -133,7 +133,7 @@ impl Publisher {
         host: u16,
         guest: u16,
         target: PublicationTarget,
-        control: mpsc::Sender<ServiceToProcess>,
+        control: impl CommandSender,
     ) -> Result<PublicationInfo> {
         let Some(saved) = &self.saved else {
             let publication = self.publish(host, guest, target, control).await?;

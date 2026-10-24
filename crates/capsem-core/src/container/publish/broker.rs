@@ -48,7 +48,7 @@ impl Drop for Active {
 pub(super) async fn serve(
     owner: Arc<Publisher>,
     mut incoming: mpsc::Receiver<Incoming>,
-    control: mpsc::Sender<ServiceToProcess>,
+    control: impl CommandSender,
     router: Arc<companion::Router>,
     cancellation: CancellationToken,
 ) -> Result<()> {
@@ -318,10 +318,7 @@ pub(super) async fn serve(
     result.and(guest_cleanup).and(router_cleanup).and(audit_cleanup)
 }
 
-async fn abort_guest(
-    control: &mpsc::Sender<ServiceToProcess>,
-    flows: Vec<capsem_proto::router::FlowKey>,
-) -> Result<()> {
+async fn abort_guest(control: &impl CommandSender, flows: Vec<capsem_proto::router::FlowKey>) -> Result<()> {
     if flows.is_empty() {
         return Ok(());
     }

@@ -714,3 +714,5 @@ fn preview_bootstrap_and_handoff_credentials_are_scoped_and_single_use() {
         "a descriptor handoff must not replay"
     );
 }
+
+mod command_sender;

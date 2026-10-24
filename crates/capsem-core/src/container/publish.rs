@@ -21,7 +21,9 @@ use tokio_util::sync::CancellationToken;
 
 mod admission;
 mod broker;
+mod command_sender;
 mod companion;
+pub use command_sender::CommandSender;
 mod registry;
 mod saved;
 mod security;
@@ -462,7 +464,7 @@ impl Publisher {
         host_port: u16,
         guest_port: u16,
         target: capsem_proto::PublicationTarget,
-        control: mpsc::Sender<ServiceToProcess>,
+        control: impl CommandSender,
     ) -> Result<Publication> {
         self.open(
             host_port,
@@ -479,7 +481,7 @@ impl Publisher {
         host_port: u16,
         guest_port: u16,
         target: capsem_proto::PublicationTarget,
-        control: mpsc::Sender<ServiceToProcess>,
+        control: impl CommandSender,
         action: crate::security_engine::network::NetworkLifecycleAction,
     ) -> Result<Publication> {
         let lifecycle = self.drain.lock().await;
@@ -718,7 +720,7 @@ impl Publisher {
         listener_port: u16,
         guest_port: u16,
         target: capsem_proto::PublicationTarget,
-        control: mpsc::Sender<ServiceToProcess>,
+        control: impl CommandSender,
     ) -> Result<capsem_proto::ipc::PublicationInfo> {
         let lifecycle = self.drain.lock().await;
         ensure!(!self.cancellation.is_cancelled(), "VM router is shutting down");
