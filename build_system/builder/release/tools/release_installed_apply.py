@@ -5,13 +5,12 @@ from __future__ import annotations
 import json
 import shlex
 import sys
-import time
 from pathlib import Path
 
 from capsem_builder.gate import config as gate_config
 
 from ... import crypto
-from .release_apply_receipt import activation_receipt
+from .release_apply_receipt import activation_receipt, system_monotonic_ns
 from .release_glowup import PairingIdentity
 
 
@@ -104,7 +103,7 @@ def complete(
         name: crypto.sha256((evidence / f"candidate-after-{name}.json").read_bytes()).hexdigest()
         for name in ("installed", "doctor", "winterfell")
     }
-    elapsed = time.monotonic_ns() - request["started_ns"]
+    elapsed = system_monotonic_ns() - request["started_ns"]
     if elapsed < request["elapsed_ns"]:
         raise ValueError("activation receipt monotonic clock predates original request")
     result["activation_verified_elapsed_ns"] = elapsed

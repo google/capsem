@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 from capsem_builder.release.tools import release_macos_apply, release_macos_pairing
+from capsem_builder.release.tools.release_apply_receipt import system_monotonic_ns
 
 from build_system.tests.packaging.test_macos_binary_apply import inputs as inputs
 
@@ -36,7 +37,7 @@ def evidence(root: Path, raw_inputs):
         "outcome": "transport_failure",
         "transport": "service_uds",
         "error_type": "ConnectionError",
-        "started_ns": time.monotonic_ns(),
+        "started_ns": system_monotonic_ns(),
         "elapsed_ns": 0,
     }
     verdict = {
@@ -88,6 +89,28 @@ def test_original_eof_and_native_pair_activation_remain_separate(inputs, tmp_pat
         report["capabilities"][field] is False
         for field in ("physical_vz_boot", "full_doctor", "installed_winterfell")
     )
+
+
+def test_activation_uses_the_same_system_epoch_as_the_original_request(inputs, tmp_path, monkeypatch):
+    pair = evidence(tmp_path, inputs)
+    path = tmp_path / "binary-apply-request.json"
+    request = json.loads(path.read_text())
+    request["started_ns"] = time.clock_gettime_ns(time.CLOCK_MONOTONIC)
+    path.write_text(json.dumps(request))
+    monkeypatch.setattr(time, "monotonic_ns", lambda: 100_000)
+    result = release_macos_apply.finish(tmp_path, pair, source=SOURCE, maximum=16384)
+    assert result["activation_verified_elapsed_ns"] >= request["elapsed_ns"]
+
+
+@pytest.mark.parametrize("field", ["started_ns", "elapsed_ns"])
+def test_activation_still_rejects_a_request_from_the_future(inputs, tmp_path, field):
+    pair = evidence(tmp_path, inputs)
+    path = tmp_path / "binary-apply-request.json"
+    request = json.loads(path.read_text())
+    request[field] += 1_000_000_000_000
+    path.write_text(json.dumps(request))
+    with pytest.raises(ValueError, match="activation predates original request"):
+        release_macos_apply.finish(tmp_path, pair, source=SOURCE, maximum=16384)
 
 
 @pytest.mark.parametrize(

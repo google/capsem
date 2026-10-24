@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -68,6 +69,16 @@ def arguments(tmp_path):
         maximum=4096,
         transport="service_uds",
     )
+
+
+def test_request_clock_has_a_system_origin_with_legacy_process_local_monotonic(tmp_path, monkeypatch):
+    # Python 3.9 on macOS subtracts a different startup epoch in each process.
+    monkeypatch.setattr(time, "monotonic_ns", lambda: 100_000)
+    lower = time.clock_gettime_ns(time.CLOCK_MONOTONIC)
+    result = probe().request_apply(Transport(receipt({"status": "succeeded", "exit_code": 0})), arguments(tmp_path))
+    upper = time.clock_gettime_ns(time.CLOCK_MONOTONIC)
+    assert lower <= result["started_ns"] <= upper
+    assert 0 <= result["elapsed_ns"] <= upper - lower
 
 
 @pytest.mark.parametrize(

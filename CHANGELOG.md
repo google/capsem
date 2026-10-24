@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Measure update activation across processes with the system monotonic clock,
+  including macOS package checks running Python 3.9.
+
 - Verify retained workspace transports before remounting the shared device
   during guest reconnect.
 

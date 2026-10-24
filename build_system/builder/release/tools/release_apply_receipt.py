@@ -2,7 +2,18 @@
 
 from __future__ import annotations
 
+import time
+
 from .release_transition import validate_transition_verdict
+
+
+def system_monotonic_ns() -> int:
+    """Use the OS epoch shared by request and verifier processes.
+
+    Python 3.9 macOS monotonic_ns subtracts a process-local startup epoch.
+    CLOCK_MONOTONIC is system-wide on both supported Unix platforms.
+    """
+    return time.clock_gettime_ns(time.CLOCK_MONOTONIC)
 
 
 def activation_receipt(

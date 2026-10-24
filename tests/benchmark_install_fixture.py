@@ -128,10 +128,9 @@ def load(path: Path, declaration: dict):
 
 def linux_receipt(root: Path, selected):
     """Canonical source proof builders over controlled bytes; no native claim."""
-    import time
-
     from capsem_builder.release.tools import release_glowup as proof
     from capsem_builder.release.tools import release_installed_apply
+    from capsem_builder.release.tools.release_apply_receipt import system_monotonic_ns
 
     from benchmarks.helpers.install_receipt import pairing
 
@@ -161,7 +160,7 @@ def linux_receipt(root: Path, selected):
         "outcome": "transport_failure",
         "transport": "service_uds",
         "error_type": "ConnectionError",
-        "started_ns": time.monotonic_ns() - 2000000,
+        "started_ns": system_monotonic_ns() - 2000000,
         "elapsed_ns": 1000000,
     }
     transition = {

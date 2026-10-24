@@ -5,10 +5,9 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import time
 from pathlib import Path
 
-from .release_apply_receipt import activation_receipt
+from .release_apply_receipt import activation_receipt, system_monotonic_ns
 from .release_glowup import validate_installed_evidence
 from .release_macos_pairing import validate_pair, validate_public_pair
 
@@ -108,7 +107,7 @@ def finish(root: Path, spec: dict, *, source: str, maximum: int) -> dict:
         installed[phase] = evidence
     retirement = _read(root, "binary-apply-retirement.json", maximum)
     validate_native(installed, retirement, spec, source=source)
-    elapsed = time.monotonic_ns() - request["started_ns"]
+    elapsed = system_monotonic_ns() - request["started_ns"]
     if elapsed < request["elapsed_ns"]:
         raise ValueError("paired activation predates original request")
     result.update(

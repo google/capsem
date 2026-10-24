@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import time
 from pathlib import Path
 
 from capsem_builder.release.tools.release_apply_receipt import (
     activation_receipt as activation_receipt,
 )
+from capsem_builder.release.tools.release_apply_receipt import system_monotonic_ns
 from capsem_builder.release.tools.release_transition import load_update_audit
 
 from helpers.http_measurement import validate_limits
@@ -66,7 +66,7 @@ def request_apply(owner, args):
         for row in rows
     ):
         raise ValueError("candidate was handled before original Apply request")
-    started = time.monotonic_ns()
+    started = system_monotonic_ns()
     result = {
         "schema": "capsem.installed_apply_request.v1",
         "source": args.source,
@@ -114,7 +114,7 @@ def request_apply(owner, args):
                 if status == "failed"
                 else "invalid_response"
             )
-    result["elapsed_ns"] = time.monotonic_ns() - started
+    result["elapsed_ns"] = system_monotonic_ns() - started
     args.output.write_text(json.dumps(result, sort_keys=True) + "\n")
     return result
 

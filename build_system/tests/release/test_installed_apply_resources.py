@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import json
-import time
 from pathlib import Path
 
 import pytest
 from capsem_builder import crypto
 from capsem_builder.release.tools import local_release_glowup
 from capsem_builder.release.tools import release_installed_apply as apply
+from capsem_builder.release.tools.release_apply_receipt import system_monotonic_ns
 from capsem_builder.release.tools.release_glowup import PairingIdentity
 from capsem_builder.release.tools.release_update_audit import (
     TransitionEvidenceError,
@@ -52,7 +52,7 @@ def proof_files(root: Path):
         "source_commit": arguments["source_commit"],
         "attempts": 1,
         "after_line": 0,
-        "started_ns": time.monotonic_ns(),
+        "started_ns": system_monotonic_ns(),
         "elapsed_ns": 0,
         "outcome": "transport_failure",
         "error_type": "ConnectionError",
