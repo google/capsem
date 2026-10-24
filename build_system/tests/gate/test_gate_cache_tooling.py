@@ -1,9 +1,12 @@
 """Gate tool adapters use policy-owned keyed cache stages."""
 
+from contextlib import nullcontext
 from pathlib import Path
 
+import pytest
 from capsem_builder import gatelaunch
 from capsem_builder.cache.config import load_policy
+from capsem_builder.cache.leases import shared_use
 from capsem_builder.cache.paths import CachePaths
 from capsem_builder.cache.telemetry import ReuseScope
 from capsem_builder.gate import cachetooling
@@ -150,19 +153,23 @@ def test_dependency_free_bootstrap_matches_the_typed_tool_selection(monkeypatch)
     )
 
 
-def test_compiler_cache_server_is_scoped_to_the_gate_command(monkeypatch) -> None:
+@pytest.mark.parametrize("other_compiler", [False, True])
+def test_compiler_cache_server_is_scoped_to_the_gate_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, other_compiler: bool,
+) -> None:
+    paths = CachePaths(repository_root=tmp_path, policy=CACHE_POLICY)
+    monkeypatch.setattr(cachetooling.cachelayout, "cache_paths", lambda _config: paths)
     monkeypatch.setattr(cachetooling.shutil, "which", lambda _: "/usr/bin/sccache")
     runner = RecordingRunner(ROOT)
     runner.observing = False
     resource = cachetooling.CompilerCache(CONFIG, runner)
 
-    with held(resource):
+    with shared_use(paths, "rust-sccache") if other_compiler else nullcontext(), held(resource):
         assert resource.environment()[CONFIG.environment.sccache_idle_timeout] == "0"
 
     assert [command.argv for command in runner.commands] == [
         ("sccache", "--dist-status"),
-        ("sccache", "--stop-server"),
-    ]
+    ] + ([] if other_compiler else [("sccache", "--stop-server")])
     assert all(
         command.env[CONFIG.environment.sccache_base_dirs] == str(ROOT)
         for command in runner.commands
