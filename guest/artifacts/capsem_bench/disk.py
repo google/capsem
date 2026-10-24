@@ -20,18 +20,23 @@ from .helpers import (
     fdatasync,
     throughput_mbps,
 )
+from .io_capture import Operations
 
 
 def bench_seq_write(testfile, size_bytes):
     """Sequential write with 1MB blocks, fdatasync at end."""
     buf = b"\0" * BLOCK_1M
     count = size_bytes // BLOCK_1M
+    if size_bytes % BLOCK_1M:
+        raise ValueError("disk bytes must be whole operations")
+    observed = Operations(count)
 
     fd = os.open(testfile, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
     try:
         start = time.monotonic()
         for _ in range(count):
-            os.write(fd, buf)
+            op_start = time.monotonic()
+            observed.record(op_start, BLOCK_1M, os.write(fd, buf))
         fdatasync(fd)
         elapsed = time.monotonic() - start
     finally:
@@ -42,6 +47,7 @@ def bench_seq_write(testfile, size_bytes):
         "block_size": BLOCK_1M,
         "duration_ms": round(elapsed * 1000, 1),
         "throughput_mbps": throughput_mbps(size_bytes, elapsed),
+        **observed.finish(elapsed),
     }
 
 
@@ -49,6 +55,9 @@ def bench_seq_read(testfile, size_bytes):
     """Sequential read with 1MB blocks after dropping caches."""
     buf = b"\0" * BLOCK_1M
     count = size_bytes // BLOCK_1M
+    if size_bytes % BLOCK_1M:
+        raise ValueError("disk bytes must be whole operations")
+    observed = Operations(count)
     fd = os.open(testfile, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
     try:
         for _ in range(count):
@@ -62,10 +71,10 @@ def bench_seq_read(testfile, size_bytes):
     fd = os.open(testfile, os.O_RDONLY)
     try:
         start = time.monotonic()
-        while True:
+        for _ in range(count):
+            op_start = time.monotonic()
             data = os.read(fd, BLOCK_1M)
-            if not data:
-                break
+            observed.record(op_start, BLOCK_1M, len(data))
         elapsed = time.monotonic() - start
     finally:
         os.close(fd)
@@ -75,6 +84,7 @@ def bench_seq_read(testfile, size_bytes):
         "block_size": BLOCK_1M,
         "duration_ms": round(elapsed * 1000, 1),
         "throughput_mbps": throughput_mbps(size_bytes, elapsed),
+        **observed.finish(elapsed),
     }
 
 
@@ -83,6 +93,7 @@ def bench_rand_write_4k(testfile):
     file_size = RAND_IO_SIZE_MB * 1024 * 1024
     max_offset = file_size - BLOCK_4K
     buf = os.urandom(BLOCK_4K)
+    observed = Operations(RAND_IO_COUNT)
     offsets = [random.randint(0, max_offset) & ~(BLOCK_4K - 1)
                for _ in range(RAND_IO_COUNT)]
 
@@ -91,8 +102,10 @@ def bench_rand_write_4k(testfile):
         os.ftruncate(fd, file_size)
         start = time.monotonic()
         for off in offsets:
-            os.pwrite(fd, buf, off)
+            op_start = time.monotonic()
+            written = os.pwrite(fd, buf, off)
             fdatasync(fd)
+            observed.record(op_start, BLOCK_4K, written)
         elapsed = time.monotonic() - start
     finally:
         os.close(fd)
@@ -105,6 +118,7 @@ def bench_rand_write_4k(testfile):
         "duration_ms": round(elapsed * 1000, 1),
         "iops": iops,
         "throughput_mbps": throughput_mbps(total_bytes, elapsed),
+        **observed.finish(elapsed),
     }
 
 
@@ -112,6 +126,7 @@ def bench_rand_read_4k(testfile):
     """Random 4K reads after dropping caches."""
     file_size = RAND_IO_SIZE_MB * 1024 * 1024
     max_offset = file_size - BLOCK_4K
+    observed = Operations(RAND_IO_COUNT)
     offsets = [random.randint(0, max_offset) & ~(BLOCK_4K - 1)
                for _ in range(RAND_IO_COUNT)]
 
@@ -128,7 +143,9 @@ def bench_rand_read_4k(testfile):
     try:
         start = time.monotonic()
         for off in offsets:
-            os.pread(fd, BLOCK_4K, off)
+            op_start = time.monotonic()
+            data = os.pread(fd, BLOCK_4K, off)
+            observed.record(op_start, BLOCK_4K, len(data))
         elapsed = time.monotonic() - start
     finally:
         os.close(fd)
@@ -141,6 +158,7 @@ def bench_rand_read_4k(testfile):
         "duration_ms": round(elapsed * 1000, 1),
         "iops": iops,
         "throughput_mbps": throughput_mbps(total_bytes, elapsed),
+        **observed.finish(elapsed),
     }
 
 

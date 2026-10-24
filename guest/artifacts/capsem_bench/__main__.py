@@ -32,6 +32,14 @@ PROTOCOL_ENV_FLAGS = (
 
 
 def main():
+    from .io_capture import capture, environment_budget
+
+    budget = environment_budget()
+    with capture(budget):
+        _main(budget)
+
+
+def _main(io_budget):
     args = sys.argv[1:]
     mode = args[0] if args else "all"
 
@@ -155,7 +163,9 @@ def main():
 
     json_path = "/tmp/capsem-benchmark.json"
     with open(json_path, "w") as f:
-        json.dump(output, f, indent=2)
+        from .io_capture import write_artifact
+
+        write_artifact(output, f, io_budget)
     console.print(f"\nJSON results saved to {json_path}")
 
 

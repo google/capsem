@@ -192,3 +192,19 @@ def test_io_profile_reports_sequential_and_random_iops(tmp_path):
     assert profile["random"]["read_4k"]["latency_ms"]["p95"] >= 0
     assert profile["random"]["write_4k_sync"]["sync_each"] is True
     assert profile["random"]["write_4k_sync"]["latency_ms"]["p95"] >= 0
+
+
+def test_storage_summary_preserves_original_unrounded_operation_observations():
+    from capsem_bench.storage_operations import _io_summary
+
+    samples = [0.000123456789, 0.987654321, 0.000000123]
+    from capsem_bench.io_capture import Budget, capture
+
+    with capture(Budget(10, 100, 10000)):
+        result = _io_summary(3 * 4096, 4096, 3, 0.00123456789, samples)
+    assert result["raw_io"] == {
+        "latencies_ms": samples,
+        "count": 3,
+        "completed_bytes": 3 * 4096,
+        "elapsed_seconds": 0.00123456789,
+    }
