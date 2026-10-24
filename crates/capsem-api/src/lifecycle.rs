@@ -147,7 +147,13 @@ impl std::fmt::Display for VmLifecycleState {
 impl VmLifecycleState {
     pub fn available_actions(self, can_resume: bool) -> Vec<VmAction> {
         match self {
-            Self::Running => vec![VmAction::Pause, VmAction::Stop, VmAction::Fork, VmAction::Delete],
+            Self::Running => {
+                let mut actions = vec![VmAction::Stop, VmAction::Fork, VmAction::Delete];
+                if capsem_proto::warm_suspend_available() {
+                    actions.insert(0, VmAction::Pause);
+                }
+                actions
+            }
             Self::Stopped => {
                 if can_resume {
                     vec![VmAction::Start, VmAction::Fork, VmAction::Delete]
@@ -156,7 +162,7 @@ impl VmLifecycleState {
                 }
             }
             Self::Suspended => {
-                if can_resume {
+                if can_resume && capsem_proto::warm_suspend_available() {
                     vec![VmAction::Resume, VmAction::Fork, VmAction::Delete]
                 } else {
                     vec![VmAction::Fork, VmAction::Delete]

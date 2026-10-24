@@ -428,7 +428,12 @@ fn lifecycle_values_preserve_the_existing_wire_contract() {
 
 #[test]
 fn action_availability_distinguishes_resume_from_start() {
-    assert_eq!(VmLifecycleState::Suspended.available_actions(true)[0], VmAction::Resume);
+    assert!(!VmLifecycleState::Running
+        .available_actions(false)
+        .contains(&VmAction::Pause));
+    assert!(!VmLifecycleState::Suspended
+        .available_actions(true)
+        .contains(&VmAction::Resume));
     assert_eq!(VmLifecycleState::Stopped.available_actions(true)[0], VmAction::Start);
     assert_eq!(
         VmLifecycleState::Defunct.available_actions(true),
