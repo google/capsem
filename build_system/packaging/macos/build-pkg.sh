@@ -299,8 +299,8 @@ productbuild \
     --package-path "$WORK_DIR" \
     "$WORK_DIR/Capsem-$VERSION-unsigned.pkg"
 
-# Sign if identity provided
-OUTPUT_PKG="$(cd "$SCRIPT_DIR/../../.." && pwd)/cache/target/packages/Capsem-$VERSION.pkg"
+PACKAGE_DIR="$(python3 "$SCRIPT_DIR/../../scripts/release/package-output-directory.py")"
+OUTPUT_PKG="$PACKAGE_DIR/Capsem-$VERSION.pkg"
 mkdir -p "$(dirname "$OUTPUT_PKG")"
 if [ -n "$SIGNING_IDENTITY" ]; then
     echo "=== Signing .pkg ==="

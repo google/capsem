@@ -489,10 +489,13 @@ def test_native_package_owners_use_the_canonical_target_root() -> None:
     assert "cp dist/*.deb" not in workflow
     assert "cache/target/packages/Capsem-$VERSION.pkg" in workflow
     assert "cp cache/target/packages/*.deb" in workflow
-    assert "/cache/target/packages/Capsem-$VERSION.pkg" in macos_builder
-    assert (
-        'PKG="$ROOT/cache/target/packages/Capsem-$VERSION.pkg"' in local_macos_builder
-    )
+    resolver = (ROOT / "build_system/scripts/release/package-output-directory.py").read_text()
+    assert 'load_paths(ROOT).stage("packages")' in resolver
+    for builder in (macos_builder, local_macos_builder):
+        assert 'PACKAGE_DIR="$(python3 "$SCRIPT_DIR/../../scripts/release/package-output-directory.py")"' in builder
+        assert '$PACKAGE_DIR/Capsem-$VERSION.pkg' in builder
+        assert '/cache/target/packages/Capsem-$VERSION.pkg' not in builder
+
 
 
 def test_test_evidence_and_coverage_use_canonical_target_roots() -> None:

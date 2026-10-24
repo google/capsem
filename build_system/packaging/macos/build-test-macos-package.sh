@@ -84,7 +84,8 @@ bash "$SCRIPT_DIR/build-pkg.sh" \
     "$ASSETS_DIR" \
     "$VERSION"
 
-PKG="$ROOT/cache/target/packages/Capsem-$VERSION.pkg"
+PACKAGE_DIR="$(python3 "$SCRIPT_DIR/../../scripts/release/package-output-directory.py")"
+PKG="$PACKAGE_DIR/Capsem-$VERSION.pkg"
 test -s "$PKG"
 mkdir -p "$(dirname "$SBOM")"
 python3 build_system/scripts/release/generate-host-binary-sbom.py --output "$SBOM" "$PKG"

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import re
+import shutil
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -224,3 +227,49 @@ def test_local_package_consumes_the_binaries_cargo_produced(tmp_path: Path) -> N
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "PACKAGE_INPUTS_FOUND" in result.stdout
+
+
+@pytest.mark.parametrize("authority", ["primary", "linked", "configured"])
+def test_macos_package_outputs_share_the_admitted_cache_owner(
+    tmp_path: Path, authority: str
+) -> None:
+    """Run both real shell resolutions against real policy/common-Git metadata."""
+    primary = tmp_path / "primary"
+    checkout = primary if authority == "primary" else tmp_path / "worktree"
+    checkout.mkdir(parents=True)
+    (checkout / "config").mkdir()
+    shutil.copy2(ROOT / "config/cache.toml", checkout / "config/cache.toml")
+    git_dir = primary / ".git/worktrees/fixture"
+    git_dir.mkdir(parents=True)
+    (git_dir / "commondir").write_text("../..\n")
+    if checkout != primary:
+        (checkout / ".git").write_text(f"gitdir: {git_dir}\n")
+    helper = checkout / "build_system/scripts/release/package-output-directory.py"
+    helper.parent.mkdir(parents=True)
+    if (ROOT / "build_system/scripts/release" / helper.name).exists():
+        shutil.copy2(ROOT / "build_system/scripts/release" / helper.name, helper)
+    scripts = checkout / "build_system/packaging/macos"
+    scripts.mkdir(parents=True)
+    env = os.environ.copy()
+    env["PATH"] = str(Path(sys.executable).parent) + os.pathsep + env["PATH"]
+    env.pop("CAPSEM_CACHE_AUTHORITY", None)
+    expected_root = primary
+    if authority == "configured":
+        expected_root = tmp_path / "explicit-owner"
+        env["CAPSEM_CACHE_AUTHORITY"] = str(expected_root)
+    from capsem_builder.cache.config import load_paths
+    expected = load_paths(checkout, environment=env).stage("packages")
+    assert expected.is_relative_to(expected_root)
+    for name in ["build-pkg.sh", "build-test-macos-package.sh"]:
+        source = (MACOS / name).read_text()
+        declarations = [line for line in source.splitlines() if line.startswith("PACKAGE_DIR=")]
+        variable = "OUTPUT_PKG" if name == "build-pkg.sh" else "PKG"
+        declarations.append(next(line for line in source.splitlines() if line.startswith(variable + "=")))
+        result = subprocess.run(
+            ["bash", "-c", "\n".join(declarations) + f'\nprintf "%s" "${variable}"', "package-output"],
+            cwd=checkout, env={**env, "SCRIPT_DIR": str(scripts), "ROOT": str(checkout), "VERSION": "0.7.1"},
+            capture_output=True, text=True, timeout=10, check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        assert Path(result.stdout) == expected / "Capsem-0.7.1.pkg"
+    assert not expected.exists(), "resolving the admitted destination must not write"
