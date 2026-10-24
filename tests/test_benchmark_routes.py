@@ -94,6 +94,7 @@ def test_fixture_diagnostics_do_not_corrupt_collector_json(
     monkeypatch.setattr(collector, "collect_run_purge", lambda *_: {})
     monkeypatch.setattr(collector, "collect_save_controls", lambda *_: {})
     monkeypatch.setattr(collector, "collect_ask_controls", lambda *_: {})
+    monkeypatch.setattr(collector, "collect_reload_controls", lambda *_: {})
     # This is a collector-output wiring test, never an implicit product/native
     # launcher when a future finite collector is added without its double.
     def unexpected_child(*args,**kwargs):

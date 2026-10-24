@@ -32,7 +32,7 @@ def records(path,maximum):
 
 
 @contextmanager
-def ask_target(label,cfg):
+def ask_target(label,cfg,*,policy_factory=policy):
     from .route_lifecycle_fixture import lifecycle_target
     with tempfile.TemporaryDirectory(prefix='capsem-route-asks-') as temporary:
         transcript = Path(temporary)/'upstream.jsonl'
@@ -40,7 +40,7 @@ def ask_target(label,cfg):
         try:
             mock,ready = start_mock_server(request_log=transcript,dns_answers='routable')
             def prepare(service):
-                (service.home_dir/'corp.toml').write_text(policy(ready))
+                (service.home_dir/'corp.toml').write_text(policy_factory(ready))
             with lifecycle_target(label,prepare=prepare) as (target,service,reference,certificate):
                 yield target,service,reference,certificate,lambda:records(transcript,cfg['max_log_bytes'])
         finally:

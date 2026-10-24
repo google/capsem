@@ -57,6 +57,7 @@ from benchmarks.helpers.route_networks import collect_networks
 from benchmarks.helpers.route_policy import collect_policy
 from benchmarks.helpers.route_preview import collect_preview_controls
 from benchmarks.helpers.route_proxies import collect_proxies
+from benchmarks.helpers.route_reload import collect_reload_controls
 from benchmarks.helpers.route_requests import Target, request, request_input, route_load_config
 from benchmarks.helpers.route_run_purge import collect_run_purge
 from benchmarks.helpers.route_save import collect_save_controls
@@ -199,6 +200,7 @@ def main() -> int:
         metrics.update(collect_run_purge(args.quick))
         metrics.update(collect_save_controls(args.quick))
         metrics.update(collect_ask_controls(args.quick))
+        metrics.update(collect_reload_controls(args.quick))
 
     service = ServiceInstance()
     service.assets_dir = clone_benchmark_assets(

@@ -356,3 +356,6 @@ see [save route evidence](references/save-routes.md).
 
 For original HTTP Ask resolution and separate pending/completion clocks,
 see [Ask route evidence](references/ask-routes.md).
+
+For live corporate reload and original flow block/restore checks,
+see [reload route evidence](references/reload-routes.md).

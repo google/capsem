@@ -25,6 +25,7 @@ from .benchmarknetworkschema import DiagnosticCorpusConfig, NetworkRouteConfig
 from .benchmarkpolicyschema import PolicyRouteConfig
 from .benchmarkpreviewschema import PreviewRouteConfig
 from .benchmarkproxyschema import ProxyRouteConfig
+from .benchmarkreloadschema import ReloadRouteConfig
 from .benchmarkrunpurgeschema import RunPurgeConfig
 from .benchmarksaveschema import SaveRouteConfig
 from .benchmarkstreamschema import StreamConfig, StreamEndpointEvidence
@@ -91,6 +92,7 @@ class RouteCoverageConfig(Strict):
     run_purge: RunPurgeConfig
     save_controls: SaveRouteConfig
     ask_controls: AskRouteConfig
+    reload_controls: ReloadRouteConfig
     unmeasured: dict[str, RouteDebtConfig]
     internal: dict[str, RouteDebtConfig]
     unmeasured_cases: dict[str, RouteDebtConfig]
