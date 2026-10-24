@@ -11,6 +11,8 @@ invalidated it failed the complete gate at `warm-base` with "failed to read
 from __future__ import annotations
 
 import re
+import shlex
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -26,6 +28,51 @@ cached image is next rebuilt.
 
 
 FETCH = "RUN cargo fetch --locked"
+
+
+def _coverage_prewarm_command() -> list[str]:
+    source = DOCKERFILE.read_text(encoding="utf-8").replace("\\\n", " ")
+    instruction = next(line for line in source.splitlines() if line.startswith("RUN ") and "cargo llvm-cov show-env" in line)
+    return shlex.split(instruction.removeprefix("RUN "))
+
+
+def test_coverage_prewarm_uses_the_actual_lanes_environment_flags() -> None:
+    healthy = '''cargo() {
+    if [ "$1" = llvm-cov ] && [ "$2" = show-env ]; then
+        printf '%s\\n' "$@" >&2
+        printf 'export CAPSEM_COVERAGE_PREWARM_PROBE=ready\\n'
+    else
+        test "$CAPSEM_COVERAGE_PREWARM_PROBE" = ready
+    fi
+}
+export -f cargo
+exec "$@"
+'''
+    result = subprocess.run(["bash", "-c", healthy, "prewarm-fixture", *_coverage_prewarm_command()], capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result
+    arguments = result.stderr.splitlines()
+    assert arguments[:2] == ["llvm-cov", "show-env"]
+    assert "--sh" in arguments and "--export-prefix" not in arguments
+    runtime = tomllib.loads((PROJECT_ROOT / "config/gate.toml").read_text())["modules"]["rust_coverage"]
+    assert ("--no-cfg-coverage" in arguments) == ("--no-cfg-coverage" in runtime)
+    script = (PROJECT_ROOT / "build_system/scripts/test/test-linux-rust.sh").read_text().replace("\\\n", " ")
+    linux = shlex.split(next(line for line in script.splitlines() if line.startswith("cargo llvm-cov nextest")))
+    assert ("--no-cfg-coverage" in arguments) == ("--no-cfg-coverage" in linux)
+
+
+def test_coverage_prewarm_propagates_environment_generation_failure() -> None:
+    command = _coverage_prewarm_command()
+    failure = '''cargo() {
+    if [ "$1" = llvm-cov ] && [ "$2" = show-env ]; then return 87; fi
+    echo unexpected-build-after-failed-environment
+    return 0
+}
+export -f cargo
+exec "$@"
+'''
+    result = subprocess.run(["bash", "-c", failure, "prewarm-fixture", *command], capture_output=True, text=True, timeout=10)
+    assert result.returncode == 87, result
+    assert "unexpected-build" not in result.stdout
 
 
 def _copied_before_the_fetch(dockerfile: str) -> set[str]:

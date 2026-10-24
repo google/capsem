@@ -79,6 +79,7 @@ RUN cargo build --locked --workspace --all-targets
 # uses. `cargo llvm-cov show-env` is the documented way to get exactly the
 # RUSTFLAGS and target directory the coverage run will use, so a build under
 # them produces artifacts the lane reuses rather than discards.
+# Match the lane's no-cfg-coverage mode, and preserve show-env's exit before eval.
 #
 # This matters because instrumentation changes every build fingerprint:
 # warming without these flags would leave the lane recompiling the whole
@@ -88,7 +89,8 @@ RUN cargo build --locked --workspace --all-targets
 # with "not found *.profraw files" and a fallback swallowed the failure, so
 # nothing was compiled at all and three subsequent "fixes" were built on a
 # step that had silently done nothing. A failed prewarm is a failed image.
-RUN bash -c 'eval "$(cargo llvm-cov show-env --export-prefix)" \
+RUN bash -euc 'coverage_env=$(cargo llvm-cov show-env --sh --no-cfg-coverage) \
+    && eval "$coverage_env" \
     && cargo build --locked --workspace --all-targets'
 
 USER root
