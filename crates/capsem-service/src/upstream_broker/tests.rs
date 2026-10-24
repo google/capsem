@@ -785,6 +785,7 @@ async fn opaque_selections_cannot_cross_worker_generations() {
 
 #[tokio::test]
 async fn active_descriptor_capacity_is_bounded_and_recovers_after_release() {
+    capsem_foundation::unix::process::ensure_open_file_limit(capsem_proto::NETWORK_PROCESS_OPEN_FILE_LIMIT).unwrap();
     let upstream = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
     let (client, _publisher, authority, task) =
         start_broker(test_policy("policy-a", None, vec![upstream.local_addr().unwrap()]));
