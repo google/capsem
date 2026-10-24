@@ -194,5 +194,3 @@ def _bench_random_write_profile(testfile, size_bytes, op_size, count, sync_each=
     result = _io_summary(observed.completed_bytes, op_size, count, elapsed, observed.latencies)
     result["sync_each"] = sync_each
     return result
-
-
