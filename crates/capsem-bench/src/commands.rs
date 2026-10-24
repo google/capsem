@@ -174,6 +174,11 @@ fn run_with_probe(
         if quick {
             args.push("--quick".to_string());
         }
+        if *dimension == schema::Dimension::Install {
+            // The disposable installed owner must bind its package/activation
+            // receipts to the same exact source this runner records.
+            args.extend(["--source-commit".to_string(), commit.to_string()]);
+        }
         let collected = collector::run(&program, &args, timeout, limits)?;
         let after = probe()?;
 

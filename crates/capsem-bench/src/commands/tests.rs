@@ -177,3 +177,40 @@ fn default_dimension_inventory_names_missing_collectors() {
     .to_string();
     assert!(error.contains("routes") && error.contains("vsock"), "{error}");
 }
+
+#[test]
+fn install_collector_receives_the_exact_source_recorded_with_fresh_fitness() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(
+        root.path().join("install"),
+        format!(
+            "test \"$1\" = --source-commit && test \"$2\" = {SHA} || exit 23; \
+             echo '{{\"metrics\":{{\"activation.seconds\":{{\"unit\":\"seconds\",\"samples\":[1]}}}}}}'"
+        ),
+    )
+    .unwrap();
+    let path = root.path().join("store.db");
+    let mut probes = 0;
+    run_with_probe(
+        &[schema::Dimension::Install],
+        root.path(),
+        &path,
+        Duration::from_secs(2),
+        Some("/bin/sh"),
+        false,
+        "test",
+        SHA,
+        PROFILE,
+        || {
+            probes += 1;
+            Ok(fitness(true))
+        },
+    )
+    .unwrap();
+    assert_eq!(probes, 2);
+    let record = store::latest(&store::open(&path).unwrap(), schema::Dimension::Install, "x86_64")
+        .unwrap()
+        .unwrap();
+    assert_eq!(record.release.commit, SHA);
+    assert_eq!(record.metrics[0].samples.as_deref(), Some(&[1.0][..]));
+}
