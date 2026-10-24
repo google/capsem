@@ -19,6 +19,8 @@ function /bin/launchctl {{
         printf '%s' {shlex.quote(output)} >&2
         return {status}
     fi
+    printf '%s' {shlex.quote(diagnostic)} >&2
+    printf '%s' {shlex.quote(diagnostic)}
     return {stop}
 }}
 capsem_stop_launch_agent gui/12345 /absent-source-plist
@@ -113,3 +115,20 @@ capsem_stop_launch_agent gui/12345 {shlex.quote(str(plist))}
         "bootout gui/12345/com.capsem.service", "print gui/12345/com.capsem.service",
     ]
     assert plist.read_bytes() == original
+
+
+@pytest.mark.parametrize("stop", [0, 5, 127])
+def test_mac_refusal_records_exact_bootout_exit_without_manager_output(stop: int) -> None:
+    canary = "synthetic-private-bootout-detail"
+    result = probe("Darwin", 0, "loaded-query-private-detail", stop=stop, diagnostic=canary)
+    assert result.returncode == 1
+    assert f"bootout_exit={stop} print_exit=0" in result.stderr
+    assert canary not in result.stdout + result.stderr
+    assert "loaded-query-private-detail" not in result.stdout + result.stderr
+
+
+def test_mac_unverifiable_absence_retains_both_original_exit_codes() -> None:
+    result = probe("Darwin", 77, "private-query-error", stop=5)
+    assert result.returncode == 1
+    assert "bootout_exit=5 print_exit=77" in result.stderr
+    assert "private-query-error" not in result.stdout + result.stderr

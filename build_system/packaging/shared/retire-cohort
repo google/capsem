@@ -123,20 +123,26 @@ capsem_retire_named_cohort() {
 # Confirm manager quiescence, including ordinary already-stopped reinstalls.
 # Never interpret a generic query failure as absence of the target service.
 capsem_stop_launch_agent() {
-    local domain="$1" uid="${1#gui/}" state status expected
+    local domain="$1" uid="${1#gui/}" state status expected bootout_status=0
     case "$uid" in ''|0|*[!0-9]*) return 1 ;; esac
     [ "$domain" = "gui/$uid" ] || return 1
     # Never let a user-writable plist choose a root/implicit-domain unload target.
-    /bin/launchctl bootout "$domain/com.capsem.service" 2>/dev/null || true
+    # Preserve the original exit while keeping manager-controlled details private.
+    # A nonzero bootout never proves absence; only the exact query below can.
+    if /bin/launchctl bootout "$domain/com.capsem.service" >/dev/null 2>&1; then
+        bootout_status=0
+    else
+        bootout_status=$?
+    fi
     if state=$(LC_ALL=C /bin/launchctl print "$domain/com.capsem.service" 2>&1 >/dev/null); then
-        echo 'capsem: selected LaunchAgent remains loaded' >&2
+        printf 'capsem: selected LaunchAgent remains loaded (bootout_exit=%s print_exit=0)\n' "$bootout_status" >&2
         return 1
     else
         status=$?
     fi
     expected=$(printf 'Bad request.\nCould not find service "com.capsem.service" in domain for user gui: %s' "$uid")
     if [ "$status" -ne 113 ] || [ "$state" != "$expected" ]; then
-        echo 'capsem: cannot verify selected LaunchAgent absence' >&2
+        printf 'capsem: cannot verify selected LaunchAgent absence (bootout_exit=%s print_exit=%s)\n' "$bootout_status" "$status" >&2
         return 1
     fi
 }

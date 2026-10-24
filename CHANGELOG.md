@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Preserve exact LaunchAgent stop and state-query exit codes in installer refusal
+  diagnostics without exposing service-manager details or relaxing drain checks.
+
 - Verify original public predecessor manifest readiness through its actual
   artifact-bound assets JSON receipt, while retaining modern status checks.
 
