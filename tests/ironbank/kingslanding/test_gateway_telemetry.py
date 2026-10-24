@@ -97,7 +97,7 @@ def _gateway(service):
 def _private_logs(service):
     service.stop(cleanup=False)  # Flush both owned tracing workers first.
     logs = read_log_stream(service.tmp_dir / "service.log")
-    gateway = read_log_stream(service.tmp_dir / "logs/gateway.log")
+    gateway = read_log_stream(service.tmp_dir / "gateway.log")
     assert logs and gateway, "privacy assertion requires actual runtime logs"
     combined = logs + gateway
     assert not any(value in combined for value in CANARIES)
