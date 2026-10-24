@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Preserve protected inert retired `main.db` files during HOST admission without
+  reading or migrating them; incompatible current HOST ledgers still refuse.
+  Candidate activation separately fences retained legacy session state.
+
 - Confirm installer service-manager quiescence and repeat signed admission after
   draining old producers, before payload removal; preserve current in-service updates.
 

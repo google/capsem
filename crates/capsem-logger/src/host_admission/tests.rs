@@ -93,7 +93,7 @@ fn absent_state_is_distinct_from_partial_or_corrupt_existing_state() {
         assert_eq!(std::fs::read(&db).unwrap(), data);
     }
     std::fs::remove_file(&db).unwrap();
-    for name in ["host.db-wal", "host.db-shm", "host.db-journal", "main.db"] {
+    for name in ["host.db-wal", "host.db-shm", "host.db-journal"] {
         let partial = db.with_file_name(name);
         std::fs::write(&partial, b"original partial").unwrap();
         assert!(admit_preinstall_host_schema(&home, Duration::from_secs(1)).is_err());
@@ -292,3 +292,5 @@ fn separate_candidate_reads_snapshots_during_actual_row_writes() {
 }
 
 mod physical;
+
+mod retired;

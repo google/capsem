@@ -28,6 +28,8 @@ pub enum HostSchemaAdmission {
 ///
 /// SQLite may create an empty WAL and create/update its SHM coordination index;
 /// it cannot migrate schema or write ledger records through this connection.
+/// Retired `main.db` files are inert protected files, never opened as SQLite;
+/// their existence says nothing about retained session compatibility.
 /// Held descriptors reject other-account path authority; SQLite still opens
 /// the validated host path. Atomic containment against deliberately racing
 /// replacement by this same account is not a guarantee of this API.
@@ -55,13 +57,18 @@ fn admit(home: &Path, timeout: Duration, physical_archive: bool) -> anyhow::Resu
         return Ok(HostSchemaAdmission::Absent);
     };
     let main = file(&sessions, "host.db", uid)?;
-    let mut held_files = Vec::new();
-    for name in ["host.db-wal", "host.db-shm", "host.db-journal", "main.db"] {
+    let retired_main = file(&sessions, "main.db", uid)?;
+    let retired_present = retired_main.is_some();
+    let mut held_files: Vec<File> = retired_main.into_iter().collect();
+    for name in ["main.db-wal", "main.db-shm", "main.db-journal"] {
         if let Some(handle) = file(&sessions, name, uid)? {
-            ensure!(
-                main.is_some() && name != "main.db",
-                "partial or retired host ledger state"
-            );
+            ensure!(retired_present, "partial retired main ledger state");
+            held_files.push(handle);
+        }
+    }
+    for name in ["host.db-wal", "host.db-shm", "host.db-journal"] {
+        if let Some(handle) = file(&sessions, name, uid)? {
+            ensure!(main.is_some(), "partial host ledger state");
             held_files.push(handle);
         }
     }
