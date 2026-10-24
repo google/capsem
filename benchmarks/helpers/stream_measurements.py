@@ -33,9 +33,9 @@ def service_gateway(service) -> Gateway:
     raise RuntimeError("service gateway did not publish its endpoint")
 
 
-def measure(metrics: dict, phase: str, root, operation):
+def measure(metrics: dict, phase: str, root, operation, *, roots=None, max_roots=None):
     """Record raw process-tree pressure beside a successful measured action."""
-    sampler = ProcessTreeSampler(root)
+    sampler = ProcessTreeSampler(root) if roots is None else ProcessTreeSampler(root,roots=roots,max_roots=max_roots)
     sampler.start()
     started = time.monotonic()
     try:

@@ -34,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keep optional metric exporter initialization and shutdown off the async service
   runtime so enabling telemetry cannot panic before the service becomes ready.
 
+- Bind finite native supervisor restart benchmark source cases with separate
+  admission, original retirement, readiness and reconnection clocks; retain
+  ordinary route confinement and stopped workspace preservation checks.
+
 - Declare a separate native restart benchmark dimension so supervisor work
   can retain its isolated owner without relaxing ordinary route confinement.
 

@@ -172,7 +172,7 @@ def service_arguments(service: ServiceInstance) -> list[str]:
 
 def service_environment(service: ServiceInstance) -> dict[str, str]:
     (service.home_dir / "corp.toml").write_text("")
-    (service.home_dir / "settings.toml").write_text('[settings."app.auto_update"]\nvalue = false\nmodified = "test"\n')
+    (service.home_dir / "settings.toml").write_text('[images]\ncatalog = false\n[settings."app.auto_update"]\nvalue = false\nmodified = "test"\n')
     return {
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
         "CAPSEM_HOME": str(service.home_dir), "CAPSEM_RUN_DIR": str(service.tmp_dir),

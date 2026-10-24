@@ -50,6 +50,12 @@ def validate(registered: set[str], coverage: dict) -> None:
         assert entry['collector'] == 'routes' and entry['target_scope'] == ('gateway' if operation in gateway_mints else 'both'), RATIONALE
         assert entry['cases'] and len(entry['reason']) >= 20, RATIONALE
     measured |= set(preview)
+    native = coverage.get('restart_controls',{}).get('endpoints',{})
+    assert not measured & set(native), RATIONALE
+    for operation,entry in native.items():
+        assert operation == 'POST /restart' and entry['collector'] == 'restart' and entry['target_scope'] == 'both', RATIONALE
+        assert entry['cases'] == {'managed-original':'cycles'} and (ROOT/'benchmarks/collectors/restart').exists(), RATIONALE
+    measured |= set(native)
     debt, internal = set(coverage["unmeasured"]), set(coverage["internal"])
     errors = coverage.get('connection_errors',{})
     if errors:
@@ -141,11 +147,13 @@ def test_gateway_owned_method_additions_cannot_hide_behind_proxy_inventory(monke
         validate(registered_operations(), config())
 
 
-@pytest.mark.parametrize("operation,owner", [
-    ("POST /restart", "tests/ironbank/test_sdk_restart.py"),
-])
-def test_mutation_debt_keeps_its_domain_fixture_owner(operation: str, owner: str) -> None:
-    assert config()["unmeasured"][operation]["owner"] == owner, RATIONALE
+def test_native_restart_requires_its_own_dimension_not_poll_or_missing_case() -> None:
+    import copy
+    coverage = copy.deepcopy(config())
+    assert set(coverage['restart_controls']['endpoints']) == {'POST /restart'}
+    del coverage['restart_controls']['endpoints']['POST /restart']
+    with pytest.raises(AssertionError,match='Missing'):
+        validate(registered_operations(),coverage)
 
 
 def test_stream_evidence_cannot_overlap_polls_or_hide_missing_registered_method() -> None:
@@ -228,7 +236,8 @@ def test_finite_empty_network_and_synthetic_diagnostics_bind_exact_four_operatio
     operations = measured_operations(coverage) | set(coverage['streaming'])
     for domain in ('images', 'policy', 'lifecycle', 'networks', 'proxies', 'workload_controls', 'network_members', 'credentials', 'mcp_controls', 'preview_controls', 'run_purge', 'save_controls', 'ask_controls', 'reload_controls'):
         operations |= set(coverage[domain]['endpoints'])
-    assert len(operations) == 104 and len(coverage['unmeasured']) == 12, RATIONALE
+    operations |= set(coverage['restart_controls']['endpoints'])
+    assert len(operations) == 105 and len(coverage['unmeasured']) == 11, RATIONALE
     assert len(coverage['internal']) == 7 and len(coverage['unmeasured_cases']) == 20, RATIONALE
     del coverage['networks']['endpoints']['POST /networks']
     with pytest.raises(AssertionError, match='POST /networks'):

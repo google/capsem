@@ -55,6 +55,27 @@ fixture instead. This means `routes` provides RPS for every route in its
 measured class, rather than claiming that arbitrary mutations are safe to
 replay as a load test.
 
+## Managed restart (`restart`)
+
+`capsem-gate bench --commit <exact-sha> restart` uses the existing disposable
+native supervisor owner. Ordinary route measurements remain confined. The
+default complete benchmark plan runs the confined selection with
+`--exclude restart`, then a separate native restart-only invocation of the same
+Rust runner. A complete ALL result requires the union of both sets of recording
+IDs, with identical source and configuration; the ordinary invocation alone is
+incomplete. Explicit mixed selections are partitioned the same way. Quick
+diagnostics exclude restart.
+
+The finite case restarts an isolated service with a known stopped workspace.
+HTTP 202 measures admission only. Separate raw clocks report observed original
+process retirement, new authenticated readiness, reconnection and verified
+registry/workspace preservation. Old-token rejection is checked on the new
+listener. CPU and sampled resident peaks follow only the owning fixture's
+stamped process roots, including replacements, through the existing sampler;
+these are not exact startup peaks. The case does not boot a VM, measure warm
+restore or certify live workload recovery. Native execution and two baseline /
+two candidate fitness-qualified runs are required before any performance claim.
+
 ## Boot timing
 
 Boot timing is measured independently from `capsem-bench`. The guest init script (`capsem-init`) records the wall-clock duration of each boot stage using `/proc/uptime`. The PTY agent sends these measurements to the host over the vsock control channel, where they are displayed as an inline table with a proportional bar chart.

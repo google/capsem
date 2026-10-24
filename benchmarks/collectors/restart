@@ -1,0 +1,27 @@
+#!/usr/bin/env python3
+"""Native-only supervisor endpoint samples through the canonical Rust runner."""
+import argparse
+import json
+import sys
+from contextlib import redirect_stdout
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0,str(ROOT/'tests'))
+sys.path.insert(0,str(ROOT))
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--quick',action='store_true')
+    args = parser.parse_args()
+    if args.quick:
+        parser.error('restart requires the native supervisor; quick is diagnostic and excludes it')
+    from benchmarks.helpers.route_restart import collect_restart
+    with redirect_stdout(sys.stderr):
+        metrics = collect_restart()
+    print(json.dumps({'metrics':metrics}))
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

@@ -3614,6 +3614,24 @@ target_scope = "both"
 reason = "Narrow explicitly allowed builtin headers/raw fetch calls return fixed mock bytes and independently deliver exactly one original nonce-bound upstream request each."
 cases = {headers = "cycles", "raw-body" = "cycles"}
 
+[benchmark.routes.restart_controls]
+dimension = "restart"
+cycles = 2
+timeout_seconds = 45
+poll_seconds = 0.05
+max_attempts = 900
+max_response_bytes = 1048576
+max_roots = 64
+workspace_files = 64
+max_workspace_bytes = 1048576
+max_registry_bytes = 1048576
+
+[benchmark.routes.restart_controls.endpoints."POST /restart"]
+collector = "restart"
+target_scope = "both"
+reason = "Disposable native supervisor, original stopped workspace and exact owned replacement roots; admission, original retirement, new readiness and authenticated reconnection have separate clocks."
+cases = { managed-original = "cycles" }
+
 [benchmark.routes.reload_controls]
 cycles = 2
 quick_cycles = 1
@@ -3734,7 +3752,6 @@ cases = {"declared-port-wiring" = "cycles"}
 "GET /connections/authorizations/{transaction_id}" = { owner = "crates/capsem-service/src/connection_routes.rs", reason = "Production Runtime constructs only disabled unconfigured agy-native profile; successful enrollment metadata needs an implemented provider contract, never fabricated authority." }
 "GET /connections/{connection_id}" = { owner = "crates/capsem-service/src/connection_routes.rs", reason = "Production Runtime constructs only disabled unconfigured agy-native profile; successful enrollment metadata needs an implemented provider contract, never fabricated authority." }
 "POST /connections/google/authorize" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
-"POST /restart" = { owner = "tests/ironbank/test_sdk_restart.py", reason = "Needs disposable supervisor and real client reconnection; accepted restart is distinct from ready completion." }
 "POST /update/apply" = { owner = "crates/capsem-service/src/tests/update_routes.rs", reason = "Needs hermetic update subprocess and isolated runtime; plan-only response must not certify live update performance." }
 "POST /update/check" = { owner = "crates/capsem-service/src/tests/update_routes.rs", reason = "Needs hermetic update subprocess and isolated runtime; plan-only response must not certify live update performance." }
 "POST /vms/{id}/credential-grants" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
