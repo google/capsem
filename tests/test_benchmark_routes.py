@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from helpers.collector_source import source_main
 from helpers.stopped_workspace import BODY_ROUTE, BODY_URL, VM_ID
 
 from benchmarks.helpers.route_measurements import Observations
@@ -142,10 +143,7 @@ def test_fixture_diagnostics_do_not_corrupt_collector_json(
 def source_collector_main():
     # Fail before main constructs any resource, not after a missed double has
     # entered its native fixture. New finite imports inherit this exact rule.
-    unmocked = [name for name,value in vars(collector).items()
-        if name.startswith('collect_') and callable(value) and value.__module__ != __name__]
-    assert not unmocked, f'source wiring requires test-owned collectors: {unmocked}'
-    return collector.main()
+    return source_main(vars(collector),test_module=__name__)
 
 
 def test_missing_prepared_image_inputs_fail_before_product_children(monkeypatch) -> None:

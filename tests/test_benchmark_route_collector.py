@@ -12,6 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from capsem_builder.gate import config as gate_config
+from helpers.collector_source import source_main
 from helpers.http_measurement import MeasuredResponse
 
 from benchmarks.helpers.route_measurements import Observations
@@ -23,6 +24,16 @@ COLLECTOR = CONFIG.path(CONFIG.benchmark.run.collectors) / "routes"
 
 def _collector() -> dict:
     return runpy.run_path(str(COLLECTOR))
+
+
+def test_source_boundary_rejects_unmocked_collector_before_any_fixture():
+    import pytest
+    from helpers.collector_source import source_main
+    called = []
+    namespace = {'collect_new':json.loads,'main':lambda:called.append('native')}
+    with pytest.raises(AssertionError,match='collect_new'):
+        source_main(namespace,test_module=__name__)
+    assert called == []
 
 
 def test_every_measured_route_resolves_to_a_concrete_fixture_request() -> None:
@@ -139,6 +150,17 @@ def test_routes_reuse_owned_gateway_and_default_product_fixture(monkeypatch, tmp
         "collect_lifecycle": lambda *_: {},
         "collect_networks": lambda *_: {},
         "collect_images": lambda *_: {},
+        "collect_proxies": lambda *_: {},
+        "collect_workload_controls": lambda *_: {},
+        "collect_connection_errors": lambda *_: {},
+        "collect_network_members": lambda *_: {},
+        "collect_credentials": lambda *_: {},
+        "collect_mcp_controls": lambda *_: {},
+        "collect_preview_controls": lambda *_: {},
+        "collect_run_purge": lambda *_: {},
+        "collect_save_controls": lambda *_: {},
+        "collect_ask_controls": lambda *_: {},
+        "collect_reload_controls": lambda *_: {},
         "clone_benchmark_assets": lambda *args: tmp_path,
         "measured_cases": lambda: [module["RouteCase"]("GET", "/vms/{id}/exposures", "default")],
         "preflight": lambda *_: None,
@@ -147,7 +169,7 @@ def test_routes_reuse_owned_gateway_and_default_product_fixture(monkeypatch, tmp
         "sample_concurrent_route": lambda target, path, samples, *_: (Observations([1.0] * samples, [0.1] * samples, [0.2] * samples), {}, 1.0),
     }.items():
         monkeypatch.setitem(globals_, key, value)
-    assert module["main"]() == 0
+    assert source_main(globals_,test_module=__name__) == 0
     assert calls == ["start", "product image", "service", "gateway", "stop"]
     assert json.loads(capsys.readouterr().out)["metrics"]
 
