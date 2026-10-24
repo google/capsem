@@ -31,6 +31,7 @@ from pathlib import Path
 # collector run outside pytest has to do the same.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "guest/artifacts"))
 
 from capsem_builder.gate import config as gate_config
 from helpers.constants import DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
@@ -57,7 +58,8 @@ from benchmarks.helpers.guest_runtime import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-PROTOCOL_SETTINGS = gate_config.load(PROJECT_ROOT).benchmark.protocol
+BENCHMARK_SETTINGS = gate_config.load(PROJECT_ROOT).benchmark
+PROTOCOL_SETTINGS = BENCHMARK_SETTINGS.protocol
 
 
 def apply_protocol_defaults() -> None:
@@ -142,7 +144,7 @@ def main() -> int:
                 f"/vms/{name}/exec",
                 {
                     "target": "vm",
-                    "command": guest_command(mode),
+                    "command": guest_command(mode, io_limits=BENCHMARK_SETTINGS.run),
                     "timeout_secs": args.timeout,
                 },
                 timeout=args.timeout + 10,
@@ -178,7 +180,10 @@ def main() -> int:
                 f"exit={None if not artifact_result else artifact_result.get('exit_code')}\n"
                 f"response={json.dumps(artifact_result)[:1000]}"
             )
-        raw_document = json.loads(exec_output_text(artifact_result))
+        artifact_text = exec_output_text(artifact_result)
+        if len(artifact_text.encode("utf-8")) > BENCHMARK_SETTINGS.run.max_collector_bytes:
+            raise ValueError("guest artifact exceeds configured byte budget")
+        raw_document = json.loads(artifact_text)
         protocol_collection = raw_document if mode == "protocol" else None
         document = (
             json.loads(protocol_collection["sidecar"])
@@ -192,6 +197,11 @@ def main() -> int:
             "mock_server_protocol" if mode == "protocol" else mode.replace("-", "_")
         )
         section = document.get(section_name, document)
+        io_metrics, io_facts = {}, {}
+        if mode in {"disk", "storage"}:
+            from benchmarks.helpers.storage_raw import extract
+
+            io_metrics, io_facts = extract(mode, section, BENCHMARK_SETTINGS.run)
         if failed := failed_load_levels(section):
             diagnostics = failed_load_diagnostics(service, client, name, mode)
             raise RuntimeError(
@@ -227,7 +237,7 @@ def main() -> int:
             f"resources={json.dumps(resource_samples(resource_metrics), sort_keys=True)}"
         )
     numbers = flatten(section)
-    if not numbers:
+    if not numbers and not io_metrics:
         raise RuntimeError(
             f"capsem-bench {mode} reported no numbers: "
             f"artifact={json.dumps(document, sort_keys=True)[:1000]!r}; "
@@ -247,6 +257,9 @@ def main() -> int:
             "samples": [0],
         }
     measured.update(resource_metrics)
+    measured.update(io_metrics)
+    if io_facts:
+        document["io_capture_facts"] = io_facts
     if not measured:
         raise RuntimeError(
             f"capsem-bench {mode} reported {len(numbers)} numbers, none of which "
