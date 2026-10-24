@@ -162,7 +162,6 @@ def generate_build_context(
         template_name: Template filename (e.g., "Dockerfile.rootfs.j2").
         config: Guest image configuration.
         arch_name: Architecture name (e.g., "arm64", "x86_64").
-        templates_dir: Explicit source owner for installed-package callers.
     Returns:
         Context dict ready for Jinja rendering.
 
@@ -199,6 +198,7 @@ def render_dockerfile(
         template_name: Template filename (e.g., "Dockerfile.rootfs.j2").
         config: Guest image configuration.
         arch_name: Architecture name (e.g., "arm64", "x86_64").
+        templates_dir: Explicit source owner for installed-package callers.
     Returns:
         Rendered Dockerfile as a string.
 
