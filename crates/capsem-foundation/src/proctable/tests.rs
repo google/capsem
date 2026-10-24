@@ -38,27 +38,46 @@ fn process_records_carry_real_parent_identity() {
 
 #[test]
 fn process_records_preserve_native_argument_boundaries_and_empty_values() {
+    use std::io::Read as _;
+    use std::os::fd::OwnedFd;
+    use std::os::unix::net::UnixStream;
     use std::process::{Command, Stdio};
     let expected = [
         "-c",
-        "read ignored",
+        "printf ready; read ignored",
         "argv-boundary",
         "",
         "--session-dir",
         "/tmp/capsem owned/sessions/id",
     ];
-    let mut child = Command::new("sh").args(expected).stdin(Stdio::piped()).spawn().unwrap();
-    let observed = processes()
-        .unwrap()
-        .into_iter()
-        .find(|process| process.pid == child.id());
+    // Linux closes exec's CLOEXEC descriptors before populating arg_end.
+    // Successful spawn is not evidence that /proc/<pid>/cmdline is ready.
+    let (mut ready, output) = UnixStream::pair().unwrap();
+    ready.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+    let mut child = Command::new("sh")
+        .args(expected)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::from(OwnedFd::from(output)))
+        .spawn()
+        .unwrap();
+    let mut marker = [0; 5];
+    let observed = ready.read_exact(&mut marker).and_then(|()| processes());
     let status = child.try_wait().unwrap();
     if status.is_none() {
         child.kill().unwrap();
     }
     child.wait().unwrap();
-    let observed =
-        observed.unwrap_or_else(|| panic!("argument fixture pid {} absent; child status {status:?}", child.id()));
+    let observed = observed
+        .expect("ready argument fixture and readable process table")
+        .into_iter()
+        .find(|process| process.pid == child.id())
+        .unwrap_or_else(|| {
+            panic!(
+                "ready argument fixture pid {} absent; child status {status:?}",
+                child.id()
+            )
+        });
+    assert_eq!(&marker, b"ready");
     assert_eq!(
         observed.argv.iter().skip(1).collect::<Vec<_>>(),
         expected.iter().map(std::ffi::OsStr::new).collect::<Vec<_>>()
