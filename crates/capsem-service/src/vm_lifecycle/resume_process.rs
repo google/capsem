@@ -11,6 +11,10 @@ pub(crate) fn configure_resume_workload(
     command: &mut tokio::process::Command,
     entry: &PersistentVmEntry,
 ) -> Result<()> {
+    anyhow::ensure!(
+        !entry.suspended || capsem_proto::warm_suspend_available(),
+        capsem_proto::WARM_SUSPEND_UNAVAILABLE
+    );
     if !entry.suspended {
         // Only a cold boot may upgrade the staged controller and clear the
         // previous workload markers. Warm memory still owns those bytes.
@@ -47,6 +51,10 @@ impl ServiceState {
 
         let entry = find_persistent_entry_by_route_id(self.as_ref(), id)
             .ok_or_else(|| anyhow!("no persistent VM with id \"{}\"", id))?;
+        anyhow::ensure!(
+            !entry.suspended || capsem_proto::warm_suspend_available(),
+            capsem_proto::WARM_SUSPEND_UNAVAILABLE
+        );
         let vm_id = persistent_entry_vm_id(&entry);
         if vm_id != id {
             return Err(anyhow!(

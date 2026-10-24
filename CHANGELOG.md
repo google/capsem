@@ -7,9 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- Disable warm suspend and restore while original workspace file and directory
-  handles cannot survive owner replacement (#378). Persistent stop/start remains
-  available; existing checkpoints are preserved.
+- Refuse warm suspend and restore in the service and omit their UI actions while
+  original workspace handles cannot survive owner replacement (#378). Persistent
+  stop/start remains available; existing checkpoints are preserved.
 
 - Measure update activation across processes with the system monotonic clock,
   including macOS package checks running Python 3.9.

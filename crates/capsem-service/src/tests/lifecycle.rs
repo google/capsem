@@ -505,7 +505,7 @@ fn vm_lifecycle_available_actions_are_contractual() {
 
     assert_eq!(
         VmLifecycleState::Running.available_actions(false),
-        vec![VmAction::Pause, VmAction::Stop, VmAction::Fork, VmAction::Delete]
+        vec![VmAction::Stop, VmAction::Fork, VmAction::Delete]
     );
     assert_eq!(
         VmLifecycleState::Stopped.available_actions(true),
@@ -517,7 +517,7 @@ fn vm_lifecycle_available_actions_are_contractual() {
     );
     assert_eq!(
         VmLifecycleState::Suspended.available_actions(true),
-        vec![VmAction::Resume, VmAction::Fork, VmAction::Delete]
+        vec![VmAction::Fork, VmAction::Delete]
     );
     assert_eq!(
         VmLifecycleState::Suspended.available_actions(false),

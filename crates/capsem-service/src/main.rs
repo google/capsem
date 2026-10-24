@@ -656,6 +656,9 @@ impl ServiceState {
         } else {
             VmLifecycleState::Stopped
         };
+        if entry.suspended && !capsem_proto::warm_suspend_available() {
+            return (status, false, Some(capsem_proto::WARM_SUSPEND_UNAVAILABLE.into()));
+        }
 
         let resolved = match self.resolve_pinned_asset_paths(&entry.asset_pins) {
             Ok(resolved) => resolved,

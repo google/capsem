@@ -7,6 +7,14 @@ pub(crate) async fn handle_resume(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<Json<ProvisionResponse>, AppError> {
+    if !capsem_proto::warm_suspend_available()
+        && find_persistent_entry_by_route_id(&state, &id).is_some_and(|entry| entry.suspended)
+    {
+        return Err(AppError::new(
+            StatusCode::NOT_IMPLEMENTED,
+            capsem_proto::WARM_SUSPEND_UNAVAILABLE.into(),
+        ));
+    }
     let _launch = state
         .lifecycle
         .admit()

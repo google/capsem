@@ -442,6 +442,12 @@ pub(super) async fn handle_suspend(
                 "ephemeral VMs cannot be suspended (persist first)".into(),
             ));
         }
+        if !capsem_proto::warm_suspend_available() {
+            return Err(AppError::new(
+                StatusCode::NOT_IMPLEMENTED,
+                capsem_proto::WARM_SUSPEND_UNAVAILABLE.into(),
+            ));
+        }
         let result = owner_connection::OwnerConnection::capture(i);
         drop(instances);
         result

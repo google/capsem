@@ -22,11 +22,11 @@ fn suspended_resume_preserves_its_staged_controller_across_retries() {
 
     for _ in 0..2 {
         let mut command = tokio::process::Command::new("capsem-process");
-        configure_resume_workload(&mut command, &entry).unwrap();
-        assert!(command
-            .as_std()
-            .get_args()
-            .any(|argument| argument == "--checkpoint-path"));
+        assert_eq!(
+            configure_resume_workload(&mut command, &entry).unwrap_err().to_string(),
+            capsem_proto::WARM_SUSPEND_UNAVAILABLE
+        );
+        assert_eq!(command.as_std().get_args().count(), 0);
         assert_eq!(std::fs::read(stage.join("launch.py")).unwrap(), b"suspended launcher");
         assert_eq!(std::fs::read(stage.join("options.json")).unwrap(), b"{}");
         assert_eq!(
