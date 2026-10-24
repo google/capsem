@@ -37,7 +37,7 @@ fn actual_gateway_profile_attests_before_publishing_markers() {
         parent
             .set_read_timeout(Some(std::time::Duration::from_secs(5)))
             .unwrap();
-        let status = Command::new(std::env::current_exe().unwrap())
+        let status = Command::new(sandbox_test_executable(&root))
             .args([
                 "--exact",
                 "tests::attestation::actual_gateway_attestation_child",
@@ -54,7 +54,9 @@ fn actual_gateway_profile_attests_before_publishing_markers() {
             .unwrap();
         assert!(
             status.success(),
-            "gateway startup attestation child {variant} failed: {status}"
+            "gateway startup attestation child {variant} failed: {status}\n{}\n{}",
+            std::fs::read_to_string(root.join("stdout")).unwrap(),
+            std::fs::read_to_string(root.join("stderr")).unwrap(),
         );
         let mut receipt = [0; 4];
         parent

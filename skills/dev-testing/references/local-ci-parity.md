@@ -9,6 +9,9 @@ test-only alias in the gate handoff inventory. Seatbelt cannot stack: the
 parent retains gate confinement while that child installs the worker policy.
 Keep unconfined negative controls on the ordinary inherited launch path; never
 escape the whole test runner or exempt external MCP executables.
+Report a failed child's captured stdout/stderr and bound its parent's IPC wait.
+Otherwise an immediate policy rejection becomes a six-minute nextest timeout.
+Audit direct `current_exe` launches across role tests before full coverage.
 
 ### Ironbank parity rule
 

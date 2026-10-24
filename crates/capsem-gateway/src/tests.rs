@@ -11,6 +11,19 @@ mod hostile;
 mod http_metrics;
 mod route_forwarding;
 
+pub(crate) fn sandbox_test_executable(directory: &std::path::Path) -> std::path::PathBuf {
+    let executable = std::env::current_exe().unwrap();
+    if cfg!(target_os = "macos") {
+        // Only this named test child leaves the inherited gate policy. It
+        // installs the real gateway policy before exercising its denials.
+        let child = directory.join("capsem-gateway-confinement-test");
+        std::fs::copy(executable, &child).unwrap();
+        child
+    } else {
+        executable
+    }
+}
+
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
 fn attestation_exec_probe_exists_on_target() {

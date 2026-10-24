@@ -236,34 +236,49 @@ async fn confined_gateway_can_export_only_over_its_inherited_metric_descriptor()
     use std::os::fd::OwnedFd;
     let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
     let (local, remote) = std::os::unix::net::UnixStream::pair().unwrap();
-    let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
+    let directory = tempfile::tempdir().unwrap();
+    let mut command = tokio::process::Command::new(crate::tests::sandbox_test_executable(directory.path()));
     command
         .args(["--exact", "metric_export::tests::confined_metric_child", "--nocapture"])
         .env(
             "CAPSEM_METRIC_CONFINED_PORT",
             listener.local_addr().unwrap().port().to_string(),
         )
-        .stdin(std::process::Stdio::from(OwnedFd::from(local)));
-    let child = command.spawn().unwrap();
+        .stdin(std::process::Stdio::from(OwnedFd::from(local)))
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    let mut child = command.spawn().unwrap();
+    drop(command);
     let (tx, rx) = channel_from_std_with_limit::<GatewayMetricMessage, GatewayMetricRequest>(
         remote,
         MAX_GATEWAY_METRIC_FRAME_BYTES,
     )
     .unwrap();
-    tx.send(GatewayMetricMessage::Hello { generation: [6; 16] })
-        .await
-        .unwrap();
-    let request = rx.recv().await.unwrap();
-    assert!(request.valid_for([6; 16], 1));
-    assert_eq!(request.body, b"confined-protobuf");
-    tx.send(GatewayMetricMessage::Receipt {
-        request_id: 1,
-        outcome: GatewayMetricOutcome::Accepted,
+    let exchange = tokio::time::timeout(Duration::from_secs(5), async {
+        tx.send(GatewayMetricMessage::Hello { generation: [6; 16] }).await?;
+        let request = rx.recv().await?;
+        assert!(request.valid_for([6; 16], 1));
+        assert_eq!(request.body, b"confined-protobuf");
+        tx.send(GatewayMetricMessage::Receipt {
+            request_id: 1,
+            outcome: GatewayMetricOutcome::Accepted,
+        })
+        .await?;
+        Ok::<_, anyhow::Error>(())
     })
-    .await
-    .unwrap();
+    .await;
+    if !matches!(&exchange, Ok(Ok(()))) {
+        let _ = child.kill().await;
+    }
     let output = child.wait_with_output().await.unwrap();
-    assert!(output.status.success());
+    assert!(
+        matches!(&exchange, Ok(Ok(()))) && output.status.success(),
+        "metric child exchange {exchange:?}, status {}\n{}\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
