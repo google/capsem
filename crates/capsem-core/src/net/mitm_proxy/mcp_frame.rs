@@ -56,7 +56,14 @@ pub(super) async fn serve(
             "framed MCP endpoint disabled".into(),
         ));
     };
-    serve_io(initial_buf, vsock_stream, Arc::clone(endpoint), Arc::clone(&config.db)).await
+    serve_io_until_stopped(
+        initial_buf,
+        vsock_stream,
+        Arc::clone(endpoint),
+        Arc::clone(&config.db),
+        config.shutdown.clone(),
+    )
+    .await
 }
 
 /// Dispatch an MCP JSON-RPC request through the same security-event and
@@ -282,11 +289,25 @@ fn is_client_response(payload: &[u8]) -> bool {
         .is_ok_and(|shape| shape.method.is_none() && (shape.result.is_some() || shape.error.is_some()))
 }
 
+#[cfg(test)]
 async fn serve_io<I>(
     initial_buf: Vec<u8>,
     stream: I,
     endpoint: Arc<McpEndpointState>,
     db: Arc<DbWriter>,
+) -> Result<String, (String, Decision, String)>
+where
+    I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    serve_io_until_stopped(initial_buf, stream, endpoint, db, Default::default()).await
+}
+
+async fn serve_io_until_stopped<I>(
+    initial_buf: Vec<u8>,
+    stream: I,
+    endpoint: Arc<McpEndpointState>,
+    db: Arc<DbWriter>,
+    shutdown: tokio_util::sync::CancellationToken,
 ) -> Result<String, (String, Decision, String)>
 where
     I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
@@ -314,6 +335,12 @@ where
     let mut workers = tokio::task::JoinSet::<Result<()>>::new();
     let mut graceful = false;
     let (mut result, writer_completed): (Result<()>, bool) = tokio::select! {
+        _ = shutdown.cancelled() => {
+            // The owner revokes approval/upstream authority before stopping
+            // this connection. Preserve each admitted call's terminal audit.
+            graceful = true;
+            (Ok(()), false)
+        }
         result = async {
         loop {
             let frame = {

@@ -27,6 +27,12 @@ pub(super) struct Tasks {
 }
 
 impl Tasks {
+    pub(super) fn until_stopped(stopped: tokio_util::sync::CancellationToken) -> Self {
+        Self {
+            jobs: Default::default(),
+            stopped,
+        }
+    }
     pub(super) async fn enforce(
         &self,
         context: Context,
@@ -64,19 +70,96 @@ impl Tasks {
         }
         response
             .await
-            .map_err(|_| crate::security_engine::SecurityActionError::new("MCP response worker stopped"))?
+            .map_err(|_| crate::security_engine::SecurityActionError::new("HTTP completion worker stopped"))?
+    }
+
+    pub(super) async fn run_http<F, Fut>(
+        self: &Arc<Self>,
+        work: F,
+    ) -> Result<hyper::Response<ProxyBoxBody>, anyhow::Error>
+    where
+        F: FnOnce(tokio_util::sync::CancellationToken) -> Fut,
+        Fut: std::future::Future<Output = Result<hyper::Response<ProxyBoxBody>, anyhow::Error>> + Send + 'static,
+    {
+        let cancellation = self.stopped.child_token();
+        // Ordinary requests stay on hyper's task: only an interrupted
+        // original is transferred to the connection-owned completion set.
+        HeldHttpRequest {
+            future: Some(Box::pin(work(cancellation.clone()))),
+            tasks: Arc::clone(self),
+            cancellation,
+        }
+        .await
+    }
+
+    pub(super) fn spawn_end(&self, future: super::hooks::ChunkEndFuture) {
+        self.jobs.lock().expect("HTTP completion tasks poisoned").spawn(future);
     }
 
     pub(super) async fn drain(&self) {
         self.stopped.cancel();
-        let mut jobs = {
-            let mut owner = self.jobs.lock().expect("MCP response tasks poisoned");
-            std::mem::take(&mut *owner)
-        };
-        while let Some(result) = jobs.join_next().await {
-            if let Err(error) = result {
-                tracing::warn!(%error, "MCP response worker failed during connection drain");
+        loop {
+            let mut jobs = {
+                let mut owner = self.jobs.lock().expect("MCP response tasks poisoned");
+                std::mem::take(&mut *owner)
+            };
+            if jobs.is_empty() {
+                break;
             }
+            while let Some(result) = jobs.join_next().await {
+                if let Err(error) = result {
+                    tracing::warn!(%error, "MCP response worker failed during connection drain");
+                }
+            }
+        }
+    }
+}
+
+struct HeldHttpRequest<F>
+where
+    F: std::future::Future<Output = Result<hyper::Response<ProxyBoxBody>, anyhow::Error>> + Send + 'static,
+{
+    future: Option<std::pin::Pin<Box<F>>>,
+    tasks: Arc<Tasks>,
+    cancellation: tokio_util::sync::CancellationToken,
+}
+
+impl<F> std::future::Future for HeldHttpRequest<F>
+where
+    F: std::future::Future<Output = Result<hyper::Response<ProxyBoxBody>, anyhow::Error>> + Send + 'static,
+{
+    type Output = F::Output;
+    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
+        let this = self.get_mut();
+        let result = this
+            .future
+            .as_mut()
+            .expect("HTTP request polled after completion")
+            .as_mut()
+            .poll(cx);
+        if result.is_ready() {
+            this.future = None;
+        }
+        result
+    }
+}
+
+impl<F> Drop for HeldHttpRequest<F>
+where
+    F: std::future::Future<Output = Result<hyper::Response<ProxyBoxBody>, anyhow::Error>> + Send + 'static,
+{
+    fn drop(&mut self) {
+        self.cancellation.cancel();
+        if let Some(future) = self.future.take() {
+            // Dropping the completed response runs its normal end hooks;
+            // those futures join this same owner's finite drain.
+            self.tasks
+                .jobs
+                .lock()
+                .expect("HTTP completion tasks poisoned")
+                .spawn(async move {
+                    drop(future.await);
+                });
         }
     }
 }

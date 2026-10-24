@@ -129,6 +129,7 @@ pub struct ChunkDispatchBody<B> {
     end_tail: Option<Bytes>,
     pending_end: VecDeque<super::hooks::ChunkEndFuture>,
     preserve_size_hint: bool,
+    completion_tasks: Option<Arc<super::mcp_response::Tasks>>,
 }
 
 impl<B> ChunkDispatchBody<B> {
@@ -144,7 +145,13 @@ impl<B> ChunkDispatchBody<B> {
             end_tail: None,
             pending_end: VecDeque::new(),
             preserve_size_hint: true,
+            completion_tasks: None,
         }
+    }
+
+    pub(super) fn with_completion_tasks(mut self, tasks: Arc<super::mcp_response::Tasks>) -> Self {
+        self.completion_tasks = Some(tasks);
+        self
     }
 
     /// Seed the per-request `HookState` with a typed value before
@@ -284,7 +291,11 @@ impl<B> Drop for ChunkDispatchBody<B> {
             self.dispatch_response_end();
         }
         if !self.pending_end.is_empty() {
-            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            if let Some(tasks) = &self.completion_tasks {
+                for future in self.pending_end.drain(..) {
+                    tasks.spawn_end(future);
+                }
+            } else if let Ok(handle) = tokio::runtime::Handle::try_current() {
                 for future in self.pending_end.drain(..) {
                     handle.spawn(future);
                 }

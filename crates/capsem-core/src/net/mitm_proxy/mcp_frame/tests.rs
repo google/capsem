@@ -6,6 +6,7 @@ use capsem_proto::mcp_contracts::{JsonRpcError, McpToolDef};
 use crate::net::mitm_proxy::ScopedMcpTools;
 
 use super::*;
+mod retirement;
 
 mod approval;
 mod fragmentation;

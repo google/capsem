@@ -46,6 +46,9 @@ pub struct MitmProxyConfig {
     /// bodies, so admitting every connected client would multiply the body
     /// limit by the network client's much larger connection capacity.
     pub semantic_body_budget: Arc<Semaphore>,
+    /// Session-owner stop signal. Existing HTTP work must cancel and drain
+    /// its original audit before the confined worker relinquishes its ledger.
+    pub shutdown: tokio_util::sync::CancellationToken,
 }
 
 impl MitmProxyConfig {

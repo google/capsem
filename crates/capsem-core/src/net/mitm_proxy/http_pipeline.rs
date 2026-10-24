@@ -32,7 +32,7 @@ pub(super) async fn serve_pipeline<IO>(
     // avoids re-establishing TCP[+TLS] for every request on the
     // same connection.
     let cached_upstream: Arc<UpstreamCache> = Arc::default();
-    let mcp_responses = Arc::new(mcp_response::Tasks::default());
+    let mcp_responses = Arc::new(mcp_response::Tasks::until_stopped(config.shutdown.child_token()));
     let request_mcp_responses = Arc::clone(&mcp_responses);
 
     let svc = hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
@@ -97,35 +97,50 @@ pub(super) async fn serve_pipeline<IO>(
                     req.uri().path(),
                 )
             });
-            handle_request(
-                req,
-                &request_domain,
-                protocol,
-                upstream_protocol,
-                authoritative_host,
-                upstream_port,
-                &upstream_tls,
-                &config_arc,
-                &process_name,
-                ai_identity.provider,
-                ai_identity.protocol,
-                &cached_upstream,
-                policy_snapshot,
-                &mcp_responses,
-            )
-            .await
+            let completion = Arc::clone(&mcp_responses);
+            completion
+                .run_http(move |cancellation| async move {
+                    handle_request(
+                        req,
+                        &request_domain,
+                        protocol,
+                        upstream_protocol,
+                        authoritative_host,
+                        upstream_port,
+                        &upstream_tls,
+                        &config_arc,
+                        &process_name,
+                        ai_identity.provider,
+                        ai_identity.protocol,
+                        &cached_upstream,
+                        policy_snapshot,
+                        &mcp_responses,
+                        &cancellation,
+                    )
+                    .await
+                })
+                .await
         }
     });
 
     // hyper's header read timeout only exists when the builder has a timer;
     // without one a guest sending `G` and stalling pinned the task forever.
-    if let Err(e) = hyper::server::conn::http1::Builder::new()
-        .timer(hyper_util::rt::TokioTimer::new())
-        .header_read_timeout(CLASSIFY_READ_TIMEOUT)
-        .serve_connection(io, svc)
-        .with_upgrades()
-        .await
-    {
+    let result = {
+        let connection = hyper::server::conn::http1::Builder::new()
+            .timer(hyper_util::rt::TokioTimer::new())
+            .header_read_timeout(CLASSIFY_READ_TIMEOUT)
+            .serve_connection(io, svc)
+            .with_upgrades();
+        tokio::pin!(connection);
+        tokio::select! {
+            result = &mut connection => result,
+            _ = config.shutdown.cancelled() => {
+                connection.as_mut().graceful_shutdown();
+                connection.await
+            }
+        }
+    };
+    if let Err(e) = result {
         // Connection errors are expected when the guest closes.
         let err_str = e.to_string();
         if !e.is_incomplete_message() && !err_str.contains("error shutting down connection") {

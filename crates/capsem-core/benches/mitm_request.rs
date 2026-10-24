@@ -109,6 +109,7 @@ fn proxy_config(upstream_port: u16) -> Arc<MitmProxyConfig> {
         upstream_resolver: Default::default(),
         upstream_grants: None,
         semantic_body_budget: MitmProxyConfig::new_semantic_body_budget(),
+        shutdown: Default::default(),
     })
 }
 

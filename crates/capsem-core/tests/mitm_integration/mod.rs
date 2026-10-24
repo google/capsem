@@ -7,6 +7,7 @@ mod approval_fixture;
 mod content_filters;
 mod deadlines;
 mod host_normalization;
+mod http_approval_drain;
 mod internal_mcp_approval;
 mod mcp_gateway_route;
 mod mcp_over_http;
