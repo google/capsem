@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Refuse warm suspend and restore in the service and omit their UI actions while
   original workspace handles cannot survive owner replacement (#378). Persistent
   stop/start remains available; existing checkpoints are preserved.
+- Refuse direct VM-owner checkpoint startup and suspend IPC before cancelling
+  running jobs or changing guest state.
 
 - Measure update activation across processes with the system monotonic clock,
   including macOS package checks running Python 3.9.

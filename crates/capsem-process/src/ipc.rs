@@ -137,6 +137,7 @@ async fn record_guest_write(
 pub(crate) async fn handle_ipc_connection(
     stream: tokio::net::UnixStream,
     controller: PeerIdentity,
+    vm_id: String,
     ctrl_tx: crate::control_queue::Sender,
     ipc_tx: broadcast::Sender<ProcessToService>,
     session_terminal: Arc<SessionTerminal>,
@@ -690,6 +691,18 @@ pub(crate) async fn handle_ipc_connection(
                 break;
             }
             ServiceToProcess::Suspend => {
+                if !capsem_proto::warm_suspend_available() {
+                    capsem_core::try_send!(
+                        "ipc_suspend_unavailable",
+                        ipc_tx_out
+                            .send(ProcessToService::SuspendRolledBack {
+                                id: vm_id.clone(),
+                                error: capsem_proto::WARM_SUSPEND_UNAVAILABLE.into(),
+                            })
+                            .await
+                    );
+                    continue;
+                }
                 info!("Received Suspend command, forwarding to ctrl channel");
                 capsem_core::try_send!("ctrl_suspend", ctrl_tx.send(ServiceToProcess::Suspend).await);
             }

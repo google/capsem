@@ -501,7 +501,7 @@ fn args_checkpoint_path_optional() {
 }
 
 #[test]
-fn args_checkpoint_path_set() {
+fn args_checkpoint_path_refuses_disabled_warm_restore() {
     let args = Args::try_parse_from([
         "capsem-process",
         "--id",
@@ -525,8 +525,8 @@ fn args_checkpoint_path_set() {
         "--checkpoint-path",
         "/tmp/cp.vzsave",
     ])
-    .unwrap();
-    assert_eq!(args.checkpoint_path.unwrap(), PathBuf::from("/tmp/cp.vzsave"));
+    .unwrap_err();
+    assert!(args.to_string().contains(capsem_proto::WARM_SUSPEND_UNAVAILABLE));
 }
 
 #[test]

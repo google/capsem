@@ -203,8 +203,15 @@ struct Args {
     /// broker. The service grants this without exposing a collector address.
     #[arg(long)]
     metric_broker: bool,
-    #[arg(long)]
+    #[arg(long, value_parser = parse_checkpoint_path)]
     checkpoint_path: Option<PathBuf>,
+}
+
+fn parse_checkpoint_path(value: &str) -> std::result::Result<PathBuf, String> {
+    if !capsem_proto::warm_suspend_available() {
+        return Err(capsem_proto::WARM_SUSPEND_UNAVAILABLE.into());
+    }
+    Ok(PathBuf::from(value))
 }
 
 /// Generate a short (16-hex-char) correlation id for this
@@ -827,6 +834,7 @@ async fn run_async_main_loop(
     let ctrl_tx_ipc = ctrl_tx.clone();
     let uds_path = args.uds_path.clone();
     let is_restore = args.checkpoint_path.is_some();
+    let ipc_vm_id = args.id.clone();
     let vm_for_vsock = Arc::clone(&vm);
     let vm_ready_vsock = Arc::clone(&vm_ready);
     let db_for_vsock = Arc::clone(&db);
@@ -896,11 +904,13 @@ async fn run_async_main_loop(
         let builtin_bin_c = builtin_bin.clone();
         let builtin_env_c = builtin_env.clone();
         let ready_c = Arc::clone(&vm_ready);
+        let vm_id_c = ipc_vm_id.clone();
 
         tokio::spawn(async move {
             if let Err(e) = ipc::handle_ipc_connection(
                 stream,
                 controller,
+                vm_id_c,
                 tx_c,
                 ipc_tx_pass,
                 term_c,

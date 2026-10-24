@@ -234,6 +234,7 @@ impl Dispatcher {
         tokio::spawn(handle_ipc_connection(
             stream,
             controller_identity(),
+            "test-owner".into(),
             self.ctrl_tx.clone(),
             self.events_tx.clone(),
             Arc::clone(&self.session_terminal),
@@ -685,7 +686,16 @@ async fn negotiated_dispatcher_covers_stream_jobs_queries_and_lifecycle() {
     }
 
     service_tx.send(ServiceToProcess::Suspend).await.unwrap();
-    assert!(matches!(ctrl_rx.recv().await.unwrap(), ServiceToProcess::Suspend));
+    let refusal = tokio::time::timeout(std::time::Duration::from_millis(200), service_rx.recv())
+        .await
+        .expect("disabled suspend must reply without reaching guest control")
+        .unwrap();
+    assert!(matches!(refusal, ProcessToService::SuspendRolledBack { error, .. }
+        if error == capsem_proto::WARM_SUSPEND_UNAVAILABLE));
+    assert!(
+        ctrl_rx.try_recv().is_err(),
+        "disabled suspend must not cancel jobs or reach the VM"
+    );
     service_tx.send(ServiceToProcess::Shutdown).await.unwrap();
     assert!(matches!(ctrl_rx.recv().await.unwrap(), ServiceToProcess::Shutdown));
     handler.await.unwrap().unwrap();
