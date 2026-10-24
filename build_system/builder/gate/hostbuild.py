@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from .actions import Run
 from .config import GateConfig
 from .execution import Kind, Needs, Speed, Step, step
@@ -9,7 +11,9 @@ from .phase import Phase
 from .plan import Plan
 
 
-def _build_step(config: GateConfig, *, label: str = "build-binaries") -> Step:
+def _build_step(
+    config: GateConfig, *, label: str = "build-binaries", json_log: Path | None = None
+) -> Step:
     """Build exactly the binaries the signing step owns.
 
     They once had no producer: signing rewrote whatever an earlier build left
@@ -22,11 +26,20 @@ def _build_step(config: GateConfig, *, label: str = "build-binaries") -> Step:
     return step(
         label,
         Run(
-            ["cargo", "build", *selected],
+            [
+                "cargo",
+                "build",
+                *selected,
+                *(() if json_log is None else ("--message-format=json",)),
+            ],
             timeout_seconds=settings.build_timeout_seconds,
+            log=json_log,
         ),
         contends=(config.exclusive("workspace_binaries"),),
-        produces=tuple(binary_dir / name for name in settings.built),
+        produces=(
+            *tuple(binary_dir / name for name in settings.built),
+            *(() if json_log is None else (json_log,)),
+        ),
         kind=Kind.PACKAGE,
         needs=frozenset({Needs.DISK}),
         speed=Speed.SLOW,
@@ -39,6 +52,7 @@ def add(
     *,
     after: tuple[Step, ...] = (),
     label: str = "build-binaries",
+    json_log: Path | None = None,
 ) -> Step:
     """Add the one host build path.
 
@@ -47,4 +61,4 @@ def add(
     every plan that compiles, which a prerequisite of this one fragment could
     not do for clippy, coverage, or any other compile beside it.
     """
-    return owner.add(_build_step(config, label=label), after=after)
+    return owner.add(_build_step(config, label=label, json_log=json_log), after=after)

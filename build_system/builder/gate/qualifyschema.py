@@ -71,6 +71,22 @@ class ModulesConfig(Strict):
     transition: TransitionSettings
 
 
+class NativeFileContentConfig(Strict):
+    script: str
+    cargo_command: tuple[str, ...]
+    cargo_log: str
+    host_log: str
+    source_receipt: str
+    selection: str
+    cache_stage: SafeToken
+    generation_prefix: SafeToken
+    artifact_name: SafeToken
+    receipt_name: SafeToken
+    selector: str
+    timeout_seconds: PositiveInt
+    build_timeout_seconds: PositiveInt
+
+
 class FunctionalConfig(Strict):
     kingslanding: KingslandingConfig
     greyjoy: GreyjoyConfig
@@ -78,6 +94,7 @@ class FunctionalConfig(Strict):
     reference_image: PinnedImageConfig
     qualification: QualificationConfig
     native_images: NativeImagesConfig
+    native_file_content: NativeFileContentConfig
     injection_script: str
     integration_script: str
     binary: str

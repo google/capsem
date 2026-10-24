@@ -2370,6 +2370,21 @@ binary_variable = "CAPSEM_TEST_BINARY"
 assets_variable = "CAPSEM_TEST_ASSETS_DIR"
 assets_dir_variable = "CAPSEM_ASSETS_DIR"
 
+[functional.native_file_content]
+script = "build_system/scripts/test/native-file-content-artifact.py"
+cargo_command = ["cargo", "test", "--frozen", "-p", "capsem-service", "--bin", "capsem-service", "--features", "native-acceptance", "--no-run", "--message-format=json"]
+cargo_log = "cache/state/native-file-content-cargo.jsonl"
+host_log = "cache/state/native-file-content-host-cargo.jsonl"
+source_receipt = "cache/state/native-file-content-source.json"
+selection = "cache/state/native-file-content-selection.json"
+cache_stage = "ironbank"
+generation_prefix = "native-file-content-"
+artifact_name = "capsem-service-native-file-content"
+receipt_name = "native-file-content.json"
+selector = "service_runtime::tests::native_file_content::original_guest_file_content_approve_deny_and_cancel"
+timeout_seconds = 300
+build_timeout_seconds = 1800
+
 # Image qualification (tests/qualification): mandatory groups every image
 # passes, and the groups its images/<name>/qualify.toml capabilities add. The
 # main gate runs it on the reference image; `capsem-gate image-qualify --image

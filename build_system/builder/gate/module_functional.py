@@ -8,6 +8,7 @@ from . import (
     audits,
     hostpackage,
     kingslanding,
+    nativeacceptance,
     pytestsuite,
     runtimeprepare,
     sdkchecks,
@@ -86,9 +87,7 @@ def functional(
     # That the content the suites will boot is complete is a run-time question,
     # asked once, before any suite: a plan may not depend on build output.
     checked = (
-        (phase.add(_content_step(content), after=after),)
-        if content.root is not None
-        else after
+        (phase.add(_content_step(content), after=after),) if content.root is not None else after
     )
 
     # This module owns its prerequisites, the same way `module_contracts` had
@@ -105,8 +104,13 @@ def functional(
     # sets of edges and closes a cycle -- which is the reordering
     # `_already_issuing` documents as the reason dedup lives at the call site
     # rather than inside `Plan.add`.
-    sdk_node = node if node is not None else phase.add(
-        toolchain.node(config, config.functional.node_workspaces), after=checked,
+    sdk_node = (
+        node
+        if node is not None
+        else phase.add(
+            toolchain.node(config, config.functional.node_workspaces),
+            after=checked,
+        )
     )
     # SDK producers need their toolchain, not VM content. In a composed plan
     # they already belong to the fast phase; adding the later runtime-content
@@ -138,7 +142,8 @@ def functional(
             else (phase.add(hostpackage.sign_step(config), after=settled),)
         )
 
-    fixture = phase.add(kingslanding.prefetch(config), after=first)
+    native = nativeacceptance.prepare(phase, config, qualification, after=first)
+    fixture = phase.add(kingslanding.prefetch(config), after=(native,))
     # The suites that can share the machine, in order: they claim Apple VZ and
     # the workspace binaries shared, and the xdist suite claims the VM fleet
     # alone so its four VMs never overlap another fleet.
@@ -155,9 +160,7 @@ def functional(
     ):
         current = phase.add(content.suite(owned).as_step(config), after=(current,))
     current = phase.add(vmproofs.injection(config, **content.proof_arguments()), after=(current,))
-    current = phase.add(
-        vmproofs.integration(config, **content.proof_arguments()), after=(current,)
-    )
+    current = phase.add(vmproofs.integration(config, **content.proof_arguments()), after=(current,))
     # Measurements hold Apple VZ alone, so they run last, one at a time.
     for suite in (
         pytestsuite.timing(config),
