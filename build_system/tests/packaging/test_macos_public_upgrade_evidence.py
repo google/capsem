@@ -228,7 +228,7 @@ def test_public_state_cli_captures_original_then_rejects_mutation(tmp_path, monk
     (home / "sessions").mkdir(parents=True)
     (home / "assets").mkdir()
     (home / "sessions/main.db").write_bytes(b"old format remains opaque")
-    manifest = home / "assets/manifest.json"
+    manifest = home / "assets" / "manifest.json"
     manifest.write_text('{"channel":"stable"}')
     source = "http://127.0.0.1:18765/candidate/assets/stable/manifest.json"
     spec = {
@@ -243,7 +243,7 @@ def test_public_state_cli_captures_original_then_rejects_mutation(tmp_path, monk
         "limits": {"timeout": 1, "maximum": 16384},
     }
     (root / "binary-apply-pair.json").write_text(json.dumps(spec))
-    (home / "assets/manifest-metadata.json").write_text(
+    (home / "assets" / "manifest-metadata.json").write_text(
         json.dumps(
             {
                 "manifest_url": source,

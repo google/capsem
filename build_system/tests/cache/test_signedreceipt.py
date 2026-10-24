@@ -11,6 +11,7 @@ import pytest
 from capsem_builder.cache import signedreceipt as subject
 
 ROOT = Path(__file__).resolve().parents[3]
+ENTITLEMENTS_NAME = Path("build_system/packaging/macos/entitlements.plist").name
 
 
 @pytest.fixture
@@ -20,7 +21,7 @@ def runner(tmp_path):
     directory.mkdir(parents=True)
     script = directory / "run_signed.sh"
     shutil.copy2(ROOT / "build_system/packaging/macos/run_signed.sh", script)
-    (directory / "entitlements.plist").write_text("<entitlements/>\n")
+    (directory / ENTITLEMENTS_NAME).write_text("<entitlements/>\n")
     original = root / "cache/target/cargo/release/deps/source-double"
     original.parent.mkdir(parents=True)
     original.write_text(
@@ -70,7 +71,7 @@ def test_prepare_only_returns_actual_copy_without_executing_it(runner):
     receipt = subject.PreparedExecutable.model_validate_json(result.stdout)
     receipt.verify(
         original=original,
-        policy=(script.with_name("entitlements.plist"), script),
+        policy=(script.with_name(ENTITLEMENTS_NAME), script),
         assets_dir=root / "assets",
     )
     assert receipt.executable.path != original and receipt.executable.path.is_file()

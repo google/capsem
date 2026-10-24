@@ -17,7 +17,7 @@ def test_original_cli_check_requires_request_cache_and_independent_status(tmp_pa
     cfg = subject.update_check_config()
     url,body = 'http://127.0.0.1:1'+cfg['manifest_path'],b'{"independent":"manifest"}'
     _write_manifest_metadata(tmp_path,url)
-    cache_path = tmp_path/'assets/manifest-metadata.json'
+    cache_path = tmp_path/'assets' / 'manifest-metadata.json'
     original = json.loads(cache_path.read_bytes())
     requests,metrics = [],{}
     service = SimpleNamespace(home_dir=tmp_path,update_cli=tmp_path/'bin/capsem')
@@ -82,14 +82,14 @@ def test_update_inputs_refuse_fallback_before_any_fixture(tmp_path,monkeypatch):
     monkeypatch.delenv('CAPSEM_ASSETS_DIR',raising=False)
     with pytest.raises(RuntimeError,match='prepared manifest'):
         subject.require_update_inputs()
-    assets = tmp_path/'assets'
-    assets.mkdir()
-    monkeypatch.setenv('CAPSEM_ASSETS_DIR',str(assets))
+    asset_directory = tmp_path/'assets'
+    asset_directory.mkdir()
+    monkeypatch.setenv('CAPSEM_ASSETS_DIR',str(asset_directory))
     graph = {'packages':[{'status':'current','version':'0.7.1'}],'runtime':{'revision':'2026.0101.1'}}
-    (assets/'manifest.json').write_text(json.dumps(graph))
+    (asset_directory/'manifest.json').write_text(json.dumps(graph))
     cli,root,read = subject.require_update_inputs()
-    assert cli == binary and root == assets and read == graph
-    (assets/'manifest.json').unlink()
+    assert cli == binary and root == asset_directory and read == graph
+    (asset_directory/'manifest.json').unlink()
     with pytest.raises(AssertionError,match='regular file'):
         subject.require_update_inputs()
 

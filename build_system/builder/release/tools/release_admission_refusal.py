@@ -82,8 +82,8 @@ def snapshot(home: Path, spec: dict) -> dict:
         "app": Path("/Applications/Capsem.app/Contents/MacOS/capsem-app"),
         "app-info": Path("/Applications/Capsem.app/Contents/Info.plist"),
         "host.db": home / "sessions/host.db",
-        "manifest": home / "assets/manifest.json",
-        "metadata": home / "assets/manifest-metadata.json",
+        "manifest": home / "assets" / "manifest.json",
+        "metadata": home / "assets" / "manifest-metadata.json",
         "plist": home.parent / "Library/LaunchAgents/com.capsem.service.plist",
         "sentinel": home / "preinstall-preservation.txt",
     }

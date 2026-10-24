@@ -155,8 +155,8 @@ def main() -> int:
             owner.close()
         selected = feed_selection(
             spec,
-            read_json(args.home / "assets/manifest-metadata.json", maximum),
-            args.home / "assets/manifest.json",
+            read_json(args.home / "assets" / "manifest-metadata.json", maximum),
+            args.home / "assets" / "manifest.json",
             source=args.source,
         )
         evidence = {

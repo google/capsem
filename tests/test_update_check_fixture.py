@@ -19,7 +19,7 @@ def test_original_manifest_server_records_exact_request_and_closes(tmp_path):
             assert response.read() == body
         assert requests == ['/manifest.json']
         _write_manifest_metadata(tmp_path,base+'/manifest.json')
-        metadata = json.loads((tmp_path/'assets/manifest-metadata.json').read_bytes())
+        metadata = json.loads((tmp_path/'assets' / 'manifest-metadata.json').read_bytes())
         assert metadata['manifest_url'] == base+'/manifest.json'
         assert metadata['origin'] == 'package'
     assert requests == ['/manifest.json']

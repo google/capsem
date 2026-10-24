@@ -86,7 +86,7 @@ def update_target(label,cfg,inputs):
 
 def sample_update_check(cycle,requests,body,url):
     cfg,deadline = cycle.cfg,time.monotonic()+cycle.cfg['timeout_seconds']
-    path = cycle.service.home_dir/'assets/manifest-metadata.json'
+    path = cycle.service.home_dir/'assets' / 'manifest-metadata.json'
     baseline = bounded_json(path,cfg['max_manifest_bytes'])
     assert 'checked_url' not in baseline and 'checked_at' not in baseline
     assert requests == [], 'automatic polling raced the original check'
