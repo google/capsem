@@ -110,7 +110,14 @@ fn unsafe_retired_family_never_gains_path_authority() {
                 std::fs::write(&outside, b"foreign original").unwrap();
                 match defect {
                     "symlink" => symlink(&outside, &path).unwrap(),
-                    "hardlink" => std::fs::hard_link(&outside, &path).unwrap(),
+                    "hardlink" => ContainedDir::open_root(root.path())
+                        .unwrap()
+                        .hard_link(
+                            OsStr::new("outside"),
+                            &ContainedDir::open_root(path.parent().unwrap()).unwrap(),
+                            OsStr::new(name),
+                        )
+                        .unwrap(),
                     "directory" => std::fs::create_dir(&path).unwrap(),
                     _ => unreachable!(),
                 }
