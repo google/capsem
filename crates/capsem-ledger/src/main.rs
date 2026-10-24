@@ -21,6 +21,7 @@ use clap::Parser;
 use tokio::task::{JoinError, JoinSet};
 
 mod codec;
+mod preinstall;
 
 const CLIENT_LIMIT: usize = 64;
 
@@ -46,6 +47,9 @@ fn main() -> Result<()> {
     unsafe {
         capsem_foundation::unix::process::clear_inherited_environment();
         fd::close_inherited_descriptors()?;
+    }
+    if preinstall::requested() {
+        return preinstall::run();
     }
     let _telemetry = capsem_foundation::telemetry::init(capsem_foundation::telemetry::TelemetryConfig {
         service: "capsem-ledger",
