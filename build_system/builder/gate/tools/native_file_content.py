@@ -18,8 +18,7 @@ from capsem_builder.gate.config import GateConfig, load
 from capsem_builder.gate.qualification import from_environment
 from capsem_builder.gate.sourcecommit import source_commit_for_checkout, tree_of
 from capsem_builder.release.tools.package_payload import package_payload_files
-
-from build_system.scripts.release.release_test_binary_provenance import (
+from capsem_builder.release.tools.test_binary_provenance import (
     COHORT_VARIABLE,
     verify_frozen_binary,
 )

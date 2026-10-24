@@ -170,7 +170,7 @@ def test_local_mode_builds_a_missing_binary(tmp_path: Path) -> None:
 
 
 def _frozen_cohort(tmp_path: Path) -> tuple[Path, Path, Path, dict[str, str]]:
-    from build_system.scripts.release.release_test_binary_provenance import (
+    from capsem_builder.release.tools.test_binary_provenance import (
         COHORT_SCHEMA,
         COHORT_VARIABLE,
     )

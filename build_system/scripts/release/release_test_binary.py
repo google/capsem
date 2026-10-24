@@ -20,8 +20,7 @@ from pathlib import Path
 from capsem_builder import crypto
 from capsem_builder.gate import cargotarget
 from capsem_builder.gate import config as gate_config
-
-from build_system.scripts.release.release_test_binary_provenance import (
+from capsem_builder.release.tools.test_binary_provenance import (
     COHORT_VARIABLE,
     verify_frozen_binary,
 )

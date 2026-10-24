@@ -1,6 +1,9 @@
 """A native test artifact must not borrow a stale/foreign Cargo generation."""
 
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +11,21 @@ import pytest
 from capsem_builder.gate.config import load
 from capsem_builder.gate.tools.native_file_content import artifacts, verify_host_roles
 from helpers.gate import PROJECT_ROOT
+
+
+def test_declared_native_command_bootstraps_without_repository_pythonpath():
+    environment = dict(os.environ)
+    environment.pop("PYTHONPATH", None)
+    result = subprocess.run(
+        [sys.executable, "build_system/scripts/test/native-file-content-artifact.py", "--help"],
+        cwd=PROJECT_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "begin" in result.stdout and "assemble" in result.stdout
 
 
 def row(root: Path, *, tests=True, features=("native-acceptance",)) -> dict[str, Any]:
