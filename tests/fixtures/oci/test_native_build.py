@@ -1,5 +1,6 @@
 """Fixed native builds reuse canonical producers; all machine work is doubled."""
 
+import json
 import shutil
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,6 +13,33 @@ from tests.fixtures.oci import native_build, native_inputs
 from tests.fixtures.oci.test_native_inputs import oci
 
 ROOT = Path(__file__).resolve().parents[3]
+
+
+@pytest.mark.parametrize("fault", [None, "manifest", "config", "layers"])
+def test_loaded_binds_standard_descriptor_to_original_manifest(monkeypatch, tmp_path, fault):
+    subject, manifest, selected = oci(tmp_path / "original")
+    wrong = "sha256:" + "f" * 64
+    identity = wrong if fault == "manifest" else subject
+    descriptor: dict[str, object] = {"mediaType": manifest["mediaType"], "digest": identity}
+    if fault == "config":
+        descriptor["annotations"] = {"config.digest": wrong}
+    metadata = {
+        "Id": identity,
+        "Descriptor": descriptor,
+        "Os": "linux",
+        "Architecture": "amd64",
+        "RootFS": {
+            "Type": "layers",
+            "Layers": [wrong] if fault == "layers" else selected["rootfs"]["diff_ids"],
+        },
+    }
+    monkeypatch.setattr(native_build.image_build.subprocess, "run",
+        lambda *a, **k: SimpleNamespace(returncode=0, stdout=json.dumps(metadata)))
+    if fault:
+        with pytest.raises(ValueError):
+            native_build.loaded("candidate:amd64", "linux/amd64", manifest, selected, subject=subject)
+    else:
+        assert native_build.loaded("candidate:amd64", "linux/amd64", manifest, selected, subject=subject) == subject
 
 
 def test_candidates_are_fixed_build_specs_not_functional_pin_substitutes():

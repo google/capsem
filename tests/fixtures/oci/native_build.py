@@ -41,8 +41,9 @@ def candidate(config, name):
     return CandidateImage(config, name)
 
 
-def loaded(tag, platform, manifest, selected):
-    identity, config, layers = _retained_image("docker", tag, platform.split("/")[1], TIMEOUT)
+def loaded(tag, platform, manifest, selected, *, subject):
+    identity, config, layers = _retained_image("docker", tag, platform.split("/")[1], TIMEOUT,
+        expected_manifest=subject, expected_config=manifest["config"]["digest"])
     if config != manifest["config"]["digest"] or layers != selected["rootfs"]["diff_ids"]:
         raise ValueError("native Docker config or ordered layers differ from original OCI")
     return identity
@@ -109,7 +110,7 @@ def shared_base(config, platform):
             paths, tag=tag, checkout=config.root, slot="native-base-" + platform.split("/")[1]
         )
         subprocess.run([*common, "--load", "--tag", tag, context], check=True, timeout=3600)
-        yield loaded(tag, platform, manifest, selected), binding
+        yield loaded(tag, platform, manifest, selected, subject=binding.subject), binding
     finally:
         release_path(lease)
 
@@ -146,7 +147,7 @@ def produce(config, name, platform):
                 held = paths.stage(image.settings().cache_stage) / template.format(key=key)
                 inputs.require(config.root, name, layout, digest, selected_platform, maximum)
                 _, _, manifest, selected = metadata(layout, digest, platform, maximum)
-                loaded(selected_tag, platform, manifest, selected)
+                loaded(selected_tag, platform, manifest, selected, subject=digest)
 
             digest = image_build.build(image, platform, base_image=base, validate=validate)
             if held is None:

@@ -88,7 +88,8 @@ def build(image, selected: str | None = None, *, base_image: str | None = None, 
     return digest
 
 
-def _retained_image(runtime, tag, architecture, inspect_timeout, *, config_required=True):
+def _retained_image(runtime, tag, architecture, inspect_timeout, *, config_required=True,
+                    expected_manifest=None, expected_config=None):
     fields = '{"Id":{{json .Id}},"Descriptor":{{json .Descriptor}},"Os":{{json .Os}},"Architecture":{{json .Architecture}},"RootFS":{{json .RootFS}}}'
     found = subprocess.run([runtime, "image", "inspect", "--format", fields, tag],
                            capture_output=True, text=True, check=False, timeout=inspect_timeout)
@@ -112,6 +113,13 @@ def _retained_image(runtime, tag, architecture, inspect_timeout, *, config_requi
             raise ValueError("retained image descriptor identity is invalid")
         annotations = descriptor.get("annotations")
         config = annotations.get("config.digest") if isinstance(annotations, dict) else None
+        # Containerd's immutable image ID can name the OCI manifest.
+        # Only that exact verified manifest binds its original config;
+        # an unrelated image without the optional annotation still fails.
+        if config_required and config is None and identity == expected_manifest and (
+            annotations is None or (isinstance(annotations, dict) and "config.digest" not in annotations)
+        ):
+            config = expected_config
         if (config_required or config is not None) and (not isinstance(config, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", config)):
             raise ValueError("retained image descriptor config identity is invalid")
     rootfs = value.get("RootFS")
@@ -146,7 +154,8 @@ def prepare_local_evidence(image, reference: str, output: Path, *, inspect_timeo
         raise ValueError("evidence requires this exact local image identity")
     manifest = json.loads((layout / "blobs/sha256" / entry["digest"].split(":")[1]).read_text())
     selected = json.loads((layout / "blobs/sha256" / manifest["config"]["digest"].split(":")[1]).read_text())
-    identity, config, layers = _retained_image(rootfs.RUNTIME, f"{image.settings().local_name}:{architecture}", architecture, inspect_timeout)
+    identity, config, layers = _retained_image(rootfs.RUNTIME, f"{image.settings().local_name}:{architecture}", architecture, inspect_timeout,
+        expected_manifest=entry["digest"], expected_config=manifest["config"]["digest"])
     if config != manifest["config"]["digest"]:
         raise ValueError("retained image identity differs from selected OCI config")
     expected_root = selected.get("rootfs")

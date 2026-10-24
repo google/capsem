@@ -57,13 +57,19 @@ def test_missing_or_mismatched_retained_image_fails_before_export(monkeypatch, t
         image_build.prepare_local_evidence(image, f"127.0.0.1:12345/library/dev@{digest}", tmp_path / "evidence", inspect_timeout=5)
 
 
-@pytest.mark.parametrize("containerd", [False, True])
+@pytest.mark.parametrize("containerd", [False, True, "pinned-manifest"])
 @pytest.mark.parametrize("tools_index", [False, True])
 def test_callback_generates_exact_local_subject_with_existing_producer(monkeypatch, tmp_path, containerd, tools_index):
     from images.ci import rootfs
     image, digest, config = fixture(tmp_path)
     calls = []
     metadata = retained(config, containerd=containerd)
+    if containerd == "pinned-manifest":
+        metadata["Id"] = digest
+        metadata["Descriptor"] = {
+            "digest": digest,
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        }
     tool_metadata = retained(config)
     if tools_index:
         tool_metadata["Id"] = "sha256:" + "6" * 64
@@ -163,7 +169,7 @@ def test_callback_rejects_foreign_producer_output(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("defect", [
-    "config", "manifest", "media", "annotations", "descriptor", "platform", "os",
+    "config", "pinned-config", "pinned-layers", "manifest", "media", "annotations", "descriptor", "platform", "os",
     "layers", "extra-layer", "missing-layers", "order", "root-type", "identity", "classic-config",
 ])
 def test_retained_identity_tampering_never_reaches_producer(monkeypatch, tmp_path, defect):
@@ -174,6 +180,13 @@ def test_retained_identity_tampering_never_reaches_producer(monkeypatch, tmp_pat
     wrong = "sha256:" + "0" * 64
     if defect == "config":
         metadata["Descriptor"]["annotations"]["config.digest"] = wrong
+    elif defect in {"pinned-config", "pinned-layers"}:
+        metadata["Id"] = metadata["Descriptor"]["digest"] = digest
+        if defect == "pinned-config":
+            metadata["Descriptor"]["annotations"]["config.digest"] = wrong
+        else:
+            metadata["Descriptor"].pop("annotations")
+            metadata["RootFS"]["Layers"] = [wrong]
     elif defect == "manifest":
         metadata["Descriptor"]["digest"] = wrong
     elif defect == "media":
