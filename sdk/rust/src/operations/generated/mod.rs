@@ -9,6 +9,8 @@ mod call_mcp_tool;
 pub use call_mcp_tool::{call_mcp_tool, CallMcpToolParams};
 mod cancel_connection_authorization;
 pub use cancel_connection_authorization::{cancel_connection_authorization, CancelConnectionAuthorizationParams};
+mod check_hypervisor_update;
+pub use check_hypervisor_update::{check_hypervisor_update, CheckHypervisorUpdateParams};
 mod claim_managed_session;
 pub use claim_managed_session::{claim_managed_session, ClaimManagedSessionParams};
 mod close_managed_session;

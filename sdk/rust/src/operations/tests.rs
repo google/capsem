@@ -39,6 +39,12 @@ macro_rules! operation {
 operation!(get_hypervisor_info, "getHypervisorInfo");
 operation!(get_hypervisor_logs, "getHypervisorLogs", GetHypervisorLogsParams);
 operation!(get_asset_status, "getAssetStatus");
+operation!(
+    acknowledge_browser_request,
+    "acknowledgeBrowserRequest",
+    AcknowledgeBrowserRequestParams
+);
+operation!(get_image_inventory, "getImageInventory", GetImageInventoryParams);
 operation!(inject_credential, "injectCredential", InjectCredentialParams);
 operation!(list_connections, "listConnections", ListConnectionsParams);
 operation!(list_security_asks, "listSecurityAsks", ListSecurityAsksParams);
@@ -91,6 +97,11 @@ operation!(get_panics, "getPanics", GetPanicsParams);
 operation!(get_triage, "getTriage", GetTriageParams);
 operation!(get_update_status, "getUpdateStatus");
 operation!(update_hypervisor, "updateHypervisor", UpdateHypervisorParams);
+operation!(
+    check_hypervisor_update,
+    "checkHypervisorUpdate",
+    CheckHypervisorUpdateParams
+);
 operation!(create_proxy, "createProxy", CreateProxyParams);
 operation!(heartbeat_proxy, "heartbeatProxy", HeartbeatProxyParams);
 operation!(stop_proxy, "stopProxy", StopProxyParams);
