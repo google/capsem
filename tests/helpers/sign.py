@@ -31,7 +31,7 @@ def _needs_entitlements(binary_path: Path) -> bool:
     }
 
 
-def sign_binary(binary_path: Path) -> None:
+def sign_binary(binary_path: Path, *, relocated: bool = False) -> None:
     """Verify immutable inputs; prepare only ordinary developer executables.
 
     Role-specific entitlements belong to the gate's signing policy. Frozen or
@@ -39,7 +39,10 @@ def sign_binary(binary_path: Path) -> None:
     """
     cohort = os.environ.get(COHORT_VARIABLE, "").strip()
     release = os.environ.get("CAPSEM_RELEASE_INPUT_DIR", "").strip()
-    immutable = _selected_role(binary_path) and bool(cohort or release)
+    selected = _selected_role(binary_path)
+    if relocated and selected:
+        raise ValueError("selected runtime artifacts cannot be signed as relocated fixtures")
+    immutable = selected and bool(cohort or release)
     if immutable:
         if cohort and release:
             raise RuntimeError("frozen provenance cannot be mixed with release inputs")
@@ -65,8 +68,9 @@ def sign_binary(binary_path: Path) -> None:
     lock_path = binary_path.with_suffix(".sign.lock")
     with open(lock_path, "w") as lock_fd:
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
-        # Skip if already validly signed
-        if verify_signed(binary_path):
+        # A copied Apple platform signature can verify yet violate its launch
+        # constraints. Only ordinary relocated fixtures replace that signature.
+        if not relocated and verify_signed(binary_path):
             return
         command = ["codesign", "--sign", "-", "--force"]
         if required:

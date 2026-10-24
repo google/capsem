@@ -42,6 +42,29 @@ def codesign(monkeypatch, *, valid=True, entitlements=""):
     return calls
 
 
+def test_relocated_fixture_replaces_even_a_valid_platform_signature(binary, monkeypatch):
+    target = binary.parent.parent / "capsem-fixture"
+    target.write_bytes(b"copied Apple platform executable")
+    calls = codesign(monkeypatch)
+    sign.sign_binary(target, relocated=True)
+    signed = [call for call in calls if "--sign" in call]
+    assert len(signed) == 1
+    assert "--entitlements" not in signed[0]
+
+
+@pytest.mark.parametrize("kind", ["developer", "cohort", "release"])
+def test_selected_runtime_cannot_be_relocated_and_resigned(binary, monkeypatch, kind):
+    if kind != "developer":
+        monkeypatch.setenv("CAPSEM_LOCAL_TEST_BINARY_COHORT" if kind == "cohort" else "CAPSEM_RELEASE_INPUT_DIR", "original")
+    calls = codesign(monkeypatch)
+    before = binary.read_bytes()
+    with pytest.raises(ValueError, match="relocated"):
+        sign.sign_binary(binary, relocated=True)
+    assert binary.read_bytes() == before
+    assert not calls
+    assert not binary.with_suffix(".sign.lock").exists()
+
+
 @pytest.mark.parametrize("kind", ["cohort", "release"])
 def test_selected_artifacts_are_read_only_consumers(binary, monkeypatch, kind):
     calls = codesign(monkeypatch)
@@ -170,8 +193,8 @@ def test_cohort_and_release_authorities_cannot_mix(binary, monkeypatch):
 
 @pytest.mark.parametrize("receipt", [
     "not a plist",
-    "[Dict]\n[Key] com.apple.security.virtualization\n[Bool] true\n"
-    "[Key] com.apple.security.network.client\n[Bool] true\n",
+    ("[Dict]\n[Key] com.apple.security.virtualization\n[Bool] true\n"
+     "[Key] com.apple.security.network.client\n[Bool] true\n"),
 ])
 def test_malformed_vm_entitlement_receipt_is_not_signed(binary, monkeypatch, receipt):
     target = binary.with_name("capsem-service")

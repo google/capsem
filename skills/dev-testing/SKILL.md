@@ -171,6 +171,12 @@ It is fail-fast infrastructure
 validation only: the later Docker/systemd install E2E remains mandatory and
 must still exercise the installed package and post-install behavior.
 
+Copied macOS system executables need `sign_binary(path, relocated=True)` from
+`tests/helpers/sign.py`. Their original Apple signature may verify strictly
+yet still carry launch constraints that cause SIGKILL after relocation.
+This mode replaces only ordinary fixture signatures; selected runtime,
+release, and frozen-cohort artifacts must remain immutable consumers.
+
 ## Local/CI execution parity
 
 Read `references/local-ci-parity.md` before editing any release workflow, gate

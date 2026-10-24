@@ -386,7 +386,7 @@ def test_new_descendants_of_a_preexisting_service_are_not_gate_orphans() -> None
 def test_check_preserves_real_children_started_by_a_baselined_service(tmp_path: Path) -> None:
     binary = tmp_path / "capsem-test-service"
     shutil.copy("/bin/bash", binary)
-    sign_binary(binary)
+    sign_binary(binary, relocated=True)
     child_script = 'trap "exit" TERM; while :; do /bin/sleep 1; done'
     script = 'read -r _; "$1" -c "$2" & echo $!; wait'
     baseline_file = tmp_path / "baseline.json"
@@ -467,10 +467,9 @@ def _start_long_lived_capsem_fixture(binary: Path) -> subprocess.Popen:
     else:
         shutil.copy("/bin/sleep", binary)
         argv = [str(binary), "300"]
-    # Copying strips the signature, and Apple Silicon kills an unsigned binary
-    # at exec. Same ad-hoc signing every other test fixture uses; a no-op on
-    # Linux.
-    sign_binary(binary)
+    # Copied Apple platform signatures can verify but fail launch constraints.
+    # Replace only this relocated fixture's signature; a no-op on Linux.
+    sign_binary(binary, relocated=True)
     # Keep stdin open so the Linux Bash remains blocked in its own builtin;
     # sleep ignores the pipe on macOS. The caller owns and closes it.
     return subprocess.Popen(argv, stdin=subprocess.PIPE)

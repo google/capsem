@@ -28,9 +28,9 @@ SETTINGS = gate_config.load(PROJECT_ROOT).pidfiles
 def _sleeper(tmp_path: Path, name: str = "sleeper") -> subprocess.Popen:
     binary = tmp_path / name
     shutil.copy("/bin/sleep", binary)
-    # Copying strips the signature, and Apple Silicon kills an unsigned binary
-    # at exec. A no-op on Linux.
-    sign_binary(binary)
+    # Replace the copied platform signature and its original launch constraints.
+    # A no-op on Linux.
+    sign_binary(binary, relocated=True)
     return subprocess.Popen([str(binary), "300"])
 
 
