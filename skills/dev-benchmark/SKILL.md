@@ -222,6 +222,17 @@ proved by `tests/ironbank/test_content_filter_ledger.py`, not inferred from spee
 Enabled content inspection deliberately buffers bounded SSE bodies; do not claim
 streaming-token latency or run authoritative comparisons on an unfit machine.
 
+Disk/storage sample the exact already-running host service and observed
+descendants only during their original guest exec (after readiness, before
+artifact retrieval). The bounded sampler reuses the numeric budget at
+`benchmark.criterion.resources`; `host_resources.budget_config` and its receipt
+name that provenance, without claiming a Criterion child or fresh lifetime.
+CPU is an observed live-counter lower bound, RSS/FD values are sampled tree
+high-water observations, and optional PSS/USS remain absent when unavailable.
+Unseen children, final-interval CPU, atomic/continuous peaks, and out-of-tree
+Apple VZ helpers are not certified. Resource selection is independent of
+`LOAD_MODES`, so disk/storage keep their existing guest CPU allocation.
+
 ## Is the move real?
 
 `compare` and `verify` report `delta_abs`, `delta_pct`, `ratio`, and

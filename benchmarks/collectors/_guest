@@ -45,6 +45,7 @@ from benchmarks.helpers.guest_measurements import (
     numeric_metrics,
     resource_samples,
 )
+from benchmarks.helpers.guest_resources import MEASURED_IO_MODES, GuestResources
 from benchmarks.helpers.guest_runtime import (
     LOAD_MODES,
     MITM_FIXTURE_TARGET,
@@ -135,8 +136,13 @@ def main() -> int:
             raise RuntimeError(f"{name} never became exec-ready")
 
         print(f"running capsem-bench {mode}", file=sys.stderr)
-        resources = process_tree_sampler(service) if mode in LOAD_MODES else None
+        resources = (
+            GuestResources(service, BENCHMARK_SETTINGS.criterion.resources)
+            if mode in MEASURED_IO_MODES
+            else process_tree_sampler(service) if mode in LOAD_MODES else None
+        )
         resource_metrics = {}
+        resource_receipt = None
         if resources is not None:
             resources.start()
         try:
@@ -152,6 +158,8 @@ def main() -> int:
         finally:
             if resources is not None:
                 resource_metrics = resources.stop()
+                if isinstance(resources, GuestResources):
+                    resource_receipt = resources.receipt()
         if not benchmark_result or benchmark_result.get("exit_code") != 0:
             raise RuntimeError(
                 f"capsem-bench {mode} failed: "
@@ -258,6 +266,8 @@ def main() -> int:
         }
     measured.update(resource_metrics)
     measured.update(io_metrics)
+    if resource_receipt is not None:
+        document["host_resources"] = resource_receipt
     if io_facts:
         document["io_capture_facts"] = io_facts
     if not measured:

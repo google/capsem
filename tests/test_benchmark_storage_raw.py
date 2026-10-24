@@ -309,6 +309,20 @@ def test_original_disk_artifact_reaches_real_collector_protocol_once(monkeypatch
         ),
     )
     monkeypatch.setitem(main.__globals__, "wait_exec_ready", lambda *_args, **_kwargs: True)
+    monkeypatch.setitem(
+        main.__globals__,
+        "GuestResources",
+        type(
+            "Resources",
+            (),
+            {
+                "__init__": lambda self, *_: None,
+                "start": lambda self: None,
+                "stop": lambda self: {},
+                "receipt": lambda self: {"source_double": True},
+            },
+        ),
+    )
     monkeypatch.setattr(sys, "argv", ["disk"])
     assert main() == 0
     output = json.loads(capsys.readouterr().out)

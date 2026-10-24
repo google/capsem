@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Restrict macOS companion virtualization entitlements to the existing five
   configured VM roles; preserve valid production signatures during installation.
+- Observe bounded host-service CPU lower bounds and sampled RSS/descriptor
+  high-water during guest disk/storage execution, with exact-root receipts.
+
 - Forward original guest I/O samples to benchmark statistics exactly once and
   refuse incomplete required paths, optional-rootfs inventories or operation artifacts.
 
