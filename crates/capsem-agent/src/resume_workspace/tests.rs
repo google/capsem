@@ -1,6 +1,19 @@
 use super::*;
 
 #[test]
+fn a_healthy_retained_workspace_is_not_unmounted() {
+    let directory = tempfile::tempdir().unwrap();
+    rebind_steps(
+        |_| panic!("remount would reset a healthy retained VirtioFS connection"),
+        || {
+            enumerate(directory.path())?;
+            Ok(1)
+        },
+    )
+    .unwrap();
+}
+
+#[test]
 fn a_successful_empty_directory_is_enumerable() {
     let directory = tempfile::tempdir().unwrap();
     enumerate(directory.path()).unwrap();
@@ -67,6 +80,7 @@ fn every_required_rebind_command_failure_prevents_ready_and_later_commands() {
     for failed in 2..6 {
         let count = std::cell::Cell::new(0);
         let ready = std::cell::Cell::new(false);
+        let first_probe = std::cell::Cell::new(true);
         let result = ready_after(
             || Ok(()),
             || {
@@ -80,7 +94,13 @@ fn every_required_rebind_command_failure_prevents_ready_and_later_commands() {
                             Ok(())
                         }
                     },
-                    || Ok(1),
+                    || {
+                        if first_probe.replace(false) {
+                            Err(io::Error::from_raw_os_error(5))
+                        } else {
+                            Ok(1)
+                        }
+                    },
                 )
             },
             || {
@@ -169,6 +189,7 @@ fn successful_enumeration_stops_retrying_without_an_extra_pause() {
 #[test]
 fn absent_optional_stale_mounts_do_not_hide_required_mount_failures() {
     let commands = std::cell::RefCell::new(Vec::new());
+    let first_probe = std::cell::Cell::new(true);
     rebind_steps(
         |arguments| {
             commands.borrow_mut().push(arguments.join(" "));
@@ -178,7 +199,13 @@ fn absent_optional_stale_mounts_do_not_hide_required_mount_failures() {
                 Ok(())
             }
         },
-        || Ok(1),
+        || {
+            if first_probe.replace(false) {
+                Err(io::Error::from_raw_os_error(5))
+            } else {
+                Ok(1)
+            }
+        },
     )
     .unwrap();
     assert_eq!(

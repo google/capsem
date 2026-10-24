@@ -22,10 +22,10 @@ pub(crate) fn ready_after(
     ready()
 }
 
-/// Reconnect the agent's own workspace mount after host owner replacement.
-/// This does not repair existing workload-private mounts or held descriptors.
+/// Retain a healthy restored connection before repairing a stale agent mount.
+/// Remounting the shared device can invalidate held workload file handles.
 pub(crate) fn rebind() -> io::Result<()> {
-    eprintln!("[capsem-agent] rebinding workspace after resume");
+    eprintln!("[capsem-agent] checking workspace after resume");
     rebind_steps(run, || {
         warm_with(
             || enumerate(Path::new("/mnt/shared/workspace")),
@@ -59,8 +59,12 @@ fn warm_with(mut probe: impl FnMut() -> io::Result<()>, mut pause: impl FnMut())
 
 fn rebind_steps(
     mut run: impl FnMut(&[&str]) -> io::Result<()>,
-    warm: impl FnOnce() -> io::Result<usize>,
+    mut warm: impl FnMut() -> io::Result<usize>,
 ) -> io::Result<()> {
+    if warm().is_ok() {
+        eprintln!("[capsem-agent] retained workspace transport is healthy");
+        return Ok(());
+    }
     // These stale mounts may be absent on the first reconnect. Required
     // mount creation, enumeration and final bind follow the cleanup.
     let _ = run(&["umount", "-l", "/root"]);

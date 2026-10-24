@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Verify retained workspace transports before remounting the shared device
+  during guest reconnect.
+
 - Wait for the selected macOS service to unload before replacing a package,
   preserving exact service-manager absence checks and bounded teardown.
 
