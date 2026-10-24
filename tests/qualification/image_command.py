@@ -10,6 +10,14 @@ def command_matches(command, resolved, header, actual):
         return False
     if actual in (command, [resolved, *command[1:]]):
         return True
+    # The base-owned GUI launcher execs this exact private-bus delegation,
+    # retaining its own resolved path and every image argument ($0/$@).
+    if (
+        command[0] in ("capsem-gui", "/usr/local/bin/capsem-gui")
+        and resolved == "/usr/local/bin/capsem-gui"
+        and actual == ["dbus-run-session", "--", resolved, *command[1:]]
+    ):
+        return True
     first_line = header.splitlines()[0] if header else ""
     if not first_line.startswith("#!"):
         return False
@@ -41,9 +49,7 @@ def assert_image_command(client, vm_id, candidate):
     if candidate.command and actual == candidate.command:
         return
     assert candidate.command, "the candidate must declare its own startup command"
-    resolved = workload_exec(
-        client, vm_id, f"command -v {shlex.quote(candidate.command[0])}"
-    )
+    resolved = workload_exec(client, vm_id, f"command -v {shlex.quote(candidate.command[0])}")
     assert resolved.get("exit_code") == 0, resolved
     path = resolved["stdout_text"].strip()
     assert path and "\n" not in path, resolved
