@@ -81,6 +81,31 @@ def ready(layout: Path, *, root: Path | None = None) -> tuple[dict, Path]:
     return manifest, path
 
 
+def metadata(image: dict, filesystem: Path) -> tuple[dict, dict[str, bytes]]:
+    """Original-root descriptor and exact metadata bytes, without writing files."""
+    size = filesystem.stat().st_size
+    if not 0 < size <= LIMIT:
+        raise ValueError("prepared-root size exceeds the runtime bound")
+    root_digest = sha256(filesystem)
+    manifest = {
+        "schemaVersion": 2,
+        "mediaType": MANIFEST,
+        "artifactType": MEDIA,
+        "subject": image,
+        "config": descriptor(b"{}", EMPTY),
+        "layers": [{"mediaType": MEDIA, "digest": root_digest, "size": size}],
+        "annotations": {"org.capsem.rootfs.blake3": "blake3:" + digest_file(filesystem)},
+    }
+    data = json.dumps(manifest, sort_keys=True).encode()
+    entry = descriptor(data, MANIFEST)
+    return manifest, {
+        "blobs/sha256/" + manifest["config"]["digest"].split(":")[1]: b"{}",
+        "blobs/sha256/" + entry["digest"].split(":")[1]: data,
+        "index.json": json.dumps({"schemaVersion": 2, "manifests": [entry]}).encode(),
+        "oci-layout": b'{"imageLayoutVersion":"1.0.0"}',
+    }
+
+
 def stage(layout: Path, output: Path) -> tuple[dict, Path]:
     """Retain canonical producer output; reject an OBOM for another image."""
     image = subject(layout)
@@ -88,10 +113,8 @@ def stage(layout: Path, output: Path) -> tuple[dict, Path]:
     if component["version"] != image["digest"]:
         raise ValueError("producer subject differs from the platform image")
     filesystem = output / "rootfs.erofs"
-    size = filesystem.stat().st_size
-    if not 0 < size <= LIMIT:
-        raise ValueError("prepared-root size exceeds the runtime bound")
-    root_digest = sha256(filesystem)
+    manifest, files = metadata(image, filesystem)
+    root_digest = manifest["layers"][0]["digest"]
     with tempfile.TemporaryDirectory(dir=layout, prefix=".rootfs-") as temporary:
         root = Path(temporary) / "rootfs-v2"
         (root / "blobs/sha256").mkdir(parents=True)
@@ -99,25 +122,12 @@ def stage(layout: Path, output: Path) -> tuple[dict, Path]:
             os.link(filesystem, _blob(root, root_digest))
         except OSError:
             shutil.copyfile(filesystem, _blob(root, root_digest))
-        manifest = {
-            "schemaVersion": 2,
-            "mediaType": MANIFEST,
-            "artifactType": MEDIA,
-            "subject": image,
-            "config": descriptor(b"{}", EMPTY),
-            "layers": [{"mediaType": MEDIA, "digest": root_digest, "size": size}],
-            "annotations": {"org.capsem.rootfs.blake3": "blake3:" + digest_file(filesystem)},
-        }
-        data = json.dumps(manifest, sort_keys=True).encode()
-        _blob(root, manifest["config"]["digest"]).write_bytes(b"{}")
-        entry = descriptor(data, MANIFEST)
-        _blob(root, entry["digest"]).write_bytes(data)
-        (root / "index.json").write_text(json.dumps({"schemaVersion": 2, "manifests": [entry]}))
-        (root / "oci-layout").write_text('{"imageLayoutVersion":"1.0.0"}')
+        for relative, data in files.items():
+            (root / relative).write_bytes(data)
         if (layout / "rootfs-v2").exists():
             existing, _ = ready(layout)
-            if existing['layers'][0]['digest'] != root_digest:
-                raise ValueError('prepared original root differs from producer output')
+            if existing["layers"][0]["digest"] != root_digest:
+                raise ValueError("prepared original root differs from producer output")
         else:
             root.rename(layout / "rootfs-v2")
     return ready(layout)

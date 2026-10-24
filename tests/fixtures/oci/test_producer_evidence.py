@@ -16,6 +16,28 @@ from tests.fixtures.oci.test_pinned_image import _layout
 REPOSITORY = "ghcr.io/google/capsem/capsem-debug"
 
 
+def test_projected_original_bytes_equal_actual_atomic_output(tmp_path):
+    from tests.fixtures.oci import producer_evidence
+
+    layout, digest, _ = _layout(tmp_path / "subject")
+    original = tmp_path / "original"
+    output(original, digest)
+    before = {path.name: path.read_bytes() for path in original.iterdir()}
+    required = producer_evidence.required_bytes(
+        published_root.subject(layout), original, REPOSITORY, "arm64", maximum=1048576
+    )
+    assert not (layout / "rootfs-v2").exists()
+    assert not (layout / producer_evidence.DIRECTORY).exists()
+    producer_evidence.stage(layout, original, REPOSITORY, "arm64", maximum=1048576)
+    written = sum(
+        path.stat().st_size
+        for directory in ("rootfs-v2", producer_evidence.DIRECTORY)
+        for path in producer_evidence.regular_files(layout / directory)
+    )
+    assert required == written
+    assert {path.name: path.read_bytes() for path in original.iterdir()} == before
+
+
 def output(
     path, digest, *, repository=REPOSITORY, architecture="arm64", root=b"ORIGINAL root bytes"
 ):

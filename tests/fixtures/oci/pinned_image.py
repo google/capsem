@@ -19,7 +19,6 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import ssl
 import sys
 import tempfile
@@ -65,7 +64,11 @@ def verify(layout: Path, digest: str, platform: str) -> None:
     if _sha256(manifest_path) != digest:
         raise ValueError(f"{layout}: manifest bytes do not hash to {digest}")
     manifest = json.loads(manifest_path.read_bytes())
-    if manifest.get("mediaType") not in MANIFEST_TYPES:
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("mediaType") not in MANIFEST_TYPES
+        or not isinstance(manifest.get("layers"), list)
+    ):
         raise ValueError(f"{digest} is a {manifest.get('mediaType')}, not one platform's manifest")
     for descriptor in (manifest["config"], *manifest["layers"]):
         path = _blob(layout, descriptor["digest"])
@@ -166,13 +169,70 @@ def _fetch(
     accept: str | None,
     target: Path,
     digest: str,
+    size: int,
 ) -> None:
     partial = target.with_suffix(".part")
     with client.open(url, token, accept) as response, partial.open("wb") as out:
-        shutil.copyfileobj(response, out, CHUNK)
-    if _sha256(partial) != digest:
+        count = 0
+        while chunk := response.read(min(CHUNK, size - count + 1)):
+            count += len(chunk)
+            if count > size:
+                raise ValueError(
+                    f"{url} did not serve {digest}: blob exceeds its original descriptor"
+                )
+            out.write(chunk)
+    if count != size or _sha256(partial) != digest:
         raise ValueError(f"{url} did not serve {digest}")
     partial.rename(target)
+
+
+def manifest_intent(
+    raw: bytes, digest: str, platform: str, maximum: int
+) -> tuple[dict, bytes, int]:
+    """Verified original descriptor closure, before any cache or blob write."""
+    if len(raw) > maximum or "sha256:" + hashlib.sha256(raw).hexdigest() != digest:
+        raise ValueError("original manifest exceeds its bound or digest differs")
+    manifest = json.loads(raw)
+    if manifest.get("mediaType") not in MANIFEST_TYPES:
+        raise ValueError("original subject is not a platform manifest")
+    total = len(raw)
+    for item in (manifest["config"], *manifest["layers"]):
+        if (
+            not isinstance(item, dict)
+            or type(item.get("size")) is not int
+            or item["size"] < 0
+            or not isinstance(item.get("digest"), str)
+            or not re.fullmatch(r"sha256:[0-9a-f]{64}", item["digest"])
+        ):
+            raise ValueError("original blob descriptor size/digest is invalid")
+        # Repeated descriptors count again: their old blob and a replacement
+        # .part can coexist. Each new blob otherwise renames, not copies.
+        total += item["size"]
+    os_name, architecture = platform.split("/")
+    entry = {
+        "mediaType": manifest["mediaType"],
+        "digest": digest,
+        "size": len(raw),
+        "platform": {"architecture": architecture, "os": os_name},
+    }
+    index = json.dumps({"schemaVersion": 2, "manifests": [entry]}, sort_keys=True).encode()
+    return manifest, index, total + len(index) + len(b'{"imageLayoutVersion":"1.0.0"}')
+
+
+def _manifest(client, base, token, digest, maximum):
+    with client.open(f"{base}/manifests/{digest}", token, ",".join(MANIFEST_TYPES)) as response:
+        raw = response.read(maximum + 1)
+    if len(raw) > maximum:
+        raise ValueError("original manifest exceeds its metadata bound")
+    return raw
+
+
+def download_intent(digest, *, repository, maximum, context=None):
+    registry, name = repository.split("/", 1)
+    client = _Registry(context)
+    return _manifest(
+        client, f"https://{registry}/v2/{name}", _token(client, registry, name), digest, maximum
+    )
 
 
 def pull(
@@ -182,39 +242,37 @@ def pull(
     *,
     repository: str,
     context: ssl.SSLContext | None = None,
+    original_manifest: bytes | None = None,
 ) -> None:
     """Fetch the pinned manifest and its blobs verbatim, so the digest survives."""
     registry, name = repository.split("/", 1)
     client = _Registry(context)
     token = _token(client, registry, name)
     base = f"https://{registry}/v2/{name}"
+    maximum = _config().functional.reference_image.evidence_max_bytes
+    manifest_bytes = (
+        original_manifest
+        if original_manifest is not None
+        else _manifest(client, base, token, digest, maximum)
+    )
+    manifest, index, _ = manifest_intent(manifest_bytes, digest, platform, maximum)
     with tempfile.TemporaryDirectory(dir=layout.parent, prefix=".pull-") as tmp:
         staged = Path(tmp) / "layout"
         _blob(staged, digest).parent.mkdir(parents=True)
-        _fetch(
-            client,
-            f"{base}/manifests/{digest}",
-            token,
-            ",".join(MANIFEST_TYPES),
-            _blob(staged, digest),
-            digest,
-        )
-        manifest_bytes = _blob(staged, digest).read_bytes()
-        manifest = json.loads(manifest_bytes)
+        _blob(staged, digest).write_bytes(manifest_bytes)
         for descriptor in (manifest["config"], *manifest["layers"]):
             blob = descriptor["digest"]
-            _fetch(client, f"{base}/blobs/{blob}", token, None, _blob(staged, blob), blob)
-        os_name, architecture = platform.split("/")
+            _fetch(
+                client,
+                f"{base}/blobs/{blob}",
+                token,
+                None,
+                _blob(staged, blob),
+                blob,
+                descriptor["size"],
+            )
         (staged / "oci-layout").write_text('{"imageLayoutVersion":"1.0.0"}')
-        entry = {
-            "mediaType": manifest["mediaType"],
-            "digest": digest,
-            "size": len(manifest_bytes),
-            "platform": {"architecture": architecture, "os": os_name},
-        }
-        (staged / "index.json").write_text(
-            json.dumps({"schemaVersion": 2, "manifests": [entry]}, sort_keys=True)
-        )
+        (staged / "index.json").write_bytes(index)
         verify(staged, digest, platform)
         _publish(staged, layout)
 
@@ -330,27 +388,38 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("section", choices=sorted(SECTIONS))
     parser.add_argument("action", choices=("prepare", "build"))
     parser.add_argument("--platform", help="linux/<arch>; this host's by default")
-    parser.add_argument('--receipt', action='store_true')
-    parser.add_argument('--candidate-image', choices=('dev', 'codex-cli', 'claude-code', 'agy', 'antigravity-desktop'))
+    parser.add_argument("--receipt", action="store_true")
+    parser.add_argument(
+        "--candidate-image",
+        choices=("dev", "codex-cli", "claude-code", "agy", "antigravity-desktop"),
+    )
     args = parser.parse_args(argv)
     if args.candidate_image:
-        if (args.section, args.action, args.receipt) != ('reference_image', 'build', True):
-            parser.error('--candidate-image requires reference_image build --receipt')
+        if (args.section, args.action, args.receipt) != ("reference_image", "build", True):
+            parser.error("--candidate-image requires reference_image build --receipt")
         from tests.fixtures.oci import native_build, native_candidates
+
         original = native_candidates.source(ROOT)
         config = _config()
         selected = args.platform or config.host_arch().docker_platform
-        with native_build.produce(config, args.candidate_image, selected) as (image, digest, binding):
+        with native_build.produce(config, args.candidate_image, selected) as (
+            image,
+            digest,
+            binding,
+        ):
             native_candidates.record(config, image, digest, selected, original, build=binding)
         return
     image = SECTIONS[args.section]
     if args.receipt:
-        if args.action != 'build':
-            parser.error('--receipt is only valid for build')
+        if args.action != "build":
+            parser.error("--receipt is only valid for build")
         from tests.fixtures.oci import native_candidates
+
         original = native_candidates.source(ROOT)
         digest = image.build(args.platform)
-        native_candidates.record(_config(), image, digest, image.platform_name(args.platform), original)
+        native_candidates.record(
+            _config(), image, digest, image.platform_name(args.platform), original
+        )
     else:
         (image.prepare if args.action == "prepare" else image.build)(args.platform)
 

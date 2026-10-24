@@ -19,6 +19,32 @@ from tests.fixtures.oci.registry import serve
 MANIFEST = "application/vnd.oci.image.manifest.v1+json"
 
 
+def test_download_projection_includes_original_descriptors_and_partial_peak(tmp_path):
+    from capsem_builder import crypto
+
+    layout, digest, _ = _layout(tmp_path)
+    raw = (layout / "blobs/sha256" / digest.split(":")[1]).read_bytes()
+    document = json.loads(raw)
+    # A repeated blob can coexist with its next .part until atomic replacement;
+    # a unique-closure total alone would undercount this peak.
+    document["layers"].append(document["layers"][0])
+    raw = json.dumps(document).encode()
+    digest = "sha256:" + crypto.sha256(raw).hexdigest()
+    parsed, index, required = pinned_image.manifest_intent(raw, digest, "linux/arm64", 4096)
+    assert parsed == document
+    assert required == (
+        len(raw)
+        + document["config"]["size"]
+        + sum(layer["size"] for layer in document["layers"])
+        + len(index)
+        + len(b'{"imageLayoutVersion":"1.0.0"}')
+    )
+    with pytest.raises(ValueError, match="bound or digest"):
+        pinned_image.manifest_intent(raw, digest, "linux/arm64", len(raw) - 1)
+    with pytest.raises(ValueError, match="bound or digest"):
+        pinned_image.manifest_intent(raw, "sha256:" + "0" * 64, "linux/arm64", 4096)
+
+
 @pytest.mark.parametrize("status", [403, 500])
 def test_registry_challenge_failure_releases_error_response(status):
     response = urllib.error.HTTPError(

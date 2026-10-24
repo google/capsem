@@ -127,6 +127,46 @@ def ready(layout, repository, architecture, *, maximum):
     return directory
 
 
+def receipt(subject, root, original, repository, architecture):
+    return {
+        "subject": subject,
+        "repository": repository,
+        "platform": "linux/" + architecture,
+        "root": root["layers"][0],
+        "files": {
+            name: published_root.descriptor(data, FILES[name]) for name, data in original.items()
+        },
+    }
+
+
+def required_bytes(subject, output, repository, architecture, *, maximum):
+    """Exact original root+metadata write peak, including atomic temporary trees.
+
+    Both temporary trees rename into place; they are not copied a second time.
+    Count the full root even when the existing writer can hard-link it.
+    """
+    safe_tree(output)
+    original = metadata(output, maximum)
+    read_evidence(output, repository + "@" + subject["digest"], architecture, subject["digest"])
+    root, files = published_root.metadata(subject, output / "rootfs.erofs")
+    if (
+        original["rootfs.blake3"].decode().strip()
+        != root["annotations"]["org.capsem.rootfs.blake3"]
+    ):
+        raise ValueError("producer original root integrity differs")
+    encoded = json.dumps(
+        receipt(subject, root, original, repository, architecture), sort_keys=True
+    ).encode()
+    if len(encoded) > maximum:
+        raise ValueError("producer evidence receipt budget exceeded")
+    return (
+        root["layers"][0]["size"]
+        + sum(map(len, files.values()))
+        + sum(map(len, original.values()))
+        + len(encoded)
+    )
+
+
 def stage(layout, output, repository, architecture, *, maximum):
     """Retain first producer output atomically; never replace it with a repack."""
     safe_tree(layout)
@@ -157,21 +197,13 @@ def stage(layout, output, repository, architecture, *, maximum):
         != root["annotations"]["org.capsem.rootfs.blake3"]
     ):
         raise ValueError("producer original root integrity differs")
-    receipt = {
-        "subject": subject,
-        "repository": repository,
-        "platform": "linux/" + architecture,
-        "root": root["layers"][0],
-        "files": {
-            name: published_root.descriptor(data, FILES[name]) for name, data in original.items()
-        },
-    }
+    recorded = receipt(subject, root, original, repository, architecture)
     with tempfile.TemporaryDirectory(dir=layout, prefix=".evidence-") as temporary:
         staged = Path(temporary) / DIRECTORY
         staged.mkdir()
         for name, data in {
             **original,
-            "receipt.json": json.dumps(receipt, sort_keys=True).encode(),
+            "receipt.json": json.dumps(recorded, sort_keys=True).encode(),
         }.items():
             if len(data) > maximum:
                 raise ValueError("producer evidence receipt budget exceeded")
