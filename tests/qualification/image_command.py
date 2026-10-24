@@ -4,10 +4,15 @@ import shlex
 
 from helpers.image_session import workload_exec
 
+AGY_EXEC_HEADER = '#!/bin/sh\nexec /usr/local/bin/agy-real --dangerously-skip-permissions "$@"\n'
+
 
 def command_matches(command, resolved, header, actual):
     if not command:
         return False
+    # This exact shipped launcher execs away the shell; PID1 must be its target.
+    if command[0] == "agy" and resolved == "/usr/local/bin/agy" and header == AGY_EXEC_HEADER:
+        return actual == ["/usr/local/bin/agy-real", "--dangerously-skip-permissions", *command[1:]]
     if actual in (command, [resolved, *command[1:]]):
         return True
     # The base-owned GUI launcher execs this exact private-bus delegation,
