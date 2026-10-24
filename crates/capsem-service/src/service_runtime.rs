@@ -305,7 +305,7 @@ async fn start_and_serve(args: Args, run_dir: PathBuf, on_ready: impl FnOnce(Arc
         list_response_cache: IdentityCache::new("service.vm_list"),
         lifecycle: capsem_service::lifecycle::VmLifecycle::default(),
         shutdown_lock: tokio::sync::Mutex::new(()),
-        update_lock: tokio::sync::Mutex::new(()),
+        update_lock: Arc::new(tokio::sync::Mutex::new(())),
         policy_mutation: policy_mutation::PolicyMutationLock::default(),
         update_restart: tokio::sync::Notify::new(),
         #[cfg(test)]

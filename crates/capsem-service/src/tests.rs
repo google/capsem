@@ -142,7 +142,7 @@ pub(crate) fn test_state(
         list_response_cache: IdentityCache::new("service.vm_list"),
         lifecycle: capsem_service::lifecycle::VmLifecycle::default(),
         shutdown_lock: tokio::sync::Mutex::new(()),
-        update_lock: tokio::sync::Mutex::new(()),
+        update_lock: Arc::new(tokio::sync::Mutex::new(())),
         policy_mutation: policy_mutation::PolicyMutationLock::default(),
         update_restart: tokio::sync::Notify::new(),
         run_dir,
@@ -610,6 +610,7 @@ mod suspend;
 mod system_contracts;
 mod telemetry_export;
 mod transcript;
+mod update_execution;
 mod update_routes;
 mod vm_info;
 

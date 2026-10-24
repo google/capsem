@@ -4,6 +4,7 @@ mod browser;
 pub(crate) mod exposures;
 pub(crate) mod restart;
 mod streams;
+mod updates;
 
 pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
     Router::new()
@@ -338,50 +339,23 @@ pub(super) fn planned_update_response(plan: api::UpdateCommandPlan) -> api::Upda
 }
 
 pub(super) async fn execute_update_command(
-    state: &ServiceState,
+    state: &Arc<ServiceState>,
     plan: api::UpdateCommandPlan,
 ) -> Result<api::UpdateActionResponse, AppError> {
-    let _update_guard = state.update_lock.lock().await;
-    execute_update_command_unlocked(plan).await
+    let guard = Arc::clone(&state.update_lock).lock_owned().await;
+    updates::settle(Arc::clone(state), plan, guard, UpdateCommandKind::Check)
+        .await
+        .map(|(response, _)| response)
 }
 
 pub(super) async fn execute_update_apply(
-    state: &ServiceState,
+    state: &Arc<ServiceState>,
     plan: api::UpdateCommandPlan,
 ) -> Result<api::UpdateActionResponse, AppError> {
-    let _update_guard = state.update_lock.lock().await;
-    let response = execute_update_command_unlocked(plan).await?;
-    if response.status == api::UpdateActionStatus::Succeeded {
-        reload_activated_update_runtime(state)?;
-    }
-    Ok(response)
-}
-
-pub(super) async fn execute_update_command_unlocked(
-    plan: api::UpdateCommandPlan,
-) -> Result<api::UpdateActionResponse, AppError> {
-    let output = Command::new(&plan.program)
-        .args(&plan.args)
-        .output()
+    let guard = Arc::clone(&state.update_lock).lock_owned().await;
+    updates::settle(Arc::clone(state), plan, guard, UpdateCommandKind::Apply)
         .await
-        .map_err(|error| {
-            AppError::new(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to start update command: {error}"),
-            )
-        })?;
-    let status = if output.status.success() {
-        api::UpdateActionStatus::Succeeded
-    } else {
-        api::UpdateActionStatus::Failed
-    };
-    Ok(api::UpdateActionResponse {
-        status,
-        command: plan,
-        exit_code: output.status.code(),
-        stdout: Some(String::from_utf8_lossy(&output.stdout).to_string()),
-        stderr: Some(String::from_utf8_lossy(&output.stderr).to_string()),
-    })
+        .map(|(response, _)| response)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -439,15 +413,16 @@ pub(super) fn automatic_update_delay(environment_name: &str, default_seconds: u6
     automatic_update_delay_from_value(value.as_deref(), default_seconds)
 }
 
-pub(super) async fn run_automatic_update_once(state: &ServiceState) -> AutomaticUpdateOutcome {
+pub(super) async fn run_automatic_update_once(state: &Arc<ServiceState>) -> AutomaticUpdateOutcome {
     if !automatic_updates_enabled() {
         return AutomaticUpdateOutcome::Disabled;
     }
-    let Ok(_update_guard) = state.update_lock.try_lock() else {
+    let Ok(guard) = Arc::clone(&state.update_lock).try_lock_owned() else {
         return AutomaticUpdateOutcome::Busy;
     };
     let plan = update_command_plan(UpdateCommandKind::Apply);
-    let response = match execute_update_command_unlocked(plan).await {
+    let (response, disposition) = match updates::settle(Arc::clone(state), plan, guard, UpdateCommandKind::Apply).await
+    {
         Ok(response) => response,
         Err(error) => return AutomaticUpdateOutcome::Failed(error.body.error),
     };
@@ -460,9 +435,9 @@ pub(super) async fn run_automatic_update_once(state: &ServiceState) -> Automatic
             .unwrap_or("update command returned a non-zero exit status");
         return AutomaticUpdateOutcome::Failed(format!("exit {:?}: {detail}", response.exit_code));
     }
-    match reload_activated_update_runtime(state) {
-        Ok(disposition) => AutomaticUpdateOutcome::Succeeded(disposition),
-        Err(error) => AutomaticUpdateOutcome::Failed(error.body.error),
+    match disposition {
+        Some(disposition) => AutomaticUpdateOutcome::Succeeded(disposition),
+        None => AutomaticUpdateOutcome::Failed("successful updater did not reload its runtime".into()),
     }
 }
 

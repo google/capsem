@@ -50,6 +50,7 @@ const BLOCKING_HELPERS: &[&str] = &[
     "read_installed_status_document(",
     "read_manifest_metadata_status_document(",
     "update_status_response(",
+    "reload_activated_update_runtime(",
     "refresh_active_policies(",
     "asset_status(",
     "settle_persistent_session_dir(",

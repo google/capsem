@@ -4,6 +4,9 @@ use capsem_service::api;
 use std::ffi::OsStr;
 use std::path::PathBuf;
 
+mod execution;
+pub(crate) use execution::execute;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UpdateCommandKind {
     Check,

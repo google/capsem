@@ -25,7 +25,6 @@ use std::path::{Path as StdPath, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, RwLock};
 use tokio::net::UnixListener;
-use tokio::process::Command;
 use tracing::{error, info, warn, Instrument};
 mod active_policy;
 mod approval_routes;
@@ -306,7 +305,7 @@ pub struct ServiceState {
     /// transaction owns binaries, assets, and the selected manifest
     /// together, so the service must never launch split or overlapping
     /// mutations.
-    update_lock: tokio::sync::Mutex<()>,
+    update_lock: Arc<tokio::sync::Mutex<()>>,
     /// Serializes every policy mutation and reload, load through VM acknowledgement.
     policy_mutation: policy_mutation::PolicyMutationLock,
     /// Requests a managed service shutdown after a package update selects a

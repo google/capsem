@@ -245,6 +245,34 @@ fn write_update_runtime_manifest(assets_dir: &StdPath, binary: &str, assets: &st
 }
 
 #[tokio::test]
+async fn update_apply_overflow_still_reconciles_the_successful_transaction() {
+    let dir = tempfile::tempdir().unwrap();
+    let assets = dir.path().join("assets");
+    let candidate = dir.path().join("candidate");
+    write_update_runtime_manifest(&assets, "0.0.0", "assets-1");
+    let state = make_asset_state(assets.clone());
+    write_update_runtime_manifest(&candidate, "0.0.0", "assets-2");
+    let plan = api::UpdateCommandPlan {
+        program: "/bin/sh".into(),
+        args: vec![
+            "-c".into(),
+            format!(
+                "cp '{}' '{}'; printf '%070000d' 0",
+                candidate.join("manifest.json").display(),
+                assets.join("manifest.json").display()
+            ),
+        ],
+    };
+    let response = execute_update_apply(&state, plan).await;
+    assert!(response.is_err(), "overflow must not claim complete response capture");
+    assert_eq!(
+        state.manifest.read().unwrap().as_ref().unwrap().assets.current,
+        "assets-2",
+        "successful activation was not reconciled after output overflow"
+    );
+}
+
+#[tokio::test]
 async fn update_runtime_reloads_asset_only_activation_without_restart() {
     let dir = tempfile::tempdir().unwrap();
     let assets_dir = dir.path().join("assets");

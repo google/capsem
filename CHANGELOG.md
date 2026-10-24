@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Accept authenticated Debian package filenames containing tilde version
   separators without weakening archive origin, size or SHA-256 verification.
+- Bound update-check child lifetimes and captured output, and keep admitted
+  update transactions serialized and draining when their caller disconnects.
 
 - Create the APT archive destination on fresh host-builder caches before
   authenticated parallel downloads, avoiding missing-directory build failures.
