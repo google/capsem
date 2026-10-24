@@ -7,11 +7,14 @@ import hashlib
 import re
 import subprocess
 import tomllib
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pytest
+from capsem_builder.cache.config import load_paths
+from helpers import failures
 
 ROOT = Path(__file__).resolve().parents[2]
 POLICY = Path(__file__).with_name("generated_output_debt.toml")
@@ -509,8 +512,6 @@ def test_test_evidence_and_coverage_use_canonical_target_roots() -> None:
     release_vitest = (ROOT / "build_system/release_site/vitest.config.ts").read_text(
         encoding="utf-8"
     )
-    # The failure-evidence registry, which derives its root from gate config.
-    failures = (ROOT / "tests/helpers/failures.py").read_text(encoding="utf-8")
     collector = (
         ROOT / "build_system/builder/release/tools/release_collect_evidence.py"
     ).read_text(encoding="utf-8")
@@ -544,7 +545,7 @@ def test_test_evidence_and_coverage_use_canonical_target_roots() -> None:
     assert (
         f"reportsDirectory: '../../{coverage}/distribution-site'" in release_vitest
     ), RATIONALE
-    assert "gate_config.load(" in failures and ".outputs.test_artifacts" in failures, RATIONALE
+    assert _failure_evidence_matches(ROOT, failures.artifact_root), RATIONALE
     assert f'Path("{evidence}") / "release"' in collector, RATIONALE
 
     required_ci_paths = {
@@ -647,3 +648,15 @@ def test_current_generated_output_boundary_is_exact() -> None:
     assert policy.get("version") == 1
     problems = _problems(policy, _observe(policy["approved_output_probes"]))
     assert not problems, RATIONALE + "\n" + "\n".join(problems)
+
+
+def _failure_evidence_matches(root: Path, resolver: Callable[[Path], Path]) -> bool:
+    paths = load_paths(root)
+    if paths.policy.control is None:
+        return False
+    return resolver(root) == paths.stage(paths.policy.control.failure_artifacts.stage)
+
+
+def test_failure_evidence_contract_checks_actual_cache_owner_not_source_spelling(tmp_path: Path) -> None:
+    assert _failure_evidence_matches(ROOT, failures.artifact_root)
+    assert not _failure_evidence_matches(ROOT, lambda _: tmp_path / "unaccounted-worktree-evidence")
