@@ -258,6 +258,7 @@ embed_install_manifest_resolver "$WORK_DIR/deb/DEBIAN/postinst"
 embed_pkg_script service-owned-update "$WORK_DIR/deb/DEBIAN/postinst"
 embed_pkg_script install-vm-device-access "$WORK_DIR/deb/DEBIAN/postinst"
 chmod 755 "$WORK_DIR/deb/DEBIAN/postinst"
+python3 "$SCRIPT_DIR/embed-preinstall-resource.py" embed "$WORK_DIR/deb"
 install -Dm0644 "$SCRIPT_DIR/99-capsem-vm-devices.rules" "$WORK_DIR/deb/usr/lib/udev/rules.d/99-capsem-vm-devices.rules"
 
 PACKAGE_VERSION="$(dpkg-deb -f "$INPUT_DEB" Version)"
@@ -274,7 +275,11 @@ mkdir -p "$WORK_DIR/deb/usr/share/capsem/assets"
 write_manifest_metadata "$SELECTED_MANIFEST_SOURCE" "$PACKAGE_VERSION" "$WORK_DIR/deb/usr/share/capsem/assets/manifest-metadata.json"
 
 echo "=== Repacking .deb ==="
-dpkg-deb -b "$WORK_DIR/deb" "$OUTPUT_DEB"
+python3 "$SCRIPT_DIR/embed-preinstall-resource.py" verify "$WORK_DIR/deb"
+dpkg-deb -b "$WORK_DIR/deb" "$WORK_DIR/candidate.deb"
+dpkg-deb --ctrl-tarfile "$WORK_DIR/candidate.deb" \
+    | python3 "$SCRIPT_DIR/embed-preinstall-resource.py" check-control
+mv "$WORK_DIR/candidate.deb" "$OUTPUT_DEB"
 
 echo "=== Validating ==="
 dpkg-deb --info "$OUTPUT_DEB"

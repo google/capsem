@@ -67,6 +67,13 @@ CAPSEM_USER
 exec > >(su "$TARGET_USER" -c "tee -a \"\$HOME/.capsem/logs/install.log\" \"\$HOME/.capsem/logs/install-$INSTALL_RUN_ID.log\"") 2>&1
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-preinst event=start user=$TARGET_USER install_run_id=$INSTALL_RUN_ID install_run_log=$INSTALL_RUN_LOG"
 
+CAPSEM_INSTALL_PHASE="admit_existing_ledger"
+if ! declare -F capsem_run_preinstall_ledger_admission >/dev/null; then
+    echo 'capsem: package is missing its candidate preinstall ledger resource' >&2
+    exit 1
+fi
+capsem_run_preinstall_ledger_admission "$TARGET_USER"
+
 CAPSEM_INSTALL_PHASE="stop_existing_install"
 XDG_DIR="/run/user/$TARGET_UID"
 if capsem_install_runs_inside_service /proc/self/cgroup; then

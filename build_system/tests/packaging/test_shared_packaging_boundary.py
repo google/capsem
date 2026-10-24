@@ -19,6 +19,7 @@ EXPECTED_RESOURCE_MODES = {
     "install-manifest": 0o644,
     "install-manifest-request.sh": 0o644,
     "package_payload.py": 0o644,
+    "preinstall-ledger": 0o644,
     "prepare-install-vm-devices.sh": 0o644,
     "retire-cohort": 0o755,
     "service-owned-update": 0o644,

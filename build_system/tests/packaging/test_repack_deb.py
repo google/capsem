@@ -61,19 +61,21 @@ pytestmark = pytest.mark.skipif(
 
 def _build_fixture_deb(workdir: Path, name: str = "capsem-fixture", version: str = "0.0.1") -> Path:
     """Build a minimal valid .deb in workdir. Returns the path to the .deb."""
+    machine = int.from_bytes(_ELF_SOURCE.read_bytes()[18:20], "little")
+    architecture = {62: "amd64", 183: "arm64"}[machine]
     root = workdir / f"{name}-src"
     (root / "DEBIAN").mkdir(parents=True)
     (root / "DEBIAN" / "control").write_text(
         f"Package: {name}\n"
         f"Version: {version}\n"
-        f"Architecture: all\n"
+        f"Architecture: {architecture}\n"
         f"Maintainer: Test <test@example.com>\n"
         f"Description: fixture package for repack-deb tests\n"
     )
     # Add a token file so the archive isn't empty.
     (root / "usr" / "share" / name).mkdir(parents=True)
     (root / "usr" / "share" / name / "marker.txt").write_text("fixture")
-    deb_path = workdir / f"{name}_{version}_all.deb"
+    deb_path = workdir / f"{name}_{version}_{architecture}.deb"
     subprocess.run(
         ["dpkg-deb", "-b", str(root), str(deb_path)],
         check=True,
@@ -167,10 +169,15 @@ class _QuietHandler(http.server.SimpleHTTPRequestHandler):
         return
 
 
+class _ReleaseServer(http.server.ThreadingHTTPServer):
+    seen_user_agents: list[str]
+
+
 class _ReleaseUserAgentRequiredHandler(_QuietHandler):
     def do_GET(self) -> None:
         user_agent = self.headers.get("User-Agent", "")
-        self.server.seen_user_agents.append(user_agent)  # type: ignore[attr-defined]
+        assert isinstance(self.server, _ReleaseServer)
+        self.server.seen_user_agents.append(user_agent)
         if user_agent != "CapsemReleaseValidator/1.0":
             self.send_response(403)
             self.end_headers()
@@ -196,14 +203,14 @@ def _serve_directory(root: Path):
 @contextlib.contextmanager
 def _serve_directory_requiring_release_user_agent(root: Path):
     handler = functools.partial(_ReleaseUserAgentRequiredHandler, directory=str(root))
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
-    server.seen_user_agents = []  # type: ignore[attr-defined]
+    server = _ReleaseServer(("127.0.0.1", 0), handler)
+    server.seen_user_agents = []
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
         yield (
             f"http://127.0.0.1:{server.server_address[1]}",
-            server.seen_user_agents,  # type: ignore[attr-defined]
+            server.seen_user_agents,
         )
     finally:
         server.shutdown()
@@ -282,6 +289,8 @@ def test_preinst_script_is_included(tmp_path):
         "preinst doesn't look like the owned deb-preinst.sh"
     )
     preinst_text = preinst.read_text()
+    assert "# capsem candidate ledger resource begin" in preinst_text
+    assert 'capsem_run_preinstall_ledger_admission "$TARGET_USER"' in preinst_text
     assert "Tester action: copy the output of this command into the bug report:" in preinst_text
     assert "capsem_install_runs_inside_service" in preinst_text
     assert "event=preserve_service_owned_update" in preinst_text

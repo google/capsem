@@ -1,0 +1,51 @@
+#!/bin/bash
+# Candidate bytes and fixed bounds are embedded by the ordinary package owner.
+# The target user's candidate logger, never shell SQL, owns the state decision.
+capsem_admit_preinstall_ledger() (
+    set -euo pipefail
+    [ "$#" -eq 5 ] || { echo 'capsem: invalid preinstall admission binding' >&2; exit 1; }
+    local target_user="$1" expected_sha="$2" expected_size="$3" deadline="$4" grace="$5"
+    case "$target_user" in
+        ''|root|*[!A-Za-z0-9._-]*) echo 'capsem: invalid preinstall target user' >&2; exit 1 ;;
+    esac
+    if [[ ! "$expected_sha" =~ ^[0-9a-f]{64}$ ]] \
+        || [[ ! "$expected_size" =~ ^[1-9][0-9]*$ ]] \
+        || [[ ! "$deadline" =~ ^[1-9][0-9]*$ ]] || [[ ! "$grace" =~ ^[1-9][0-9]*$ ]]; then
+        echo 'capsem: invalid preinstall resource identity or bounds' >&2
+        exit 1
+    fi
+    [ "$(/usr/bin/id -u)" -eq 0 ] || { echo 'capsem: preinstall admission requires root staging' >&2; exit 1; }
+    local target_uid actual_sha actual_size
+    # EXIT runs after function-local scope unwinds; this subshell owns these
+    # bindings so cleanup retains its exact stage and original exit status.
+    stage=""
+    target_uid=$(/usr/bin/id -u "$target_user") || exit 1
+    [[ "$target_uid" =~ ^[1-9][0-9]*$ ]] || { echo 'capsem: preinstall target must be non-root' >&2; exit 1; }
+    capsem_cleanup_preinstall_resource() {
+        local status=$?
+        trap - EXIT HUP INT TERM
+        if [ -n "$stage" ]; then
+            /bin/rm -rf -- "$stage" || status=1
+        fi
+        exit "$status"
+    }
+    trap capsem_cleanup_preinstall_resource EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    umask 077
+    stage=$(/usr/bin/mktemp -d /var/tmp/capsem-preinstall.XXXXXXXXXX) || exit 1
+    capsem_write_preinstall_resource > "$stage/capsem-ledger" || exit 1
+    actual_size=$(/usr/bin/wc -c < "$stage/capsem-ledger" | /usr/bin/tr -d '[:space:]') || exit 1
+    actual_sha=$(/usr/bin/sha256sum "$stage/capsem-ledger") || exit 1
+    actual_sha=${actual_sha%% *}
+    if [ "$actual_size" != "$expected_size" ] || [ "$actual_sha" != "$expected_sha" ]; then
+        echo 'capsem: preinstall candidate resource identity mismatch' >&2
+        exit 1
+    fi
+    /bin/chmod 0555 "$stage/capsem-ledger" || exit 1
+    /bin/chmod 0711 "$stage" || exit 1
+    /usr/bin/timeout --signal=TERM --kill-after="${grace}s" "${deadline}s" \
+        /usr/sbin/runuser -u "$target_user" -- "$stage/capsem-ledger" \
+        --preinstall-ledger-admission --target-user "$target_user"
+)

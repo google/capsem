@@ -17,6 +17,7 @@ EXPECTED_MODES = {
     "deb-postinst.sh": 0o755,
     "deb-preinst.sh": 0o755,
     "derive-deb-libc-floor.py": 0o644,
+    "embed-preinstall-resource.py": 0o644,
     "install-deb-runtime-dependencies.py": 0o644,
     "prove-deb-platform-support.py": 0o644,
     "repack-deb.sh": 0o755,

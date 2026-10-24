@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preserve worker signal dispositions and granted I/O when proving execution
   confinement, using a direct kernel exec attempt without spawning a child.
 
+- Stage the Debian package's exact candidate ledger for target-user state
+  admission before retiring an existing installation, with bounded resources
+  and cleanup on refusal.
+
 - Reject ledger writers missing required schema columns at startup, naming the
   broken table and column without refilling or migrating the original data.
 
