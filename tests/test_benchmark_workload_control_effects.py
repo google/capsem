@@ -73,7 +73,10 @@ def test_collector_reuses_existing_native_fixture_and_resource_owner(monkeypatch
         transport = SimpleNamespace(close=lambda:closed.append(label))
         yield SimpleNamespace(label=label,transport_factory=lambda:transport),SimpleNamespace(home_dir=tmp_path,proc=SimpleNamespace(pid=123)),'reference',tmp_path/'cert'
     monkeypatch.setattr(route_lifecycle_fixture,'lifecycle_target',target)
-    monkeypatch.setattr(settings_policy,'write_settings_rule',lambda *args,**kwargs:calls.append('rule'))
+    def rule(*args,**kwargs):
+        assert kwargs['match'] == 'file.import.name == "route-upload-4096.txt" || file.import.name == "route-upload-1048576.txt"'
+        calls.append('rule')
+    monkeypatch.setattr(settings_policy,'write_settings_rule',rule)
     monkeypatch.setattr(subject,'Process',lambda pid:pid)
     monkeypatch.setattr(subject.Cycle,'cleanup',lambda self:None)
     monkeypatch.setattr(subject.Cycle,'listing',lambda self:[])

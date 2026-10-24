@@ -1,5 +1,4 @@
 """VM-only one-shot execution and owned stopped disposal; source is not timing."""
-import json
 import shlex
 import time
 import tomllib
@@ -113,8 +112,8 @@ def sample_cycle(cycle,reference,certificate,run):
 
 
 def prepare_policy(service):
-    from helpers.settings_policy import write_settings_rule
+    from helpers.settings_policy import file_name_condition, write_settings_rule
     for action,names in (('export',[FILE,RUN_FILE]),('import',[RELEASE])):
         write_settings_rule(service.home_dir,'route_run_purge_'+action,action='allow',
-            detection_level='informational',match=f'file.{action}.name in '+json.dumps(names),
+            detection_level='informational',match=file_name_condition(action,names),
             reason='Exact isolated synthetic run/purge fixture files only.')

@@ -180,7 +180,7 @@ def require_control_metrics(metrics,cfg,quick,labels=('service','gateway')):
 
 
 def collect_workload_controls(quick):
-    from helpers.settings_policy import write_settings_rule
+    from helpers.settings_policy import file_name_condition, write_settings_rule
 
     from .route_lifecycle_fixture import lifecycle_target
     cfg,metrics = controls_config(),{}
@@ -189,7 +189,7 @@ def collect_workload_controls(quick):
             with lifecycle_target(label) as (target,service,reference,certificate):
                 names = [f'route-upload-{size}.txt' for size in cfg['file_sizes']]
                 write_settings_rule(service.home_dir,RULE,action='allow',detection_level='informational',
-                    match='file.import.name in '+json.dumps(names),reason='Isolated synthetic benchmark upload corpus.')
+                    match=file_name_condition('import',names),reason='Isolated synthetic benchmark upload corpus.')
                 transport = target.transport_factory()
                 cycle = Cycle(transport,target,service,cfg,metrics)
                 try:

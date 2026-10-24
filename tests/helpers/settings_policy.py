@@ -8,11 +8,19 @@ every running VM's policy.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Any
 
 import tomli_w
+
+
+def file_name_condition(action: str, names: list[str]) -> str:
+    """Allow exact synthetic filenames using the supported condition grammar."""
+    if action not in {"import", "export"} or not names:
+        raise ValueError("file condition needs an import/export action and filenames")
+    return " || ".join(f"file.{action}.name == {json.dumps(name)}" for name in names)
 
 
 def write_settings_rule(home_dir: Path, rule_id: str, **rule: Any) -> None:

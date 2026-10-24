@@ -106,9 +106,18 @@ def test_policy_admits_only_original_synthetic_files(tmp_path):
     subject.prepare_policy(SimpleNamespace(home_dir=tmp_path))
     rules = tomllib.loads((tmp_path/'settings.toml').read_text())['profiles']['rules']
     assert set(rules) == {'route_run_purge_export','route_run_purge_import'}
-    assert rules['route_run_purge_export']['match'] == 'file.export.name in ["capsem-route-purge-proof", "capsem-route-run-proof"]'
-    assert rules['route_run_purge_import']['match'] == 'file.import.name in ["capsem-route-run-release"]'
+    assert rules['route_run_purge_export']['match'] == 'file.export.name == "capsem-route-purge-proof" || file.export.name == "capsem-route-run-proof"'
+    assert rules['route_run_purge_import']['match'] == 'file.import.name == "capsem-route-run-release"'
     assert all(rule['action'] == 'allow' for rule in rules.values())
+
+
+def test_file_condition_quotes_names_without_turning_them_into_policy():
+    from helpers.settings_policy import file_name_condition
+    assert file_name_condition('import', ['a" || true', 'b\\c']) == (
+        'file.import.name == "a\\" || true" || file.import.name == "b\\\\c"')
+    for action,names in [('import', []), ('unrecognized', ['file'])]:
+        with pytest.raises(ValueError):
+            file_name_condition(action,names)
 
 
 @pytest.mark.parametrize('broken',[False,True])

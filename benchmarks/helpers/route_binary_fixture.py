@@ -1,12 +1,11 @@
 """Real workload file producers and untimed policy/ledger completion proof."""
 from __future__ import annotations
 
-import json
 import re
 import shlex
 
 from helpers.image_session import WORKSPACE, workload_exec
-from helpers.settings_policy import apply_settings_rule
+from helpers.settings_policy import apply_settings_rule, file_name_condition
 
 from .route_fixtures import corpus_config
 
@@ -20,7 +19,7 @@ def seed_binary_files(service, vm_id: str | None) -> None:
     # Only these isolated synthetic files are allowed. The real owner still
     # evaluates policy and commits file/security history for every download.
     apply_settings_rule(service, RULE, action="allow", detection_level="informational",
-                        match="file.export.name in " + json.dumps(names), reason="Isolated benchmark binary export corpus.")
+                        match=file_name_condition("export", names), reason="Isolated benchmark binary export corpus.")
     source = f"from pathlib import Path; sizes={sizes!r}; root=Path({WORKSPACE!r}); " + "; ".join(
         f"(root / {name!r}).write_bytes(bytes(range(256)) * ({size} // 256))" for name, size in zip(names, sizes, strict=True)
     ) + "; print('CAPSEM-BINARY-FIXTURE')"

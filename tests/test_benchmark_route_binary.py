@@ -118,6 +118,7 @@ def test_binary_fixture_uses_workload_and_preserves_producer_until_drain(monkeyp
     monkeypatch.setattr(fixture, "workload_exec", workload)
     fixture.seed_binary_files(service, "live")
     assert observed[0]["action"] == "allow" and "route-4096.bin" in observed[0]["match"]
+    assert ' in ' not in observed[0]["match"] and 'file.export.name == ' in observed[0]["match"]
     fixture.finish_binary_files(service, "live", 148)
     with pytest.raises(AssertionError):
         fixture.finish_binary_files(service, "live", 147)
