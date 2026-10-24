@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Restore Debian installation without systemd while retaining exact old-cohort
+  retirement and both signed admission checks; booted systemd still requires
+  verified selected-user manager quiescence before replacement.
+
 - Limit macOS preinstall service-manager control to the selected account's
   fixed Capsem target, without trusting labels from a user-writable plist.
 

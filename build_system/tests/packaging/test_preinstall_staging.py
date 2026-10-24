@@ -160,7 +160,7 @@ def test_payload_is_embedded_after_strip_and_reverified_before_actual_control_bu
     assert "set -euo pipefail" in repack
 
 
-def package_admission_flow(*, platform: str, fail_at: int = 0, preserved: bool = False, legacy: bool = False, manager_status: int = 0) -> subprocess.CompletedProcess[str]:
+def package_admission_flow(*, platform: str, fail_at: int = 0, preserved: bool = False, legacy: bool = False, manager_status: int = 0, systemd_booted: bool = True, systemctl_available: bool = True) -> subprocess.CompletedProcess[str]:
     """Execute original maintainer-script control flow with labelled OS effects."""
     if platform == "Darwin":
         source = (ROOT / "build_system/packaging/macos/pkg-scripts/preinstall").read_text()
@@ -177,6 +177,15 @@ TARGET_UID=12345
 USER_HOME=/nonexistent-capsem-source-fixture
 CAPSEM_DIR=/nonexistent-capsem-source-fixture/.capsem
 calls=0
+# Label only the platform metadata/tool-presence inputs, not the script branch.
+function [ {{
+    if builtin [ "$#" -eq 3 ] && builtin [ "$1" = -d ] && builtin [ "$2" = /run/systemd/system ]; then return {0 if systemd_booted else 1}; fi
+    builtin [ "$@"
+}}
+command() {{
+    if builtin [ "$#" -eq 2 ] && builtin [ "$1" = -v ] && builtin [ "$2" = systemctl ]; then return {0 if systemctl_available else 1}; fi
+    builtin command "$@"
+}}
 capsem_run_preinstall_ledger_admission() {{
     calls=$((calls + 1))
     printf 'admit:%s:%s\\n' "$calls" "$*"
@@ -245,3 +254,23 @@ def test_unverified_manager_drain_prevents_retirement_and_payload_removal(platfo
     assert "retire" not in lines
     assert not any(line.startswith("remove-") for line in lines)
     assert not any(line.startswith("admit:2:") for line in lines)
+
+
+@pytest.mark.parametrize("systemctl_available", [False, True])
+def test_non_systemd_installs_still_drain_and_recheck_before_unpack(systemctl_available: bool) -> None:
+    result = package_admission_flow(platform="Linux", systemd_booted=False, systemctl_available=systemctl_available, manager_status=31)
+    assert result.returncode == 0, result.stdout + result.stderr
+    lines = result.stdout.splitlines()
+    assert "manager-stopped" not in lines
+    ordered = [line for line in lines if line.startswith("admit:") or line == "retire"]
+    assert ordered == ["admit:1:fixture-user", "retire", "admit:2:fixture-user"]
+    assert "event=complete" in result.stdout
+
+
+@pytest.mark.parametrize("systemctl_available", [False, True])
+def test_booted_systemd_cannot_skip_unavailable_user_manager(systemctl_available: bool) -> None:
+    result = package_admission_flow(platform="Linux", systemd_booted=True, systemctl_available=systemctl_available, manager_status=31)
+    assert result.returncode == 31, result.stdout + result.stderr
+    assert "manager-stopped" in result.stdout
+    assert "retire" not in result.stdout and "admit:2:" not in result.stdout
+    assert "event=complete" not in result.stdout

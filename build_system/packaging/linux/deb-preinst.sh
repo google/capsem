@@ -81,8 +81,13 @@ if capsem_install_runs_inside_service /proc/self/cgroup; then
     capsem_run_preinstall_ledger_admission "$TARGET_USER" --require-current-host
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-preinst event=preserve_service_owned_update unit=capsem.service"
 else
-    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-preinst event=stop_systemd_user_service unit=capsem.service"
-    capsem_stop_systemd_service "$TARGET_USER" "$XDG_DIR"
+    # Match postinstall's sd_booted predicate. Merely having systemctl does
+    # not mean PID1 is systemd. A booted manager must still verify quiescence;
+    # unavailable user-manager/query state is never interpreted as absence.
+    if [ -d /run/systemd/system ]; then
+        echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-preinst event=stop_systemd_user_service unit=capsem.service"
+        capsem_stop_systemd_service "$TARGET_USER" "$XDG_DIR"
+    fi
     capsem_retire_native_cohort "$CAPSEM_DIR" "$TARGET_UID" "$TARGET_USER"
     CAPSEM_INSTALL_PHASE="admit_drained_ledger"
     capsem_run_preinstall_ledger_admission "$TARGET_USER"
