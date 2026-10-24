@@ -71,7 +71,7 @@ def lease_key(template: str, name: str) -> str | None:
         return None
     if not (name.startswith(prefix) and name.endswith(suffix)):
         return None
-    return name[len(prefix):len(name) - len(suffix)]
+    return name[len(prefix) : len(name) - len(suffix)]
 
 
 @contextmanager
@@ -155,23 +155,36 @@ def held_locks(root: Path, locks: Iterable[Path]) -> tuple[str, ...]:
         lock = root / relative
         if active_path(lock):
             holders = lock_holders(lock)
-            held.append(f"{relative} held by {', '.join(holders) if holders else 'another process'}")
+            held.append(
+                f"{relative} held by {', '.join(holders) if holders else 'another process'}"
+            )
     return tuple(held)
 
 
 def lock_holders(path: Path) -> tuple[str, ...]:
     """`pid N (command)` for every flock on `path`, where the kernel lists them."""
     try:
-        inode = path.stat().st_ino
+        info = path.stat()
+        identity = (os.major(info.st_dev), os.minor(info.st_dev), info.st_ino)
         table = Path("/proc/locks").read_text(encoding="utf-8")
     except OSError:
         return ()
-    pids = sorted({
-        int(fields[4])
-        for fields in (line.split() for line in table.splitlines())
-        if len(fields) > 5 and fields[4].isdigit() and fields[5].rsplit(":", 1)[-1] == str(inode)
-    })
+    pids = sorted(
+        {
+            int(fields[4])
+            for fields in (line.split() for line in table.splitlines())
+            if len(fields) > 5 and fields[4].isdigit() and _lock_identity(fields[5]) == identity
+        }
+    )
     return tuple(f"pid {pid} ({_command(pid)})" for pid in pids)
+
+
+def _lock_identity(value: str) -> tuple[int, int, int] | None:
+    try:
+        major, minor, inode = value.split(":")
+        return int(major, 16), int(minor, 16), int(inode)
+    except ValueError:
+        return None
 
 
 def _command(pid: int) -> str:
@@ -196,9 +209,12 @@ def mutation_locks(paths: CachePaths, stage_ids: Iterable[str]) -> Iterator[tupl
                 lock.parent.mkdir(parents=True, exist_ok=True)
                 if lock.name == CARGO_LOCK_NAME:
                     _tag_cargo_target(lock.parent.parent)
-                descriptor = stack.enter_context(os.fdopen(
-                    os.open(lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600), "a+b",
-                ))
+                descriptor = stack.enter_context(
+                    os.fdopen(
+                        os.open(lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600),
+                        "a+b",
+                    )
+                )
                 try:
                     fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except BlockingIOError as error:
@@ -228,9 +244,12 @@ def shared_use(paths: CachePaths, stage_id: str) -> Iterator[None]:
         for relative in sorted(paths.policy.stages[stage_id].mutation_locks):
             lock = root / relative
             lock.parent.mkdir(parents=True, exist_ok=True)
-            descriptor = stack.enter_context(os.fdopen(
-                os.open(lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600), "a+b",
-            ))
+            descriptor = stack.enter_context(
+                os.fdopen(
+                    os.open(lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600),
+                    "a+b",
+                )
+            )
             fcntl.flock(descriptor, fcntl.LOCK_SH)
         yield
 

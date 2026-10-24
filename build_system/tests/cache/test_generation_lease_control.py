@@ -21,13 +21,21 @@ from capsem_builder.cache.planner import plan_clean, plan_prune
 
 def fixture(tmp_path, patterns):
     stage = StagePolicy(
-        path=Path("images"), description="real generation lease fixture",
-        scope=CacheScope.DISK, warm_size_bytes=1, max_size_bytes=2,
-        prune_strategy=PruneStrategy.LRU, maximum_age_hours=1,
-        maximum_count=1, managed_globs=patterns, lease_template=".{key}.lock",
+        path=Path("images"),
+        description="real generation lease fixture",
+        scope=CacheScope.DISK,
+        warm_size_bytes=1,
+        max_size_bytes=2,
+        prune_strategy=PruneStrategy.LRU,
+        maximum_age_hours=1,
+        maximum_count=1,
+        managed_globs=patterns,
+        lease_template=".{key}.lock",
     )
     policy = CachePolicy(
-        version=1, root=Path("cache"), authority_environment="CAPSEM_TEST_CACHE_AUTHORITY",
+        version=1,
+        root=Path("cache"),
+        authority_environment="CAPSEM_TEST_CACHE_AUTHORITY",
         stages={"images": stage},
     )
     paths = CachePaths(repository_root=tmp_path, policy=policy)
@@ -67,11 +75,18 @@ def test_stale_lease_as_generation_plan_is_rejected_without_unlinking(tmp_path, 
     held = retain_path(lease)
     try:
         plan = PrunePlan(
-            generated_ns=1, reclaim_bytes=0, violations=(),
-            actions=(PruneAction(
-                stage_id="images", key=key, path=lease,
-                logical_bytes=0, reason="old buggy inventory",
-            ),),
+            generated_ns=1,
+            reclaim_bytes=0,
+            violations=(),
+            actions=(
+                PruneAction(
+                    stage_id="images",
+                    key=key,
+                    path=lease,
+                    logical_bytes=0,
+                    reason="old buggy inventory",
+                ),
+            ),
         )
         with pytest.raises(ValueError, match="lease control"):
             apply_prune(paths, plan, reason="temporary stale-plan regression")
@@ -93,3 +108,29 @@ def test_owner_leasing_after_plan_preserves_generation_and_inode(tmp_path):
         assert (root / "live/payload").read_bytes() == b"live"
     finally:
         release_path(lease)
+
+
+def test_linux_holder_identity_requires_device_and_inode_not_an_inode_collision(
+    monkeypatch, tmp_path
+):
+    from capsem_builder.cache import leases
+
+    path = tmp_path / ".actual.lock"
+    path.write_bytes(b"")
+    info = path.stat()
+    major, minor = os.major(info.st_dev), os.minor(info.st_dev)
+    table = (
+        f"1: FLOCK ADVISORY READ 123 {major:02x}:{minor:02x}:{info.st_ino} 0 EOF\n"
+        f"2: FLOCK ADVISORY READ 124 {major:02x}:{minor + 1:02x}:{info.st_ino} 0 EOF\n"
+        f"3: FLOCK ADVISORY READ 125 {major + 1:02x}:{minor:02x}:{info.st_ino} 0 EOF\n"
+        f"4: FLOCK ADVISORY READ 126 {major:02x}:{minor:02x}:{info.st_ino + 1} 0 EOF\n"
+        "5: FLOCK ADVISORY READ 127 malformed 0 EOF\n"
+    )
+    original = Path.read_text
+    monkeypatch.setattr(
+        Path,
+        "read_text",
+        lambda self, *a, **kw: table if self == Path("/proc/locks") else original(self, *a, **kw),
+    )
+    monkeypatch.setattr(leases, "_command", lambda pid: "known-synthetic-holder")
+    assert leases.lock_holders(path) == ("pid 123 (known-synthetic-holder)",)
