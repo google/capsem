@@ -635,6 +635,17 @@ container_output_contents = "/package-output/."
 # A policy-owned Docker volume per architecture preserves Cargo fingerprints
 # across source-isolated gates without mixing incompatible target libraries.
 
+# Product admission budgets; NOT universal dpkg format/support ceilings.
+# S341 proved an 11.59 MB control tar on dpkg 1.22.6. Actual target/minimum
+# supported runtime qualification still owns executable and tool acceptance.
+[package.preinstall_resource]
+max_binary_bytes = 12582912
+max_encoded_bytes = 17825792
+max_script_bytes = 18874368
+max_control_bytes = 19922944
+timeout_seconds = 15
+terminate_grace_seconds = 2
+
 [package.builder]
 dockerfile = "build_system/docker/Dockerfile.package-builder"
 tag_template = "capsem-package-builder-{arch}:{digest}"

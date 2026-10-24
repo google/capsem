@@ -238,7 +238,30 @@ class PackageBuilderConfig(Strict):
     apt_archives_cache_id: SafeToken
 
 
+class PreinstallResourceConfig(Strict):
+    """Finite package budgets, not a claim about every dpkg version's limits."""
+
+    max_binary_bytes: PositiveInt
+    max_encoded_bytes: PositiveInt
+    max_script_bytes: PositiveInt
+    max_control_bytes: PositiveInt
+    timeout_seconds: PositiveInt
+    terminate_grace_seconds: PositiveInt
+
+    @model_validator(mode="after")
+    def coherent(self) -> PreinstallResourceConfig:
+        encoded = 4 * ((self.max_binary_bytes + 2) // 3)
+        if self.max_encoded_bytes < encoded + (encoded + 75) // 76:
+            raise ValueError("preinstall encoded budget cannot hold its binary budget")
+        if not self.max_control_bytes > self.max_script_bytes > self.max_encoded_bytes:
+            raise ValueError("preinstall control/script/encoded budgets must be strictly ordered")
+        if self.terminate_grace_seconds >= self.timeout_seconds:
+            raise ValueError("preinstall cleanup grace must be shorter than its deadline")
+        return self
+
+
 class PackageConfig(Strict):
+    preinstall_resource: PreinstallResourceConfig
     builder: PackageBuilderConfig
     signing: PackageSigningConfig
     manifest_variable: str
