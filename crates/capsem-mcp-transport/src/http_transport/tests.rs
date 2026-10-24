@@ -208,7 +208,8 @@ async fn confined_mcp_worker_uses_http_without_ambient_network_or_file_access() 
             .serve_connection(TokioIo::new(coordinator), service)
             .await;
     });
-    let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
+    let directory = tempfile::tempdir().unwrap();
+    let mut command = tokio::process::Command::new(crate::tests::sandbox_test_executable(directory.path()));
     command
         .env_clear()
         .args(["--exact", "http_transport::tests::confined_http_child", "--nocapture"])

@@ -150,7 +150,8 @@ async fn real_worker_acknowledges_only_after_confinement_and_uses_its_http_capab
             .serve_connection(TokioIo::new(broker), service)
             .await;
     });
-    let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
+    let directory = tempfile::tempdir().unwrap();
+    let mut command = tokio::process::Command::new(crate::tests::sandbox_test_executable(directory.path()));
     command
         .env_clear()
         .args(["--exact", "native_worker::tests::native_worker_child", "--nocapture"])

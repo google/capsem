@@ -3,3 +3,6 @@
 
 pub mod http_transport;
 pub mod native_worker;
+
+#[cfg(test)]
+mod tests;

@@ -1208,6 +1208,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "reqwest 0.12.28",
+ "tempfile",
  "tokio",
  "tracing",
 ]
