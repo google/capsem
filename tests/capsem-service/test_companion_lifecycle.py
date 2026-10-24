@@ -35,6 +35,7 @@ from types import SimpleNamespace
 
 import psutil
 import pytest
+from helpers.constants import BIN_DIR
 from helpers.http_transport import Transport
 from helpers.service import ServiceInstance, make_service_home_run_dirs
 from helpers.sign import sign_binary
@@ -42,9 +43,8 @@ from helpers.sign import sign_binary
 pytestmark = pytest.mark.integration
 
 
-PROJECT_ROOT = Path(__file__).parent.parent.parent
-TRAY_BIN = PROJECT_ROOT / "cache/target/cargo/debug/capsem-tray"
-GATEWAY_BIN = PROJECT_ROOT / "cache/target/cargo/debug/capsem-gateway"
+TRAY_BIN = BIN_DIR / "capsem-tray"
+GATEWAY_BIN = BIN_DIR / "capsem-gateway"
 
 # Parent-watch poll interval is 500ms in capsem-guard; give a generous factor
 # for loaded CI while still catching real regressions.
