@@ -619,17 +619,22 @@ jobs:
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
         run: uv run --project build_system --frozen capsem-gate test-kingslanding --slow
 
-      # Candidate construction and native KVM qualification are top-level gate
-      # calls, never nested plan actions. This job cannot publish registry bytes.
-      - name: Build native debug candidate
+      # One original native subject at a time. The same finite handoff owner
+      # retains source/base and both copies until official action return and
+      # independent original-evidence verification. No registry publication.
+      - name: Read bounded native transfer configuration
+        id: native_transfer_limits
+        run: uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff configure
+
+      - name: Build native capsem-debug candidate
         id: build_debug_candidate
         run: uv run --project build_system --frozen capsem-gate debug-image --candidate-receipt
 
-      - name: Select exact debug candidate receipt
+      - name: Select exact capsem-debug candidate receipt
         id: select_debug_candidate
         run: uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff select debug_image
 
-      - name: Qualify exact native debug candidate
+      - name: Qualify exact native capsem-debug candidate
         id: qualify_debug_candidate
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -637,15 +642,59 @@ jobs:
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
         run: uv run --project build_system --frozen capsem-gate image-qualify --image capsem-debug --layout "${{ steps.select_debug_candidate.outputs.layout }}" --native-report
 
-      - name: Build native development candidate
-        id: build_dev_candidate
-        run: uv run --project build_system --frozen capsem-gate reference-image --candidate-receipt
+      - name: Retain original native debug artifact
+        id: retain_debug_candidate
+        run: |
+          uv run --project build_system --frozen python build_system/scripts/ci/run-bounded-command.py --timeout-seconds "${{ steps.native_transfer_limits.outputs.outer_seconds }}" -- uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff hold debug_image --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" > "${{ steps.native_transfer_limits.outputs.control_dir }}/debug_image-owner.log" 2>&1 &
+          uv run --project build_system --frozen python build_system/scripts/ci/run-bounded-command.py --timeout-seconds "${{ steps.native_transfer_limits.outputs.ready_seconds }}" -- uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff ready debug_image --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
 
-      - name: Select exact development candidate receipt
+      - name: Upload original qualified capsem-debug artifact
+        id: upload_debug_candidate
+        if: ${{ success() }}
+        timeout-minutes: ${{ fromJSON(steps.native_transfer_limits.outputs.upload_minutes) }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.retain_debug_candidate.outputs.artifact_name }}
+          path: ${{ steps.retain_debug_candidate.outputs.artifact_path }}
+          retention-days: 7
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Independently download original capsem-debug artifact
+        id: download_debug_candidate
+        if: ${{ success() }}
+        timeout-minutes: ${{ fromJSON(steps.native_transfer_limits.outputs.download_minutes) }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ steps.upload_debug_candidate.outputs.artifact-id }}
+          path: ${{ steps.retain_debug_candidate.outputs.download_path }}
+          merge-multiple: true
+          digest-mismatch: error
+
+      - name: Verify original capsem-debug download before normal release
+        id: release_debug_candidate
+        run: uv run --project build_system --frozen python build_system/scripts/ci/run-bounded-command.py --timeout-seconds "${{ steps.native_transfer_limits.outputs.settle_seconds }}" -- uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff release debug_image --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" --artifact-id "${{ steps.upload_debug_candidate.outputs.artifact-id }}"
+
+      - name: Settle only the failed capsem-debug transfer owner
+        id: abort_debug_candidate
+        if: ${{ always() && steps.retain_debug_candidate.outcome != 'skipped' && steps.release_debug_candidate.outcome != 'success' }}
+        run: uv run --project build_system --frozen python build_system/scripts/ci/run-bounded-command.py --timeout-seconds "${{ steps.native_transfer_limits.outputs.settle_seconds }}" -- uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff abort debug_image --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
+
+      - name: Build native dev candidate
+        id: build_dev_candidate
+        run: uv run --project build_system --frozen capsem-gate reference-image --candidate-receipt --candidate-image dev
+
+      - name: Retain original native shared base
+        id: retain_native_base
+        run: |
+          uv run --project build_system --frozen python build_system/scripts/ci/run-bounded-command.py --timeout-seconds "${{ steps.native_transfer_limits.outputs.base_outer_seconds }}" -- uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff hold base --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" > "${{ steps.native_transfer_limits.outputs.control_dir }}/base-owner.log" 2>&1 &
+          uv run --project build_system --frozen python build_system/scripts/ci/run-bounded-command.py --timeout-seconds "${{ steps.native_transfer_limits.outputs.ready_seconds }}" -- uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff ready base --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
+
+      - name: Select exact dev candidate receipt
         id: select_dev_candidate
         run: uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff select reference_image
 
-      - name: Qualify exact native development candidate
+      - name: Qualify exact native dev candidate
         id: qualify_dev_candidate
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -653,20 +702,283 @@ jobs:
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
         run: uv run --project build_system --frozen capsem-gate image-qualify --image dev --layout "${{ steps.select_dev_candidate.outputs.layout }}" --native-report
 
-      - name: Stage both completed native candidates
-        id: stage_native_candidates
-        run: uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff stage
+      - name: Retain original native dev artifact
+        id: retain_dev_candidate
+        run: |
+          uv run --project build_system --frozen python build_system/scripts/ci/run-bounded-command.py --timeout-seconds "${{ steps.native_transfer_limits.outputs.outer_seconds }}" -- uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff hold reference_image --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" > "${{ steps.native_transfer_limits.outputs.control_dir }}/reference_image-owner.log" 2>&1 &
+          uv run --project build_system --frozen python build_system/scripts/ci/run-bounded-command.py --timeout-seconds "${{ steps.native_transfer_limits.outputs.ready_seconds }}" -- uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff ready reference_image --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
 
-      - name: Upload qualified native image candidates
+      - name: Upload original qualified dev artifact
+        id: upload_dev_candidate
+        if: ${{ success() }}
+        timeout-minutes: ${{ fromJSON(steps.native_transfer_limits.outputs.upload_minutes) }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.retain_dev_candidate.outputs.artifact_name }}
+          path: ${{ steps.retain_dev_candidate.outputs.artifact_path }}
+          retention-days: 7
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Independently download original dev artifact
+        id: download_dev_candidate
+        if: ${{ success() }}
+        timeout-minutes: ${{ fromJSON(steps.native_transfer_limits.outputs.download_minutes) }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ steps.upload_dev_candidate.outputs.artifact-id }}
+          path: ${{ steps.retain_dev_candidate.outputs.download_path }}
+          merge-multiple: true
+          digest-mismatch: error
+
+      - name: Verify original dev download before normal release
+        id: release_dev_candidate
+        run: uv run --project build_system --frozen python build_system/scripts/ci/run-bounded-command.py --timeout-seconds "${{ steps.native_transfer_limits.outputs.settle_seconds }}" -- uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff release reference_image --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" --artifact-id "${{ steps.upload_dev_candidate.outputs.artifact-id }}"
+
+      - name: Settle only the failed dev transfer owner
+        id: abort_dev_candidate
+        if: ${{ always() && steps.retain_dev_candidate.outcome != 'skipped' && steps.release_dev_candidate.outcome != 'success' }}
+        run: uv run --project build_system --frozen python build_system/scripts/ci/run-bounded-command.py --timeout-seconds "${{ steps.native_transfer_limits.outputs.settle_seconds }}" -- uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff abort reference_image --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
+
+      - name: Build native codex-cli candidate
+        id: build_codex_cli_candidate
+        run: uv run --project build_system --frozen capsem-gate reference-image --candidate-receipt --candidate-image codex-cli
+
+      - name: Select exact codex-cli candidate receipt
+        id: select_codex_cli_candidate
+        run: uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff select codex-cli
+
+      - name: Qualify exact native codex-cli candidate
+        id: qualify_codex_cli_candidate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+        run: uv run --project build_system --frozen capsem-gate image-qualify --image codex-cli --layout "${{ steps.select_codex_cli_candidate.outputs.layout }}" --native-report
+
+      - name: Retain original native codex_cli artifact
+        id: retain_codex_cli_candidate
+        run: |
+          uv run --project build_system --frozen python build_system/scripts/ci/run-bounded-command.py --timeout-seconds "${{ steps.native_transfer_limits.outputs.outer_seconds }}" -- uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff hold codex-cli --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" > "${{ steps.native_transfer_limits.outputs.control_dir }}/codex-cli-owner.log" 2>&1 &
+          uv run --project build_system --frozen python build_system/scripts/ci/run-bounded-command.py --timeout-seconds "${{ steps.native_transfer_limits.outputs.ready_seconds }}" -- uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff ready codex-cli --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
+
+      - name: Upload original qualified codex-cli artifact
+        id: upload_codex_cli_candidate
+        if: ${{ success() }}
+        timeout-minutes: ${{ fromJSON(steps.native_transfer_limits.outputs.upload_minutes) }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.retain_codex_cli_candidate.outputs.artifact_name }}
+          path: ${{ steps.retain_codex_cli_candidate.outputs.artifact_path }}
+          retention-days: 7
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Independently download original codex-cli artifact
+        id: download_codex_cli_candidate
+        if: ${{ success() }}
+        timeout-minutes: ${{ fromJSON(steps.native_transfer_limits.outputs.download_minutes) }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ steps.upload_codex_cli_candidate.outputs.artifact-id }}
+          path: ${{ steps.retain_codex_cli_candidate.outputs.download_path }}
+          merge-multiple: true
+          digest-mismatch: error
+
+      - name: Verify original codex-cli download before normal release
+        id: release_codex_cli_candidate
+        run: uv run --project build_system --frozen python build_system/scripts/ci/run-bounded-command.py --timeout-seconds "${{ steps.native_transfer_limits.outputs.settle_seconds }}" -- uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff release codex-cli --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" --artifact-id "${{ steps.upload_codex_cli_candidate.outputs.artifact-id }}"
+
+      - name: Settle only the failed codex-cli transfer owner
+        id: abort_codex_cli_candidate
+        if: ${{ always() && steps.retain_codex_cli_candidate.outcome != 'skipped' && steps.release_codex_cli_candidate.outcome != 'success' }}
+        run: uv run --project build_system --frozen python build_system/scripts/ci/run-bounded-command.py --timeout-seconds "${{ steps.native_transfer_limits.outputs.settle_seconds }}" -- uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff abort codex-cli --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
+
+      - name: Build native claude-code candidate
+        id: build_claude_code_candidate
+        run: uv run --project build_system --frozen capsem-gate reference-image --candidate-receipt --candidate-image claude-code
+
+      - name: Select exact claude-code candidate receipt
+        id: select_claude_code_candidate
+        run: uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff select claude-code
+
+      - name: Qualify exact native claude-code candidate
+        id: qualify_claude_code_candidate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+        run: uv run --project build_system --frozen capsem-gate image-qualify --image claude-code --layout "${{ steps.select_claude_code_candidate.outputs.layout }}" --native-report
+
+      - name: Retain original native claude_code artifact
+        id: retain_claude_code_candidate
+        run: |
+          uv run --project build_system --frozen python build_system/scripts/ci/run-bounded-command.py --timeout-seconds "${{ steps.native_transfer_limits.outputs.outer_seconds }}" -- uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff hold claude-code --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" > "${{ steps.native_transfer_limits.outputs.control_dir }}/claude-code-owner.log" 2>&1 &
+          uv run --project build_system --frozen python build_system/scripts/ci/run-bounded-command.py --timeout-seconds "${{ steps.native_transfer_limits.outputs.ready_seconds }}" -- uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff ready claude-code --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
+
+      - name: Upload original qualified claude-code artifact
+        id: upload_claude_code_candidate
+        if: ${{ success() }}
+        timeout-minutes: ${{ fromJSON(steps.native_transfer_limits.outputs.upload_minutes) }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.retain_claude_code_candidate.outputs.artifact_name }}
+          path: ${{ steps.retain_claude_code_candidate.outputs.artifact_path }}
+          retention-days: 7
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Independently download original claude-code artifact
+        id: download_claude_code_candidate
+        if: ${{ success() }}
+        timeout-minutes: ${{ fromJSON(steps.native_transfer_limits.outputs.download_minutes) }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ steps.upload_claude_code_candidate.outputs.artifact-id }}
+          path: ${{ steps.retain_claude_code_candidate.outputs.download_path }}
+          merge-multiple: true
+          digest-mismatch: error
+
+      - name: Verify original claude-code download before normal release
+        id: release_claude_code_candidate
+        run: uv run --project build_system --frozen python build_system/scripts/ci/run-bounded-command.py --timeout-seconds "${{ steps.native_transfer_limits.outputs.settle_seconds }}" -- uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff release claude-code --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" --artifact-id "${{ steps.upload_claude_code_candidate.outputs.artifact-id }}"
+
+      - name: Settle only the failed claude-code transfer owner
+        id: abort_claude_code_candidate
+        if: ${{ always() && steps.retain_claude_code_candidate.outcome != 'skipped' && steps.release_claude_code_candidate.outcome != 'success' }}
+        run: uv run --project build_system --frozen python build_system/scripts/ci/run-bounded-command.py --timeout-seconds "${{ steps.native_transfer_limits.outputs.settle_seconds }}" -- uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff abort claude-code --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
+
+      - name: Build native agy candidate
+        id: build_agy_candidate
+        run: uv run --project build_system --frozen capsem-gate reference-image --candidate-receipt --candidate-image agy
+
+      - name: Select exact agy candidate receipt
+        id: select_agy_candidate
+        run: uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff select agy
+
+      - name: Qualify exact native agy candidate
+        id: qualify_agy_candidate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+        run: uv run --project build_system --frozen capsem-gate image-qualify --image agy --layout "${{ steps.select_agy_candidate.outputs.layout }}" --native-report
+
+      - name: Retain original native agy artifact
+        id: retain_agy_candidate
+        run: |
+          uv run --project build_system --frozen python build_system/scripts/ci/run-bounded-command.py --timeout-seconds "${{ steps.native_transfer_limits.outputs.outer_seconds }}" -- uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff hold agy --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" > "${{ steps.native_transfer_limits.outputs.control_dir }}/agy-owner.log" 2>&1 &
+          uv run --project build_system --frozen python build_system/scripts/ci/run-bounded-command.py --timeout-seconds "${{ steps.native_transfer_limits.outputs.ready_seconds }}" -- uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff ready agy --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
+
+      - name: Upload original qualified agy artifact
+        id: upload_agy_candidate
+        if: ${{ success() }}
+        timeout-minutes: ${{ fromJSON(steps.native_transfer_limits.outputs.upload_minutes) }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.retain_agy_candidate.outputs.artifact_name }}
+          path: ${{ steps.retain_agy_candidate.outputs.artifact_path }}
+          retention-days: 7
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Independently download original agy artifact
+        id: download_agy_candidate
+        if: ${{ success() }}
+        timeout-minutes: ${{ fromJSON(steps.native_transfer_limits.outputs.download_minutes) }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ steps.upload_agy_candidate.outputs.artifact-id }}
+          path: ${{ steps.retain_agy_candidate.outputs.download_path }}
+          merge-multiple: true
+          digest-mismatch: error
+
+      - name: Verify original agy download before normal release
+        id: release_agy_candidate
+        run: uv run --project build_system --frozen python build_system/scripts/ci/run-bounded-command.py --timeout-seconds "${{ steps.native_transfer_limits.outputs.settle_seconds }}" -- uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff release agy --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" --artifact-id "${{ steps.upload_agy_candidate.outputs.artifact-id }}"
+
+      - name: Settle only the failed agy transfer owner
+        id: abort_agy_candidate
+        if: ${{ always() && steps.retain_agy_candidate.outcome != 'skipped' && steps.release_agy_candidate.outcome != 'success' }}
+        run: uv run --project build_system --frozen python build_system/scripts/ci/run-bounded-command.py --timeout-seconds "${{ steps.native_transfer_limits.outputs.settle_seconds }}" -- uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff abort agy --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
+
+      - name: Build native antigravity-desktop candidate
+        id: build_antigravity_desktop_candidate
+        run: uv run --project build_system --frozen capsem-gate reference-image --candidate-receipt --candidate-image antigravity-desktop
+
+      - name: Select exact antigravity-desktop candidate receipt
+        id: select_antigravity_desktop_candidate
+        run: uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff select antigravity-desktop
+
+      - name: Qualify exact native antigravity-desktop candidate
+        id: qualify_antigravity_desktop_candidate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+        run: uv run --project build_system --frozen capsem-gate image-qualify --image antigravity-desktop --layout "${{ steps.select_antigravity_desktop_candidate.outputs.layout }}" --native-report
+
+      - name: Retain original native antigravity_desktop artifact
+        id: retain_antigravity_desktop_candidate
+        run: |
+          uv run --project build_system --frozen python build_system/scripts/ci/run-bounded-command.py --timeout-seconds "${{ steps.native_transfer_limits.outputs.outer_seconds }}" -- uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff hold antigravity-desktop --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" > "${{ steps.native_transfer_limits.outputs.control_dir }}/antigravity-desktop-owner.log" 2>&1 &
+          uv run --project build_system --frozen python build_system/scripts/ci/run-bounded-command.py --timeout-seconds "${{ steps.native_transfer_limits.outputs.ready_seconds }}" -- uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff ready antigravity-desktop --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
+
+      - name: Upload original qualified antigravity-desktop artifact
+        id: upload_antigravity_desktop_candidate
+        if: ${{ success() }}
+        timeout-minutes: ${{ fromJSON(steps.native_transfer_limits.outputs.upload_minutes) }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.retain_antigravity_desktop_candidate.outputs.artifact_name }}
+          path: ${{ steps.retain_antigravity_desktop_candidate.outputs.artifact_path }}
+          retention-days: 7
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Independently download original antigravity-desktop artifact
+        id: download_antigravity_desktop_candidate
+        if: ${{ success() }}
+        timeout-minutes: ${{ fromJSON(steps.native_transfer_limits.outputs.download_minutes) }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ steps.upload_antigravity_desktop_candidate.outputs.artifact-id }}
+          path: ${{ steps.retain_antigravity_desktop_candidate.outputs.download_path }}
+          merge-multiple: true
+          digest-mismatch: error
+
+      - name: Verify original antigravity-desktop download before normal release
+        id: release_antigravity_desktop_candidate
+        run: uv run --project build_system --frozen python build_system/scripts/ci/run-bounded-command.py --timeout-seconds "${{ steps.native_transfer_limits.outputs.settle_seconds }}" -- uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff release antigravity-desktop --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" --artifact-id "${{ steps.upload_antigravity_desktop_candidate.outputs.artifact-id }}"
+
+      - name: Settle only the failed antigravity-desktop transfer owner
+        id: abort_antigravity_desktop_candidate
+        if: ${{ always() && steps.retain_antigravity_desktop_candidate.outcome != 'skipped' && steps.release_antigravity_desktop_candidate.outcome != 'success' }}
+        run: uv run --project build_system --frozen python build_system/scripts/ci/run-bounded-command.py --timeout-seconds "${{ steps.native_transfer_limits.outputs.settle_seconds }}" -- uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff abort antigravity-desktop --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
+
+      - name: Release the original common base after all five official artifacts
+        id: release_native_base
+        run: uv run --project build_system --frozen python build_system/scripts/ci/run-bounded-command.py --timeout-seconds "${{ steps.native_transfer_limits.outputs.settle_seconds }}" -- uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff release base --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
+
+      - name: Require all six native receipts and unique official artifact IDs
+        id: finish_native_candidates
+        run: uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff finish --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
+
+      - name: Upload complete native image artifact manifest
         id: upload_native_candidates
         if: ${{ success() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: native-image-candidates-amd64-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: cache/target/tests/evidence/qualified-native-images
+          path: ${{ steps.finish_native_candidates.outputs.manifest_path }}
           retention-days: 7
           if-no-files-found: error
           compression-level: 0
+
+      - name: Settle only the failed common-base owner
+        id: abort_native_base
+        if: ${{ always() && steps.retain_native_base.outcome != 'skipped' && steps.release_native_base.outcome != 'success' }}
+        run: uv run --project build_system --frozen python build_system/scripts/ci/run-bounded-command.py --timeout-seconds "${{ steps.native_transfer_limits.outputs.settle_seconds }}" -- uv run --project build_system --frozen python -m tests.fixtures.oci.native_handoff abort base --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
 
       - name: Upload install and glow-up evidence on failure
         if: failure()
