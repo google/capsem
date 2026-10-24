@@ -15,6 +15,8 @@ class NativeTransferConfig(Strict):
     release_seconds: PositiveInt = Field(le=120)
     verify_seconds: PositiveInt = Field(le=300)
     outer_seconds: PositiveInt = Field(le=2400)
+    base_hold_seconds: PositiveInt = Field(le=13800)
+    base_outer_seconds: PositiveInt = Field(le=14400)
     upload_minutes: PositiveInt = Field(le=10)
     download_minutes: PositiveInt = Field(le=10)
     poll_seconds: float = Field(gt=0, le=1, allow_inf_nan=False)
@@ -29,6 +31,8 @@ class NativeTransferConfig(Strict):
         if (
             self.hold_seconds <= consumer
             or self.outer_seconds < self.ready_seconds + self.hold_seconds + self.release_seconds
+            or self.base_outer_seconds
+            < self.ready_seconds + self.base_hold_seconds + self.release_seconds
         ):
             raise ValueError(
                 "native upload/download/verify/release must fit the finite retained owner"

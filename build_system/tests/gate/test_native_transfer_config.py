@@ -18,6 +18,8 @@ ROOT = Path(__file__).resolve().parents[3]
         ("hold_seconds", 0),
         ("hold_seconds", 600),
         ("outer_seconds", 900),
+        ("base_hold_seconds", 14400),
+        ("base_outer_seconds", 10000),
     ],
 )
 def test_transfer_cannot_select_an_unaccounted_owner_or_outlive_its_bound(field, value):
