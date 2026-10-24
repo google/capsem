@@ -15,8 +15,6 @@ from pydantic import (
     Field,
     PositiveFloat,
     PositiveInt,
-    StrictBool,
-    StrictInt,
     field_validator,
     model_validator,
 )
@@ -24,6 +22,7 @@ from pydantic import (
 from .benchmarkaskschema import AskRouteConfig
 from .benchmarkcontrolschema import WorkloadControlConfig
 from .benchmarkcredentialschema import CredentialRouteConfig
+from .benchmarkcriterionschema import BenchmarkCriterionConfig
 from .benchmarkerrorschema import ConnectionErrorConfig
 from .benchmarkimageschema import ImageRouteConfig
 from .benchmarkinstallschema import InstallBenchmarkConfig
@@ -36,7 +35,6 @@ from .benchmarkpreviewschema import PreviewRouteConfig
 from .benchmarkproxyschema import ProxyRouteConfig
 from .benchmarkreadschema import RouteCaseConfig, RouteCorpusConfig, RouteDebtConfig
 from .benchmarkreloadschema import ReloadRouteConfig
-from .benchmarkresourceschema import CriterionResourceConfig
 from .benchmarkrestartschema import RestartRouteConfig
 from .benchmarkrunpurgeschema import RunPurgeConfig
 from .benchmarksaveschema import SaveRouteConfig
@@ -174,26 +172,6 @@ class BenchmarkRunConfig(Strict):
     fitness_timeout_secs: PositiveInt
     fitness_poll_interval_secs: PositiveFloat
     doctor_timeout_secs: PositiveInt
-
-
-class CriterionArtifactProfile(Strict):
-    opt_level: str
-    debuginfo: StrictInt
-    debug_assertions: StrictBool
-    overflow_checks: StrictBool
-    test: StrictBool
-
-
-class BenchmarkCriterionConfig(Strict):
-    max_cases: PositiveInt
-    quick_sample_size: Annotated[int, Field(ge=10)]
-    diagnostic_targets: dict[str, str]
-    artifact_profile: CriterionArtifactProfile
-    profile_directory: Annotated[str, Field(pattern=r"^[A-Za-z0-9_-]+$")]
-    prepare_runner: str
-    entitlements: str
-    assets_dir: str
-    resources: CriterionResourceConfig
 
 
 class BenchmarkProtocolConfig(Strict):
