@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Restrict macOS package retirement to the selected account and exact installed
   app/helper paths, without globally terminating other users' Capsem apps.
 
+- Prove the original Debian package's pre-unpack candidate admission and
+  dependency refusal on the configured distribution matrix, independently
+  of the admin executable's version probe.
+
 - Declare the candidate ledger's actual target-library pre-dependencies so
   Debian prepares them before running preinstall state admission.
 

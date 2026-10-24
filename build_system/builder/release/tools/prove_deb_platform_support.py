@@ -14,12 +14,20 @@ under the wrong heading and still pass.  Both directions are failures: a floor
 that is too high refuses users who would have been fine, which is as much a
 defect as declaring none at all.
 
-The package is read with the portable archive reader, and the exact probe
-binary travels through Docker stdin. No host Debian tools or host-path sharing
-is required, and the probe images need not carry `dpkg-deb`. Alpine
-carries neither that nor glibc, and is exactly the case worth proving: musl is
-not a slightly older glibc, it is a different libc, and the binaries cannot run
-there at any version.
+The portable archive/resource owners first bind the embedded ledger to the
+same package payload and canonical preinstall body. Debian/Ubuntu rows then
+unpack the ORIGINAL package in a fresh disposable account, without configuring
+it: dpkg must enforce Pre-Depends before entering preinst or replacing files.
+Supported rows must actually complete candidate admission and clean its stage.
+The admin executable remains a separate global-floor control; it cannot stand
+in for candidate admission. Alpine remains explicitly a musl executable
+negative control, never a missing-dpkg dependency-refusal result.
+
+Matrix images must already be prepared at their configured digests. All probes
+are network-disabled, use the package architecture and require their actual OS
+tools; no runtime installation or host-path sharing is used. Cross-architecture
+Docker execution does not certify native CPU/hypervisor qualification. This
+fresh-account proof does not replace installed/current/incompatible-ledger tests.
 
 The image reference is derived from the version each row already states, so the
 release is named once.
@@ -34,6 +42,7 @@ import sys
 import tomllib
 from pathlib import Path
 
+from .deb_preunpack_probe import check_preunpack, validate_package
 from .generate_host_binary_sbom import deb_data_member
 from .package_payload import deb_field, tar_payload_files
 
@@ -65,7 +74,7 @@ def declared_floor(package: Path) -> tuple[int, ...]:
     return version(match.group(1))
 
 
-def probe_libc(image: str) -> tuple[str, tuple[int, ...]]:
+def probe_libc(image: str, architecture: str) -> tuple[str, tuple[int, ...]]:
     """The libc an image ships, as a flavour and a version.
 
     musl reports itself by name and puts its version on the next line; glibc
@@ -73,7 +82,8 @@ def probe_libc(image: str) -> tuple[str, tuple[int, ...]]:
     than the number: a glibc floor says nothing about a musl system.
     """
     result = subprocess.run(
-        ("docker", "run", "--rm", "--entrypoint", "sh", image, "-c", "ldd --version 2>&1"),
+        ("docker", "run", "--rm", "--pull=never", "--network=none", "--platform", f"linux/{architecture}",
+         "--entrypoint", "sh", image, "-c", "ldd --version 2>&1"),
         capture_output=True,
         text=True,
     )
@@ -90,7 +100,7 @@ def probe_libc(image: str) -> tuple[str, tuple[int, ...]]:
     return "glibc", tuple(int(part) for part in match.groups() if part is not None)
 
 
-def binary_runs(image: str, binary: bytes) -> tuple[bool, str]:
+def binary_runs(image: str, binary: bytes, architecture: str) -> tuple[bool, str]:
     """Try to run one packaged binary inside ``image``."""
     result = subprocess.run(
         (
@@ -99,6 +109,8 @@ def binary_runs(image: str, binary: bytes) -> tuple[bool, str]:
             "--rm",
             "-i",
             "--network=none",
+            "--pull=never",
+            "--platform", f"linux/{architecture}",
             "--entrypoint",
             "sh",
             image,
@@ -111,9 +123,12 @@ def binary_runs(image: str, binary: bytes) -> tuple[bool, str]:
     return result.returncode == 0, (result.stderr or result.stdout).decode(errors="replace").strip()
 
 
-def check(image: str, label: str, declared: str, binary: bytes, floor: tuple[int, ...]) -> list[str]:
+def check(
+    image: str, label: str, declared: str, binary: bytes, floor: tuple[int, ...],
+    *, package: Path, architecture: str,
+) -> list[str]:
     """One release: the binaries must run exactly where the floor says."""
-    flavour, libc = probe_libc(image)
+    flavour, libc = probe_libc(image, architecture)
     described = f"{flavour} {shown(libc)}"
     if described != declared:
         return [
@@ -123,7 +138,7 @@ def check(image: str, label: str, declared: str, binary: bytes, floor: tuple[int
         ]
 
     satisfied = flavour == "glibc" and libc >= floor
-    ran, output = binary_runs(image, binary)
+    ran, output = binary_runs(image, binary, architecture)
 
     if satisfied and not ran:
         return [
@@ -148,7 +163,9 @@ def check(image: str, label: str, declared: str, binary: bytes, floor: tuple[int
 
     verdict = "runs" if ran else "cannot run, as declared"
     print(f"  ok  {label:<22} {described:<14} {verdict}")
-    return []
+    # musl is a separate executable-negative control, not a Debian dependency
+    # refusal: Alpine has no dpkg. Never certify missing dpkg as safe refusal.
+    return check_preunpack(image, package, architecture, satisfied) if flavour == "glibc" else []
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -159,6 +176,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.package.is_file():
         raise SystemExit(f"package does not exist: {args.package}")
+
+    try:
+        architecture = validate_package(args.package, repository=Path(__file__).resolve().parents[4])
+    except (OSError, ValueError) as error:
+        raise SystemExit(f"platform preinstall resource refused: {error}") from error
 
     linux = tomllib.loads(args.config.read_text(encoding="utf-8"))["platforms"]["linux"]
     configured = version(linux["minimum_glibc"])
@@ -179,7 +201,10 @@ def main(argv: list[str] | None = None) -> int:
     for row in linux["distributions"]:
         suffix = row.get("tag_suffix", "")
         image = f"{row['repository']}:{row['version']}{suffix}@{row['digest']}"
-        failures += check(image, f"{row['name']} {row['version']}", row["libc"], binary, floor)
+        failures += check(
+            image, f"{row['name']} {row['version']}", row["libc"], binary, floor,
+            package=args.package, architecture=architecture,
+        )
 
     for failure in failures:
         print(f"FAIL: {failure}", file=sys.stderr)
