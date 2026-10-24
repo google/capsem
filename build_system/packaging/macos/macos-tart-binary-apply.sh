@@ -18,6 +18,23 @@ capsem_pair_http() {
         --maximum "$(capsem_pair_field --field maximum)" "$@"
 }
 
+capsem_pair_wait_for_receipt() {
+    local version="$1" attempt receipt
+    # Launchd readiness occurs inside postinstall. PackageKit commits the
+    # package receipt only after that script exits, so observe its completion
+    # with the same finite budget used for service readiness.
+    for attempt in $(seq 1 90); do
+        receipt=$(/usr/sbin/pkgutil --pkg-info com.capsem.pkg 2>&1 || true)
+        if grep -Fxq "version: $version" <<< "$receipt"; then
+            return 0
+        fi
+        sleep 2
+    done
+    printf 'ERROR: package receipt did not settle at version %s after %s observations\n%s\n' \
+        "$version" "$attempt" "$receipt" >&2
+    return 1
+}
+
 capsem_pair_verify() {
     local phase="$1" version package metadata_url binary_names
     version=$(capsem_pair_field --phase "$phase" --field version)
@@ -46,7 +63,7 @@ capsem_pair_verify() {
     done <<< "$binary_names"
     VERSION="$version" verify_binary_cohort
     "$CAPSEM" version > "$SHARE/binary-apply-$phase-version.txt"
-    /usr/sbin/pkgutil --pkg-info com.capsem.pkg | grep -Fx "version: $version"
+    capsem_pair_wait_for_receipt "$version"
     test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
         /Applications/Capsem.app/Contents/Info.plist)" = "$version"
     python3 "$VERIFY" --capsem "$CAPSEM" --manifest-url "$MANIFEST_URL" \
