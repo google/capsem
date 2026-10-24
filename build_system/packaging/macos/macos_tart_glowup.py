@@ -30,6 +30,7 @@ from capsem_builder.release.tools.release_transition_candidates import (
     validate_macos_guest_report,
 )
 from macos_candidate_content import stage_file, stage_guest_scripts, stage_release_site
+from macos_tart_cleanup import finish_cleanup, remove_vm
 from macos_tart_transition_support import failure_diagnostic_script, local_tart_capabilities
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -141,11 +142,7 @@ def require_owned_vm(vm_name: str) -> None:
 
 def cleanup_vm(vm_name: str, *, run: Run = subprocess.run) -> None:
     require_owned_vm(vm_name)
-    for command in (
-        ["tart", "stop", vm_name],
-        ["tart", "delete", vm_name],
-    ):
-        run(command, check=False, capture_output=True, text=True)
+    remove_vm(vm_name, cast(TartRuntimePolicy, _TART), run=run)
 
 
 def run_checked(
@@ -403,6 +400,7 @@ def main() -> int:
     runner: subprocess.Popen[str] | None = None
     log_stream = None
     ip: str | None = None
+    primary_error: BaseException | None = None
     try:
         run_checked(tart_clone_command(args.image, vm_name), timeout=3600)
         run_checked(
@@ -476,20 +474,21 @@ def main() -> int:
         report_path.write_text(rendered_report)
         final_report_path = work_dir / "report.json"
         final_report_path.write_text(rendered_report)
-        print(f"Tart macOS installed-package proof passed: {final_report_path}")
-        return 0
+    except BaseException as error:
+        primary_error = error
+        raise
     finally:
-        primary_error = sys.exc_info()[0] is not None
-        if primary_error and ip is not None:
-            capture_guest_diagnostics(ip, work_dir)
-        cleanup_vm(vm_name)
-        terminate_runner(runner, log_stream)
-        final_control = run_cache_control(
-            "macos-glowup-final",
-            strict=False,
+        finish_cleanup(
+            primary_error=primary_error,
+            diagnostics=(lambda: capture_guest_diagnostics(ip, work_dir))
+            if ip is not None
+            else None,
+            vm=lambda: cleanup_vm(vm_name),
+            runner=lambda: terminate_runner(runner, log_stream),
+            cache=lambda: run_cache_control("macos-glowup-final"),
         )
-        if final_control.returncode != 0 and not primary_error:
-            raise RuntimeError("Tart storage controller found leaked or running glow-up VMs")
+    print(f"Tart macOS installed-package proof passed: {final_report_path}")
+    return 0
 
 
 if __name__ == "__main__":

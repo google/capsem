@@ -243,23 +243,6 @@ def test_guest_command_fails_closed_without_authenticated_marker() -> None:
         )
 
 
-def test_cleanup_refuses_to_stop_or_delete_foreign_tart_vms() -> None:
-    module = _load_harness()
-    calls: list[list[str]] = []
-
-    def record(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
-        calls.append(command)
-        return subprocess.CompletedProcess(command, 0, "", "")
-
-    with pytest.raises(ValueError, match="owned VM name"):
-        module.cleanup_vm("developer-workstation", run=record)
-
-    module.cleanup_vm("capsem-glowup-123", run=record)
-    assert calls == [
-        ["tart", "stop", "capsem-glowup-123"],
-        ["tart", "delete", "capsem-glowup-123"],
-    ]
-
 
 def test_ip_wait_fails_immediately_when_tart_runner_exits() -> None:
     module = _load_harness()

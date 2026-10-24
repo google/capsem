@@ -1186,7 +1186,7 @@ max_lines = 300
 [boundary.scripts.oversized_line_counts]
 "build_system/packaging/macos/build-pkg.sh" = 317
 "build_system/packaging/macos/macos_release_glowup.py" = 360
-"build_system/packaging/macos/macos_tart_glowup.py" = 500
+"build_system/packaging/macos/macos_tart_glowup.py" = 499
 
 # ---------------------------------------------------------------------------
 # What may not run beside what
