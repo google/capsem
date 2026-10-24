@@ -97,8 +97,8 @@ def test_rust_format_is_a_fast_source_leaf() -> None:
     assert _wave_of(FastModule, label) > _wave_of(FastModule, "fast.audit.source-syntax")
     assert _wave_of(FastModule, label) > _wave_of(FastModule, "fast.toolchain.rust")
     assert _wave_of(FastModule, label) < _wave_of(FastModule, "fast.clippy")
-    assert CONFIG.modules.rust_format == ("cargo", "fmt", "--all", "--", "--check")
-    assert "cargo fmt --all -- --check" in "\n".join(plan.step_named(label).render())
+    assert CONFIG.modules.rust_format == ("cargo", "fmt", "--", "--check")
+    assert "cargo fmt -- --check" in "\n".join(plan.step_named(label).render())
 
 
 def test_static_owns_the_frontend_bundle_before_rust_coverage() -> None:

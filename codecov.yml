@@ -163,6 +163,9 @@ component_management:
         - crates/capsem-logger/src/**
         - crates/capsem-telemetry/src/**
         - crates/capsem-core/src/pty_log.rs
+        - crates/capsem-core/src/pty_log/**
+        - crates/capsem-core/src/terminal.rs
+        - crates/capsem-core/src/terminal/**
         - crates/capsem-core/src/session/**
 
     # Machine lifecycle, VM config, vsock manager, host-side lifecycle state

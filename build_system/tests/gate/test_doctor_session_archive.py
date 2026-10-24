@@ -74,7 +74,7 @@ def test_a_body_naming_an_unrecorded_block_is_reported(ledger: Path) -> None:
 def test_a_body_whose_bytes_changed_fails_the_end_to_end_read(ledger: Path) -> None:
     _edit(
         ledger,
-        "UPDATE event_body_blobs SET body_hash = 'blake3:' || printf('%064d', 0) WHERE id = 1",
+        "UPDATE event_body_blobs SET body_hash = 'xxh3-128:' || printf('%032d', 0) WHERE id = 1",
     )
     found = _findings(ledger, verify=True)
     assert len(found.problems) == 1
