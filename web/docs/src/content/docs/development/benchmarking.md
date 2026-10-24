@@ -55,17 +55,16 @@ fixture instead. This means `routes` provides RPS for every route in its
 measured class, rather than claiming that arbitrary mutations are safe to
 replay as a load test.
 
-## Warm pause and resume in `routes`
+## Disabled warm operations in `routes`
 
-The finite pause/resume cases use a disposable persistent image session.
-Pause requires the original host owner to retire with a completed native and
-terminal checkpoint pair. Resume requires the original foreground to answer
-with retained RAM, cwd and open file descriptions before the first fresh exec,
-then checks the guest boot identity, transient runtime marker and independent
-workspace bytes. HTTP response clocks and verified effect clocks are separate;
-these mutations never enter the concurrent read loop. Cold start cannot satisfy
-the warm case. Source checks alone do not certify native warm restoration or
-performance; the exact supported native cohort must execute these cases.
+Warm suspend/restore is disabled for 0.7.1 pending [#378](https://github.com/google/capsem/issues/378).
+The active pause case measures an actual 501 refusal while the original process,
+boot, generation and session remain unchanged. The resume case measures 501 for
+an owned synthetic saved-session fixture and verifies its checkpoint bytes remain
+intact. These are unsupported-operation measurements, not native checkpoint or
+warm-continuity proof. HTTP and verified-effect clocks remain separate. Original
+warm identity regressions are retained for #378; they must pass before warm
+suspend is re-enabled. Cold start is never reported as warm success.
 
 ## Managed restart (`restart`)
 

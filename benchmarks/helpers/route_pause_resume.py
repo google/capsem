@@ -1,4 +1,4 @@
-"""Original physical checkpoint and warm continuation through existing owners."""
+"""Disabled warm-operation measurements and retained #378 regression probes."""
 import time
 import tomllib
 from functools import partial
@@ -9,6 +9,7 @@ from psutil import Process
 from .route_credentials import require_credential_metrics
 from .route_run_purge import read_file
 from .route_save import boot_id, generation, path_identity, vm_text
+from .route_suspend_refusal import prepare_saved_session, sample_disabled_suspend
 from .route_warm_probe import FILE, ORIGINAL, RESUMED, RUNTIME, WarmProbe
 from .route_workload_controls import Cycle
 from .stream_measurements import measure, sample_count
@@ -43,7 +44,8 @@ def original_state(cycle,vm_id,status,deadline):
     return info
 
 
-def sample_pause_resume(cycle,reference,certificate):
+def sample_original_warm(cycle,reference,certificate):
+    """Retained regression only; the active collector measures disabled refusals."""
     cfg = cycle.cfg
     deadline = time.monotonic()+cfg['timeout_seconds']
     assert cycle.listing(deadline=deadline) == []
@@ -111,13 +113,13 @@ def collect_pause_resume(quick):
     cfg,metrics = pause_resume_config(),{}
     for label in ('service','gateway'):
         for index in range(sample_count(cfg,'cycles',quick)):
-            with lifecycle_target(label,prepare=prepare_policy) as (target,service,reference,certificate):
+            with lifecycle_target(label,prepare=prepare_saved_session) as (target,service,reference,certificate):
                 transport = target.transport_factory()
                 cycle = Cycle(transport,target,service,cfg,metrics)
                 try:
                     assert service.proc is not None
                     measure(metrics,f'{label}.pause_resume.{index}',Process(service.proc.pid),
-                        partial(sample_pause_resume,cycle,reference,certificate))
+                        partial(sample_disabled_suspend,cycle,reference,certificate))
                     cycle.cleanup()
                     assert cycle.listing() == []
                 finally:

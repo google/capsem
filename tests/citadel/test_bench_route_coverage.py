@@ -10,7 +10,7 @@ from helpers.route_inventory import function_operations, route_operations
 ROOT = Path(__file__).parents[2]
 SERVICE = ROOT / "crates/capsem-service/src/router_runtime.rs"
 GATEWAY = ROOT / "crates/capsem-gateway/src/main.rs"
-RATIONALE = "[benchmark.routes] must name each HTTP method and successful fixture case; uncovered operations retain a concrete acceptance owner."
+RATIONALE = "[benchmark.routes] must name each HTTP method and exact fixture outcome; unsupported refusals never claim lifecycle success, and uncovered operations retain a concrete acceptance owner."
 
 
 def config() -> dict:
@@ -305,11 +305,13 @@ def test_original_ask_decision_cannot_disappear_or_inherit_a_read_poll():
         validate(registered_operations(),coverage)
 
 
-def test_warm_pair_cannot_disappear_or_inherit_cold_start_or_read_poll():
+def test_disabled_warm_pair_cannot_disappear_or_claim_cold_or_warm_success():
     import copy
     for operation in ('POST /vms/{id}/pause','POST /vms/{id}/resume'):
         coverage = copy.deepcopy(config())
         assert set(coverage['pause_resume']['endpoints']) == {'POST /vms/{id}/pause','POST /vms/{id}/resume'}
+        expected = 'disabled-owner-unchanged' if operation.endswith('/pause') else 'disabled-checkpoint-preserved'
+        assert coverage['pause_resume']['endpoints'][operation]['cases'] == {expected: 'cycles'}, RATIONALE
         del coverage['pause_resume']['endpoints'][operation]
         with pytest.raises(AssertionError,match='Missing'):
             validate(registered_operations(),coverage)

@@ -3740,18 +3740,18 @@ close_timeout_seconds = 5
 poll_seconds = 0.05
 ram_mb = 1024
 cpus = 2
-name = "route-original-warm"
+name = "route-suspend-refusal"
 
 [benchmark.routes.pause_resume.endpoints."POST /vms/{id}/pause"]
 collector = "routes"
 target_scope = "both"
-reason = "Original persistent native owner retires with a complete paired native/terminal checkpoint, independent Suspended reads and retained session identity; response alone is not completion."
-cases = { original-checkpoint = "cycles" }
+reason = "Warm suspend is disabled for 0.7.1/P0 #378: actual 501 refusal preserves the running original process, boot, owner generation and session identity; this is not checkpoint success."
+cases = { disabled-owner-unchanged = "cycles" }
 [benchmark.routes.pause_resume.endpoints."POST /vms/{id}/resume"]
 collector = "routes"
 target_scope = "both"
-reason = "Replacement host owner restores the original guest boot and transient memory; the original foreground proves RAM nonce, cwd and retained file descriptions before independent readback. Cold start cannot pass."
-cases = { original-warm-continuation = "cycles" }
+reason = "Warm restore is disabled for 0.7.1/P0 #378: actual 501 refusal preserves owned synthetic checkpoint bytes and registry metadata without starting a replacement; no native restore validity or continuity is claimed."
+cases = { disabled-checkpoint-preserved = "cycles" }
 
 [benchmark.routes.restart_controls]
 dimension = "restart"

@@ -1,4 +1,4 @@
-"""Original paused guest continuation; never cold start as warm success."""
+"""Disabled warm-operation refusals; never cold start as warm success (#378)."""
 from pydantic import Field, PositiveFloat, PositiveInt, model_validator
 
 from .benchmarkfiniteschema import FiniteEndpointEvidence
@@ -25,10 +25,10 @@ class PauseResumeConfig(Strict):
 
     @model_validator(mode='after')
     def original_pair(self):
-        expected = {'POST /vms/{id}/pause':{'original-checkpoint':'cycles'},
-            'POST /vms/{id}/resume':{'original-warm-continuation':'cycles'}}
+        expected = {'POST /vms/{id}/pause':{'disabled-owner-unchanged':'cycles'},
+            'POST /vms/{id}/resume':{'disabled-checkpoint-preserved':'cycles'}}
         if self.quick_cycles > self.cycles or self.exec_timeout_seconds >= self.timeout_seconds:
             raise ValueError('warm cycle/deadline invalid')
         if {key:value.cases for key,value in self.endpoints.items()} != expected:
-            raise ValueError('pause/resume require exact original finite pair')
+            raise ValueError('pause/resume require exact disabled-operation refusal pair')
         return self

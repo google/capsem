@@ -11,6 +11,17 @@ from benchmarks.helpers import route_pause_resume as subject
 VM = '123e4567-e89b-42d3-a456-426614174000'
 BOOT = '123e4567-e89b-42d3-a456-426614174001'
 
+def test_active_cases_measure_disabled_refusal_not_warm_success():
+    cfg = subject.pause_resume_config()
+    assert {key:value['cases'] for key,value in cfg['endpoints'].items()} == {
+        'POST /vms/{id}/pause': {'disabled-owner-unchanged':'cycles'},
+        'POST /vms/{id}/resume': {'disabled-checkpoint-preserved':'cycles'},
+    }
+    from capsem_builder.gate.benchmarkwarmschema import PauseResumeConfig
+    cfg['endpoints']['POST /vms/{id}/pause']['cases'] = {'original-checkpoint':'cycles'}
+    with pytest.raises(ValueError, match='refusal pair'):
+        PauseResumeConfig.model_validate(cfg)
+
 
 def measured(retry=False):
     return MeasuredResponse(200,{},b'{}',1,2,3,2 if retry else 1)
@@ -88,13 +99,13 @@ def test_pause_then_original_warm_resume_requires_effects(monkeypatch,tmp_path,f
     monkeypatch.setattr(subject,'WarmProbe',Probe)
     certificate = SimpleNamespace(read_text=lambda:'synthetic')
     if fault == 'none':
-        subject.sample_pause_resume(cycle,'pinned',certificate)
+        subject.sample_original_warm(cycle,'pinned',certificate)
         assert sum(url.endswith('/pause') for _,url in state['calls']) == 1
         assert sum(url.endswith('/resume') for _,url in state['calls']) == 1
         assert len(cycle.metrics) == 8
     else:
         with pytest.raises((AssertionError,ValueError,TimeoutError)):
-            subject.sample_pause_resume(cycle,'pinned',certificate)
+            subject.sample_original_warm(cycle,'pinned',certificate)
     assert sum(url.endswith('/pause') for _,url in state['calls']) <= 1
     assert sum(url.endswith('/resume') for _,url in state['calls']) <= 1
 
@@ -138,7 +149,7 @@ def test_collector_retains_existing_owned_fixture_and_closes_on_failure(monkeypa
     calls = []
     @contextmanager
     def fixture(label,*,prepare):
-        assert prepare is subject.prepare_policy
+        assert prepare is subject.prepare_saved_session
         calls.append(('enter',label))
         try:
             yield SimpleNamespace(transport_factory=lambda:SimpleNamespace(close=lambda:calls.append('close'))),SimpleNamespace(proc=SimpleNamespace(pid=123)),'pinned','certificate'
