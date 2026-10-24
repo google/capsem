@@ -56,9 +56,13 @@ def test_inventory_uses_public_tool_projection_of_full_producer_artifact():
                'artifact_reference': 'local@evidence', 'inventory': public}
     route_images.validate_inventory(payload, produced)
     for field in ('packages', 'tools'):
-        for changed in ([], [{**public[field][0], 'version': 'wrong'}]):
+        rows = public[field]
+        assert isinstance(rows, list)
+        for changed in ([], [{**rows[0], 'version': 'wrong'}]):
             bad = copy.deepcopy(payload)
-            bad['inventory'][field] = changed
+            inventory = bad['inventory']
+            assert isinstance(inventory, dict)
+            inventory[field] = changed
             with pytest.raises(AssertionError):
                 route_images.validate_inventory(bad, produced)
 
