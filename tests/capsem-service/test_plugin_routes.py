@@ -17,6 +17,9 @@ PLUGIN_IDS = {
     "log_sanitizer",
     "dummy_pre_eicar",
     "dummy_post_allow",
+    "pii_filter",
+    "secret_exfiltration",
+    "utf8_guard",
 }
 PLUGIN_STAGES = {"preprocess", "postprocess", "logging"}
 PLUGIN_MODES = {"allow", "ask", "block", "rewrite", "disable"}
@@ -80,6 +83,10 @@ def test_plugin_routes_expose_typed_stage_contract(client: Any) -> None:
     _assert_plugin_contract(plugins["log_sanitizer"], plugin_id="log_sanitizer", stage="logging")
     _assert_plugin_contract(plugins["dummy_pre_eicar"], plugin_id="dummy_pre_eicar", stage="preprocess")
     _assert_plugin_contract(plugins["dummy_post_allow"], plugin_id="dummy_post_allow", stage="postprocess")
+    for plugin_id in ("pii_filter", "secret_exfiltration", "utf8_guard"):
+        _assert_plugin_contract(plugins[plugin_id], plugin_id=plugin_id, stage="preprocess")
+        assert plugins[plugin_id]["config"]["mode"] == "disable"
+        assert plugins[plugin_id]["runtime"]["enabled"] is False
 
     assert plugins["credential_broker"]["config"] == {
         "mode": "rewrite",
@@ -183,6 +190,7 @@ def test_credential_broker_detail_and_reload_routes_share_one_contract(client: A
         "inventory",
         "grants",
         "corp_constraints",
+        "sessions",
     }
     assert detail["store"]["ready"] is True
     assert detail["store"]["status"] == "ready"
@@ -193,6 +201,7 @@ def test_credential_broker_detail_and_reload_routes_share_one_contract(client: A
         "fork_default": "inherit",
     }
     assert detail["corp_constraints"] == []
+    assert detail["sessions"] == []
 
     reloaded = client.post(
         "/plugins/credential_broker/credentials/reload",
@@ -202,6 +211,7 @@ def test_credential_broker_detail_and_reload_routes_share_one_contract(client: A
     assert reloaded["inventory"] == []
     assert reloaded["grants"] == detail["grants"]
     assert reloaded["corp_constraints"] == []
+    assert reloaded["sessions"] == []
     assert reloaded["store"]["ready"] is True
     assert reloaded["store"]["status"] == "ready"
     assert reloaded["store"]["backend"] == detail["store"]["backend"]
