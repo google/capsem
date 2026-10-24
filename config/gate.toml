@@ -1700,6 +1700,7 @@ rust_image = "rust:1.97.1-bookworm@sha256:0e2bcaef56d041a486784e54104a81aebe0da4
 uv_image = "ghcr.io/astral-sh/uv:0.12.3@sha256:2d890623d310b57771ce840f0da5eed5fc6d657da05ffaa45d82797b53fa3abc"
 cargo_tool_args = { TAURI_CLI_VERSION = "cargo-tauri", CARGO_NEXTEST_VERSION = "cargo-nextest", CARGO_LLVM_COV_VERSION = "cargo-llvm-cov" }
 script = "build_system/scripts/test/test-linux-rust.sh"
+coverage_reports = { "codecov.json" = ["cargo", "llvm-cov", "report", "--codecov", "--output-path", "{output}"], "summary.txt" = ["cargo", "llvm-cov", "report", "--summary-only"] }
 mount = "/src"
 # `probe_user` and `probe_network` are gone with the probe they configured.
 # It reproduced Linux CI's "dubious ownership" case -- a checkout owned by

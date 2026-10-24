@@ -46,7 +46,7 @@ def test_macos_builds_real_mcp_workers_before_unit_coverage() -> None:
 
 def test_linux_builds_real_mcp_workers_before_unit_coverage() -> None:
     source = (ROOT / "build_system/scripts/test/test-linux-rust.sh").read_text()
-    preparation, _ = source.split("cargo llvm-cov nextest", 1)
+    preparation, _ = source.split("uv run --project build_system --frozen python build_system/scripts/test/linux-rust-coverage.py", 1)
     assert native_builds(preparation) >= WORKERS, "Linux unit tests require actual native MCP executables first"
 
 
@@ -149,6 +149,10 @@ def test_coverage_cleans_before_preparing_workers_and_preserves_them_for_reporti
         commands = [command.argv for command in parsed_commands(source, origin="coverage cohort lifecycle")]
         clean = [i for i, argv in enumerate(commands) if argv[:3] == ("cargo", "llvm-cov", "clean")]
         workers = [i for i, argv in enumerate(commands) if argv[:3] == ("cargo", "llvm-cov", "run")]
+        if any('linux-rust-coverage.py' in arg for argv in commands for arg in argv):
+            from helpers.linux_rust import coverage_commands
+
+            commands.extend(command.argv for command in coverage_commands(ROOT))
         report = next(i for i, argv in enumerate(commands) if argv[:3] == ("cargo", "llvm-cov", "nextest"))
         assert len(clean) == 1 and clean[0] < min(workers) <= max(workers) < report, (
             "start one clean coverage cohort before native worker preparation"

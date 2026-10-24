@@ -110,8 +110,10 @@ def test_sealed_linux_frontend_builds_the_current_sdk_first() -> None:
     assert "COPY sdk/typescript /src/sdk/typescript" in base, RATIONALE
     assert base.index("COPY sdk/typescript") < base.index("COPY web/app"), RATIONALE
     assert "sdk/typescript/pnpm-lock.yaml" in CONFIG.hostimage.identity_inputs, RATIONALE
-    assert "\n    capsem-api\n" in runner and "\n    capsem-sdk\n" in runner, RATIONALE
-    assert "\n    capsem-mcp\n" not in runner, RATIONALE
+    from helpers.linux_rust import coverage_commands
+
+    coverage = next(command.argv for command in coverage_commands(ROOT) if command.argv[:3] == ('cargo', 'llvm-cov', 'nextest'))
+    assert '--workspace' in coverage and '-p' not in coverage, RATIONALE
 
 
 def test_release_package_builds_the_current_sdk_before_the_frontend() -> None:

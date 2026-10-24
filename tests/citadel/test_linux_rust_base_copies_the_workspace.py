@@ -55,8 +55,9 @@ exec "$@"
     assert "--sh" in arguments and "--export-prefix" not in arguments
     runtime = tomllib.loads((PROJECT_ROOT / "config/gate.toml").read_text())["modules"]["rust_coverage"]
     assert ("--no-cfg-coverage" in arguments) == ("--no-cfg-coverage" in runtime)
-    script = (PROJECT_ROOT / "build_system/scripts/test/test-linux-rust.sh").read_text().replace("\\\n", " ")
-    linux = shlex.split(next(line for line in script.splitlines() if line.startswith("cargo llvm-cov nextest")))
+    from helpers.linux_rust import coverage_commands
+
+    linux = next(command.argv for command in coverage_commands(PROJECT_ROOT) if command.argv[:3] == ('cargo', 'llvm-cov', 'nextest'))
     assert ("--no-cfg-coverage" in arguments) == ("--no-cfg-coverage" in linux)
 
 

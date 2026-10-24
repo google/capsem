@@ -5213,9 +5213,12 @@ def test_linux_ci_coverage_cannot_hang_without_a_named_failure() -> None:
 
     assert "timeout-minutes:" in coverage_step
     assert "run: just test-linux-rust" in coverage_step
-    assert "cargo llvm-cov nextest" in runner
-    report_block = runner.split("cargo llvm-cov report", maxsplit=1)[1]
-    assert "--bins" not in report_block
+    from helpers.linux_rust import coverage_commands
+
+    issued = coverage_commands(PROJECT_ROOT)
+    coverage_command = next(command for command in issued if command.argv[:3] == ('cargo', 'llvm-cov', 'nextest'))
+    reports = [command for command in issued if command.argv[:3] == ('cargo', 'llvm-cov', 'report')]
+    assert reports and all('--bins' not in command.argv for command in reports)
     assert "--fail-under-lines" not in runner
     from capsem_builder.gate import config as gate_config
 
@@ -5224,7 +5227,8 @@ def test_linux_ci_coverage_cannot_hang_without_a_named_failure() -> None:
         next(floor for floor in floors if "--fail-under-lines" in floor).replace("=", " ")
         == RUST_LINE_COVERAGE_FLOOR
     )
-    assert "--profile ci" in runner
+    assert coverage_command.env['NEXTEST_PROFILE'] == 'ci'
+    assert '--no-fail-fast' in coverage_command.argv
     assert slow_timeout == {
         "period": "120s",
         "terminate-after": 3,
@@ -5334,7 +5338,11 @@ def test_just_test_owns_linux_rust_platform_coverage_through_docker(
     assert "host.on_macos()" not in linuxrust
     assert "run: just test-linux-rust" in linux_ci
     assert "cargo llvm-cov nextest" not in linux_ci
-    assert "cargo llvm-cov nextest" in runner
+    from helpers.linux_rust import coverage_commands
+
+    issued = coverage_commands(PROJECT_ROOT)
+    coverage_command = next(command.argv for command in issued if command.argv[:3] == ('cargo', 'llvm-cov', 'nextest'))
+    assert '--workspace' in coverage_command and '--tests' in coverage_command
     linux_clippy = "cargo clippy --workspace --all-targets -- -D warnings"
     cross_clippy = (
         'cargo clippy --target "$cross_target" -p capsem-core --lib --tests -- -D warnings'
@@ -5346,10 +5354,10 @@ def test_just_test_owns_linux_rust_platform_coverage_through_docker(
     assert cross_clippy in runner
     assert linux_clippy in runner
     assert runner.index(cross_clippy) < runner.index(linux_clippy)
-    assert runner.index(linux_clippy) < runner.index("cargo llvm-cov nextest")
-    assert "capsem-service" in runner
-    assert 'package_args+=( -p "$package" )' in runner
-    assert "--profile ci" in runner
+    assert runner.index(linux_clippy) < runner.index('uv run --project build_system --frozen python build_system/scripts/test/linux-rust-coverage.py')
+    assert '--workspace' in coverage_command and '-p' not in coverage_command
+    assert 'packages=(' not in runner
+    assert next(command.env for command in issued if command.argv == coverage_command)['NEXTEST_PROFILE'] == 'ci'
     config = gate_config.load(PROJECT_ROOT)
     for argument, tool_name in config.hostimage.cargo_tool_args.items():
         package, version = cargo_tool(config=config, argument=argument)

@@ -6,38 +6,6 @@ OUTPUT_DIR=${CAPSEM_LINUX_RUST_OUTPUT_DIR:-$ROOT/cache/target/coverage/linux}
 mkdir -p "$OUTPUT_DIR"
 export NEXTEST_STATE_DIR="$OUTPUT_DIR/nextest"
 
-packages=(
-    capsem-assets
-    capsem-api
-    capsem-sdk
-    capsem-config
-    capsem-credentials
-    capsem-foundation
-    capsem-core
-    capsem-admin
-    capsem-agent
-    capsem-logger
-    capsem-proto
-    capsem-guard
-    capsem-gateway
-    capsem-service
-    capsem
-    capsem-tui
-    capsem-mcp-aggregator
-    capsem-mcp-builtin
-    capsem-process
-    capsem-ledger
-    capsem-proxy
-    capsem-router
-    capsem-bench
-    capsem-mock-server
-)
-
-package_args=()
-for package in "${packages[@]}"; do
-    package_args+=( -p "$package" )
-done
-
 cd "$ROOT"
 
 # The macOS-hosted sealed lane inherits these dependency trees from its
@@ -67,18 +35,4 @@ cargo llvm-cov clean --workspace
 cargo llvm-cov run --locked --no-cfg-coverage --no-report -p capsem-mcp-aggregator -- --version
 cargo llvm-cov run --locked --no-cfg-coverage --no-report -p capsem-mcp-builtin -- --version
 
-cargo llvm-cov nextest \
-    --no-cfg-coverage \
-    --no-clean \
-    --lib \
-    --bins \
-    --profile ci \
-    --codecov \
-    --output-path "$OUTPUT_DIR/codecov.json" \
-    "${package_args[@]}"
-
-set -o pipefail
-cargo llvm-cov report \
-    --summary-only \
-    "${package_args[@]}" \
-    2>&1 | tee "$OUTPUT_DIR/summary.txt"
+uv run --project build_system --frozen python build_system/scripts/test/linux-rust-coverage.py

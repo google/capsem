@@ -81,6 +81,7 @@ class HostImageConfig(Strict):
     cargo_tool_args: dict[Annotated[str, StringConstraints(pattern=r"^[A-Z][A-Z0-9_]+$")], str]
     script: str
     mount: str
+    coverage_reports: dict[str, tuple[str, ...]]
 
 
 class PrivateImagesConfig(Strict):

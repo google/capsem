@@ -45,7 +45,7 @@ class _LinuxRust:
                     "linux-rust",
                     Run(
                         ["bash", config.hostimage.script],
-                        env={config.environment.linux_rust.output_dir: str(config.root)},
+                        env={config.environment.linux_rust.output_dir: str(config.path(config.hostimage.extract_to))},
                     ),
                     kind=Kind.COMPILE,
                     needs=frozenset({Needs.DOCKER, Needs.DISK}),

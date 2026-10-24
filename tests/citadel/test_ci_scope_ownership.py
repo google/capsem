@@ -163,7 +163,9 @@ def test_unit_coverage_includes_library_and_binary_targets() -> None:
         for step in _workflow()["jobs"]["test"]["steps"]
         if step.get("name") == "Unit tests with coverage"
     )
-    linux = (ROOT / "build_system/scripts/test/test-linux-rust.sh").read_text()
+    from helpers.linux_rust import coverage_commands
+
+    linux = "\n".join(shlex.join(command.argv) for command in coverage_commands(ROOT))
     for platform, script in (("macOS", macos), ("Linux", linux)):
         command = next(
             line for line in script.replace("\\\n", " ").splitlines()
