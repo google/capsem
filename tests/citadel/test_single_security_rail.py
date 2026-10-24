@@ -94,7 +94,7 @@ def test_network_mechanics_do_not_make_security_decisions() -> None:
     assert offenders == []
 
 
-def test_session_event_writes_stay_behind_dbwriter() -> None:
+def _session_event_write_violations(root: Path) -> list[str]:
     allowed_direct_sqlite = {
         "crates/capsem-logger/src/db.rs",
         "crates/capsem-logger/src/reader.rs",
@@ -121,6 +121,10 @@ def test_session_event_writes_stay_behind_dbwriter() -> None:
         # is that file's single owning module. It opens the file once to
         # ensure its own tables before the shared handle takes over.
         "crates/capsem-logger/src/network_db.rs",
+        # Logger's fresh candidate admission owns its bounded read-only HOST
+        # snapshot, reusing its schema/archive validators. Not an event writer
+        # and not permission for routes or other logger modules to open SQLite.
+        "crates/capsem-logger/src/host_admission.rs",
     }
     allowed_event_inserts = {
         "crates/capsem-logger/src/schema.rs",
@@ -161,12 +165,12 @@ def test_session_event_writes_stay_behind_dbwriter() -> None:
     )
 
     offenders: list[str] = []
-    for crate in (PROJECT_ROOT / "crates").iterdir():
+    for crate in (root / "crates").iterdir():
         src = crate / "src"
         if not src.exists():
             continue
         for path in src.rglob("*.rs"):
-            rel = path.relative_to(PROJECT_ROOT).as_posix()
+            rel = path.relative_to(root).as_posix()
             if (
                 rel.endswith(("/tests.rs", "_tests.rs"))
                 or "/tests/" in rel
@@ -183,4 +187,27 @@ def test_session_event_writes_stay_behind_dbwriter() -> None:
                     if needle in text:
                         offenders.append(f"{rel} inserts event rows directly with {needle}")
 
-    assert offenders == []
+    return offenders
+
+
+
+def test_session_event_writes_stay_behind_dbwriter() -> None:
+    assert _session_event_write_violations(PROJECT_ROOT) == []
+
+
+def test_exact_logger_admission_owner_does_not_grant_route_or_event_sql(tmp_path: Path) -> None:
+    sources = {
+        "crates/capsem-logger/src/host_admission.rs": 'Connection::open_with_flags(uri, flags); INSERT INTO model_calls',
+        "crates/capsem-logger/src/routes.rs": 'Connection::open(path);',
+        "crates/capsem-service/src/host_admission.rs": 'Connection::open_with_flags(uri, flags); INSERT INTO model_calls',
+    }
+    for relative, code in sources.items():
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(code)
+    errors = _session_event_write_violations(tmp_path)
+    assert not any("capsem-logger/src/host_admission.rs opens" in error for error in errors)
+    assert any("capsem-logger/src/host_admission.rs inserts" in error for error in errors)
+    assert any("capsem-logger/src/routes.rs opens" in error for error in errors)
+    assert any("capsem-service/src/host_admission.rs opens" in error for error in errors)
+    assert any("capsem-service/src/host_admission.rs inserts" in error for error in errors)
