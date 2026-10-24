@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Restrict macOS companion virtualization entitlements to the existing five
   configured VM roles; preserve valid production signatures during installation.
 
+- Compare benchmark operation rates as higher-is-better throughput, with an
+  explicit operations-per-second unit distinct from operation counts.
+
 - Restore Debian installation without systemd while retaining exact old-cohort
   retirement and both signed admission checks; booted systemd still requires
   verified selected-user manager quiescence before replacement.

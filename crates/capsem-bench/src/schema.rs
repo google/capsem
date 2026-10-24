@@ -153,6 +153,7 @@ pub enum Unit {
     Megabytes,
     RequestsPerSecond,
     MegabitsPerSecond,
+    OperationsPerSecond,
     Operations,
     Ratio,
     Count,
