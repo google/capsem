@@ -151,6 +151,8 @@ def test_completed_work_counts_are_quality_facts_not_lower_is_better_costs():
     facts = observed.tcp("tcp.upload.s4", throughput_report("upload", 4, 1), direction="upload", streams=4, seconds=1)
     assert facts["bytes_sent"] == 1000 and facts["bytes_received"] == 1000
     assert not any(key.endswith((".bytes_sent", ".bytes_received", ".streams")) for key in observed.metrics)
+    assert not any(key.endswith((".send_megabits_per_sec", ".receive_megabits_per_sec")) for key in observed.metrics)
+    assert observed.metrics["tcp.upload.s4.megabits_per_sec"]["samples"] == [0.5]
 
 
 @pytest.mark.parametrize("value", [True, 1.5, 2**53 + 1])

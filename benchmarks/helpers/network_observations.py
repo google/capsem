@@ -89,7 +89,7 @@ class NetworkObservations:
                 raise ValueError("original throughput elapsed time is empty")
             if key in {"bytes_sent", "bytes_received", "streams"}:
                 facts[key] = value
-            else:
+            elif key == "elapsed_seconds":
                 self.add(lane + "." + key, unit, value)
         selected = "send_megabits_per_sec" if direction == "upload" else "receive_megabits_per_sec"
         if direction != "latency":
