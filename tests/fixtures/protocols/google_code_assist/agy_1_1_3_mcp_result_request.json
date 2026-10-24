@@ -1,0 +1,92 @@
+{
+  "model": "gemini-3.5-flash-low",
+  "requestType": "agent",
+  "request": {
+    "contents": [
+      {
+        "role": "user",
+        "parts": [
+          {
+            "text": "<USER_REQUEST>\nCAPSEM_MCP_PROOF=049b8ed775cb49ad8627b8ed953dae39. Call the Capsem MCP local echo tool with text 049b8ed775cb49ad8627b8ed953dae39. Return only the actual text returned by that tool.\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nThe current local time is: 2026-10-24T03:35:29Z.\n</ADDITIONAL_METADATA>\n<USER_SETTINGS_CHANGE>\nThe user changed setting `Model Selection` from None to Gemini 3.5 Flash (Medium). No need to comment on this change if the user doesn't ask about it. If reporting what model you are, please use a human readable name instead of the exact string.\n</USER_SETTINGS_CHANGE>"
+          }
+        ]
+      },
+      {
+        "role": "model",
+        "parts": [
+          {
+            "functionCall": {
+              "id": "capsem_google_mcp_echo",
+              "name": "call_mcp_tool",
+              "args": {
+                "Arguments": {
+                  "text": "049b8ed775cb49ad8627b8ed953dae39"
+                },
+                "ServerName": "capsem",
+                "ToolName": "local__echo",
+                "toolAction": "Calling echo",
+                "toolSummary": "MCP echo proof"
+              }
+            },
+            "thoughtSignature": "capsem+agy+fixture+signature"
+          }
+        ]
+      },
+      {
+        "role": "model",
+        "parts": [
+          {
+            "functionResponse": {
+              "id": "capsem_google_mcp_echo",
+              "name": "call_mcp_tool",
+              "response": {
+                "output": "Created At: 2026-10-24T03:35:29Z\nCompleted At: 2026-10-24T03:35:29Z\n049b8ed775cb49ad8627b8ed953dae39"
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "systemInstruction": {
+      "parts": [
+        {
+          "text": "<mcp_servers>\nEach MCP server has a directory `/home/capsem/.gemini/antigravity-cli/mcp/<serverName>` containing tool schemas (`<toolName>.json`) and optionally an `instructions.md` file with best practices.\nEagerly loaded tools are registered as native tools under the name `mcp_<serverName>_<toolName>`. Call eager tools directly.\nFor lazily-loaded tools, read the corresponding schema file to understand the arguments and usage, then call the tool using the `call_mcp_tool` tool.\nThe following MCP servers and their available tools are listed below, following this format:\n```\n# <serverName>\nEager:\n<toolName>\nLazy:\n<toolName>\n```\n# capsem\nLazy:\nlocal__echo\nlocal__fetch_http\nlocal__grep_http\nlocal__http_headers\ncapsem__expose_port\n</mcp_servers>"
+        }
+      ]
+    },
+    "tools": [
+      {
+        "functionDeclarations": [
+          {
+            "name": "call_mcp_tool",
+            "parameters": {
+              "type": "OBJECT",
+              "required": [
+                "ServerName",
+                "ToolName",
+                "Arguments",
+                "toolSummary",
+                "toolAction"
+              ],
+              "properties": {
+                "Arguments": {},
+                "ServerName": {
+                  "type": "STRING"
+                },
+                "ToolName": {
+                  "type": "STRING"
+                },
+                "toolAction": {
+                  "type": "STRING"
+                },
+                "toolSummary": {
+                  "type": "STRING"
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

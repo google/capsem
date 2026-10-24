@@ -2,6 +2,7 @@
 //! A final token requires the exact original call and typed successful MCP result.
 use bytes::Bytes;
 use serde_json::{json, Value};
+use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 const MARKER: &str = "CAPSEM_MCP_PROOF=";
 const DISPATCH: &str = "call_mcp_tool";
@@ -91,10 +92,16 @@ fn proof(payload: &Value, request: &Value, contents: &[Value], prompt: &str) -> 
     if result["name"] != DISPATCH || result["id"] != CALL_ID {
         return Err("Google MCP proof result does not belong to its original call");
     }
+    let timestamp_wrapper = result["response"]["output"]
+        .as_str()
+        .is_some_and(|text| text.starts_with("Created At: "));
+    // Actual AGY renders this timestamp wrapper with role=model; the typed
+    // Google controls use role=user. Bind each exact form, not role aliases.
+    let result_role = if timestamp_wrapper { "model" } else { "user" };
     let pair = contents.get(contents.len().saturating_sub(2)..).unwrap_or(&[]);
     if pair.len() != 2
         || pair[0]["role"] != "model"
-        || pair[1]["role"] != "user"
+        || pair[1]["role"] != result_role
         || !pair[0]["parts"]
             .as_array()
             .is_some_and(|parts| parts.iter().any(|part| part.get("functionCall") == Some(&original)))
@@ -111,21 +118,48 @@ fn proof(payload: &Value, request: &Value, contents: &[Value], prompt: &str) -> 
         return Err("Google MCP result has an unknown or failed response envelope");
     }
     let output = &result["response"]["output"];
-    // This is a strict source-level MCP control, not a claim about AGY's
-    // unobserved success rendering. Unknown/narrated/error envelopes fail;
-    // the parent native capture must prove the actual envelope separately.
-    let parsed;
-    let output = if let Some(text) = output.as_str() {
-        parsed = serde_json::from_str::<Value>(text).map_err(|_| "Google MCP result output is not typed JSON")?;
-        &parsed
-    } else {
-        output
+    // AGY1.1.3's actual successful native result has a strict timestamp
+    // wrapper. The canonical typed MCP controls remain valid too; prose,
+    // errors or token substrings are never successful echo results.
+    let echoed = match output.as_str() {
+        Some(text) if text.starts_with("Created At: ") => timestamped_echo(text, token),
+        Some(text) => serde_json::from_str::<Value>(text).is_ok_and(|value| typed_echo(&value, token)),
+        None => typed_echo(output, token),
     };
-    if !output.is_object() || output["isError"] != false || output["content"] != json!([{"type":"text","text":token}]) {
-        return Err("Google MCP proof needs the exact successful typed echo result");
+    if !echoed {
+        return Err("Google MCP proof needs the exact successful echo result");
     }
     let last = chunk(payload, json!([{"text":token}]), true);
     Ok(Bytes::from(format!("data: {last}\n\n")))
+}
+
+fn typed_echo(output: &Value, token: &str) -> bool {
+    output.is_object() && output["isError"] == false && output["content"] == json!([{"type":"text","text":token}])
+}
+
+fn timestamped_echo(output: &str, token: &str) -> bool {
+    let Some((created, rest)) = output
+        .strip_prefix("Created At: ")
+        .and_then(|text| text.split_once('\n'))
+    else {
+        return false;
+    };
+    let Some((completed, payload)) = rest
+        .strip_prefix("Completed At: ")
+        .and_then(|text| text.split_once('\n'))
+    else {
+        return false;
+    };
+    if payload != token {
+        return false;
+    }
+    let (Ok(created), Ok(completed)) = (
+        OffsetDateTime::parse(created, &Rfc3339),
+        OffsetDateTime::parse(completed, &Rfc3339),
+    ) else {
+        return false;
+    };
+    created <= completed
 }
 
 fn advertises_echo(request: &Value) -> bool {

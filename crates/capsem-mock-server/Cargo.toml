@@ -31,6 +31,7 @@ hyper-util.workspace = true
 rustls.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+time = { workspace = true, features = ["parsing"] }
 tokio.workspace = true
 tokio-rustls.workspace = true
 tracing.workspace = true

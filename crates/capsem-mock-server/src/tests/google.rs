@@ -24,6 +24,139 @@ fn events(body: &[u8]) -> Vec<Value> {
         .collect()
 }
 
+fn captured_result_request() -> Value {
+    serde_json::from_str(include_str!(
+        "../../../../tests/fixtures/protocols/google_code_assist/agy_1_1_3_mcp_result_request.json"
+    ))
+    .unwrap()
+}
+
+#[tokio::test]
+async fn google_mcp_finishes_the_actual_captured_timestamp_wrapper() {
+    let (status, _, body) = routed(
+        Method::POST,
+        "/v1internal:streamGenerateContent",
+        None,
+        HeaderMap::new(),
+        captured_result_request(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    assert_eq!(
+        events(&body)[0]["response"]["candidates"][0]["content"]["parts"],
+        json!([{"text":"049b8ed775cb49ad8627b8ed953dae39"}])
+    );
+}
+
+#[tokio::test]
+async fn google_mcp_timestamp_wrapper_requires_exact_syntax_valid_dates_order_and_payload() {
+    let token = "049b8ed775cb49ad8627b8ed953dae39";
+    let wrap = |created: &str, completed: &str, payload: &str| {
+        format!("Created At: {created}\nCompleted At: {completed}\n{payload}")
+    };
+    let cases = [
+        (wrap("2026-10-24T03:35:29+02:00", "2026-10-24T02:35:29Z", token), true),
+        (
+            wrap(
+                "2026-10-24T03:35:29.123456789Z",
+                "2026-10-24T03:35:29.123456790Z",
+                token,
+            ),
+            true,
+        ),
+        (wrap("2026-10-24T03:35:29", "2026-10-24T03:35:29Z", token), false),
+        (wrap("2026-02-30T03:35:29Z", "2026-10-24T03:35:29Z", token), false),
+        (wrap("2026-10-24T03:35:29Z", "2026-10-24T03:35:29+01:00", token), false),
+        (wrap("2026-10-24T03:35:29Z", "2026-10-24T03:35:28Z", token), false),
+        (wrap("2026-10-24T03:35:29+25:00", "2026-10-24T03:35:29Z", token), false),
+        (wrap("2026-10-24T03:35:29Z", "not a date", token), false),
+        (
+            wrap(
+                "2026-10-24T03:35:29Z",
+                "2026-10-24T03:35:29Z",
+                &format!("permission denied; {token}"),
+            ),
+            false,
+        ),
+        (
+            wrap("2026-10-24T03:35:29Z", "2026-10-24T03:35:29Z", &format!("{token}\n")),
+            false,
+        ),
+        (
+            wrap(
+                "2026-10-24T03:35:29Z",
+                "2026-10-24T03:35:29Z",
+                &format!("{token}\nextra"),
+            ),
+            false,
+        ),
+        (
+            wrap("2026-10-24T03:35:29Z", "2026-10-24T03:35:29Z", "wrong token"),
+            false,
+        ),
+        (
+            format!("Created at: 2026-10-24T03:35:29Z\nCompleted At: 2026-10-24T03:35:29Z\n{token}"),
+            false,
+        ),
+        (
+            format!(" Created At: 2026-10-24T03:35:29Z\nCompleted At: 2026-10-24T03:35:29Z\n{token}"),
+            false,
+        ),
+        (
+            format!("Created At: 2026-10-24T03:35:29Z\r\nCompleted At: 2026-10-24T03:35:29Z\r\n{token}"),
+            false,
+        ),
+    ];
+    for (output, valid) in cases {
+        let mut request = captured_result_request();
+        request["request"]["contents"][2]["parts"][0]["functionResponse"]["response"]["output"] = json!(output);
+        let (status, _, body) = routed(
+            Method::POST,
+            "/v1internal:streamGenerateContent",
+            None,
+            HeaderMap::new(),
+            request,
+        )
+        .await;
+        assert_eq!(
+            status,
+            if valid { StatusCode::OK } else { StatusCode::BAD_REQUEST },
+            "{output}: {}",
+            String::from_utf8_lossy(&body)
+        );
+    }
+}
+
+#[tokio::test]
+async fn google_mcp_captured_wrapper_cannot_bypass_call_or_error_linkage() {
+    for fault in ["id", "name", "args", "role", "result-role", "error"] {
+        let mut request = captured_result_request();
+        match fault {
+            "id" => request["request"]["contents"][2]["parts"][0]["functionResponse"]["id"] = json!("other"),
+            "name" => request["request"]["contents"][2]["parts"][0]["functionResponse"]["name"] = json!("run_command"),
+            "args" => {
+                request["request"]["contents"][1]["parts"][0]["functionCall"]["args"]["Arguments"]["text"] =
+                    json!("other")
+            }
+            "role" => request["request"]["contents"][1]["role"] = json!("user"),
+            "result-role" => request["request"]["contents"][2]["role"] = json!("user"),
+            "error" => {
+                request["request"]["contents"][2]["parts"][0]["functionResponse"]["response"]["error"] = json!("failed")
+            }
+            _ => unreachable!(),
+        }
+        let (status, _, _) = routed(
+            Method::POST,
+            "/v1internal:streamGenerateContent",
+            None,
+            HeaderMap::new(),
+            request,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{fault}");
+    }
+}
+
 #[tokio::test]
 async fn google_mcp_dispatch_accepts_the_reduced_original_native_request() {
     let request = serde_json::from_str(include_str!(
@@ -155,7 +288,7 @@ async fn with_result(fault: &str) -> (StatusCode, HeaderMap, Bytes) {
             result["response"]["output"] = json!(format!("Created At: timestamp\npermission denied; {TOKEN}"))
         }
         "string-json" => result["response"]["output"] = json!(result["response"]["output"].to_string()),
-        "none" | "role" => {}
+        "none" | "role" | "result-role" => {}
         _ => unreachable!(),
     }
     request["request"]["contents"].as_array_mut().unwrap().extend([
@@ -164,6 +297,9 @@ async fn with_result(fault: &str) -> (StatusCode, HeaderMap, Bytes) {
     ]);
     if fault == "role" {
         request["request"]["contents"][1]["role"] = json!("user");
+    }
+    if fault == "result-role" {
+        request["request"]["contents"][2]["role"] = json!("model");
     }
     routed(
         Method::POST,
@@ -187,6 +323,7 @@ async fn google_mcp_proof_never_finalizes_an_unrelated_failed_or_unknown_result(
         "extra",
         "unknown-envelope",
         "role",
+        "result-role",
     ] {
         let (status, _, body) = with_result(fault).await;
         assert_eq!(
