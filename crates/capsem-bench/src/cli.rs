@@ -41,7 +41,9 @@ pub(crate) enum Command {
     /// Compare two records metric by metric.
     #[cfg(feature = "host")]
     Compare(CompareArgs),
-    /// Ratchet a directory of records against checked-in evidence.
+    /// Verify matching observed subject sets against paired baseline evidence.
+    ///
+    /// Subjects absent from both stores require a separate complete run-plan check.
     #[cfg(feature = "host")]
     Verify(VerifyArgs),
     /// Measure dimensions and record what they measured.

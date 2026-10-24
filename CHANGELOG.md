@@ -45,6 +45,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Keep optional metric exporter initialization and shutdown off the async service
   runtime so enabling telemetry cannot panic before the service becomes ready.
+- Reject incomplete paired benchmark evidence instead of seeding a successful
+  verdict when a baseline or candidate subject is missing. Verification still
+  requires complete fit, raw and configuration-compatible repeats on both sides.
+
 - Validate Antigravity CLI's captured MCP result in hermetic qualification
   using ordered timestamps, the original call identity and exact echoed token.
 

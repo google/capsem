@@ -1,6 +1,6 @@
 //! Evidence comparison and release verdicts.
 
-use std::path::Path;
+use std::{collections::BTreeSet, path::Path};
 
 use anyhow::{bail, Context, Result};
 
@@ -60,25 +60,36 @@ fn aggregate(records: &[schema::Record]) -> Option<schema::Record> {
     Some(aggregate)
 }
 
-/// Ratchet this run against evidence without granting noise release authority.
+/// Ratchet the complete observed subject union; this does not prove an omitted run plan.
 pub(crate) fn verify(records: &Path, evidence_dir: &Path, runs: usize, thresholds: Thresholds) -> Result<()> {
+    if runs == 0 {
+        bail!("--runs must be at least 1");
+    }
     let evidence = store::open(evidence_dir)?;
     let measured = store::open(records)?;
-    let subjects = store::subjects(&measured)?;
-    if subjects.is_empty() {
-        bail!("no records to verify in {}", records.display());
+    let baseline_subjects: BTreeSet<_> = store::subjects(&evidence)?.into_iter().collect();
+    let subjects: BTreeSet<_> = store::subjects(&measured)?.into_iter().collect();
+    if subjects.is_empty() && baseline_subjects.is_empty() {
+        bail!("no paired benchmark subjects to verify");
+    }
+    if let Some(subject) = baseline_subjects.symmetric_difference(&subjects).next() {
+        let (dimension, arch) = subject;
+        let missing = if baseline_subjects.contains(subject) {
+            "candidate"
+        } else {
+            "baseline"
+        };
+        bail!("missing {missing} subject {} for {arch}", dimension.as_str());
     }
 
     let mut significant = 0usize;
     for (dimension, arch) in subjects {
         let current_runs = store::latest_many(&measured, dimension, &arch, runs)?;
-        evidence::repeats(&current_runs, runs)?;
+        evidence::repeats(&current_runs, runs)
+            .with_context(|| format!("candidate {} for {arch}", dimension.as_str()))?;
         let baseline_runs = store::latest_many(&evidence, dimension, &arch, runs)?;
-        if baseline_runs.is_empty() {
-            println!("{}: no evidence yet for {arch} -- seeding", dimension.as_str());
-            continue;
-        }
-        evidence::repeats(&baseline_runs, runs)?;
+        evidence::repeats(&baseline_runs, runs)
+            .with_context(|| format!("baseline {} for {arch}", dimension.as_str()))?;
         evidence::compatible(&baseline_runs[0], &current_runs[0])?;
         let record = aggregate(&current_runs).context("current repeats")?;
         let baseline = aggregate(&baseline_runs).context("baseline repeats")?;

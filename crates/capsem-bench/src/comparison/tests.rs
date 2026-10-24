@@ -136,3 +136,148 @@ fn mismatched_configuration_metric_or_unit_never_silently_disappears() {
         });
     assert!(evidence::eligible(&changed).is_err());
 }
+
+fn thresholds() -> Thresholds {
+    Thresholds {
+        maximum_factor: 1.1,
+        noise_factor: 1.0,
+        minimum_time_resolution_ms: 1.0,
+    }
+}
+
+fn insert_repeats(path: &Path, dimension: schema::Dimension, change: impl Fn(&mut schema::Record)) {
+    let mut db = store::open(path).unwrap();
+    for at in ["first", "second"] {
+        let mut row = authoritative(at);
+        row.dimension = dimension;
+        change(&mut row);
+        store::insert(&mut db, &row).unwrap();
+    }
+}
+
+#[test]
+fn verification_never_seeds_a_missing_baseline_subject() {
+    let root = tempfile::tempdir().unwrap();
+    let before = root.path().join("before.db");
+    let after = root.path().join("after.db");
+    insert_repeats(&after, schema::Dimension::Routes, |_| {});
+    assert!(verify(&after, &before, 2, thresholds()).is_err());
+}
+
+#[test]
+fn verification_requires_every_subject_seen_on_either_side() {
+    for extra_baseline in [true, false] {
+        let root = tempfile::tempdir().unwrap();
+        let before = root.path().join("before.db");
+        let after = root.path().join("after.db");
+        for path in [&before, &after] {
+            insert_repeats(path, schema::Dimension::Routes, |_| {});
+        }
+        let extra = if extra_baseline { &before } else { &after };
+        insert_repeats(extra, schema::Dimension::Restart, |_| {});
+        let error = verify(&after, &before, 2, thresholds()).unwrap_err();
+        let detail = format!("{error:#}");
+        assert!(detail.contains("restart") && detail.contains("x86_64"), "{detail}");
+    }
+}
+
+#[test]
+fn verification_does_not_pair_different_architectures() {
+    let root = tempfile::tempdir().unwrap();
+    let before = root.path().join("before.db");
+    let after = root.path().join("after.db");
+    insert_repeats(&before, schema::Dimension::Routes, |_| {});
+    insert_repeats(&after, schema::Dimension::Routes, |row| {
+        row.host.arch = "aarch64".into();
+        let measurement = row.measurement.as_mut().unwrap();
+        measurement.before.host.arch = "aarch64".into();
+        measurement.after.host.arch = "aarch64".into();
+    });
+    assert!(verify(&after, &before, 2, thresholds()).is_err());
+}
+
+#[test]
+fn verification_rejects_empty_stores_and_zero_repeats() {
+    let root = tempfile::tempdir().unwrap();
+    let before = root.path().join("before.db");
+    let after = root.path().join("after.db");
+    assert!(verify(&after, &before, 2, thresholds()).is_err());
+    for path in [&before, &after] {
+        insert_repeats(path, schema::Dimension::Routes, |_| {});
+    }
+    assert!(verify(&after, &before, 0, thresholds()).is_err());
+}
+
+#[test]
+fn verification_rejects_incomplete_or_ineligible_evidence_on_either_side() {
+    for bad_baseline in [true, false] {
+        for invalid in [
+            "single",
+            "rawless",
+            "historical",
+            "quick",
+            "unfit",
+            "profile",
+            "unit",
+            "key",
+            "source",
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let before = root.path().join("before.db");
+            let after = root.path().join("after.db");
+            let good = if bad_baseline { &after } else { &before };
+            let bad = if bad_baseline { &before } else { &after };
+            insert_repeats(good, schema::Dimension::Routes, |_| {});
+            let mut db = store::open(bad).unwrap();
+            for at in ["first", "second"] {
+                let mut row = authoritative(at);
+                match invalid {
+                    "single" if at == "second" => continue,
+                    "rawless" => row.metrics[0].samples = None,
+                    "historical" => row.measurement = None,
+                    "quick" => row.quick = true,
+                    "unfit" => row
+                        .measurement
+                        .as_mut()
+                        .unwrap()
+                        .after
+                        .objections
+                        .push(crate::machine::Objection {
+                            what: "load".into(),
+                            detail: "busy".into(),
+                        }),
+                    "profile" => row.measurement.as_mut().unwrap().profile = "different".into(),
+                    "unit" => row.metrics[0].unit = schema::Unit::Count,
+                    "key" => row.metrics[0].key = "different".into(),
+                    "source" if at == "second" => row.release.commit = "b".repeat(40),
+                    _ => {}
+                }
+                store::insert(&mut db, &row).unwrap();
+            }
+            assert!(
+                verify(&after, &before, 2, thresholds()).is_err(),
+                "{invalid}, bad baseline={bad_baseline}"
+            );
+        }
+    }
+}
+
+#[test]
+fn complete_paired_subject_union_passes_without_changing_regression_verdicts() {
+    let root = tempfile::tempdir().unwrap();
+    let before = root.path().join("before.db");
+    let after = root.path().join("after.db");
+    for dimension in [schema::Dimension::Routes, schema::Dimension::Restart] {
+        insert_repeats(&before, dimension, |_| {});
+        insert_repeats(&after, dimension, |row| row.release.commit = "b".repeat(40));
+    }
+    verify(&after, &before, 2, thresholds()).unwrap();
+    insert_repeats(&after, schema::Dimension::Routes, |row| {
+        row.recorded_at = format!("third-{}", row.recorded_at);
+        row.release.commit = "b".repeat(40);
+        row.metrics[0].samples = Some(vec![0.06]);
+        row.metrics[0].summary = stats::Summary::of(&[0.06]).unwrap();
+    });
+    let error = verify(&after, &before, 2, thresholds()).unwrap_err();
+    assert!(error.to_string().contains("1 metric(s) regressed"), "{error}");
+}
