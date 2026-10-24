@@ -15,6 +15,20 @@ def root(pid,started=1.):
     return SimpleNamespace(pid=pid,create_time=lambda:started)
 
 
+def scoped_processes(monkeypatch,factory):
+    # psutil.process_iter caches constructors globally: patching Process on
+    # that shared module can inject fake rows into the real leak inventory.
+    monkeypatch.setattr(subject,'psutil',SimpleNamespace(**{**vars(psutil),'Process':factory}))
+
+
+def test_owned_double_does_not_replace_global_leak_inventory(monkeypatch):
+    original = psutil.Process
+    fake = root(11)
+    scoped_processes(monkeypatch,lambda pid:fake)
+    assert subject.psutil.Process(11) is fake
+    assert psutil.Process is original
+
+
 def test_overlap_is_one_snapshot_and_replacement_is_new_cpu_identity(monkeypatch):
     first,second = root(11),root(12,2.)
     rows = {11:usage(11,'capsem-service',cpu='10',rss=100,pss=80,uss=60,fds=2),
@@ -24,7 +38,7 @@ def test_overlap_is_one_snapshot_and_replacement_is_new_cpu_identity(monkeypatch
         if process.pid == 11:
             values.append(rows[12])
         return TreeSnapshot({(value.pid,value.started_at):value for value in values})
-    monkeypatch.setattr(subject.psutil,'Process',lambda pid:{11:first,12:second}[pid])
+    scoped_processes(monkeypatch,lambda pid:{11:first,12:second}[pid])
     monkeypatch.setattr(subject,'process_tree_snapshot',snapshot)
     roots = (subject.OwnedProcess.capture(first),subject.OwnedProcess.capture(second))
     combined = subject.owned_process_snapshot(roots,maximum=4)
@@ -37,7 +51,7 @@ def test_overlap_is_one_snapshot_and_replacement_is_new_cpu_identity(monkeypatch
     assert sampler.metrics()['resources.total.peak_rss_bytes']['samples'] == [150]
     replacement = root(13,3.)
     rows[13] = usage(13,'capsem-service',cpu='3',rss=175,pss=150,uss=120,fds=2,started_at=3.)
-    monkeypatch.setattr(subject.psutil,'Process',lambda pid:replacement if pid == 13 else {11:first,12:second}[pid])
+    scoped_processes(monkeypatch,lambda pid:replacement if pid == 13 else {11:first,12:second}[pid])
     sampler.observe(subject.owned_process_snapshot((subject.OwnedProcess.capture(replacement),),maximum=4))
     assert sampler.metrics()['resources.total.cpu_s']['samples'] == [4.]
     assert sampler.metrics()['resources.total.peak_rss_bytes']['samples'] == [175]
@@ -55,7 +69,7 @@ def test_identity_budget_and_accounting_errors_are_not_silent(monkeypatch,fault)
         if fault == 'denied':
             raise psutil.AccessDenied(pid)
         return root(pid,2. if fault == 'reused' else 1.)
-    monkeypatch.setattr(subject.psutil,'Process',current)
+    scoped_processes(monkeypatch,current)
     with pytest.raises((ValueError,RuntimeError,psutil.AccessDenied)):
         subject.owned_process_snapshot(() if fault == 'empty' else (captured,),maximum=0 if fault == 'budget' else 4)
 
@@ -64,7 +78,7 @@ def test_normal_exit_is_empty_not_replacement_and_bounded_provider_is_exclusive(
     captured = subject.OwnedProcess.capture(root(11))
     def gone(pid):
         raise psutil.NoSuchProcess(pid)
-    monkeypatch.setattr(subject.psutil,'Process',gone)
+    scoped_processes(monkeypatch,gone)
     assert subject.owned_process_snapshot((captured,),maximum=1).processes == {}
     with pytest.raises(ValueError):
         ProcessTreeSampler(root(12),roots=lambda:(captured,),max_roots=1)
