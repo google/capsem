@@ -640,16 +640,6 @@ impl ServiceState {
         })
     }
 
-    fn validate_pinned_asset_files(
-        &self,
-        resolved: &capsem_assets::asset_manager::ResolvedAssets,
-        pins: &BootAssetPins,
-    ) -> Result<()> {
-        validate_asset_file_pin("kernel", &resolved.kernel, &pins.kernel)?;
-        validate_asset_file_pin("initrd", &resolved.initrd, &pins.initrd)?;
-        validate_asset_file_pin("rootfs", &resolved.rootfs, &pins.rootfs)
-    }
-
     fn persistent_entry_resume_state(&self, entry: &PersistentVmEntry) -> (VmLifecycleState, bool, Option<String>) {
         if entry.defunct {
             return (VmLifecycleState::Defunct, false, entry.last_error.clone());

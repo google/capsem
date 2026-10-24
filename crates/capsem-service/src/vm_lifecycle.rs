@@ -53,6 +53,7 @@ pub(super) fn persistent_resume_state_fingerprint(state: &ServiceState, entry: &
         "defunct": entry.defunct,
         "last_error": entry.last_error,
         "installed_manifest": small_file_fingerprint(&state.assets_dir.join("manifest.json")),
+        "parent_manifest": state.assets_dir.parent().and_then(|parent| small_file_fingerprint(&parent.join("manifest.json"))),
         "rootfs": rootfs.as_ref().and_then(metadata_fingerprint),
         "kernel": file_metadata_fingerprint(&boot_asset_pin_path(&state.assets_dir, arch, &entry.asset_pins.kernel)),
         "initrd": file_metadata_fingerprint(&boot_asset_pin_path(&state.assets_dir, arch, &entry.asset_pins.initrd)),

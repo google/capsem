@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Report saved sessions as unavailable when their recorded boot asset pins do
+  not match mutable development assets, instead of offering a resume that fails.
+
 - Distinguish denied TUI approvals in purple and expired or cancelled requests
   in muted text while keeping pending and approved requests blue.
 

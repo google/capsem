@@ -1,3 +1,4 @@
+mod boot_assets;
 mod readiness;
 pub(super) use readiness::{vm_ready_poll_opts, wait_for_vm_ready};
 mod provision;
@@ -125,13 +126,6 @@ fn collect_revoked_digests(value: &serde_json::Value, inside_revoked: bool, revo
         }
         _ => {}
     }
-}
-
-pub(super) fn validate_asset_file_pin(kind: &str, path: &StdPath, pin: &BootAssetPin) -> Result<()> {
-    if !path.exists() {
-        return Err(anyhow!("{kind} asset '{}' is missing at {}", pin.name, path.display()));
-    }
-    Ok(())
 }
 
 pub(super) fn boot_asset_pin_hash_name(pin: &BootAssetPin) -> String {

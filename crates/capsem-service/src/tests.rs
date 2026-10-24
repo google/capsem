@@ -598,6 +598,7 @@ mod logs_api;
 mod mcp_routes;
 mod network_routes;
 mod persist_purge;
+mod pinned_assets;
 mod plugin_routes;
 mod polled_route_cost;
 mod restart;
