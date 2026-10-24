@@ -3614,6 +3614,29 @@ target_scope = "both"
 reason = "Narrow explicitly allowed builtin headers/raw fetch calls return fixed mock bytes and independently deliver exactly one original nonce-bound upstream request each."
 cases = {headers = "cycles", "raw-body" = "cycles"}
 
+[benchmark.routes.run_purge]
+cycles = 2
+quick_cycles = 1
+timeout_seconds = 240.0
+exec_timeout_seconds = 60
+max_response_bytes = 1048576
+poll_seconds = 0.05
+ram_mb = 1024
+cpus = 2
+retained_sessions = 2
+marker = "capsem-owned-run-purge"
+
+[benchmark.routes.run_purge.endpoints."POST /run"]
+collector = "routes"
+target_scope = "both"
+reason = "Original VM-only one-shot execution writes independently observed UID/environment bytes before public release; response completes only after exact process/session removal, including the observer fence cost."
+cases = {"vm-fenced-execution-cleanup" = "cycles"}
+[benchmark.routes.run_purge.endpoints."POST /purge"]
+collector = "routes"
+target_scope = "both"
+reason = "Default preserves two healthy owned stopped sessions as untimed control, then original all=true removes their exact paths/public identities with independently reconciled counts."
+cases = {"owned-stopped-disposal" = "cycles"}
+
 [benchmark.routes.preview_controls]
 cycles = 2
 quick_cycles = 1
@@ -3660,9 +3683,7 @@ cases = {"declared-port-wiring" = "cycles"}
 "GET /connections/{connection_id}" = { owner = "crates/capsem-service/src/connection_routes.rs", reason = "Production Runtime constructs only disabled unconfigured agy-native profile; successful enrollment metadata needs an implemented provider contract, never fabricated authority." }
 "POST /connections/google/authorize" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
 "POST /corp/reload" = { owner = "tests/ironbank/test_managed_policy.py", reason = "Needs real running-owner policy publication and acknowledgement, with isolated policy files restored afterwards." }
-"POST /purge" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
 "POST /restart" = { owner = "tests/ironbank/test_sdk_restart.py", reason = "Needs disposable supervisor and real client reconnection; accepted restart is distinct from ready completion." }
-"POST /run" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
 "POST /update/apply" = { owner = "crates/capsem-service/src/tests/update_routes.rs", reason = "Needs hermetic update subprocess and isolated runtime; plan-only response must not certify live update performance." }
 "POST /update/check" = { owner = "crates/capsem-service/src/tests/update_routes.rs", reason = "Needs hermetic update subprocess and isolated runtime; plan-only response must not certify live update performance." }
 "POST /vms/{id}/credential-grants" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }

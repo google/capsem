@@ -31,6 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keep optional metric exporter initialization and shutdown off the async service
   runtime so enabling telemetry cannot panic before the service becomes ready.
 
+- Add finite VM-only one-shot execution and stopped-session purge benchmark
+  source cases with independent file, process and removal effects. Actual
+  performance remains a separate exact-cohort gate.
+
 - Add finite exposure and surface control benchmark source cases with original
   single-use capabilities, independently counted workload requests and original
   socket retirement checks. Native rendering and measured performance remain

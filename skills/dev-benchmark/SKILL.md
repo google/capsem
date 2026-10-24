@@ -347,3 +347,6 @@ see [policy route evidence](references/policy-routes.md).
 
 For finite exposure/surface controls and their gateway-only minting scope,
 see [preview route evidence](references/preview-routes.md).
+
+For original VM-only one-shot execution and owned stopped-session disposal,
+see [run and purge route evidence](references/run-purge-routes.md).
