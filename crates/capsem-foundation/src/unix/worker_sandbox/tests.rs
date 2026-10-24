@@ -10,6 +10,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
+mod execution;
 mod mcp;
 
 #[test]

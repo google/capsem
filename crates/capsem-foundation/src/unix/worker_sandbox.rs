@@ -103,10 +103,29 @@ pub fn confine(policy: &Policy) -> io::Result<()> {
     platform::confine(policy)
 }
 
+/// Prove exec denial without spawning a child. Successful execution replaces
+/// this worker, so it cannot subsequently publish readiness.
+pub fn attest_execution_denied() -> io::Result<()> {
+    let executable = std::ffi::CString::new(EXECUTION_PROBE).map_err(io::Error::other)?;
+    // CommandExt::exec resets SIGPIPE even when exec fails. The kernel-only
+    // attempt preserves the continuing worker's cwd, descriptors and signals.
+    let error = nix::unistd::execv(&executable, &[executable.as_c_str()]).unwrap_err();
+    require_execution_denial(super::errno::io(error))
+}
+
+fn require_execution_denial(error: io::Error) -> io::Result<()> {
+    if error.kind() == io::ErrorKind::PermissionDenied {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "process execution did not prove permission denial: {error}"
+        )))
+    }
+}
+
 /// Prove that a descriptor-only worker lost ambient authority before it
 /// advertises readiness. A missing endpoint or executable is not denial proof.
 pub fn attest_descriptor_only() -> io::Result<()> {
-    use std::os::unix::process::CommandExt as _;
     fn denied(result: io::Result<()>, operation: &str) -> io::Result<()> {
         match result {
             Err(error) if error.kind() == io::ErrorKind::PermissionDenied => Ok(()),
@@ -121,12 +140,7 @@ pub fn attest_descriptor_only() -> io::Result<()> {
         std::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, 9)).map(|_| ()),
         "outbound connect",
     )?;
-    denied(
-        // Test exec itself, without a spawn path requiring unrelated runtime
-        // facilities. If exec succeeds, this worker cannot publish Ready.
-        Err(std::process::Command::new(EXECUTION_PROBE).exec()),
-        "process execution",
-    )?;
+    attest_execution_denied()?;
     let parent = super::process::parent_process_id().ok_or_else(|| io::Error::other("worker parent unavailable"))?;
     if super::process::probe_signal_authority(parent)? != super::process::SignalProbe::Denied {
         return Err(io::Error::other("worker retained parent signal authority"));
