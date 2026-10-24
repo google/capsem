@@ -3614,6 +3614,24 @@ target_scope = "both"
 reason = "Narrow explicitly allowed builtin headers/raw fetch calls return fixed mock bytes and independently deliver exactly one original nonce-bound upstream request each."
 cases = {headers = "cycles", "raw-body" = "cycles"}
 
+[benchmark.routes.save_controls]
+cycles = 2
+quick_cycles = 1
+timeout_seconds = 240.0
+exec_timeout_seconds = 30
+max_response_bytes = 1048576
+poll_seconds = 0.05
+ram_mb = 1024
+cpus = 2
+name = "route-saved-original"
+marker = "capsem-original-save-retained"
+
+[benchmark.routes.save_controls.endpoints."POST /vms/{id}/save"]
+collector = "routes"
+target_scope = "both"
+reason = "Original ephemeral becomes named persistent without moving its live process/session; mandatory untimed normal stop/cold start preserves identity, exact bytes and inode while changing boot/runtime state."
+cases = {"original-live-claim" = "cycles"}
+
 [benchmark.routes.run_purge]
 cycles = 2
 quick_cycles = 1
@@ -3689,7 +3707,6 @@ cases = {"declared-port-wiring" = "cycles"}
 "POST /vms/{id}/credential-grants" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
 "POST /vms/{id}/pause" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
 "POST /vms/{id}/resume" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
-"POST /vms/{id}/save" = { owner = "tests/ironbank/kingslanding/test_lifecycle.py", reason = "Mutating operation needs disposable lifecycle/control fixture and completion semantics." }
 "POST /vms/{id}/security/asks/{ask_id}/resolve" = { owner = "crates/capsem-service/src/approval_routes.rs", reason = "Needs live boot-generation approval waiter; resolution is a real control mutation." }
 
 # A timed idle/read case does not certify every state of the same operation.

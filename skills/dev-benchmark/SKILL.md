@@ -350,3 +350,6 @@ see [preview route evidence](references/preview-routes.md).
 
 For original VM-only one-shot execution and owned stopped-session disposal,
 see [run and purge route evidence](references/run-purge-routes.md).
+
+For original ephemeral save claims and mandatory normal cold retention checks,
+see [save route evidence](references/save-routes.md).

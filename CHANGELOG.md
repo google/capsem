@@ -34,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keep optional metric exporter initialization and shutdown off the async service
   runtime so enabling telemetry cannot panic before the service becomes ready.
 
+- Add a finite original ephemeral-session save benchmark source case with
+  independent live identity, path and file checks plus normal cold-start
+  retention verification. Native measurement remains a separate gate.
+
 - Add finite VM-only one-shot execution and stopped-session purge benchmark
   source cases with independent file, process and removal effects. Actual
   performance remains a separate exact-cohort gate.

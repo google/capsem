@@ -25,6 +25,7 @@ from .benchmarkpolicyschema import PolicyRouteConfig
 from .benchmarkpreviewschema import PreviewRouteConfig
 from .benchmarkproxyschema import ProxyRouteConfig
 from .benchmarkrunpurgeschema import RunPurgeConfig
+from .benchmarksaveschema import SaveRouteConfig
 from .benchmarkstreamschema import StreamConfig, StreamEndpointEvidence
 from .configschema import Strict
 
@@ -87,6 +88,7 @@ class RouteCoverageConfig(Strict):
     mcp_controls: McpRouteConfig
     preview_controls: PreviewRouteConfig
     run_purge: RunPurgeConfig
+    save_controls: SaveRouteConfig
     unmeasured: dict[str, RouteDebtConfig]
     internal: dict[str, RouteDebtConfig]
     unmeasured_cases: dict[str, RouteDebtConfig]

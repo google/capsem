@@ -28,9 +28,9 @@ def lifecycle_config() -> dict:
     return LifecycleRouteConfig.model_validate(raw).model_dump()
 
 
-def validate_running(value, vm_id):
+def validate_running(value, vm_id, *, persistent=True):
     assert value['id'] == vm_id and value['status'] == 'Running'
-    assert value['persistent'] is True and type(value['pid']) is int and value['pid'] > 0
+    assert value['persistent'] is persistent and type(value['pid']) is int and value['pid'] > 0
 
 
 def validate_exec(value, expected):
@@ -91,10 +91,10 @@ class Cycle:
         return self.call('POST', f'/vms/{vm_id}/exec', {'command': PROBE + command,
             'timeout_secs': self.cfg['exec_timeout_seconds'], 'target': 'workload'}, deadline=deadline)
 
-    def ready(self, vm_id, reference, *, deadline):
+    def ready(self, vm_id, reference, *, deadline, persistent=True):
         while True:
             info = self.info(vm_id, deadline=deadline)
-            validate_running(info, vm_id)
+            validate_running(info, vm_id, persistent=persistent)
             container = self.read(f'/vms/{vm_id}/container', deadline=deadline)
             assert container['state'] not in {'failed', 'exited'}, container
             if container['state'] == 'running':
