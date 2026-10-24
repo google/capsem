@@ -243,7 +243,6 @@ def test_guest_command_fails_closed_without_authenticated_marker() -> None:
         )
 
 
-
 def test_ip_wait_fails_immediately_when_tart_runner_exits() -> None:
     module = _load_harness()
 
