@@ -56,6 +56,7 @@ def test_platform_proof_reads_exact_package_without_host_debian_tools(
     docker.write_text(
         f"#!{sys.executable}\nimport sys, pathlib, json\n"
         f"with pathlib.Path({str(calls)!r}).open('a') as log: log.write(json.dumps(sys.argv[1:])+'\\n')\n"
+        "if sys.argv[1] == 'rm': sys.exit(0)\n"
         f"if 'ldd --version' in sys.argv[-1]: print('ldd (GNU libc) {libc}'); sys.exit(0)\n"
         "if 'platform-preunpack' in sys.argv:\n"
         f"    assert sys.stdin.buffer.read() == pathlib.Path({str(package)!r}).read_bytes()\n"
@@ -74,7 +75,14 @@ def test_platform_proof_reads_exact_package_without_host_debian_tools(
     assert result.returncode == expected, result.stdout + result.stderr
     assert received.read_bytes() == payload
     invocations = [json.loads(line) for line in calls.read_text().splitlines()]
-    assert len(invocations) == (3 if expected == 0 else 2)
-    assert all("-v" not in call and "--mount" not in call for call in invocations)
-    assert all("--pull=never" in call and "--network=none" in call for call in invocations)
-    assert "-i" in invocations[-1]
+    docker_runs = [call for call in invocations if call[0] == "run"]
+    removals = [call for call in invocations if call[0] == "rm"]
+    assert len(docker_runs) == (3 if expected == 0 else 2)
+    assert len(removals) == len(docker_runs)
+    names = [call[call.index("--name") + 1] for call in docker_runs]
+    assert len(set(names)) == len(names)
+    assert [call[-1] for call in removals] == names
+    assert all(call[:4] == ["rm", "-f", "-v", name] for call, name in zip(removals, names, strict=True))
+    assert all("-v" not in call and "--mount" not in call for call in docker_runs)
+    assert all("--pull=never" in call and "--network=none" in call for call in docker_runs)
+    assert "-i" in docker_runs[-1]

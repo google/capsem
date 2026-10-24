@@ -42,6 +42,8 @@ import sys
 import tomllib
 from pathlib import Path
 
+from capsem_builder.gate.platformproof import probe_container
+
 from .deb_preunpack_probe import check_preunpack, validate_package
 from .generate_host_binary_sbom import deb_data_member
 from .package_payload import deb_field, tar_payload_files
@@ -81,12 +83,26 @@ def probe_libc(image: str, architecture: str) -> tuple[str, tuple[int, ...]]:
     puts its version at the end of the first line.  The flavour matters more
     than the number: a glibc floor says nothing about a musl system.
     """
-    result = subprocess.run(
-        ("docker", "run", "--rm", "--pull=never", "--network=none", "--platform", f"linux/{architecture}",
-         "--entrypoint", "sh", image, "-c", "ldd --version 2>&1"),
-        capture_output=True,
-        text=True,
-    )
+    with probe_container(Path(__file__).resolve().parents[4]) as container:
+        result = subprocess.run(
+            (
+                "docker",
+                "run",
+                "--name",
+                container,
+                "--pull=never",
+                "--network=none",
+                "--platform",
+                f"linux/{architecture}",
+                "--entrypoint",
+                "sh",
+                image,
+                "-c",
+                "ldd --version 2>&1",
+            ),
+            capture_output=True,
+            text=True,
+        )
     text = (result.stdout + result.stderr).strip()
     if "musl" in text.lower():
         match = _MUSL_VERSION.search(text)
@@ -102,30 +118,39 @@ def probe_libc(image: str, architecture: str) -> tuple[str, tuple[int, ...]]:
 
 def binary_runs(image: str, binary: bytes, architecture: str) -> tuple[bool, str]:
     """Try to run one packaged binary inside ``image``."""
-    result = subprocess.run(
-        (
-            "docker",
-            "run",
-            "--rm",
-            "-i",
-            "--network=none",
-            "--pull=never",
-            "--platform", f"linux/{architecture}",
-            "--entrypoint",
-            "sh",
-            image,
-            "-c",
-            "mkdir -p /probe && cat > /probe/program && chmod 555 /probe/program && exec /probe/program --version",
-        ),
-        input=binary,
-        capture_output=True,
-    )
+    with probe_container(Path(__file__).resolve().parents[4]) as container:
+        result = subprocess.run(
+            (
+                "docker",
+                "run",
+                "--name",
+                container,
+                "-i",
+                "--network=none",
+                "--pull=never",
+                "--platform",
+                f"linux/{architecture}",
+                "--entrypoint",
+                "sh",
+                image,
+                "-c",
+                "mkdir -p /probe && cat > /probe/program && chmod 555 /probe/program && exec /probe/program --version",
+            ),
+            input=binary,
+            capture_output=True,
+        )
     return result.returncode == 0, (result.stderr or result.stdout).decode(errors="replace").strip()
 
 
 def check(
-    image: str, label: str, declared: str, binary: bytes, floor: tuple[int, ...],
-    *, package: Path, architecture: str,
+    image: str,
+    label: str,
+    declared: str,
+    binary: bytes,
+    floor: tuple[int, ...],
+    *,
+    package: Path,
+    architecture: str,
 ) -> list[str]:
     """One release: the binaries must run exactly where the floor says."""
     flavour, libc = probe_libc(image, architecture)
@@ -178,7 +203,9 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"package does not exist: {args.package}")
 
     try:
-        architecture = validate_package(args.package, repository=Path(__file__).resolve().parents[4])
+        architecture = validate_package(
+            args.package, repository=Path(__file__).resolve().parents[4]
+        )
     except (OSError, ValueError) as error:
         raise SystemExit(f"platform preinstall resource refused: {error}") from error
 
@@ -202,8 +229,13 @@ def main(argv: list[str] | None = None) -> int:
         suffix = row.get("tag_suffix", "")
         image = f"{row['repository']}:{row['version']}{suffix}@{row['digest']}"
         failures += check(
-            image, f"{row['name']} {row['version']}", row["libc"], binary, floor,
-            package=args.package, architecture=architecture,
+            image,
+            f"{row['name']} {row['version']}",
+            row["libc"],
+            binary,
+            floor,
+            package=args.package,
+            architecture=architecture,
         )
 
     for failure in failures:

@@ -4,11 +4,18 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from capsem_builder.gate.docker import Docker
 from capsem_builder.release.tools import deb_preunpack_probe as probe
 from capsem_builder.release.tools import preinstall_resource as resource
 from capsem_builder.release.tools.finalize_binary_staging_fixtures import _write_synthetic_deb
 
 ROOT = Path(__file__).resolve().parents[3]
+
+
+@pytest.fixture(autouse=True)
+def no_real_docker_cleanup(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Lifetime behavior has separate recorded-owner/real-signal tests.
+    monkeypatch.setattr(Docker, "remove", lambda *args, **kwargs: None)
 
 
 @pytest.fixture
@@ -130,7 +137,8 @@ def test_original_package_single_disposable_owner_and_strict_receipt(
     argv, kwargs = calls.pop()
     assert "--network=none" in argv and "--pull=never" in argv
     assert argv[argv.index("--platform") + 1] == "linux/arm64"
-    assert "--mount" not in argv and "-v" not in argv and "--rm" in argv
+    assert "--mount" not in argv and "-v" not in argv and "--rm" not in argv
+    assert "--name" in argv
     assert kwargs["original_bytes"] == package.read_bytes()
     script = argv[argv.index("-c") + 1]
     assert "dpkg --unpack /probe/candidate.deb" in script

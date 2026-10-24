@@ -12,6 +12,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from capsem_builder.gate.platformproof import probe_container
+
 from . import preinstall_resource as resource
 from .generate_host_binary_sbom import deb_data_member
 from .package_payload import deb_field, tar_payload_files
@@ -105,10 +107,10 @@ fi
 
 def check_preunpack(image: str, package: Path, architecture: str, supported: bool) -> list[str]:
     """One existing matrix image; no host mounts, network or package configure."""
-    with package.open("rb") as original:
+    with probe_container(Path(__file__).resolve().parents[4]) as container, package.open("rb") as original:
         result = subprocess.run(
             (
-                "docker", "run", "--rm", "-i", "--pull=never", "--network=none",
+                "docker", "run", "--name", container, "-i", "--pull=never", "--network=none",
                 "--platform", f"linux/{architecture}", "--entrypoint", "sh", image,
                 "-c", _SCRIPT, "platform-preunpack", "supported" if supported else "refused",
             ),

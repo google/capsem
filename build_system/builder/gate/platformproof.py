@@ -13,10 +13,49 @@ passed the whole suite, and then failed on every user below glibc 2.39.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
+
+from capsem_builder import crypto
+
+from . import cancellation
+from . import config as gate_config
 from .actions import Script
 from .config import GateConfig
+from .docker import Docker
 from .errors import GateError
 from .execution import Kind, Needs, Speed, Step, step
+from .lifecycle import Resource, held
+from .proc import Runner
+
+
+class _ProbeContainer(Resource, name="platform-probe-container"):
+    """Reserve one nonce-owned name BEFORE the Docker client can create it.
+
+    No predecessor/stale-name removal: another invocation has another UUID.
+    Release remains strict even if creation/attachment was interrupted, so
+    ambiguous daemon settlement is a failure, never inferred absence.
+    """
+
+    def __init__(self, docker: Docker, prefix: str) -> None:
+        self._docker = docker
+        self.container = f"{prefix}-platform-{crypto.uuid_v4().hex}"
+
+    def acquire(self) -> None:
+        pass  # The unique name is the owned slot; creation occurs inside held.
+
+    def release(self) -> None:
+        self._docker.remove(self.container, strict=True)
+
+
+@contextmanager
+def probe_container(repository: Path) -> Iterator[str]:
+    """Use the gate's existing signal unwinding and exact Docker settlement."""
+    config = gate_config.for_root(repository)
+    container = _ProbeContainer(Docker(Runner(repository)), config.install.container)
+    with cancellation.unwind_sigterm(), held(container):
+        yield container.container
 
 
 def platform_step(config: GateConfig, package: str | None) -> Step:
