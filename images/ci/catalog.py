@@ -20,11 +20,10 @@ import copy
 import datetime
 import json
 import re
+import tomllib
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
-
-import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
 DESCRIPTIONS = ROOT / "images" / "catalog.toml"
