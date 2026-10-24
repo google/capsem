@@ -5,6 +5,7 @@ Pinned Criterion --list declares exact case IDs. Each fresh benchmark.json and
 sample.json pair must match. Original upstream JSON text remains in the bounded
 existing sidecar for audit, not as a second statistics or cache authority.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -28,6 +29,7 @@ SETTINGS = gate_config.load(ROOT).benchmark
 def prepare(*args, **kwargs):
     # Resolve source-owned helpers after this script's CLI path bootstrap.
     from benchmarks.helpers.criterion_process import prepare as prepare_binary
+
     return prepare_binary(*args, **kwargs)
 
 
@@ -63,7 +65,9 @@ def read_original(path: Path, root: Path, budget: dict[str, int]) -> str:
     return raw.decode("utf-8")
 
 
-def samples_for(root: Path, target: str, expected: set[str], budget: dict[str, int]) -> tuple[dict, dict]:
+def samples_for(
+    root: Path, target: str, expected: set[str], budget: dict[str, int]
+) -> tuple[dict, dict]:
     measured, originals, observed = {}, {}, set()
     for path in root.glob("**/new/sample.json"):
         if len(observed) >= SETTINGS.criterion.max_cases:
@@ -77,14 +81,24 @@ def samples_for(root: Path, target: str, expected: set[str], budget: dict[str, i
         original = read_original(path, root, budget)
         sample = json.loads(original)
         times, iters = sample["times"], sample["iters"]
-        if (not isinstance(times, list) or not isinstance(iters, list) or not times
-                or len(times) != len(iters) or len(times) > SETTINGS.run.max_samples_per_metric
-                or len(times) > budget["samples"]):
+        if (
+            not isinstance(times, list)
+            or not isinstance(iters, list)
+            or not times
+            or len(times) != len(iters)
+            or len(times) > SETTINGS.run.max_samples_per_metric
+            or len(times) > budget["samples"]
+        ):
             raise ValueError("Criterion raw arrays are empty, unequal or exceed sample budget")
         values = []
         for total, count in zip(times, iters, strict=True):
-            if any(type(value) not in (int, float) or not math.isfinite(value) or value <= 0
-                   for value in (total, count)) or not float(count).is_integer():
+            if (
+                any(
+                    type(value) not in (int, float) or not math.isfinite(value) or value <= 0
+                    for value in (total, count)
+                )
+                or not float(count).is_integer()
+            ):
                 raise ValueError("Criterion times/iteration counts must be positive finite numbers")
             value = total / count
             if not math.isfinite(value) or value <= 0:
@@ -98,20 +112,24 @@ def samples_for(root: Path, target: str, expected: set[str], budget: dict[str, i
         originals[full_id] = {"benchmark_json": metadata, "sample_json": original}
         observed.add(full_id)
     if observed != expected:
-        raise ValueError(f"Criterion case coverage mismatch: missing={sorted(expected-observed)}")
+        raise ValueError(f"Criterion case coverage mismatch: missing={sorted(expected - observed)}")
     return measured, originals
 
 
-def run_bench(crate: str, target: str, *, sample_size: int | None,
-              budget: dict[str, int] | None = None) -> tuple[dict, dict, dict]:
+def run_bench(
+    crate: str, target: str, *, sample_size: int | None, budget: dict[str, int] | None = None
+) -> tuple[dict, dict, dict]:
     budget = input_budget() if budget is None else budget
-    timeout = SETTINGS.run.quick_timeout_secs if sample_size is not None else SETTINGS.run.timeout_secs
+    timeout = (
+        SETTINGS.run.quick_timeout_secs if sample_size is not None else SETTINGS.run.timeout_secs
+    )
     print(f"running {crate}::{target}", file=sys.stderr)
     # Gate/bounded TMPDIR owns this lifetime. Cargo's shared target is untouched.
     with tempfile.TemporaryDirectory(prefix="capsem-criterion-") as temporary:
         generation = Path(temporary)
-        execution = prepare(ROOT, crate, target, timeout=timeout, budget=budget,
-                            settings=SETTINGS.criterion)
+        execution = prepare(
+            ROOT, crate, target, timeout=timeout, budget=budget, settings=SETTINGS.criterion
+        )
         listed = execution.run(["--list"], generation / "list", "declare")
         if not listed:
             raise ValueError("Criterion no case output")
@@ -128,8 +146,18 @@ def run_bench(crate: str, target: str, *, sample_size: int | None,
         diagnostic = execution.run(args, output, "measure")
         print(diagnostic, file=sys.stderr, end="")
         measured, originals = samples_for(output, target, expected, budget)
-        return measured, {"crate": crate, "target": target, "generation": generation.name,
-                          "listing": listed, "cases": originals, "execution": execution.receipt}, execution.runtime_metrics
+        return (
+            measured,
+            {
+                "crate": crate,
+                "target": target,
+                "generation": generation.name,
+                "listing": listed,
+                "cases": originals,
+                "execution": execution.receipt,
+            },
+            execution.runtime_metrics,
+        )
 
 
 def main() -> int:
@@ -161,8 +189,12 @@ def main() -> int:
     metrics, receipts = {}, []
     budget = input_budget()
     for crate, target in targets:
-        cases, receipt, resources = run_bench(crate, target,
-            sample_size=SETTINGS.criterion.quick_sample_size if args.quick else None, budget=budget)
+        cases, receipt, resources = run_bench(
+            crate,
+            target,
+            sample_size=SETTINGS.criterion.quick_sample_size if args.quick else None,
+            budget=budget,
+        )
         for case, values in cases.items():
             metrics[f"{target}.{case}.ns"] = {"unit": "nanoseconds", "samples": values}
         for name, metric in resources.items():

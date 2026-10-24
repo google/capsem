@@ -119,12 +119,18 @@ def test_observation_cannot_use_lenient_survivor_cleanup(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("seconds", [0, -1, float("inf"), float("nan")])
-@pytest.mark.parametrize("kind",["tee","run"])
-def test_invalid_deadline_fails_before_any_child(tmp_path, monkeypatch, seconds,kind):
+@pytest.mark.parametrize("kind", ["tee", "run"])
+def test_invalid_deadline_fails_before_any_child(tmp_path, monkeypatch, seconds, kind):
     monkeypatch.setattr(processgroup.subprocess, "Popen", lambda *a, **k: pytest.fail("child"))
     with pytest.raises(ValueError):
         if kind == "tee":
             run(tmp_path, Observer(), timeout=seconds)
         else:
-            processgroup.run(["unreachable"],cwd=tmp_path,env=os.environ,capture=False,
-                policy=POLICY,timeout_seconds=seconds)
+            processgroup.run(
+                ["unreachable"],
+                cwd=tmp_path,
+                env=os.environ,
+                capture=False,
+                policy=POLICY,
+                timeout_seconds=seconds,
+            )

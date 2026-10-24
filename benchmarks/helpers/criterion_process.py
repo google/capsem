@@ -89,8 +89,8 @@ class Execution:
             )
 
     def run(self, arguments: list[str], home: Path, phase: str) -> str:
-        if phase not in ('declare','measure'):
-            raise ValueError('unknown Criterion runtime phase')
+        if phase not in ("declare", "measure"):
+            raise ValueError("unknown Criterion runtime phase")
         self.verify()
         environment = {**os.environ, "CRITERION_HOME": str(home)}
         if self.signed:
@@ -121,6 +121,7 @@ class Execution:
 
 def resource_observer(settings):
     from .criterion_resources import CriterionResources
+
     return CriterionResources(settings)
 
 
