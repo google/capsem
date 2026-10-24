@@ -953,7 +953,6 @@ invalid-argument-type = 19
 invalid-assignment = 5
 invalid-return-type = 2
 no-matching-overload = 2
-not-subscriptable = 2
 unresolved-attribute = 54
 unresolved-import = 1
 unsupported-operator = 2
