@@ -201,13 +201,7 @@ jobs:
           # Evidence is part of a published generation. Shared scanner or
           # recipe changes must not reuse the prior generation's OBOM/rootfs.
           key="$(uv run --project build_system --frozen python images/ci/inputkey.py \
-            "images/$IMAGE" images/ci/*.py .github/workflows/images.yaml \
-            build_system/builder/*.py build_system/builder/image/*.py \
-            build_system/builder/gate/*.py build_system/builder/release/obom.py \
-            build_system/builder/release/package_inventory.py \
-            build_system/docker/Dockerfile.asset-tools config/docker/image/build.toml \
-            config/gate.toml build_system/pyproject.toml build_system/uv.lock \
-            --with "$BASE_DIGEST")"
+            --derived "$IMAGE" --with "$BASE_DIGEST")"
           exists="$(sh images/ci/published.sh "$REGISTRY/$IMAGE:$key")"
           build=false
           if [ "$FORCE" = true ] || [ "$exists" = false ]; then build=true; fi

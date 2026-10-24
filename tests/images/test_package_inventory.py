@@ -91,7 +91,10 @@ def test_publication_attaches_inventory_to_platform_subject_and_keys_its_produce
     assert attach["env"]["SUBJECT"].endswith("@${{ steps.push.outputs.digest }}")
     assert '"$SUBJECT" packages.json:application/vnd.capsem.package-inventory.v1+json' in attach["run"]
     key = next(step for step in steps if step.get("id") == "published")
-    assert "build_system/builder/release/package_inventory.py" in key["run"]
+    from images.ci.inputkey import DERIVED_FILES
+
+    assert '--derived "$IMAGE" --with "$BASE_DIGEST"' in key["run"]
+    assert "build_system/builder/release/package_inventory.py" in DERIVED_FILES
 
 
 def test_standalone_fixture_inventory_requires_real_packages_but_not_shared_toolkit(tmp_path: Path) -> None:

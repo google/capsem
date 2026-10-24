@@ -22,7 +22,7 @@ Key = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 
 def workflow_key(root: Path, name: str, base: str | None = None) -> str:
     """Read, never execute, the actual workflow's one canonical key invocation."""
-    from images.ci.inputkey import input_key
+    from images.ci.inputkey import derived_key, input_key
 
     if name not in {"base", "dev", "codex-cli", "claude-code", "agy", "antigravity-desktop"}:
         raise ValueError("native recipe is not allowlisted")
@@ -43,27 +43,17 @@ def workflow_key(root: Path, name: str, base: str | None = None) -> str:
     if words[: len(prefix)] != prefix:
         raise ValueError("native key workflow owner differs")
     arguments = words[len(prefix) :]
-    extra: list[str] = []
     if name != "base":
         if (
             not base
             or not re.fullmatch(r"sha256:[0-9a-f]{64}", base)
-            or arguments[-2:] != ["--with", "$BASE_DIGEST"]
+            or arguments != ["--derived", "$IMAGE", "--with", "$BASE_DIGEST"]
         ):
-            raise ValueError("native key requires the original base subject")
-        arguments = arguments[:-2]
-        extra.append(base)
-    paths = []
-    for argument in arguments:
-        argument = argument.replace("$IMAGE", name)
-        path = Path(argument)
-        if path.is_absolute() or ".." in path.parts or "$" in argument or argument.startswith("-"):
-            raise ValueError("native key path is not a fixed source input")
-        found = sorted(root.glob(argument))
-        if not found:
-            raise ValueError("native key source input is missing")
-        paths.extend(found)
-    return input_key(paths, root=root, extra=extra)
+            raise ValueError("native key requires the canonical derived owner and original base subject")
+        return derived_key(name, base, root=root)
+    if base is not None or arguments != ["images/base"]:
+        raise ValueError("native base key workflow owner differs")
+    return input_key([root / "images/base"], root=root)
 
 
 def metadata(layout: Path, subject: str, platform: str, maximum: int):

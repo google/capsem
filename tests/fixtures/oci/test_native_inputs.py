@@ -89,32 +89,10 @@ def test_base_and_child_mismatch_cannot_be_attested(tmp_path, fault):
 
 
 def test_native_key_reads_the_actual_workflow_input_vector():
-    from images.ci.inputkey import input_key
+    from images.ci.inputkey import derived_key, input_key
 
-    patterns = [
-        "images/ci/*.py",
-        "build_system/builder/*.py",
-        "build_system/builder/image/*.py",
-        "build_system/builder/gate/*.py",
-    ]
-    fixed = [
-        "images/codex-cli",
-        ".github/workflows/images.yaml",
-        "build_system/builder/release/obom.py",
-        "build_system/builder/release/package_inventory.py",
-        "build_system/docker/Dockerfile.asset-tools",
-        "config/docker/image/build.toml",
-        "config/gate.toml",
-        "build_system/pyproject.toml",
-        "build_system/uv.lock",
-    ]
-    inputs = [ROOT / path for path in fixed] + [
-        path for pattern in patterns for path in ROOT.glob(pattern)
-    ]
     base = "sha256:" + "c" * 64
-    assert native_inputs.workflow_key(ROOT, "codex-cli", base) == input_key(
-        inputs, root=ROOT, extra=[base]
-    )
+    assert native_inputs.workflow_key(ROOT, "codex-cli", base) == derived_key("codex-cli", base, root=ROOT)
     assert native_inputs.workflow_key(ROOT, "base") == input_key([ROOT / "images/base"], root=ROOT)
     assert native_inputs.workflow_key(
         ROOT, "codex-cli", "sha256:" + "d" * 64
