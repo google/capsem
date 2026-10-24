@@ -74,6 +74,9 @@ def test_settings_security_routes_expose_single_contract() -> None:
         "dummy_post_allow",
         "dummy_pre_eicar",
         "log_sanitizer",
+        "pii_filter",
+        "secret_exfiltration",
+        "utf8_guard",
     }
     assert all(plugin["name"] and plugin["description"] for plugin in plugins["plugins"])
     assert all("scope" not in plugin for plugin in plugins["plugins"])
