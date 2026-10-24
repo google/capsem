@@ -111,14 +111,21 @@ The eight guest collectors are one file, `_guest`, symlinked per mode: they
 read their mode from `argv[0]` and drive the modules in
 `guest/artifacts/capsem_bench/`. `criterion` derives its targets from the Cargo
 manifests and reads raw per-iteration nanoseconds out of Criterion's
-`sample.json`. Require fresh raw samples for measured coverage; running a
-`[[bench]]` target alone does not establish it. Current automatic per-target
-freshness enforcement remains the explicit follow-up below.
+`sample.json`. Its empty invocation-owned output directory must cover the exact
+pinned Criterion `--list` case set, with matching `benchmark.json` identities.
+Missing, extra, malformed, partial and historical `--reuse` inputs fail.
+Original upstream input text and invocation identity remain in the bounded
+sidecar; normalized samples use the existing Rust statistics/store owner.
+Cargo's shared target/cache is unchanged. Reading, parsing and conversion are
+collector work, not established per-child workload CPU/resource receipts.
 
-Two current targets, `ipc_framing_micro` and `db_read_write_micro`, only print
-manual summary tables. They produce no Criterion samples and are diagnostic-only;
-do not count them as stored measurements. Their migration and per-target sample
-freshness checks are tracked in [#373](https://github.com/google/capsem/issues/373).
+Four current targets, `ipc_framing_micro`, `db_read_write_micro`,
+`vsock_framing_micro` and `ledger_codec`, print only manual summary tables.
+Their canonical diagnostic classification is `[benchmark.criterion]` in
+`config/gate.toml`: default selection names and excludes them; explicit
+selection fails. They never inherit another target's measured coverage.
+Their genuine Criterion migration remains tracked in
+[#373](https://github.com/google/capsem/issues/373).
 The separate `db_external_reader_poll`, `db_writer_pressure`, and
 `session_stats_poll` targets do produce Criterion samples.
 

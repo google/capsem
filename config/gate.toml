@@ -4146,6 +4146,16 @@ timeout_secs = 1800
 # promise, not an estimate.
 quick_timeout_secs = 60
 
+[benchmark.criterion]
+max_cases = 1024
+quick_sample_size = 10
+# Summary-only producers are diagnostic, never Criterion raw evidence.
+[benchmark.criterion.diagnostic_targets]
+"capsem-foundation::ipc_framing_micro" = "manual MessagePack framing summary"
+"capsem-logger::db_read_write_micro" = "manual database/archive timing summary"
+"capsem-proto::vsock_framing_micro" = "manual protocol framing summary"
+"capsem-ledger::ledger_codec" = "manual codec timing summary"
+
 [benchmark.protocol]
 # Raw samples need enough p99 tail observations to expose drift while keeping
 # this four-scenario VM lane routine. The 50,000-request release stress cohort

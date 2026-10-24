@@ -163,6 +163,12 @@ class BenchmarkRunConfig(Strict):
     quick_timeout_secs: int
 
 
+class BenchmarkCriterionConfig(Strict):
+    max_cases: PositiveInt
+    quick_sample_size: Annotated[int, Field(ge=10)]
+    diagnostic_targets: dict[str, str]
+
+
 class BenchmarkProtocolConfig(Strict):
     """Stable workload for the in-guest model and MCP protocol collector."""
 
@@ -259,6 +265,7 @@ class BenchmarkConfig(Strict):
     route_load: RouteLoadConfig
     route_health: RouteHealthConfig
     run: BenchmarkRunConfig
+    criterion: BenchmarkCriterionConfig
     protocol: BenchmarkProtocolConfig
     mitm_scale: BenchmarkMitmScaleConfig
     content_filter: BenchmarkContentFilterConfig
