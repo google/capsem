@@ -77,7 +77,11 @@ fn run_log_sandbox_probe(mode: &str) -> (tempfile::TempDir, PathBuf) {
     let fixture = capsem_core::pty_log::PtyLog::open(&unrelated).unwrap();
     fixture.record_output(b"unrelated host fixture");
     drop(fixture);
-    let output = std::process::Command::new(std::env::current_exe().unwrap())
+    // The parent keeps the gate policy; this exact named test child installs
+    // the real VM-owner policy before probing rotation and redirection.
+    let executable = directory.path().join("capsem-owner-confinement-test");
+    std::fs::copy(std::env::current_exe().unwrap(), &executable).unwrap();
+    let output = std::process::Command::new(executable)
         .env_clear()
         .args([
             "--exact",
