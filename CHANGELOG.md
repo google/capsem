@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Report saved sessions as unavailable when their recorded boot asset pins do
   not match mutable development assets, instead of offering a resume that fails.
 
+- Fail resumed guest readiness when required workspace remount, enumeration or
+  bind operations fail, before reporting the session ready.
+
 - Accept a successfully enumerated empty workspace during resume, while
   preserving directory iteration errors as failures.
 

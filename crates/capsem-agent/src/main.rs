@@ -578,18 +578,20 @@ fn main() {
                     // KVM restores the guest at the exact point after the
                     // persistent ext4 upper was frozen. Thaw it before any
                     // workspace rebinding or abbreviated BootConfig writes.
-                    if let Err(e) = thaw_system_filesystem() {
-                        eprintln!("[capsem-agent] resume: failed to thaw system filesystem: {e}");
+                    if let Err(e) =
+                        resume_workspace::ready_after(thaw_system_filesystem, resume_workspace::rebind, || {
+                            send_guest_msg(
+                                c_fd,
+                                &GuestToHost::Ready {
+                                    version: env!("CARGO_PKG_VERSION").to_string(),
+                                },
+                            )
+                        })
+                    {
+                        eprintln!("[capsem-agent] resume preparation failed: {e}");
                         let _ = nix::sys::signal::kill(child, Signal::SIGHUP);
                         process::exit(1);
                     }
-                    rebind_workspace_after_resume();
-                    let _ = send_guest_msg(
-                        c_fd,
-                        &GuestToHost::Ready {
-                            version: env!("CARGO_PKG_VERSION").to_string(),
-                        },
-                    );
 
                     // Drain abbreviated handshake, processing clock/timezone resync.
                     loop {
@@ -675,76 +677,6 @@ fn main() {
             eprintln!("[capsem-agent] fork failed: {e}");
             process::exit(1);
         }
-    }
-}
-
-/// After resume, the VirtioFS mount capsem-init set up in its pre-chroot
-/// namespace (host path: /mnt/shared) is connected to a dead virtiofsd from
-/// the previous capsem-process. /root was bind-mounted from that share, so
-/// reads/writes against /root return ENOENT or hang.
-///
-/// The agent runs inside a chroot where /mnt/shared means /newroot/mnt/shared
-/// -- NOT init's mount point. So we create a fresh virtiofs mount inside the
-/// chroot (same "capsem" tag, new connection to the new host's virtiofsd)
-/// and rebind /root onto it. Lazy-unmount the stale /root and any stale
-/// chroot-local /mnt/shared first. mkdir -p ensures the mount point exists
-/// in the overlay upper even on first resume.
-///
-/// Best-effort: log and continue on every failure. A wedged virtiofs is
-/// better than crashing the agent.
-fn rebind_workspace_after_resume() {
-    use std::process::Command;
-    let run = |args: &[&str]| -> bool {
-        match Command::new(args[0]).args(&args[1..]).status() {
-            Ok(s) if s.success() => true,
-            Ok(s) => {
-                eprintln!("[capsem-agent] rebind: {} exited {s}", args.join(" "));
-                false
-            }
-            Err(e) => {
-                eprintln!("[capsem-agent] rebind: failed to spawn {}: {e}", args[0]);
-                false
-            }
-        }
-    };
-    eprintln!("[capsem-agent] rebinding workspace after resume");
-    let _ = run(&["umount", "-l", "/root"]);
-    let _ = run(&["umount", "-l", "/mnt/shared"]);
-    let _ = run(&["mkdir", "-p", "/mnt/shared"]);
-    if !run(&["mount", "-t", "virtiofs", "capsem", "/mnt/shared"]) {
-        eprintln!("[capsem-agent] rebind: virtiofs remount failed; /root will be stale");
-        return;
-    }
-    // Warm the virtiofs: on first mount after VM restore, FUSE lookups are
-    // lazy. A plain stat (GETATTR) on the workspace dir can succeed before
-    // virtiofsd has populated its child-inode map, and a bind against that
-    // half-ready subtree leaves /root ENOENT-ing every child file.
-    // std::fs::read_dir forces a real READDIR round-trip -- once that
-    // succeeds, virtiofsd has enumerated the directory and subsequent
-    // LOOKUPs on children will resolve. If warming never completes we abort
-    // rather than binding against an empty view: the HTTP read_file will
-    // fail loudly instead of silently returning ENOENT on a real file.
-    let workspace_src = std::path::Path::new("/mnt/shared/workspace");
-    let mut warmed_attempts = 0;
-    let mut warmed = false;
-    for attempt in 1..=50 {
-        if resume_workspace::enumerate(workspace_src).is_ok() {
-            warmed = true;
-            warmed_attempts = attempt;
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
-    if !warmed {
-        eprintln!("[capsem-agent] rebind: /mnt/shared/workspace not enumerable after 1s; aborting (no /root bind)");
-        return;
-    }
-    eprintln!("[capsem-agent] rebind: virtiofs warmed after {warmed_attempts} attempts");
-    let _ = run(&["mkdir", "-p", "/root"]);
-    if !run(&["mount", "--bind", "/mnt/shared/workspace", "/root"]) {
-        eprintln!("[capsem-agent] rebind: /root bind-mount failed");
-    } else {
-        eprintln!("[capsem-agent] rebind: /root reconnected to host workspace");
     }
 }
 
