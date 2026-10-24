@@ -2778,7 +2778,9 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "event=remove_user_app_payload" in pkg_preinstall
     assert 'su "$USER" -c \'rm -rf "$HOME/Applications/Capsem.app"\'' in pkg_preinstall
     assert "rm -rf /usr/local/share/capsem" in pkg_preinstall
-    assert "pkill -9 -x capsem-app" in pkg_preinstall
+    assert 'capsem_retire_native_cohort "$CAPSEM_DIR" "$(id -u "$USER")" "$USER"' in pkg_preinstall
+    assert "pkill " not in pkg_preinstall
+    assert "killall " not in pkg_preinstall
     assert "capsem stop" not in pkg_preinstall
     assert "$CAPSEM_DIR/bin/capsem" not in pkg_preinstall
     assert "event=stop_existing_service" not in pkg_preinstall
@@ -2928,7 +2930,9 @@ def test_macos_postinstall_adds_capsem_bin_to_fish_path() -> None:
     assert "fish_add_path" in postinstall
     assert r'grep -qF "fish_add_path --path \"\$HOME/.capsem/bin\""' in postinstall
     assert 'cp -R "$PKG_SHARE/assets/"* "$CAPSEM_DIR/assets/"' not in postinstall
-    assert "pkill -x capsem-app" in postinstall
+    assert 'capsem_retire_installed_app "$CAPSEM_DIR" "$(id -u "$USER")" "$USER"' in postinstall
+    assert "pkill " not in postinstall
+    assert "killall " not in postinstall
     assert 'INSTALL_LOG="$CAPSEM_DIR/logs/install.log"' in postinstall
     assert 'INSTALL_RUN_ID=$(su "$USER" -c \'cat "$HOME/.capsem/logs/install-current-run"\'' in postinstall
     assert (
