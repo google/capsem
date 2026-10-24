@@ -41,6 +41,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keep optional metric exporter initialization and shutdown off the async service
   runtime so enabling telemetry cannot panic before the service becomes ready.
 
+- Prepare Antigravity CLI qualification through the existing isolated synthetic
+  OAuth session fixture instead of an unsupported API-key guess. Real CLI/MCP
+  native qualification remains required.
+
 - Reject incomplete agent qualification contracts before fixture startup,
   including missing turn, synthetic credential, provider and endpoint fields.
   OAuth-only agents still require a genuine authentication fixture.

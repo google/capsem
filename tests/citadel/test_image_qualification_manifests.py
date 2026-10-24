@@ -7,8 +7,11 @@ one naming a capability the harness has no group for, would publish untested
 behavior -- so neither gets past the fast phase.
 """
 
-import tomllib
 from pathlib import Path
+
+import tomllib
+
+from tests.qualification.candidate import declared as qualification_declaration
 
 ROOT = Path(__file__).resolve().parents[2]
 #: The capability groups tests/qualification implements.
@@ -30,6 +33,9 @@ def test_a_manifest_declares_only_capabilities_the_harness_tests():
         assert set(declared) <= {"capabilities", "expect"}, (name, sorted(declared))
         unknown = set(declared.get("capabilities", ())) - KNOWN
         assert not unknown, f"{name} declares capabilities with no qualification group: {sorted(unknown)}"
+        # The same reader collection uses must reject incomplete agent auth/
+        # turn contracts during fast checks, before any host fixture starts.
+        qualification_declaration(name)
 
 
 def test_internal_images_are_not_qualified_as_products():

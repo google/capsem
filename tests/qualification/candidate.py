@@ -102,7 +102,15 @@ def _validate_agent_expectation(path: Path, expect: dict) -> None:
     ):
         raise ValueError(f"{path}: agent [expect].turn requires a nonempty argv list")
     credential = expect.get("credential_env")
-    if not isinstance(credential, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", credential):
+    fixture = expect.get("credential_fixture")
+    if fixture is not None:
+        if (
+            fixture != "agy_oauth" or credential is not None
+            or expect.get("provider") != "google" or turn[0] != "agy"
+            or expect.get("path") != "/v1internal:streamGenerateContent"
+        ):
+            raise ValueError(f"{path}: agent credential_fixture must select only the existing Google agy_oauth fixture")
+    elif not isinstance(credential, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", credential):
         raise ValueError(f"{path}: agent [expect].credential_env requires a supported synthetic credential environment name")
     provider = expect.get("provider")
     if not isinstance(provider, str) or not provider.strip():

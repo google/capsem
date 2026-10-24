@@ -2,3 +2,11 @@
 # (tests/qualification). It may only add: no manifest removes a mandatory
 # group or supplies startup configuration, which comes from the OCI config.
 capabilities = ["agent", "ollama"]
+
+# Existing synthetic consumer-session fixture; no API-key support in CLI1.1.3.
+# The shipped MCP configuration remains unchanged.
+[expect]
+turn = ["agy", "--model", "Gemini 3.5 Flash (Medium)", "--print-timeout", "90s", "-p"]
+credential_fixture = "agy_oauth"
+provider = "google"
+path = "/v1internal:streamGenerateContent"

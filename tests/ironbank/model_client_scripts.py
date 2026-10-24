@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import textwrap
 
+from helpers.agy_auth import synthetic_home_setup
 from ironbank.model_client_config import (
     HERMETIC_AGY_MODEL,
     HERMETIC_AGY_MODEL_DISPLAY,
@@ -1035,25 +1036,9 @@ env = os.environ.copy()
 env["HOME"] = HOME
 env["NO_COLOR"] = "1"
 env["TERM"] = "xterm-256color"
-token_path = Path(HOME + "/.gemini/antigravity-cli/antigravity-oauth-token")
-token_path.parent.mkdir(parents=True, exist_ok=True)
-token_path.write_text(json.dumps({
-    "token": {
-        "access_token": "capsem_test_agy_access_" + NONCE,
-        "token_type": "Bearer",
-        "refresh_token": "capsem_test_agy_refresh_" + NONCE,
-        "expiry": "2099-01-01T00:00:00Z"
-    },
-    "auth_method": "consumer"
-}), encoding="utf-8")
-token_path.chmod(0o600)
-settings_path = Path(HOME + "/.gemini/antigravity-cli/settings.json")
-agy_model_settings = {
-    "trustedWorkspaces": [WORKSPACE],
-    "telemetry": {"enabled": False},
-    "autoUpdate": {"enabled": False}
-}
-settings_path.write_text(json.dumps(agy_model_settings), encoding="utf-8")
+'''
+        + synthetic_home_setup()
+        + r'''
 completed = subprocess.run(
     [
         "agy",

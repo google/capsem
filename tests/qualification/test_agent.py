@@ -1,7 +1,8 @@
 """Capability `agent`: the shipped agent completes a turn through Capsem.
 
-The agent runs as it ships -- its own binary, its own configuration, nothing
-written for the test -- and dials its real provider host. Capsem's corp
+The agent uses its shipped binary/provider/MCP configuration, with only the
+declared synthetic authentication fixture in its isolated test home, and
+dials its real provider host. Capsem's corp
 upstream overrides deliver that connection to the hermetic mock model server
 (helpers.hermetic_models), which answers with a tool call that writes a token
 into the workspace. Qualification needs the observable outcome: the turn
@@ -20,6 +21,8 @@ from helpers.hermetic_models import hermetic_models
 from helpers.image_session import WORKSPACE, session_of, workload_exec
 from helpers.service import ServiceInstance, vm_session_db_path
 from helpers.session_ledger import open_session_ledger
+
+from tests.qualification import agent_credentials
 
 pytestmark = pytest.mark.integration
 
@@ -49,7 +52,7 @@ def test_the_agent_completes_a_turn_and_its_tool_call_lands(model_service, candi
     token, target = uuid.uuid4().hex, f"{WORKSPACE}/agent-turn.txt"
     prompt = f"Write uuid4 hex value {token} to {target}."
     command = shlex.join([*expect["turn"], prompt])
-    credential = f"{expect['credential_env']}=capsem-qualification-test-key"
+    credential = agent_credentials.command_environment(expect)
     client = model_service.client()
     with session_of(
         model_service,
@@ -57,8 +60,9 @@ def test_the_agent_completes_a_turn_and_its_tool_call_lands(model_service, candi
         "agent",
         layout=candidate.layout,
         image_name=candidate.name,
-        env={expect["credential_env"]: "capsem-qualification-test-key"},
+        env=agent_credentials.environment(expect),
     ) as vm_id:
+        agent_credentials.prepare(client, vm_id, expect)
         turn = workload_exec(
             client, vm_id, f"cd {WORKSPACE} && env {credential} {command}", timeout=240
         )

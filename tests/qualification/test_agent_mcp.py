@@ -16,6 +16,7 @@ from helpers.image_session import WORKSPACE, session_of, workload_exec
 from helpers.service import vm_session_db_path
 from helpers.session_ledger import open_session_ledger
 
+from tests.qualification import agent_credentials
 from tests.qualification.agent_model_ledger import assert_model_ledger
 from tests.qualification.test_agent import model_service
 
@@ -35,7 +36,7 @@ def test_the_agent_invokes_its_configured_capsem_mcp_echo(
         "Return only the actual text returned by that tool."
     )
     command = shlex.join([*expect["turn"], prompt])
-    credential = f"{expect['credential_env']}=capsem-qualification-test-key"
+    credential = agent_credentials.command_environment(expect)
     client = model_service.client()
     with session_of(
         model_service,
@@ -43,8 +44,9 @@ def test_the_agent_invokes_its_configured_capsem_mcp_echo(
         "agent-mcp",
         layout=candidate.layout,
         image_name=candidate.name,
-        env={expect["credential_env"]: "capsem-qualification-test-key"},
+        env=agent_credentials.environment(expect),
     ) as vm_id:
+        agent_credentials.prepare(client, vm_id, expect)
         try:
             turn = workload_exec(
                 client,
