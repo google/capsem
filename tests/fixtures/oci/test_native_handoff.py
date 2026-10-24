@@ -171,7 +171,12 @@ def test_both_complete_native_records_stage_exact_original_bytes(monkeypatch, tm
     }
     for section, (_, receipt, layout, _) in selected.items():
         actual = destination / section / "layout"
-        members = handoff.files(layout, config.functional.native_images.report_name)
+        members = handoff.files(
+            layout,
+            config.functional.native_images.report_name,
+            maximum=config.functional.native_images.artifact_max_files,
+            metadata_max=config.functional.native_images.receipt_max_bytes,
+        )
         assert {p.relative_to(actual) for p in actual.rglob("*") if p.is_file()} == set(members)
         for path in members:
             assert (actual / path).read_bytes() == (layout / path).read_bytes()

@@ -40,9 +40,13 @@ def leased(config, image):
         release_path(paths.stage(stage) / template.format(key=receipt.layout_key))
 
 
-def files(layout, report_name):
+def files(layout, report_name, *, maximum, metadata_max):
     """Exact descriptor closure, never upload an arbitrary cache tree."""
-    producer_evidence.safe_tree(layout)
+    actual = set()
+    for path in producer_evidence.regular_files(layout, maximum=4 * maximum):
+        actual.add(path.relative_to(layout))
+        if len(actual) > maximum:
+            raise ValueError("native artifact file budget exceeded")
     result = {Path("index.json"), Path(report_name)}
     if (layout / "oci-layout").exists():
         result.add(Path("oci-layout"))
@@ -51,10 +55,14 @@ def files(layout, report_name):
         result.add(relative / "index.json")
         if (root / "oci-layout").exists():
             result.add(relative / "oci-layout")
-        (entry,) = json.loads((root / "index.json").read_bytes())["manifests"]
+        (entry,) = json.loads(producer_evidence.read_file(root / "index.json", metadata_max))[
+            "manifests"
+        ]
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", entry["digest"]):
+            raise ValueError("invalid artifact subject descriptor")
         manifest_path = relative / "blobs/sha256" / entry["digest"].split(":")[1]
         result.add(manifest_path)
-        manifest = json.loads((layout / manifest_path).read_bytes())
+        manifest = json.loads(producer_evidence.read_file(layout / manifest_path, metadata_max))
         for descriptor in (manifest["config"], *manifest["layers"]):
             if not re.fullmatch(r"sha256:[0-9a-f]{64}", descriptor["digest"]):
                 raise ValueError("invalid artifact descriptor")
@@ -63,7 +71,6 @@ def files(layout, report_name):
         Path(producer_evidence.DIRECTORY) / name
         for name in (*producer_evidence.FILES, "receipt.json")
     )
-    actual = {path.relative_to(layout) for path in layout.rglob("*") if path.is_file()}
     if actual != result:
         raise ValueError("candidate artifact membership differs from exact allowlist")
     return sorted(result)
@@ -110,7 +117,12 @@ def stage(config):
                     layout,
                     journal,
                     build_journal,
-                    files(layout, settings.report_name),
+                    files(
+                        layout,
+                        settings.report_name,
+                        maximum=settings.artifact_max_files,
+                        metadata_max=settings.receipt_max_bytes,
+                    ),
                 )
             )
         total = sum(
