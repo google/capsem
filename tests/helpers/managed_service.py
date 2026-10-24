@@ -9,6 +9,7 @@ import re
 import signal
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from collections.abc import Iterator
@@ -19,6 +20,8 @@ import psutil
 
 from .constants import ASSETS_DIR, BIN_DIR
 from .http_transport import Transport
+from .managed_observation import ReadinessPolicy, ReadyObservation, wait_ready
+from .process_snapshot import OwnedProcess
 from .service import ServiceInstance
 from .systemd_manager import manager_environment
 
@@ -51,74 +54,60 @@ class ManagedService:
         self.label = f"com.capsem.sdk-restart.{uuid.uuid4().hex}"
         self.domain = f"gui/{os.getuid()}"
         self.processes: dict[int, psutil.Process] = {}
+        self._roots: dict[int,OwnedProcess] = {}
+        self._process_lock = threading.Lock()
 
     def remember(self, pid: int) -> None:
+        if type(pid) is not int or pid <= 1:
+            raise ValueError('native owner cannot enumerate a global supervisor root')
         try:
-            process = self.processes.get(pid) or psutil.Process(pid)
+            with self._process_lock:
+                process = self.processes.get(pid) or psutil.Process(pid)
             if not process.is_running():
                 return
-            self.processes[pid] = process
-            self.processes.update((child.pid, child) for child in process.children(recursive=True))
+            for child in (process,*process.children(recursive=True)):
+                try:
+                    owned = OwnedProcess.capture(child)
+                except psutil.NoSuchProcess:
+                    continue
+                with self._process_lock:
+                    previous = self._roots.get(child.pid)
+                    if previous is not None and previous.started_at != owned.started_at:
+                        raise RuntimeError("managed owned process PID replaced")
+                    self.processes[child.pid] = child
+                    self._roots[child.pid] = owned
         except psutil.NoSuchProcess:
             pass
 
-    def command(self, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-        result = subprocess.run(["launchctl", *args], capture_output=True, text=True, timeout=10, check=False)
+    def owned_roots(self) -> tuple[OwnedProcess,...]:
+        with self._process_lock:
+            return tuple(self._roots.values())
+
+    def remember_gateway(self, service_pid: int, gateway_pid: int) -> None:
+        self.remember(service_pid)
+        with self._process_lock:
+            if gateway_pid not in self._roots:
+                raise RuntimeError('published gateway is not an original service descendant')
+
+    def command(self, *args: str, check: bool = True, timeout: float = 10) -> subprocess.CompletedProcess[str]:
+        result = subprocess.run(["launchctl", *args], capture_output=True, text=True, timeout=timeout, check=False)
         if check:
             assert result.returncode == 0, f"launchctl {args}: {result.stderr}"
         return result
 
     def ready(self, previous: GatewayIdentity | None = None) -> GatewayIdentity:
-        deadline = time.monotonic() + 45
-        probe = "supervisor PID"
-        last_probe = "not attempted"
-        while time.monotonic() < deadline:
-            try:
-                root = self.service.tmp_dir
-                probe = "supervisor PID"
-                pid = self.pid()
-                self.remember(pid)
-                probe = "gateway runtime files"
-                identity = GatewayIdentity(
-                    port=int((root / "gateway.port").read_text()),
-                    token=(root / "gateway.token").read_text().strip(),
-                    service_pid=pid,
-                    gateway_pid=int((root / "gateway.pid").read_text()),
-                )
-                changed = previous is None or (
-                    identity.service_pid != previous.service_pid
-                    and identity.gateway_pid != previous.gateway_pid
-                    and identity.token != previous.token
-                )
-                probe = "gateway HTTP"
-                if sys.platform == "linux":
-                    namespaces = (
-                        os.readlink(f"/proc/{process}/ns/net")
-                        for process in (os.getpid(), identity.service_pid, identity.gateway_pid)
-                    )
-                    probe += " test/service/gateway namespaces=" + "/".join(namespaces)
-                if changed:
-                    status, _ = identity.get("/vms/list")
-                    last_probe = f"{probe} status={status}"
-                    if status == 200:
-                        return identity
-                else:
-                    last_probe = "gateway identity has not rotated"
-            except (OSError, ValueError, ConnectionError) as error:
-                # Error text or HTTP bodies can contain credentials. Retain
-                # only the failed stage and error class, never token contents.
-                last_probe = f"{probe}: {type(error).__name__} errno={getattr(error, 'errno', None)}"
-            time.sleep(0.1)
-        state = f"{self.startup_state()}; last probe: {last_probe}"
-        (self.service.tmp_dir / "managed-supervisor-state.txt").write_text(state)
-        raise AssertionError(f"managed gateway did not become ready; {state}; evidence: {self.service.tmp_dir}")
+        return wait_ready(self,previous).identity
+
+    def ready_observed(self, previous: GatewayIdentity | None, *, policy: ReadinessPolicy,
+        original: tuple[OwnedProcess,...]=()) -> ReadyObservation:
+        return wait_ready(self,previous,policy=policy,original=original)
 
     def startup_state(self) -> str:
         result = self.command("list", self.label, check=False)
         return f"launchctl returncode={result.returncode}"
 
-    def pid(self) -> int:
-        job = self.command("list", self.label, check=False)
+    def pid(self, *, timeout: float = 10) -> int:
+        job = self.command("list", self.label, check=False, timeout=timeout)
         match = re.search(r'^\t"PID" = ([0-9]+);$', job.stdout, re.MULTILINE)
         if match is None:
             raise ValueError("supervisor has not started the service")
@@ -140,18 +129,18 @@ class SystemdService(ManagedService):
         self.label = "capsem.service"
         self.environment: dict[str, str] | None = None
 
-    def command(self, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    def command(self, *args: str, check: bool = True, timeout: float = 10) -> subprocess.CompletedProcess[str]:
         assert self.environment is not None, "supervisor manager has not been bound"
         result = subprocess.run(
             ["systemctl", "--user", *args], env=self.environment,
-            capture_output=True, text=True, timeout=10, check=False,
+            capture_output=True, text=True, timeout=timeout, check=False,
         )
         if check:
             assert result.returncode == 0, f"systemctl {args}: {result.stderr}"
         return result
 
-    def pid(self) -> int:
-        result = self.command("show", self.label, "--property=MainPID", "--value", check=False)
+    def pid(self, *, timeout: float = 10) -> int:
+        result = self.command("show", self.label, "--property=MainPID", "--value", check=False, timeout=timeout)
         pid = int(result.stdout.strip() or "0")
         if result.returncode or pid == 0:
             raise ValueError("supervisor has not started the service")
