@@ -188,3 +188,12 @@ def test_failed_atomic_publication_cleans_only_own_temporary_and_preserves_scrip
         resource.embed(package, repository=ROOT, limits=resource.load_limits(ROOT))
     assert (package / "DEBIAN/preinst").read_bytes() == original
     assert set((package / "DEBIAN").iterdir()) == members
+
+
+def test_generated_linux_binding_forwards_only_the_extra_restriction(package: Path) -> None:
+    resource.embed(package, repository=ROOT, limits=resource.load_limits(ROOT))
+    prefix = (package / "DEBIAN/preinst").read_bytes().split(resource.END)[0]
+    result = subprocess.run(["bash"], input=prefix + b'\ncapsem_admit_preinstall_ledger() { printf "%s\\n" "$@"; }\ncapsem_run_preinstall_ledger_admission fixture-user --require-current-host\n', capture_output=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.decode().splitlines()
+    assert len(lines) == 6 and lines[0] == "fixture-user" and lines[-1] == "--require-current-host"

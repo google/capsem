@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Confirm installer service-manager quiescence and repeat signed admission after
+  draining old producers, before payload removal; preserve current in-service updates.
+
 - Refuse legacy installation activation when the default installed home retains
   session or unknown registry state; in-service updates require a current HOST ledger.
 

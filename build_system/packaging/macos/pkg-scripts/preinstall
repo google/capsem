@@ -55,13 +55,14 @@ capsem_run_preinstall_ledger_admission "$USER"
 CAPSEM_INSTALL_PHASE="stop_existing_install"
 if [ -n "${USER:-}" ] && [ "$USER" != "root" ]; then
     PLIST="$USER_HOME/Library/LaunchAgents/com.capsem.service.plist"
-    if [ -f "$PLIST" ]; then
-        echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=preinstall event=unload_launch_agent path=$PLIST"
-        launchctl bootout "gui/$(id -u "$USER")" "$PLIST" 2>/dev/null || \
-            launchctl unload "$PLIST" 2>/dev/null || true
-    fi
+    capsem_stop_launch_agent "gui/$(id -u "$USER")" "$PLIST"
     capsem_retire_native_cohort "$CAPSEM_DIR" "$(id -u "$USER")" "$USER"
 fi
+
+# The first check cannot exclude state created by a still-running old service.
+# Repeat the same signed candidate after exact retirement, before payload removal.
+CAPSEM_INSTALL_PHASE="admit_drained_ledger"
+capsem_run_preinstall_ledger_admission "$USER"
 
 CAPSEM_INSTALL_PHASE="remove_app_payload"
 if [ -n "${USER_HOME:-}" ] && [ "$USER_HOME" != "/" ]; then

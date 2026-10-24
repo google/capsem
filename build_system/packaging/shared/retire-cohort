@@ -119,3 +119,48 @@ capsem_retire_named_cohort() {
     echo "capsem: native helper cohort did not stop:$survivor" >&2
     return 1
 }
+
+# Confirm manager quiescence, including ordinary already-stopped reinstalls.
+# Never interpret a generic query failure as absence of the target service.
+capsem_stop_launch_agent() {
+    local domain="$1" plist="$2" uid="${1#gui/}" state status expected
+    case "$uid" in ''|0|*[!0-9]*) return 1 ;; esac
+    [ "$domain" = "gui/$uid" ] || return 1
+    /bin/launchctl bootout "$domain/com.capsem.service" 2>/dev/null || {
+        if [ -f "$plist" ]; then /bin/launchctl unload "$plist" 2>/dev/null || true; fi
+    }
+    if state=$(LC_ALL=C /bin/launchctl print "$domain/com.capsem.service" 2>&1 >/dev/null); then
+        echo 'capsem: selected LaunchAgent remains loaded' >&2
+        return 1
+    else
+        status=$?
+    fi
+    expected=$(printf 'Bad request.\nCould not find service "com.capsem.service" in domain for user gui: %s' "$uid")
+    if [ "$status" -ne 113 ] || [ "$state" != "$expected" ]; then
+        echo 'capsem: cannot verify selected LaunchAgent absence' >&2
+        return 1
+    fi
+}
+
+capsem_stop_systemd_service() {
+    local target_user="$1" xdg="$2" state line count=0 load="" active="" sub=""
+    su "$target_user" -c 'export LC_ALL=C XDG_RUNTIME_DIR="$1"; exec systemctl --user stop capsem.service' \
+        capsem-quiesce "$xdg" 2>/dev/null || true
+    state=$(su "$target_user" -c 'export LC_ALL=C XDG_RUNTIME_DIR="$1"; exec systemctl --user show --property=LoadState --property=ActiveState --property=SubState capsem.service' \
+        capsem-quiesce "$xdg") || { echo 'capsem: cannot verify selected systemd service state' >&2; return 1; }
+    while IFS= read -r line; do
+        count=$((count + 1))
+        case "$line" in
+            LoadState=*) [ -z "$load" ] || return 1; load=${line#LoadState=} ;;
+            ActiveState=*) [ -z "$active" ] || return 1; active=${line#ActiveState=} ;;
+            SubState=*) [ -z "$sub" ] || return 1; sub=${line#SubState=} ;;
+            *) return 1 ;;
+        esac
+    done <<< "$state"
+    [ "$count" -eq 3 ] || return 1
+    case "$load" in loaded|not-found|masked) ;; *) return 1 ;; esac
+    [ "$active" = inactive ] && [ "$sub" = dead ] || {
+        echo 'capsem: selected systemd service is not inactive' >&2
+        return 1
+    }
+}

@@ -113,7 +113,7 @@ def _prefix(package: Path, repository: Path, limits: Limits) -> bytes:
     invoke = (
         "capsem_run_preinstall_ledger_admission() {\n"
         f'    capsem_admit_preinstall_ledger "$1" {digest} {len(binary)} '
-        f"{limits.timeout_seconds} {limits.terminate_grace_seconds}\n"
+        f'{limits.timeout_seconds} {limits.terminate_grace_seconds} "${{@:2}}"\n'
         "}\n"
     ).encode()
     return (
@@ -169,7 +169,7 @@ def stage_macos(package: Path, *, scripts: Path, limits: Limits) -> None:
         b'    /usr/bin/codesign --verify --strict "$resource" || return 1\n'
         b'    capsem_write_preinstall_resource() { /bin/cat "$resource"; }\n'
         + f'    capsem_admit_preinstall_ledger "$1" {crypto.sha256(binary).hexdigest()} '
-        f'{len(binary)} {limits.timeout_seconds} {limits.terminate_grace_seconds}\n'.encode()
+        f'{len(binary)} {limits.timeout_seconds} {limits.terminate_grace_seconds} "${{@:2}}"\n'.encode()
         + b'}\n' + END
     )
     destination = scripts / "capsem-ledger"

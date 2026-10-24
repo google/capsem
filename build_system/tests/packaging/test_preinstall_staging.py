@@ -31,6 +31,7 @@ def invoke(
     candidate_status: int = 0,
     timeout_status: int = 0,
     platform: str = "Linux",
+    restriction: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     source = root / "source"
     source.write_bytes(payload)
@@ -66,7 +67,7 @@ function /usr/bin/su {{
 }}
 source {q(HELPER)}
 capsem_write_preinstall_resource() {{ /bin/cat {q(source)}; return {decode_status}; }}
-capsem_admit_preinstall_ledger {q(target)} {crypto.sha256(expected).hexdigest()} {len(expected)} 15 2
+capsem_admit_preinstall_ledger {q(target)} {crypto.sha256(expected).hexdigest()} {len(expected)} 15 2 {q(restriction) if restriction is not None else ""}
 """
     return subprocess.run(["bash", "-c", script], text=True, capture_output=True, timeout=10)
 
@@ -129,8 +130,9 @@ def test_mac_exact_su_argv_identity_and_cleanup_without_gnu_timeout(tmp_path: Pa
     result = invoke(tmp_path, platform="Darwin", candidate_status=status)
     assert result.returncode == status, result.stderr
     assert (tmp_path / "su-argv").read_text().splitlines() == [
-        "fixture-user", "-c", 'exec "$1" --preinstall-ledger-admission --target-user "$2"',
-        "capsem-preinstall", str(tmp_path / "stage/capsem-ledger"), "fixture-user",
+        "fixture-user", "-c", 'exec "$@"',
+        "capsem-preinstall", str(tmp_path / "stage/capsem-ledger"),
+        "--preinstall-ledger-admission", "--target-user", "fixture-user",
     ]
     assert (tmp_path / "observed-bytes").read_bytes() == PAYLOAD
     assert not (tmp_path / "timeout-argv").exists()
@@ -156,3 +158,90 @@ def test_payload_is_embedded_after_strip_and_reverified_before_actual_control_bu
     publish = repack.index('mv "$WORK_DIR/candidate.deb" "$OUTPUT_DEB"')
     assert verify < build < budget < publish
     assert "set -euo pipefail" in repack
+
+
+def package_admission_flow(*, platform: str, fail_at: int = 0, preserved: bool = False, legacy: bool = False, manager_status: int = 0) -> subprocess.CompletedProcess[str]:
+    """Execute original maintainer-script control flow with labelled OS effects."""
+    if platform == "Darwin":
+        source = (ROOT / "build_system/packaging/macos/pkg-scripts/preinstall").read_text()
+        start = 'CAPSEM_INSTALL_PHASE="admit_candidate_ledger"'
+    else:
+        source = (ROOT / "build_system/packaging/linux/deb-preinst.sh").read_text()
+        start = 'CAPSEM_INSTALL_PHASE="admit_existing_ledger"'
+    body = source[source.index(start):]
+    setup = f'''
+set -euo pipefail
+USER=fixture-user
+TARGET_USER=fixture-user
+TARGET_UID=12345
+USER_HOME=/nonexistent-capsem-source-fixture
+CAPSEM_DIR=/nonexistent-capsem-source-fixture/.capsem
+calls=0
+capsem_run_preinstall_ledger_admission() {{
+    calls=$((calls + 1))
+    printf 'admit:%s:%s\\n' "$calls" "$*"
+    if [ "$calls" -eq {fail_at} ]; then return 23; fi
+    if [ {int(legacy)} -eq 1 ] && [ "${{2:-}}" = --require-current-host ]; then return 24; fi
+}}
+capsem_install_runs_inside_service() {{ return {0 if preserved else 1}; }}
+capsem_stop_launch_agent() {{ echo manager-stopped; return {manager_status}; }}
+capsem_stop_systemd_service() {{ echo manager-stopped; return {manager_status}; }}
+capsem_retire_native_cohort() {{ echo retire; }}
+id() {{ echo 12345; }}
+su() {{ echo remove-user; }}
+rm() {{ echo remove-package; }}
+'''
+    return subprocess.run(["bash", "-c", setup + body], capture_output=True, text=True, timeout=10)
+
+
+@pytest.mark.parametrize("platform", ["Darwin", "Linux"])
+@pytest.mark.parametrize("fail_at", [1, 2])
+def test_original_package_flow_rechecks_after_drain_before_removal(platform: str, fail_at: int) -> None:
+    result = package_admission_flow(platform=platform, fail_at=fail_at)
+    assert result.returncode == 23, result.stdout + result.stderr
+    lines = result.stdout.splitlines()
+    assert not any(line.startswith("remove-") for line in lines)
+    admissions = [line for line in lines if line.startswith("admit:")]
+    assert len(admissions) == fail_at
+    assert ("retire" in lines) == (fail_at == 2)
+    if fail_at == 2:
+        assert lines.index("retire") < lines.index(admissions[1])
+
+
+def test_linux_in_service_legacy_refuses_before_unpack_but_current_host_is_preserved() -> None:
+    refused = package_admission_flow(platform="Linux", preserved=True, legacy=True)
+    assert refused.returncode == 24, refused.stdout + refused.stderr
+    assert "--require-current-host" in refused.stdout
+    assert "retire" not in refused.stdout and "event=complete" not in refused.stdout
+    current = package_admission_flow(platform="Linux", preserved=True)
+    assert current.returncode == 0, current.stderr
+    assert "--require-current-host" in current.stdout and "event=complete" in current.stdout
+    assert "retire" not in current.stdout
+
+
+@pytest.mark.parametrize("platform", ["Darwin", "Linux"])
+def test_only_current_host_restriction_reaches_exact_candidate_argv(tmp_path: Path, platform: str) -> None:
+    result = invoke(tmp_path, platform=platform, restriction="--require-current-host")
+    assert result.returncode == 0, result.stderr
+    argv = tmp_path / ("su-argv" if platform == "Darwin" else "runuser-argv")
+    assert argv.read_text().splitlines()[-1] == "--require-current-host"
+    assert not (tmp_path / "stage").exists()
+
+
+@pytest.mark.parametrize("restriction", ["--database=/foreign", "--require-current-host=no", ""])
+def test_unknown_restriction_never_stages_or_executes(tmp_path: Path, restriction: str) -> None:
+    result = invoke(tmp_path, restriction=restriction)
+    assert result.returncode != 0
+    assert not (tmp_path / "stage").exists()
+    assert not (tmp_path / "runuser-argv").exists()
+
+
+@pytest.mark.parametrize("platform", ["Darwin", "Linux"])
+def test_unverified_manager_drain_prevents_retirement_and_payload_removal(platform: str) -> None:
+    result = package_admission_flow(platform=platform, manager_status=31)
+    assert result.returncode == 31, result.stderr
+    lines = result.stdout.splitlines()
+    assert lines.count("manager-stopped") == 1
+    assert "retire" not in lines
+    assert not any(line.startswith("remove-") for line in lines)
+    assert not any(line.startswith("admit:2:") for line in lines)

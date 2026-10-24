@@ -77,13 +77,15 @@ capsem_run_preinstall_ledger_admission "$TARGET_USER"
 CAPSEM_INSTALL_PHASE="stop_existing_install"
 XDG_DIR="/run/user/$TARGET_UID"
 if capsem_install_runs_inside_service /proc/self/cgroup; then
+    # The old producer remains live here: an absent HOST cannot safely transition.
+    capsem_run_preinstall_ledger_admission "$TARGET_USER" --require-current-host
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-preinst event=preserve_service_owned_update unit=capsem.service"
 else
-    if command -v systemctl >/dev/null 2>&1 && [ -d "$XDG_DIR" ]; then
-        echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-preinst event=stop_systemd_user_service unit=capsem.service"
-        su "$TARGET_USER" -c "XDG_RUNTIME_DIR=$XDG_DIR systemctl --user stop capsem.service" 2>/dev/null || true
-    fi
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-preinst event=stop_systemd_user_service unit=capsem.service"
+    capsem_stop_systemd_service "$TARGET_USER" "$XDG_DIR"
     capsem_retire_native_cohort "$CAPSEM_DIR" "$TARGET_UID" "$TARGET_USER"
+    CAPSEM_INSTALL_PHASE="admit_drained_ledger"
+    capsem_run_preinstall_ledger_admission "$TARGET_USER"
 fi
 
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-preinst event=complete"

@@ -3,8 +3,13 @@
 # The target user's candidate logger, never shell SQL, owns the state decision.
 capsem_admit_preinstall_ledger() (
     set -euo pipefail
-    [ "$#" -eq 5 ] || { echo 'capsem: invalid preinstall admission binding' >&2; exit 1; }
+    { [ "$#" -eq 5 ] || [ "$#" -eq 6 ]; } || { echo 'capsem: invalid preinstall admission binding' >&2; exit 1; }
     local target_user="$1" expected_sha="$2" expected_size="$3" deadline="$4" grace="$5"
+    local extra=()
+    if [ "$#" -eq 6 ]; then
+        [ "$6" = --require-current-host ] || { echo 'capsem: invalid preinstall admission restriction' >&2; exit 1; }
+        extra=(--require-current-host)
+    fi
     case "$target_user" in
         ''|root|*[!A-Za-z0-9._-]*) echo 'capsem: invalid preinstall target user' >&2; exit 1 ;;
     esac
@@ -54,11 +59,12 @@ capsem_admit_preinstall_ledger() (
     if [ "$platform" = Darwin ]; then
         # Candidate owns its complete five-second operation bound. OS su/PAM
         # startup is Installer-owned, not covered by that candidate deadline.
-        /usr/bin/su "$target_user" -c 'exec "$1" --preinstall-ledger-admission --target-user "$2"' \
-            capsem-preinstall "$stage/capsem-ledger" "$target_user"
+        /usr/bin/su "$target_user" -c 'exec "$@"' \
+            capsem-preinstall "$stage/capsem-ledger" --preinstall-ledger-admission \
+            --target-user "$target_user" ${extra[@]+"${extra[@]}"}
     else
         /usr/bin/timeout --signal=TERM --kill-after="${grace}s" "${deadline}s" \
             /usr/sbin/runuser -u "$target_user" -- "$stage/capsem-ledger" \
-            --preinstall-ledger-admission --target-user "$target_user"
+            --preinstall-ledger-admission --target-user "$target_user" ${extra[@]+"${extra[@]}"}
     fi
 )

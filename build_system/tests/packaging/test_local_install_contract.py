@@ -278,7 +278,8 @@ def test_deb_preinstall_preserves_a_service_owned_update_until_activation() -> N
     assert "event=preserve_service_owned_update" in preserve
     assert "systemctl --user stop capsem.service" not in preserve
     assert "capsem_retire_native_cohort" not in preserve
-    assert "systemctl --user stop capsem.service" in ordinary
+    assert "capsem_stop_systemd_service" not in preserve
+    assert "capsem_stop_systemd_service" in ordinary
     assert "capsem_retire_native_cohort" in ordinary
 
 

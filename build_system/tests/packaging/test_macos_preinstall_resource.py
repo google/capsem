@@ -63,7 +63,7 @@ def test_mac_invalid_resource_preserves_original_script(staged: tuple[Path, Path
 def test_mac_admission_precedes_every_old_install_mutation() -> None:
     preinstall = (ROOT / "build_system/packaging/macos/pkg-scripts/preinstall").read_text()
     admission = preinstall.index('capsem_run_preinstall_ledger_admission "$USER"')
-    for operation in ('CAPSEM_INSTALL_PHASE="stop_existing_install"', "launchctl bootout", "capsem_retire_native_cohort", "rm -rf /Applications", "rm -rf /usr/local/share"):
+    for operation in ('CAPSEM_INSTALL_PHASE="stop_existing_install"', "capsem_stop_launch_agent", "capsem_retire_native_cohort", "rm -rf /Applications", "rm -rf /usr/local/share"):
         assert admission < preinstall.index(operation)
     builder = (ROOT / "build_system/packaging/macos/build-pkg.sh").read_text()
     assert 'codesign --verify --strict "$SHARE_DIR/bin/capsem-ledger"' in builder

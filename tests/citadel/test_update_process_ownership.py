@@ -133,7 +133,7 @@ def _package_handoff_violations(preinstall: str, ownership: str) -> list[str]:
             "preinstall does not report the preserved self-update handoff"
         )
     for destructive in (
-        "systemctl --user stop capsem.service",
+        "capsem_stop_systemd_service",
         "capsem_retire_native_cohort",
     ):
         if destructive in preserve:
@@ -142,6 +142,8 @@ def _package_handoff_violations(preinstall: str, ownership: str) -> list[str]:
             )
         if destructive not in ordinary:
             violations.append(f"ordinary package replacement lost `{destructive}`")
+    if "systemctl --user stop capsem.service" in preserve:
+        violations.append("service-owned transaction directly stops its own unit")
     return violations
 
 
@@ -254,7 +256,8 @@ def test_release_skills_document_the_old_service_package_handoff() -> None:
     assert "embed_native_cohort_retirement" in repack
     assert "preinst plus postinst scripts" in repack
     assert "DEBIAN/preinst script" in repack
-    assert "systemctl --user stop capsem.service" in preinstall
+    assert "capsem_stop_systemd_service" in preinstall
+    assert "systemctl --user stop capsem.service" in cohort
     assert "event=preserve_service_owned_update" in preinstall
 
     for skill in (installation_skill, release_skill):
@@ -331,6 +334,8 @@ def test_guard_rejects_the_failure_shapes_that_reached_release_qualification() -
         "ownership guard accepts a package that kills an update launched by 0.6.1"
     )
 
+    injected_stop = preinstall.replace("event=preserve_service_owned_update", "event=preserve_service_owned_update; capsem_stop_systemd_service")
+    assert _package_handoff_violations(injected_stop, ownership)
     postinstall = DEB_POSTINSTALL.read_text()
     stale_public_hydration = postinstall.replace(
         "event=defer_service_owned_manifest_activation",

@@ -4883,8 +4883,9 @@ def test_binary_update_installer_scripts_replace_and_restart_full_helper_cohort(
         "capsem-mcp-builtin",
     ]
 
-    assert 'launchctl bootout "gui/$(id -u "$USER")" "$PLIST"' in preinstall
-    assert "launchctl unload" in preinstall
+    assert 'capsem_stop_launch_agent "gui/$(id -u "$USER")" "$PLIST"' in preinstall
+    assert 'launchctl bootout "$domain/com.capsem.service"' in retire_cohort
+    assert "launchctl unload" in retire_cohort
     for name in stale_companions:
         assert name in retire_cohort
     for caller in (preinstall, deb_preinst):
@@ -4894,7 +4895,8 @@ def test_binary_update_installer_scripts_replace_and_restart_full_helper_cohort(
     assert '"$kill_command" -9 "$pid"' in retire_cohort
     assert "retired native helper" in retire_cohort
     assert "pkill" not in preinstall and "pkill" not in postinstall
-    assert "systemctl --user stop capsem.service" in deb_preinst
+    assert "capsem_stop_systemd_service" in deb_preinst
+    assert "systemctl --user stop capsem.service" in retire_cohort
     assert "event=stop_systemd_user_service" in deb_preinst
     assert 'cp "$SCRIPT_DIR/deb-preinst.sh" "$WORK_DIR/deb/DEBIAN/preinst"' in repack_deb
     assert 'chmod 755 "$WORK_DIR/deb/DEBIAN/preinst"' in repack_deb
