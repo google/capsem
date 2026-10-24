@@ -249,6 +249,9 @@ def test_macos_package_outputs_share_the_admitted_cache_owner(
     helper.parent.mkdir(parents=True)
     if (ROOT / "build_system/scripts/release" / helper.name).exists():
         shutil.copy2(ROOT / "build_system/scripts/release" / helper.name, helper)
+    bootstrap = checkout / "build_system/builder/bootstrap.py"
+    bootstrap.parent.mkdir()
+    shutil.copy2(ROOT / "build_system/builder/bootstrap.py", bootstrap)
     scripts = checkout / "build_system/packaging/macos"
     scripts.mkdir(parents=True)
     env = os.environ.copy()
@@ -274,3 +277,16 @@ def test_macos_package_outputs_share_the_admitted_cache_owner(
         assert result.returncode == 0, result.stderr
         assert Path(result.stdout) == expected / "Capsem-0.7.1.pkg"
     assert not expected.exists(), "resolving the admitted destination must not write"
+
+
+def test_package_output_resolver_enters_the_locked_project_interpreter() -> None:
+    # macOS shell python is 3.9; the existing bootstrap must enter the locked
+    # builder before importing its typed cache/config dependencies.
+    from capsem_builder.cache.config import load_paths
+    result = subprocess.run(
+        ["/usr/bin/python3", str(ROOT / "build_system/scripts/release/package-output-directory.py")],
+        cwd="/", env={"PATH": "/usr/bin:/bin"},
+        capture_output=True, text=True, timeout=15, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert Path(result.stdout.strip()) == load_paths(ROOT).stage("packages")
