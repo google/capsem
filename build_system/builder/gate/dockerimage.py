@@ -234,7 +234,7 @@ class ImageOperations:
             if isinstance(candidate, str)
             and re.fullmatch(r"[^@\s]+@sha256:[0-9a-f]{64}", candidate)
             and "/" in candidate
-            and ("." in candidate.split("/", 1)[0] or ":" in candidate.split("/", 1)[0] or candidate.startswith("localhost/"))
+            and ("." in candidate.split("/", 1)[0] or ":" in candidate.split("/", 1)[0] or candidate.split("/", 1)[0] == "localhost")
         }
         if origins:
             qualified_matches = matches & origins
