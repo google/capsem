@@ -19,7 +19,10 @@ def validate_transcript(body: bytes, *, max_bytes: int, tail_lines: int) -> None
     output = base64.b64decode(payload["content"], validate=True)
     assert type(payload["bytes"]) is int and payload["bytes"] == len(output) > 0
     assert output.count(MARKER) == 1, "missing/duplicate known foreground marker"
-    assert len(output.splitlines()) <= tail_lines
+    # Match the route's LF tail: CR rewrites stay within a terminal line.
+    # A final LF terminates its line; an unterminated final line still counts.
+    lines = output.count(b"\n") + int(not output.endswith(b"\n"))
+    assert lines <= tail_lines
 
 
 def transcript_samples(service, gateway, vm: str, cfg: dict, samples: int) -> dict:

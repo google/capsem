@@ -23,6 +23,19 @@ def test_transcript_is_nonempty_exact_bounded_foreground_output() -> None:
         validate_transcript(json.dumps(payload).encode(), max_bytes=1024, tail_lines=1)
 
 
+@pytest.mark.parametrize("ending", [b"\r\n", b""])
+def test_transcript_carriage_return_rewrites_do_not_create_new_lines(ending) -> None:
+    # The Rust endpoint tails LF-delimited output, retaining terminal rewrites.
+    output = b"redraw\r" * 20 + MARKER + ending
+    payload = {"bytes": len(output), "content": base64.b64encode(output).decode()}
+    validate_transcript(json.dumps(payload).encode(), max_bytes=1024, tail_lines=1)
+
+    overflow = output + b"\nsecond\rredraw"
+    payload = {"bytes": len(overflow), "content": base64.b64encode(overflow).decode()}
+    with pytest.raises(AssertionError):
+        validate_transcript(json.dumps(payload).encode(), max_bytes=1024, tail_lines=1)
+
+
 def test_events_require_real_vm_transition_after_authoritative_poll() -> None:
     payload = {"type": "vm-state-changed", "payload": {"id": "vm", "state": "Stopped", "trigger": "status_poll"}}
     assert decode_event(json.dumps(payload), "vm") == "Stopped"
