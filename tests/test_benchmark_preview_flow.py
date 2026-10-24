@@ -9,7 +9,7 @@ from benchmarks.helpers import route_preview as controls
 from benchmarks.helpers import route_preview_flow as subject
 
 VM = '123e4567-e89b-42d3-a456-426614174000'
-GEN = '123e4567-e89b-42d3-a456-426614174001'
+GEN = '18446744073709551615'
 
 
 def receipt(status=200,body=b'{}',headers=None):

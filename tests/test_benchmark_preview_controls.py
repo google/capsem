@@ -39,7 +39,7 @@ def test_empty_bootstrap_has_no_invented_first_body_sample_and_safe_cookie():
 def test_exposure_owner_and_declared_surface_cannot_be_replaced_or_deleted():
     a = {'id':'surface-a','host_port':None,'guest_port':14500,'target':'container','access':'http_preview'}
     b = {**a,'id':'manual-b','guest_port':8080}
-    listing = {'owner_generation':'123e4567-e89b-42d3-a456-426614174000','exposures':[a,b]}
+    listing = {'owner_generation':'18446744073709551615','exposures':[a,b]}
     surface = {'state':'running','surface':{'kind':'xpra','port':14500,'exposure_id':'surface-a'}}
     subject.validate_owners(listing,surface,listing['owner_generation'],a,b)
     for fault in ('generation','surface','missing','duplicate','changed'):
@@ -57,6 +57,17 @@ def test_exposure_owner_and_declared_surface_cannot_be_replaced_or_deleted():
             rows['exposures'][1]['guest_port'] = 99
         with pytest.raises(AssertionError):
             subject.validate_owners(rows,container,listing['owner_generation'],a,b)
+
+
+@pytest.mark.parametrize('value',['1','18446744073709551615'])
+def test_original_publication_generation_preserves_all_u64_bits(value):
+    assert subject.publication_generation(value) == value
+
+
+@pytest.mark.parametrize('value',['','0','01','+1','-1','18446744073709551616','123e4567-e89b-42d3-a456-426614174000','\u0661',1,None])
+def test_publication_generation_rejects_noncanonical_or_foreign_identity(value):
+    with pytest.raises(AssertionError):
+        subject.publication_generation(value)
 
 
 def test_refusal_requires_exact_status_no_guest_hit_and_original_close():

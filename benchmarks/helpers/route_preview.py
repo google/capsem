@@ -4,7 +4,6 @@ import tomllib
 from functools import partial
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
-from uuid import UUID
 
 from helpers.http_transport import Transport
 from psutil import Process
@@ -50,8 +49,16 @@ def bootstrap_cookie(receipt,surface):
     return cookie
 
 
+def publication_generation(value):
+    """Public listener identity is a decimal-string nonzero u64, not UUID."""
+    assert isinstance(value,str) and 1 <= len(value) <= 20 and value.isascii() and value.isdecimal()
+    integer = int(value)
+    assert 0 < integer <= (1 << 64)-1 and str(integer) == value
+    return value
+
+
 def validate_owners(listing,container,generation,a,b=None):
-    assert str(UUID(generation)) == generation and listing['owner_generation'] == generation
+    assert publication_generation(generation) == listing['owner_generation']
     assert container['state'] == 'running' and container['surface'] == {'kind':'xpra','port':14500,'exposure_id':a['id']}
     expected = [a] if b is None else [a,b]
     assert sorted(listing['exposures'],key=lambda row:row['id']) == sorted(expected,key=lambda row:row['id']), 'original exposures changed'
