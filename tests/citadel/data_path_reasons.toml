@@ -492,7 +492,13 @@ json = { count = 9, reason = "benchmark" }
 json = { count = 2, reason = "benchmark" }
 
 [sources."crates/capsem-mock-server/src/main.rs"]
-json = { count = 52, reason = "benchmark" }
+json = { count = 46, reason = "benchmark" }
+
+[sources."crates/capsem-mock-server/src/google.rs"]
+json = { count = 7, reason = "benchmark" }
+
+[sources."crates/capsem-mock-server/src/google_mcp.rs"]
+json = { count = 11, reason = "benchmark" }
 
 [sources."crates/capsem-mock-server/src/responses/stream.rs"]
 json = { count = 28, reason = "benchmark" }

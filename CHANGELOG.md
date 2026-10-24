@@ -45,6 +45,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Keep optional metric exporter initialization and shutdown off the async service
   runtime so enabling telemetry cannot panic before the service becomes ready.
+- Make Antigravity CLI's hermetic MCP proof follow its captured lazy tool
+  dispatcher and refuse unrelated or failed results instead of claiming success.
+
 - Add a finite update-check benchmark source case that requires the real
   prepared CLI, one original manifest fetch and matching cache/public status.
   Native execution and package-apply qualification remain separate proof.
