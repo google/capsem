@@ -4,7 +4,6 @@ import os
 import subprocess
 from dataclasses import replace
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from capsem_builder.gate import config as gate_config
@@ -119,19 +118,20 @@ def test_generated_base64_decodes_exact_original_bytes_without_execution(package
     assert result.stdout == (package / "usr/bin/capsem-ledger").read_bytes()
 
 
-@pytest.mark.parametrize("mode", [0o644, 0o4755, 0o2755])
-def test_candidate_rejects_nonexecutable_or_setid_mode(package: Path, mode: int, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("mode", [0, 0o644, 0o4644, 0o2644, 0o4755, 0o2755, 0o6755])
+def test_resource_rejects_nonexecutable_or_setid_mode(mode: int) -> None:
+    with pytest.raises(ValueError, match="executable without set-id authority"):
+        resource.require_executable_mode(mode)
+
+
+@pytest.mark.parametrize("mode", [0o111, 0o500, 0o755, 0o555, 0o1755, 0o100755])
+def test_resource_accepts_unprivileged_executable_mode(mode: int) -> None:
+    resource.require_executable_mode(mode)
+
+
+def test_candidate_rejects_nonexecutable_mode(package: Path) -> None:
     binary = package / "usr/bin/capsem-ledger"
-    original = Path.stat
-
-    def reported_mode(path: Path, *, follow_symlinks: bool = True):
-        # Some host filesystems strip setgid on chmod for this test UID.
-        # Keep real lstat/bytes while explicitly supplying this mode input.
-        if path == binary and follow_symlinks:
-            return SimpleNamespace(st_mode=mode)
-        return original(path, follow_symlinks=follow_symlinks)
-
-    monkeypatch.setattr(Path, "stat", reported_mode)
+    binary.chmod(0o644)
     with pytest.raises(ValueError, match="executable"):
         resource.embed(package, repository=ROOT, limits=resource.load_limits(ROOT))
 

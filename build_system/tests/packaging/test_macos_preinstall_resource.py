@@ -38,7 +38,9 @@ def test_mac_resource_keeps_exact_candidate_and_binds_identity(staged: tuple[Pat
     assert b"base64" not in generated
 
 
-@pytest.mark.parametrize("bad", ["symlink", "shared", "setid", "nonexec", "oversize"])
+# Seatbelt silently strips set-id bits on chmod. Concrete modes are exercised
+# through the shared production rule in test_preinstall_resource.py.
+@pytest.mark.parametrize("bad", ["symlink", "shared", "nonexec", "oversize"])
 def test_mac_invalid_resource_preserves_original_script(staged: tuple[Path, Path], bad: str) -> None:
     payload, scripts = staged
     binary = payload / "usr/local/share/capsem/bin/capsem-ledger"
@@ -49,8 +51,6 @@ def test_mac_invalid_resource_preserves_original_script(staged: tuple[Path, Path
         binary.symlink_to(original)
     elif bad == "shared":
         binary.with_name("shared").hardlink_to(binary)
-    elif bad == "setid":
-        binary.chmod(0o4755)
     elif bad == "nonexec":
         binary.chmod(0o644)
     else:

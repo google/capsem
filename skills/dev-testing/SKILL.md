@@ -177,6 +177,11 @@ yet still carry launch constraints that cause SIGKILL after relocation.
 This mode replaces only ordinary fixture signatures; selected runtime,
 release, and frozen-cohort artifacts must remain immutable consumers.
 
+Seatbelt can silently strip set-id bits even when `chmod` succeeds. Verify a
+fixture's real mode before blaming admission. Test mode decisions with concrete
+inputs through the shared production predicate, keeping real filesystem tests
+for both consumers; do not mock `Path.stat` or relax the sandbox to set a bit.
+
 ## Local/CI execution parity
 
 Read `references/local-ci-parity.md` before editing any release workflow, gate

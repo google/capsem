@@ -82,6 +82,12 @@ class Candidate:
     architecture: str
 
 
+def require_executable_mode(mode: int) -> None:
+    """The shared mode rule, independent of filesystem set-id support."""
+    if not mode & 0o111 or mode & 0o6000:
+        raise ValueError("preinstall resource must be executable without set-id authority")
+
+
 def candidate(package: Path, limits: Limits) -> Candidate:
     data = _regular(package, "usr/bin/capsem-ledger", limits.max_binary_bytes)
     control = _regular(package, "DEBIAN/control", limits.max_control_bytes).decode("utf-8")
@@ -95,9 +101,7 @@ def candidate(package: Path, limits: Limits) -> Candidate:
         or int.from_bytes(data[18:20], "little") != machines[architectures[0].strip()]
     ):
         raise ValueError("preinstall resource must be a matching target Linux ELF executable")
-    mode = (package / "usr/bin/capsem-ledger").stat().st_mode
-    if not mode & 0o111 or mode & 0o6000:
-        raise ValueError("preinstall resource must be executable without set-id authority")
+    require_executable_mode((package / "usr/bin/capsem-ledger").stat().st_mode)
     return Candidate(data, architectures[0].strip())
 
 
@@ -155,9 +159,7 @@ def stage_macos(package: Path, *, scripts: Path, limits: Limits) -> None:
     """
     member = "usr/local/share/capsem/bin/capsem-ledger"
     binary = _regular(package, member, limits.max_binary_bytes)
-    mode = (package / member).stat().st_mode
-    if not mode & 0o111 or mode & 0o6000:
-        raise ValueError("preinstall resource must be executable without set-id authority")
+    require_executable_mode((package / member).stat().st_mode)
     original = _regular(scripts, "preinstall", limits.max_script_bytes)
     if not original.startswith(SHEBANG) or BEGIN in original:
         raise ValueError("preinstall resource requires an original canonical bash script")
