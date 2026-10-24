@@ -266,7 +266,7 @@ import sys
 assert importlib.util.find_spec('blake3') is None
 from capsem_builder.release.tools import verify_installed_release as verify
 sys.argv = json.loads(Path(sys.argv[1]).read_text())
-verify.fetch_bytes = lambda _url: (Path(sys.argv[sys.argv.index('--capsem-home') + 1]) / 'assets/manifest.json').read_bytes()
+verify.fetch_bytes = lambda _url: (Path(sys.argv[sys.argv.index('--capsem-home') + 1]) / 'assets' / 'manifest.json').read_bytes()
 raise SystemExit(verify.main())
 """
     result = subprocess.run(["/usr/bin/python3", "-S", "-c", code, str(argv)],
