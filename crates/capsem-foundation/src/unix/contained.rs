@@ -667,6 +667,22 @@ impl ContainedDir {
         File::from(self.fd.try_clone()?).sync_all()
     }
 
+    /// Observe whether this opened directory has any child name, without
+    /// following links or filtering entries whose metadata cannot be read.
+    /// Stops on the first name. Concurrent creators can change the namespace
+    /// after this observation; this grants no deletion or mutation authority.
+    pub fn is_empty(&self) -> io::Result<bool> {
+        let mut directory = nix::dir::Dir::from_fd(self.fd.try_clone()?.into_raw_fd())?;
+        for entry in directory.iter() {
+            let entry = entry?;
+            let name = entry.file_name().to_bytes();
+            if name != b"." && name != b".." {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     /// List children with metadata read without following links.
     pub fn entries(&self) -> io::Result<Vec<ContainedEntry>> {
         let mut entries = Vec::new();

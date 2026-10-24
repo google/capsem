@@ -704,3 +704,35 @@ fn owned_directory_validation_does_not_require_or_create0700() {
     assert!(held.validate_owner_no_external_write(uid).is_err());
     assert_eq!(held.mode().unwrap(), 0o777);
 }
+
+#[test]
+fn directory_emptiness_observes_names_without_filtering_metadata() {
+    use std::os::unix::fs::PermissionsExt;
+    let tree = tree();
+    assert!(tree.root.is_empty().unwrap());
+    symlink("missing-target", tree.root_path.join(".unknown")).unwrap();
+    assert!(!tree.root.is_empty().unwrap());
+    assert!(
+        !tree.root.is_empty().unwrap(),
+        "a second probe must rewind its iterator"
+    );
+    std::fs::remove_file(tree.root_path.join(".unknown")).unwrap();
+    std::fs::write(tree.root_path.join("saved"), b"original").unwrap();
+    std::fs::set_permissions(&tree.root_path, std::fs::Permissions::from_mode(0o400)).unwrap();
+    let observed = tree.root.is_empty();
+    std::fs::set_permissions(&tree.root_path, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(
+        !observed.unwrap(),
+        "entry stat permission is irrelevant to a name-presence probe"
+    );
+}
+
+#[test]
+fn directory_emptiness_stays_with_the_opened_directory_after_replacement() {
+    let tree = tree();
+    std::fs::write(tree.root_path.join("saved"), b"original").unwrap();
+    std::fs::rename(&tree.root_path, tree.outside.join("original")).unwrap();
+    std::fs::create_dir(&tree.root_path).unwrap();
+    assert!(!tree.root.is_empty().unwrap());
+    assert!(ContainedDir::open_root(&tree.root_path).unwrap().is_empty().unwrap());
+}
