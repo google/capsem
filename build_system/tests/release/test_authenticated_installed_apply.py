@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 import pytest
+
 from build_system.tests.release.test_installed_apply_probe import arguments, probe
 
 TOKEN = "A0b1C2d3" * 8

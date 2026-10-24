@@ -186,6 +186,10 @@ prune discipline, common cache contracts, and the source-guard contracts.
 
 ## TDD workflow
 
+Focused Ruff checks must include `--config build_system/pyproject.toml`, as
+the canonical source gate does. Implicit configuration can classify imports
+differently and produce changes that fail the actual repository policy.
+
 Write tests first:
 1. Write failing tests that capture expected behavior
 2. Verify they fail for the right reason
