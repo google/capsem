@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Wait for the selected macOS service to unload before replacing a package,
+  preserving exact service-manager absence checks and bounded teardown.
+
 - Keep image status pending while older cached versions are being verified, so
   session choosers continue polling and show available updates accurately.
 

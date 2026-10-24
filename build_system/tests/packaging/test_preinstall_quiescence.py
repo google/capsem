@@ -13,6 +13,7 @@ RETIRE = ROOT / "build_system/packaging/shared/retire-cohort"
 def probe(platform: str, status: int, output: str, *, stop: int = 1, diagnostic: str = "") -> subprocess.CompletedProcess[str]:
     if platform == "Darwin":
         command = f'''
+sleep() {{ :; }}
 function /bin/launchctl {{
     if [ "$1" = print ]; then
         [ "${{LC_ALL:-}}" = C ] || return 99
@@ -41,6 +42,34 @@ capsem_stop_systemd_service fixture-user /run/user/12345
 
 def absent(label: str = "com.capsem.service", domain: str = "gui: 12345") -> str:
     return f'Bad request.\nCould not find service "{label}" in domain for user {domain}'
+
+
+@pytest.mark.parametrize("stop", [0, 5])
+@pytest.mark.parametrize("loaded_polls", [1, 3, 50])
+def test_mac_unload_waits_for_exact_selected_label_absence(tmp_path: Path, stop: int, loaded_polls: int) -> None:
+    counter, actions = tmp_path / "queries", tmp_path / "actions"
+    counter.write_text("0")
+    script = f'''
+set -euo pipefail
+source {shlex.quote(str(RETIRE))}
+sleep() {{ printf '%s\\n' "sleep $*" >> {shlex.quote(str(actions))}; }}
+function /bin/launchctl {{
+    printf '%s\\n' "$*" >> {shlex.quote(str(actions))}
+    if [ "$1" = bootout ]; then return {stop}; fi
+    count=$(cat {shlex.quote(str(counter))})
+    printf '%s' "$((count + 1))" > {shlex.quote(str(counter))}
+    if [ "$count" -lt {loaded_polls} ]; then return 0; fi
+    printf '%s' {shlex.quote(absent())} >&2
+    return 113
+}}
+capsem_stop_launch_agent gui/12345
+'''
+    result = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=10)
+    assert result.returncode == (1 if loaded_polls == 50 else 0), result.stderr
+    events = actions.read_text().splitlines()
+    assert events.count("bootout gui/12345/com.capsem.service") == 1
+    assert events.count("print gui/12345/com.capsem.service") == min(loaded_polls + 1, 50)
+    assert events.count("sleep 0.1") == min(loaded_polls, 49)
 
 
 @pytest.mark.parametrize("stop", [0, 1])

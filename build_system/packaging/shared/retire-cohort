@@ -123,7 +123,7 @@ capsem_retire_named_cohort() {
 # Confirm manager quiescence, including ordinary already-stopped reinstalls.
 # Never interpret a generic query failure as absence of the target service.
 capsem_stop_launch_agent() {
-    local domain="$1" uid="${1#gui/}" state status expected bootout_status=0
+    local domain="$1" uid="${1#gui/}" state status expected attempt bootout_status=0
     case "$uid" in ''|0|*[!0-9]*) return 1 ;; esac
     [ "$domain" = "gui/$uid" ] || return 1
     # Never let a user-writable plist choose a root/implicit-domain unload target.
@@ -134,17 +134,28 @@ capsem_stop_launch_agent() {
     else
         bootout_status=$?
     fi
-    if state=$(LC_ALL=C /bin/launchctl print "$domain/com.capsem.service" 2>&1 >/dev/null); then
-        printf 'capsem: selected LaunchAgent remains loaded (bootout_exit=%s print_exit=0)\n' "$bootout_status" >&2
-        return 1
-    else
-        status=$?
-    fi
     expected=$(printf 'Bad request.\nCould not find service "com.capsem.service" in domain for user gui: %s' "$uid")
-    if [ "$status" -ne 113 ] || [ "$state" != "$expected" ]; then
-        printf 'capsem: cannot verify selected LaunchAgent absence (bootout_exit=%s print_exit=%s)\n' "$bootout_status" "$status" >&2
-        return 1
-    fi
+    # Successful bootout can precede job removal for the installed service.
+    # Observe settlement within the existing cohort's five-second budget;
+    # never resubmit bootout or treat an unavailable manager as absence.
+    for attempt in $(seq 1 50); do
+        if state=$(LC_ALL=C /bin/launchctl print "$domain/com.capsem.service" 2>&1 >/dev/null); then
+            if [ "$attempt" -eq 50 ]; then
+                printf 'capsem: selected LaunchAgent remains loaded (bootout_exit=%s print_exit=0)\n' "$bootout_status" >&2
+                return 1
+            fi
+            sleep 0.1
+            continue
+        else
+            status=$?
+        fi
+        if [ "$status" -ne 113 ] || [ "$state" != "$expected" ]; then
+            printf 'capsem: cannot verify selected LaunchAgent absence (bootout_exit=%s print_exit=%s)\n' "$bootout_status" "$status" >&2
+            return 1
+        fi
+        return 0
+    done
+    return 1
 }
 
 capsem_stop_systemd_service() {
