@@ -40,7 +40,14 @@ def validate_catalog(payload, reference: str, architecture: str) -> None:
 def validate_inventory(payload, expected: dict) -> None:
     assert expected['packages'] and all(row['name'] and row['version'] and row['architecture'] for row in expected['packages'])
     assert payload['image'] == expected['subject'] and payload['architecture'] == expected['architecture']
-    assert payload['artifact_reference'] and payload['inventory'] == expected
+    assert payload['artifact_reference']
+    # Producer evidence also binds binary paths/digests. The generated public
+    # DTO projects its package/tool fields just as the service does.
+    public = SCHEMAS['/images/{name}/inventory'].validate_python({
+        'image': expected['subject'], 'architecture': expected['architecture'],
+        'artifact_reference': payload['artifact_reference'], 'inventory': expected,
+    }).model_dump(by_alias=True)
+    assert payload['inventory'] == public['inventory']
 
 
 def require_transfers(requests: list[str], *, cold: bool) -> None:

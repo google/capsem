@@ -41,6 +41,28 @@ def test_inventory_compares_complete_producer_versions():
         route_images.validate_inventory(bad, expected)
 
 
+def test_inventory_uses_public_tool_projection_of_full_producer_artifact():
+    produced = {
+        'schema': 'capsem.package_inventory.v1', 'subject': 'local@pin', 'architecture': 'arm64',
+        'packages': [{'name': 'git', 'version': '2.50', 'architecture': 'arm64'}],
+        'tools': [{'name': 'gh', 'version': '2.0', 'binary_path': 'usr/bin/gh', 'binary_sha256': 'a' * 64}],
+    }
+    public = {
+        'schema': 'capsem.package_inventory.v1', 'subject': 'local@pin', 'architecture': 'arm64',
+        'packages': [{'name': 'git', 'version': '2.50', 'architecture': 'arm64'}],
+        'tools': [{'name': 'gh', 'version': '2.0'}],
+    }
+    payload = {'image': 'local@pin', 'architecture': 'arm64',
+               'artifact_reference': 'local@evidence', 'inventory': public}
+    route_images.validate_inventory(payload, produced)
+    for field in ('packages', 'tools'):
+        for changed in ([], [{**public[field][0], 'version': 'wrong'}]):
+            bad = copy.deepcopy(payload)
+            bad['inventory'][field] = changed
+            with pytest.raises(AssertionError):
+                route_images.validate_inventory(bad, produced)
+
+
 def test_cached_and_cold_transfer_claims_require_actual_registry_receipts():
     route_images.require_transfers(['/v2/library/dev/blobs/sha256:abc', '/v2/library/dev/blobs/sha256:def'], cold=True)
     route_images.require_transfers(['/v2/library/dev/manifests/sha256:abc'], cold=False)
