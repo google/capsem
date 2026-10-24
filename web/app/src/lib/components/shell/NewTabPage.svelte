@@ -14,6 +14,7 @@
   import Modal from './Modal.svelte';
   import ImageCatalog from './ImageCatalog.svelte';
   import AppIcon from './AppIcon.svelte';
+  import SessionActivity from './SessionActivity.svelte';
   import Pause from 'phosphor-svelte/lib/Pause';
   import Trash from 'phosphor-svelte/lib/Trash';
   import Play from 'phosphor-svelte/lib/Play';
@@ -254,6 +255,7 @@
                   {#if vm.app}<AppIcon icon={vm.app.icon} class="size-7" />{/if}
                   <div class="min-w-0"><p class="truncate">{vm.name ?? vm.id}</p>
                     {#if vm.app}<p class="truncate text-xs font-normal text-muted-foreground-1">{vm.app.display_name}</p>{/if}
+                    <SessionActivity terminal={vm.terminal} />
                   </div>
                 </div>
               </td>

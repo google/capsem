@@ -74,6 +74,7 @@ describe('user-facing session language contract', () => {
     expect(dashboard).toContain('{vm.app.display_name}');
     expect(dashboard).toContain('<AppIcon icon={vm.app.icon}');
     expect(dashboard).not.toContain('vm.name.split');
+    expect(dashboard).toContain('<SessionActivity terminal={vm.terminal} />');
   });
 
   it('shows compact truthful usage totals before session launch', () => {
