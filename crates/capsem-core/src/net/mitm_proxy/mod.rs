@@ -552,7 +552,7 @@ async fn handle_request(
     let inspect_inbound = semantic_body::inspection_enabled(&policy_snapshot, true);
     // This permit precedes body collection, bounding concurrent plugin buffers.
     let mut _content_body_permit = if inspect_outbound || inspect_inbound {
-        match Arc::clone(&config.semantic_body_budget).try_acquire_owned() {
+        match semantic_body::admit(&config.semantic_body_budget).await {
             Ok(permit) => Some(permit),
             Err(error) => {
                 return Ok(make_502(
@@ -1122,11 +1122,11 @@ async fn handle_request(
     let should_evaluate_model_request =
         sniffed_model_request || effective_ai_protocol.is_some_and(|protocol| is_llm_api_path(protocol, &path));
     // A connected client is much cheaper than a semantic body. Keep the
-    // body permit through both request and response evaluation, and refuse
-    // excess work before collecting an attacker-controlled upload.
+    // body permit through both request and response evaluation, and wait
+    // boundedly for capacity before collecting an attacker-controlled upload.
     let mut _semantic_body_permit =
         if _content_body_permit.is_none() && (should_evaluate_model_request || observed_mcp_request.is_some()) {
-            match Arc::clone(&config.semantic_body_budget).try_acquire_owned() {
+            match semantic_body::admit(&config.semantic_body_budget).await {
                 Ok(permit) => Some(permit),
                 Err(error) => {
                     return Ok(make_502(
@@ -1748,7 +1748,7 @@ async fn handle_request(
     let inspect_inbound = inspect_inbound || semantic_body::utf8_enabled(&policy_snapshot, true, &resp_parts.headers);
     let mut _response_content_permit =
         if inspect_inbound && _content_body_permit.is_none() && _semantic_body_permit.is_none() {
-            match Arc::clone(&config.semantic_body_budget).try_acquire_owned() {
+            match semantic_body::admit(&config.semantic_body_budget).await {
                 Ok(permit) => Some(permit),
                 Err(error) => {
                     return Ok(make_502(

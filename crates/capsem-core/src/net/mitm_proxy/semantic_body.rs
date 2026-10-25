@@ -6,9 +6,23 @@ use tracing::Instrument;
 
 use super::body::ProxyBoxBody;
 
+#[cfg(test)]
+mod tests;
+
 const BODY_LIMIT: usize = 16 * 1024 * 1024;
 const DECOMPRESSED_BODY_LIMIT: usize = 32 * 1024 * 1024;
 const BODY_DEADLINE: Duration = Duration::from_secs(60);
+
+pub(super) async fn admit(
+    budget: &std::sync::Arc<tokio::sync::Semaphore>,
+) -> anyhow::Result<tokio::sync::OwnedSemaphorePermit> {
+    // Keep the buffer budget unchanged, but apply backpressure to ordinary
+    // concurrent model/MCP requests instead of failing immediately with 502.
+    tokio::time::timeout(BODY_DEADLINE, std::sync::Arc::clone(budget).acquire_owned())
+        .await
+        .map_err(|_| anyhow::anyhow!("content inspection admission timed out"))?
+        .map_err(Into::into)
+}
 
 pub(super) fn retain_admission<B>(
     body: super::body::ChunkDispatchBody<B>,
