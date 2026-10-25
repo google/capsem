@@ -3,39 +3,40 @@
 
 Two VMs join one network, each plugged into its switch by one cable, and the
 guest's own `capsem-bench-rs` drives TCP and UDP between their addresses.
-Beside original byte/latency observations it records guest TCP retransmissions,
-bounded observed host-service resources, and the switch's per-reason drops.
-Guest pump CPU and unowned out-of-tree VZ helpers remain explicitly unavailable;
-global process names are not attribution. Raw samples only; Rust owns statistics.
+Beside throughput it records what explains a number: TCP retransmissions on
+the sending guest, the CPU each hop spent (the switch, the VM owners, the
+hypervisor, and both guests' cable pumps), and the switch's own per-reason
+drop counters from the network's history. Raw samples only; `capsem-bench`
+computes every statistic.
 """
 
 from __future__ import annotations
 
 import argparse
+import ctypes
 import json
+import subprocess
 import sys
 import time
 import uuid
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "tests"))
+sys.path.insert(0, str(ROOT))
 
-from capsem_builder.gate import config as gate_config
-from helpers.constants import (
+from helpers.constants import (  # noqa: E402 - after the path insert
     EXEC_READY_TIMEOUT,
 )
-from helpers.service import ServiceInstance, exec_output_text, wait_exec_ready
-
-from benchmarks.helpers.guest_resources import GuestResources
-from benchmarks.helpers.network_observations import NetworkObservations, counter
-
-ROOT = Path(__file__).resolve().parents[2]
-SETTINGS = gate_config.load(ROOT).benchmark
+from helpers.service import ServiceInstance, wait_exec_ready  # noqa: E402
 
 THROUGHPUT_PORT = 5201
 ECHO_PORT = 5202
+# Guest clock ticks per second (`getconf CLK_TCK` on the guest kernel).
+GUEST_HZ = 100
 LANES = (("upload", 1), ("upload", 4), ("download", 4))
+# `upload.s4` is the lane whose CPU is sampled: every hop busy at once.
+PROFILED = ("upload", 4)
 DROPS = ("short", "source_mac", "source_address", "unknown", "queue_full", "storm")
 
 
@@ -43,35 +44,70 @@ def guest(client, vm, command, timeout=60):
     result = client.post(f"/vms/{vm}/exec", {"command": command, "timeout_secs": timeout}, timeout=timeout + 5)
     if result is None or result.get("exit_code") != 0:
         raise RuntimeError(f"{vm}: {command!r} -> {result}")
-    text = exec_output_text(result)
-    if len(text.encode("utf-8")) > SETTINGS.run.max_collector_bytes:
-        raise ValueError("original guest network output exceeds configured byte budget")
-    return text
+    return result["stdout"]
 
 
 def retransmits(client, vm):
     snmp = guest(client, vm, "cat /proc/net/snmp").splitlines()
     names, values = [line.split() for line in snmp if line.startswith("Tcp:")][:2]
-    return counter(int(values[names.index("RetransSegs")]))
+    return int(values[names.index("RetransSegs")])
+
+
+def pump_ticks(client, vm):
+    """utime+stime of the VM's cable pump."""
+    stat = guest(client, vm, 'cat "/proc/$(pgrep -x capsem-tun | head -n 1)/stat"')
+    fields = stat[stat.rindex(")") + 2 :].split()
+    return int(fields[11]) + int(fields[12])
+
+
+class _TaskInfo(ctypes.Structure):
+    _fields_ = [(n, ctypes.c_uint64) for n in ("virtual", "resident", "user", "system", "tu", "ts")] + [
+        (f"i{n}", ctypes.c_int32) for n in range(12)
+    ]
+
+
+def host_cpu_seconds(pid):
+    if sys.platform == "linux":
+        fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+        return (int(fields[11]) + int(fields[12])) / 100
+    info = _TaskInfo()
+    size = ctypes.CDLL("/usr/lib/libproc.dylib").proc_pidinfo(pid, 4, ctypes.c_uint64(0), ctypes.byref(info), 96)
+    if size != 96:
+        return 0.0
+
+    class Timebase(ctypes.Structure):
+        _fields_ = [("numer", ctypes.c_uint32), ("denom", ctypes.c_uint32)]
+
+    timebase = Timebase()
+    ctypes.CDLL("/usr/lib/libSystem.dylib").mach_timebase_info(ctypes.byref(timebase))
+    return (info.user + info.system) * timebase.numer / timebase.denom / 1e9
+
+
+def pids(pattern, parent=None):
+    argv = ["pgrep", "-f", pattern] if parent is None else ["pgrep", "-P", str(parent), "-f", pattern]
+    return [int(pid) for pid in subprocess.run(argv, capture_output=True, text=True, check=False).stdout.split()]
+
+
+def host_hops(service):
+    hops = {
+        "switch": pids(r"capsem-router .*--network", service.proc.pid),
+        "owners": pids("capsem-process", service.proc.pid),
+    }
+    if sys.platform == "darwin":
+        hops["hypervisor"] = pids("com.apple.Virtualization.VirtualMachine")
+    return hops
 
 
 def history(client, network):
     """Every row of the network's history, page by page: a cable that flaps
     under load writes rows enough to push the leaves off the first page."""
-    events, cursor, seen = [], "", set()
-    for _ in range(SETTINGS.run.max_samples_per_metric):
+    events, cursor = [], ""
+    while True:
         page = client.get(f"/networks/{network}/logs" + (f"?cursor={cursor}" if cursor else ""))
-        rows = page.get("events")
-        if not isinstance(rows, list) or len(events) + len(rows) > SETTINGS.run.max_samples_per_metric:
-            raise ValueError("missing or overbudget network history rows")
-        events.extend(rows)
+        events += page.get("events", [])
         cursor = page.get("next_cursor")
         if not cursor:
             return events
-        if not isinstance(cursor, str) or cursor in seen:
-            raise ValueError("network history cursor repeated or invalid")
-        seen.add(cursor)
-    raise ValueError("network history page budget exceeded")
 
 
 def member(client, network, vm_id):
@@ -82,7 +118,7 @@ def member(client, network, vm_id):
 
 
 def throughput(client, vm, address, direction, streams, seconds):
-    return json.loads(
+    report = json.loads(
         guest(
             client,
             vm,
@@ -90,7 +126,9 @@ def throughput(client, vm, address, direction, streams, seconds):
             f"--seconds {seconds} --address {address}:{THROUGHPUT_PORT}",
             timeout=seconds + 60,
         )
-    )
+    )["metrics"]
+    key = "send_megabits_per_sec" if direction == "upload" else "receive_megabits_per_sec"
+    return report[key]["samples"][0], report
 
 
 def main() -> int:
@@ -99,13 +137,13 @@ def main() -> int:
     parser.add_argument("--trials", type=int, default=None)
     parser.add_argument("--seconds", type=int, default=None)
     args = parser.parse_args()
-    trials = args.trials if args.trials is not None else (1 if args.quick else 3)
-    seconds = args.seconds if args.seconds is not None else (2 if args.quick else 5)
+    trials = args.trials or (1 if args.quick else 3)
+    seconds = args.seconds or (2 if args.quick else 5)
 
-    if not 0 < trials <= SETTINGS.run.max_samples_per_metric or seconds <= 0:
-        raise ValueError("network trials/duration exceed supported bounds")
-    observations = NetworkObservations(SETTINGS.run)
-    add = observations.add
+    samples: dict[str, dict] = {}
+
+    def add(key, unit, value):
+        samples.setdefault(key, {"unit": unit, "samples": []})["samples"].append(float(value))
 
     service = ServiceInstance()
     suffix = uuid.uuid4().hex[:6]
@@ -138,43 +176,53 @@ def main() -> int:
         )
         time.sleep(1)
 
-        def measure(lane, trial, operation):
-            resources = GuestResources(service, SETTINGS.criterion.resources)
-            resources.start()
-            try:
-                result = operation()
-            finally:
-                metrics = resources.stop()
-            for key, metric in metrics.items():
-                if len(metric["samples"]) != 1:
-                    raise ValueError("partial host resource measurement")
-                add(lane + "." + key, metric["unit"], metric["samples"][0])
-            return result, resources.receipt()
-
         for trial in range(trials):
             print(f"network trial {trial + 1}/{trials}", file=sys.stderr)
             for direction, streams in LANES:
                 lane = f"tcp.{direction}.s{streams}"
-                before = {side: retransmits(client, vm) for side, vm in (("sender", sender), ("receiver", receiver))}
-                report, receipt = measure(lane, trial, lambda direction=direction, streams=streams: throughput(
-                    client, sender, address, direction, streams, seconds))
-                facts = observations.tcp(lane, report, direction=direction, streams=streams, seconds=seconds)
-                after = {side: retransmits(client, vm) for side, vm in (("sender", sender), ("receiver", receiver))}
-                deltas = {side: counter(after[side] - value) for side, value in before.items()}
-                add(lane + ".retransmits", "count", sum(deltas.values()))
-                observations.window(lane, trial, receipt, producer=facts, guest_tcp={side: {
-                    "before": before[side], "after": after[side], "delta": deltas[side]
-                } for side in before})
-            latency, receipt = measure("tcp.latency", trial, lambda: throughput(
-                client, sender, address, "latency", 1, 1))
-            facts = observations.tcp("tcp.latency", latency, direction="latency", streams=1, seconds=1)
-            observations.window("tcp.latency", trial, receipt, producer=facts)
-            udp, receipt = measure("udp", trial, lambda: json.loads(guest(
-                client, sender,
-                f"capsem-bench-rs udp --address {address}:{ECHO_PORT} --count 200 --size 1400 "
-                "--interval-ms 2 --wait-ms 2000")))
-            facts = observations.udp(udp, count=200)
-            observations.window("udp", trial, receipt, producer=facts)
+                resent = retransmits(client, sender) + retransmits(client, receiver)
+                profiled = (direction, streams) == PROFILED
+                if profiled:
+                    hops = host_hops(service)
+                    host_before = {hop: sum(map(host_cpu_seconds, found)) for hop, found in hops.items()}
+                    pumps_before = (pump_ticks(client, sender), pump_ticks(client, receiver))
+                    started = time.monotonic()
+                megabits, _ = throughput(client, sender, address, direction, streams, seconds)
+                add(f"{lane}.megabits_per_sec", "megabits_per_second", megabits)
+                add(
+                    f"{lane}.retransmits",
+                    "count",
+                    retransmits(client, sender) + retransmits(client, receiver) - resent,
+                )
+                if profiled:
+                    elapsed = time.monotonic() - started
+                    busy = {
+                        hop: (sum(map(host_cpu_seconds, found)) - host_before[hop]) / elapsed * 100
+                        for hop, found in hops.items()
+                    }
+                    pumps_after = (pump_ticks(client, sender), pump_ticks(client, receiver))
+                    for side, before, after in zip(("sender", "receiver"), pumps_before, pumps_after, strict=True):
+                        busy[f"{side}_pump"] = (after - before) / GUEST_HZ / elapsed * 100
+                    # Share of a core per Gb/s moved in the same trial: work
+                    # per bit, which a change that only moves fewer bits
+                    # cannot improve.
+                    for hop, percent in busy.items():
+                        add(f"cpu.{hop}_percent", "ratio", percent)
+                        add(f"cpu.{hop}_percent_per_gbps", "ratio", percent / (megabits / 1000))
+            _, latency = throughput(client, sender, address, "latency", 1, 1)
+            for value in latency["round_trip_ms"]["samples"]:
+                add("tcp.round_trip_ms", "milliseconds", value)
+            udp = json.loads(
+                guest(
+                    client,
+                    sender,
+                    f"capsem-bench-rs udp --address {address}:{ECHO_PORT} --count 200 --size 1400 "
+                    "--interval-ms 2 --wait-ms 2000",
+                )
+            )["metrics"]
+            for value in udp["round_trip_ms"]["samples"]:
+                add("udp.round_trip_ms", "milliseconds", value)
+            add("udp.lost", "count", udp["lost"]["samples"][0])
 
         # The switch counted every frame it could not deliver; its counters
         # arrive in each port's close row: one per leave, and one per cable
@@ -198,15 +246,11 @@ def main() -> int:
                     print(line, file=sys.stderr)
             raise RuntimeError(f"the switch reported {len(left)} of 2 leaves ({len(closes)} closes)")
         for reason in DROPS:
-            add(f"switch.dropped.{reason}", "count", sum(counter(e["event"]["frames"]["dropped"][reason]) for e in closes))
-        observations.complete(
-            [*(f"tcp.{direction}.s{streams}" for direction, streams in LANES), "tcp.latency", "udp"],
-            trials=trials,
-        )
+            add(f"switch.dropped.{reason}", "count", sum(e["event"]["frames"]["dropped"][reason] for e in closes))
     finally:
         service.stop()
 
-    json.dump({"metrics": observations.metrics, "sidecar": observations.sidecar()}, sys.stdout, allow_nan=False)
+    json.dump({"metrics": samples}, sys.stdout)
     return 0
 
 

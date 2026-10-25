@@ -1,61 +1,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use crate::sample_limits::Limits;
-
-fn parse(text: &str) -> anyhow::Result<super::Collected> {
-    super::parse(text, Limits::configured())
-}
-
-fn run(program: &Path, args: &[String], timeout: Duration) -> anyhow::Result<super::Collected> {
-    super::run(program, args, timeout, Limits::configured())
-}
-
-#[test]
-fn metric_and_total_sample_limits_reject_instead_of_thinning() {
-    let limits = Limits {
-        max_collector_bytes: 1024,
-        max_samples_per_metric: 2,
-        max_samples_per_run: 3,
-    };
-    assert!(super::parse(SAMPLE, limits).is_err());
-    let total = r#"{"metrics":{"a":{"unit":"count","samples":[1,2]},"b":{"unit":"count","samples":[3,4]}}}"#;
-    assert!(super::parse(total, limits).is_err());
-}
-
-#[test]
-fn exact_sample_and_byte_boundaries_preserve_every_observation() {
-    let limits = Limits {
-        max_collector_bytes: SAMPLE.len(),
-        max_samples_per_metric: 3,
-        max_samples_per_run: 3,
-    };
-    assert_eq!(
-        super::parse(SAMPLE, limits).unwrap().metrics["cpu_s"].samples,
-        [0.14, 0.15, 0.16]
-    );
-    assert!(super::parse(&format!(" {SAMPLE}"), limits).is_err());
-    let duplicate = r#"{"metrics":{"a":{"unit":"count","samples":[1]},"a":{"unit":"count","samples":[2]}}}"#;
-    assert!(parse(duplicate).is_err());
-}
-
-#[test]
-fn oversized_live_output_is_refused_before_a_hanging_child_timeout() {
-    let started = std::time::Instant::now();
-    let limits = Limits {
-        max_collector_bytes: 1024,
-        max_samples_per_metric: 10,
-        max_samples_per_run: 10,
-    };
-    let result = super::run(
-        Path::new("sh"),
-        &["-c".into(), "head -c 2048 /dev/zero; exec sleep 30".into()],
-        Duration::from_secs(2),
-        limits,
-    );
-    assert!(format!("{:#}", result.unwrap_err()).contains("byte limit"));
-    assert!(started.elapsed() < Duration::from_secs(1));
-}
+use super::{parse, run};
 
 const SAMPLE: &str = r#"{"metrics":{"cpu_s":{"unit":"seconds","samples":[0.14,0.15,0.16]}}}"#;
 

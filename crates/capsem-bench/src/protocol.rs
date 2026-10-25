@@ -5,7 +5,6 @@
 //! notices before that happens rather than after.
 
 use anyhow::{bail, Context, Result};
-use bytes::{Bytes, BytesMut};
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -73,7 +72,6 @@ pub(crate) async fn run_protocol(args: ProtocolArgs) -> Result<Artifact> {
                     clients.clone(),
                     &base_url,
                     *scenario,
-                    args.query.as_deref(),
                     args.requests,
                     args.concurrency,
                     Duration::from_millis(args.timeout_ms),
@@ -106,7 +104,6 @@ pub(crate) async fn run_protocol(args: ProtocolArgs) -> Result<Artifact> {
             version: "1.1-rust".to_string(),
             lane: args.lane,
             base_url,
-            query: args.query,
             dns_udp_addr,
             total_requests: args.requests,
             concurrency: args.concurrency,
@@ -147,7 +144,6 @@ pub(crate) async fn run_protocol_delta(args: ProtocolDeltaArgs) -> Result<Protoc
     }
     let host_artifact = run_protocol(ProtocolArgs {
         base_url: Some(args.base_url.trim_end_matches('/').to_string()),
-        query: None,
         dns_udp_addr: host_dns_udp_addr,
         requests: args.requests,
         concurrency: args.concurrency,
@@ -208,16 +204,11 @@ pub(crate) async fn run_http_scenario(
     clients: HttpClients,
     base_url: &str,
     scenario: Scenario,
-    query: Option<&str>,
     total_requests: usize,
     concurrency: usize,
     timeout: Duration,
 ) -> Result<ScenarioResult> {
-    let mut url = reqwest::Url::parse(&format!("{base_url}{}", scenario.path)).context("parse scenario URL")?;
-    if let Some(query) = query {
-        url.set_query(Some(query));
-    }
-    let url = url.to_string();
+    let url = format!("{base_url}{}", scenario.path);
     let workers = concurrency.min(total_requests);
     let per_worker = total_requests / workers;
     let remainder = total_requests % workers;
@@ -262,7 +253,6 @@ pub(crate) async fn run_dns_scenario(
                         status: 0,
                         size: 0,
                         latency_ms: 0.0,
-                        first_body_byte_ms: None,
                         attempts: 1,
                         error: Some(format!("dns bind: {error}")),
                         required_text_present: false,
@@ -299,7 +289,6 @@ pub(crate) async fn run_one_dns_query(
                 status: 0,
                 size: 0,
                 latency_ms: 0.0,
-                first_body_byte_ms: None,
                 attempts: 1,
                 error: Some(format!("dns query: {error}")),
                 required_text_present: false,
@@ -313,7 +302,6 @@ pub(crate) async fn run_one_dns_query(
             status: 0,
             size: 0,
             latency_ms: started.elapsed().as_secs_f64() * 1000.0,
-            first_body_byte_ms: None,
             attempts: 1,
             error: Some(format!("dns send: {error}")),
             required_text_present: false,
@@ -331,7 +319,6 @@ pub(crate) async fn run_one_dns_query(
                 status: rcode,
                 size: len,
                 latency_ms,
-                first_body_byte_ms: None,
                 attempts: 1,
                 error: (!id_matches).then(|| "dns id mismatch".to_string()),
                 required_text_present: true,
@@ -342,7 +329,6 @@ pub(crate) async fn run_one_dns_query(
             status: 0,
             size: 0,
             latency_ms: started.elapsed().as_secs_f64() * 1000.0,
-            first_body_byte_ms: None,
             attempts: 1,
             error: Some(format!("dns recv: {error}")),
             required_text_present: false,
@@ -352,7 +338,6 @@ pub(crate) async fn run_one_dns_query(
             status: 0,
             size: 0,
             latency_ms: started.elapsed().as_secs_f64() * 1000.0,
-            first_body_byte_ms: None,
             attempts: 1,
             error: Some("dns timeout".to_string()),
             required_text_present: false,
@@ -382,16 +367,15 @@ pub(crate) async fn run_one_request(
             }
         };
         match tokio::time::timeout(timeout, request.send()).await {
-            Ok(Ok(mut response)) => {
+            Ok(Ok(response)) => {
                 let status = response.status().as_u16();
-                return match read_response_body(&mut response, started).await {
-                    Ok((body, first_body_byte_ms)) => {
+                return match response.bytes().await {
+                    Ok(body) => {
                         let latency_ms = started.elapsed().as_secs_f64() * 1000.0;
                         RequestSample {
                             status,
                             size: body.len(),
                             latency_ms,
-                            first_body_byte_ms,
                             attempts: attempt,
                             error: None,
                             required_text_present: required_text_present(&body, scenario),
@@ -408,7 +392,6 @@ pub(crate) async fn run_one_request(
                             status,
                             size: 0,
                             latency_ms: started.elapsed().as_secs_f64() * 1000.0,
-                            first_body_byte_ms: None,
                             attempts: attempt,
                             error: last_request_error,
                             required_text_present: false,
@@ -429,7 +412,6 @@ pub(crate) async fn run_one_request(
                     status: 0,
                     size: 0,
                     latency_ms: started.elapsed().as_secs_f64() * 1000.0,
-                    first_body_byte_ms: None,
                     attempts: attempt,
                     error: Some("timeout".to_string()),
                     required_text_present: false,
@@ -442,46 +424,11 @@ pub(crate) async fn run_one_request(
         status: 0,
         size: 0,
         latency_ms: started.elapsed().as_secs_f64() * 1000.0,
-        first_body_byte_ms: None,
         attempts: HTTP_REQUEST_ATTEMPTS,
         error: Some(last_request_error.unwrap_or_else(|| "request failed".to_string())),
         required_text_present: false,
         secret_shaped_fixture_seen: false,
     }
-}
-
-async fn read_response_body(
-    response: &mut reqwest::Response,
-    started: Instant,
-) -> reqwest::Result<(Bytes, Option<f64>)> {
-    let mut first_chunk = Bytes::new();
-    let mut remaining_chunks = Vec::new();
-    let mut length = 0;
-    let mut first_body_byte_ms = None;
-    while let Some(chunk) = response.chunk().await? {
-        if !chunk.is_empty() {
-            first_body_byte_ms.get_or_insert_with(|| started.elapsed().as_secs_f64() * 1000.0);
-            length += chunk.len();
-            if first_chunk.is_empty() {
-                first_chunk = chunk;
-            } else {
-                remaining_chunks.push(chunk);
-            }
-        }
-    }
-    // Keep the transport buffer for a single chunk. Multiple chunks coalesce
-    // once, rather than repeatedly growing and copying a body-sized Vec.
-    let body = if remaining_chunks.is_empty() {
-        first_chunk
-    } else {
-        let mut body = BytesMut::with_capacity(length);
-        body.extend_from_slice(&first_chunk);
-        for chunk in remaining_chunks {
-            body.extend_from_slice(&chunk);
-        }
-        body.freeze()
-    };
-    Ok((body, first_body_byte_ms))
 }
 
 pub(crate) async fn sleep_before_http_retry(attempt: usize) {
@@ -533,7 +480,6 @@ pub(crate) fn summarize(
         bytes_per_sec: round1(transfer_bytes as f64 / duration_s),
         latency_ms: latency_summary(samples.iter().map(|sample| sample.latency_ms).collect()),
         latency_samples: samples.iter().map(|sample| sample.latency_ms).collect(),
-        first_body_byte_samples: samples.iter().filter_map(|sample| sample.first_body_byte_ms).collect(),
         errors,
         secret_shaped_fixture_seen: secret_seen,
         raw_secret_stored_in_result: scenario.secret_shaped_fixture.then_some(false),

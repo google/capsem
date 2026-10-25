@@ -209,38 +209,6 @@ fn throughput_growth_is_an_improvement_and_loss_is_a_regression() {
 }
 
 #[test]
-fn operation_rate_wire_unit_preserves_values_and_higher_is_better() {
-    let unit: Unit = serde_json::from_str("\"operations_per_second\"").expect("operation rate unit");
-    assert_eq!(serde_json::to_string(&unit).unwrap(), "\"operations_per_second\"");
-    for (after, regressed, ratio) in [(200.0, false, 2.0), (50.0, true, 0.5), (100.0, false, 1.0)] {
-        let verdict = compare(
-            "disk.random_read.iops",
-            Statistic::Median,
-            &steady(100.0),
-            &steady(after),
-            unit,
-            THRESHOLDS,
-        );
-        assert_eq!(verdict.regressed, regressed);
-        assert_eq!(verdict.significant, regressed);
-        assert_eq!(verdict.ratio, ratio, "displayed ratio remains current/baseline");
-    }
-    let count: Unit = serde_json::from_str("\"operations\"").unwrap();
-    assert_ne!(count, unit, "counts cannot silently become rates");
-    assert!(
-        compare(
-            "disk.operation_count",
-            Statistic::Median,
-            &steady(100.0),
-            &steady(200.0),
-            count,
-            THRESHOLDS
-        )
-        .regressed
-    );
-}
-
-#[test]
 fn nanosecond_percentages_have_no_release_authority() {
     let verdict = compare(
         "criterion.metrics.increment_ns",

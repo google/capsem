@@ -6,11 +6,7 @@ mod commands;
 #[cfg(feature = "host")]
 mod comparison;
 mod dns_load;
-#[cfg(feature = "host")]
-mod evidence;
 mod http_load;
-#[cfg(feature = "host")]
-mod install_evidence;
 #[cfg(feature = "host")]
 mod machine;
 mod ping;
@@ -22,8 +18,6 @@ mod protocol_record;
 mod rates;
 mod redis;
 mod runtime_limits;
-#[cfg(feature = "host")]
-mod sample_limits;
 mod scenarios;
 #[cfg(feature = "host")]
 mod schema;
@@ -54,7 +48,6 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command.unwrap_or(Command::Protocol(ProtocolArgs {
         base_url: None,
-        query: None,
         dns_udp_addr: None,
         requests: 50_000,
         concurrency: 64,
@@ -129,10 +122,10 @@ async fn main() -> Result<()> {
             );
         }
         #[cfg(feature = "host")]
-        Command::Verify(args) => return comparison::verify(&args.records, &args.evidence, args.runs, args.thresholds),
+        Command::Verify(args) => return comparison::verify(&args.records, &args.evidence, args.thresholds),
         #[cfg(feature = "host")]
         Command::Run(args) => {
-            let wanted = commands::select_run_dimensions(&args.dimensions, &args.exclude)?;
+            let wanted = commands::select_dimensions(&args.dimensions)?;
             return commands::run_dimensions(
                 &wanted,
                 &args.collectors,
@@ -142,7 +135,7 @@ async fn main() -> Result<()> {
                 args.quick,
                 &args.channel,
                 &args.commit,
-                &std::fs::read_to_string(&args.cohort_config)?,
+                machine::running_capsem_processes()?,
             );
         }
     }

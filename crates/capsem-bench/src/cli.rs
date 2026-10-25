@@ -41,9 +41,7 @@ pub(crate) enum Command {
     /// Compare two records metric by metric.
     #[cfg(feature = "host")]
     Compare(CompareArgs),
-    /// Verify matching observed subject sets against paired baseline evidence.
-    ///
-    /// Subjects absent from both stores require a separate complete run-plan check.
+    /// Ratchet a directory of records against checked-in evidence.
     #[cfg(feature = "host")]
     Verify(VerifyArgs),
     /// Measure dimensions and record what they measured.
@@ -65,14 +63,8 @@ pub(crate) struct ReportArgs {
 #[cfg(feature = "host")]
 #[derive(Parser, Debug)]
 pub(crate) struct RunArgs {
-    /// Exact benchmark configuration retained for cohort compatibility.
-    #[arg(long, default_value = "config/gate.toml")]
-    pub(crate) cohort_config: PathBuf,
     /// Dimensions to measure. Every one when omitted.
     pub(crate) dimensions: Vec<String>,
-    /// Exclude named dimensions from an implicit full selection.
-    #[arg(long)]
-    pub(crate) exclude: Vec<String>,
     /// Directory holding one executable per dimension.
     #[arg(long, default_value = "benchmarks/collectors")]
     pub(crate) collectors: PathBuf,
@@ -122,9 +114,6 @@ pub(crate) struct CompareArgs {
 #[cfg(feature = "host")]
 #[derive(Parser, Debug)]
 pub(crate) struct VerifyArgs {
-    /// Required complete authoritative repeats on each side.
-    #[arg(long, default_value_t = 2)]
-    pub(crate) runs: usize,
     #[arg(long, default_value = "cache/target/tests/benchmarks/benchmarks.db")]
     pub(crate) records: PathBuf,
     #[arg(long)]
@@ -148,9 +137,6 @@ pub(crate) struct DoctorArgs {
 pub(crate) struct ProtocolArgs {
     #[arg(long)]
     pub(crate) base_url: Option<String>,
-    /// Fixture query controls, retained in the artifact (for example bytes and delay_ms).
-    #[arg(long)]
-    pub(crate) query: Option<String>,
     #[arg(long)]
     pub(crate) dns_udp_addr: Option<String>,
     #[arg(long, default_value_t = 50_000)]

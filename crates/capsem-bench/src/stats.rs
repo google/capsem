@@ -195,10 +195,7 @@ pub fn compare(
     };
     let delta_pct = if before == 0.0 { 0.0 } else { delta_abs / before * 100.0 };
 
-    let regression_ratio = if matches!(
-        unit,
-        Unit::RequestsPerSecond | Unit::MegabitsPerSecond | Unit::OperationsPerSecond
-    ) {
+    let regression_ratio = if matches!(unit, Unit::RequestsPerSecond | Unit::MegabitsPerSecond) {
         if after == 0.0 {
             if before == 0.0 {
                 1.0
@@ -243,7 +240,6 @@ fn minimum_delta(unit: Unit, minimum_time_resolution_ms: f64) -> f64 {
         | Unit::Megabytes
         | Unit::RequestsPerSecond
         | Unit::MegabitsPerSecond
-        | Unit::OperationsPerSecond
         | Unit::Operations
         | Unit::Ratio
         | Unit::Count => 0.0,

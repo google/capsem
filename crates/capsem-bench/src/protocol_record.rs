@@ -20,16 +20,10 @@ pub(crate) fn build(artifact: &Artifact, channel: &str, commit: &str, strays: Ve
                     key: format!("protocol.{}.{}.{suffix}", report.lane, scenario.name),
                     unit,
                     summary,
-                    samples: Some(samples.to_vec()),
                 });
             }
         };
         push("latency_ms", schema::Unit::Milliseconds, &scenario.latency_samples);
-        push(
-            "first_body_byte_ms",
-            schema::Unit::Milliseconds,
-            &scenario.first_body_byte_samples,
-        );
         push(
             "requests_per_sec",
             schema::Unit::RequestsPerSecond,
@@ -50,8 +44,6 @@ pub(crate) fn build(artifact: &Artifact, channel: &str, commit: &str, strays: Ve
         },
         host: fitness.host,
         quick: false,
-        // This entrypoint has no pre-workload fitness receipt: diagnostic only.
-        measurement: None,
         metrics,
         sidecar: None,
     }

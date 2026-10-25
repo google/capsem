@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
-"""Raw bounded HTTP route receipts, direct and via the gateway.
+"""Measure HTTP route latency and per-request CPU, direct and via the gateway.
 
-Method/path/fixtures and request counts belong to config/gate.toml. All derived
-statistics stay in capsem-bench; client validation runs after receipt clocks.
+Routes come from `[benchmark.routes] measured` in `config/gate.toml`. Citadel
+requires every registered route to be measured, recorded as debt, or identified
+as an internal control route.
+
+Warm latency reuses connections like the UI and gateway pool; cold latency
+includes setup. Every response must be successful JSON. Managed lifecycle
+POSTs use an idempotently closed tombstone. Prints raw milliseconds plus service
+and gateway CPU deltas; `capsem-bench` computes every statistic.
 """
 
 from __future__ import annotations
@@ -13,8 +19,12 @@ import json
 import sys
 import threading
 import time
+from collections.abc import Callable
 from contextlib import ExitStack, redirect_stdout
+from dataclasses import dataclass
 from pathlib import Path
+
+import tomllib
 
 # Match pytest's roots for helpers that import `helpers.*` and `scripts.*`.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
@@ -23,94 +33,109 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import psutil
 from helpers.benchmark_assets import clone_benchmark_assets
 from helpers.constants import ASSETS_DIR
+from helpers.debug_session import debug_session
+from helpers.gateway import GatewayInstance
 from helpers.http_transport import Transport
-from helpers.image_session import image_session
 from helpers.process_cpu import process_cpu_seconds
 from helpers.service import ServiceInstance
 from helpers.stopped_workspace import (
+    BODY_ROUTE,
+    BODY_URL,
+    VM_ID,
+    assert_event_bodies,
     seed_stopped_workspace,
 )
 
-from benchmarks.helpers.route_asks import collect_ask_controls
-from benchmarks.helpers.route_binary_fixture import (
-    expected_file_exports,
-    finish_binary_files,
-    seed_binary_files,
-)
-from benchmarks.helpers.route_cases import RouteCase, measured_cases
-from benchmarks.helpers.route_connection_errors import collect_connection_errors
-from benchmarks.helpers.route_credentials import collect_credentials
-from benchmarks.helpers.route_fixtures import (
-    corpus_config,
-    network_fixture,
-    seed_diagnostics,
-    seed_logs,
-    seed_metadata,
-)
-from benchmarks.helpers.route_gateway import GATEWAY_RESPONSES
-from benchmarks.helpers.route_images import collect_images
-from benchmarks.helpers.route_lifecycle import collect_lifecycle
-from benchmarks.helpers.route_mcp import collect_mcp_controls
-from benchmarks.helpers.route_measurements import Observations, route_metrics
-from benchmarks.helpers.route_network_members import collect_network_members
-from benchmarks.helpers.route_networks import collect_networks
-from benchmarks.helpers.route_pause_resume import collect_pause_resume
-from benchmarks.helpers.route_policy import collect_policy
-from benchmarks.helpers.route_preview import collect_preview_controls
-from benchmarks.helpers.route_proxies import collect_proxies
-from benchmarks.helpers.route_reload import collect_reload_controls
-from benchmarks.helpers.route_requests import (
-    Target,
-    request,
-    request_input,
-    route_load_config,
-)
-from benchmarks.helpers.route_run_purge import collect_run_purge
-from benchmarks.helpers.route_save import collect_save_controls
-from benchmarks.helpers.route_update_check import (
-    collect_update_check,
-    require_update_inputs,
-)
-from benchmarks.helpers.route_validation import validate_snapshot, validate_wire
-from benchmarks.helpers.route_workload_controls import collect_workload_controls
-from benchmarks.helpers.stream_measurements import service_gateway
+from benchmarks.helpers.route_measurements import route_metrics
 
+ROOT = Path(__file__).resolve().parents[2]
 WARMUP = 2
+MANAGED_REQUEST_ID = "fc120782-2272-4b3d-a2e6-a26ee2f8ab61"
+MANAGED_TOKEN = "af" * 32
+LIVE_ROUTES = {"/vms/{id}/exposures", "/vms/{id}/security/status"}
 
 
-def preflight(target: Target, cases: list[RouteCase], live_id: str | None, network_id: str | None = None) -> None:
-    """Validate real schemas/counters outside all measured windows."""
-    transport = target.transport_factory()
-    payloads = {}
+def measured_routes() -> list[str]:
+    config = tomllib.loads((ROOT / "config" / "gate.toml").read_text(encoding="utf-8"))
+    return list(config["benchmark"]["routes"]["measured"])
+
+
+def route_load_config() -> dict[str, int]:
+    config = tomllib.loads((ROOT / "config" / "gate.toml").read_text(encoding="utf-8"))
+    return dict(config["benchmark"]["route_load"])
+
+
+def request_path(route: str, live_session_id: str | None = None) -> str:
+    """Resolve a configured route template against the stopped VM fixture."""
+    if route == BODY_ROUTE:
+        return BODY_URL
+    if route in LIVE_ROUTES and live_session_id is None:
+        raise ValueError(f"measured route requires a live owner fixture: {route}")
+    subject = live_session_id if route in LIVE_ROUTES else VM_ID
+    path = route.replace("{id}", subject).replace("{request_id}", MANAGED_REQUEST_ID)
+    if "{" in path or "}" in path:
+        raise ValueError(f"measured route has no successful fixture: {route}")
+    return path
+
+
+def request_input(path: str) -> tuple[str, bytes | None]:
+    """Return the method and body for one repeatable benchmark request."""
+    if path.endswith("/claim"):
+        return "POST", json.dumps({"ownership_token": MANAGED_TOKEN}).encode()
+    if path.endswith("/close"):
+        payload = {"ownership_token": MANAGED_TOKEN, "outcome": "cancelled"}
+        return "POST", json.dumps(payload).encode()
+    return "GET", None
+
+
+@dataclass(frozen=True)
+class Target:
+    label: str
+    transport_factory: Callable[[], Transport]
+    headers: dict[str, str]
+    cpu_processes: dict[str, psutil.Process]
+
+
+def request(transport: Transport, target: Target, path: str) -> None:
+    """Require one successful JSON response."""
+    method, request_body = request_input(path)
+    headers = dict(target.headers)
+    if request_body is not None:
+        headers["Content-Type"] = "application/json"
+    status, _, body = transport.request(
+        method, path, headers=headers, body=request_body
+    )
+    if not 200 <= status < 300:
+        raise RuntimeError(
+            f"{target.label} {path} returned HTTP {status}: {body[:500]!r}"
+        )
     try:
-        for case in cases:
-            if not case.supports_target(target.label):
-                continue
-            path = case.resolve(live_id, network_id)
-            if request_input(path)[0] != case.method:
-                raise ValueError(f"case method differs from its request: {case.metric_key}")
-            receipt = request(transport, target, path, case.response)
-            payloads[case.path] = receipt.body if case.response in {"binary", "warc", *GATEWAY_RESPONSES.values()} else validate_wire(case, receipt.body, live_id, network_id)
-        validate_snapshot(payloads)
-    finally:
-        transport.close()
+        payload = json.loads(body)
+    except json.JSONDecodeError as error:
+        raise RuntimeError(
+            f"{target.label} {path} returned non-JSON: {body[:500]!r}"
+        ) from error
+    if path == BODY_URL:
+        assert_event_bodies(payload)
 
 
 def sample_warm_route(
-    target: Target, path: str, samples: int, response: str = "json"
-) -> tuple[Observations, dict[str, float]]:
+    target: Target, path: str, samples: int
+) -> tuple[list[float], dict[str, float]]:
     """Raw kept-alive latency and every participating process's CPU."""
     transport = target.transport_factory()
     try:
         for _ in range(WARMUP):
-            request(transport, target, path, response)
+            request(transport, target, path)
         before = {
             name: process_cpu_seconds(proc)
             for name, proc in target.cpu_processes.items()
         }
-        latencies = Observations()
+        latencies = []
         for _ in range(samples):
-            latencies.append(request(transport, target, path, response))
+            started = time.perf_counter()
+            request(transport, target, path)
+            latencies.append((time.perf_counter() - started) * 1000.0)
         cpu = {
             name: float(process_cpu_seconds(proc) - before[name])
             for name, proc in target.cpu_processes.items()
@@ -120,33 +145,37 @@ def sample_warm_route(
         transport.close()
 
 
-def sample_cold_route(target: Target, path: str, samples: int, response: str = "json") -> Observations:
+def sample_cold_route(target: Target, path: str, samples: int) -> list[float]:
     """Raw latency including a new socket and HTTP connection."""
-    latencies = Observations()
+    latencies = []
     for _ in range(samples):
         transport = target.transport_factory()
         try:
-            latencies.append(request(transport, target, path, response))
+            started = time.perf_counter()
+            request(transport, target, path)
+            latencies.append((time.perf_counter() - started) * 1000.0)
         finally:
             transport.close()
     return latencies
 
 
 def sample_concurrent_route(
-    target: Target, path: str, samples: int, concurrency: int, response: str = "json"
-) -> tuple[Observations, dict[str, float], float]:
+    target: Target, path: str, samples: int, concurrency: int
+) -> tuple[list[float], dict[str, float], float]:
     """Raw latency, CPU and RPS with one kept-alive connection per worker."""
     workers = min(samples, concurrency)
     barrier = threading.Barrier(workers + 1)
 
-    def worker(count: int) -> Observations:
+    def worker(count: int) -> list[float]:
         transport = target.transport_factory()
         try:
-            request(transport, target, path, response)
+            request(transport, target, path)
             barrier.wait(timeout=30)
-            measured = Observations()
+            measured = []
             for _ in range(count):
-                measured.append(request(transport, target, path, response))
+                started = time.perf_counter()
+                request(transport, target, path)
+                measured.append((time.perf_counter() - started) * 1000.0)
             return measured
         finally:
             transport.close()
@@ -162,10 +191,7 @@ def sample_concurrent_route(
         }
         started = time.perf_counter()
         barrier.wait(timeout=30)
-        latencies = Observations()
-        for future in futures:
-            latencies.extend(future.result())
-        latencies.require_count(samples)
+        latencies = [latency for future in futures for latency in future.result()]
         elapsed = time.perf_counter() - started
     cpu = {
         name: float(process_cpu_seconds(proc) - before[name])
@@ -181,13 +207,11 @@ def main() -> int:
     args = parser.parse_args()
 
     samples = args.samples if args.samples is not None else (16 if args.quick else 128)
-    if samples <= 0:
-        parser.error("samples must be positive")
     load = route_load_config()
-    load_samples = int(load["quick_requests"] if args.quick else load["requests"])
-    concurrency = int(load["concurrency"])
-    cases = measured_cases()
-    if not cases:
+    load_samples = load["quick_requests"] if args.quick else load["requests"]
+    concurrency = load["concurrency"]
+    routes = measured_routes()
+    if not routes:
         print(
             "no routes are listed as measured in [benchmark.routes]; every one "
             "is still in the unmeasured debt inventory",
@@ -195,40 +219,20 @@ def main() -> int:
         )
         return 1
 
-    require_update_inputs()  # Fail before any other collector can prepare fixtures.
-    with redirect_stdout(sys.stderr):
-        metrics: dict[str, dict] = collect_images(args.quick)
-        metrics.update(collect_policy(args.quick))
-        metrics.update(collect_lifecycle(args.quick))
-        metrics.update(collect_networks(args.quick))
-        metrics.update(collect_proxies(args.quick))
-        metrics.update(collect_workload_controls(args.quick))
-        metrics.update(collect_connection_errors(args.quick))
-        metrics.update(collect_network_members(args.quick))
-        metrics.update(collect_credentials(args.quick))
-        metrics.update(collect_mcp_controls(args.quick))
-        metrics.update(collect_preview_controls(args.quick))
-        metrics.update(collect_run_purge(args.quick))
-        metrics.update(collect_save_controls(args.quick))
-        metrics.update(collect_ask_controls(args.quick))
-        metrics.update(collect_reload_controls(args.quick))
-        metrics.update(collect_pause_resume(args.quick))
-        metrics.update(collect_update_check(args.quick))
-
     service = ServiceInstance()
     service.assets_dir = clone_benchmark_assets(
         ASSETS_DIR, service.home_dir / "benchmark-assets"
     )
+    gateway = GatewayInstance(service.uds_path)
 
+    metrics: dict[str, dict] = {}
     try:
-        seed_stopped_workspace(service.tmp_dir, service.assets_dir, file_count=corpus_config()["workspace_files"])
-        seed_metadata(service, corpus_config())
+        seed_stopped_workspace(service.tmp_dir, service.assets_dir)
         with redirect_stdout(sys.stderr):
             service.start()
-        gateway = service_gateway(service)
-        assert service.proc is not None, "service must be running before measurement"
+            gateway.start()
         service_proc = psutil.Process(service.proc.pid)
-        gateway_proc = psutil.Process(gateway.pid)
+        gateway_proc = psutil.Process(gateway.proc.pid)
         targets = (
             Target(
                 label="service",
@@ -238,7 +242,6 @@ def main() -> int:
             ),
             Target(
                 label="gateway",
-                service_socket=str(service.uds_path),
                 transport_factory=lambda: Transport(
                     host="127.0.0.1", port=gateway.port
                 ),
@@ -250,39 +253,24 @@ def main() -> int:
             ),
         )
         with ExitStack() as fixtures:
-            network_id = fixtures.enter_context(network_fixture(service)) if any(case.path.startswith("/networks/{id}") for case in cases) else None
             live_id = None
-            if any(case.live for case in cases):
+            if LIVE_ROUTES.intersection(routes):
                 live_id = fixtures.enter_context(
-                    image_session(service, service.home_dir / "route-registry", "route-live-owner")
+                    debug_session(service, service.home_dir / "route-registry", "route-live-owner")
                 )
-            binary = any(case.response == "binary" for case in cases)
-            if binary:
-                seed_binary_files(service, live_id)
-            seed_logs(service, corpus_config())
-            if any(case.response == "diagnostics" for case in cases):
-                seed_diagnostics(service, corpus_config())
-            for target in targets:
-                preflight(target, cases, live_id, network_id)
-            for case in cases:
-                concrete_path = case.resolve(live_id, network_id)
-                path = case.metric_key
-                count, requests, workers = case.counts(samples, load_samples, concurrency, args.samples)
+            for path in routes:
+                concrete_path = request_path(path, live_id)
                 for target in targets:
-                    if not case.supports_target(target.label):
-                        continue
                     print(f"{target.label} {path}", file=sys.stderr)
-                    latencies, cpu = sample_warm_route(target, concrete_path, count, case.response)
-                    cold_latencies = sample_cold_route(target, concrete_path, count, case.response)
-                    metrics.update(route_metrics(target.label, path, latencies, cold_latencies, cpu, expected=count))
+                    latencies, cpu = sample_warm_route(target, concrete_path, samples)
+                    cold_latencies = sample_cold_route(target, concrete_path, samples)
+                    metrics.update(route_metrics(target.label, path, latencies, cold_latencies, cpu))
                     concurrent_latencies, concurrent_cpu, rps = sample_concurrent_route(
-                        target, concrete_path, requests, workers, case.response
+                        target, concrete_path, load_samples, concurrency
                     )
-                    metrics.update(route_metrics(target.label, path, concurrent_latencies, None, concurrent_cpu, rps, expected=requests))
-            if binary:
-                expected = expected_file_exports(cases, samples=samples, load_requests=load_samples, concurrency=concurrency, warmup=WARMUP, targets=len(targets), override=args.samples)
-                finish_binary_files(service, live_id, expected)
+                    metrics.update(route_metrics(target.label, path, concurrent_latencies, None, concurrent_cpu, rps))
     finally:
+        gateway.stop()
         service.stop()
 
     json.dump({"metrics": metrics}, sys.stdout)

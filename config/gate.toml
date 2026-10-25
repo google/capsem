@@ -3215,753 +3215,130 @@ slowest_steps = 10
 # the same URL. Uncovered operations and internal controls name their existing
 # fixture owner and exact gap. New registration or method drift fails Citadel.
 [benchmark.routes]
+internal = { "/vms/{id}/preserve-failure" = "CLI-only doctor failure preservation mutates and stops a one-shot VM over the local service UDS", "/networks/private/resolve" = "VM owners ask the service what a private name or pool address is, for their VM's networks only, over the local service UDS; never a gateway route", "/internal/gateway/status" = "The gateway reads one combined VM, asset, and update snapshot over its brokered service channel; this route is never exposed on TCP", "/internal/vms/{id}/metrics" = "An authenticated VM owner submits its OTLP metrics to the service over the local UDS for host export; the gateway must never expose this ingestion route", "/internal/vms/{id}/exposures/{exposure_id}/preview-session" = "The authenticated gateway asks the service for owner-scoped bootstrap material over the local service UDS", "/internal/vms/{id}/exposures/{exposure_id}/preview-bootstrap" = "The authenticated gateway exchanges a single-use browser bootstrap token over the local service UDS", "/internal/vms/{id}/exposures/{exposure_id}/preview-admission" = "The authenticated gateway asks the service and VM owner to admit one browser descriptor over the local service UDS" }
 measured = [
-    { method = "GET", path = "/", case = "gateway-static", target_scope = "gateway", response = "health" },
-    { method = "GET", path = "/health", case = "gateway-static", target_scope = "gateway", response = "health" },
-    { method = "GET", path = "/openapi.json", case = "gateway-static", target_scope = "gateway", response = "openapi" },
-    { method = "GET", path = "/vms/{id}/surface/", case = "gateway-static", target_scope = "gateway", response = "html" },
-    { method = "GET", path = "/vms/{id}/surface/launch.js", case = "gateway-static", target_scope = "gateway", response = "javascript" },
-    { method = "POST", path = "/vms/managed/{request_id}/close", case = "closed-tombstone" },
-    { method = "POST", path = "/vms/managed/{request_id}/claim", case = "closed-tombstone" },
-    { method = "GET", path = "/connections", case = "default" },
-    { method = "GET", path = "/vms/{id}/credential-grants", case = "default" },
-    { method = "GET", path = "/vms/{id}/bodies/{event_id}", case = "default" },
-    { method = "GET", path = "/vms/{id}/bodies/{event_id}", case = "complete-recorded-body", query = { max_bytes = 1048576 } },
-    { method = "GET", path = "/vms/{id}/files/content", case = "binary-4KiB", query = { path = "route-4096.bin" }, response = "binary", samples = 8, load_requests = 16, concurrency = 2 },
-    { method = "GET", path = "/vms/{id}/files/content", case = "binary-1MiB", query = { path = "route-1048576.bin" }, response = "binary", samples = 8, load_requests = 16, concurrency = 2 },
-    { method = "GET", path = "/vms/{id}/bodies/export.warc.gz", case = "complete-recorded-archive", response = "warc", samples = 8, load_requests = 16, concurrency = 1 },
-    { method = "GET", path = "/vms/{id}/status", case = "default" },
-    { method = "GET", path = "/vms/{id}/exposures", case = "default" },
-    { method = "GET", path = "/vms/{id}/security/status", case = "default" },
-    { method = "GET", path = "/status", case = "default" },
-    { method = "GET", path = "/version", case = "default" },
-    { method = "GET", path = "/vms/list", case = "default" },
-    { method = "GET", path = "/networks", case = "default" },
-    { method = "GET", path = "/detection/latest", case = "default" },
-    { method = "GET", path = "/enforcement/latest", case = "default" },
-    { method = "GET", path = "/detection/status", case = "default" },
-    { method = "GET", path = "/enforcement/status", case = "default" },
-    { method = "GET", path = "/assets/status", case = "default" },
-    { method = "GET", path = "/stats", case = "default" },
-    { method = "GET", path = "/system/status", case = "default" },
-    { method = "GET", path = "/update/status", case = "default" },
-    { method = "GET", path = "/vms/{id}/info", case = "recorded-session" },
-    { method = "GET", path = "/vms/{id}/save/status", case = "recorded-session" },
-    { method = "GET", path = "/vms/{id}/fork/status", case = "recorded-session" },
-    { method = "GET", path = "/vms/{id}/stats/summary", case = "recorded-session" },
-    { method = "GET", path = "/vms/{id}/stats/detail", case = "recorded-session" },
-    { method = "GET", path = "/vms/{id}/timeline", case = "recorded-session" },
-    { method = "GET", path = "/vms/{id}/history", case = "recorded-session" },
-    { method = "GET", path = "/vms/{id}/history/processes", case = "recorded-session" },
-    { method = "GET", path = "/vms/{id}/history/counts", case = "recorded-session" },
-    { method = "GET", path = "/vms/{id}/security/latest", case = "recorded-session" },
-    { method = "GET", path = "/vms/{id}/detection/latest", case = "recorded-session" },
-    { method = "GET", path = "/vms/{id}/detection/status", case = "recorded-session" },
-    { method = "GET", path = "/vms/{id}/enforcement/latest", case = "recorded-session" },
-    { method = "GET", path = "/vms/{id}/enforcement/status", case = "recorded-session" },
-    { method = "GET", path = "/security/latest", case = "local-config" },
-    { method = "GET", path = "/security/status", case = "local-config" },
-    { method = "GET", path = "/plugins/list", case = "local-config" },
-    { method = "GET", path = "/plugins/{plugin_id}/info", case = "credential_broker" },
-    { method = "GET", path = "/plugins/{plugin_id}/info", case = "pii_filter" },
-    { method = "GET", path = "/plugins/{plugin_id}/info", case = "secret_exfiltration" },
-    { method = "GET", path = "/plugins/{plugin_id}/info", case = "utf8_guard" },
-    { method = "GET", path = "/plugins/credential_broker/credentials/info", case = "local-config" },
-    { method = "GET", path = "/settings/info", case = "local-config" },
-    { method = "GET", path = "/corp/info", case = "local-config" },
-    { method = "GET", path = "/mcp/info", case = "local-config" },
-    { method = "GET", path = "/mcp/servers/list", case = "local-config" },
-    { method = "GET", path = "/mcp/default/info", case = "local-config" },
-    { method = "GET", path = "/vms/{id}/container", case = "live-image" },
-    { method = "GET", path = "/vms/{id}/security/asks", case = "idle" },
-    { method = "GET", path = "/vms/{id}/files/list", case = "seeded-workspace", query = { depth = 1 } },
-    { method = "GET", path = "/vms/{id}/logs", case = "recorded-tail", query = { tail = 16, max_bytes = 102400, grep = "CAPSEM-ROUTE-CORPUS" } },
-    { method = "GET", path = "/host-logs/{name}", case = "mcp-tail", parameters = { name = "mcp" }, query = { tail = 16, max_bytes = 102400, grep = "CAPSEM-ROUTE-CORPUS" } },
-    { method = "GET", path = "/host-logs/{name}", case = "service-tail", parameters = { name = "service" }, query = { tail = 16, max_bytes = 102400, grep = "CAPSEM-ROUTE-CORPUS" } },
-    { method = "GET", path = "/service-logs", case = "retained-text", response = "text" },
-    { method = "GET", path = "/mcp/servers/{server_id}/tools/list", case = "local-cache", parameters = { server_id = "local" } },
-    { method = "GET", path = "/networks/{id}", case = "created-network" },
-    { method = "GET", path = "/panics", case = "synthetic-populated", response = "diagnostics", query = { since = "2099-01-01T00:00:00Z", limit = 3 } },
-    { method = "GET", path = "/panics", case = "synthetic-limited", response = "diagnostics", query = { since = "2099-01-01T00:00:00Z", limit = 1 } },
-    { method = "GET", path = "/panics", case = "synthetic-later-since", response = "diagnostics", query = { since = "2099-02-02T00:00:00Z", limit = 3 } },
-    { method = "GET", path = "/triage", case = "synthetic-populated", response = "diagnostics", query = { since = "2099-01-01T00:00:00Z", limit = 3 } },
-    { method = "GET", path = "/triage", case = "synthetic-limited", response = "diagnostics", query = { since = "2099-01-01T00:00:00Z", limit = 1 } },
-    { method = "GET", path = "/triage", case = "synthetic-later-since", response = "diagnostics", query = { since = "2099-02-02T00:00:00Z", limit = 3 } },
+    "/vms/managed/{request_id}/close",
+    "/vms/managed/{request_id}/claim",
+    "/connections",
+    "/vms/{id}/credential-grants",
+    "/vms/{id}/bodies/{event_id}",
+    "/vms/{id}/status",
+    "/vms/{id}/exposures",
+    "/vms/{id}/security/status",
+    "/status",
+    "/version",
+    "/vms/list",
+    "/networks",
+    "/detection/latest",
+    "/enforcement/latest",
+    "/detection/status",
+    "/enforcement/status",
+    "/assets/status",
+    "/stats",
+    "/system/status",
+    "/update/status",
 ]
-
-[benchmark.routes.streaming."GET /vms/{id}/stream"]
-collector = "stream"
-target_scope = "gateway"
-reason = "Real authenticated stream-v3 terminal echo/resize/projection and byte-counted streaming exec; no JSON poll substitution."
-cases = { echo = { sample_key = "keystrokes", metrics = ["terminal.keystroke_echo_ms"] }, resize = { sample_key = "resize_samples", metrics = ["terminal.resize_echo_ms"] }, transfer = { sample_key = "runs", metrics = ["terminal.source_input_mbps", "terminal.projected_wire_mbps", "exec.output_mbps", "exec.output_100mib_seconds"] } }
-
-[benchmark.routes.streaming."GET /vms/{id}/history/transcript"]
-collector = "stream"
-target_scope = "both"
-reason = "Known actual terminal output after real PTY rotation and owner stop/drain; bounded base64 tail with strict complete receipts."
-cases = { tail = { sample_key = "transcript_samples", metrics = ["service.GET /vms/{id}/history/transcript [rotated-tail].latency_ms", "service.GET /vms/{id}/history/transcript [rotated-tail].cold_latency_ms", "gateway.GET /vms/{id}/history/transcript [rotated-tail].latency_ms", "gateway.GET /vms/{id}/history/transcript [rotated-tail].cold_latency_ms"] } }
-
-[benchmark.routes.streaming."GET /events"]
-collector = "stream"
-target_scope = "gateway"
-reason = "Separate matched Ping/Pong transport RTT and genuine persistent owner stop followed by authoritative status-poll transition delivery."
-cases = { transport = { sample_key = "events_ping_samples", metrics = ["events.transport_ping_pong_ms"] }, transition = { sample_key = "event_transitions", metrics = ["events.stop_to_event_ms", "events.status_poll_to_event_ms"] } }
-
-[benchmark.stream]
-runs = 3
-quick_runs = 1
-keystrokes = 400
-quick_keystrokes = 50
-resize_samples = 20
-terminal_bytes = 16777216
-exec_bytes = 104857600
-marker_timeout_seconds = 30
-transcript_samples = 8
-quick_transcript_samples = 2
-transcript_tail_lines = 16
-transcript_max_bytes = 65536
-transcript_rotation_min_bytes = 20971520
-transcript_rotated_path = "owner/logs/pty.log.1"
-events_ping_samples = 16
-quick_events_ping_samples = 4
-event_transitions = 1
-events_max_frame_bytes = 65536
-events_max_frames = 8
-events_timeout_seconds = 10
-events_open_timeout_seconds = 15
-events_close_timeout_seconds = 5
-mutation_timeout_seconds = 60
-
-# Finite materialization cohorts: one genuinely empty service home per cycle.
-# Canonical image export/scan/repack and service startup are untimed setup.
-[benchmark.routes.images]
-cycles = 3
-quick_cycles = 1
-cached_samples = 8
-quick_cached_samples = 2
-refresh_samples = 2
-quick_refresh_samples = 1
-inventory_samples = 8
-quick_inventory_samples = 2
-warm_pulls = 2
-quick_warm_pulls = 1
-timeout_seconds = 900
-inspect_timeout_seconds = 15
-poll_seconds = 0.02
-max_response_bytes = 16777216
-
-[benchmark.routes.images.endpoints."GET /images"]
-collector = "routes"
-target_scope = "both"
-reason = "Exact local official catalogue: cached reads and actual hermetic refresh are distinct."
-cases = {catalog_cached = "cached_samples", catalog_refresh = "refresh_samples"}
-
-[benchmark.routes.images.endpoints."GET /images/{name}/inventory"]
-collector = "routes"
-target_scope = "both"
-reason = "Complete canonical producer package versions and OBOM bound to the selected local native pin."
-cases = {inventory_warm = "inventory_samples"}
-
-[benchmark.routes.images.endpoints."POST /images/pull"]
-collector = "routes"
-target_scope = "both"
-reason = "Fresh isolated service home plus actual registry blob receipts proves cold; warm reuse forbids blob transfer."
-cases = {pull_cold = "cycles", pull_warm = "warm_pulls"}
-
-[benchmark.routes.images.endpoints."POST /assets/ensure"]
-collector = "routes"
-target_scope = "both"
-reason = "Owned clone missing one real asset hydrates from the pinned local source; admission and ready completion remain separate."
-cases = {ensure_materialize = "cycles", ensure_ready = "cycles"}
-
-# These are finite host-persisted changes with an independently empty VM set.
-# Runtime acknowledgement and durable ledger reads remain separate case debt.
-[benchmark.routes.policy]
-cycles = 3
-quick_cycles = 1
-timeout_seconds = 30
-max_response_bytes = 10485760
-file_max_bytes = 131072
-setting_id = "appearance.font_size"
-setting_baseline = 14
-setting_value = 15
-corp_value = 16
-plugin_id = "dummy_pre_eicar"
-plugin_baseline = "block"
-plugin_value = "rewrite"
-default_baseline = "block"
-default_value = "ask"
-server_id = "local"
-tool_id = "fetch_http"
-tool_baseline = "ask"
-tool_value = "block"
-
-[benchmark.routes.policy.endpoints."PATCH /settings/edit"]
-collector = "routes"
-target_scope = "both"
-reason = "Isolated host-only contract: exact owned files and fresh effective host readback; no VM publication or physical ledger latency claim."
-cases = {"host-setting-changed" = "cycles"}
-
-[benchmark.routes.policy.endpoints."PUT /corp/edit"]
-collector = "routes"
-target_scope = "both"
-reason = "Isolated host-only contract: exact owned files and fresh effective host readback; no VM publication or physical ledger latency claim."
-cases = {"host-corp-installed" = "cycles"}
-
-[benchmark.routes.policy.endpoints."POST /corp/validate"]
-collector = "routes"
-target_scope = "both"
-reason = "Isolated host-only contract: exact owned files and fresh effective host readback; no VM publication or physical ledger latency claim."
-cases = {"inline-validated-no-write" = "cycles"}
-
-[benchmark.routes.policy.endpoints."PATCH /plugins/{plugin_id}/edit"]
-collector = "routes"
-target_scope = "both"
-reason = "Isolated host-only contract: exact owned files and fresh effective host readback; no VM publication or physical ledger latency claim."
-cases = {"host-plugin-changed" = "cycles"}
-
-[benchmark.routes.policy.endpoints."PATCH /mcp/default/edit"]
-collector = "routes"
-target_scope = "both"
-reason = "Isolated host-only contract: exact owned files and fresh effective host readback; no VM publication or physical ledger latency claim."
-cases = {"host-default-permission-changed" = "cycles"}
-
-[benchmark.routes.policy.endpoints."PATCH /mcp/servers/{server_id}/tools/{tool_id}/edit"]
-collector = "routes"
-target_scope = "both"
-reason = "Isolated host-only contract: exact owned files and fresh effective host readback; no VM publication or physical ledger latency claim."
-cases = {"host-tool-permission-changed" = "cycles"}
-
-# One finite owned lifecycle per home/transport; no concurrent mutation load.
-[benchmark.routes.lifecycle]
-cycles = 3
-quick_cycles = 1
-timeout_seconds = 300
-poll_seconds = 0.05
-max_response_bytes = 1048576
-ram_mb = 1024
-cpus = 2
-exec_timeout_seconds = 30
-marker = "capsem-lifecycle-known-bytes"
-
-[benchmark.routes.lifecycle.endpoints."POST /vms/create"]
-collector = "routes"
-target_scope = "both"
-reason = "Finite isolated persistent image owner with independent state, workload bytes and process/path settlement; API response timing is separate from completion."
-cases = {"create-workload-ready" = "cycles"}
-
-[benchmark.routes.lifecycle.endpoints."POST /vms/{id}/exec"]
-collector = "routes"
-target_scope = "both"
-reason = "Finite isolated persistent image owner with independent state, workload bytes and process/path settlement; API response timing is separate from completion."
-cases = {"workload-marker-write" = "cycles"}
-
-[benchmark.routes.lifecycle.endpoints."POST /vms/{id}/fork"]
-collector = "routes"
-target_scope = "both"
-reason = "Finite isolated persistent image owner with independent state, workload bytes and process/path settlement; API response timing is separate from completion."
-cases = {"fork-stopped" = "cycles"}
-
-[benchmark.routes.lifecycle.endpoints."POST /vms/{id}/start"]
-collector = "routes"
-target_scope = "both"
-reason = "Finite isolated persistent image owner with independent state, workload bytes and process/path settlement; API response timing is separate from completion."
-cases = {"start-fork-preserved" = "cycles"}
-
-[benchmark.routes.lifecycle.endpoints."POST /vms/{id}/stop"]
-collector = "routes"
-target_scope = "both"
-reason = "Finite isolated persistent image owner with independent state, workload bytes and process/path settlement; API response timing is separate from completion."
-cases = {"stop-persistent-exit" = "cycles"}
-
-[benchmark.routes.lifecycle.endpoints."DELETE /vms/{id}/delete"]
-collector = "routes"
-target_scope = "both"
-reason = "Finite isolated persistent image owner with independent state, workload bytes and process/path settlement; API response timing is separate from completion."
-cases = {"delete-owned-settled" = "cycles"}
-
-# Finite empty-network lifecycle; name-release probe is untimed completion work.
-[benchmark.routes.networks]
-cycles = 3
-quick_cycles = 1
-timeout_seconds = 30.0
-max_response_bytes = 1048576
-name = "route-owned-empty-network"
-
-[benchmark.routes.networks.endpoints."POST /networks"]
-collector = "routes"
-target_scope = "both"
-reason = "Finite isolated empty network create, exact public detail/list and owned database materialization; no member or transport claim."
-cases = {"empty-network-created" = "cycles"}
-
-[benchmark.routes.networks.endpoints."DELETE /networks/{id}"]
-collector = "routes"
-target_scope = "both"
-reason = "Finite owned empty network retirement, public absence, retained audit database and independently recreated same name with new identity."
-cases = {"empty-network-retired" = "cycles"}
-
-[benchmark.routes.proxies]
-cycles = 3
-quick_cycles = 1
-timeout_seconds = 45.0
-max_response_bytes = 1048576
-max_log_bytes = 1048576
-lease_ttl_seconds = 15
-renew_after_seconds = 5.0
-expiry_margin_seconds = 1.0
-poll_seconds = 0.05
-provider = "openai"
-worker_binary = "capsem-proxy"
-model = "gpt-4.1"
-expected_content = "Capsem ironbank poem\nledgers count the sparks\nno secret crosses raw"
-
-[benchmark.routes.proxies.endpoints."POST /proxies"]
-collector = "routes"
-target_scope = "both"
-reason = "Finite fresh VM-free proxy owner and listener, independent known model response and exact hermetic upstream delivery."
-cases = {"original-listener-ready" = "cycles"}
-
-[benchmark.routes.proxies.endpoints."POST /proxies/{id}/heartbeat"]
-collector = "routes"
-target_scope = "both"
-reason = "Original worker and listener survive original fifteen second TTL after one renewal; separate unrenewed control expires outside request timing."
-cases = {"original-lease-renewed" = "cycles"}
-
-[benchmark.routes.proxies.endpoints."POST /proxies/{id}/stop"]
-collector = "routes"
-target_scope = "both"
-reason = "First owned stop closes original listener, retires exact worker identity and settles original session directory, without replay."
-cases = {"original-owner-settled" = "cycles"}
-
-[benchmark.routes.workload_controls]
-cycles = 2
-quick_cycles = 1
-timeout_seconds = 180.0
-exec_timeout_seconds = 15
-max_response_bytes = 2097152
-poll_seconds = 0.05
-ram_mb = 1024
-cpus = 2
-file_sizes = [4096, 1048576]
-timeline_limit = 200
-browser_url = "https://example.invalid/route-browser"
-
-[benchmark.routes.workload_controls.endpoints."POST /vms/{id}/browser/acknowledge"]
-collector = "routes"
-target_scope = "both"
-reason = "Original genuine xdg-open request cleared across info/list, old replay preserves newer request and wrong owner generation refuses with409."
-cases = {"original-request-cleared" = "cycles"}
-
-[benchmark.routes.workload_controls.endpoints."POST /vms/{id}/files/content"]
-collector = "routes"
-target_scope = "both"
-reason = "Original bounded bytes independently verified inside workload and file listing; normal producer drain precedes exact public import events and rule counters."
-cases = {"bytes-4096" = "cycles", "bytes-1048576" = "cycles"}
-
-# Error-path source coverage is orthogonal to successful functionality.
-# The seven operations remain success debt below; enrollment design is deferred.
-[benchmark.routes.connection_errors]
-success_coverage = false
-samples = 8
-quick_samples = 2
-timeout_seconds = 10.0
-max_response_bytes = 65536
-transaction_id = "11111111-1111-4111-8111-111111111111"
-connection_id = "22222222-2222-4222-8222-222222222222"
-grant_id = "33333333-3333-4333-8333-333333333333"
-request_id = "44444444-4444-4444-8444-444444444444"
-
-[benchmark.routes.connection_errors.endpoints."GET /connections/authorizations/{transaction_id}"]
-classification = "missing-transaction"
-status = 404
-code = "transaction_expired"
-reason = "Matched transaction lookup with valid opaque identity in explicitly empty unconfigured broker, not generic route404."
-
-[benchmark.routes.connection_errors.endpoints."DELETE /connections/authorizations/{transaction_id}"]
-classification = "missing-transaction"
-status = 404
-code = "transaction_expired"
-reason = "Matched cancellation returns exact typed absent transaction refusal; no existing transaction or cancellation success claimed."
-
-[benchmark.routes.connection_errors.endpoints."GET /connections/{connection_id}"]
-classification = "missing-connection"
-status = 404
-code = "connection_unavailable"
-reason = "Matched lookup has no configured connection; structured private refusal distinguishes missing public route or authentication."
-
-[benchmark.routes.connection_errors.endpoints."DELETE /connections/{connection_id}"]
-classification = "missing-connection"
-status = 404
-code = "connection_unavailable"
-reason = "Matched disconnect of valid unknown connection remains explicit error only; no real material or authority is created/revoked."
-
-[benchmark.routes.connection_errors.endpoints."POST /connections/google/authorize"]
-classification = "unconfigured-profile"
-status = 503
-code = "configuration_required"
-reason = "Well formed request passes existing interposition policy but unsupported disabled native profile has no provider authority."
-
-[benchmark.routes.connection_errors.endpoints."POST /vms/{id}/credential-grants"]
-classification = "stopped-owner"
-status = 503
-code = "session_unavailable"
-reason = "Canonical retained fixture owner exists without a running process; valid grant request is refused, never presented as successful grant."
-
-[benchmark.routes.connection_errors.endpoints."DELETE /vms/{id}/credential-grants/{grant_id}"]
-classification = "missing-grant"
-status = 404
-code = "grant_unavailable"
-reason = "Canonical retained owner and empty approval inventory are proven before matched revocation returns exact unavailable grant refusal."
-
-[benchmark.routes.network_members]
-cycles = 2
-quick_cycles = 1
-timeout_seconds = 180.0
-exec_timeout_seconds = 15
-max_response_bytes = 1048576
-poll_seconds = 0.05
-ram_mb = 1024
-cpus = 2
-name = "route-member-team"
-probe_count = 2
-probe_interval_ms = 20
-probe_timeout_ms = 1000
-log_limit = 16
-
-[benchmark.routes.network_members.endpoints."PUT /networks/{id}/members/{vm_id}"]
-collector = "routes"
-target_scope = "both"
-reason = "Original owned member ready with independent guest cable/address, original switch identity and bidirectional existing-engine zero-loss private probes."
-cases = {"original-cable-ready" = "cycles"}
-
-[benchmark.routes.network_members.endpoints."DELETE /networks/{id}/members/{vm_id}"]
-collector = "routes"
-target_scope = "both"
-reason = "Original member/cable removed while peer and original switch persist, removed private address no longer answers existing-engine probes."
-cases = {"original-cable-removed" = "cycles"}
-
-[benchmark.routes.network_members.endpoints."GET /networks/{id}/logs"]
-collector = "routes"
-target_scope = "both"
-reason = "Actual two-connect one-close private link corpus joins original cable identity and positive frame counts; no fabricated per-flow record."
-cases = {"populated-private-links" = "cycles"}
-
-[benchmark.routes.credentials]
-cycles = 2
-quick_cycles = 1
-timeout_seconds = 180.0
-exec_timeout_seconds = 30
-max_response_bytes = 1048576
-max_log_bytes = 1048576
-max_store_bytes = 16384
-poll_seconds = 0.05
-ram_mb = 1024
-cpus = 2
-
-[benchmark.routes.credentials.endpoints."POST /credentials/inject"]
-collector = "routes"
-target_scope = "both"
-reason = "Fresh synthetic memory and file credentials reach the original owner; exact opaque inventory, persistence and allowed mock header with refused body/unrelated binding."
-cases = {memory = "cycles", file = "cycles"}
-
-[benchmark.routes.credentials.endpoints."POST /plugins/credential_broker/credentials/reload"]
-collector = "routes"
-target_scope = "both"
-reason = "Changed owned durable account already observed by guest flips service memory-only replay availability and exact hydration counts after the original reload."
-cases = {"changed-store" = "cycles"}
-
-[benchmark.routes.mcp_controls]
-cycles = 2
-quick_cycles = 1
-timeout_seconds = 180.0
-exec_timeout_seconds = 30
-max_response_bytes = 1048576
-max_log_bytes = 1048576
-poll_seconds = 0.05
-ram_mb = 1024
-cpus = 2
-path = "/html/about"
-expected_content_type = "text/html; charset=utf-8"
-expected_body = "<html><body><main><h1>Capsem mock server about page</h1><p>Google fixture content for local MCP extraction.</p></main></body></html>\n"
-
-[benchmark.routes.mcp_controls.tools.echo]
-title = "Echo"
-description = "Return the input text verbatim. Zero I/O, zero policy, no upstream -- exists to benchmark MCP transport overhead (gateway -> aggregator -> server -> response) without any other variable. Use the `text` parameter; the result is the same text wrapped in a tool-call response."
-[benchmark.routes.mcp_controls.tools.fetch_http]
-title = "Fetch URL"
-description = "Fetch a URL and return its content. In 'markdown' mode (default), HTML is converted to markdown. In 'content' mode, plain text. In 'raw' mode, unchanged. Use start_index/max_length for pagination."
-[benchmark.routes.mcp_controls.tools.grep_http]
-title = "Grep URL"
-description = "Fetch a URL and search its content for a regex pattern. Returns matching lines with context. Use start_index/max_length for pagination."
-[benchmark.routes.mcp_controls.tools.http_headers]
-title = "HTTP headers"
-description = "Return HTTP status code and response headers for a URL. Optionally specify the HTTP method (default: GET)."
-
-[benchmark.routes.mcp_controls.endpoints."POST /mcp/servers/{server_id}/refresh"]
-collector = "routes"
-target_scope = "both"
-reason = "Fresh empty cache becomes the exact four shipped builtin definitions after one original live owner refresh; configuration-level running=false is not live proof."
-cases = {"discovered-live" = "cycles"}
-[benchmark.routes.mcp_controls.endpoints."POST /mcp/servers/{server_id}/tools/{tool_id}/call"]
-collector = "routes"
-target_scope = "both"
-reason = "Narrow explicitly allowed builtin headers/raw fetch calls return fixed mock bytes and independently deliver exactly one original nonce-bound upstream request each."
-cases = {headers = "cycles", "raw-body" = "cycles"}
-
-[benchmark.routes.update_check]
-cycles = 2
-quick_cycles = 1
-timeout_seconds = 60
-max_response_bytes = 1048576
-max_manifest_bytes = 4194304
-max_cli_output_bytes = 65536
-binary_version = "99.99.99"
-runtime_revision = "2030.0101.1"
-manifest_path = "/fixtures/update-check/manifest.json"
-
-[benchmark.routes.update_check.endpoints."POST /update/check"]
-collector = "routes"
-target_scope = "both"
-reason = "Original real prepared UserDir CLI fetches one known graph through isolated provenance, then exact cache hash/tracks agree with independent public status; no Development or plan-only success."
-cases = {"real-cli-manifest-fetch" = "cycles"}
-
-[benchmark.routes.pause_resume]
-cycles = 2
-quick_cycles = 1
-timeout_seconds = 300
-exec_timeout_seconds = 30
-max_response_bytes = 1048576
-max_metadata_bytes = 65536
-max_checkpoint_bytes = 4294967296
-max_terminal_checkpoint_bytes = 16777216
-max_probe_frames = 512
-max_probe_bytes = 4194304
-close_timeout_seconds = 5
-poll_seconds = 0.05
-ram_mb = 1024
-cpus = 2
-name = "route-suspend-refusal"
-
-[benchmark.routes.pause_resume.endpoints."POST /vms/{id}/pause"]
-collector = "routes"
-target_scope = "both"
-reason = "Warm suspend is disabled for 0.7.1/P0 #378: actual 501 refusal preserves the running original process, boot, owner generation and session identity; this is not checkpoint success."
-cases = { disabled-owner-unchanged = "cycles" }
-[benchmark.routes.pause_resume.endpoints."POST /vms/{id}/resume"]
-collector = "routes"
-target_scope = "both"
-reason = "Warm restore is disabled for 0.7.1/P0 #378: actual 501 refusal preserves owned synthetic checkpoint bytes and registry metadata without starting a replacement; no native restore validity or continuity is claimed."
-cases = { disabled-checkpoint-preserved = "cycles" }
-
-[benchmark.routes.restart_controls]
-dimension = "restart"
-cycles = 2
-timeout_seconds = 45
-poll_seconds = 0.05
-max_attempts = 900
-max_response_bytes = 1048576
-max_roots = 64
-workspace_files = 64
-max_workspace_bytes = 1048576
-max_registry_bytes = 1048576
-
-[benchmark.routes.restart_controls.endpoints."POST /restart"]
-collector = "restart"
-target_scope = "both"
-reason = "Disposable native supervisor, original stopped workspace and exact owned replacement roots; admission, original retirement, new readiness and authenticated reconnection have separate clocks."
-cases = { managed-original = "cycles" }
-
-[benchmark.routes.reload_controls]
-cycles = 2
-quick_cycles = 1
-timeout_seconds = 120.0
-exec_timeout_seconds = 30
-max_response_bytes = 1048576
-max_log_bytes = 1048576
-max_policy_bytes = 1048576
-poll_seconds = 0.05
-ram_mb = 1024
-cpus = 2
-name = "route-original-reload"
-[benchmark.routes.reload_controls.endpoints."POST /corp/reload"]
-collector = "routes"
-target_scope = "both"
-reason = "Actual isolated file reload acknowledges exactly one original running owner; independent HTTP block/no delivery then exact policy restore/delivery, unchanged process/publication and bounded original active artifact."
-cases = {"block-original" = "cycles", "restore-original" = "cycles"}
-
-[benchmark.routes.ask_controls]
-cycles = 2
-quick_cycles = 1
-timeout_seconds = 120.0
-exec_timeout_seconds = 30
-max_response_bytes = 1048576
-max_log_bytes = 1048576
-poll_seconds = 0.05
-ram_mb = 1024
-cpus = 2
-[benchmark.routes.ask_controls.endpoints."POST /vms/{id}/security/asks/{ask_id}/resolve"]
-collector = "routes"
-target_scope = "both"
-reason = "Real private HTTP Ask holds one original mapped workload request; generation-bound approve/deny, duplicate refusal and independent mock bytes. Pending dwell and original completion are separate clocks; stopped physical ledger remains acceptance-owned."
-cases = {"approve-original" = "cycles", "deny-original" = "cycles"}
-
-[benchmark.routes.save_controls]
-cycles = 2
-quick_cycles = 1
-timeout_seconds = 240.0
-exec_timeout_seconds = 30
-max_response_bytes = 1048576
-poll_seconds = 0.05
-ram_mb = 1024
-cpus = 2
-name = "route-saved-original"
-marker = "capsem-original-save-retained"
-
-[benchmark.routes.save_controls.endpoints."POST /vms/{id}/save"]
-collector = "routes"
-target_scope = "both"
-reason = "Original ephemeral becomes named persistent without moving its live process/session; mandatory untimed normal stop/cold start preserves identity, exact bytes and inode while changing boot/runtime state."
-cases = {"original-live-claim" = "cycles"}
-
-[benchmark.routes.run_purge]
-cycles = 2
-quick_cycles = 1
-timeout_seconds = 240.0
-exec_timeout_seconds = 60
-max_response_bytes = 1048576
-poll_seconds = 0.05
-ram_mb = 1024
-cpus = 2
-retained_sessions = 2
-marker = "capsem-owned-run-purge"
-
-[benchmark.routes.run_purge.endpoints."POST /run"]
-collector = "routes"
-target_scope = "both"
-reason = "Original VM-only one-shot execution writes independently observed UID/environment bytes before public release; response completes only after exact process/session removal, including the observer fence cost."
-cases = {"vm-fenced-execution-cleanup" = "cycles"}
-[benchmark.routes.run_purge.endpoints."POST /purge"]
-collector = "routes"
-target_scope = "both"
-reason = "Default preserves two healthy owned stopped sessions as untimed control, then original all=true removes their exact paths/public identities with independently reconciled counts."
-cases = {"owned-stopped-disposal" = "cycles"}
-
-[benchmark.routes.preview_controls]
-cycles = 2
-quick_cycles = 1
-timeout_seconds = 180.0
-exec_timeout_seconds = 30
-max_response_bytes = 1048576
-max_token_bytes = 4096
-bootstrap_lifetime_seconds = 30
-poll_seconds = 0.05
-ram_mb = 1024
-cpus = 2
-
-[benchmark.routes.preview_controls.endpoints."POST /vms/{id}/exposures"]
-collector = "routes"
-target_scope = "both"
-reason = "Original manual container port declaration appears under the exact live owner generation without replacing the existing declared surface exposure."
-cases = {"owned-declaration" = "cycles"}
-[benchmark.routes.preview_controls.endpoints."DELETE /vms/{id}/exposures/{exposure_id}"]
-collector = "routes"
-target_scope = "both"
-reason = "Original admitted keepalive flow closes, deleted exposure disappears, new mint is refused and the independent declared surface still delivers known bytes."
-cases = {"original-flow-deleted" = "cycles"}
-[benchmark.routes.preview_controls.endpoints."POST /vms/{id}/exposures/{exposure_id}/preview-session"]
-collector = "routes"
-target_scope = "gateway"
-reason = "Gateway-only original bootstrap exchanges once, rejects replay and cross-scope cookies, then admits exact canonical workload bytes with independent guest request count."
-cases = {"single-use-capability" = "cycles"}
-[benchmark.routes.preview_controls.endpoints."DELETE /vms/{id}/exposures/{exposure_id}/preview-session"]
-collector = "routes"
-target_scope = "both"
-reason = "Exactly one original session retires and its admitted keepalive socket reaches peer EOF/reset while the exposure remains available for a fresh independent capability."
-cases = {"original-flow-revoked" = "cycles"}
-[benchmark.routes.preview_controls.endpoints."POST /vms/{id}/surface/session"]
-collector = "routes"
-target_scope = "gateway"
-reason = "Gateway-only declared surface capability serves the pinned client and known labelled responder port bytes; this control wiring fixture does not implement Xpra or native rendering."
-cases = {"declared-port-wiring" = "cycles"}
-
-[benchmark.routes.unmeasured]
-"DELETE /connections/authorizations/{transaction_id}" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
-"DELETE /connections/{connection_id}" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
-"DELETE /vms/{id}/credential-grants/{grant_id}" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
-"GET /connections/authorizations/{transaction_id}" = { owner = "crates/capsem-service/src/connection_routes.rs", reason = "Production Runtime constructs only disabled unconfigured agy-native profile; successful enrollment metadata needs an implemented provider contract, never fabricated authority." }
-"GET /connections/{connection_id}" = { owner = "crates/capsem-service/src/connection_routes.rs", reason = "Production Runtime constructs only disabled unconfigured agy-native profile; successful enrollment metadata needs an implemented provider contract, never fabricated authority." }
-"POST /connections/google/authorize" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
-"POST /update/apply" = { owner = "crates/capsem-service/src/tests/update_routes.rs", reason = "Needs hermetic update subprocess and isolated runtime; plan-only response must not certify live update performance." }
-"POST /vms/{id}/credential-grants" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Needs canonical synthetic provider authorization or credential grant lifecycle fixture." }
-
-# A timed idle/read case does not certify every state of the same operation.
-[benchmark.routes.unmeasured_cases]
-"POST /corp/reload [managed-lease-retirement]" = { owner = "tests/ironbank/test_managed_policy.py", reason = "Ordinary original-owner HTTP block/restore timing does not measure managed lease narrowing/relaxation, invalid-policy fail-closed controls or exact retirement; canonical managed-policy native acceptance retains those states." }
-"POST /vms/{id}/security/asks/{ask_id}/resolve [physical-original-audit]" = { owner = "tests/ironbank/test_security_approval_lifecycle.py", reason = "Public terminal receipt and independent upstream bytes do not replace exact pending-to-terminal security_ask_events/net_events joins after original producer stop/drain in canonical Ironbank." }
-"POST /vms/{id}/surface/session [actual-xpra-native-render]" = { owner = "tests/ironbank/kingslanding/test_workload_browser.py", reason = "Labelled plain HTTP responder proves capability/client/port wiring only; actual Xpra protocol, editor rendering and native input/paint need the real UI image and driver." }
-"DELETE /vms/{id}/exposures/{exposure_id}/preview-session [physical-preview-ledger]" = { owner = "tests/ironbank/kingslanding/test_preview.py", reason = "Original socket EOF and independent guest hits are live effect checks, not physical network/security/archive joins after original producer drain; canonical Ironbank retains ledger ownership." }
-"POST /mcp/servers/{server_id}/refresh [physical-discovery-pin]" = { owner = "tests/ironbank/test_mcp_settings_ledger.py", reason = "Public tool metadata and opaque pin shape do not independently certify inputSchema pin bytes or physical discovery/security/archive joins; existing canonical MCP/core pin owners retain proof." }
-"POST /mcp/servers/{server_id}/tools/{tool_id}/call [physical-tool-net-security]" = { owner = "tests/ironbank/test_mcp_settings_ledger.py", reason = "Independent original mock request and returned text timing do not replace physical tool/net/security/archive joins after original producer drain in canonical Ironbank." }
-"POST /credentials/inject [physical-broker-ledger]" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Public inventory and exact mock bytes do not replace physical substitution/security/archive privacy joins after original producer drain in canonical Ironbank." }
-"POST /plugins/credential_broker/credentials/reload [physical-store-ledger]" = { owner = "tests/ironbank/test_credential_broker_ledger.py", reason = "Public changed-store cache and replay transition timing does not certify physical ledger/archive joins; canonical store/broker Ironbank retains that proof." }
-"POST /vms/{id}/files/content [physical-import-archive]" = { owner = "tests/ironbank/test_files_process_ledger.py", reason = "Public import event/counter proof is sourced after drain; physical fs/security/archive joins remain canonical FilesProcessLedger proof, never direct collector DB reads." }
-"POST /vms/{id}/stop [physical-producer-ledger-drain]" = { owner = "tests/ironbank/test_policy_mutation_routes.py", reason = "Public stop promises process exit; physical producer ledger flush/drain proof remains canonical Ironbank and is not inferred from status or path presence." }
-"POST /vms/{id}/exec [per-request-cpu-limits]" = { owner = "tests/ironbank/kingslanding/test_workload_exec.py", reason = "Finite known workload output does not certify per-request CPU limit enforcement, saturation or cancellation behavior." }
-
-"GET /vms/{id}/security/asks [pending]" = { owner = "crates/capsem-service/src/approval_routes.rs", reason = "Needs a real generation-bound original waiter and populated approval queue; idle case is not that workload." }
-"POST /vms/managed/{request_id}/claim [initial-claim]" = { owner = "tests/ironbank/test_managed_sessions.py", reason = "Closed tombstone retries do not measure first ownership admission and lifecycle work." }
-"POST /vms/managed/{request_id}/close [initial-close]" = { owner = "tests/ironbank/test_managed_sessions.py", reason = "Closed tombstone retries do not measure first producer drain and VM teardown." }
-
-"PATCH /plugins/{plugin_id}/edit [durable-ledger-read]" = { owner = "tests/ironbank/test_policy_mutation_routes.py", reason = "Physical policy_mutation_events proof remains canonical Ironbank after producer drain; benchmark has no public host-ledger read API and never opens SQLite." }
-"PATCH /plugins/{plugin_id}/edit [running-vm-publication]" = { owner = "crates/capsem-service/src/tests/policy_push.rs", reason = "Host-only case asserts no running VM; nonzero materialization and exact-generation VM/broker acknowledgement timing needs its real live owner." }
-"PATCH /mcp/default/edit [durable-ledger-read]" = { owner = "tests/ironbank/test_policy_mutation_routes.py", reason = "Physical policy_mutation_events proof remains canonical Ironbank after producer drain; benchmark has no public host-ledger read API and never opens SQLite." }
-"PATCH /mcp/default/edit [running-vm-publication]" = { owner = "crates/capsem-service/src/tests/policy_push.rs", reason = "Host-only case asserts no running VM; nonzero materialization and exact-generation VM/broker acknowledgement timing needs its real live owner." }
-"PATCH /mcp/servers/{server_id}/tools/{tool_id}/edit [durable-ledger-read]" = { owner = "tests/ironbank/test_policy_mutation_routes.py", reason = "Physical policy_mutation_events proof remains canonical Ironbank after producer drain; benchmark has no public host-ledger read API and never opens SQLite." }
-"PATCH /mcp/servers/{server_id}/tools/{tool_id}/edit [running-vm-publication]" = { owner = "crates/capsem-service/src/tests/policy_push.rs", reason = "Host-only case asserts no running VM; nonzero materialization and exact-generation VM/broker acknowledgement timing needs its real live owner." }
-
-[benchmark.routes.internal]
-"GET /internal/gateway/status" = { owner = "service-control-plane", reason = "The gateway reads one combined VM, asset, and update snapshot over its brokered service channel; this route is never exposed on TCP" }
-"POST /internal/vms/{id}/exposures/{exposure_id}/preview-admission" = { owner = "service-control-plane", reason = "The authenticated gateway asks the service and VM owner to admit one browser descriptor over the local service UDS" }
-"POST /internal/vms/{id}/exposures/{exposure_id}/preview-bootstrap" = { owner = "service-control-plane", reason = "The authenticated gateway exchanges a single-use browser bootstrap token over the local service UDS" }
-"POST /internal/vms/{id}/exposures/{exposure_id}/preview-session" = { owner = "service-control-plane", reason = "The authenticated gateway asks the service for owner-scoped bootstrap material over the local service UDS" }
-"POST /internal/vms/{id}/metrics" = { owner = "service-control-plane", reason = "An authenticated VM owner submits its OTLP metrics to the service over the local UDS for host export; the gateway must never expose this ingestion route" }
-"POST /networks/private/resolve" = { owner = "service-control-plane", reason = "VM owners ask the service what a private name or pool address is, for their VM's networks only, over the local service UDS; never a gateway route" }
-"POST /vms/{id}/preserve-failure" = { owner = "service-control-plane", reason = "CLI-only doctor failure preservation mutates and stops a one-shot VM over the local service UDS" }
-
-[benchmark.routes.corpus]
-file_sizes = [4096, 1048576]
-archive_facts_max_bytes = 11534336
-archive_inflated_max_bytes = 1048576
-archive_max_records = 1024
-warc_info_max_bytes = 4096
-workspace_files = 64
-file_depth = 1
-log_bytes = 1048576
-log_line_bytes = 128
-log_tail = 16
-log_read_bytes = 102400
-mcp_tools = ["fetch_http"]
-network_name = "route-read-network"
-
-# Synthetic app log input, not a real crash; future since excludes active sinks.
-[benchmark.routes.corpus.diagnostics]
-old_timestamp = "2098-01-01T00:00:00Z"
-since = "2099-01-01T00:00:00Z"
-first_timestamp = "2099-02-01T00:00:00Z"
-later_since = "2099-02-02T00:00:00Z"
-second_timestamp = "2099-02-03T00:00:00Z"
-warning_timestamp = "2099-02-04T00:00:00Z"
-limit = 3
-narrow_limit = 1
-padding_lines = 256
-padding_bytes = 128
-max_file_bytes = 131072
+unmeasured = [
+    # Standalone proxy lifecycle mutations require a supervised worker fixture;
+    # their functional acceptance owns successful create, lease, and teardown.
+    "/proxies",
+    "/proxies/{id}/heartbeat",
+    "/proxies/{id}/stop",
+    # Provider authorization/poll/disconnect and concrete connection records
+    # need genuine provider lifecycle fixtures, not timed error responses.
+    "/connections/google/authorize",
+    "/connections/authorizations/{transaction_id}",
+    "/connections/{connection_id}",
+    # Claim/close mutate owned session lifetimes; grant revocation mutates
+    # credential authority. Their native acceptance owns the effects.
+    "/vms/{id}/credential-grants/{grant_id}",
+    # Restart needs a disposable supervisor; the read-only route collector
+    # cannot time accepted restarts. Its functional proof owns that lifecycle.
+    "/restart",
+    # Secret-bearing mutation includes durable storage or VM-owner acknowledgement;
+    # the native injection acceptance owns it, not a read-only route benchmark.
+    "/credentials/inject",
+    "/corp/edit",
+    "/assets/ensure",
+    "/plugins/list",
+    "/plugins/{plugin_id}/info",
+    "/plugins/{plugin_id}/edit",
+    "/plugins/credential_broker/credentials/info",
+    "/plugins/credential_broker/credentials/reload",
+    "/mcp/info",
+    "/mcp/servers/list",
+    "/mcp/default/info",
+    "/mcp/default/edit",
+    "/mcp/servers/{server_id}/tools/list",
+    "/mcp/servers/{server_id}/refresh",
+    "/mcp/servers/{server_id}/tools/{tool_id}/edit",
+    "/mcp/servers/{server_id}/tools/{tool_id}/call",
+    "/corp/info",
+    "/corp/reload",
+    "/corp/validate",
+    "/networks/{id}",
+    "/networks/{id}/logs",
+    "/networks/{id}/members/{vm_id}",
+    # The image catalog is read from a registry, at most every 30 minutes;
+    # timing it would time the network. Pulls are network-bound mutations.
+    # /enforcement/latest moved to measured so the debt does not grow.
+    "/images",
+    "/images/pull",
+    "/host-logs/{name}",
+    "/panics",
+    "/purge",
+    "/run",
+    "/security/latest",
+    "/security/status",
+    "/service-logs",
+    "/settings/edit",
+    "/settings/info",
+    "/triage",
+    "/update/apply",
+    "/update/check",
+    "/vms/create",
+    "/vms/{id}/container",
+    "/vms/{id}/delete",
+    "/vms/{id}/exposures/{exposure_id}",
+    "/vms/{id}/exposures/{exposure_id}/preview-session",
+    "/vms/{id}/detection/latest",
+    "/vms/{id}/detection/status",
+    "/vms/{id}/enforcement/latest",
+    "/vms/{id}/enforcement/status",
+    "/vms/{id}/bodies/export.warc.gz",
+    "/vms/{id}/exec",
+    "/vms/{id}/files/content",
+    "/vms/{id}/files/list",
+    "/vms/{id}/fork",
+    "/vms/{id}/fork/status",
+    "/vms/{id}/history",
+    "/vms/{id}/history/counts",
+    "/vms/{id}/history/processes",
+    "/vms/{id}/history/transcript",
+    "/vms/{id}/info",
+    "/vms/{id}/logs",
+    "/vms/{id}/pause",
+    "/vms/{id}/resume",
+    "/vms/{id}/save",
+    "/vms/{id}/save/status",
+    "/vms/{id}/security/latest",
+    "/vms/{id}/start",
+    "/vms/{id}/stats/detail",
+    "/vms/{id}/stats/summary",
+    "/vms/{id}/stop",
+    "/vms/{id}/stream",
+    "/vms/{id}/timeline",
+    # Product routes; expanded timing coverage is deferred to the benchmark lane.
+    "/images/{name}/inventory",
+    "/vms/{id}/browser/acknowledge",
+    "/vms/{id}/security/asks",
+    "/vms/{id}/security/asks/{ask_id}/resolve",
+]
 
 # Concurrent kept-alive clients exercise the same measured read-only routes as
 # the latency lane. This catches cache lock and single-flight contention while
 # keeping mutations and network-bound catalog reads out of an RPS claim.
 [benchmark.route_load]
-# Strict client-observed HTTP receipts; no retry, headers/first-body/completion.
 timeout_seconds = 30.0
 max_response_bytes = 10485760
 concurrency = 16
@@ -4147,20 +3524,7 @@ linux = 400
 [benchmark.gates.startup_mean_ms]
 python3 = 100
 
-[benchmark.install]
-# Prepared genuine before/after artifacts, never a cached functional receipt.
-inputs = "cache/target/tests/benchmarks/install-inputs.json"
-work_root = "cache/target/tests/benchmarks/install"
-owner_timeout_seconds = 1200
-cleanup_timeout_seconds = 120
-max_input_bytes = 1048576
-max_receipt_bytes = 10485760
-max_package_bytes = 1073741824
-
 [benchmark.run]
-max_collector_bytes = 67108864
-max_samples_per_metric = 1000000
-max_samples_per_run = 4000000
 # What `just bench` invokes. The binary computes every derived number; a
 # collector under `collectors` prints raw samples and nothing else, which is
 # what makes `p99` mean the same thing in all eighteen dimensions.
@@ -4191,34 +3555,6 @@ fitness_timeout_secs = 120
 fitness_poll_interval_secs = 1.0
 doctor_timeout_secs = 15
 
-[benchmark.criterion]
-max_cases = 1024
-quick_sample_size = 10
-# Admission expectations for pinned Cargo's existing default bench profile;
-# these do not set compiler flags or change Criterion's optimization/settings.
-profile_directory = "release"
-prepare_runner = "build_system/packaging/macos/run_signed.sh"
-entitlements = "build_system/packaging/macos/entitlements.plist"
-assets_dir = "assets"
-[benchmark.criterion.artifact_profile]
-opt_level = "3"
-debuginfo = 0
-debug_assertions = false
-overflow_checks = false
-test = true
-[benchmark.criterion.resources]
-interval_seconds = 0.05
-stop_timeout_seconds = 2.0
-max_processes = 256
-max_identities = 4096
-max_observations = 100000
-# Summary-only producers are diagnostic, never Criterion raw evidence.
-[benchmark.criterion.diagnostic_targets]
-"capsem-foundation::ipc_framing_micro" = "manual MessagePack framing summary"
-"capsem-logger::db_read_write_micro" = "manual database/archive timing summary"
-"capsem-proto::vsock_framing_micro" = "manual protocol framing summary"
-"capsem-ledger::ledger_codec" = "manual codec timing summary"
-
 [benchmark.protocol]
 # Raw samples need enough p99 tail observations to expose drift while keeping
 # this four-scenario VM lane routine. The 50,000-request release stress cohort
@@ -4231,22 +3567,6 @@ scenarios = [
     "credential_response",
     "mcp_tools_list",
     "mcp_tool_call",
-]
-
-# Text-only nonmatching traffic measures detector/buffering overhead without
-# conflating intended block decisions with failed throughput. Matching bytes,
-# broker permits and archive non-disclosure belong to the Ironbank matrix.
-[benchmark.content_filter]
-requests = 32
-concurrency = [1, 2]
-body_bytes = [4096, 65536, 1048576]
-stream_delay_ms = 50
-timeout_ms = 30000
-profiles = [
-  { name = "disabled", plugin = "pii_filter", mode = "disable" },
-  { name = "pii", plugin = "pii_filter", mode = "rewrite" },
-  { name = "secret", plugin = "secret_exfiltration", mode = "block" },
-  { name = "utf8", plugin = "utf8_guard", mode = "block" },
 ]
 
 [benchmark.mitm_scale]

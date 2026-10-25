@@ -74,30 +74,6 @@ pub(crate) enum HttpMethod {
 
 pub(crate) const SCENARIOS: &[Scenario] = &[
     Scenario {
-        name: "content_text",
-        transport: ScenarioTransport::Http,
-        path: "/content/text",
-        method: HttpMethod::Get,
-        request_body: None,
-        expected_status: 200,
-        expected_bytes: None,
-        body_kind: "text",
-        required_text: Some("x"),
-        secret_shaped_fixture: false,
-    },
-    Scenario {
-        name: "content_stream",
-        transport: ScenarioTransport::Http,
-        path: "/content/stream",
-        method: HttpMethod::Get,
-        request_body: None,
-        expected_status: 200,
-        expected_bytes: None,
-        body_kind: "sse",
-        required_text: Some("data: end"),
-        secret_shaped_fixture: false,
-    },
-    Scenario {
         name: "tiny_http",
         transport: ScenarioTransport::Http,
         path: "/tiny",
@@ -248,8 +224,6 @@ pub(crate) struct ProtocolReport {
     pub(crate) lane: String,
     pub(crate) base_url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) query: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) dns_udp_addr: Option<String>,
     pub(crate) total_requests: usize,
     pub(crate) concurrency: usize,
@@ -279,9 +253,6 @@ pub(crate) struct ScenarioResult {
     /// itself, so a collector that pre-summarizes hides the distribution.
     #[serde(skip)]
     pub(crate) latency_samples: Vec<f64>,
-    /// Raw arrival time of the first nonempty HTTP body chunk; DNS/empty bodies have none.
-    #[serde(skip)]
-    pub(crate) first_body_byte_samples: Vec<f64>,
     pub(crate) errors: BTreeMap<String, usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) secret_shaped_fixture_seen: Option<bool>,
@@ -304,7 +275,6 @@ pub(crate) struct RequestSample {
     pub(crate) status: u16,
     pub(crate) size: usize,
     pub(crate) latency_ms: f64,
-    pub(crate) first_body_byte_ms: Option<f64>,
     pub(crate) attempts: usize,
     pub(crate) error: Option<String>,
     pub(crate) required_text_present: bool,

@@ -30,15 +30,6 @@ pub(crate) fn build(artifact: &Artifact) -> Result<Document> {
                 samples: scenario.latency_samples.clone(),
             },
         );
-        if !scenario.first_body_byte_samples.is_empty() {
-            metrics.insert(
-                format!("{prefix}.first_body_byte_ms"),
-                Metric {
-                    unit: "milliseconds",
-                    samples: scenario.first_body_byte_samples.clone(),
-                },
-            );
-        }
         metrics.insert(
             format!("{prefix}.requests_per_sec"),
             Metric {

@@ -10,7 +10,6 @@
 //! and that is the convention every collector follows.
 
 use std::collections::BTreeMap;
-use std::io::Read;
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -18,16 +17,13 @@ use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use capsem_foundation::unix::process::{child_has_exited, send_process_group_signal, ProcessId, Signal};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-use crate::sample_limits::Limits;
 use crate::schema::Unit;
-use serde::de::DeserializeSeed;
-
-mod bounded;
 
 /// One metric's raw observations, as a collector reports them.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RawMetric {
     pub unit: Unit,
     /// Every observation. Not a mean, not a percentile -- the samples.
@@ -35,7 +31,8 @@ pub struct RawMetric {
 }
 
 /// What a collector prints on stdout.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Collected {
     /// Metric key to its samples. Keys are dotted and stable; the dimension
     /// name is prepended by the runner, so a collector names only its own part.
@@ -51,18 +48,18 @@ pub struct Collected {
 /// its JSON is common and refusing it would push collectors toward swallowing
 /// their own diagnostics. Anything after the document is refused: two
 /// documents mean the collector ran twice and only one would be read.
-pub fn parse(stdout: &str, limits: Limits) -> Result<Collected> {
-    if stdout.len() > limits.max_collector_bytes {
-        bail!("collector byte limit exceeded");
-    }
+pub fn parse(stdout: &str) -> Result<Collected> {
     let start = stdout
         .find('{')
         .context("collector printed no JSON document on stdout")?;
-    let mut stream = serde_json::Deserializer::from_str(&stdout[start..]);
-    let collected = bounded::Document(&mut bounded::Budget { limits, total: 0 })
-        .deserialize(&mut stream)
+    let mut stream = serde_json::Deserializer::from_str(&stdout[start..]).into_iter::<Collected>();
+    let collected = stream
+        .next()
+        .context("collector printed no JSON document on stdout")?
         .context("collector output is not a valid sample document")?;
-    if stream.end().is_err() {
+
+    let rest = &stdout[start + stream.byte_offset()..];
+    if !rest.trim().is_empty() {
         bail!("collector printed more than one document; only the first would be read");
     }
     if collected.metrics.is_empty() {
@@ -88,7 +85,7 @@ pub fn parse(stdout: &str, limits: Limits) -> Result<Collected> {
 /// pipe holds 64 KiB; a collector that prints more than that before exiting
 /// blocks on write until someone reads, and reading only after exit turned
 /// every chatty collector into a reported timeout.
-pub fn run(program: &Path, args: &[String], timeout: Duration, limits: Limits) -> Result<Collected> {
+pub fn run(program: &Path, args: &[String], timeout: Duration) -> Result<Collected> {
     let mut owned = CollectorProcess(Some(
         Command::new(program)
             .args(args)
@@ -105,39 +102,18 @@ pub fn run(program: &Path, args: &[String], timeout: Duration, limits: Limits) -
     let (drained_tx, drained_rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let mut output = Vec::new();
-        let result = stdout
-            .by_ref()
-            .take(limits.max_collector_bytes as u64 + 1)
-            .read_to_end(&mut output)
-            .and_then(|_| {
-                if output.len() > limits.max_collector_bytes {
-                    Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "collector byte limit exceeded",
-                    ))
-                } else {
-                    Ok(output)
-                }
-            });
+        let result = std::io::Read::read_to_end(&mut stdout, &mut output).map(|_| output);
         let _ = drained_tx.send(result);
     });
 
     let deadline = std::time::Instant::now() + timeout;
-    let mut drained = None;
     loop {
-        if drained.is_none() {
-            match drained_rx.try_recv() {
-                Ok(result) => drained = Some(result.context("read collector stdout")?),
-                Err(std::sync::mpsc::TryRecvError::Empty) => {}
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => bail!("collector stdout reader stopped"),
-            }
-        }
         match child_has_exited(pid)? {
             true => {
                 // The pipe closes when its last writer exits. A grandchild the
                 // collector left behind keeps it open, so the wait for EOF is
                 // bounded by the same deadline rather than by that grandchild.
-                let output = match drained.take() { Some(output) => output, None => drained_rx
+                let output = drained_rx
                     .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
                     .map_err(|_| {
                         anyhow::anyhow!(
@@ -146,7 +122,7 @@ pub fn run(program: &Path, args: &[String], timeout: Duration, limits: Limits) -
                             timeout.as_secs()
                         )
                     })?
-                    .context("read collector stdout")? };
+                    .context("read collector stdout")?;
                 let status = owned.reap()?;
                 if !status.success() {
                     bail!(
@@ -155,11 +131,8 @@ pub fn run(program: &Path, args: &[String], timeout: Duration, limits: Limits) -
                         status.code().unwrap_or(-1)
                     );
                 }
-                return parse(
-                    std::str::from_utf8(&output).context("collector stdout is not UTF-8")?,
-                    limits,
-                )
-                .with_context(|| format!("collector {}", program.display()));
+                return parse(&String::from_utf8_lossy(&output))
+                    .with_context(|| format!("collector {}", program.display()));
             }
             false if std::time::Instant::now() >= deadline => {
                 bail!(

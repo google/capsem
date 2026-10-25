@@ -1,39 +1,34 @@
 #!/usr/bin/env python3
-"""Fresh Criterion inputs and raw samples; the Rust owner computes statistics.
+"""Measure the Rust Criterion benchmarks.
 
-Pinned Criterion --list declares exact case IDs. Each fresh benchmark.json and
-sample.json pair must match. Original upstream JSON text remains in the bounded
-existing sidecar for audit, not as a second statistics or cache authority.
+Nine bench targets are declared across three crates and, before this,
+nothing ran any of them: not CI, not the gate, not a just recipe. Two had
+drifted into placeholders measuring something other than what they name.
+
+Targets are read from the Cargo manifests rather than listed here, so a new
+`[[bench]]` is picked up by existing code instead of being silently orphaned
+the way these nine were.
+
+Prints raw per-iteration nanoseconds on stdout; `capsem-bench` computes every
+statistic. Diagnostics go to stderr.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import math
-import stat
+import os
+import subprocess
 import sys
-import tempfile
 import tomllib
 from pathlib import Path
 
-from capsem_builder.gate import config as gate_config
-
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "tests"))
-
-SETTINGS = gate_config.load(ROOT).benchmark
-
-
-def prepare(*args, **kwargs):
-    # Resolve source-owned helpers after this script's CLI path bootstrap.
-    from benchmarks.helpers.criterion_process import prepare as prepare_binary
-
-    return prepare_binary(*args, **kwargs)
+CRITERION = ROOT / "cache" / "target" / "cargo" / "criterion"
 
 
 def declared_targets() -> list[tuple[str, str]]:
+    """Every `[[bench]]` in the workspace, as (crate, bench name)."""
     found = []
     for manifest in sorted((ROOT / "crates").glob("*/Cargo.toml")):
         data = tomllib.loads(manifest.read_text(encoding="utf-8"))
@@ -44,167 +39,86 @@ def declared_targets() -> list[tuple[str, str]]:
     return found
 
 
-def input_budget() -> dict[str, int]:
-    return {"bytes": SETTINGS.run.max_collector_bytes, "samples": SETTINGS.run.max_samples_per_run}
-
-
-def read_original(path: Path, root: Path, budget: dict[str, int]) -> str:
-    """Bound before reading/parsing; never follow retained external inputs."""
-    for member in [path, *path.parents]:
-        if member == root:
-            break
-        if member.is_symlink():
-            raise ValueError(f"linked Criterion input: {member}")
-    if not stat.S_ISREG(path.stat().st_mode):
-        raise ValueError(f"non-regular Criterion input: {path}")
-    with path.open("rb") as source:
-        raw = source.read(budget["bytes"] + 1)
-    if not raw or len(raw) > budget["bytes"]:
-        raise ValueError("Criterion input byte budget exceeded or empty input")
-    budget["bytes"] -= len(raw)
-    return raw.decode("utf-8")
-
-
-def samples_for(
-    root: Path, target: str, expected: set[str], budget: dict[str, int]
-) -> tuple[dict, dict]:
-    measured, originals, observed = {}, {}, set()
-    for path in root.glob("**/new/sample.json"):
-        if len(observed) >= SETTINGS.criterion.max_cases:
-            raise ValueError("Criterion case budget exceeded")
-        case = path.parent.parent.relative_to(root).as_posix()
-        metadata = read_original(path.with_name("benchmark.json"), root, budget)
-        identity = json.loads(metadata)
-        full_id = identity["full_id"]
-        if full_id not in expected or full_id in observed or identity["directory_name"] != case:
-            raise ValueError("Criterion full_id/directory/list identity mismatch")
-        original = read_original(path, root, budget)
-        sample = json.loads(original)
-        times, iters = sample["times"], sample["iters"]
-        if (
-            not isinstance(times, list)
-            or not isinstance(iters, list)
-            or not times
-            or len(times) != len(iters)
-            or len(times) > SETTINGS.run.max_samples_per_metric
-            or len(times) > budget["samples"]
-        ):
-            raise ValueError("Criterion raw arrays are empty, unequal or exceed sample budget")
-        values = []
-        for total, count in zip(times, iters, strict=True):
-            if (
-                any(
-                    type(value) not in (int, float) or not math.isfinite(value) or value <= 0
-                    for value in (total, count)
-                )
-                or not float(count).is_integer()
-            ):
-                raise ValueError("Criterion times/iteration counts must be positive finite numbers")
-            value = total / count
-            if not math.isfinite(value) or value <= 0:
-                raise ValueError("Criterion per-iteration sample is not positive finite")
-            values.append(value)
-        budget["samples"] -= len(values)
-        key = case.removeprefix(f"{target}/")
-        if key in measured:
-            raise ValueError("Criterion metric identity collision")
-        measured[key] = values
-        originals[full_id] = {"benchmark_json": metadata, "sample_json": original}
-        observed.add(full_id)
-    if observed != expected:
-        raise ValueError(f"Criterion case coverage mismatch: missing={sorted(expected - observed)}")
-    return measured, originals
-
-
-def run_bench(
-    crate: str, target: str, *, sample_size: int | None, budget: dict[str, int] | None = None
-) -> tuple[dict, dict, dict]:
-    budget = input_budget() if budget is None else budget
-    timeout = (
-        SETTINGS.run.quick_timeout_secs if sample_size is not None else SETTINGS.run.timeout_secs
-    )
+def run_bench(crate: str, target: str, *, sample_size: int | None) -> None:
+    command = ["cargo", "bench", "-p", crate, "--bench", target]
+    if sample_size is not None:
+        # Criterion reads this after `--`; fewer samples is a coarser estimate,
+        # which is the trade a dev-loop run is making on purpose.
+        command += ["--", "--sample-size", str(sample_size)]
     print(f"running {crate}::{target}", file=sys.stderr)
-    # Gate/bounded TMPDIR owns this lifetime. Cargo's shared target is untouched.
-    with tempfile.TemporaryDirectory(prefix="capsem-criterion-") as temporary:
-        generation = Path(temporary)
-        execution = prepare(
-            ROOT, crate, target, timeout=timeout, budget=budget, settings=SETTINGS.criterion
-        )
-        listed = execution.run(["--list"], generation / "list", "declare")
-        if not listed:
-            raise ValueError("Criterion no case output")
-        expected = set()
-        for line in listed.splitlines():
-            if not line.endswith(": benchmark") or not (name := line.removesuffix(": benchmark")):
-                raise ValueError("unexpected Criterion --list output")
-            if name in expected or len(expected) >= SETTINGS.criterion.max_cases:
-                raise ValueError("duplicate Criterion case or case budget exceeded")
-            expected.add(name)
-        output = generation / "measured"
-        output.mkdir()
-        args = ["--sample-size", str(sample_size)] if sample_size is not None else []
-        diagnostic = execution.run(args, output, "measure")
-        print(diagnostic, file=sys.stderr, end="")
-        measured, originals = samples_for(output, target, expected, budget)
-        return (
-            measured,
-            {
-                "crate": crate,
-                "target": target,
-                "generation": generation.name,
-                "listing": listed,
-                "cases": originals,
-                "execution": execution.receipt,
-            },
-            execution.runtime_metrics,
-        )
+    # Criterion otherwise puts cases directly under its shared output root,
+    # without the Cargo target directory that samples_for reads.
+    subprocess.run(
+        command,
+        cwd=ROOT,
+        check=True,
+        stdout=sys.stderr,
+        env={**os.environ, "CRITERION_HOME": str(CRITERION / target)},
+    )
+
+
+def samples_for(target: str) -> dict[str, list[float]]:
+    """Raw per-iteration nanoseconds for each case of one bench target."""
+    root = CRITERION / target
+    if not root.is_dir():
+        return {}
+    measured: dict[str, list[float]] = {}
+    for sample_path in sorted(root.glob("**/new/sample.json")):
+        sample = json.loads(sample_path.read_text(encoding="utf-8"))
+        times, iters = sample.get("times", []), sample.get("iters", [])
+        per_iteration = [
+            float(total) / float(count)
+            for total, count in zip(times, iters, strict=False)
+            if float(count) > 0
+        ]
+        if not per_iteration:
+            continue
+        # `<target>/<case>/new/sample.json` -- the case is the parent of `new`.
+        case = sample_path.parent.parent.relative_to(root).as_posix().removeprefix(f"{target}/")
+        measured[case] = per_iteration
+    return measured
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--quick", action="store_true", help="coarser diagnostic sample count")
-    parser.add_argument("--target", action="append", help="select an exact measured bench target")
+    parser.add_argument(
+        "--quick",
+        action="store_true",
+        help="fewer samples per case; a coarser estimate for the dev loop",
+    )
+    parser.add_argument(
+        "--reuse",
+        action="store_true",
+        help="read results already on disk instead of running the benchmarks",
+    )
+    parser.add_argument("--target", action="append", help="limit to one bench target")
     args = parser.parse_args()
+
     targets = declared_targets()
-    diagnostic = SETTINGS.criterion.diagnostic_targets
-    declared = {f"{crate}::{target}" for crate, target in targets}
-    if set(diagnostic) - declared:
-        parser.error("diagnostic target classification contains undeclared targets")
-    names = [target for _, target in targets]
-    if len(set(names)) != len(names):
-        parser.error("ambiguous repeated benchmark target names")
     if args.target:
-        if len(set(args.target)) != len(args.target) or set(args.target) - set(names):
-            parser.error("unknown or repeated benchmark target selection")
-        selected = [pair for pair in targets if pair[1] in args.target]
-        if any(f"{crate}::{target}" in diagnostic for crate, target in selected):
-            parser.error("selected benchmark is diagnostic-only, not a Criterion measurement")
-        targets = selected
-    else:
-        for name, reason in diagnostic.items():
-            print(f"diagnostic-only {name}: {reason}", file=sys.stderr)
-        targets = [pair for pair in targets if f"{pair[0]}::{pair[1]}" not in diagnostic]
+        targets = [pair for pair in targets if pair[1] in args.target]
     if not targets:
-        parser.error("no measured Criterion targets selected")
-    metrics, receipts = {}, []
-    budget = input_budget()
+        print("no [[bench]] targets are declared", file=sys.stderr)
+        return 1
+
+    metrics: dict[str, dict] = {}
     for crate, target in targets:
-        cases, receipt, resources = run_bench(
-            crate,
-            target,
-            sample_size=SETTINGS.criterion.quick_sample_size if args.quick else None,
-            budget=budget,
+        if not args.reuse:
+            run_bench(crate, target, sample_size=10 if args.quick else None)
+        for case, values in samples_for(target).items():
+            metrics[f"{target}.{case}.ns"] = {
+                "unit": "nanoseconds",
+                "samples": values,
+            }
+
+    if not metrics:
+        print(
+            "no Criterion results found; the benches produced nothing to read",
+            file=sys.stderr,
         )
-        for case, values in cases.items():
-            metrics[f"{target}.{case}.ns"] = {"unit": "nanoseconds", "samples": values}
-        for name, metric in resources.items():
-            metrics[f"{target}.runtime.{name}"] = metric
-        receipts.append(receipt)
-    document = {"metrics": metrics, "sidecar": json.dumps({"criterion_inputs": receipts})}
-    encoded = json.dumps(document).encode()
-    if len(encoded) > SETTINGS.run.max_collector_bytes:
-        raise ValueError("Criterion collector output budget exceeded")
-    sys.stdout.write(encoded.decode())
+        return 1
+
+    json.dump({"metrics": metrics}, sys.stdout)
     return 0
 
 

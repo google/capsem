@@ -9,10 +9,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from helpers.collector_source import source_main
-from helpers.stopped_workspace import BODY_ROUTE, BODY_URL, VM_ID
-
-from benchmarks.helpers.route_measurements import Observations
 
 ROOT = Path(__file__).resolve().parents[1]
 config = tomllib.loads((ROOT / "config/gate.toml").read_text())
@@ -29,28 +25,28 @@ loader.exec_module(collector)
     [
         ("/connections", "/connections"),
         ("/status", "/status"),
-        ("/vms/{id}/status", f"/vms/{VM_ID}/status"),
-        ("/vms/{id}/credential-grants", f"/vms/{VM_ID}/credential-grants"),
-        (BODY_ROUTE, BODY_URL),
+        ("/vms/{id}/status", f"/vms/{collector.VM_ID}/status"),
+        ("/vms/{id}/credential-grants", f"/vms/{collector.VM_ID}/credential-grants"),
+        (collector.BODY_ROUTE, collector.BODY_URL),
     ],
 )
 def test_measured_paths_use_the_actual_fixture(pattern: str, expected: str) -> None:
-    assert collector.RouteCase("GET", pattern, "default").resolve(None) == expected
+    assert collector.request_path(pattern) == expected
 
 
 @pytest.mark.parametrize("pattern", ["/connections/{connection_id}", "/vms/{id}/bodies/{other}"])
 def test_a_route_without_a_successful_fixture_is_refused(pattern: str) -> None:
     with pytest.raises(ValueError, match="fixture"):
-        collector.RouteCase("GET", pattern, "default").resolve(None)
+        collector.request_path(pattern)
 
 
 @pytest.mark.parametrize("pattern", ["/vms/{id}/exposures", "/vms/{id}/security/status"])
 def test_live_owner_routes_require_the_live_fixture(pattern: str) -> None:
     with pytest.raises(ValueError, match="live"):
-        collector.RouteCase("GET", pattern, "default").resolve(None)
+        collector.request_path(pattern)
     live_id = "2ac847f8-55fa-46e6-93f4-bd91db45d4ea"
-    assert collector.RouteCase("GET", pattern, "default").resolve(live_id) == pattern.replace("{id}", live_id)
-    assert collector.RouteCase("GET", BODY_ROUTE, "default").resolve(live_id) == BODY_URL
+    assert collector.request_path(pattern, live_id) == pattern.replace("{id}", live_id)
+    assert collector.request_path(collector.BODY_ROUTE, live_id) == collector.BODY_URL
 
 
 def test_fixture_diagnostics_do_not_corrupt_collector_json(
@@ -58,7 +54,6 @@ def test_fixture_diagnostics_do_not_corrupt_collector_json(
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
 ) -> None:
-    original_ask_collector = collector.collect_ask_controls
     stopped = []
     service = SimpleNamespace(
         tmp_dir=tmp_path,
@@ -71,92 +66,37 @@ def test_fixture_diagnostics_do_not_corrupt_collector_json(
     gateway = SimpleNamespace(
         port=12345,
         token="fixture-token",
-        pid=2,
+        proc=SimpleNamespace(pid=2),
         start=lambda: print("GATEWAY LOG: isolated fixture"),
         stop=lambda: stopped.append("gateway"),
     )
     monkeypatch.setattr(collector, "ServiceInstance", lambda: service)
-    monkeypatch.setattr(collector, "service_gateway", lambda _: gateway)
-    monkeypatch.setattr(collector, "seed_stopped_workspace", lambda *_, **__: None)
+    monkeypatch.setattr(collector, "GatewayInstance", lambda _: gateway)
+    monkeypatch.setattr(collector, "seed_stopped_workspace", lambda *_: None)
     monkeypatch.setattr(collector, "clone_benchmark_assets", lambda *_: tmp_path / "benchmark-assets")
     original_process = collector.psutil.Process
     monkeypatch.setattr(collector.psutil, "Process", lambda _: None)
-    monkeypatch.setattr(collector, "measured_cases", lambda: [collector.RouteCase("GET", "/status", "default")])
-    monkeypatch.setattr(collector, "collect_policy", lambda *_: {})
-    monkeypatch.setattr(collector, "collect_lifecycle", lambda *_: {})
-    monkeypatch.setattr(collector, "collect_networks", lambda *_: {})
-    monkeypatch.setattr(collector, "collect_proxies", lambda *_: {})
-    monkeypatch.setattr(collector, "collect_workload_controls", lambda *_: {})
-    monkeypatch.setattr(collector, "collect_connection_errors", lambda *_: {})
-    monkeypatch.setattr(collector, "collect_network_members", lambda *_: {})
-    monkeypatch.setattr(collector, "collect_credentials", lambda *_: {})
-    monkeypatch.setattr(collector, "collect_mcp_controls", lambda *_: {})
-    monkeypatch.setattr(collector, "collect_preview_controls", lambda *_: {})
-    monkeypatch.setattr(collector, "collect_run_purge", lambda *_: {})
-    monkeypatch.setattr(collector, "collect_save_controls", lambda *_: {})
-    monkeypatch.setattr(collector, "collect_ask_controls", lambda *_: {})
-    monkeypatch.setattr(collector, "collect_reload_controls", lambda *_: {})
-    monkeypatch.setattr(collector, "collect_pause_resume", lambda *_: {})
-    monkeypatch.setattr(collector, "collect_update_check", lambda *_: {})
-    monkeypatch.setattr(collector, "require_update_inputs", lambda: None)
-    # This is a collector-output wiring test, never an implicit product/native
-    # launcher when a future finite collector is added without its double.
-    def unexpected_child(*args,**kwargs):
-        raise AssertionError('source collector wiring test attempted a child launch')
-    monkeypatch.setattr('subprocess.Popen',unexpected_child)
-    monkeypatch.setattr(collector, "collect_images", lambda *_: (print("IMAGE PREPARATION: untimed") or {}))
-    monkeypatch.setattr(collector, "preflight", lambda *_: None)
-    monkeypatch.setattr(collector, "seed_metadata", lambda *_: None)
-    monkeypatch.setattr(collector, "seed_logs", lambda *_: None)
+    monkeypatch.setattr(collector, "measured_routes", lambda: ["/status"])
     monkeypatch.setattr(
         collector, "sample_warm_route",
-        lambda target, *_: (Observations([0.1], [0.01], [0.02]), dict.fromkeys(target.cpu_processes, 0.0)),
+        lambda target, *_: ([0.1], dict.fromkeys(target.cpu_processes, 0.0)),
     )
-    monkeypatch.setattr(collector, "sample_cold_route", lambda *_: Observations([0.2], [0.01], [0.02]))
+    monkeypatch.setattr(collector, "sample_cold_route", lambda *_: [0.2])
     monkeypatch.setattr(
         collector, "sample_concurrent_route",
-        lambda target, path, samples, *_: (Observations([0.3] * samples, [0.01] * samples, [0.02] * samples), dict.fromkeys(target.cpu_processes, 0.0), 10.0),
+        lambda target, *_: ([0.3], dict.fromkeys(target.cpu_processes, 0.0), 10.0),
     )
     monkeypatch.setattr(sys, "argv", ["routes", "--samples", "1"])
 
     try:
-        # Keep one genuine finite collector unmocked. Its fixture owner is a
-        # sentinel so this adversary itself cannot launch native preparation,
-        # even when the source-only preflight is broken.
-        from benchmarks.helpers import route_asks
-        def unexpected_fixture(*args,**kwargs):
-            raise AssertionError('native fixture preparation reached')
-        with monkeypatch.context() as missing:
-            missing.setattr(collector,'collect_ask_controls',original_ask_collector)
-            missing.setattr(route_asks,'ask_target',unexpected_fixture)
-            with pytest.raises(AssertionError,match='collect_ask_controls'):
-                source_collector_main()
-        assert source_collector_main() == 0
+        assert collector.main() == 0
     finally:
         # psutil is shared with the process-leak fixture, which tears down
         # before monkeypatch's automatic undo.
         monkeypatch.setattr(collector.psutil, "Process", original_process)
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
-    assert len(payload["metrics"]) == 26
+    assert len(payload["metrics"]) == 14
     assert "SERVICE LOG:" in captured.err
-    assert stopped == ["service"]
-
-
-def source_collector_main():
-    # Fail before main constructs any resource, not after a missed double has
-    # entered its native fixture. New finite imports inherit this exact rule.
-    return source_main(vars(collector),test_module=__name__)
-
-
-def test_missing_prepared_image_inputs_fail_before_product_children(monkeypatch) -> None:
-    created = []
-    def unavailable(*_):
-        raise ValueError('missing exact retained image input')
-    monkeypatch.setattr(collector, 'collect_images', unavailable)
-    monkeypatch.setattr(collector, 'require_update_inputs', lambda: None)
-    monkeypatch.setattr(collector, 'ServiceInstance', lambda: created.append(True))
-    monkeypatch.setattr(sys, 'argv', ['routes', '--samples', '1'])
-    with pytest.raises(ValueError, match='retained image'):
-        collector.main()
-    assert created == []
+    assert "GATEWAY LOG:" in captured.err
+    assert stopped == ["gateway", "service"]
