@@ -36,9 +36,11 @@ model IDs not yet published upstream. Refresh merges these entries only while
 their exact ID is absent upstream; upstream takes ownership when it adds the ID.
 Its single reviewed entry is Google's published standard Gemini 4 Argon API
 rates, including the announced December 1 change. The internal observed
-`gemini-4-argon-trial` ID remains unpriced: neither response identity nor a
-product announcement proves billing equivalence. Estimates express public API
-token value, not a subscription invoice. Existing ledger rows are not repriced.
+`gemini-4-argon-medium` and `gemini-4-argon-trial` IDs are explicit reviewed
+aliases of that canonical entry, sharing its rates and date constraints.
+Estimates express public API token value, not a subscription invoice. The
+alias review does not infer subscription billing equivalence. Existing ledger
+rows are not repriced.
 
 Refresh with:
 

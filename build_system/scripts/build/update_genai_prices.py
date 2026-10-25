@@ -56,11 +56,23 @@ def merge_reviewed_prices(
                 "reviewed prices require unique exact IDs and primary-source provenance"
             )
         seen.add(identity)
+        aliases = row.get("aliases", [])
+        if aliases and (
+            not isinstance(aliases, list)
+            or not row.get("alias_note")
+            or any(not isinstance(alias, str) or not alias.startswith(model["id"] + "-") for alias in aliases)
+            or len(set(aliases)) != len(aliases)
+        ):
+            raise ValueError("reviewed aliases require exact distinct family IDs and a review note")
         provider = next((entry for entry in providers if entry["id"] == provider_id), None)
         if provider is None:
             raise ValueError(f"missing upstream provider: {provider_id}")
         if not any(entry["id"] == model["id"] for entry in provider["models"]):
             provider["models"].append({key: model[key] for key in MODEL_FIELDS if key in model})
+        if aliases:
+            canonical = next(entry for entry in provider["models"] if entry["id"] == model["id"])
+            existing = canonical["match"].get("or", [canonical["match"]])
+            canonical["match"] = {"or": existing + [{"equals": alias} for alias in aliases if {"equals": alias} not in existing]}
     return providers
 
 

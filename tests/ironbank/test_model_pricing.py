@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import pytest
-from ironbank.model_pricing import assert_model_call_price, estimate_cost_usd, has_pricing
+from ironbank.model_pricing import (
+    assert_model_call_price,
+    estimate_cost_usd,
+    has_pricing,
+)
 
 
 def test_openai_gpt5_nano_fixture_price_is_exact() -> None:
@@ -85,7 +89,7 @@ def test_prompt_tiers_charge_entire_call_and_cache_write_has_its_own_rate() -> N
 def test_unknown_null_is_not_an_observed_zero_and_missing_usage_stays_unknown() -> None:
     row = {
         "provider": "google",
-        "model": "gemini-4-argon-trial",
+        "model": "gemini-unknown-fixture",
         "input_tokens": 100,
         "output_tokens": 10,
         "usage_details": "{}",
@@ -121,10 +125,17 @@ def test_known_measured_zero_is_valid() -> None:
     )
 
 
-def test_reviewed_argon_prices_follow_published_dates_without_trial_alias() -> None:
+def test_captured_opus_one_hour_cache_writes_use_published_rate() -> None:
+    assert estimate_cost_usd(provider="anthropic", model="claude-opus-5", input_tokens=45149,
+                             output_tokens=8, usage_details={"cache_read": 44611, "cache_write": 34, "cache_write_1h": 34},
+                             timestamp="2026-10-24T00:00:00Z") == pytest.approx(0.0253655)
+
+
+@pytest.mark.parametrize("model", ["gemini-4-argon", "gemini-4-argon-medium", "gemini-4-argon-trial"])
+def test_reviewed_argon_prices_and_aliases_follow_published_dates(model: str) -> None:
     values = {
         "provider": "google",
-        "model": "gemini-4-argon",
+        "model": model,
         "input_tokens": 1_000_000,
         "output_tokens": 1_000_000,
         "usage_details": {"cache_read": 100_000},

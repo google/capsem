@@ -60,8 +60,9 @@ def estimate_cost_usd(
         return None
     read = int(usage_details.get("cache_read") or 0)
     write = int(usage_details.get("cache_write") or 0)
+    write_1h = int(usage_details.get("cache_write_1h") or 0)
     effective_input = input_tokens - read - write
-    if min(effective_input, read, write) < 0 or usage_details.get("cache_write_1h", 0):
+    if min(effective_input, read, write, write_1h) < 0 or write_1h > write or (write_1h and provider != "anthropic"):
         return None
     provider_data = _provider(provider)
     if provider_data is None:
@@ -74,13 +75,18 @@ def estimate_cost_usd(
         (effective_input, "input_mtok"),
         (output_tokens, "output_mtok"),
         (read, "cache_read_mtok"),
-        (write, "cache_write_mtok"),
+        (write - write_1h, "cache_write_mtok"),
     ]:
         if count:
             rate = _rate(price.get(key), input_tokens)
             if rate is None:
                 return None
             total += count * rate / 1_000_000.0
+    if write_1h:
+        rate = _rate(price.get("input_mtok"), input_tokens)
+        if rate is None:
+            return None
+        total += write_1h * 2 * rate / 1_000_000.0
     return total
 
 

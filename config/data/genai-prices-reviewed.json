@@ -5,7 +5,9 @@
       "provider": "google",
       "source_url": "https://ai.google.dev/gemini-api/docs/pricing",
       "availability_source_url": "https://antigravity.google/blog/gemini-4-argon-in-google-antigravity/",
-      "note": "Published standard API-equivalent token rates only. No inference about subscription billing or internal trial aliases. Explicit cache writes are unsupported.",
+      "note": "Published standard API-equivalent token rates only, not subscription billing. Explicit cache writes are unsupported.",
+      "aliases": ["gemini-4-argon-medium", "gemini-4-argon-trial"],
+      "alias_note": "Maintainer-reviewed exact Code Assist request/response variants observed in the demo, valued at the canonical Gemini 4 Argon public API token rates. This is an API-equivalent estimate, not a subscription invoice.",
       "model": {
         "id": "gemini-4-argon",
         "match": {"equals": "gemini-4-argon"},

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Map reviewed Gemini 4 Argon Medium and Trial aliases to one canonical price entry, sharing its published rates and date changes.
+
 - Show `/home` as the file explorer root and include nested agent artifact directories.
 
 - Back workload `/home` with the observed session file tree, preserving existing Home files on first launch so Home artifacts appear in Files and file telemetry.

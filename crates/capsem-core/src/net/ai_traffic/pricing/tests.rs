@@ -349,17 +349,21 @@ fn oversized_model_string_rejected() {
 }
 
 #[test]
-fn live_unknown_trial_model_is_not_free_and_output_only_usage_is_retained() {
+fn reviewed_trial_model_is_priced_and_output_only_usage_is_retained() {
     let table = PricingTable::load();
-    assert_eq!(
-        table.estimate_cost(
-            "google",
-            Some("gemini-4-argon-trial"),
-            Some(34298),
-            Some(250),
-            &no_details()
-        ),
-        None
+    assert!(
+        (table
+            .estimate_cost(
+                "google",
+                Some("gemini-4-argon-trial"),
+                Some(34298),
+                Some(250),
+                &no_details()
+            )
+            .unwrap()
+            - 0.071096)
+            .abs()
+            < 1e-10
     );
     assert!(
         table
