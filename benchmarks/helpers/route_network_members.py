@@ -160,13 +160,21 @@ def sample_members(cycle,reference,certificate):
     deadline = time.monotonic()+cfg['timeout_seconds']
     cycle.probe.deadline = deadline
     cycle.call('DELETE',f'/networks/{network}/members/{alpha}',deadline=deadline)
-    while original.is_running() or cycle.probe.cables(alpha):
+    while cycle.probe.cables(alpha):
         if time.monotonic() >= deadline:
-            raise TimeoutError('last-member switch/cable did not retire')
+            raise TimeoutError('last-member cable did not detach')
         time.sleep(cfg['poll_seconds'])
-    assert cycle.probe.switches() == []
+    # Disconnect leaves an empty network available for rejoining. Its switch
+    # retires only after the network itself is deleted, not after a detach.
+    assert cycle.read(f'/networks/{network}',deadline=deadline)['members'] == []
+    cycle.same_switch(original)
     _,retired = cycle.call('DELETE',f'/networks/{network}',deadline=deadline)
     assert retired == {'success':True}
+    while original.is_running():
+        if time.monotonic() >= deadline:
+            raise TimeoutError('deleted network switch did not retire')
+        time.sleep(cfg['poll_seconds'])
+    assert cycle.probe.switches() == []
 
 
 def require_member_metrics(metrics,cfg,quick,labels=('service','gateway')):

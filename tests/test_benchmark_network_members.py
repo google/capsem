@@ -12,8 +12,10 @@ from benchmarks.helpers import route_network_members as subject
 class Backend:
     def __init__(self,failure=''):
         self.failure,self.calls,self.members,self.counter = failure,[],{},0
+        self.retired = False
+        self.created = False
         self.network = str(UUID(int=99))
-        self.switch = SimpleNamespace(pid=123,create_time=lambda:1.,is_running=lambda:bool(self.members))
+        self.switch = SimpleNamespace(pid=123,create_time=lambda:1.,is_running=lambda:not self.retired)
 
     def measure_request(self,method,path,**kwargs):
         self.calls.append((method,path))
@@ -23,6 +25,7 @@ class Backend:
             self.counter += 1
             value = {'id':str(UUID(int=self.counter)), 'name':data['name'], 'status':'Running', 'available_actions':[]}
         elif path == '/networks' and method == 'POST':
+            self.created = True
             status,value = 201,self.info()
         elif '/members/' in path:
             ident = path.rsplit('/',1)[1]
@@ -34,6 +37,9 @@ class Backend:
         elif '/logs' in path:
             value = subject_test_logs(self)
         elif method == 'DELETE':
+            assert not self.members, 'retirement requires an empty network'
+            if self.failure != 'retire-noop':
+                self.retired = True
             value = {'success':True}
         else:
             value = self.info()
@@ -64,7 +70,7 @@ class Probe:
     def switches(self):
         if self.backend.failure == 'switch-replaced' and len(self.backend.members) == 2:
             return [SimpleNamespace(pid=999,create_time=lambda:1.)]
-        return [self.backend.switch] if self.backend.members else []
+        return [self.backend.switch] if self.backend.created and not self.backend.retired else []
 
 
 def subject_test_logs(backend):
@@ -90,6 +96,7 @@ def subject_test_logs(backend):
 def setup(monkeypatch,failure=''):
     backend = Backend(failure)
     cycle = subject.Cycle(backend,SimpleNamespace(label='service',headers={}),None,subject.member_config(),{},lambda _:Probe(backend))
+    cycle.cfg = {**cycle.cfg,'timeout_seconds':0.2,'poll_seconds':0.001}
     monkeypatch.setattr(cycle,'listing',lambda **kw:[])
     monkeypatch.setattr(cycle,'ready',lambda *a,**kw:None)
     return cycle,backend
@@ -100,13 +107,13 @@ def test_real_effect_sequence_is_distinct_from_reply_and_flow_logs(monkeypatch,t
     cert = tmp_path/'cert'
     cert.write_text('synthetic certificate')
     subject.sample_members(cycle,'reference',cert)
-    assert len(cycle.metrics) == 12 and backend.members == {}
+    assert len(cycle.metrics) == 12 and backend.members == {} and backend.retired
     assert sum(method == 'PUT' for method,_ in backend.calls) == 2
     assert sum(method == 'DELETE' and '/members/' in path for method,path in backend.calls) == 2
     subject.require_member_metrics({**cycle.metrics,'service.network_members.0.wall_s':{'samples':[1]}},cycle.cfg,True,labels=('service',))
 
 
-@pytest.mark.parametrize('failure',['attach-noop','detach-noop','missing-cable','no-reachability','fake-flow','retry','switch-replaced'])
+@pytest.mark.parametrize('failure',['attach-noop','detach-noop','missing-cable','no-reachability','fake-flow','retry','switch-replaced','retire-noop'])
 def test_noop_broken_cable_packets_or_fabricated_flow_cannot_pass(monkeypatch,tmp_path,failure):
     cycle,_ = setup(monkeypatch,failure)
     cert = tmp_path/'cert'
