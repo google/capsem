@@ -359,6 +359,13 @@ mod google_wire {
     use serde::Deserialize;
 
     #[derive(Deserialize)]
+    pub struct Envelope<'a> {
+        pub model: Option<String>,
+        #[serde(borrow)]
+        pub request: Option<&'a serde_json::value::RawValue>,
+    }
+
+    #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     pub struct Request {
         pub contents: Option<Vec<Content>>,
@@ -409,9 +416,17 @@ mod google_wire {
 }
 
 fn parse_google(body: &[u8]) -> RequestMeta {
-    let body = google_request_body(body);
-    let Ok(req) = serde_json::from_slice::<google_wire::Request>(&body) else {
+    let Ok(envelope) = serde_json::from_slice::<google_wire::Envelope<'_>>(body) else {
         return RequestMeta::default();
+    };
+    // Code Assist wraps the public request. Borrow its bytes rather than
+    // decoding and reserializing a second full JSON document.
+    let request = envelope.request.map_or(body, |raw| raw.get().as_bytes());
+    let Ok(req) = serde_json::from_slice::<google_wire::Request>(request) else {
+        return RequestMeta {
+            model: envelope.model,
+            ..Default::default()
+        };
     };
 
     let system_prompt_preview = req.system_instruction.as_ref().and_then(|si| {
@@ -472,23 +487,13 @@ fn parse_google(body: &[u8]) -> RequestMeta {
     });
 
     RequestMeta {
-        model: None,   // Gemini model is in the URL path, not the body
-        stream: false, // Streaming detected from URL path in emit_model_call
+        model: envelope.model, // Public Gemini uses the URL; Code Assist supplies this field.
+        stream: false,         // Streaming detected from URL path in emit_model_call
         system_prompt_preview,
         messages_count,
         tools_count,
         tool_results,
     }
-}
-
-fn google_request_body(body: &[u8]) -> Vec<u8> {
-    let Ok(json) = serde_json::from_slice::<serde_json::Value>(body) else {
-        return body.to_vec();
-    };
-    let Some(request) = json.get("request").filter(|value| value.is_object()) else {
-        return body.to_vec();
-    };
-    serde_json::to_vec(request).unwrap_or_else(|_| body.to_vec())
 }
 
 // ── Ollama native ──────────────────────────────────────────────────

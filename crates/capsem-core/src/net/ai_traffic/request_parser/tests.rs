@@ -320,6 +320,16 @@ fn google_code_assist_model_role_function_response_preserves_call_id() {
         .contains("The command completed successfully"));
 }
 
+#[test]
+fn demo_code_assist_preserves_requested_model_and_tool_response_bytes() {
+    let body = br#"{"model":"gemini-4-argon-medium","request":{"contents":[{"role":"model","parts":[{"functionResponse":{"id":"fixture-write","name":"write_file","response":{ "output": "Created file" }}}]}]}}"#;
+    let meta = parse_request(ModelProtocol::Google, body);
+    assert_eq!(meta.model.as_deref(), Some("gemini-4-argon-medium"));
+    assert_eq!(meta.messages_count, 1);
+    assert_eq!(meta.tool_results[0].call_id, "fixture-write");
+    assert_eq!(meta.tool_results[0].content_preview, r#"{ "output": "Created file" }"#);
+}
+
 // ── Adversarial ─────────────────────────────────────────────────
 
 #[test]

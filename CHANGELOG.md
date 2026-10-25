@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Preserve the model requested by Google Code Assist while borrowing wrapped request bytes instead of decoding and reserializing the document.
+
 - Estimate Anthropic one-hour prompt-cache writes at the published rate without charging the same tokens as five-minute writes.
 
 - Mark archived request excerpts as truncated instead of reporting valid large model requests as invalid JSON.
