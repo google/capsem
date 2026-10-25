@@ -2,7 +2,7 @@ use super::*;
 use crate::tests::{read_http_request, write_json_response, write_response};
 
 #[test]
-fn overview_refuses_graphical_and_unknown_presentation_without_name_guesses() {
+fn overview_refuses_nonterminal_apps_without_name_guesses() {
     let mut value: serde_json::Value = serde_json::from_str(&overview("running", "Running")).unwrap();
     value["vms"][0]["name"] = serde_json::json!("terminal-looking-name");
     value["vms"][0]["app"] = serde_json::json!({"catalog_name":"anything","image":"r@sha256:abc","architecture":"arm64","display_name":"Development","description":"Tools","interfaces":["graphical"],"evidence":[]});
@@ -10,11 +10,21 @@ fn overview_refuses_graphical_and_unknown_presentation_without_name_guesses() {
         .unwrap()
         .sessions
         .is_empty());
-    value["vms"][0]["app"] = serde_json::Value::Null;
+    value["vms"][0]["app"]["interfaces"] = serde_json::json!([]);
     assert!(state_from_status_json_for_test(&value.to_string(), Duration::ZERO)
         .unwrap()
         .sessions
         .is_empty());
+}
+
+#[test]
+fn overview_keeps_bare_runtime_vms_available_to_shell() {
+    let mut value: serde_json::Value = serde_json::from_str(&overview("running", "Running")).unwrap();
+    value["vms"][0]["app"] = serde_json::Value::Null;
+    value["vms"][0]["name"] = serde_json::json!("asset-runtime-arm64");
+    let state = state_from_status_json_for_test(&value.to_string(), Duration::ZERO).unwrap();
+    assert_eq!(state.sessions.len(), 1);
+    assert_eq!(state.sessions[0].title, "asset-runtime-arm64");
 }
 
 #[test]

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Keep bare runtime VMs available in the TUI shell while excluding graphical
+  and web applications from the terminal session manager.
+
 - Move the unfinished expanded benchmark campaign to its own development lane
   (#379); retain the established release checks for Capsem 0.7.1.
 

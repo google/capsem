@@ -285,7 +285,8 @@ fn status_response_to_state(status: HypervisorInfo, latency: Duration) -> AppSta
 
 fn terminal_vm(vm: &VmSummary) -> bool {
     use capsem_sdk::models::ImageInterface;
-    vm.app.as_ref().is_some_and(|app| {
+    // A bare runtime VM has a shell but no catalog app metadata.
+    vm.app.as_ref().is_none_or(|app| {
         app.interfaces.contains(&ImageInterface::Terminal)
             && !app.interfaces.contains(&ImageInterface::Graphical)
             && !app.interfaces.contains(&ImageInterface::Web)
