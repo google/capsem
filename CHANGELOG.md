@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Let fullscreen GUI windows fill the viewport despite fixed application size
+  hints, keeping Antigravity's first-run controls reachable at Retina density.
+
 - Keep bare runtime VMs available in the TUI shell while excluding graphical
   and web applications from the terminal session manager.
 

@@ -44,8 +44,12 @@ done
 # through the existing X11 settings owner. Fail closed when the pinned source
 # changes; re-evaluate this patch when upgrading Xpra.
 python3 - <<'PY'
+import ast
 import hashlib
 from pathlib import Path
+from types import SimpleNamespace
+
+from xpra.util.objects import typedict
 
 path = Path('/usr/lib/python3/dist-packages/xpra/server/base.py')
 source = path.read_bytes()
@@ -53,6 +57,32 @@ assert hashlib.sha256(source).hexdigest() == '0c31a16622d13030b3d4feea335e611986
 obsolete = b'    def update_all_server_settings(self, reset: bool = False) -> None:\n        pass  # may be overridden in subclasses (ie: x11 server)\n\n'
 assert source.count(obsolete) == 1
 path.write_bytes(source.replace(obsolete, b''))
+
+# Fullscreen is owned by the embedding viewport. Xpra 6.5.1 still clamps it
+# to WM_NORMAL_HINTS, so fixed-size Electron welcome windows get cropped at
+# HiDPI. Ignore those hints only in fullscreen; dialogs retain their limits.
+path = Path('/usr/lib/python3/dist-packages/xpra/x11/models/window.py')
+source = path.read_bytes()
+assert hashlib.sha256(source).hexdigest() == '1a9c88a1d8c0264f75db08feb5686927a2f3207a1be09ea449b77aea097dc9c5'
+method = b'    def calc_constrained_size(self, w: int, h: int, hints: dict) -> tuple[int, int]:\n'
+assert source.count(method) == 1
+source = source.replace(method, method + b'        if self.get_property("fullscreen"):\n            return w, h\n')
+
+# Exercise the installed implementation without importing the X11 module,
+# whose bindings require a live display during a Docker image build.
+tree = ast.parse(source)
+model = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == 'WindowModel')
+functions = [next(node for node in body if isinstance(node, ast.FunctionDef) and node.name == 'calc_constrained_size')
+             for body in (tree.body, model.body)]
+namespace = {'typedict': typedict, 'geomlog': lambda *args: None}
+exec(compile(ast.Module(body=[functions[0]], type_ignores=[]), str(path), 'exec'), namespace)
+exec(compile(ast.Module(body=[functions[1]], type_ignores=[]), str(path), 'exec'), namespace, methods := {})
+hints = {'minimum-size': (728, 584), 'maximum-size': (728, 584)}
+for fullscreen in (False, True):
+    window = SimpleNamespace(get_property=lambda name: fullscreen, size_constraints=())
+    for size in ((2400, 1476), (1600, 1200)):
+        assert methods['calc_constrained_size'](window, *size, hints) == (size if fullscreen else (728, 584))
+path.write_bytes(source)
 PY
 # Xvfb cannot update hardware DPI. Use Xpra's rootless Xdummy backend and
 # require the direct, non-setuid Xorg binary (never the legacy Xorg wrapper).
