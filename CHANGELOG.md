@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Group model reasoning/text and uniquely matched tool results in Stats, keep unanswered requests visible, and move raw payloads into the Details side panel.
+
 - Queue concurrent model and MCP requests for bounded inspection capacity instead of immediately returning 502; retain the existing body-memory limit and fail closed on timeout.
 
 - Preserve the model requested by Google Code Assist while borrowing wrapped request bytes instead of decoding and reserializing the document.

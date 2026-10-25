@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import demo from './fixtures/demo-071-interactions.json';
+import claudeDemo from './fixtures/demo-071-claude-interactions.json';
 import {
   CaptureStatus,
   InteractionBlockKind,
@@ -20,6 +22,7 @@ import {
   interactionLabel,
   interactionItems,
   payloadDisplay,
+  displayInteractions,
 } from '../interaction-viewer';
 
 const report: InteractionReport = {
@@ -84,6 +87,39 @@ const report: InteractionReport = {
 };
 
 describe('interaction viewer model', () => {
+  it('retains unanswered Claude requests and never invents a tool result', () => {
+    const items = displayInteractions(claudeDemo as InteractionReport, 'model');
+    expect(items.filter(item => item.content.kind === 'request_preview').map(item => item.model_call_id)).toEqual([2, 7]);
+    const tool = items.find(item => item.content.kind === 'tool_call');
+    expect(tool?.content.kind === 'tool_call' && tool.content.result).toBeUndefined();
+    expect(items.filter(item => item.content.kind === 'message')).toHaveLength(7);
+  });
+  it('groups the sanitized AGY demo continuation and hides duplicate raw request cards', () => {
+    const source = structuredClone(demo) as InteractionReport;
+    const items = displayInteractions(source, 'model');
+    expect(items.filter(item => item.content.kind === 'request_preview')).toHaveLength(0);
+    expect(items.filter(item => item.content.kind === 'tool_result')).toHaveLength(0);
+    const call = items.find(item => item.content.kind === 'tool_call');
+    expect(call?.content.kind === 'tool_call' && call.content.result?.call_id).toBe('fixture-write');
+    const message = items.find(item => item.model_call_id === 3 && item.content.kind === 'message');
+    expect(message?.content.kind === 'message' && message.content.blocks.map(block => block.kind)).toEqual(['reasoning', 'text']);
+    expect(source).toEqual(demo);
+  });
+
+  it('never pairs reused tool identifiers across traces or hides an unmatched result', () => {
+    const source = structuredClone(report);
+    source.items[2].trace_id = 'one'; source.items[3].trace_id = 'two';
+    expect(displayInteractions(source, 'tools')).toHaveLength(2);
+    source.items[3].trace_id = 'one';
+    expect(displayInteractions(source, 'tools')).toHaveLength(1);
+  });
+
+  it('keeps ambiguous call identities separate instead of inventing a pairing', () => {
+    const source = structuredClone(report);
+    source.items[2].trace_id = source.items[3].trace_id = 'one';
+    source.items.push({...source.items[2], event_id: 'another-call'});
+    expect(displayInteractions(source, 'tools')).toHaveLength(3);
+  });
   it('filters the shared ordered interaction objects without rebuilding rows', () => {
     expect(interactionItems(report, 'all')).toEqual(report.items);
     expect(interactionItems(report, 'model').map(item => item.event_id)).toEqual([

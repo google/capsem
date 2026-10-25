@@ -78,7 +78,7 @@ describe('StatsView tool-call contract', () => {
   });
 
   it('renders model and MCP activity from shared typed interaction variants', () => {
-    expect(source).toContain('type { EventBody, InteractionReport, ModelUsage, ToolEvent }');
+    expect(source).toContain('type { EventBody, Interaction, InteractionReport, ModelUsage, ToolEvent }');
     expect(source).toContain('interactions = detailRows.interactions');
     expect(source).toContain('title="Model and Tool Interactions"');
     expect(interactionSource).toContain('report: InteractionReport');
@@ -188,7 +188,9 @@ describe('StatsView detail drawer contract', () => {
     expect(source).toContain('api.getVmStatsDetail(vmId)');
     expect(source).toContain('bodyBlobs = detailRows.body_blobs');
     expect(source).toContain('interactions = detailRows.interactions');
-    expect(interactionSource).toContain('interactionBodies(report, item.event_id)');
+    expect(interactionSource).toContain('onDetails(item)');
+    expect(source).toContain('event_id: item.model_event_id ?? item.event_id');
+    expect(source).toContain('onDetails={inspectInteraction}');
     expect(detailSource).toContain("'request_body'");
     expect(detailSource).toContain("'response_body'");
     expect(source).toContain('api.fetchEventBodies(vmId, eventId)');

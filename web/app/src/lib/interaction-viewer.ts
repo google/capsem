@@ -32,6 +32,63 @@ export function interactionItems(
   ));
 }
 
+function exchangeKey(item: Interaction): string {
+  return item.model_event_id ?? (item.model_call_id != null
+    ? `${item.trace_id ?? ''}:${item.model_call_id}` : item.event_id);
+}
+
+/** Presentation joins use recorded identities; the original report stays intact. */
+export function displayInteractions(report: InteractionReport, scope: InteractionScope): Interaction[] {
+  const calls = new Map<string, Interaction[]>();
+  const results = new Map<string, Interaction[]>();
+  const toolKey = (item: Interaction) => item.trace_id && 'call_id' in item.content
+    ? `${item.trace_id}:${item.content.call_id}` : undefined;
+  for (const item of report.items) {
+    const key = toolKey(item);
+    if (!key) continue;
+    const map = item.content.kind === InteractionToolCallKind.TOOL_CALL ? calls
+      : item.content.kind === InteractionToolResultKind.TOOL_RESULT ? results : null;
+    if (map) map.set(key, [...(map.get(key) ?? []), item]);
+  }
+  const consumed = new Set<Interaction>();
+  const paired = new Map<Interaction, Interaction>();
+  for (const [key, candidates] of calls) {
+    const matches = results.get(key) ?? [];
+    if (candidates.length !== 1 || matches.length !== 1) continue;
+    paired.set(candidates[0], matches[0]);
+    consumed.add(matches[0]);
+  }
+  const exchanges = new Set(report.items.filter(item => item.content.kind !== InteractionRequestKind.REQUEST_PREVIEW)
+    .map(exchangeKey));
+  const messages = new Map<string, Interaction>();
+  const visible: Interaction[] = [];
+  for (const original of interactionItems(report, scope)) {
+    if (consumed.has(original)) continue;
+    if (original.content.kind === InteractionRequestKind.REQUEST_PREVIEW && exchanges.has(exchangeKey(original))) continue;
+    const result = paired.get(original);
+    let item = original;
+    if (original.content.kind === InteractionToolCallKind.TOOL_CALL && result?.content.kind === InteractionToolResultKind.TOOL_RESULT) {
+      item = {...original, content: {...original.content, result: {
+        ...original.content.result,
+        ...result.content,
+        response: result.content.response ?? original.content.result?.response,
+      }}};
+    }
+    if (item.content.kind === InteractionMessageKind.MESSAGE) {
+      const key = exchangeKey(item);
+      const prior = messages.get(key);
+      if (prior?.content.kind === InteractionMessageKind.MESSAGE) {
+        prior.content.blocks.push(...item.content.blocks);
+        continue;
+      }
+      item = {...item, content: {...item.content, blocks: [...item.content.blocks]}};
+      messages.set(key, item);
+    }
+    visible.push(item);
+  }
+  return visible;
+}
+
 export function interactionBodies(
   report: InteractionReport,
   eventId: string,

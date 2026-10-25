@@ -5,11 +5,11 @@
     InteractionToolCallKind,
     InteractionToolResultKind,
     type InteractionReport,
+    type Interaction,
   } from '@capsem/sdk';
-  import { formatBytes, formatTime } from '../../../format';
+  import { formatTime } from '../../../format';
   import {
-    interactionBodies,
-    interactionItems,
+    displayInteractions,
     interactionLabel,
     type InteractionScope,
   } from '../../../interaction-viewer';
@@ -20,13 +20,15 @@
     report,
     scope,
     title,
+    onDetails,
   }: {
     report: InteractionReport;
     scope: InteractionScope;
     title: string;
+    onDetails: (item: Interaction) => void;
   } = $props();
 
-  const items = $derived(interactionItems(report, scope));
+  const items = $derived(displayInteractions(report, scope));
 </script>
 
 <section class="mb-6">
@@ -40,17 +42,12 @@
         <header class="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1">
           <span class="text-sm font-medium text-foreground">{interactionLabel(item)}</span>
           <span class="text-xs text-muted-foreground">{formatTime(item.timestamp)}</span>
-          {#if item.trace_id}
-            <span class="font-mono text-[10px] text-muted-foreground-1">trace {item.trace_id}</span>
-          {/if}
-          {#if item.turn_id}
-            <span class="font-mono text-[10px] text-muted-foreground-1">turn {item.turn_id}</span>
-          {/if}
+          <button type="button" class="ml-auto text-xs text-info hover:underline" onclick={() => onDetails(item)}>Details</button>
         </header>
 
         <div class="space-y-2">
           {#if item.content.kind === InteractionRequestKind.REQUEST_PREVIEW}
-            <InteractionPayload label="Request" payload={item.content.payload} />
+            <p class="text-xs text-muted-foreground">Request captured. Open Details to inspect the payload.</p>
           {:else if item.content.kind === InteractionMessageKind.MESSAGE}
             {#each item.content.blocks as block, index (`${block.kind}:${index}`)}
               <InteractionPayload label={block.kind} payload={block.payload} />
@@ -63,11 +60,8 @@
               <StatsBadge value={item.content.decision} kind="decision" />
               <span class="font-mono text-[10px] text-muted-foreground">{item.content.call_id}</span>
             </div>
-            <InteractionPayload label="Arguments" payload={item.content.arguments} />
-            <InteractionPayload label="Observed request" payload={item.content.request} />
             {#if item.content.result}
-              <InteractionPayload label="Result" payload={item.content.result.payload} />
-              <InteractionPayload label="Observed response" payload={item.content.result.response} />
+              <p class="text-xs text-muted-foreground">{item.content.result.is_error ? 'Tool returned an error' : 'Result received'}</p>
               {#if item.content.result.error_message}
                 <p class="text-xs text-destructive">{item.content.result.error_message}</p>
               {/if}
@@ -79,23 +73,12 @@
                 <span class="rounded bg-destructive/10 px-1.5 py-0.5 text-destructive">error</span>
               {/if}
             </div>
-            <InteractionPayload label="Result" payload={item.content.payload} />
-            <InteractionPayload label="Observed response" payload={item.content.response} />
+            <p class="text-xs text-muted-foreground">Result captured. Open Details to inspect the payload.</p>
             {#if item.content.error_message}
               <p class="text-xs text-destructive">{item.content.error_message}</p>
             {/if}
           {/if}
 
-          {#each interactionBodies(report, item.event_id) as body (`${body.direction}:${body.body_hash}`)}
-            <div class="space-y-1">
-              <div class="flex flex-wrap gap-2 text-[10px] text-muted-foreground-1">
-                <span>{body.direction} body</span>
-                {#if body.content_type}<span>{body.content_type}</span>{/if}
-                <span>{formatBytes(body.stored_bytes)} of {formatBytes(body.original_bytes)}</span>
-                <span class="font-mono">{body.body_hash}</span>
-              </div>
-            </div>
-          {/each}
         </div>
       </article>
     {:else}

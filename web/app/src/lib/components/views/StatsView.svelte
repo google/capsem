@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import type { EventBody, InteractionReport, ModelUsage, ToolEvent } from '@capsem/sdk';
+  import type { EventBody, Interaction, InteractionReport, ModelUsage, ToolEvent } from '@capsem/sdk';
   import * as api from '../../api';
   import { formatBytes, formatDuration, formatTime, formatEstimatedCost, mergeCostCoverage, estimatedCostHelp } from '../../format';
   import { getShikiHighlighter, resolveShikiTheme, ensureShikiLang, ensureShikiTheme, type ShikiHighlighter } from '../../shiki.ts';
@@ -84,6 +84,10 @@
   function number(value: unknown): number {
     const n = Number(value ?? 0);
     return Number.isFinite(n) ? n : 0;
+  }
+
+  function inspectInteraction(item: Interaction) {
+    showDetail('model', {event_id: item.model_event_id ?? item.event_id, context_json: item});
   }
 
   function text(value: unknown): string {
@@ -294,7 +298,7 @@
             <td class="px-4 py-2 text-right text-foreground" title={estimatedCostHelp}>{formatEstimatedCost(row.estimated_cost_usd, row.cost_coverage)}</td>
           {/snippet}
         </StatsTable>
-        <InteractionViewer title="Model and Tool Interactions" report={interactions} scope="model" />
+        <InteractionViewer title="Model and Tool Interactions" report={interactions} scope="model" onDetails={inspectInteraction} />
 
       {:else if activeTab === 'tools'}
         <div class="grid grid-cols-4 gap-3 mb-6">
@@ -303,7 +307,7 @@
           <MetricCard label="Protocol Origin" value={protocolOriginToolCalls.toLocaleString()} />
           <MetricCard label="Blocked/Error" value={toolBlocked.toLocaleString()} tone="danger" />
         </div>
-        <InteractionViewer title="Tool Interactions" report={interactions} scope="tools" />
+        <InteractionViewer title="Tool Interactions" report={interactions} scope="tools" onDetails={inspectInteraction} />
 
       {:else if activeTab === 'http'}
         <div class="grid grid-cols-4 gap-3 mb-6">

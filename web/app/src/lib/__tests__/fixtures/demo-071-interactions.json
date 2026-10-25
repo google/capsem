@@ -1,0 +1,264 @@
+{
+  "items": [
+    {
+      "event_id": "000000000001",
+      "timestamp": "2026-10-24T12:00:00Z",
+      "model_call_id": 1,
+      "model_event_id": "000000000065",
+      "trace_id": "fixture-title",
+      "turn_id": "fixture-title",
+      "item_index": 1,
+      "content": {
+        "kind": "request_preview",
+        "payload": {
+          "status": "unknown",
+          "content": {
+            "kind": "json",
+            "value": {
+              "output": "Created file."
+            }
+          }
+        }
+      }
+    },
+    {
+      "event_id": "000000000002",
+      "timestamp": "2026-10-24T12:00:00Z",
+      "model_call_id": 1,
+      "model_event_id": "000000000065",
+      "trace_id": "fixture-title",
+      "turn_id": "fixture-title",
+      "item_index": 2,
+      "content": {
+        "kind": "message",
+        "role": "assistant",
+        "blocks": [
+          {
+            "kind": "text",
+            "payload": {
+              "status": "unknown",
+              "content": {
+                "kind": "text",
+                "text": "Fixture assistant text."
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "event_id": "000000000003",
+      "timestamp": "2026-10-24T12:00:00Z",
+      "model_call_id": 2,
+      "model_event_id": "000000000066",
+      "trace_id": "fixture-main",
+      "turn_id": "fixture-main",
+      "item_index": null,
+      "content": {
+        "kind": "tool_call",
+        "call_id": "fixture-write",
+        "tool_name": "write_file",
+        "server_name": "model",
+        "origin": "native",
+        "decision": "allowed",
+        "arguments": {
+          "status": "unknown",
+          "content": {
+            "kind": "json",
+            "value": {
+              "output": "Created file."
+            }
+          }
+        },
+        "request": null,
+        "result": null
+      }
+    },
+    {
+      "event_id": "000000000004",
+      "timestamp": "2026-10-24T12:00:00Z",
+      "model_call_id": 2,
+      "model_event_id": "000000000066",
+      "trace_id": "fixture-main",
+      "turn_id": "fixture-main",
+      "item_index": 1,
+      "content": {
+        "kind": "request_preview",
+        "payload": {
+          "status": "unknown",
+          "content": {
+            "kind": "raw",
+            "raw": "{\"model\":\"gemini-4-argon-medium\",\"request\":{\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "reason": "invalid_json"
+          }
+        }
+      }
+    },
+    {
+      "event_id": "000000000005",
+      "timestamp": "2026-10-24T12:00:00Z",
+      "model_call_id": 3,
+      "model_event_id": "000000000067",
+      "trace_id": "fixture-title",
+      "turn_id": "fixture-title",
+      "item_index": 1,
+      "content": {
+        "kind": "request_preview",
+        "payload": {
+          "status": "unknown",
+          "content": {
+            "kind": "raw",
+            "raw": "{\"model\":\"gemini-4-argon-medium\",\"request\":{\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "reason": "invalid_json"
+          }
+        }
+      }
+    },
+    {
+      "event_id": "000000000006",
+      "timestamp": "2026-10-24T12:00:00Z",
+      "model_call_id": 3,
+      "model_event_id": "000000000067",
+      "trace_id": "fixture-title",
+      "turn_id": "fixture-title",
+      "item_index": 2,
+      "content": {
+        "kind": "message",
+        "role": "assistant",
+        "blocks": [
+          {
+            "kind": "reasoning",
+            "payload": {
+              "status": "unknown",
+              "content": {
+                "kind": "text",
+                "text": "Fixture assistant text."
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "event_id": "000000000007",
+      "timestamp": "2026-10-24T12:00:00Z",
+      "model_call_id": 3,
+      "model_event_id": "000000000067",
+      "trace_id": "fixture-title",
+      "turn_id": "fixture-title",
+      "item_index": 3,
+      "content": {
+        "kind": "message",
+        "role": "assistant",
+        "blocks": [
+          {
+            "kind": "text",
+            "payload": {
+              "status": "unknown",
+              "content": {
+                "kind": "text",
+                "text": "Fixture assistant text."
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "event_id": "000000000008",
+      "timestamp": "2026-10-24T12:00:00Z",
+      "model_call_id": 4,
+      "model_event_id": "000000000068",
+      "trace_id": "fixture-main",
+      "turn_id": "fixture-main",
+      "item_index": 1,
+      "content": {
+        "kind": "message",
+        "role": "assistant",
+        "blocks": [
+          {
+            "kind": "text",
+            "payload": {
+              "status": "unknown",
+              "content": {
+                "kind": "text",
+                "text": "Fixture assistant text."
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "event_id": "000000000009",
+      "timestamp": "2026-10-24T12:00:00Z",
+      "model_call_id": 4,
+      "model_event_id": "000000000068",
+      "trace_id": "fixture-main",
+      "turn_id": "fixture-main",
+      "item_index": 2,
+      "content": {
+        "kind": "tool_result",
+        "call_id": "fixture-write",
+        "payload": {
+          "status": "unknown",
+          "content": {
+            "kind": "json",
+            "value": {
+              "output": "Created file."
+            }
+          }
+        },
+        "response": null,
+        "is_error": false,
+        "error_message": null
+      }
+    },
+    {
+      "event_id": "00000000000a",
+      "timestamp": "2026-10-24T12:00:00Z",
+      "model_call_id": 5,
+      "model_event_id": "000000000069",
+      "trace_id": "fixture-title",
+      "turn_id": "fixture-title",
+      "item_index": 1,
+      "content": {
+        "kind": "request_preview",
+        "payload": {
+          "status": "unknown",
+          "content": {
+            "kind": "raw",
+            "raw": "{\"model\":\"gemini-4-argon-medium\",\"request\":{\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "reason": "invalid_json"
+          }
+        }
+      }
+    },
+    {
+      "event_id": "00000000000b",
+      "timestamp": "2026-10-24T12:00:00Z",
+      "model_call_id": 5,
+      "model_event_id": "000000000069",
+      "trace_id": "fixture-title",
+      "turn_id": "fixture-title",
+      "item_index": 2,
+      "content": {
+        "kind": "message",
+        "role": "assistant",
+        "blocks": [
+          {
+            "kind": "text",
+            "payload": {
+              "status": "unknown",
+              "content": {
+                "kind": "text",
+                "text": "Fixture assistant text."
+              }
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "bodies": []
+}

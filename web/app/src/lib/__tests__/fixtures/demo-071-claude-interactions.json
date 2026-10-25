@@ -1,0 +1,406 @@
+{
+  "items": [
+    {
+      "model_call_id": 1,
+      "item_index": 1,
+      "event_id": "000000000001",
+      "model_event_id": "000000000002",
+      "timestamp": "2026-10-24T12:00:00Z",
+      "trace_id": "fixture-trace-1",
+      "turn_id": "fixture-trace-1",
+      "content": {
+        "kind": "request_preview",
+        "payload": {
+          "status": "truncated",
+          "content": {
+            "kind": "raw",
+            "raw": "{\"fixture\":",
+            "reason": "truncated"
+          }
+        }
+      }
+    },
+    {
+      "model_call_id": 1,
+      "item_index": 2,
+      "event_id": "000000000003",
+      "model_event_id": "000000000002",
+      "timestamp": "2026-10-24T12:00:00Z",
+      "trace_id": "fixture-trace-1",
+      "turn_id": "fixture-trace-1",
+      "content": {
+        "kind": "message",
+        "role": "assistant",
+        "blocks": [
+          {
+            "kind": "text",
+            "payload": {
+              "status": "unknown",
+              "content": {
+                "kind": "text",
+                "text": "Fixture Claude text."
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "model_call_id": 2,
+      "item_index": 1,
+      "event_id": "000000000004",
+      "model_event_id": "000000000005",
+      "timestamp": "2026-10-24T12:00:00Z",
+      "trace_id": "fixture-trace-1",
+      "turn_id": "fixture-trace-1",
+      "content": {
+        "kind": "request_preview",
+        "payload": {
+          "status": "truncated",
+          "content": {
+            "kind": "raw",
+            "raw": "{\"fixture\":",
+            "reason": "truncated"
+          }
+        }
+      }
+    },
+    {
+      "model_call_id": 5,
+      "item_index": 1,
+      "event_id": "000000000006",
+      "model_event_id": "000000000007",
+      "timestamp": "2026-10-24T12:00:00Z",
+      "trace_id": "fixture-trace-1",
+      "turn_id": "fixture-trace-1",
+      "content": {
+        "kind": "request_preview",
+        "payload": {
+          "status": "truncated",
+          "content": {
+            "kind": "raw",
+            "raw": "{\"fixture\":",
+            "reason": "truncated"
+          }
+        }
+      }
+    },
+    {
+      "model_call_id": 5,
+      "item_index": 2,
+      "event_id": "000000000008",
+      "model_event_id": "000000000007",
+      "timestamp": "2026-10-24T12:00:00Z",
+      "trace_id": "fixture-trace-1",
+      "turn_id": "fixture-trace-1",
+      "content": {
+        "kind": "message",
+        "role": "assistant",
+        "blocks": [
+          {
+            "kind": "text",
+            "payload": {
+              "status": "unknown",
+              "content": {
+                "kind": "text",
+                "text": "Fixture Claude text."
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "model_call_id": 6,
+      "item_index": null,
+      "event_id": "000000000009",
+      "model_event_id": "00000000000a",
+      "timestamp": "2026-10-24T12:00:00Z",
+      "trace_id": "fixture-trace-2",
+      "turn_id": "fixture-trace-2",
+      "content": {
+        "kind": "tool_call",
+        "call_id": "fixture-skill",
+        "tool_name": "Skill",
+        "server_name": "model",
+        "origin": "native",
+        "decision": "allowed",
+        "arguments": {
+          "status": "unknown",
+          "content": {
+            "kind": "json",
+            "value": {
+              "fixture": true
+            }
+          }
+        }
+      }
+    },
+    {
+      "model_call_id": 6,
+      "item_index": 1,
+      "event_id": "00000000000b",
+      "model_event_id": "00000000000a",
+      "timestamp": "2026-10-24T12:00:00Z",
+      "trace_id": "fixture-trace-2",
+      "turn_id": "fixture-trace-2",
+      "content": {
+        "kind": "request_preview",
+        "payload": {
+          "status": "truncated",
+          "content": {
+            "kind": "raw",
+            "raw": "{\"fixture\":",
+            "reason": "truncated"
+          }
+        }
+      }
+    },
+    {
+      "model_call_id": 7,
+      "item_index": 1,
+      "event_id": "00000000000c",
+      "model_event_id": "00000000000d",
+      "timestamp": "2026-10-24T12:00:00Z",
+      "trace_id": "fixture-trace-1",
+      "turn_id": "fixture-trace-1",
+      "content": {
+        "kind": "request_preview",
+        "payload": {
+          "status": "truncated",
+          "content": {
+            "kind": "raw",
+            "raw": "{\"fixture\":",
+            "reason": "truncated"
+          }
+        }
+      }
+    },
+    {
+      "model_call_id": 8,
+      "item_index": 1,
+      "event_id": "00000000000e",
+      "model_event_id": "00000000000f",
+      "timestamp": "2026-10-24T12:00:00Z",
+      "trace_id": "fixture-trace-1",
+      "turn_id": "fixture-trace-1",
+      "content": {
+        "kind": "request_preview",
+        "payload": {
+          "status": "truncated",
+          "content": {
+            "kind": "raw",
+            "raw": "{\"fixture\":",
+            "reason": "truncated"
+          }
+        }
+      }
+    },
+    {
+      "model_call_id": 8,
+      "item_index": 2,
+      "event_id": "000000000010",
+      "model_event_id": "00000000000f",
+      "timestamp": "2026-10-24T12:00:00Z",
+      "trace_id": "fixture-trace-1",
+      "turn_id": "fixture-trace-1",
+      "content": {
+        "kind": "message",
+        "role": "assistant",
+        "blocks": [
+          {
+            "kind": "text",
+            "payload": {
+              "status": "unknown",
+              "content": {
+                "kind": "text",
+                "text": "Fixture Claude text."
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "model_call_id": 9,
+      "item_index": 1,
+      "event_id": "000000000011",
+      "model_event_id": "000000000012",
+      "timestamp": "2026-10-24T12:00:00Z",
+      "trace_id": "fixture-trace-1",
+      "turn_id": "fixture-trace-1",
+      "content": {
+        "kind": "request_preview",
+        "payload": {
+          "status": "truncated",
+          "content": {
+            "kind": "raw",
+            "raw": "{\"fixture\":",
+            "reason": "truncated"
+          }
+        }
+      }
+    },
+    {
+      "model_call_id": 9,
+      "item_index": 2,
+      "event_id": "000000000013",
+      "model_event_id": "000000000012",
+      "timestamp": "2026-10-24T12:00:00Z",
+      "trace_id": "fixture-trace-1",
+      "turn_id": "fixture-trace-1",
+      "content": {
+        "kind": "message",
+        "role": "assistant",
+        "blocks": [
+          {
+            "kind": "text",
+            "payload": {
+              "status": "unknown",
+              "content": {
+                "kind": "text",
+                "text": "Fixture Claude text."
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "model_call_id": 10,
+      "item_index": 1,
+      "event_id": "000000000014",
+      "model_event_id": "000000000015",
+      "timestamp": "2026-10-24T12:00:00Z",
+      "trace_id": "fixture-trace-1",
+      "turn_id": "fixture-trace-1",
+      "content": {
+        "kind": "request_preview",
+        "payload": {
+          "status": "truncated",
+          "content": {
+            "kind": "raw",
+            "raw": "{\"fixture\":",
+            "reason": "truncated"
+          }
+        }
+      }
+    },
+    {
+      "model_call_id": 10,
+      "item_index": 2,
+      "event_id": "000000000016",
+      "model_event_id": "000000000015",
+      "timestamp": "2026-10-24T12:00:00Z",
+      "trace_id": "fixture-trace-1",
+      "turn_id": "fixture-trace-1",
+      "content": {
+        "kind": "message",
+        "role": "assistant",
+        "blocks": [
+          {
+            "kind": "text",
+            "payload": {
+              "status": "unknown",
+              "content": {
+                "kind": "text",
+                "text": "Fixture Claude text."
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "model_call_id": 11,
+      "item_index": 1,
+      "event_id": "000000000017",
+      "model_event_id": "000000000018",
+      "timestamp": "2026-10-24T12:00:00Z",
+      "trace_id": "fixture-trace-1",
+      "turn_id": "fixture-trace-1",
+      "content": {
+        "kind": "request_preview",
+        "payload": {
+          "status": "truncated",
+          "content": {
+            "kind": "raw",
+            "raw": "{\"fixture\":",
+            "reason": "truncated"
+          }
+        }
+      }
+    },
+    {
+      "model_call_id": 11,
+      "item_index": 2,
+      "event_id": "000000000019",
+      "model_event_id": "000000000018",
+      "timestamp": "2026-10-24T12:00:00Z",
+      "trace_id": "fixture-trace-1",
+      "turn_id": "fixture-trace-1",
+      "content": {
+        "kind": "message",
+        "role": "assistant",
+        "blocks": [
+          {
+            "kind": "text",
+            "payload": {
+              "status": "unknown",
+              "content": {
+                "kind": "text",
+                "text": "Fixture Claude text."
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "model_call_id": 12,
+      "item_index": 1,
+      "event_id": "00000000001a",
+      "model_event_id": "00000000001b",
+      "timestamp": "2026-10-24T12:00:00Z",
+      "trace_id": "fixture-trace-1",
+      "turn_id": "fixture-trace-1",
+      "content": {
+        "kind": "request_preview",
+        "payload": {
+          "status": "truncated",
+          "content": {
+            "kind": "raw",
+            "raw": "{\"fixture\":",
+            "reason": "truncated"
+          }
+        }
+      }
+    },
+    {
+      "model_call_id": 12,
+      "item_index": 2,
+      "event_id": "00000000001c",
+      "model_event_id": "00000000001b",
+      "timestamp": "2026-10-24T12:00:00Z",
+      "trace_id": "fixture-trace-1",
+      "turn_id": "fixture-trace-1",
+      "content": {
+        "kind": "message",
+        "role": "assistant",
+        "blocks": [
+          {
+            "kind": "text",
+            "payload": {
+              "status": "unknown",
+              "content": {
+                "kind": "text",
+                "text": "Fixture Claude text."
+              }
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "bodies": []
+}
