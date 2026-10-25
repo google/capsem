@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Back workload `/home` with the observed session file tree, preserving existing Home files on first launch so Home artifacts appear in Files and file telemetry.
+
 - Group model reasoning/text and uniquely matched tool results in Stats, keep unanswered requests visible, and move raw payloads into the Details side panel.
 
 - Queue concurrent model and MCP requests for bounded inspection capacity instead of immediately returning 502; retain the existing body-memory limit and fail closed on timeout.

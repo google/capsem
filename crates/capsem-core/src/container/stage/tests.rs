@@ -25,6 +25,7 @@ fn published_root_stage_metadata_is_typed_and_keeps_the_single_stage_path() {
             "runtime_terminal.py",
             "runtime_userns.py",
             "runtime_workspace.py",
+            "runtime_home.py",
             "launch.py"
         ]
     );
@@ -93,6 +94,7 @@ fn stage_plan_writes_only_options_and_launcher_modules() {
             "runtime_terminal.py",
             "runtime_userns.py",
             "runtime_workspace.py",
+            "runtime_home.py",
             "launch.py"
         ]
     );

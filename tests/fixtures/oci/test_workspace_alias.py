@@ -62,7 +62,7 @@ def test_real_launcher_applies_only_the_recipe_owned_alias_after_home_volume(lau
     config = launcher.configure(unpacked(), metadata, options)
     destinations = [mount["destination"] for mount in config["mounts"]]
     scratch = "/home/capsem/.gemini/antigravity/scratch"
-    assert destinations.index(scratch) > destinations.index("/home/capsem")
+    assert destinations.index(scratch) > destinations.index("/home")
     assert destinations.index(scratch + "/.capsem-image") > destinations.index(scratch)
     alias = next(mount for mount in config["mounts"] if mount["destination"] == scratch)
     assert alias["source"] == str(launcher.WORKSPACE_VIEW)

@@ -35,6 +35,7 @@ RuntimeConsole, Console = (_pty[name] for name in ("RuntimeConsole", "Console"))
 _terminal = runpy.run_path(str(Path(__file__).with_name("runtime_terminal.py")))
 Relay, relay = (_terminal[name] for name in ("Relay", "relay"))
 _workspace = runpy.run_path(str(Path(__file__).with_name("runtime_workspace.py")))
+_home = runpy.run_path(str(Path(__file__).with_name("runtime_home.py")))
 _safe_mount_point = _workspace["safe_mount_point"]
 
 RUNTIME = Path("/var/tmp/capsem-container")
@@ -287,6 +288,7 @@ def configure(unpacked, image, options, detached=False):
             "options": ["bind", "rw", "nosuid", "nodev"],
         }
         for path in sorted(volumes)
+        if workspace is None or not (path == "/home" or path.startswith("/home/"))
     )
     mounts.extend(
         {
@@ -323,6 +325,7 @@ def configure(unpacked, image, options, detached=False):
                 "options": ["ro", "nosuid", "nodev", "noexec", "mode=000", "size=4k"],
             }
         )
+    mounts.extend(_home["mounts"](workspace, WORKSPACE_VIEW, STAGE))
     mounts.extend(_workspace["alias_mounts"](image, workspace, str(WORKSPACE_VIEW), STAGE))
     mounts.extend(
         {
@@ -1017,11 +1020,16 @@ def run(stage, detached=False):
             bundle / "rootfs",
             checked_id_map(options["id_map"]),
         )
-        if _workspace["enabled"](image, options.get("workspace")):
+        if options.get("workspace") is not None:
             user = config["process"]["user"]
-            workspace_mappings(id_map, user)  # Reject identities outside the existing map.
             owner = tuple(id_map["hostID"] + user[key] for key in ("uid", "gid"))
-            _workspace["import_scratch"](volume_dir(_workspace["HOME"]), WORKSPACE_VIEW, LAYER, owner, id_map=id_map)
+            _home["prepare"](
+                _home["sources"](bundle / "rootfs", (image.get("config") or {}).get("Volumes") or {}, volume_dir),
+                WORKSPACE_VIEW, LAYER, owner, id_map,
+            )
+        if _workspace["enabled"](image, options.get("workspace")):
+            workspace_mappings(id_map, user)  # Reject identities outside the existing map.
+            _workspace["import_scratch"](WORKSPACE_VIEW / "capsem", WORKSPACE_VIEW, LAYER, owner, id_map=id_map)
         config_path.write_text(json.dumps(config))
         (RUNTIME / "resolv.conf").write_text(resolv_conf())
         (RUNTIME / "hosts").write_text(hosts_file())

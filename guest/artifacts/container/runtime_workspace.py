@@ -96,9 +96,10 @@ def directory(parent, name, owner=None, create=False):
 
 
 class Budget:
-    def __init__(self, maximum):
+    def __init__(self, maximum, preserve=False):
         self.bytes = maximum
         self.entries = 16384
+        self.preserve = preserve
 
     def consume(self, count):
         self.bytes -= count
@@ -171,6 +172,8 @@ def copy_file(source, destination, name, budget, owner):
             if copied != size:
                 raise ValueError("scratch import source changed during copy")
             os.fsync(output)
+            if budget.preserve:
+                os.fchmod(output, os.fstat(source).st_mode & 0o777)
         finally:
             # Even on failure, never unlink or replace a concurrent guest entry.
             # The original remains intact; an incomplete import has no receipt.
@@ -196,6 +199,17 @@ def copy_tree(source, destination, budget, owner, depth=0):
     for name in bounded_names(source, budget):
         if name == ".capsem-image":
             raise ValueError("scratch import cannot name the launcher's stage")
+        mode = os.stat(name, dir_fd=source, follow_symlinks=False).st_mode
+        if budget.preserve and stat.S_ISLNK(mode):
+            target = os.readlink(name, dir_fd=source)
+            try:
+                os.symlink(target, name, dir_fd=destination)
+            except FileExistsError:
+                if os.readlink(name, dir_fd=destination) != target:
+                    raise ValueError("home import link conflicts with existing data")
+            continue
+        if budget.preserve and not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
+            continue  # Runtime sockets/pipes are not persistent files.
         fd = os.open(name, FILE_FLAGS, dir_fd=source)
         try:
             mode = os.fstat(fd).st_mode

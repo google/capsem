@@ -7,6 +7,7 @@ The source remains unchanged; the replacement image selects the workspace alias.
 import json
 
 import pytest
+from helpers.image_session import wait_running
 from helpers.service import exec_output_text
 
 from tests.fixtures.oci.registry import FIXTURES, registry
@@ -19,6 +20,29 @@ HOME = "/home/capsem"
 SCRATCH = f"{HOME}/.gemini/antigravity/scratch"
 POLICY = "org.capsem.workspace.policy"
 
+
+def test_workload_home_files_are_browsable_observed_and_persistent(service, tmp_path):
+    client = service.client()
+    metadata = json.loads((FIXTURES / "redis-config.json").read_text())
+    metadata.update(Entrypoint=["/bin/sh", "-c"], Cmd=["echo home-fixture-ready; exec sleep 3600"],
+                    WorkingDir="/workspace", Volumes={HOME: {}}, User="1000:1000")
+    with (
+        registry(tmp_path, image_config=metadata) as (name, ca, _),
+        created(service, tmp_path, name, ca, "observed-home", ready="home-fixture-ready") as vm,
+    ):
+        vm_id = vm["id"]
+        run(client, vm_id, f"printf home-artifact > {HOME}/ascii_art.txt")
+        status, body = client.get_bytes(f"/vms/{vm_id}/files/content?path=capsem/ascii_art.txt")
+        assert (status, body) == (200, b"home-artifact")
+        entries = client.get(f"/vms/{vm_id}/files/list?path=capsem&depth=2")["entries"]
+        assert any(entry["name"] == "ascii_art.txt" for entry in entries)
+        wait_for(lambda: any(event["path"].endswith("capsem/ascii_art.txt") for event in
+                            client.get(f"/vms/{vm_id}/stats/detail")["file_events"]),
+                 "actual Home write in file ledger", timeout=20)
+        client.post(f"/vms/{vm_id}/stop", {}, timeout=60)
+        client.post(f"/vms/{vm_id}/start", {}, timeout=60)
+        wait_running(client, vm_id)
+        assert run(client, vm_id, f"cat {HOME}/ascii_art.txt") == "home-artifact"
 
 def test_new_image_clone_imports_scratch_without_changing_original_home(service, tmp_path):
     client = service.client()
