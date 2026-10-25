@@ -103,7 +103,23 @@ pub(super) fn read_interactions(
         let content = match row.kind {
             ModelItemKind::Request => InteractionContent::Request(InteractionRequest {
                 kind: InteractionRequestKind::RequestPreview,
-                payload: row.content.map(|raw| cut(preview_payload(raw), row.content_truncated)),
+                payload: row.content.map(|raw| {
+                    // The writer caps list excerpts before this query. The parent
+                    // body index, not JSON parse failure, tells us the tail exists.
+                    let truncated = row.content_truncated
+                        || row
+                            .model_event_id
+                            .as_ref()
+                            .and_then(|id| bodies.get(id))
+                            .is_some_and(|entries| {
+                                entries.iter().any(|body| {
+                                    body.source_table == "model_calls"
+                                        && body.direction == "request"
+                                        && body.original_bytes > raw.len() as u64
+                                })
+                            });
+                    cut(preview_payload(raw), truncated)
+                }),
             }),
             ModelItemKind::Reasoning | ModelItemKind::Response => {
                 let kind = match row.kind {

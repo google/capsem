@@ -32,6 +32,9 @@ pub(super) fn json_payload(raw: String, status: CaptureStatus) -> CapturedPayloa
 pub(super) fn cut(mut payload: CapturedPayload, truncated: bool) -> CapturedPayload {
     if truncated {
         payload.status = CaptureStatus::Truncated;
+        if let CapturedContent::Raw(content) = &mut payload.content {
+            content.reason = RawContentReason::Truncated;
+        }
     }
     payload
 }

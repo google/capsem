@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Mark archived request excerpts as truncated instead of reporting valid large model requests as invalid JSON.
+
 - Start GUI applications after Xpra negotiates the client's viewport and DPI,
   so Electron does not retain the initial display's 1× scale on Retina screens.
 
