@@ -9,32 +9,73 @@ from __future__ import annotations
 
 import math
 from itertools import pairwise
+from typing import Annotated, Literal
 
-from pydantic import Field, PositiveFloat, PositiveInt, field_validator
+from pydantic import (
+    Field,
+    PositiveFloat,
+    PositiveInt,
+    field_validator,
+    model_validator,
+)
 
+from .benchmarkaskschema import AskRouteConfig
+from .benchmarkcontrolschema import WorkloadControlConfig
+from .benchmarkcredentialschema import CredentialRouteConfig
+from .benchmarkcriterionschema import BenchmarkCriterionConfig
+from .benchmarkerrorschema import ConnectionErrorConfig
+from .benchmarkimageschema import ImageRouteConfig
+from .benchmarkinstallschema import InstallBenchmarkConfig
+from .benchmarklifecycleschema import LifecycleRouteConfig
+from .benchmarkmcpschema import McpRouteConfig
+from .benchmarkmemberschema import NetworkMemberConfig
+from .benchmarknetworkschema import NetworkRouteConfig
+from .benchmarkpolicyschema import PolicyRouteConfig
+from .benchmarkpreviewschema import PreviewRouteConfig
+from .benchmarkproxyschema import ProxyRouteConfig
+from .benchmarkreadschema import RouteCaseConfig, RouteCorpusConfig, RouteDebtConfig
+from .benchmarkreloadschema import ReloadRouteConfig
+from .benchmarkrestartschema import RestartRouteConfig
+from .benchmarkrunpurgeschema import RunPurgeConfig
+from .benchmarksaveschema import SaveRouteConfig
+from .benchmarkstreamschema import StreamConfig, StreamEndpointEvidence
+from .benchmarkupdateschema import UpdateCheckConfig
+from .benchmarkwarmschema import PauseResumeConfig
 from .configschema import Strict
 
 
 class RouteCoverageConfig(Strict):
-    """Which HTTP routes the benchmark system measures.
+    """Exhaustive method-aware coverage; no path-only coverage claims."""
 
-    Three classes that must together account for every route the service
-    registers. `unmeasured` is debt, not an exemption list. `internal` maps the
-    tiny set of service-only control routes to mandatory reasons. A route in no
-    class fails `tests/citadel/test_bench_route_coverage.py` in the fast phase,
-    which makes a new route measured by default rather than invisible.
-    """
-
-    measured: tuple[str, ...]
-    unmeasured: tuple[str, ...]
-    internal: dict[str, str]
+    measured: tuple[RouteCaseConfig, ...]
+    streaming: dict[str, StreamEndpointEvidence]
+    images: ImageRouteConfig
+    policy: PolicyRouteConfig
+    lifecycle: LifecycleRouteConfig
+    networks: NetworkRouteConfig
+    proxies: ProxyRouteConfig
+    workload_controls: WorkloadControlConfig
+    connection_errors: ConnectionErrorConfig
+    network_members: NetworkMemberConfig
+    credentials: CredentialRouteConfig
+    mcp_controls: McpRouteConfig
+    preview_controls: PreviewRouteConfig
+    run_purge: RunPurgeConfig
+    save_controls: SaveRouteConfig
+    ask_controls: AskRouteConfig
+    reload_controls: ReloadRouteConfig
+    restart_controls: RestartRouteConfig
+    pause_resume: PauseResumeConfig
+    update_check: UpdateCheckConfig
+    unmeasured: dict[str, RouteDebtConfig]
+    internal: dict[str, RouteDebtConfig]
+    unmeasured_cases: dict[str, RouteDebtConfig]
+    corpus: RouteCorpusConfig
 
 
 class RouteLoadConfig(Strict):
     """Concurrent request window applied to every measured read-only route."""
 
-    # Also consumed by the existing installed-package HTTP proof. These bounds
-    # remain product qualification inputs when expanded benchmarking is deferred.
     timeout_seconds: PositiveFloat = Field(allow_inf_nan=False)
     max_response_bytes: PositiveInt
     concurrency: PositiveInt
@@ -118,6 +159,9 @@ class BenchmarkRunConfig(Strict):
     """
 
     crate: str
+    max_collector_bytes: PositiveInt
+    max_samples_per_metric: PositiveInt
+    max_samples_per_run: PositiveInt
     bin_name: str
     binary: str
     collectors: str
@@ -137,6 +181,25 @@ class BenchmarkProtocolConfig(Strict):
     concurrency: PositiveInt
     timeout_ms: PositiveInt
     scenarios: list[str]
+
+
+class ContentFilterProfile(Strict):
+    """One independent plugin mode compared to the disabled baseline."""
+
+    name: str
+    plugin: Literal["pii_filter", "secret_exfiltration", "utf8_guard"]
+    mode: Literal["disable", "rewrite", "block"]
+
+
+class BenchmarkContentFilterConfig(Strict):
+    """Bounded text/SSE cohorts; concurrency respects the two-body inspection budget."""
+
+    requests: PositiveInt
+    concurrency: tuple[Annotated[int, Field(ge=1, le=2)], ...] = Field(min_length=1)
+    body_bytes: tuple[Annotated[int, Field(ge=1, le=1048576)], ...] = Field(min_length=1)
+    stream_delay_ms: Annotated[int, Field(ge=1, le=1000)]
+    timeout_ms: PositiveInt
+    profiles: tuple[ContentFilterProfile, ...] = Field(min_length=1)
 
 
 class BenchmarkMitmScaleConfig(Strict):
@@ -202,10 +265,23 @@ class BenchmarkGatesConfig(Strict):
 
 
 class BenchmarkConfig(Strict):
+    install: InstallBenchmarkConfig
+    stream: StreamConfig
     routes: RouteCoverageConfig
     route_load: RouteLoadConfig
     route_health: RouteHealthConfig
     run: BenchmarkRunConfig
+    criterion: BenchmarkCriterionConfig
     protocol: BenchmarkProtocolConfig
     mitm_scale: BenchmarkMitmScaleConfig
+    content_filter: BenchmarkContentFilterConfig
     gates: BenchmarkGatesConfig
+
+    @model_validator(mode="after")
+    def install_settles_before_outer_deadline(self):
+        if (
+            self.install.owner_timeout_seconds + self.install.cleanup_timeout_seconds
+            >= self.run.timeout_secs
+        ):
+            raise ValueError("Install owner and cleanup must settle before the collector deadline")
+        return self

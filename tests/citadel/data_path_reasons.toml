@@ -190,6 +190,10 @@ json = { count = 1, reason = "benchmark" }
 [sources."crates/capsem-bench/src/commands.rs"]
 json = { count = 1, reason = "benchmark" }
 
+# Existing persisted Install pair-provenance sidecar, decoded once by its owner.
+[sources."crates/capsem-bench/src/install_evidence.rs"]
+json = { count = 1, reason = "durable" }
+
 [sources."crates/capsem-bench/src/main.rs"]
 json = { count = 10, reason = "benchmark" }
 

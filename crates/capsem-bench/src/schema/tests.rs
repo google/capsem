@@ -1,6 +1,40 @@
 use super::{Dimension, Host, Metric, Record, Release, Unit, SCHEMA};
 use crate::stats::Summary;
 
+#[test]
+fn restart_is_a_separate_native_non_quick_dimension() {
+    let selected = crate::commands::select_dimensions(&["restart".to_owned()]).unwrap();
+    assert_eq!(selected, vec![Dimension::Restart]);
+    assert_eq!(Dimension::Restart.as_str(), "restart");
+    assert!(!Dimension::Restart.needs_vm());
+    assert!(!Dimension::Restart.in_quick_lane());
+    assert_eq!(serde_json::to_string(&Dimension::Restart).unwrap(), "\"restart\"");
+    assert_eq!(
+        Dimension::ALL
+            .iter()
+            .filter(|dimension| **dimension == Dimension::Restart)
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn native_split_exclusions_are_explicit_and_cannot_select_nothing() {
+    let ordinary = crate::commands::select_run_dimensions(&[], &["restart".to_owned()]).unwrap();
+    assert_eq!(ordinary.len(), Dimension::ALL.len() - 1);
+    assert!(!ordinary.contains(&Dimension::Restart));
+    assert!(ordinary.contains(&Dimension::Routes));
+    assert!(crate::commands::select_run_dimensions(&[], &["unknown".to_owned()]).is_err());
+    assert!(crate::commands::select_run_dimensions(&["restart".to_owned()], &["restart".to_owned()]).is_err());
+    assert!(crate::commands::select_run_dimensions(&[String::new()], &[]).is_err());
+    let every_name: Vec<String> = Dimension::ALL.iter().map(|d| d.as_str().to_owned()).collect();
+    assert!(crate::commands::select_run_dimensions(&[], &every_name).is_err());
+    assert_eq!(
+        crate::commands::select_run_dimensions(&["routes".to_owned()], &["restart".to_owned()]).unwrap(),
+        vec![Dimension::Routes]
+    );
+}
+
 fn record() -> Record {
     Record {
         schema: SCHEMA.to_string(),
@@ -20,7 +54,9 @@ fn record() -> Record {
             load_before: 0.1,
         },
         quick: false,
+        measurement: None,
         metrics: vec![Metric {
+            samples: None,
             key: "gateway./vms/list.cpu_s".to_string(),
             unit: Unit::Seconds,
             summary: Summary::of(&[0.14, 0.15, 0.16]).expect("summarizes"),
@@ -94,7 +130,7 @@ fn every_dimension_is_listed_once() {
     names.sort_unstable();
     names.dedup();
     assert_eq!(names.len(), listed, "a dimension is listed twice");
-    assert_eq!(listed, 21, "ALL must carry every dimension");
+    assert_eq!(listed, 23, "ALL must carry every dimension");
 }
 
 #[test]

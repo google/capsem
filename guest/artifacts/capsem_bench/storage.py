@@ -2,10 +2,8 @@
 
 import contextlib
 import os
-import random
 import stat
 import struct
-import time
 
 from rich.table import Table
 from rich.text import Text
@@ -20,12 +18,18 @@ from .helpers import (
     BLOCK_1M,
     BLOCK_4K,
     console,
-    drop_caches,
     fmt_bytes,
-    percentile,
-    throughput_mbps,
 )
 from .rootfs import ROOTFS_SCAN_DIRS, collect_rootfs_files, find_largest_file
+from .storage_operations import (
+    _bench_random_read_profile,
+    _bench_random_write_profile,
+    _bench_rootfs_rand_read,
+    _bench_seq_read_existing,
+    _bench_seq_read_profile,
+    _bench_seq_write_profile,
+    _block_key,
+)
 
 DEFAULT_STORAGE_PATHS = ["/root", "/tmp", "/var/tmp", "/var/log", "/run"]
 DEFAULT_STORAGE_SIZE_MB = 64
@@ -412,166 +416,6 @@ def rootfs_storage_bench():
         })
     result["seq_reads"] = seq
     result["rand_read_4k"] = _bench_rootfs_rand_read(files, ROOTFS_RAND_COUNT)
-    return result
-
-
-def _bench_seq_read_existing(path, size_bytes, drop=False):
-    if drop:
-        drop_caches()
-    fd = os.open(path, os.O_RDONLY)
-    try:
-        start = time.monotonic()
-        while os.read(fd, BLOCK_1M):
-            pass
-        elapsed = time.monotonic() - start
-    finally:
-        os.close(fd)
-    return {
-        "size_bytes": size_bytes,
-        "block_size": BLOCK_1M,
-        "duration_ms": round(elapsed * 1000, 1),
-        "throughput_mbps": throughput_mbps(size_bytes, elapsed),
-    }
-
-
-def _bench_rootfs_rand_read(files, count):
-    if not files:
-        return {"count": 0, "error": "no files found"}
-    targets = []
-    for _ in range(count):
-        path, size = random.choice(files)
-        max_off = max(size - BLOCK_4K, 0)
-        offset = random.randint(0, max_off) & ~(BLOCK_4K - 1)
-        targets.append((path, offset))
-    drop_caches()
-    fd_cache = {}
-    try:
-        start = time.monotonic()
-        for path, offset in targets:
-            fd = fd_cache.get(path)
-            if fd is None:
-                fd = os.open(path, os.O_RDONLY)
-                fd_cache[path] = fd
-            os.pread(fd, BLOCK_4K, offset)
-        elapsed = time.monotonic() - start
-    finally:
-        for fd in fd_cache.values():
-            os.close(fd)
-    total_bytes = count * BLOCK_4K
-    return {
-        "count": count,
-        "files_sampled": len(fd_cache),
-        "duration_ms": round(elapsed * 1000, 1),
-        "iops": round(count / elapsed, 1) if elapsed > 0 else 0,
-        "throughput_mbps": throughput_mbps(total_bytes, elapsed),
-    }
-
-
-def _block_key(size):
-    if size == BLOCK_4K:
-        return "4k"
-    if size == 64 * 1024:
-        return "64k"
-    if size == BLOCK_1M:
-        return "1m"
-    return str(size)
-
-
-def _io_summary(size_bytes, block_size, count, elapsed, latencies=None):
-    summary = {
-        "size_bytes": size_bytes,
-        "block_size": block_size,
-        "count": count,
-        "duration_ms": round(elapsed * 1000, 1),
-        "iops": round(count / elapsed, 1) if elapsed > 0 else 0,
-        "throughput_mbps": throughput_mbps(size_bytes, elapsed),
-        "avg_latency_ms": round((elapsed * 1000) / count, 3) if count else 0,
-    }
-    if latencies:
-        ordered = sorted(latencies)
-        summary["latency_ms"] = {
-            "p50": round(percentile(ordered, 50), 3),
-            "p95": round(percentile(ordered, 95), 3),
-            "p99": round(percentile(ordered, 99), 3),
-            "max": round(ordered[-1], 3),
-        }
-    return summary
-
-
-def _bench_seq_write_profile(testfile, size_bytes, block_size):
-    buf = b"\0" * block_size
-    count = size_bytes // block_size
-    fd = os.open(testfile, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
-    try:
-        start = time.monotonic()
-        for _ in range(count):
-            os.write(fd, buf)
-        os.ftruncate(fd, size_bytes)
-        os.fsync(fd)
-        elapsed = time.monotonic() - start
-    finally:
-        os.close(fd)
-    return _io_summary(size_bytes, block_size, count, elapsed)
-
-
-def _bench_seq_read_profile(testfile, size_bytes, block_size, drop=False):
-    if drop:
-        drop_caches()
-    count = 0
-    fd = os.open(testfile, os.O_RDONLY)
-    try:
-        start = time.monotonic()
-        while os.read(fd, block_size):
-            count += 1
-        elapsed = time.monotonic() - start
-    finally:
-        os.close(fd)
-    return _io_summary(size_bytes, block_size, count, elapsed)
-
-
-def _random_offsets(file_size, op_size, count):
-    max_off = max(file_size - op_size, 0)
-    return [random.randint(0, max_off) & ~(op_size - 1) for _ in range(count)]
-
-
-def _bench_random_read_profile(testfile, size_bytes, op_size, count):
-    offsets = _random_offsets(size_bytes, op_size, count)
-    drop_caches()
-    latencies = []
-    fd = os.open(testfile, os.O_RDONLY)
-    try:
-        start = time.monotonic()
-        for off in offsets:
-            op_start = time.monotonic()
-            os.pread(fd, op_size, off)
-            latencies.append((time.monotonic() - op_start) * 1000)
-        elapsed = time.monotonic() - start
-    finally:
-        os.close(fd)
-    return _io_summary(count * op_size, op_size, count, elapsed, latencies)
-
-
-def _bench_random_write_profile(testfile, size_bytes, op_size, count, sync_each=False):
-    offsets = _random_offsets(size_bytes, op_size, count)
-    buf = os.urandom(op_size)
-    latencies = []
-    fd = os.open(testfile, os.O_WRONLY | os.O_CREAT, 0o644)
-    try:
-        os.ftruncate(fd, size_bytes)
-        start = time.monotonic()
-        for off in offsets:
-            op_start = time.monotonic()
-            os.pwrite(fd, buf, off)
-            if sync_each:
-                os.fsync(fd)
-            latencies.append((time.monotonic() - op_start) * 1000)
-        if not sync_each:
-            os.fsync(fd)
-        elapsed = time.monotonic() - start
-    finally:
-        os.close(fd)
-    result = _io_summary(count * op_size, op_size, count, elapsed, latencies)
-    result["sync_each"] = sync_each
     return result
 
 

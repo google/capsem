@@ -17,6 +17,23 @@ from .plan import Plan
 from .pythonenv import uv_run
 
 
+def benchmark_fragment(plan: Plan,config: GateConfig,*,after: tuple[Step,...],
+                       content: RuntimeContent,commit: str) -> Step:
+    """The same native manager boundary for the canonical restart-only runner.
+
+    Ordinary route collectors never inherit this privilege boundary. Source,
+    config, raw samples and recording storage remain the existing Rust owner.
+    """
+    from .bench import _argv
+    argv = _argv(config,quick=False,dimensions=(config.benchmark.routes.restart_controls.dimension,),commit=commit)
+    if not host.on_macos():
+        argv = uv_run(config,'python','-m',config.suites.pytest.managed_restart_driver,'--',*argv)
+    return plan.phase('native').add(step('bench.restart',
+        Run(argv,env=config.environment.content(assets=str(content.assets)),outside_sandbox=True),
+        contends=(config.exclusive('host_service'),),kind=Kind.E2E,
+        needs=frozenset({Needs.DISK,Needs.NETWORK}),speed=Speed.SLOW),after=after)
+
+
 def fragment(
     plan: Plan, config: GateConfig, *, after: tuple[Step, ...], content: RuntimeContent
 ) -> Step:

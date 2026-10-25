@@ -18,10 +18,11 @@ a gate measures the sharing.
 
 from __future__ import annotations
 
-from . import runtimeprepare
+from . import managedrestart, runtimeprepare
 from .actions import Run
 from .command import GateCommand
 from .config import GateConfig
+from .content import RuntimeContent
 from .execution import Kind, Needs, Speed, Step, step
 from .plan import Plan
 
@@ -69,7 +70,8 @@ def fitness(config: GateConfig) -> tuple[Step, Step]:
     )
 
 
-def _measure(config: GateConfig, *, quick: bool, dimensions: tuple[str, ...], commit: str):
+def _argv(config: GateConfig, *, quick: bool, dimensions: tuple[str, ...], commit: str,
+          exclusions: tuple[str,...] = ()) -> list[str]:
     settings = config.benchmark.run
     timeout = settings.quick_timeout_secs if quick else settings.timeout_secs
     argv = [
@@ -88,10 +90,17 @@ def _measure(config: GateConfig, *, quick: bool, dimensions: tuple[str, ...], co
     ]
     if quick:
         argv.append("--quick")
+    for exclusion in exclusions:
+        argv.extend(("--exclude",exclusion))
     argv.extend(dimensions)
+    return argv
+
+
+def _measure(config: GateConfig, *, quick: bool, dimensions: tuple[str, ...], commit: str,
+             exclusions: tuple[str,...] = ()):
     return step(
         "bench.quick" if quick else "bench.run",
-        Run(argv),
+        Run(_argv(config,quick=quick,dimensions=dimensions,commit=commit,exclusions=exclusions)),
         # Every dimension in one step and one contention: two benchmarks
         # sharing this machine would each measure the other.
         contends=(config.exclusive("host_service"),),
@@ -127,23 +136,30 @@ class BenchCommand(GateCommand, name="bench", help="measure performance and reco
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
+        requested = tuple(self._args.dimensions.split())
+        native = self._config.benchmark.routes.restart_controls.dimension
+        quick = bool(self._args.quick)
+        restart = not quick and (not requested or native in requested)
+        ordinary = tuple(name for name in requested if name != native) if restart else requested
         prepared = runtimeprepare.prepare(
             plan,
             self._config,
-            guest=not bool(self._args.quick),
+            # Even restart-only needs the manifest-pinned stopped workspace;
+            # preparing guest artifacts does not boot a guest.
+            guest=not quick,
             permission=self.rebuild_permission,
             build_label="bench.build",
             sign_label="bench.sign",
         )
-        plan.add(
-            _measure(
-                self._config,
-                quick=bool(self._args.quick),
-                dimensions=tuple(self._args.dimensions.split()),
-                commit=self._args.commit,
-            ),
-            after=(prepared.ready,),
-        )
+        after = (prepared.ready,)
+        if not restart or not requested or ordinary:
+            measured = plan.add(_measure(self._config,quick=quick,dimensions=ordinary,
+                commit=self._args.commit,exclusions=(native,) if restart and not requested else ()),after=after)
+            after = (measured,)
+        if restart:
+            managedrestart.benchmark_fragment(plan,self._config,after=after,
+                content=RuntimeContent.standalone(self._config),
+                commit=self._args.commit)
         return plan
 
 

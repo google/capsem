@@ -55,6 +55,38 @@ fixture instead. This means `routes` provides RPS for every route in its
 measured class, rather than claiming that arbitrary mutations are safe to
 replay as a load test.
 
+## Disabled warm operations in `routes`
+
+Warm suspend/restore is disabled for 0.7.1 pending [#378](https://github.com/google/capsem/issues/378).
+The active pause case measures an actual 501 refusal while the original process,
+boot, generation and session remain unchanged. The resume case measures 501 for
+an owned synthetic saved-session fixture and verifies its checkpoint bytes remain
+intact. These are unsupported-operation measurements, not native checkpoint or
+warm-continuity proof. HTTP and verified-effect clocks remain separate. Original
+warm identity regressions are retained for #378; they must pass before warm
+suspend is re-enabled. Cold start is never reported as warm success.
+
+## Managed restart (`restart`)
+
+`capsem-gate bench --commit <exact-sha> restart` uses the existing disposable
+native supervisor owner. Ordinary route measurements remain confined. The
+default complete benchmark plan runs the confined selection with
+`--exclude restart`, then a separate native restart-only invocation of the same
+Rust runner. A complete ALL result requires the union of both sets of recording
+IDs, with identical source and configuration; the ordinary invocation alone is
+incomplete. Explicit mixed selections are partitioned the same way. Quick
+diagnostics exclude restart.
+
+The finite case restarts an isolated service with a known stopped workspace.
+HTTP 202 measures admission only. Separate raw clocks report observed original
+process retirement, new authenticated readiness, reconnection and verified
+registry/workspace preservation. Old-token rejection is checked on the new
+listener. CPU and sampled resident peaks follow only the owning fixture's
+stamped process roots, including replacements, through the existing sampler;
+these are not exact startup peaks. The case does not boot a VM, measure warm
+restore or certify live workload recovery. Native execution and two baseline /
+two candidate fitness-qualified runs are required before any performance claim.
+
 ## Boot timing
 
 Boot timing is measured independently from `capsem-bench`. The guest init script (`capsem-init`) records the wall-clock duration of each boot stage using `/proc/uptime`. The PTY agent sends these measurements to the host over the vsock control channel, where they are displayed as an inline table with a proportional bar chart.

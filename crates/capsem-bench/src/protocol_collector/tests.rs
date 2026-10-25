@@ -13,6 +13,7 @@ fn collector_keeps_raw_protocol_latencies() {
             version: "test".into(),
             lane: "guest_capsem".into(),
             base_url: "http://127.0.0.1:3713".into(),
+            query: None,
             dns_udp_addr: None,
             total_requests: 3,
             concurrency: 2,
@@ -40,6 +41,7 @@ fn collector_keeps_raw_protocol_latencies() {
                     p99: 2.5,
                 },
                 latency_samples: vec![0.5, 1.5, 2.5],
+                first_body_byte_samples: vec![0.1, 0.2, 0.3],
                 errors: BTreeMap::new(),
                 secret_shaped_fixture_seen: None,
                 raw_secret_stored_in_result: None,
@@ -51,6 +53,21 @@ fn collector_keeps_raw_protocol_latencies() {
     let latency = &document.metrics["guest_capsem.model_json_response.latency_ms"];
     assert_eq!(latency.unit, "milliseconds");
     assert_eq!(latency.samples, [0.5, 1.5, 2.5]);
+    let first_byte = &document.metrics["guest_capsem.model_json_response.first_body_byte_ms"];
+    assert_eq!(first_byte.unit, "milliseconds");
+    assert_eq!(first_byte.samples, [0.1, 0.2, 0.3]);
+    assert!(!document.sidecar.contains("first_body_byte_samples"));
     assert!(document.sidecar.contains("model_json_response"));
     assert!(!document.sidecar.contains("latency_samples"));
+    #[cfg(feature = "host")]
+    {
+        let record = crate::protocol_record::build(&artifact, "test", "source", Vec::new());
+        let metric = record
+            .metrics
+            .iter()
+            .find(|metric| metric.key == "protocol.guest_capsem.model_json_response.first_body_byte_ms")
+            .unwrap();
+        assert_eq!(metric.unit, crate::schema::Unit::Milliseconds);
+        assert_eq!(metric.summary.n, 3);
+    }
 }

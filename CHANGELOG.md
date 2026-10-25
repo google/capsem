@@ -7,9 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- Move the unfinished expanded benchmark campaign to its own development lane
-  (#379); retain the established release checks for Capsem 0.7.1.
-
 - Refuse warm suspend and restore in the service and omit their UI actions while
   original workspace handles cannot survive owner replacement (#378). Persistent
   stop/start retains files and restarts programs; existing checkpoints are preserved.
@@ -69,8 +66,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Restrict macOS companion virtualization entitlements to the existing five
   configured VM roles; preserve valid production signatures during installation.
 
+- Attribute network benchmark host resources to the original live service for
+  each lane/trial, retaining original bytes/loss counters and refusing counter
+  resets; replace global process-name and guessed guest-pump CPU attribution
+  with explicit unavailable scopes.
+
+- Observe bounded host-service CPU lower bounds and sampled RSS/descriptor
+  high-water during guest disk/storage execution, with exact-root receipts
+  requiring the original service owner to remain alive throughout.
+
+- Forward original guest I/O samples to benchmark statistics exactly once and
+  refuse incomplete required paths, optional-rootfs inventories or operation artifacts.
+
+- Preserve bounded original disk and storage operation latency observations and
+  completed byte counts; reject short I/O instead of reporting requested bytes.
+
 - Record guest disk and storage IOPS as operations per second without changing
   their original observed values.
+
+- Compare benchmark operation rates as higher-is-better throughput, with an
+  explicit operations-per-second unit distinct from operation counts.
 
 - Restore Debian installation without systemd while retaining exact old-cohort
   retirement and both signed admission checks; booted systemd still requires
@@ -169,11 +184,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Keep optional metric exporter initialization and shutdown off the async service
   runtime so enabling telemetry cannot panic before the service becomes ready.
+- Attribute Criterion resource observations to the measured executable rather
+  than compilation or parsing, with bounded sampled memory high-water marks,
+  observed CPU lower bounds and explicit lifecycle/completeness receipts.
+
+- Fixed Criterion benchmark preparation to verify Cargo's exact executable and
+  optimization profile, preserve the macOS signed runner contract, and declare
+  and measure the same binary in benchmark mode with separate phase receipts.
+
+- Require fresh Criterion raw samples for every selected target and listed case,
+  preserving bounded original inputs for audit and refusing malformed samples
+  or historical reuse. Summary-only targets remain explicitly diagnostic.
+
+- Reject incomplete paired benchmark evidence instead of seeding a successful
+  verdict when a baseline or candidate subject is missing. Verification still
+  requires complete fit, raw and configuration-compatible repeats on both sides.
+
 - Validate Antigravity CLI's captured MCP result in hermetic qualification
   using ordered timestamps, the original call identity and exact echoed token.
 
 - Make Antigravity CLI's hermetic MCP proof follow its captured lazy tool
   dispatcher and refuse unrelated or failed results instead of claiming success.
+
+- Add a finite update-check benchmark source case that requires the real
+  prepared CLI, one original manifest fetch and matching cache/public status.
+  Native execution and package-apply qualification remain separate proof.
 
 - Prepare Antigravity CLI qualification through the existing isolated synthetic
   OAuth session fixture instead of an unsupported API-key guess. Real CLI/MCP
@@ -182,6 +217,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reject incomplete agent qualification contracts before fixture startup,
   including missing turn, synthetic credential, provider and endpoint fields.
   OAuth-only agents still require a genuine authentication fixture.
+
+- Add finite pause/resume benchmark source cases that require a completed
+  checkpoint and the original foreground's RAM, cwd and open descriptions,
+  with separate response and verified effect clocks. Native proof remains
+  required; cold start cannot count as warm continuation.
+
+- Bind finite native supervisor restart benchmark source cases with separate
+  admission, original retirement, readiness and reconnection clocks; retain
+  ordinary route confinement and stopped workspace preservation checks.
+
+- Declare a separate native restart benchmark dimension so supervisor work
+  can retain its isolated owner without relaxing ordinary route confinement.
+
+- Add finite live corporate reload benchmark source cases that independently
+  verify original-owner policy blocking and exact restoration. Native
+  performance and managed-retirement acceptance remain separate gates.
+
+- Add finite HTTP approval-resolution benchmark source cases with genuine
+  original waiters, generation/duplicate conflicts and independent delivery
+  checks. Pending and original completion clocks remain separate from resolver
+  HTTP; native measurements and physical audit remain separate gates.
+
+- Add a finite original ephemeral-session save benchmark source case with
+  independent live identity, path and file checks plus normal cold-start
+  retention verification. Native measurement remains a separate gate.
+
+- Add finite VM-only one-shot execution and stopped-session purge benchmark
+  source cases with independent file, process and removal effects. Actual
+  performance remains a separate exact-cohort gate.
+
+- Add finite exposure and surface control benchmark source cases with original
+  single-use capabilities, independently counted workload requests and original
+  socket retirement checks. Native rendering and measured performance remain
+  separate gates.
+
+- Add finite live MCP refresh and builtin call benchmark source cases with
+  exact discovered metadata, narrow permissions and independent upstream facts.
+  Native performance and physical ledger proof remain separate gates.
+
+- Add finite synthetic credential injection and changed-store reload benchmark
+  source cases with independent broker binding and service-cache effects.
+  Physical ledger proof and measured performance remain separate gates.
+
+- Add finite benchmark source cases for network member attach/detach and real
+  private link history, with independent guest cable, switch and packet effects.
+  No per-flow logging or measured performance result is implied.
+
+- Add explicitly classified benchmark source cases for seven unavailable
+  connection/enrollment routes. Error-path timings remain separate from
+  successful functionality; no enrollment authority is enabled.
+
+- Add finite gateway benchmark source cases for genuine workload browser
+  acknowledgement and bounded file uploads, with independent workspace reads
+  and public ledger effects. Physical archive proof remains separately owned.
 
 - Add finite standalone proxy create, original lease renewal and stop cases to
   gateway performance coverage, with independent listener, worker and session
@@ -199,13 +288,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add populated synthetic-log diagnostics and finite owned empty-network benchmark
+  cases with strict status receipts, independent retirement checks and retained
+  audit-history validation; these do not claim real crash or native timing proof.
+
+- Benchmark six owned VM lifecycle operations with finite strict request samples and separate verified workload/process/path completion; native measurement remains required.
+
+- Add finite host-only settings and policy mutation benchmark cases with exact
+  file restoration and fresh effective-state checks; VM publication stays separate.
+
 - Measure finite hermetic image catalogue, installed package inventory, cold/warm
   image preparation and local runtime asset materialization as separate cases.
 
+- Bind stream benchmarks to real terminal output, rotated transcript tails and
+  gateway state-change delivery, with transport Ping/Pong reported separately.
+
+- Cover gateway-only health, OpenAPI and static app launcher reads in route
+  benchmarks, validating source content and security headers without service HTTP404
+  samples or claiming graphical rendering performance.
+
+- Add bounded route benchmark profiles for live workload binary downloads, full
+  archived event bodies and completed WARC exports, checking original bytes and
+  real file-policy/ledger completion against independent fixture facts.
+
+- Record route benchmark headers, first observed body byte and completion from
+  bounded single-attempt HTTP reads; reject hidden retries, partial framing and
+  slow trickles past the configured total deadline.
+
 - Keep TUI Manager and Help reachable from an empty image picker, and preserve
   its dismissal across session refreshes.
+- Benchmark real isolated network inspection with public setup and teardown; keep
+  populated transport-log and unavailable enrollment timing explicitly uncovered.
+
+- Add bounded route benchmark cases for seeded workspace listings, real VM and host
+  log tails, plain-text service logs and cached local MCP tool metadata.
+
 - Bind embedded app HTTP, event streams and terminal frames to the same private
   local gateway connection, rejecting cross-origin authority refreshes.
+- Add benchmark coverage for 26 more gateway/service read operations with distinct method and fixture
+  cases, including live container state and idle approvals; validate real response
+  schemas and counters before timing and keep uncovered operations explicit.
+
 - Preserve active OCI image generations and their lock files during cache
   retention instead of treating hidden lease controls as removable payloads.
 
@@ -277,6 +400,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Carry committed price coverage through session, per-model and global service
   totals without deriving price completeness from a zero cost.
+- Retain original benchmark samples as bounded binary arrays alongside their
+  summaries, and stop collectors that exceed configured output/sample budgets.
+
+- Record fresh machine-fitness receipts before and after each benchmark, retain
+  contaminated results as diagnostics, and require compatible complete repeats
+  before comparison or verification can treat observations as evidence.
+
+- Refuse a benchmark request before launching workloads when any requested
+  collector is missing, including unfinished dimensions in the default sweep.
+
+- Add a canonical full-pipe content-filter benchmark with disabled/PII/secret/UTF-8
+  profiles, bounded text/SSE cohorts, exact sample validation and process CPU/memory.
+
+- Record raw first-body-byte latency alongside full HTTP completion in the
+  canonical traffic benchmark, exposing buffering and streaming delay.
+
 - Brand all six supported images with bundled official product/publisher icons,
   owner names and canonical product links, with recorded asset provenance.
 
@@ -461,6 +600,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and keeping fork suffixes within the public name limit.
 - Preserve terminal completion markers at the start of large stream frames
   and across frame boundaries before retaining the bounded receive tail.
+
+- Enforce total receive deadlines and exact output byte budgets in stream
+  benchmarks, including peers that keep sending nonmatching frames.
 
 - Keep the native app and embedded terminals on the selected local gateway,
   including isolated runtime ports.

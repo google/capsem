@@ -10,7 +10,10 @@ from tests.ironbank.kingslanding import test_publish_benchmark as benchmark
 
 def doctor(exit_code, *objections):
     return subprocess.CompletedProcess(
-        [], exit_code, json.dumps({"objections": [{"what": name} for name in objections]}).encode(), b""
+        [],
+        exit_code,
+        json.dumps({"objections": [{"what": name} for name in objections]}).encode(),
+        b"",
     )
 
 
@@ -29,13 +32,17 @@ def test_load_must_become_fit_before_measurement(monkeypatch, tmp_path):
     calls = scripted_doctor(monkeypatch, [doctor(1, "load"), doctor(0)])
     elapsed = [0.0]
     monkeypatch.setattr(benchmark, "monotonic", lambda: elapsed[0], raising=False)
-    monkeypatch.setattr(benchmark, "sleep", lambda delay: elapsed.__setitem__(0, elapsed[0] + delay), raising=False)
+    monkeypatch.setattr(
+        benchmark, "sleep", lambda delay: elapsed.__setitem__(0, elapsed[0] + delay), raising=False
+    )
 
     benchmark.qualify_benchmark_host(tmp_path)
 
     assert len(calls) == 2 and elapsed[0] > 0
     assert (tmp_path / "doctor.exit").read_text() == "0\n"
-    observations = [json.loads(line) for line in (tmp_path / "doctor-readiness.jsonl").read_text().splitlines()]
+    observations = [
+        json.loads(line) for line in (tmp_path / "doctor-readiness.jsonl").read_text().splitlines()
+    ]
     assert [row["exit_code"] for row in observations] == [1, 0]
     assert observations[0]["fitness"]["objections"] == [{"what": "load"}]
 
@@ -53,10 +60,14 @@ def test_persistent_load_still_fails_at_the_configured_deadline(monkeypatch, tmp
     calls = scripted_doctor(monkeypatch, [doctor(1, "load")])
     elapsed = [0.0]
     monkeypatch.setattr(benchmark, "monotonic", lambda: elapsed[0])
-    monkeypatch.setattr(benchmark, "sleep", lambda delay: elapsed.__setitem__(0, elapsed[0] + delay))
+    monkeypatch.setattr(
+        benchmark, "sleep", lambda delay: elapsed.__setitem__(0, elapsed[0] + delay)
+    )
     with pytest.raises(AssertionError, match="load"):
         benchmark.qualify_benchmark_host(tmp_path)
-    assert elapsed[0] == benchmark.for_root(benchmark.PROJECT_ROOT).benchmark.run.fitness_timeout_secs
+    assert (
+        elapsed[0] == benchmark.for_root(benchmark.PROJECT_ROOT).benchmark.run.fitness_timeout_secs
+    )
     assert len(calls) > 1
     assert (tmp_path / "doctor.exit").read_text() == "1\n"
 

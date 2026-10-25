@@ -876,17 +876,20 @@ name = "capsem-bench"
 version = "0.7.1"
 dependencies = [
  "anyhow",
+ "bytes",
  "capsem-foundation",
  "capsem-proto",
  "clap",
  "futures",
  "reqwest 0.12.28",
+ "rmp-serde",
  "rusqlite",
  "serde",
  "serde_json",
  "socket2",
  "tempfile",
  "tokio",
+ "toml 0.8.2",
 ]
 
 [[package]]

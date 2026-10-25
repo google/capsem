@@ -21,7 +21,9 @@ fn record(dimension: Dimension, arch: &str, at: &str, value: f64) -> Record {
             load_before: 0.1,
         },
         quick: false,
+        measurement: None,
         metrics: vec![Metric {
+            samples: None,
             key: "gateway./vms/list.cpu_s".to_string(),
             unit: Unit::Seconds,
             summary: Summary::of(&[value; 8]).expect("summarizes"),
@@ -56,11 +58,96 @@ fn a_record_round_trips_through_the_store() {
 }
 
 #[test]
+fn original_samples_round_trip_as_binary_without_json_expansion() {
+    let (_dir, mut db) = store();
+    let values = vec![-0.0, 0.125, 1.0, 10000.0];
+    let mut row = base();
+    row.metrics[0].summary = Summary::of(&values).unwrap();
+    row.metrics[0].samples = Some(values.clone());
+    let id = insert(&mut db, &row).unwrap();
+    let (kind, bytes): (String, i64) = db
+        .query_row(
+            "SELECT typeof(raw_samples), length(raw_samples) FROM metrics WHERE run_id=?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(kind, "blob");
+    assert_eq!(bytes, 32);
+    let found = latest(&db, Dimension::Routes, "x86_64").unwrap().unwrap();
+    assert_eq!(
+        found.metrics[0]
+            .samples
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|v| v.to_bits())
+            .collect::<Vec<_>>(),
+        values.iter().map(|v| v.to_bits()).collect::<Vec<_>>()
+    );
+    assert_eq!(found.metrics[0].summary, row.metrics[0].summary);
+    assert!(!serde_json::to_string(&found).unwrap().contains("samples"));
+    db.execute("DELETE FROM runs WHERE id=?1", [id]).unwrap();
+    assert_eq!(
+        db.query_row("SELECT count(*) FROM metrics", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+}
+
+#[test]
+fn oversized_or_incomplete_sample_records_fail_atomically() {
+    let (_dir, mut db) = store();
+    let mut row = base();
+    row.metrics[0].samples = Some(vec![1.0; 8]);
+    let limits = super::Limits {
+        max_collector_bytes: 1024,
+        max_samples_per_metric: 8,
+        max_samples_per_run: 7,
+    };
+    assert!(super::insert_with_limits(&mut db, &row, limits).is_err());
+    row.metrics[0].samples = Some(vec![1.0; 7]);
+    assert!(insert(&mut db, &row).is_err());
+    row.metrics[0].samples = Some(vec![f64::NAN; 8]);
+    assert!(insert(&mut db, &row).is_err());
+    assert_eq!(
+        db.query_row("SELECT count(*) FROM runs", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+}
+
+#[test]
+fn malformed_sample_blobs_are_not_read_as_missing_historical_data() {
+    let (_dir, mut db) = store();
+    insert(&mut db, &base()).unwrap();
+    db.execute("UPDATE metrics SET raw_samples=X'01'", []).unwrap();
+    assert!(latest(&db, Dimension::Routes, "x86_64").is_err());
+}
+
+#[test]
 fn opening_twice_is_safe() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("bench.db");
     open(&path).expect("creates");
     open(&path).expect("reopens");
+}
+
+#[test]
+fn historical_v2_observations_migrate_without_inventing_fitness() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    {
+        let mut db = open(&path).unwrap();
+        insert(&mut db, &base()).unwrap();
+        db.execute_batch("DROP TABLE measurements; ALTER TABLE metrics DROP COLUMN raw_samples; UPDATE meta SET value = '2' WHERE key = 'schema_version';")
+            .unwrap();
+    }
+    let db = open(&path).unwrap();
+    let row = latest(&db, Dimension::Routes, "x86_64").unwrap().unwrap();
+    assert_eq!(row.metrics[0].summary.median, 0.14);
+    assert!(row.measurement.is_none());
+    assert!(crate::evidence::eligible(&row).is_err());
 }
 
 #[test]

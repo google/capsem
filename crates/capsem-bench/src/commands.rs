@@ -15,6 +15,9 @@ use crate::schema;
 use crate::stats;
 use crate::store;
 
+#[cfg(test)]
+mod tests;
+
 /// What can be measured, and what a quick run leaves out.
 pub(crate) fn list_dimensions() {
     println!("{:<12}  QUICK", "DIMENSION");
@@ -86,14 +89,55 @@ pub(crate) fn run_dimensions(
     quick: bool,
     channel: &str,
     commit: &str,
-    strays: Vec<String>,
+    profile: &str,
 ) -> Result<()> {
-    let fitness = machine::examine(
-        machine::Judgement::Measurement,
-        std::env::consts::ARCH,
-        std::env::consts::OS,
-        &strays,
-    );
+    run_with_probe(
+        wanted,
+        collectors,
+        out,
+        timeout,
+        interpreter,
+        quick,
+        channel,
+        commit,
+        profile,
+        || {
+            Ok(machine::examine(
+                machine::Judgement::Measurement,
+                std::env::consts::ARCH,
+                std::env::consts::OS,
+                &machine::running_capsem_processes()?,
+            ))
+        },
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_with_probe(
+    wanted: &[schema::Dimension],
+    collectors: &Path,
+    out: &Path,
+    timeout: Duration,
+    interpreter: Option<&str>,
+    quick: bool,
+    channel: &str,
+    commit: &str,
+    profile: &str,
+    mut probe: impl FnMut() -> Result<machine::Fitness>,
+) -> Result<()> {
+    let missing = wanted
+        .iter()
+        .filter(|dimension| !quick || dimension.in_quick_lane())
+        .filter(|dimension| !collectors.join(dimension.as_str()).is_file())
+        .map(|dimension| dimension.as_str())
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        bail!("requested benchmark collectors are missing: {}", missing.join(", "));
+    }
+    let limits = crate::sample_limits::Limits::from_config(profile)?;
+    if !quick && (profile.is_empty() || commit.len() != 40 || !commit.bytes().all(|b| b.is_ascii_hexdigit())) {
+        bail!("authoritative recording requires an exact source SHA and nonempty configuration");
+    }
     let mut connection = store::open(out)?;
     let mut ran = 0usize;
 
@@ -101,12 +145,17 @@ pub(crate) fn run_dimensions(
         // A quick run answers "how bad is it" while developing, so it takes
         // only the dimensions that finish in seconds.
         if quick && !dimension.in_quick_lane() {
+            println!("{}: excluded from quick diagnostics", dimension.as_str());
             continue;
         }
         let program = collectors.join(dimension.as_str());
-        if !program.exists() {
-            println!("{}: no collector yet", dimension.as_str());
-            continue;
+        let before = probe()?;
+        if !quick && !before.fit() {
+            bail!(
+                "machine is unfit before {}: {:?}",
+                dimension.as_str(),
+                before.objections
+            );
         }
 
         // An interpreter prefix runs the collector as an argument to it, so a
@@ -125,16 +174,23 @@ pub(crate) fn run_dimensions(
         if quick {
             args.push("--quick".to_string());
         }
-        let collected = collector::run(&program, &args, timeout)?;
+        if *dimension == schema::Dimension::Install {
+            // The disposable installed owner must bind its package/activation
+            // receipts to the same exact source this runner records.
+            args.extend(["--source-commit".to_string(), commit.to_string()]);
+        }
+        let collected = collector::run(&program, &args, timeout, limits)?;
+        let after = probe()?;
 
         let metrics = collected
             .metrics
-            .iter()
+            .into_iter()
             .filter_map(|(key, raw)| {
                 stats::Summary::of(&raw.samples).map(|summary| schema::Metric {
                     key: format!("{}.{key}", dimension.as_str()),
                     unit: raw.unit,
                     summary,
+                    samples: Some(raw.samples),
                 })
             })
             .collect::<Vec<_>>();
@@ -148,18 +204,30 @@ pub(crate) fn run_dimensions(
                 channel: channel.to_string(),
                 commit: commit.to_string(),
             },
-            host: fitness.host.clone(),
+            host: before.host.clone(),
             quick,
+            measurement: Some(schema::Measurement {
+                before,
+                after,
+                profile: profile.to_string(),
+            }),
             metrics,
             sidecar: collected.sidecar,
         };
-        let run_id = store::insert(&mut connection, &record)?;
+        let authoritative = crate::evidence::eligible(&record).is_ok();
+        let run_id = store::insert_with_limits(&mut connection, &record, limits)?;
         println!(
             "{}: {} metrics recorded as run {run_id}",
             dimension.as_str(),
             record.metrics.len()
         );
         ran += 1;
+        if !quick && !authoritative {
+            bail!(
+                "machine became unfit after {}; stored diagnostic observations only",
+                dimension.as_str()
+            );
+        }
     }
 
     if ran == 0 {
@@ -238,6 +306,22 @@ pub(crate) fn select_dimensions(names: &[String]) -> Result<Vec<schema::Dimensio
                 })
         })
         .collect()
+}
+
+/// Partition a full run without a second registry of available dimensions.
+pub(crate) fn select_run_dimensions(names: &[String], exclusions: &[String]) -> Result<Vec<schema::Dimension>> {
+    let mut selected = select_dimensions(names)?;
+    if !exclusions.is_empty() {
+        let excluded = select_dimensions(exclusions)?;
+        if !names.is_empty() && selected.iter().any(|name| excluded.contains(name)) {
+            bail!("explicit dimensions conflict with exclusions");
+        }
+        selected.retain(|name| !excluded.contains(name));
+    }
+    if selected.is_empty() {
+        bail!("dimension selection must not be empty");
+    }
+    Ok(selected)
 }
 
 /// What every measured subject currently reads, and how it has moved.

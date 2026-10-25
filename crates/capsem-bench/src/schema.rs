@@ -28,6 +28,8 @@ pub const SCHEMA: &str = "capsem.bench.v2";
 pub enum Dimension {
     // Host, driving the service and gateway.
     Routes,
+    /// Managed native restart, isolated from ordinary confined route reads.
+    Restart,
     Websocket,
     Lifecycle,
     /// Terminal and streaming exec over `/vms/{id}/stream` through the gateway.
@@ -52,6 +54,8 @@ pub enum Dimension {
     MitmLoad,
     /// Aggregate HTTPS interception throughput as independent VMs fan out.
     MitmScale,
+    /// Disabled and enabled HTTP content filters over the real guest proxy.
+    ContentFilter,
     DnsLoad,
 }
 
@@ -59,6 +63,7 @@ impl Dimension {
     /// Every dimension, for `capsem-bench list` and for a full sweep.
     pub const ALL: &'static [Dimension] = &[
         Dimension::Routes,
+        Dimension::Restart,
         Dimension::Websocket,
         Dimension::Lifecycle,
         Dimension::Stream,
@@ -78,12 +83,14 @@ impl Dimension {
         Dimension::McpLoad,
         Dimension::MitmLoad,
         Dimension::MitmScale,
+        Dimension::ContentFilter,
         Dimension::DnsLoad,
     ];
 
     pub fn as_str(self) -> &'static str {
         match self {
             Dimension::Routes => "routes",
+            Dimension::Restart => "restart",
             Dimension::Websocket => "websocket",
             Dimension::Lifecycle => "lifecycle",
             Dimension::Stream => "stream",
@@ -103,6 +110,7 @@ impl Dimension {
             Dimension::McpLoad => "mcp-load",
             Dimension::MitmLoad => "mitm-load",
             Dimension::MitmScale => "mitm-scale",
+            Dimension::ContentFilter => "content-filter",
             Dimension::DnsLoad => "dns-load",
         }
     }
@@ -111,7 +119,12 @@ impl Dimension {
     pub fn needs_vm(self) -> bool {
         !matches!(
             self,
-            Dimension::Criterion | Dimension::Crypto | Dimension::Protocol | Dimension::Routes | Dimension::Websocket
+            Dimension::Criterion
+                | Dimension::Crypto
+                | Dimension::Protocol
+                | Dimension::Routes
+                | Dimension::Restart
+                | Dimension::Websocket
         )
     }
 
@@ -140,6 +153,7 @@ pub enum Unit {
     Megabytes,
     RequestsPerSecond,
     MegabitsPerSecond,
+    OperationsPerSecond,
     Operations,
     Ratio,
     Count,
@@ -148,6 +162,9 @@ pub enum Unit {
 /// One measured thing: a stable key, a unit, and its distribution.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Metric {
+    /// Original observations live only in the store's binary sample column.
+    #[serde(skip)]
+    pub samples: Option<Vec<f64>>,
     /// Dotted and stable across releases -- `gateway./vms/list.cpu_s`. This is
     /// the identity a trend line and a budget both hang on, so it must survive
     /// renaming the function that produced it.
@@ -186,6 +203,16 @@ pub struct Host {
 /// One dimension's measurements, as written to disk.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct Measurement {
+    pub before: crate::machine::Fitness,
+    pub after: crate::machine::Fitness,
+    /// Exact config bytes, not a digest or a claimed profile name.
+    pub profile: String,
+}
+
+/// One dimension's measurements, as written to disk.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Record {
     pub schema: String,
     pub dimension: Dimension,
@@ -195,6 +222,9 @@ pub struct Record {
     pub host: Host,
     /// Reduced-sample dev-loop run. Never promotable to evidence.
     pub quick: bool,
+    /// Missing on historical observations; never fabricated during migration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub measurement: Option<Measurement>,
     pub metrics: Vec<Metric>,
     /// Bulk output kept beside the record rather than inside it. The parallel
     /// benchmark embedded 80 KB of captured stdout in its artifact.

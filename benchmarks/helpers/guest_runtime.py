@@ -63,13 +63,19 @@ def mitm_fixture_corp_toml(ready: dict) -> str:
     )
 
 
-def guest_command(mode: str) -> str:
+def guest_command(mode: str, *, io_limits=None) -> str:
     """Build one safely quoted command with owned benchmark controls."""
     assignments = [
         f"{name}={value}"
         for name in FORWARDED_ENV
         if (value := os.environ.get(name)) is not None
     ]
+    if mode in {"disk", "storage"} and io_limits is not None:
+        assignments.extend((
+            f"CAPSEM_BENCH_MAX_SAMPLES_PER_METRIC={io_limits.max_samples_per_metric}",
+            f"CAPSEM_BENCH_MAX_SAMPLES_PER_RUN={io_limits.max_samples_per_run}",
+            f"CAPSEM_BENCH_MAX_COLLECTOR_BYTES={io_limits.max_collector_bytes}",
+        ))
     command = ["env", *assignments, "capsem-bench", mode]
     if mode == "protocol":
         command.extend(
