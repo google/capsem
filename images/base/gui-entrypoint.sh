@@ -7,7 +7,8 @@
 #      its stored login;
 #   3. the runtime's CA bundle, imported into the user's NSS database, which
 #      Chromium trusts instead of the system bundle;
-#   4. Xpra, which starts its own X display and then the application in it.
+#   4. Xpra, which negotiates the client's display and DPI before starting
+#      the application. Electron reads its scale when it starts.
 # The container exits with the application's exit status.
 #
 # Chromium keeps its sandbox. The image runs with no_new_privs, so the setuid
@@ -129,7 +130,7 @@ xpra start :100 \
     --open-url=no \
     --notifications=no \
     --system-tray=no \
-    --start-child="$0 --child" \
+    --start-child-after-connect="$0 --child" \
     --exit-with-children=yes \
     --terminate-children=yes
 

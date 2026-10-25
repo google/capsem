@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Start GUI applications after Xpra negotiates the client's viewport and DPI,
+  so Electron does not retain the initial display's 1× scale on Retina screens.
+
 - Let fullscreen GUI windows fill the viewport despite fixed application size
   hints, keeping Antigravity's first-run controls reachable at Retina density.
 
