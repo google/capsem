@@ -92,6 +92,21 @@ fn cache_details(cache_read: u64) -> BTreeMap<String, u64> {
 }
 
 #[test]
+fn demo_opus_one_hour_cache_usage_is_priced_without_double_charging_writes() {
+    // Captured demo usage only: no prompts, account IDs, headers or credentials.
+    let (model, input, output, details) = crate::net::ai_traffic::events::parse_non_streaming_usage(
+        crate::net::ai_traffic::provider::ModelProtocol::Anthropic,
+        include_bytes!("fixtures/demo-opus-cache.json"),
+    );
+    assert_eq!(input, Some(45149));
+    let cost = PricingTable::load()
+        .estimate_cost_at("anthropic", model.as_deref(), input, output, &details, at(2026, 10, 24))
+        .unwrap();
+    let expected = (504.0 * 5.0 + 44611.0 * 0.5 + 34.0 * 10.0 + 8.0 * 25.0) / 1_000_000.0;
+    assert!((cost - expected).abs() < 1e-12, "{cost} != {expected}");
+}
+
+#[test]
 fn load_succeeds() {
     let table = PricingTable::load();
     assert!(

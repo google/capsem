@@ -1,0 +1,13 @@
+{
+  "model": "claude-opus-5",
+  "usage": {
+    "input_tokens": 504,
+    "cache_creation_input_tokens": 34,
+    "cache_read_input_tokens": 44611,
+    "output_tokens": 8,
+    "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 34
+    }
+  }
+}

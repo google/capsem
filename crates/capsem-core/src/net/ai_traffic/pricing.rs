@@ -260,10 +260,15 @@ impl PricingTable {
         let output = output_tokens?;
         let read = usage_details.get("cache_read").copied().unwrap_or(0);
         let write = usage_details.get("cache_write").copied().unwrap_or(0);
-        // The bundled table has no duration-specific write rate. Never guess it.
-        if usage_details.get("cache_write_1h").copied().unwrap_or(0) > 0 {
+        let write_1h = usage_details.get("cache_write_1h").copied().unwrap_or(0);
+        // Anthropic explicitly prices 1h writes at twice the base input rate:
+        // https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+        // `cache_write` includes both TTLs. Do not charge the 1h subset twice,
+        // and never apply this provider-specific contract to another provider.
+        if write_1h > 0 && provider != "anthropic" {
             return None;
         }
+        let write_5m = write.checked_sub(write_1h)?;
         let provider = self.providers.iter().find(|p| p.id == provider)?;
         let price = provider
             .models
@@ -283,7 +288,8 @@ impl PricingTable {
             component(base, &price.input_mtok)?
                 + component(output, &price.output_mtok)?
                 + component(read, &price.cache_read_mtok)?
-                + component(write, &price.cache_write_mtok)?,
+                + component(write_5m, &price.cache_write_mtok)?
+                + component(write_1h, &price.input_mtok)? * 2.0,
         )
     }
 }
