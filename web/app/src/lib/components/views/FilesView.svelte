@@ -37,7 +37,7 @@
     loading = true;
     error = null;
     try {
-      const resp = await api.listFiles(vmId, '/', 4);
+      const resp = await api.listFiles(vmId, '/', 8);
       fileTree = resp.entries;
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to load files';
@@ -176,7 +176,7 @@
   <!-- Tree pane -->
   <div class="w-64 shrink-0 border-r border-line-2 overflow-auto bg-layer">
     <div class="flex items-center justify-between px-3 py-2 border-b border-line-2">
-      <span class="text-xs font-medium text-muted-foreground uppercase tracking-wider">Files</span>
+      <span class="text-xs font-medium text-muted-foreground tracking-wider">/home</span>
       <div class="flex items-center gap-x-1">
         {#if uploadStatus}
           <span class="text-xs text-primary">{uploadStatus}</span>

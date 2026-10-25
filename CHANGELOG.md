@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Show `/home` as the file explorer root and include nested agent artifact directories.
+
 - Back workload `/home` with the observed session file tree, preserving existing Home files on first launch so Home artifacts appear in Files and file telemetry.
 
 - Group model reasoning/text and uniquely matched tool results in Stats, keep unanswered requests visible, and move raw payloads into the Details side panel.
