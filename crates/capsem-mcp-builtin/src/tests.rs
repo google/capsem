@@ -5,6 +5,27 @@ const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(capsem_proto::MCP_HTT
 const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(capsem_proto::MCP_STARTUP_TIMEOUT_SECONDS);
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+#[test]
+fn startup_refuses_stdin_without_a_connected_capability_socket() {
+    if std::env::var_os("CAPSEM_BUILTIN_STARTUP_TEST").is_some() {
+        use std::os::fd::AsFd;
+        let expected = capsem_foundation::unix::fd::validate_connected_stream(std::io::stdin().as_fd())
+            .unwrap_err();
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let error = runtime.block_on(run("startup-fixture".into(), "startup-trace".into())).unwrap_err();
+        assert_eq!(error.root_cause().to_string(), expected.to_string());
+        return;
+    }
+    // Actual entry initialization runs in its own process with no bootstrap
+    // descriptor; it must refuse before publishing MCP readiness or tools.
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "tests::startup_refuses_stdin_without_a_connected_capability_socket"])
+        .env("CAPSEM_BUILTIN_STARTUP_TEST", "1")
+        .stdin(std::process::Stdio::null())
+        .status().unwrap();
+    assert!(status.success());
+}
+
 /// A non-public address is reachable only through an explicit allow rule,
 /// so a test that talks to a loopback fixture carries one.
 fn loopback_allowed_rules() -> SecurityRuleSet {
@@ -198,6 +219,32 @@ async fn a_refused_request_is_recorded_on_the_error_result() {
     };
     assert_eq!(request.decision, builtin_ledger::HttpDecision::Denied);
     assert_eq!(request.policy_action, "block");
+}
+
+#[tokio::test]
+async fn typed_http_wrappers_preserve_method_and_url_when_policy_refuses() {
+    let handler = handler();
+    let url = "http://127.0.0.1:1/wrapper-parameters";
+    let results = [
+        handler.grep_http(Parameters(GrepHttpParams {
+            url: url.to_string(), pattern: "needle".to_string(),
+            context_lines: Some(2), max_matches: Some(1),
+            start_index: Some(0), max_length: Some(100),
+        })).await,
+        handler.http_headers(Parameters(HttpHeadersParams {
+            url: url.to_string(), method: Some("HEAD".to_string()),
+        })).await,
+    ];
+    for (result, method) in results.iter().zip(["GET", "HEAD"]) {
+        assert_eq!(result.is_error, Some(true), "{result:?}");
+        let records = ledger_records(result);
+        let [BuiltinLedgerRecord::HttpRequest(request)] = records.as_slice() else {
+            panic!("one denied request must carry one ledger record");
+        };
+        assert_eq!(request.domain, "127.0.0.1");
+        assert_eq!(request.method, method);
+        assert_eq!(request.decision, builtin_ledger::HttpDecision::Denied);
+    }
 }
 
 // ── Tool-failure propagation ───────────────────────────────────────

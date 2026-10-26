@@ -8,6 +8,9 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
+#[cfg(feature = "host")]
+mod command_flows;
+
 #[test]
 fn selected_scenarios_are_strict() {
     let selected = select_scenarios(Some("tiny_http,model_json_response")).unwrap();

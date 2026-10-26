@@ -45,7 +45,10 @@ use scenarios::*;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = Cli::parse();
+    execute(Cli::parse()).await
+}
+
+async fn execute(cli: Cli) -> Result<()> {
     match cli.command.unwrap_or(Command::Protocol(ProtocolArgs {
         base_url: None,
         dns_udp_addr: None,
