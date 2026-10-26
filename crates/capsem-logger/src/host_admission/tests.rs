@@ -15,7 +15,11 @@ fn account() -> (tempfile::TempDir, PathBuf) {
 fn sessions(home: &Path) -> PathBuf {
     let dir = home.join(".capsem/sessions");
     // Admission deliberately refuses external write authority under any umask.
-    std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&dir).unwrap();
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&dir)
+        .unwrap();
     dir
 }
 

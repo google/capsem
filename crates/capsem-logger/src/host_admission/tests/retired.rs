@@ -8,8 +8,11 @@ fn dormant(home: &Path) {
     for name in FAMILY {
         // Deliberately not SQLite: admission must never interpret retired data.
         fs::write_new_regular_file_no_follow(
-            &directory.join(name), format!("original inert {name}").as_bytes(), 0o600,
-        ).unwrap();
+            &directory.join(name),
+            format!("original inert {name}").as_bytes(),
+            0o600,
+        )
+        .unwrap();
     }
 }
 

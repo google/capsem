@@ -9,20 +9,28 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 fn startup_refuses_stdin_without_a_connected_capability_socket() {
     if std::env::var_os("CAPSEM_BUILTIN_STARTUP_TEST").is_some() {
         use std::os::fd::AsFd;
-        let expected = capsem_foundation::unix::fd::validate_connected_stream(std::io::stdin().as_fd())
+        let expected = capsem_foundation::unix::fd::validate_connected_stream(std::io::stdin().as_fd()).unwrap_err();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let error = runtime
+            .block_on(run("startup-fixture".into(), "startup-trace".into()))
             .unwrap_err();
-        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-        let error = runtime.block_on(run("startup-fixture".into(), "startup-trace".into())).unwrap_err();
         assert_eq!(error.root_cause().to_string(), expected.to_string());
         return;
     }
     // Actual entry initialization runs in its own process with no bootstrap
     // descriptor; it must refuse before publishing MCP readiness or tools.
     let status = std::process::Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "tests::startup_refuses_stdin_without_a_connected_capability_socket"])
+        .args([
+            "--exact",
+            "tests::startup_refuses_stdin_without_a_connected_capability_socket",
+        ])
         .env("CAPSEM_BUILTIN_STARTUP_TEST", "1")
         .stdin(std::process::Stdio::null())
-        .status().unwrap();
+        .status()
+        .unwrap();
     assert!(status.success());
 }
 
@@ -226,14 +234,22 @@ async fn typed_http_wrappers_preserve_method_and_url_when_policy_refuses() {
     let handler = handler();
     let url = "http://127.0.0.1:1/wrapper-parameters";
     let results = [
-        handler.grep_http(Parameters(GrepHttpParams {
-            url: url.to_string(), pattern: "needle".to_string(),
-            context_lines: Some(2), max_matches: Some(1),
-            start_index: Some(0), max_length: Some(100),
-        })).await,
-        handler.http_headers(Parameters(HttpHeadersParams {
-            url: url.to_string(), method: Some("HEAD".to_string()),
-        })).await,
+        handler
+            .grep_http(Parameters(GrepHttpParams {
+                url: url.to_string(),
+                pattern: "needle".to_string(),
+                context_lines: Some(2),
+                max_matches: Some(1),
+                start_index: Some(0),
+                max_length: Some(100),
+            }))
+            .await,
+        handler
+            .http_headers(Parameters(HttpHeadersParams {
+                url: url.to_string(),
+                method: Some("HEAD".to_string()),
+            }))
+            .await,
     ];
     for (result, method) in results.iter().zip(["GET", "HEAD"]) {
         assert_eq!(result.is_error, Some(true), "{result:?}");
