@@ -261,7 +261,11 @@ def extract_snapshot(repo, commit, root):
                 continue
             dest = root / path
             dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(archive.extractfile(member).read())
+            stream = archive.extractfile(member)
+            if stream is None:
+                raise ValueError(f"Git archive source member is unreadable: {path}")
+            with stream:
+                dest.write_bytes(stream.read())
             paths.append(path)
     if proc.wait() != 0:
         raise RuntimeError("git archive failed")

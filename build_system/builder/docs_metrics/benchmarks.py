@@ -3,6 +3,15 @@
 from __future__ import annotations
 
 import math
+from typing import TypedDict
+
+
+class Section(TypedDict):
+    title: str
+    description: str
+    charts: list[dict]
+    available: bool
+
 
 SECTIONS = {
     "images": ("Image performance", "Boot readiness, fork and prepared-image size."),
@@ -47,7 +56,7 @@ def normalize(snapshot: dict) -> dict:
     _eligible(source)
     for record in records.values():
         _eligible({**record, "source_commit": source["source_commit"]})
-    sections = {
+    sections: dict[str, Section] = {
         key: {"title": title, "description": desc, "charts": [], "available": False}
         for key, (title, desc) in SECTIONS.items()
     }
