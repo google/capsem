@@ -2112,7 +2112,6 @@ building = ["frontend-build", "docs", "site"]
 # neither.
 source_contract = [
     "tests/test_benchmark_routes.py",
-    "tests/test_benchmark_update_check.py",
     "tests/test_update_check_fixture.py",
     "tests/qualification/test_candidate.py",
     "build_system/tests/gate/test_gate_observation.py",
@@ -2228,7 +2227,6 @@ source_contract = [
     "build_system/tests/gate/test_gate_process_observer.py",
     "build_system/tests/gate/test_gate_testmodules.py",
     "build_system/tests/gate/test_gate_node_lock.py",
-    "build_system/tests/gate/test_gate_bench_restart.py",
     "build_system/tests/gate/test_native_transfer_config.py",
     "build_system/tests/gate/test_gate_transition.py",
     "build_system/tests/gate/test_gate_test_admission.py",
