@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -412,7 +413,7 @@ def test_install_helper_materializes_locked_inputs_before_the_sealed_image(
     )
     assert "--platform linux/amd64" in str(helper)
     assert "--network default" in str(helper)
-    assert f"BASE=capsem-host-builder@sha256:{'0' * 64}" in str(helper)
+    assert f"BASE={CONFIG.package.builder_image}" in str(helper)
     assert f"APT_SNAPSHOT_BASE={CONFIG.apt_snapshot.base}" in str(helper)
     assert f"APT_SNAPSHOT_ID={CONFIG.apt_snapshot.id}" in str(helper)
     assert f"RUST_TARGET={CONFIG.host_arch().rust_target}" in str(helper)
@@ -427,7 +428,7 @@ def test_install_helper_materializes_locked_inputs_before_the_sealed_image(
     assert identity.image_id == "sha256:" + "0" * 64
     assert runner.last_index_of(
         r"docker image inspect --format '\{\{\.Os\}\}/\{\{\.Architecture\}\}.*"
-        r"capsem-host-builder@sha256:"
+        + re.escape(CONFIG.package.builder_image)
     ) > runner.index_of(r"docker build .*Dockerfile\.install-builder")
     assert runner.last_index_of(
         r"--format '\{\{\.Os\}\}/\{\{\.Architecture\}\}.*capsem-install-builder:"

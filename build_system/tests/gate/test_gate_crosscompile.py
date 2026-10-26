@@ -747,7 +747,7 @@ def test_package_helper_is_host_native_and_target_specific(
     assert f"--platform {host.docker_platform}" in build
     assert "--network default" in build
     assert "--cache-from capsem-package-builder-cache:previous" in build
-    assert f"BASE=capsem-host-builder@sha256:{'0' * 64}" in build
+    assert f"BASE={config.package.builder_image}" in build
     assert f"BASE=sha256:{'0' * 64}" not in build
     assert f"RUST_TARGET={target.rust_target}" in build
     assert f"HOST_RUST_TARGET={host.rust_target}" in build
@@ -764,9 +764,10 @@ def test_package_helper_is_host_native_and_target_specific(
     assert any("sha256:" in note for note in runner.notes)
     assert identity.input_key.startswith(f"capsem-package-builder-{target.name}:")
     assert identity.image_id == "sha256:" + "d" * 64
-    assert identity.image_reference == (f"capsem-package-builder-{target.name}@sha256:{'0' * 64}")
+    assert identity.image_reference == identity.input_key
     assert runner.last_index_of(
-        r"--format '\{\{\.Os\}\}/\{\{\.Architecture\}\}.*capsem-host-builder@sha256:"
+        r"--format '\{\{\.Os\}\}/\{\{\.Architecture\}\}.*"
+        + re.escape(config.package.builder_image)
     ) > runner.index_of(r"docker build .*Dockerfile\.package-builder")
     from capsem_builder.gate.invocation import ConsoleMode
 
@@ -806,17 +807,19 @@ def test_package_helper_refuses_a_parent_tag_move_before_docker_build(
     monkeypatch.setattr("capsem_builder.gate.host.machine", lambda: "x86_64")
     root = _checkout(tmp_path)
     config = gate_config.load(root)
-    runner = RecordingRunner(
-        root,
-        replies={
-            "{{.Architecture}}\t{{.Id}}' capsem-host-builder:latest": (
-                f"linux/amd64\tsha256:{'a' * 64}"
-            ),
-            "{{.Architecture}}\t{{.Id}}' capsem-host-builder@sha256:": (
-                f"linux/amd64\tsha256:{'c' * 64}"
-            ),
-        },
-    )
+
+    class MovingParent(RecordingRunner):
+        lookups = 0
+
+        def execute(self, command):
+            completed = super().execute(command)
+            if command.argv[-1] == config.package.builder_image and "{{.Architecture}}" in str(command):
+                self.lookups += 1
+                identity = "a" if self.lookups == 1 else "c"
+                completed.stdout = f"linux/amd64\tsha256:{identity * 64}"
+            return completed
+
+    runner = MovingParent(root)
 
     with pytest.raises(GateError, match="moved while resolving"):
         materialize(runner, config, config.arch("x86_64"))
@@ -904,7 +907,7 @@ def test_package_helper_exact_identity_is_written_to_the_run_journal(
     (recorded,) = [note for note in journal.notes if note.startswith("package helper arm64:")]
     assert "input key capsem-package-builder-arm64:" in recorded
     assert "exact image sha256:" in recorded
-    assert "build reference capsem-package-builder-arm64@sha256:" in recorded
+    assert "build reference capsem-package-builder-arm64:" in recorded
 
 
 def test_package_source_image_and_runtime_are_network_none(
