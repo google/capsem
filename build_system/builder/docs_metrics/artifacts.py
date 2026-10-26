@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
 import io
 import json
 import re
 import subprocess
 import zipfile
 
+from .. import crypto as hashlib
 from .benchmarks import normalize
 from .github import GitHub
 
