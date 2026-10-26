@@ -1617,7 +1617,11 @@ def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
         assert ("pull_request:" in trigger) == (surface == "docs"), workflow_name
         assert "push:" in workflow, workflow_name
         assert "branches: [main]" in workflow, workflow_name
-        assert "paths:" in push_trigger, workflow_name
+        # Documentation metrics depend on the complete source tree and history.
+        if surface == "docs":
+            assert _workflow_document(workflow_name)[True]["push"] == {"branches": ["main"]}
+        else:
+            assert "paths:" in push_trigger, workflow_name
         assert f"cache-dependency-path: {directory}/pnpm-lock.yaml" in ci_block
         assert f"cd {directory} && pnpm install --frozen-lockfile" in ci_block
         assert f"bash build_system/scripts/web/check-web-surface.sh {surface}" in ci_block
@@ -1625,9 +1629,11 @@ def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
         assert (f"pnpm --dir {directory} install --frozen-lockfile" if surface == "docs"
                 else f"cd {directory} && pnpm install --frozen-lockfile") in workflow
         assert f"bash build_system/scripts/web/check-web-surface.sh {surface}" in workflow
-        assert (
-            "if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}" in workflow
+        allowed_event = (
+            "(github.event_name == 'push' || github.event_name == 'workflow_dispatch')"
+            if surface == "docs" else "github.event_name == 'push'"
         )
+        assert f"if: ${{{{ {allowed_event} && github.ref == 'refs/heads/main' }}}}" in workflow
         assert f"pages deploy {directory}/dist/ --project-name={project_name}" in workflow
         assert smoke_name in workflow
         assert f"SITE_URL: {site_url}" in workflow
@@ -3047,7 +3053,7 @@ def test_ci_docs_describes_three_independent_publication_rails() -> None:
         in docs
     )
     assert (
-        "| `docs.yaml` | Push to main when docs or a shared docs-build input changes | Deploy docs.capsem.org, then smoke the live docs site |"
+        "| `docs.yaml` | Every push to main | Refresh repository-wide metrics, deploy docs.capsem.org, then smoke the live docs site |"
         in docs
     )
     assert (

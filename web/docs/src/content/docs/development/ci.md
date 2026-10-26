@@ -19,7 +19,7 @@ Capsem uses GitHub Actions for continuous integration and release automation.
 | `release-channel-staging.yaml` | Manual | Build a deterministic staging asset channel fixture, deploy it to a Cloudflare Pages preview branch, and validate the same release-channel contract without invoking `build-assets`, `build-app-macos`, or `build-app-linux` |
 | `release-binary-staging.yaml` | Manual | Build a deterministic binary-channel dry-run bundle from fake host packages and the live asset manifest, then prove runtime image metadata is unchanged without creating a GitHub release or deploying release.capsem.org |
 | `images.yaml` | Push to main under `images/`, weekly schedule, or manual dispatch | Build the official OCI images under `images/`, publish them to ghcr.io with their OBOM, EROFS rootfs, and build provenance, and append them to the channel image catalog; the only workflow allowed to write packages |
-| `docs.yaml` | Push to main when docs or a shared docs-build input changes | Deploy docs.capsem.org, then smoke the live docs site |
+| `docs.yaml` | Every push to main | Refresh repository-wide metrics, deploy docs.capsem.org, then smoke the live docs site |
 | `site.yaml` | Push to main when marketing, graphics, or a shared site-build input changes | Deploy capsem.org, then smoke the live marketing site |
 | `release-channel.yaml` | Called by binary or asset release | Validate the generated distribution on an immutable preview, activate it on release.capsem.org, and restore the prior production deployment on any activation-verification failure |
 
