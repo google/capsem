@@ -36,8 +36,8 @@ def main() -> int:
     for path in args.output.rglob('*.html'):
         route = '/' + str(path.relative_to(args.output)).removesuffix('index.html')
         pages[route] = Links(path.read_text())
-    if len(inventory) != 36 or len(set(inventory)) != 36:
-        errors.append('approved inventory must contain 36 unique source paths')
+    if len(inventory) != 38 or len(set(inventory)) != 38:
+        errors.append('approved inventory must contain 38 unique source paths')
     for source in inventory:
         text = (site / 'src/content/docs' / source).read_text()
         description = re.search(r'^description: (.+)$', text, re.MULTILINE)

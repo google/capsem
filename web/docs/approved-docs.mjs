@@ -19,6 +19,8 @@ export const approvedDocs = [
   "architecture/overview.mdx",
   "architecture/security.mdx",
   "architecture/security-engine.mdx",
+  "architecture/statistics.mdx",
+  "architecture/benchmarks.mdx",
   "sdk/index.mdx",
   "sdk/python.md",
   "sdk/typescript.md",

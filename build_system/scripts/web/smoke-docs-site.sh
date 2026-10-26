@@ -14,6 +14,8 @@ for attempt in $(seq 1 "$ATTEMPTS"); do
     if check_page "" "Install Capsem" &&
        check_page "sdk/" "Getting started with the SDK" &&
        check_page "architecture/security/" "Security architecture" &&
+       check_page "architecture/statistics/" "Crate dependency explorer" &&
+       check_page "architecture/benchmarks/" "Image performance" &&
        check_page "getting-started/installation/" "Installation"; then
         echo "docs.capsem.org smoke passed."
         exit 0

@@ -1,0 +1,29 @@
+---
+import MetricChart from './MetricChart.astro';
+import { benchmarks as data } from '../../lib/metrics/data';
+import '../../styles/metrics.css';
+const order = ['images', 'local', 'external', 'io', 'resources', 'logging', 'security'];
+---
+<div class="metrics-dashboard">
+  <p class="metric-meta">Latest retained regular recording · Capsem {data.release} · {data.architecture} · {data.recordedAt.slice(0, 10)} · hosted runner</p>
+  <div class="metric-downloads"><a href="/data/metrics/benchmarks.json" download>Download chart data</a><a href="/data/metrics/benchmark-records.json" download>Download recorded JSON</a><a href={data.sourceUrl}>Inspect the source run</a></div>
+  {order.map(key => {
+    const section = data.sections[key];
+    return <section>
+      <h2 id={`benchmark-${key}`}>{section.title}</h2>
+      <p>{section.description}</p>
+      {section.available ? <MetricChart selector="Measurement" initial={0} variants={section.charts.map(chart => ({ label: chart.title, spec: { ...chart, type: 'bar' as const } }))} />
+        : <p class="metric-coverage">The retained regular bundle does not contain eligible measurements for this section. Existing diagnostic or exploratory recordings are not substituted.</p>}
+    </section>;
+  })}
+  <h2 id="benchmark-methodology">Reading these results</h2>
+  <p>These charts show existing measurements from one recorded source, not historical performance trends. Select a measurement to keep units and workloads separate, and download the recorded JSON for sample counts and observed ranges.</p>
+  <details><summary>Provenance, units and coverage</summary>
+    <p>Source: <a href={data.sourceUrl}>hosted release benchmark artifact</a>, commit <a href={`https://github.com/google/capsem/tree/${data.commit}`}>{data.commit.slice(0, 12)}</a>. The snapshot identifies {data.architecture}; it does not record a complete CPU-model inventory. Comparisons with other machines or architectures are not implied.</p>
+    <p>The legacy <code>throughput_mbps</code> field is produced from bytes divided by 1024² and seconds, so it is labeled MiB/s here. Format-version fields in individual JSON files are not the Capsem release version.</p>
+    <p>Image timings have three recorded trials per profile. Model and credential response scenarios have matching recorded request counts and concurrency. Their end-to-end times do not isolate plugin execution, reconstruction or rule evaluation, and differences between paths do not establish a statistically significant overhead claim.</p>
+    <p>Logging currently shows service read latency during profile mutation. It is not an ingestion or flush-throughput result. Local Criterion outputs without cohort identity and groups marked exploratory or failed doctor fitness remain outside the published charts.</p>
+    <p>Docs CI imports newer eligible hosted recordings when available. Reviewed source JSON is retained so artifact expiry does not erase these measurements. The importer never starts a VM or runs a benchmark.</p>
+  </details>
+  <p>For code growth, test counts and dependency relationships, explore <a href="/architecture/statistics/">Statistics</a>.</p>
+</div>

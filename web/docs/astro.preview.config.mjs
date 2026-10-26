@@ -26,7 +26,10 @@ export default defineConfig({
   site: 'https://docs.capsem.org',
   srcDir: './preview',
   cacheDir: './.astro/preview-cache',
-  vite: { plugins: [tailwindcss()] },
+  vite: { plugins: [tailwindcss()], build: { rolldownOptions: { output: { codeSplitting: { groups: [
+    { name: 'chart-renderer', test: /node_modules.*zrender/ },
+    { name: 'chart-models', test: /node_modules.*echarts.*lib\/(?:chart|component)\// },
+  ] } } } } },
   redirects: {
     '/': '/getting-started/intro/',
     '/getting-started/': '/getting-started/intro/',
@@ -50,7 +53,7 @@ export default defineConfig({
           ] },
           { label: 'Developers', items: links('guides/developers/integrate-the-sdk') },
         ] },
-        { label: 'Architecture', items: links('architecture/overview', 'architecture/security', 'architecture/security-engine') },
+        { label: 'Architecture', items: links('architecture/overview', 'architecture/security', 'architecture/security-engine', 'architecture/statistics', 'architecture/benchmarks') },
         { label: 'SDK', items: links('sdk', 'sdk/python', 'sdk/typescript', 'sdk/rust', 'sdk/errors') },
         { label: 'Reference', items: links('reference', 'reference/cli', 'reference/mcp', 'reference/proxy', 'reference/configuration', 'reference/credentials', 'reference/enforcement-rules', 'reference/cel', 'reference/sigma', 'reference/telemetry', 'reference/manifests') },
       ],
