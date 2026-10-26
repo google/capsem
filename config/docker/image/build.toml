@@ -70,6 +70,7 @@ identity_inputs = [
     "sdk/rust/Cargo.toml",
     "third_party/rust/alacritty_terminal/Cargo.toml",
     "third_party/rust/vte/Cargo.toml",
+    "third_party/rust/oci-client/Cargo.toml",
 ]
 source_roots = [
     "Cargo.toml",

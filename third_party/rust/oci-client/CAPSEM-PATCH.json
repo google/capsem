@@ -1,0 +1,10 @@
+{
+  "upstream_package_sha256": "ddc7848d781053285280fcd35aab24c9c0a677e26db4aa4209bd5db57467de0f",
+  "reason": "Retain maintained OCI 0.18 JWT removal while using the existing reqwest 0.12 webpki-root transport without platform keychain verification. Translate only certificate-root builder calls, preserving explicit-only and additive trust behavior. Remove the unused optional hickory-dns feature whose old resolver is vulnerable. Pin the standalone upstream test cohort separately.",
+  "files": {
+    "Cargo.lock": "26c21ff42ddee9dff1cc21dfc169d96fc1b032eefef6c1a8b3b1481ca0c19cc2",
+    "Cargo.toml": "24609c7ce42888f8fd5e1c9096965eb7247fb61dd27b8ca77f7189c50a5f9264",
+    "Cargo.toml.orig": "5053d88ff7a1bccc0b4661195cb2307927ef52b641b671d1f558ae668b9a95e1",
+    "src/client.rs": "6222789d23ce93cf6f99f2474799b6da7c4bebbdd45ea1f6ddfe8ee0b09b2e83"
+  }
+}

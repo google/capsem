@@ -1,4 +1,4 @@
-# Pinned terminal dependencies
+# Pinned Rust dependencies
 
 Elie approved adopting Alacritty with narrow checkpoint patches on 2026-10-22.
 The Rust session remains the terminal owner. These dependencies expose state;
@@ -103,3 +103,26 @@ refusal, tab-cell preservation and continued processing of every upstream
 recording. Upstream unit, reference and documentation tests remain intact.
 These prove the dependency interface; session suspend and UI behavior require
 their separate integration proof.
+
+## oci-client 0.18.0
+
+Source: [oras-project/rust-oci-client](https://github.com/oras-project/rust-oci-client).
+The exact registry archive, commit, license and original file hashes are recorded
+in `oci-client/UPSTREAM.json`; `CAPSEM-PATCH.json` accounts for each local change.
+
+The maintained release removes the unmaintained `jwt` dependency. Its upstream
+reqwest 0.13 TLS feature also brings platform keychain verification into the host.
+Capsem requires its existing reqwest 0.12 webpki-root transport. The compatibility
+patch selects that dependency and translates only the certificate-root builder
+calls: explicit-only roots still disable built-in roots; extra roots extend them.
+Certificate and hostname verification remain enabled by default. No OCI protocol,
+authentication, parsing or digest validation code is changed.
+The unused optional `hickory-dns` feature is removed: reqwest 0.12's optional
+resolver pins a vulnerable older DNS cohort. Capsem uses the default resolver;
+its separate first-party DNS protocol dependency remains independently owned.
+
+The standalone lockfile pins upstream tests separately from the application
+workspace. Run the application OCI tests and the upstream library and integration
+tests with default features disabled and `rustls-tls` enabled. The production
+HTTP-stack guard must continue rejecting platform verifier and native TLS
+dependencies. Update both provenance records after reviewing any future patch.

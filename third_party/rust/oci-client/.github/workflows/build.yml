@@ -1,0 +1,70 @@
+name: Build and Test
+on:
+  push:
+    branches:
+      - main
+  pull_request: {}
+
+permissions: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: engineerd/configurator@dc6b312d89ab097f73f3ebbf507a69dd7399c5d0 #v0.0.10
+        with:
+          name: just
+          url: https://github.com/casey/just/releases/download/0.10.2/just-0.10.2-x86_64-unknown-linux-musl.tar.gz
+          pathInArchive: just
+      - name: Build
+        run: |
+          just build
+          just test
+
+  windows-build:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        # For some reason, running with the default powershell doesn't work with the `Build` step,
+        # but bash does!
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: engineerd/configurator@dc6b312d89ab097f73f3ebbf507a69dd7399c5d0 #v0.0.10
+        with:
+          name: just
+          url: "https://github.com/casey/just/releases/download/0.10.2/just-0.10.2-x86_64-pc-windows-msvc.zip"
+          pathInArchive: just.exe
+      - name: Build
+        run: |
+          just --justfile justfile-windows build
+          just --justfile justfile-windows test
+
+  cargo-deny:
+    name: Run cargo deny
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        checks:
+          - advisories
+          - bans licenses sources
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.0.3
+        with:
+          command: check ${{ matrix.checks }}

@@ -1,4 +1,4 @@
-"""Pinned terminal patches remain an explicit, reviewable upstream delta."""
+"""Pinned dependency patches remain an explicit, reviewable upstream delta."""
 
 from __future__ import annotations
 
@@ -11,8 +11,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 VENDOR = ROOT / "third_party" / "rust"
 PROVENANCE_RATIONALE = (
-    "The maintainer approved narrow terminal checkpoint patches, not an opaque "
-    "fork. Preserve upstream hashes/licenses and account for every local byte; "
+    "Pinned dependency patches must remain narrow, reviewable deltas, not opaque "
+    "forks. Preserve upstream hashes/licenses and account for every local byte; "
     "an unrecorded change or file must fail before release qualification."
 )
 
@@ -56,7 +56,7 @@ def violations(root: Path) -> list[str]:
     return errors
 
 
-@pytest.mark.parametrize("crate", ["vte", "alacritty_terminal"])
+@pytest.mark.parametrize("crate", ["vte", "alacritty_terminal", "oci-client"])
 def test_terminal_patch_matches_reviewed_source_and_retains_upstream_provenance(crate: str) -> None:
     assert not violations(VENDOR / crate), PROVENANCE_RATIONALE
 

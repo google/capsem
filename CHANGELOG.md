@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Upgrade the compression stack to patched Zstandard bindings and replace the OCI client's unmaintained JWT dependency through its maintained release.
 
+- Keep the maintained OCI client on the shared webpki-root HTTP transport with a pinned, source-accounted compatibility patch, preserving certificate verification without platform keychain dependencies.
+
 - Keep standalone proxy broker authority live until its worker stops, so successful shutdowns do not fail with a spurious required-grant disconnect.
 
 - Retrieve requested doctor bundles from the VM session data directory, so successful diagnostics also produce the requested tarball.
