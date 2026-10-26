@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Keep one overall code-composition pie, show client LOC as a radar, move chart legends to the right, and show release effort as monthly success percentages.
+
 - Add interactive Statistics and functional Benchmarks pages to the documentation architecture section, with monthly history from the initial commit, source-code radar and pie charts, a crate dependency explorer, and tested Git/GitHub data generation in docs CI.
 
 - Map reviewed Gemini 4 Argon Medium and Trial aliases to one canonical price entry, sharing its published rates and date changes.

@@ -1,7 +1,7 @@
 export interface Series { name: string; values: (number | null)[] }
 export interface ChartSpec {
   id: string; title: string; type: 'line' | 'bar' | 'pie' | 'radar';
-  unit: string; labels: string[]; series: Series[]; stacked?: boolean; note?: string;
+  unit: string; labels: string[]; series: Series[]; stacked?: boolean; note?: string; radarMax?: number;
 }
 export interface Variant { label: string; spec: ChartSpec }
 export interface Edge { from: string; to: string; kind: string }

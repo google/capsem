@@ -12,15 +12,27 @@ export const testSystems: Record<string, string> = {
   mcp_typescript: 'MCP', inspect_ai: 'Inspect AI', python_other: 'Other Python', javascript_other: 'Other JavaScript',
 };
 export function total(values: Record<string, number>): number { return Object.values(values).reduce((a, b) => a + b, 0); }
-export function composition(rows: Snapshot[], type: 'pie' | 'radar'): Variant[] {
+export function composition(rows: Snapshot[]): Variant[] {
   return rows.map(row => {
     const sum = total(row.loc);
     return { label: row.date, spec: {
-      id: `loc-${type}`, title: type === 'pie' ? 'Share of source code' : 'Code composition radar', type, unit: '%',
+      id: 'loc-pie', title: 'Share of source code', type: 'pie', unit: '%',
       labels: Object.values(components), series: [{ name: 'Share of total LOC', values: Object.keys(components).map(key => 100 * (row.loc[key] ?? 0) / sum) }],
       note: `${sum.toLocaleString('en-US')} source lines · ${row.date}. All categories use the same percentage scale.`,
     } };
   });
+}
+export function clientComposition(rows: Snapshot[]): Variant[] {
+  const names: Record<string, string> = { app: 'App', cli: 'CLI', tui: 'TUI', tray: 'Tray', mcp_host: 'MCP', sdk_rust: 'Rust SDK', sdk_python: 'Python SDK', sdk_typescript: 'TypeScript SDK' };
+  const keys = [...new Set([...Object.keys(names), ...rows.flatMap(r => Object.keys(r.clientLoc))])];
+  const maximum = Math.max(1, ...rows.flatMap(r => Object.values(r.clientLoc)));
+  const radarMax = Math.ceil(maximum / 1000) * 1000;
+  return rows.map(row => ({ label: row.date, spec: {
+    id: 'client-breakdown', title: 'Client code breakdown', type: 'radar', unit: 'LOC', radarMax,
+    labels: keys.map(key => names[key] ?? key.replaceAll('_', ' ')),
+    series: [{ name: 'Source lines', values: keys.map(key => row.clientLoc[key] ?? 0) }],
+    note: `Client source lines at ${row.date}. Every spoke uses the same 0–${radarMax.toLocaleString('en-US')} LOC scale across all snapshots; generated code and tests excluded.`,
+  } }));
 }
 export function statisticCharts(data: Statistics): Record<string, ChartSpec> {
   const rows = data.snapshots, labels = rows.map(r => r.date);
@@ -33,15 +45,12 @@ export function statisticCharts(data: Statistics): Record<string, ChartSpec> {
     ]),
     dependencies: line('external-dependencies', 'Direct external dependencies', 'packages', ['rust', 'npm', 'python'].map(key => ({ name: key, values: rows.map(r => r.dependencies[key].direct) }))),
     tests: line('test-growth', 'Declared correctness tests by system', 'definitions', Object.entries(testSystems).map(([key, name]) => ({ name, values: rows.map(r => r.tests[key] ?? 0) })), true),
-    releases: { id: 'release-outcomes', title: 'Recorded release workflow outcomes', type: 'bar', unit: 'attempts', stacked: true,
-      labels: data.releaseOutcomes.map(r => r.month), series: ['success', 'failure', 'cancelled'].map(key => ({ name: key, values: data.releaseOutcomes.map(r => r[key as 'success' | 'failure' | 'cancelled']) })) },
-    failureIntervals: { id: 'release-failure-intervals', title: 'Failures between successful releases', type: 'bar', unit: 'attempts',
-      labels: data.releaseSuccesses.map(r => r.label), series: [{ name: 'Failures since prior success', values: data.releaseSuccesses.map(r => r.failures) }],
-      note: 'Counted independently for binary and runtime lanes, by completion time. The first success includes all failures since the start of retained evidence. Cancellations are excluded.' },
-    successTime: { id: 'successful-release-time', title: 'Duration of each successful release workflow', type: 'bar', unit: 'minutes',
-      labels: data.releaseSuccesses.map(r => r.label), series: [{ name: 'Wall-clock duration', values: data.releaseSuccesses.map(r => r.minutes) }] },
-    releaseTime: { id: 'release-duration', title: 'Workflow duration for published binary releases', type: 'bar', unit: 'minutes',
-      labels: data.releasePublications.map(r => r.version), series: [{ name: 'Producing workflow', values: data.releasePublications.map(r => r.minutes) }],
-      note: 'Publication and workflow success are different milestones. A producing workflow can finish with a failure after publishing artifacts.' },
+    releases: { id: 'release-success-rate', title: 'Successful release attempts over time', type: 'line', unit: '%',
+      labels: data.releaseOutcomes.map(r => r.month), series: [{ name: 'Successful attempts', values: data.releaseOutcomes.map(r => {
+        const attempts = r.success + r.failure + r.cancelled;
+        return attempts ? 100 * r.success / attempts : null;
+      }) }],
+      note: 'Monthly success rate = successful attempts ÷ (successful + failed + cancelled attempts). Each rerun counts separately; binary and runtime workflows are included. Months with no attempts have no value.',
+    },
   };
 }
