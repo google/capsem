@@ -25,7 +25,12 @@ def test_capsem_doctor_gate_is_backed_by_full_ledger_proof() -> None:
     }
 
     assert "test_capsem_doctor_pays_protocol_and_security_ledger_debt" in function_names
-    assert "start_mock_server()" in source
+    assert any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "start_mock_server"
+        for node in ast.walk(tree)
+    )
     assert "CAPSEM_MOCK_SERVER_BASE_URL" in source
     assert '"command": (' in source
     assert "capsem-doctor" in source
