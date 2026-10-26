@@ -4,7 +4,7 @@ use capsem_foundation::unix::lock::{self, LockMode};
 
 fn ledger() -> (tempfile::TempDir, PathBuf, PathBuf) {
     let (root, home) = account();
-    std::fs::create_dir_all(home.join(".capsem/sessions")).unwrap();
+    sessions(&home);
     let db = home.join(".capsem/sessions/host.db");
     let writer = crate::DbWriter::open(&db, 8).unwrap();
     writer.shutdown_blocking();

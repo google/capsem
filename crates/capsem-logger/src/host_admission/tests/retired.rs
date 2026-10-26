@@ -4,11 +4,12 @@ use std::os::unix::fs::MetadataExt;
 const FAMILY: [&str; 4] = ["main.db", "main.db-wal", "main.db-shm", "main.db-journal"];
 
 fn dormant(home: &Path) {
-    let directory = home.join(".capsem/sessions");
-    std::fs::create_dir_all(&directory).unwrap();
+    let directory = sessions(home);
     for name in FAMILY {
         // Deliberately not SQLite: admission must never interpret retired data.
-        std::fs::write(directory.join(name), format!("original inert {name}")).unwrap();
+        fs::write_new_regular_file_no_follow(
+            &directory.join(name), format!("original inert {name}").as_bytes(), 0o600,
+        ).unwrap();
     }
 }
 
@@ -77,8 +78,7 @@ fn inert_main_family_and_current_physical_host_coexist_unchanged() {
 #[test]
 fn live_retired_writer_transaction_is_not_opened_or_interfered_with() {
     let (_root, home) = account();
-    let directory = home.join(".capsem/sessions");
-    std::fs::create_dir_all(&directory).unwrap();
+    let directory = sessions(&home);
     let old = Connection::open(directory.join("main.db")).unwrap();
     old.execute_batch("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; CREATE TABLE original(id INTEGER); INSERT INTO original VALUES(1); BEGIN IMMEDIATE; INSERT INTO original VALUES(2)").unwrap();
     let before = originals(&home);

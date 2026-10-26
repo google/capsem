@@ -1,7 +1,7 @@
 use super::*;
 use rusqlite::Connection;
 use std::collections::BTreeMap;
-use std::os::unix::fs::{symlink, PermissionsExt};
+use std::os::unix::fs::{symlink, DirBuilderExt, PermissionsExt};
 use std::path::PathBuf;
 
 fn account() -> (tempfile::TempDir, PathBuf) {
@@ -12,9 +12,15 @@ fn account() -> (tempfile::TempDir, PathBuf) {
     (root, home)
 }
 
-fn current(home: &Path, wal: bool) -> Connection {
+fn sessions(home: &Path) -> PathBuf {
     let dir = home.join(".capsem/sessions");
-    std::fs::create_dir_all(&dir).unwrap();
+    // Admission deliberately refuses external write authority under any umask.
+    std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&dir).unwrap();
+    dir
+}
+
+fn current(home: &Path, wal: bool) -> Connection {
+    let dir = sessions(home);
     let conn = Connection::open(dir.join("host.db")).unwrap();
     if wal {
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;")
