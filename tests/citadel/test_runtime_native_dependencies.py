@@ -251,7 +251,7 @@ def test_offenders_flags_a_synthetic_native_dependency() -> None:
     depend on capsem-admin's live zstd use, which could be refactored away
     without this guard ever having run against a real violation."""
     lock_text = LOCKFILE.read_text()
-    injected = _inject_dependency(lock_text, "capsem-logger", "zstd 0.13.3")
+    injected = _inject_dependency(lock_text, "capsem-logger", "zstd")
     found = offenders(injected, ["capsem-logger"])
     assert any(item.startswith("capsem-logger:") for item in found), found
 

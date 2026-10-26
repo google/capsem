@@ -18,8 +18,8 @@ impl Puller {
                     .iter()
                     .find(|entry| {
                         entry.platform.as_ref().is_some_and(|p| {
-                            p.os == "linux"
-                                && p.architecture == self.architecture
+                            p.os == "linux".into()
+                                && p.architecture == self.architecture.as_str().into()
                                 && p.variant
                                     .as_deref()
                                     .is_none_or(|v| self.architecture == "arm64" && v == "v8")
