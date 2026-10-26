@@ -206,7 +206,7 @@ def copy_tree(source, destination, budget, owner, depth=0):
                 os.symlink(target, name, dir_fd=destination)
             except FileExistsError:
                 if os.readlink(name, dir_fd=destination) != target:
-                    raise ValueError("home import link conflicts with existing data")
+                    raise ValueError("home import link conflicts with existing data") from None
             continue
         if budget.preserve and not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
             continue  # Runtime sockets/pipes are not persistent files.
