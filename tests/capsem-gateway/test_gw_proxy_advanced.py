@@ -179,17 +179,26 @@ class TestProxyEdgeCases:
         assert status > 0 and headers
         assert body == b""
 
-    def test_options_request_cors(self, gateway_env):
-        """OPTIONS preflight returns CORS headers without auth."""
-        _, headers, _ = TcpHttpClient(gateway_env.base_url, gateway_env.token).call(
+    @pytest.mark.parametrize("origin,allowed", [
+        ("tauri://localhost", True),
+        ("http://localhost:3000", False),
+        ("http://127.0.0.1:3000", False),
+    ])
+    def test_options_request_cors(self, gateway_env, origin, allowed):
+        """Unauthenticated preflight grants only the trusted webview origin."""
+        status, headers, _ = TcpHttpClient(gateway_env.base_url, gateway_env.token).call(
             "OPTIONS",
             "/vms/create",
             headers={
-                "Origin": "http://localhost:3000",
+                "Origin": origin,
                 "Access-Control-Request-Method": "POST",
                 "Access-Control-Request-Headers": "authorization,content-type",
             },
             use_auth=False,
         )
-        assert "access-control-allow-origin" in headers
+        if allowed:
+            assert status == 200
+            assert headers.get("access-control-allow-origin") == origin
+        else:
+            assert "access-control-allow-origin" not in headers
         assert "access-control-allow-methods" in headers
