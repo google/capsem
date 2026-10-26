@@ -60,3 +60,14 @@ def test_nonfinite_numeric_results_fail_loudly():
     ] = float("nan")
     with pytest.raises(ValueError, match="finite"):
         normalize(data)
+
+
+@pytest.mark.parametrize(
+    "flag,value",
+    [("classification", "development-diagnostic"), ("quick", True), ("doctor_exit", 1)],
+)
+def test_record_level_fitness_cannot_be_hidden_by_artifact_provenance(flag, value):
+    data = snapshot()
+    next(iter(data["records"].values()))[flag] = value
+    with pytest.raises(ValueError, match="eligible"):
+        normalize(data)

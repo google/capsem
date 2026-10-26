@@ -45,6 +45,8 @@ def _eligible(source: dict) -> None:
 def normalize(snapshot: dict) -> dict:
     source, records = snapshot["source"], snapshot["records"]
     _eligible(source)
+    for record in records.values():
+        _eligible({**record, "source_commit": source["source_commit"]})
     sections = {
         key: {"title": title, "description": desc, "charts": [], "available": False}
         for key, (title, desc) in SECTIONS.items()
