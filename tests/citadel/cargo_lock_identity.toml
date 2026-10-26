@@ -1,2 +1,2 @@
-sha256 = "313a0e1977d81a729fce6a2c9643c2f0555c6479b44a42940afeb2a5850d0719"
-reason = "Prepare the deliberate 0.7.2 release cohort: only the 32 Capsem workspace package versions move from 0.7.1 to 0.7.2. Every registry dependency identity, version, checksum and dependency edge remains identical to the reviewed parent 965d92df829bca6533d8294c24539d2b96b6a7ad. Rebuild and qualify the matching host and guest cohort before publication."
+sha256 = "ee4207728d7d67d23e0efb00e88ba1c0644bcc1428c9a9c716a618a3e4e3537d"
+reason = "Qualify the 0.7.2 workspace cohort with deliberate live-audit security upgrades: zstd 0.14.3, zstd-safe 8.2.0 and zstd-sys 2.1.2 fix the compression memory-safety advisories; oci-client 0.18.0 removes unmaintained jwt 0.16.0 and updates its OCI/HTTP dependency closure. Rebuild and qualify the matching host and guest cohort before publication; no audit exceptions are added."
