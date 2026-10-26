@@ -1023,9 +1023,9 @@ def test_only_named_self_confining_children_replace_the_inherited_profile(report
     handoffs = [line for line in text.splitlines() if "no-sandbox" in line]
     executables = CONFIG.sandbox.self_confined_executables
     assert {name for name in executables if name.startswith("capsem-mcp-")} == {
-        "capsem-mcp-aggregator", "capsem-mcp-builtin"
+        "capsem-mcp-aggregator", "capsem-mcp-builtin", "capsem-mcp-confinement-test"
     }, (
-        "native MCP workers must replace the inherited gate Seatbelt before their role-bound readiness"
+        "native MCP workers and their isolated confinement probe must replace the inherited gate Seatbelt"
     )
     assert len(handoffs) == len(executables)
     for executable in executables:
