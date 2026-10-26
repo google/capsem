@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Retrieve requested doctor bundles from the VM session data directory, so successful diagnostics also produce the requested tarball.
+
 - Coordinate doctor checks with the shared mock-server listener lock when diagnostics use private temporary directories.
 
 - Run doctor through the typed exec stream and require its completed PASS result, so rendered terminal state cannot stall headless diagnostics.

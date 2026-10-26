@@ -1770,7 +1770,7 @@ async fn main() -> Result<()> {
             let ctrl_c = tokio::signal::ctrl_c();
             tokio::pin!(ctrl_c);
 
-            let bundle_arg = if *bundle { " --bundle /shared/doctor-bundle.tar" } else { "" };
+            let bundle_arg = if *bundle { " --bundle /root/doctor-bundle.tar" } else { "" };
             // Headless diagnostics use typed exec output and exit events.
             // Terminal streams carry rendered state, not shell-prompt bytes.
             let doctor_stream = capsem_api::stream::StreamControl::Start {
@@ -1839,10 +1839,10 @@ async fn main() -> Result<()> {
 
             // T4: copy the in-VM bundle out of virtiofs BEFORE delete_vm
             // tears down the session dir. The bundle path inside the
-            // guest is /shared/doctor-bundle.tar which maps to
-            // <session_dir>/guest/doctor-bundle.tar on the host.
+            // guest is /root/doctor-bundle.tar which maps to
+            // <session_dir>/guest/workspace/doctor-bundle.tar on the host.
             if *bundle {
-                let session_dir = run_dir.join("instances").join(&vm_id);
+                let session_dir = run_dir.join("sessions").join(&vm_id);
                 let dest = run_dir.join("doctor-latest.tar");
                 match doctor_bundle::copy_out(&session_dir, &dest) {
                     Ok(bytes) => eprintln!("Doctor bundle: {} ({bytes} bytes)", dest.display()),

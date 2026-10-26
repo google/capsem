@@ -4,6 +4,7 @@ Every test runs the actual capsem binary via subprocess and checks
 stdout/stderr. This is what the user does with just shell / just exec.
 """
 
+import tarfile
 import uuid
 
 import pytest
@@ -143,7 +144,14 @@ class TestDelete:
 
 class TestDoctor:
 
-    def test_doctor_passes(self, service):
+    @pytest.mark.parametrize("bundle", [False, True], ids=["ordinary", "bundle"])
+    def test_doctor_passes(self, service, bundle):
         """capsem doctor must pass — it boots a fresh VM and runs diagnostics."""
-        r = service.cli_ok("doctor", timeout=420)
+        arguments = ("doctor", "--bundle") if bundle else ("doctor",)
+        r = service.cli_ok(*arguments, timeout=420)
         assert r.returncode == 0
+        if bundle:
+            path = service.tmp_dir / "doctor-latest.tar"
+            assert path.is_file(), r.stderr
+            with tarfile.open(path) as archive:
+                assert archive.getmembers(), "doctor bundle must contain diagnostics"
