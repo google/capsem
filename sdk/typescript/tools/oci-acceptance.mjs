@@ -18,7 +18,7 @@ const guest = 'printf SDK_OCI_VM; test -s /var/tmp/capsem-container/workload.pid
 
 /** @param {import('../src/index.js').VM} vm */
 async function entered(vm) {
-  // The first operation after create/start/resume must enter the workload.
+  // The first operation after create/start must enter the workload.
   const result = await vm.exec(workload);
   assert.equal(result.exit_code, 0);
   assert.equal(result.stdout.data, 'SDK_OCI_WORKLOAD');
@@ -50,9 +50,8 @@ try {
       assert.equal((await vm.info()).status, VmLifecycleState.STOPPED);
       await vm.start();
       await entered(vm);
-      await vm.pause();
-      assert.equal((await vm.info()).status, VmLifecycleState.SUSPENDED);
-      await vm.resume();
+      await assert.rejects(() => vm.pause(), {name: "HttpError", status: 501, body: /warm suspend is disabled/});
+      assert.equal((await vm.info()).status, VmLifecycleState.RUNNING);
       await entered(vm);
       assert((await vm.delete()).success);
     } else {

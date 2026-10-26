@@ -7,7 +7,7 @@ import hashlib
 import os
 import uuid
 
-from capsem import VM, Hypervisor, models
+from capsem import VM, HttpError, Hypervisor, models
 
 
 async def ready(vm: VM) -> None:
@@ -58,9 +58,13 @@ async def main() -> None:
             await vm.start()
             await ready(vm)
             assert await vm.files.read("sdk-proof.bin") == data
-            await vm.pause()
-            assert (await vm.info()).status == models.VmLifecycleState.SUSPENDED
-            await vm.resume()
+            try:
+                await vm.pause()
+            except HttpError as error:
+                assert error.status == 501 and "warm suspend is disabled" in error.body
+            else:
+                raise AssertionError("warm suspend must remain disabled")
+            assert (await vm.info()).status == models.VmLifecycleState.RUNNING
             await ready(vm)
             assert await vm.files.read("sdk-proof.bin") == data
             print(f"SDK_LIVE_ACCEPTANCE_OK bytes={len(data)} sha256={digest}")

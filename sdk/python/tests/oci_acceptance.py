@@ -7,7 +7,7 @@ import os
 import uuid
 from pathlib import Path
 
-from capsem import VM, Hypervisor, Registry, models
+from capsem import VM, HttpError, Hypervisor, Registry, models
 
 WORKLOAD = (
     "printf SDK_OCI_WORKLOAD; test -x /usr/local/bin/redis-cli; "
@@ -17,7 +17,7 @@ GUEST = "printf SDK_OCI_VM; test -s /var/tmp/capsem-container/workload.pid"
 
 
 async def entered(vm: VM) -> None:
-    # This is the very first operation after create/start/resume. Workload
+    # This is the very first operation after create/start. Workload
     # readiness cannot be manufactured by polling before the exec.
     result = await vm.exec(WORKLOAD)
     assert result.exit_code == 0 and result.stdout.data == "SDK_OCI_WORKLOAD", (
@@ -52,9 +52,13 @@ async def main() -> None:
                 assert (await vm.info()).status == models.VmLifecycleState.STOPPED
                 await vm.start()
                 await entered(vm)
-                await vm.pause()
-                assert (await vm.info()).status == models.VmLifecycleState.SUSPENDED
-                await vm.resume()
+                try:
+                    await vm.pause()
+                except HttpError as error:
+                    assert error.status == 501 and "warm suspend is disabled" in error.body
+                else:
+                    raise AssertionError("warm suspend must remain disabled")
+                assert (await vm.info()).status == models.VmLifecycleState.RUNNING
                 await entered(vm)
                 assert (await vm.delete()).success
             else:

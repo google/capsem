@@ -51,10 +51,9 @@ try {
   await fork.files.write('sdk-proof.bin', new Uint8Array([42]));
   await vm.start();
   assert.deepEqual(await vm.files.read('sdk-proof.bin'), data);
-  await vm.pause();
-  assert.equal((await vm.info()).status, VmLifecycleState.SUSPENDED);
-  await vm.resume();
-  assertOutput((await vm.exec('printf SDK_RESUMED')).stdout, 'SDK_RESUMED');
+  await assert.rejects(() => vm.pause(), {name: "HttpError", status: 501, body: /warm suspend is disabled/});
+  assert.equal((await vm.info()).status, VmLifecycleState.RUNNING);
+  assertOutput((await vm.exec('printf SDK_STILL_RUNNING')).stdout, 'SDK_STILL_RUNNING');
   assert.deepEqual(await vm.files.read('sdk-proof.bin'), data);
   // On failure the owning service fixture preserves evidence before cleanup.
   await fork.delete();
