@@ -5918,7 +5918,11 @@ def test_mock_server_uses_rust_fixture_crate() -> None:
     assert '"crates/capsem-mock-server"' in root_cargo
     assert "capsem-mock-server" not in cli_cargo
     assert "mock_server_impl" not in cli_main
-    assert "capsem-mock-server" in cli_main
+    assert "mod doctor_mock_server;" in cli_main
+    assert "spawn_doctor_mock_server" in cli_main
+    launcher = (PROJECT_ROOT / "crates/capsem/src/doctor_mock_server.rs").read_text()
+    assert "capsem-mock-server" in launcher
+    assert "mock_server_impl" not in launcher
 
 
 def test_serial_benchmark_release_proofs_are_not_env_gated() -> None:
