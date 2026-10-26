@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Include documentation collector dependencies in the standard development environment so complete qualification can collect their tests after bootstrap.
+
 - Keep documentation benchmark archive provenance on the shared cryptographic provider.
 
 - Verify cached documentation scanners against source-pinned executable digests and materialize pinned archives through the shared tool-cache owner.
