@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from helpers import failures
 from helpers.constants import ASSETS_DIR, BIN_DIR, EXEC_READY_TIMEOUT
+from helpers.mock_server import mock_server_lock_directory
 from helpers.service import make_service_home_run_dirs, preserve_tmp_dir_on_failure
 from helpers.sign import sign_binary
 from log_streams import read_log_stream
@@ -126,6 +127,7 @@ class RealService:
         cmd = [str(CLI_BINARY), "--uds-path", str(self.uds_path), *list(args)]
         return subprocess.run(
             cmd, capture_output=True, text=True, timeout=timeout, check=False,
+            env={**os.environ, "CAPSEM_MOCK_SERVER_LOCK_DIR": str(mock_server_lock_directory())},
         )
 
     def cli_ok(self, *args, timeout=60):

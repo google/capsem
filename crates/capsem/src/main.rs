@@ -80,7 +80,11 @@ struct DoctorMockServerLock {
 impl DoctorMockServerLock {
     fn path_for_addr(addr: &str) -> PathBuf {
         let safe_addr = addr.replace([':', '.'], "-");
-        std::env::temp_dir().join(format!("capsem-mock-server-{safe_addr}.lock"))
+        // Listening ports remain shared when diagnostics have private TMPDIRs.
+        // The harness supplies its cache-owned lock directory to both launchers.
+        let directory = std::env::var_os("CAPSEM_MOCK_SERVER_LOCK_DIR")
+            .map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
+        directory.join(format!("capsem-mock-server-{safe_addr}.lock"))
     }
 
     fn acquire(addr: &str, timeout: Duration) -> Result<Self> {

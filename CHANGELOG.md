@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Coordinate doctor checks with the shared mock-server listener lock when diagnostics use private temporary directories.
+
 - Keep concurrent compiler-cache cleanup from failing completed build and test commands.
 
 - Prepare the native packages, SDKs, and host MCP server for the 0.7.2 stable release.

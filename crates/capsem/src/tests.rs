@@ -706,11 +706,44 @@ fn doctor_mock_server_addr_is_iptables_redirect_target() {
 }
 
 #[test]
-fn doctor_mock_server_lock_path_matches_shared_python_launcher() {
+fn doctor_mock_server_default_lock_path_is_stable() {
     assert_eq!(
         DoctorMockServerLock::path_for_addr(DOCTOR_MOCK_SERVER_ADDR),
         std::env::temp_dir().join("capsem-mock-server-127-0-0-1-3713.lock")
     );
+}
+
+#[test]
+fn doctor_mock_server_uses_shared_lock_across_private_tempdirs() {
+    let root = tempfile::tempdir().unwrap();
+    let shared = root.path().join("shared");
+    let private = root.path().join("private");
+    std::fs::create_dir(&shared).unwrap();
+    std::fs::create_dir(&private).unwrap();
+    let path = shared.join("capsem-mock-server-shared-probe.lock");
+    let _held = capsem_foundation::unix::lock::acquire(
+        &path, capsem_foundation::unix::lock::LockMode::Exclusive,
+    ).unwrap();
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "tests::doctor_mock_server_shared_lock_child"])
+        .env("CAPSEM_DOCTOR_LOCK_TEST", "1")
+        .env("CAPSEM_MOCK_SERVER_LOCK_DIR", &shared)
+        .env("TMPDIR", private)
+        .status().unwrap();
+    assert!(status.success());
+}
+
+#[test]
+fn doctor_mock_server_shared_lock_child() {
+    if std::env::var_os("CAPSEM_DOCTOR_LOCK_TEST").is_none() {
+        return;
+    }
+    let shared = PathBuf::from(std::env::var_os("CAPSEM_MOCK_SERVER_LOCK_DIR").unwrap());
+    assert_eq!(
+        DoctorMockServerLock::path_for_addr("shared-probe"),
+        shared.join("capsem-mock-server-shared-probe.lock"),
+    );
+    assert!(DoctorMockServerLock::acquire("shared-probe", Duration::ZERO).is_err());
 }
 
 #[test]

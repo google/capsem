@@ -30,10 +30,15 @@ class _MockServerProcess(subprocess.Popen[str]):
     _capsem_mock_server_lock: TextIO | None = None
 
 
+def mock_server_lock_directory() -> Path:
+    """Shared listening-port authority, independent of subprocess TMPDIRs."""
+    return load_paths(PROJECT_ROOT).stage("test-temp")
+
+
 def _lock_path_for_addr(addr: str) -> Path:
     safe_addr = addr.replace(":", "-").replace(".", "-")
     # Bounded commands have private TMPDIRs but share host listening ports.
-    return load_paths(PROJECT_ROOT).stage("test-temp") / f"capsem-mock-server-{safe_addr}.lock"
+    return mock_server_lock_directory() / f"capsem-mock-server-{safe_addr}.lock"
 
 
 def _acquire_lock(addr: str = MOCK_SERVER_ADDR, timeout_s: float = 120) -> TextIO:
