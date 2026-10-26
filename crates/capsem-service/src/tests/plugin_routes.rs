@@ -7,6 +7,52 @@
 
 use super::*;
 
+async fn plugin_list_wire(app: axum::Router) -> Bytes {
+    let request = axum::http::Request::builder()
+        .uri("/plugins/list")
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[axum::http::header::CONTENT_TYPE], "application/json");
+    to_bytes(response.into_body(), usize::MAX).await.unwrap()
+}
+
+#[tokio::test]
+async fn plugin_list_reuses_policy_wire_bytes_and_replaces_them_after_edits() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (_guard, _, _) = install_empty_settings_env(&dir);
+    let app = build_service_router(make_test_state());
+    let first = plugin_list_wire(app.clone()).await;
+    let second = plugin_list_wire(app.clone()).await;
+    assert_eq!(
+        first.as_ptr(),
+        second.as_ptr(),
+        "unchanged policy must reuse its encoded HTTP body"
+    );
+    let (status, _) = route_request(
+        app.clone(),
+        axum::http::Method::PATCH,
+        "/plugins/dummy_pre_eicar/edit",
+        Some(json!({"mode": "block"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let updated = plugin_list_wire(app.clone()).await;
+    assert_ne!(first.as_ptr(), updated.as_ptr());
+    let document: serde_json::Value = serde_json::from_slice(&updated).unwrap();
+    let plugin = document["plugins"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|plugin| plugin["id"] == "dummy_pre_eicar")
+        .unwrap();
+    assert_eq!(plugin["config"]["mode"], "block");
+    assert_eq!(plugin["overridden"], true);
+    assert_eq!(updated.as_ptr(), plugin_list_wire(app).await.as_ptr());
+}
+
 #[tokio::test]
 async fn content_plugins_are_independent_disabled_and_persist_typed_options() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;

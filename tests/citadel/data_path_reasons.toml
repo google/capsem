@@ -591,6 +591,9 @@ json = { count = 9, reason = "http" }
 [sources."crates/capsem-service/src/network_routes.rs"]
 json = { count = 3, reason = "http" }
 
+[sources."crates/capsem-service/src/plugin_routes.rs"]
+json = { count = 1, reason = "http" }
+
 [sources."crates/capsem-service/src/registry.rs"]
 json = { count = 2, reason = "durable" }
 

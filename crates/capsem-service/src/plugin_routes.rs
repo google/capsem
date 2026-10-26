@@ -226,7 +226,13 @@ pub(super) fn plugin_catalog() -> &'static BTreeMap<String, PluginCatalogEntry> 
 
 /// Each catalogued plugin's effective configuration, and the plugins settings
 /// or corp set.
-pub(super) type EffectivePluginPolicy = (BTreeMap<String, SecurityPluginConfig>, BTreeSet<String>);
+pub(super) struct EffectivePluginPolicy {
+    configs: BTreeMap<String, SecurityPluginConfig>,
+    overridden: BTreeSet<String>,
+    // External HTTP JSON, encoded once per policy generation. This catalog
+    // contains configuration only; runtime ledger activity stays DB-owned.
+    list_body: Bytes,
+}
 
 /// The effective plugin policy from the current files.
 fn effective_plugin_policy() -> Result<EffectivePluginPolicy, AppError> {
@@ -238,7 +244,24 @@ fn effective_plugin_policy() -> Result<EffectivePluginPolicy, AppError> {
         .collect();
     policy.extend(merge_plugin_policy(&settings, &corp));
     let overridden = settings.plugins.keys().chain(corp.plugins.keys()).cloned().collect();
-    Ok((policy, overridden))
+    let mut snapshot = EffectivePluginPolicy {
+        configs: policy,
+        overridden,
+        list_body: Bytes::new(),
+    };
+    let plugins = plugin_catalog()
+        .keys()
+        .map(|id| plugin_config_info(&snapshot, id))
+        .collect::<Result<Vec<_>, AppError>>()?;
+    snapshot.list_body = serde_json::to_vec(&PluginListResponse { plugins })
+        .map(Bytes::from)
+        .map_err(|error| {
+            AppError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("encode plugin catalog: {error}"),
+            )
+        })?;
+    Ok(snapshot)
 }
 
 impl ServiceState {
@@ -280,40 +303,36 @@ async fn plugin_info_for(
     include_runtime: bool,
 ) -> Result<PluginInfo, AppError> {
     let policy = effective_plugin_policy_for(state).await?;
-    plugin_info_from(state, &policy, plugin_id, include_runtime).await
+    let mut info = plugin_config_info(&policy, plugin_id)?;
+    if include_runtime {
+        info.runtime = plugin_runtime_status(state, plugin_id, info.config).await;
+    }
+    Ok(info)
 }
 
-/// One plugin's info against a policy the caller already read, so a route
-/// answering for every plugin reads the policy files once.
-async fn plugin_info_from(
-    state: &Arc<ServiceState>,
-    (policy, overridden): &EffectivePluginPolicy,
-    plugin_id: &str,
-    include_runtime: bool,
-) -> Result<PluginInfo, AppError> {
+fn plugin_config_info(policy: &EffectivePluginPolicy, plugin_id: &str) -> Result<PluginInfo, AppError> {
     let Some(catalog_entry) = plugin_catalog().get(plugin_id).copied() else {
         return Err(AppError::new(
             StatusCode::NOT_FOUND,
             format!("unknown plugin: {plugin_id}"),
         ));
     };
-    let config = policy.get(plugin_id).copied().unwrap_or(catalog_entry.default_config);
-    let runtime = if include_runtime {
-        plugin_runtime_status(state, plugin_id, config).await
-    } else {
-        plugin_runtime_config_status(config)
-    };
+    let config = policy
+        .configs
+        .get(plugin_id)
+        .copied()
+        .unwrap_or(catalog_entry.default_config);
     Ok(PluginInfo {
         id: plugin_id.to_string(),
         name: catalog_entry.name,
         config,
         default_config: catalog_entry.default_config,
-        overridden: overridden.contains(plugin_id),
+        overridden: policy.overridden.contains(plugin_id),
         description: catalog_entry.description,
         stage: catalog_entry.stage,
         version: catalog_entry.version,
         capabilities: plugin_capabilities(plugin_id),
-        runtime,
+        runtime: plugin_runtime_config_status(config),
         detail_routes: plugin_detail_routes(plugin_id),
     })
 }
@@ -503,15 +522,12 @@ fn hydrate_credential_broker_runtime(
 }
 
 /// GET /plugins/list -- every catalogued plugin with its effective mode.
-pub(super) async fn handle_plugins(
-    State(state): State<Arc<ServiceState>>,
-) -> Result<Json<PluginListResponse>, AppError> {
+pub(super) async fn handle_plugins(State(state): State<Arc<ServiceState>>) -> Result<impl IntoResponse, AppError> {
     let policy = effective_plugin_policy_for(&state).await?;
-    let mut plugins = Vec::new();
-    for plugin_id in plugin_catalog().keys() {
-        plugins.push(plugin_info_from(&state, &policy, plugin_id, false).await?);
-    }
-    Ok(Json(PluginListResponse { plugins }))
+    Ok((
+        [(axum::http::header::CONTENT_TYPE, "application/json")],
+        policy.list_body.clone(),
+    ))
 }
 
 /// GET /plugins/credential_broker/credentials/info -- the broker's store,
