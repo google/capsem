@@ -204,9 +204,17 @@ def test_native_rejects_changed_workflow_owner_arguments(source: Path, replaceme
         key(source)
 
 
-def test_base_v1_domain_and_exact_old_key_are_unchanged(source: Path) -> None:
+def test_base_v1_domain_and_known_key_are_unchanged(source: Path) -> None:
+    # Pin the v1 byte format with immutable input bytes. The real checked-in
+    # base context changes whenever its producer changes, so its key must too.
+    base = source / "images/base"
+    shutil.rmtree(base)
+    base.mkdir()
+    dockerfile = base / "Dockerfile"
+    dockerfile.write_bytes(b"FROM scratch\n")
+    dockerfile.chmod(0o644)
     assert inputkey.VERSION == b"capsem-official-image-input-key-v1"
-    assert workflow_key(source, "base") == "caa05a2af87b7c162a9a1a48c9407f7ee05bedea8f29929a0b25041fe1727cb7"
+    assert workflow_key(source, "base") == "6e9b2ff221c949d076d6a979521413204a55fbb796b0642ef67052ef1cf422a7"
     assert inputkey.DERIVED_DOMAIN == "capsem-derived-image-producer-v2"
 
 
