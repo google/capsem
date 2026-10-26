@@ -191,6 +191,10 @@ fn service_configuration_matches_actual_sdk_environment_resolution() {
             .env("CAPSEM_OTLP_CONFIG_TEST", case)
             .env("OTEL_EXPORTER_OTLP_HEADERS", "authorization=Bearer%20base-canary")
             .args(["--exact", "export::relay::tests::sdk_configuration_probe"]);
+        // Instrumented reexecs must retain the gate-owned profile destination.
+        if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+            child.env("LLVM_PROFILE_FILE", profile);
+        }
         if case != "corp" {
             child.env("OTEL_EXPORTER_OTLP_ENDPOINT", "https://base.example/prefix/");
         }
