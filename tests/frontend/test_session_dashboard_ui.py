@@ -17,12 +17,18 @@ def test_new_session_launcher_follows_asset_readiness() -> None:
     assert "assets = await api.getAssetsStatus()" in source
     assert "assets = await api.ensureAssets()" in source
     assert "let ready = $derived(assets?.ready === true)" in source
-    assert "ready ? createSession() : downloadAssets()" in source
-    assert "ready ? 'New session' : assetText(assets)" in source
-    assert "disabled={creatingVm || assetsLoading || downloading}" in source
-    assert "vmStore.provision({ persistent: true })" in source
-    assert "New\n" in source
-    assert "Download\n" in source
+    assert "<ImageCatalog {ready} {prepareRuntime} />" in source
+    assert "if (ready) return;" in source
+    assert "while (assets.downloading && Date.now() < deadline)" in source
+    catalog = read(DASHBOARD.with_name("ImageCatalog.svelte"))
+    assert "await startImageSession(image, ready," in catalog
+    assert "prepareRuntime," in catalog
+    assert "vmStore.provision(imageLaunchRequest(image))" in catalog
+    assert "disabled={caching !== null || launching !== null || vmStore.acting}" in catalog
+    launch = read(ROOT / "web/app/src/lib/models/image-launch.ts")
+    assert "if (!runtimeReady) await actions.prepareRuntime();" in launch
+    assert "await actions.launch();" in launch
+    assert "return { persistent: true, container:" in launch
 
     assert "Customize Session..." not in source
     assert "showCreateModal" not in source
@@ -43,12 +49,14 @@ def test_dashboard_groups_broken_sessions_and_exposes_refresh_and_purge() -> Non
     assert "isBrokenSession" in source
     assert "Broken sessions" in source
     assert "Purge broken" in source
-    assert "refreshDashboard" in source
+    assert "watchVisibleRefresh(async () =>" in source
+    assert "await Promise.all([loadAssets(), loadStats()]);" in source
     assert "handlePurgeBroken" in source
     assert "overflow-y-auto" in source
     assert "max-h-[50vh]" in source
     assert "vmStore.refresh()" in source
-    assert "api.purge()" in source
+    assert "const ids = await vmStore.deleteBroken();" in source
+    assert "ids.includes(tab.vmId)" in source
 
 
 def test_asset_api_routes_are_service_wide() -> None:
