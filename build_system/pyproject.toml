@@ -39,6 +39,7 @@ packages = [
     "capsem_builder.image.tools.build",
     "capsem_builder.policy",
     "capsem_builder.sdkgen",
+    "capsem_builder.docs_metrics",
     "capsem_builder.release",
     "capsem_builder.release.tools",
 ]
@@ -102,6 +103,13 @@ precision = 2
 fail_under = 85
 
 [dependency-groups]
+docs = [
+    "playwright==1.64.1",
+    "packaging>=26",
+    "tree-sitter==0.25.2",
+    "tree-sitter-rust==0.24.2",
+    "tree-sitter-typescript==0.23.2",
+]
 dev = [
     "aiohttp>=3.12,<4",
     "psutil>=7.2.2",

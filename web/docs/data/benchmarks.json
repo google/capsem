@@ -1,0 +1,2039 @@
+{
+  "source": {
+    "artifact_id": 11429814452,
+    "workflow_run_url": "https://github.com/google/capsem/actions/runs/37489326397",
+    "source_commit": "f9c4ff3af881d86b50a518a7da3d77825ac4ffd0",
+    "release_label": "0.6.6",
+    "artifact_created_at_utc": "2026-10-06T17:24:39Z",
+    "architecture": "x86_64",
+    "archive_sha256": "880d4e96daaf834f056e078e8ebabddabc10ec1da6caa33cfad21d3599616270",
+    "included_json_files": [
+      "capsem-bench/data_0.6.6_x86_64.json",
+      "fork/data_0.6.6_code_hosted.json",
+      "fork/data_0.6.6_co-work_hosted.json",
+      "lifecycle/data_0.6.6_co-work_hosted.json",
+      "lifecycle/data_0.6.6_code_hosted.json",
+      "mock-server-protocol/data_0.6.6_x86_64.json",
+      "parallel/data_1.0.json",
+      "route-latency/data_0.6.6.json"
+    ],
+    "excluded_exploratory_groups": [
+      {
+        "source": "kingslanding/kingslanding-4obiex_e/identity.json",
+        "classification": "exploratory; no release baseline or performance threshold",
+        "doctor_exit": 1
+      },
+      {
+        "source": "kingslanding/kingslanding-5mympn9g/identity.json",
+        "classification": "exploratory; no release baseline or performance threshold",
+        "doctor_exit": 1
+      },
+      {
+        "source": "kingslanding/redis-awd6qtli/identity.json",
+        "classification": "exploratory; no release baseline or performance threshold",
+        "doctor_exit": 1
+      },
+      {
+        "source": "kingslanding/redis-ny57smjt/identity.json",
+        "classification": "exploratory; no release baseline or performance threshold",
+        "doctor_exit": 1
+      }
+    ],
+    "selection": "Latest retained hosted-benchmarks-binary artifact discovered through GitHub Actions. Newer local diagnostic/prototype records are not substituted for the release cohort.",
+    "distinctions": [
+      "JSON version fields may describe the measurement format, not the Capsem release version.",
+      "Published release artifacts do not imply the enclosing workflow completed successfully.",
+      "Public Internet, host-to-VM publication and VM-to-VM private networking are distinct paths."
+    ]
+  },
+  "records": {
+    "capsem-bench/data_0.6.6_x86_64.json": {
+      "version": "0.3.0",
+      "timestamp": 1791307250.1803095,
+      "hostname": "bench-710fd2fb",
+      "disk": {
+        "directory": "/root",
+        "size_mb": 256,
+        "seq_write": {
+          "size_bytes": 268435456,
+          "block_size": 1048576,
+          "duration_ms": 1085.4,
+          "throughput_mbps": 235.9
+        },
+        "seq_read": {
+          "size_bytes": 268435456,
+          "block_size": 1048576,
+          "duration_ms": 142.5,
+          "throughput_mbps": 1797.0
+        },
+        "rand_write_4k": {
+          "count": 10000,
+          "block_size": 4096,
+          "duration_ms": 3660.2,
+          "iops": 2732.1,
+          "throughput_mbps": 10.7
+        },
+        "rand_read_4k": {
+          "count": 10000,
+          "block_size": 4096,
+          "duration_ms": 449.6,
+          "iops": 22243.7,
+          "throughput_mbps": 86.9
+        }
+      },
+      "rootfs": {
+        "scan_dirs": [
+          "/usr/bin",
+          "/usr/lib",
+          "/opt/ai-clis"
+        ],
+        "largest_file": "/opt/ai-clis/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
+        "largest_file_size": 258278208,
+        "seq_read": {
+          "file": "/opt/ai-clis/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
+          "size_bytes": 258278208,
+          "block_size": 1048576,
+          "duration_ms": 102.5,
+          "throughput_mbps": 2402.8
+        },
+        "files_found": 5886,
+        "rand_read_4k": {
+          "count": 5000,
+          "files_sampled": 2661,
+          "block_size": 4096,
+          "duration_ms": 303.1,
+          "iops": 16497.7,
+          "throughput_mbps": 64.4
+        },
+        "large_binary_seq_read": {
+          "count": 3,
+          "files": [
+            {
+              "path": "/opt/ai-clis/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
+              "size_bytes": 258278208,
+              "cold": {
+                "file": "/opt/ai-clis/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
+                "size_bytes": 258278208,
+                "block_size": 1048576,
+                "duration_ms": 91.5,
+                "throughput_mbps": 2692.0
+              },
+              "warm": {
+                "file": "/opt/ai-clis/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
+                "size_bytes": 258278208,
+                "block_size": 1048576,
+                "duration_ms": 21.1,
+                "throughput_mbps": 11690.1
+              }
+            },
+            {
+              "path": "/opt/ai-clis/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex-code-mode-host",
+              "size_bytes": 49682360,
+              "cold": {
+                "file": "/opt/ai-clis/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex-code-mode-host",
+                "size_bytes": 49682360,
+                "block_size": 1048576,
+                "duration_ms": 21.2,
+                "throughput_mbps": 2232.3
+              },
+              "warm": {
+                "file": "/opt/ai-clis/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex-code-mode-host",
+                "size_bytes": 49682360,
+                "block_size": 1048576,
+                "duration_ms": 4.3,
+                "throughput_mbps": 10926.4
+              }
+            },
+            {
+              "path": "/usr/bin/gh",
+              "size_bytes": 40149832,
+              "cold": {
+                "file": "/usr/bin/gh",
+                "size_bytes": 40149832,
+                "block_size": 1048576,
+                "duration_ms": 15.2,
+                "throughput_mbps": 2516.9
+              },
+              "warm": {
+                "file": "/usr/bin/gh",
+                "size_bytes": 40149832,
+                "block_size": 1048576,
+                "duration_ms": 4.0,
+                "throughput_mbps": 9589.4
+              }
+            }
+          ],
+          "bytes_read": 348110400,
+          "cold_duration_ms": 127.9,
+          "warm_duration_ms": 29.4,
+          "cold_throughput_mbps": 2595.7,
+          "warm_throughput_mbps": 11292.0
+        },
+        "small_js_read": {
+          "count": 5000,
+          "files_sampled": 177,
+          "bytes_read": 37882785,
+          "duration_ms": 18.1,
+          "ops_per_sec": 276094.4,
+          "throughput_mbps": 1994.9
+        },
+        "metadata_stat": {
+          "entries": 6938,
+          "files": 5886,
+          "dirs": 687,
+          "symlinks": 365,
+          "errors": 0,
+          "duration_ms": 123.5,
+          "stats_per_sec": 56197.8
+        }
+      },
+      "storage": {
+        "kernel": {
+          "cmdline": {
+            "raw": "console=ttyS0 root=/dev/vda ro loglevel=4 quiet init_on_alloc=1 slab_nomerge page_alloc.shuffle=1 random.trust_cpu=1 capsem.storage=virtiofs capsem.rootfs=erofs capsem.vsock_port_offset=43496 virtio_mmio.device=0x200@0xd0000000:5 virtio_mmio.device=0x200@0xd0000200:6 virtio_mmio.device=0x200@0xd0000400:7 virtio_mmio.device=0x200@0xd0000600:8 virtio_mmio.device=0x200@0xd0000800:9",
+            "args": [
+              "console=ttyS0",
+              "root=/dev/vda",
+              "ro",
+              "loglevel=4",
+              "quiet",
+              "init_on_alloc=1",
+              "slab_nomerge",
+              "page_alloc.shuffle=1",
+              "random.trust_cpu=1",
+              "capsem.storage=virtiofs",
+              "capsem.rootfs=erofs",
+              "capsem.vsock_port_offset=43496",
+              "virtio_mmio.device=0x200@0xd0000000:5",
+              "virtio_mmio.device=0x200@0xd0000200:6",
+              "virtio_mmio.device=0x200@0xd0000400:7",
+              "virtio_mmio.device=0x200@0xd0000600:8",
+              "virtio_mmio.device=0x200@0xd0000800:9"
+            ]
+          },
+          "block_queues": {
+            "vda": {
+              "scheduler": "[none] mq-deadline kyber",
+              "read_ahead_kb": 4096,
+              "nr_requests": 128,
+              "rotational": 1,
+              "logical_block_size": 512,
+              "physical_block_size": 512,
+              "max_sectors_kb": 4096,
+              "nomerges": 0,
+              "rq_affinity": 1,
+              "io_poll": 0,
+              "selected_scheduler": "none"
+            },
+            "vdb": {
+              "scheduler": "[none] mq-deadline kyber",
+              "read_ahead_kb": 4096,
+              "nr_requests": 128,
+              "rotational": 1,
+              "logical_block_size": 512,
+              "physical_block_size": 512,
+              "max_sectors_kb": 4096,
+              "nomerges": 0,
+              "rq_affinity": 1,
+              "io_poll": 0,
+              "selected_scheduler": "none"
+            }
+          },
+          "fuse_connections": {},
+          "known_host_queue_sizes": {
+            "kvm_virtio_blk": 256,
+            "kvm_virtio_fs": [
+              256,
+              256
+            ]
+          }
+        },
+        "mounts": [
+          {
+            "mount_point": "/",
+            "root": "/",
+            "fs_type": "overlay",
+            "source": "overlay",
+            "options": "rw,lowerdir=/mnt/a,upperdir=/mnt/system/upper,workdir=/mnt/system/work,uuid=on,metacopy=on"
+          },
+          {
+            "mount_point": "/proc",
+            "root": "/",
+            "fs_type": "proc",
+            "source": "proc",
+            "options": "rw"
+          },
+          {
+            "mount_point": "/sys",
+            "root": "/",
+            "fs_type": "sysfs",
+            "source": "sysfs",
+            "options": "rw"
+          },
+          {
+            "mount_point": "/sys/fs/cgroup",
+            "root": "/",
+            "fs_type": "cgroup2",
+            "source": "cgroup2",
+            "options": "rw"
+          },
+          {
+            "mount_point": "/dev",
+            "root": "/",
+            "fs_type": "devtmpfs",
+            "source": "devtmpfs",
+            "options": "rw,size=1016460k,nr_inodes=254115,mode=755"
+          },
+          {
+            "mount_point": "/dev/pts",
+            "root": "/",
+            "fs_type": "devpts",
+            "source": "devpts",
+            "options": "rw,mode=600,ptmxmode=000"
+          },
+          {
+            "mount_point": "/dev/.capsem-system",
+            "root": "/",
+            "fs_type": "ext4",
+            "source": "/dev/vdb",
+            "options": "rw,data=ordered"
+          },
+          {
+            "mount_point": "/root",
+            "root": "/workspace",
+            "fs_type": "virtiofs",
+            "source": "capsem",
+            "options": "rw"
+          },
+          {
+            "mount_point": "/etc/resolv.conf",
+            "root": "/run/resolv.conf",
+            "fs_type": "overlay",
+            "source": "overlay",
+            "options": "rw,lowerdir=/mnt/a,upperdir=/mnt/system/upper,workdir=/mnt/system/work,uuid=on,metacopy=on"
+          }
+        ],
+        "paths": {
+          "/": {
+            "path": "/",
+            "exists": true,
+            "writable": true,
+            "mount": {
+              "mount_point": "/",
+              "root": "/",
+              "fs_type": "overlay",
+              "source": "overlay",
+              "options": "rw,lowerdir=/mnt/a,upperdir=/mnt/system/upper,workdir=/mnt/system/work,uuid=on,metacopy=on"
+            },
+            "mode": "drwxr-xr-x",
+            "statvfs": {
+              "block_size": 4096,
+              "fragment_size": 4096,
+              "blocks": 16499595,
+              "blocks_free": 16496240,
+              "blocks_available": 16492144,
+              "files": 4194304,
+              "files_free": 4194132
+            }
+          },
+          "/root": {
+            "path": "/root",
+            "exists": true,
+            "writable": true,
+            "mount": {
+              "mount_point": "/root",
+              "root": "/workspace",
+              "fs_type": "virtiofs",
+              "source": "capsem",
+              "options": "rw"
+            },
+            "mode": "drwx------",
+            "statvfs": {
+              "block_size": 4096,
+              "fragment_size": 4096,
+              "blocks": 37815964,
+              "blocks_free": 16798458,
+              "blocks_available": 16794362,
+              "files": 19529728,
+              "files_free": 18280420
+            }
+          },
+          "/tmp": {
+            "path": "/tmp",
+            "exists": true,
+            "writable": true,
+            "mount": {
+              "mount_point": "/",
+              "root": "/",
+              "fs_type": "overlay",
+              "source": "overlay",
+              "options": "rw,lowerdir=/mnt/a,upperdir=/mnt/system/upper,workdir=/mnt/system/work,uuid=on,metacopy=on"
+            },
+            "mode": "drwxrwxrwt",
+            "statvfs": {
+              "block_size": 4096,
+              "fragment_size": 4096,
+              "blocks": 16499595,
+              "blocks_free": 16496240,
+              "blocks_available": 16492144,
+              "files": 4194304,
+              "files_free": 4194132
+            }
+          },
+          "/var/tmp": {
+            "path": "/var/tmp",
+            "exists": true,
+            "writable": true,
+            "mount": {
+              "mount_point": "/",
+              "root": "/",
+              "fs_type": "overlay",
+              "source": "overlay",
+              "options": "rw,lowerdir=/mnt/a,upperdir=/mnt/system/upper,workdir=/mnt/system/work,uuid=on,metacopy=on"
+            },
+            "mode": "drwxrwxrwt",
+            "statvfs": {
+              "block_size": 4096,
+              "fragment_size": 4096,
+              "blocks": 16499595,
+              "blocks_free": 16496240,
+              "blocks_available": 16492144,
+              "files": 4194304,
+              "files_free": 4194132
+            }
+          },
+          "/var/log": {
+            "path": "/var/log",
+            "exists": true,
+            "writable": true,
+            "mount": {
+              "mount_point": "/",
+              "root": "/",
+              "fs_type": "overlay",
+              "source": "overlay",
+              "options": "rw,lowerdir=/mnt/a,upperdir=/mnt/system/upper,workdir=/mnt/system/work,uuid=on,metacopy=on"
+            },
+            "mode": "drwxr-xr-x",
+            "statvfs": {
+              "block_size": 4096,
+              "fragment_size": 4096,
+              "blocks": 16499595,
+              "blocks_free": 16496240,
+              "blocks_available": 16492144,
+              "files": 4194304,
+              "files_free": 4194132
+            }
+          },
+          "/run": {
+            "path": "/run",
+            "exists": true,
+            "writable": true,
+            "mount": {
+              "mount_point": "/",
+              "root": "/",
+              "fs_type": "overlay",
+              "source": "overlay",
+              "options": "rw,lowerdir=/mnt/a,upperdir=/mnt/system/upper,workdir=/mnt/system/work,uuid=on,metacopy=on"
+            },
+            "mode": "drwxr-xr-x",
+            "statvfs": {
+              "block_size": 4096,
+              "fragment_size": 4096,
+              "blocks": 16499595,
+              "blocks_free": 16496240,
+              "blocks_available": 16492144,
+              "files": 4194304,
+              "files_free": 4194132
+            }
+          },
+          "/usr/bin": {
+            "path": "/usr/bin",
+            "exists": true,
+            "writable": true,
+            "mount": {
+              "mount_point": "/",
+              "root": "/",
+              "fs_type": "overlay",
+              "source": "overlay",
+              "options": "rw,lowerdir=/mnt/a,upperdir=/mnt/system/upper,workdir=/mnt/system/work,uuid=on,metacopy=on"
+            },
+            "mode": "drwxr-xr-x",
+            "statvfs": {
+              "block_size": 4096,
+              "fragment_size": 4096,
+              "blocks": 16499595,
+              "blocks_free": 16496240,
+              "blocks_available": 16492144,
+              "files": 4194304,
+              "files_free": 4194132
+            }
+          },
+          "/usr/lib": {
+            "path": "/usr/lib",
+            "exists": true,
+            "writable": true,
+            "mount": {
+              "mount_point": "/",
+              "root": "/",
+              "fs_type": "overlay",
+              "source": "overlay",
+              "options": "rw,lowerdir=/mnt/a,upperdir=/mnt/system/upper,workdir=/mnt/system/work,uuid=on,metacopy=on"
+            },
+            "mode": "drwxr-xr-x",
+            "statvfs": {
+              "block_size": 4096,
+              "fragment_size": 4096,
+              "blocks": 16499595,
+              "blocks_free": 16496240,
+              "blocks_available": 16492144,
+              "files": 4194304,
+              "files_free": 4194132
+            }
+          },
+          "/opt/ai-clis": {
+            "path": "/opt/ai-clis",
+            "exists": true,
+            "writable": true,
+            "mount": {
+              "mount_point": "/",
+              "root": "/",
+              "fs_type": "overlay",
+              "source": "overlay",
+              "options": "rw,lowerdir=/mnt/a,upperdir=/mnt/system/upper,workdir=/mnt/system/work,uuid=on,metacopy=on"
+            },
+            "mode": "drwxr-xr-x",
+            "statvfs": {
+              "block_size": 4096,
+              "fragment_size": 4096,
+              "blocks": 16499595,
+              "blocks_free": 16496240,
+              "blocks_available": 16492144,
+              "files": 4194304,
+              "files_free": 4194132
+            }
+          }
+        },
+        "rootfs": {
+          "scan_dirs": [
+            "/usr/bin",
+            "/usr/lib",
+            "/opt/ai-clis"
+          ],
+          "files_found": 3478,
+          "largest_file": "/opt/ai-clis/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
+          "largest_file_size": 258278208,
+          "backing": {
+            "root_mount": {
+              "mount_point": "/",
+              "root": "/",
+              "fs_type": "overlay",
+              "source": "overlay",
+              "options": "rw,lowerdir=/mnt/a,upperdir=/mnt/system/upper,workdir=/mnt/system/work,uuid=on,metacopy=on"
+            },
+            "overlay_lowerdir": "/mnt/a",
+            "overlay_upperdir": "/mnt/system/upper",
+            "overlay_workdir": "/mnt/system/work",
+            "erofs_mounts": [],
+            "squashfs_superblock": {
+              "device": "/dev/vda",
+              "magic": "0x00000000",
+              "error": "not squashfs",
+              "read_ahead_kb": 4096
+            }
+          },
+          "seq_reads": [
+            {
+              "label": "largest",
+              "path": "/opt/ai-clis/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
+              "size_bytes": 258278208,
+              "mount": {
+                "mount_point": "/",
+                "root": "/",
+                "fs_type": "overlay",
+                "source": "overlay",
+                "options": "rw,lowerdir=/mnt/a,upperdir=/mnt/system/upper,workdir=/mnt/system/work,uuid=on,metacopy=on"
+              },
+              "cold": {
+                "size_bytes": 258278208,
+                "block_size": 1048576,
+                "duration_ms": 103.3,
+                "throughput_mbps": 2383.9
+              },
+              "warm": {
+                "size_bytes": 258278208,
+                "block_size": 1048576,
+                "duration_ms": 20.5,
+                "throughput_mbps": 12018.4
+              }
+            },
+            {
+              "label": "bash",
+              "path": "/bin/bash",
+              "size_bytes": 1265648,
+              "mount": {
+                "mount_point": "/",
+                "root": "/",
+                "fs_type": "overlay",
+                "source": "overlay",
+                "options": "rw,lowerdir=/mnt/a,upperdir=/mnt/system/upper,workdir=/mnt/system/work,uuid=on,metacopy=on"
+              },
+              "cold": {
+                "size_bytes": 1265648,
+                "block_size": 1048576,
+                "duration_ms": 0.4,
+                "throughput_mbps": 3360.4
+              },
+              "warm": {
+                "size_bytes": 1265648,
+                "block_size": 1048576,
+                "duration_ms": 0.1,
+                "throughput_mbps": 17502.4
+              }
+            },
+            {
+              "label": "python3",
+              "path": "/usr/bin/python3",
+              "size_bytes": 6834488,
+              "mount": {
+                "mount_point": "/",
+                "root": "/",
+                "fs_type": "overlay",
+                "source": "overlay",
+                "options": "rw,lowerdir=/mnt/a,upperdir=/mnt/system/upper,workdir=/mnt/system/work,uuid=on,metacopy=on"
+              },
+              "cold": {
+                "size_bytes": 6834488,
+                "block_size": 1048576,
+                "duration_ms": 2.3,
+                "throughput_mbps": 2876.6
+              },
+              "warm": {
+                "size_bytes": 6834488,
+                "block_size": 1048576,
+                "duration_ms": 0.5,
+                "throughput_mbps": 13013.6
+              }
+            }
+          ],
+          "rand_read_4k": {
+            "count": 2000,
+            "files_sampled": 1503,
+            "duration_ms": 156.6,
+            "iops": 12771.4,
+            "throughput_mbps": 49.9
+          }
+        },
+        "writable": {
+          "/root": {
+            "path": "/root",
+            "size_mb": 64,
+            "seq_write": {
+              "size_bytes": 67108864,
+              "block_size": 1048576,
+              "duration_ms": 258.2,
+              "throughput_mbps": 247.9
+            },
+            "seq_read_cold": {
+              "size_bytes": 67108864,
+              "block_size": 1048576,
+              "duration_ms": 31.0,
+              "throughput_mbps": 2064.4
+            },
+            "seq_read_warm": {
+              "size_bytes": 67108864,
+              "block_size": 1048576,
+              "duration_ms": 28.1,
+              "throughput_mbps": 2281.6
+            },
+            "rand_write_4k": {
+              "count": 10000,
+              "block_size": 4096,
+              "duration_ms": 3649.6,
+              "iops": 2740.0,
+              "throughput_mbps": 10.7
+            },
+            "rand_read_4k": {
+              "count": 10000,
+              "block_size": 4096,
+              "duration_ms": 505.3,
+              "iops": 19790.9,
+              "throughput_mbps": 77.3
+            },
+            "io_profile": {
+              "path": "/root",
+              "size_mb": 64,
+              "random_ops": 2000,
+              "sequential": {
+                "4k": {
+                  "write": {
+                    "size_bytes": 67108864,
+                    "block_size": 4096,
+                    "count": 16384,
+                    "duration_ms": 1235.7,
+                    "iops": 13259.0,
+                    "throughput_mbps": 51.8,
+                    "avg_latency_ms": 0.075
+                  },
+                  "read_cold": {
+                    "size_bytes": 67108864,
+                    "block_size": 4096,
+                    "count": 16384,
+                    "duration_ms": 38.2,
+                    "iops": 428423.9,
+                    "throughput_mbps": 1673.5,
+                    "avg_latency_ms": 0.002
+                  },
+                  "read_warm": {
+                    "size_bytes": 67108864,
+                    "block_size": 4096,
+                    "count": 16384,
+                    "duration_ms": 37.6,
+                    "iops": 435818.6,
+                    "throughput_mbps": 1702.4,
+                    "avg_latency_ms": 0.002
+                  }
+                },
+                "64k": {
+                  "write": {
+                    "size_bytes": 67108864,
+                    "block_size": 65536,
+                    "count": 1024,
+                    "duration_ms": 323.2,
+                    "iops": 3168.6,
+                    "throughput_mbps": 198.0,
+                    "avg_latency_ms": 0.316
+                  },
+                  "read_cold": {
+                    "size_bytes": 67108864,
+                    "block_size": 65536,
+                    "count": 1024,
+                    "duration_ms": 28.0,
+                    "iops": 36618.2,
+                    "throughput_mbps": 2288.6,
+                    "avg_latency_ms": 0.027
+                  },
+                  "read_warm": {
+                    "size_bytes": 67108864,
+                    "block_size": 65536,
+                    "count": 1024,
+                    "duration_ms": 27.3,
+                    "iops": 37454.2,
+                    "throughput_mbps": 2340.9,
+                    "avg_latency_ms": 0.027
+                  }
+                },
+                "1m": {
+                  "write": {
+                    "size_bytes": 67108864,
+                    "block_size": 1048576,
+                    "count": 64,
+                    "duration_ms": 266.9,
+                    "iops": 239.8,
+                    "throughput_mbps": 239.8,
+                    "avg_latency_ms": 4.17
+                  },
+                  "read_cold": {
+                    "size_bytes": 67108864,
+                    "block_size": 1048576,
+                    "count": 64,
+                    "duration_ms": 33.2,
+                    "iops": 1930.4,
+                    "throughput_mbps": 1930.4,
+                    "avg_latency_ms": 0.518
+                  },
+                  "read_warm": {
+                    "size_bytes": 67108864,
+                    "block_size": 1048576,
+                    "count": 64,
+                    "duration_ms": 29.3,
+                    "iops": 2182.7,
+                    "throughput_mbps": 2182.7,
+                    "avg_latency_ms": 0.458
+                  }
+                }
+              },
+              "random": {
+                "read_4k": {
+                  "size_bytes": 8192000,
+                  "block_size": 4096,
+                  "count": 2000,
+                  "duration_ms": 138.7,
+                  "iops": 14422.2,
+                  "throughput_mbps": 56.3,
+                  "avg_latency_ms": 0.069,
+                  "latency_ms": {
+                    "p50": 0.061,
+                    "p95": 0.097,
+                    "p99": 0.335,
+                    "max": 1.339
+                  }
+                },
+                "write_4k_sync": {
+                  "size_bytes": 8192000,
+                  "block_size": 4096,
+                  "count": 2000,
+                  "duration_ms": 545.7,
+                  "iops": 3664.9,
+                  "throughput_mbps": 14.3,
+                  "avg_latency_ms": 0.273,
+                  "latency_ms": {
+                    "p50": 0.233,
+                    "p95": 0.383,
+                    "p99": 0.525,
+                    "max": 3.849
+                  },
+                  "sync_each": true
+                }
+              }
+            }
+          },
+          "/tmp": {
+            "path": "/tmp",
+            "size_mb": 64,
+            "seq_write": {
+              "size_bytes": 67108864,
+              "block_size": 1048576,
+              "duration_ms": 114.0,
+              "throughput_mbps": 561.3
+            },
+            "seq_read_cold": {
+              "size_bytes": 67108864,
+              "block_size": 1048576,
+              "duration_ms": 56.6,
+              "throughput_mbps": 1130.7
+            },
+            "seq_read_warm": {
+              "size_bytes": 67108864,
+              "block_size": 1048576,
+              "duration_ms": 7.7,
+              "throughput_mbps": 8299.2
+            },
+            "rand_write_4k": {
+              "count": 10000,
+              "block_size": 4096,
+              "duration_ms": 1886.5,
+              "iops": 5300.7,
+              "throughput_mbps": 20.7
+            },
+            "rand_read_4k": {
+              "count": 10000,
+              "block_size": 4096,
+              "duration_ms": 20.4,
+              "iops": 489837.6,
+              "throughput_mbps": 1913.4
+            },
+            "io_profile": {
+              "path": "/tmp",
+              "size_mb": 64,
+              "random_ops": 2000,
+              "sequential": {
+                "4k": {
+                  "write": {
+                    "size_bytes": 67108864,
+                    "block_size": 4096,
+                    "count": 16384,
+                    "duration_ms": 74.1,
+                    "iops": 221109.5,
+                    "throughput_mbps": 863.7,
+                    "avg_latency_ms": 0.005
+                  },
+                  "read_cold": {
+                    "size_bytes": 67108864,
+                    "block_size": 4096,
+                    "count": 16384,
+                    "duration_ms": 33.1,
+                    "iops": 494387.6,
+                    "throughput_mbps": 1931.2,
+                    "avg_latency_ms": 0.002
+                  },
+                  "read_warm": {
+                    "size_bytes": 67108864,
+                    "block_size": 4096,
+                    "count": 16384,
+                    "duration_ms": 18.9,
+                    "iops": 867400.7,
+                    "throughput_mbps": 3388.3,
+                    "avg_latency_ms": 0.001
+                  }
+                },
+                "64k": {
+                  "write": {
+                    "size_bytes": 67108864,
+                    "block_size": 65536,
+                    "count": 1024,
+                    "duration_ms": 83.1,
+                    "iops": 12326.3,
+                    "throughput_mbps": 770.4,
+                    "avg_latency_ms": 0.081
+                  },
+                  "read_cold": {
+                    "size_bytes": 67108864,
+                    "block_size": 65536,
+                    "count": 1024,
+                    "duration_ms": 14.2,
+                    "iops": 72275.4,
+                    "throughput_mbps": 4517.2,
+                    "avg_latency_ms": 0.014
+                  },
+                  "read_warm": {
+                    "size_bytes": 67108864,
+                    "block_size": 65536,
+                    "count": 1024,
+                    "duration_ms": 6.2,
+                    "iops": 165057.2,
+                    "throughput_mbps": 10316.1,
+                    "avg_latency_ms": 0.006
+                  }
+                },
+                "1m": {
+                  "write": {
+                    "size_bytes": 67108864,
+                    "block_size": 1048576,
+                    "count": 64,
+                    "duration_ms": 97.3,
+                    "iops": 657.9,
+                    "throughput_mbps": 657.9,
+                    "avg_latency_ms": 1.52
+                  },
+                  "read_cold": {
+                    "size_bytes": 67108864,
+                    "block_size": 1048576,
+                    "count": 64,
+                    "duration_ms": 23.2,
+                    "iops": 2755.1,
+                    "throughput_mbps": 2755.1,
+                    "avg_latency_ms": 0.363
+                  },
+                  "read_warm": {
+                    "size_bytes": 67108864,
+                    "block_size": 1048576,
+                    "count": 64,
+                    "duration_ms": 7.2,
+                    "iops": 8907.6,
+                    "throughput_mbps": 8907.6,
+                    "avg_latency_ms": 0.112
+                  }
+                }
+              },
+              "random": {
+                "read_4k": {
+                  "size_bytes": 8192000,
+                  "block_size": 4096,
+                  "count": 2000,
+                  "duration_ms": 112.8,
+                  "iops": 17732.7,
+                  "throughput_mbps": 69.3,
+                  "avg_latency_ms": 0.056,
+                  "latency_ms": {
+                    "p50": 0.057,
+                    "p95": 0.067,
+                    "p99": 0.083,
+                    "max": 2.045
+                  }
+                },
+                "write_4k_sync": {
+                  "size_bytes": 8192000,
+                  "block_size": 4096,
+                  "count": 2000,
+                  "duration_ms": 126.3,
+                  "iops": 15830.3,
+                  "throughput_mbps": 61.8,
+                  "avg_latency_ms": 0.063,
+                  "latency_ms": {
+                    "p50": 0.059,
+                    "p95": 0.074,
+                    "p99": 0.176,
+                    "max": 1.004
+                  },
+                  "sync_each": true
+                }
+              }
+            }
+          },
+          "/var/tmp": {
+            "path": "/var/tmp",
+            "size_mb": 64,
+            "seq_write": {
+              "size_bytes": 67108864,
+              "block_size": 1048576,
+              "duration_ms": 94.5,
+              "throughput_mbps": 677.3
+            },
+            "seq_read_cold": {
+              "size_bytes": 67108864,
+              "block_size": 1048576,
+              "duration_ms": 19.8,
+              "throughput_mbps": 3227.6
+            },
+            "seq_read_warm": {
+              "size_bytes": 67108864,
+              "block_size": 1048576,
+              "duration_ms": 5.7,
+              "throughput_mbps": 11206.7
+            },
+            "rand_write_4k": {
+              "count": 10000,
+              "block_size": 4096,
+              "duration_ms": 1755.2,
+              "iops": 5697.4,
+              "throughput_mbps": 22.3
+            },
+            "rand_read_4k": {
+              "count": 10000,
+              "block_size": 4096,
+              "duration_ms": 20.9,
+              "iops": 478889.3,
+              "throughput_mbps": 1870.7
+            },
+            "io_profile": {
+              "path": "/var/tmp",
+              "size_mb": 64,
+              "random_ops": 2000,
+              "sequential": {
+                "4k": {
+                  "write": {
+                    "size_bytes": 67108864,
+                    "block_size": 4096,
+                    "count": 16384,
+                    "duration_ms": 87.1,
+                    "iops": 188013.2,
+                    "throughput_mbps": 734.4,
+                    "avg_latency_ms": 0.005
+                  },
+                  "read_cold": {
+                    "size_bytes": 67108864,
+                    "block_size": 4096,
+                    "count": 16384,
+                    "duration_ms": 63.6,
+                    "iops": 257581.4,
+                    "throughput_mbps": 1006.2,
+                    "avg_latency_ms": 0.004
+                  },
+                  "read_warm": {
+                    "size_bytes": 67108864,
+                    "block_size": 4096,
+                    "count": 16384,
+                    "duration_ms": 20.1,
+                    "iops": 814579.0,
+                    "throughput_mbps": 3181.9,
+                    "avg_latency_ms": 0.001
+                  }
+                },
+                "64k": {
+                  "write": {
+                    "size_bytes": 67108864,
+                    "block_size": 65536,
+                    "count": 1024,
+                    "duration_ms": 56.6,
+                    "iops": 18083.5,
+                    "throughput_mbps": 1130.2,
+                    "avg_latency_ms": 0.055
+                  },
+                  "read_cold": {
+                    "size_bytes": 67108864,
+                    "block_size": 65536,
+                    "count": 1024,
+                    "duration_ms": 22.0,
+                    "iops": 46551.5,
+                    "throughput_mbps": 2909.5,
+                    "avg_latency_ms": 0.021
+                  },
+                  "read_warm": {
+                    "size_bytes": 67108864,
+                    "block_size": 65536,
+                    "count": 1024,
+                    "duration_ms": 6.8,
+                    "iops": 149606.0,
+                    "throughput_mbps": 9350.4,
+                    "avg_latency_ms": 0.007
+                  }
+                },
+                "1m": {
+                  "write": {
+                    "size_bytes": 67108864,
+                    "block_size": 1048576,
+                    "count": 64,
+                    "duration_ms": 82.7,
+                    "iops": 773.6,
+                    "throughput_mbps": 773.6,
+                    "avg_latency_ms": 1.293
+                  },
+                  "read_cold": {
+                    "size_bytes": 67108864,
+                    "block_size": 1048576,
+                    "count": 64,
+                    "duration_ms": 32.3,
+                    "iops": 1983.2,
+                    "throughput_mbps": 1983.2,
+                    "avg_latency_ms": 0.504
+                  },
+                  "read_warm": {
+                    "size_bytes": 67108864,
+                    "block_size": 1048576,
+                    "count": 64,
+                    "duration_ms": 6.6,
+                    "iops": 9707.0,
+                    "throughput_mbps": 9707.0,
+                    "avg_latency_ms": 0.103
+                  }
+                }
+              },
+              "random": {
+                "read_4k": {
+                  "size_bytes": 8192000,
+                  "block_size": 4096,
+                  "count": 2000,
+                  "duration_ms": 104.2,
+                  "iops": 19186.0,
+                  "throughput_mbps": 74.9,
+                  "avg_latency_ms": 0.052,
+                  "latency_ms": {
+                    "p50": 0.053,
+                    "p95": 0.062,
+                    "p99": 0.075,
+                    "max": 1.153
+                  }
+                },
+                "write_4k_sync": {
+                  "size_bytes": 8192000,
+                  "block_size": 4096,
+                  "count": 2000,
+                  "duration_ms": 123.2,
+                  "iops": 16227.3,
+                  "throughput_mbps": 63.4,
+                  "avg_latency_ms": 0.062,
+                  "latency_ms": {
+                    "p50": 0.056,
+                    "p95": 0.069,
+                    "p99": 0.167,
+                    "max": 2.311
+                  },
+                  "sync_each": true
+                }
+              }
+            }
+          },
+          "/var/log": {
+            "path": "/var/log",
+            "size_mb": 64,
+            "seq_write": {
+              "size_bytes": 67108864,
+              "block_size": 1048576,
+              "duration_ms": 81.4,
+              "throughput_mbps": 785.9
+            },
+            "seq_read_cold": {
+              "size_bytes": 67108864,
+              "block_size": 1048576,
+              "duration_ms": 17.0,
+              "throughput_mbps": 3766.1
+            },
+            "seq_read_warm": {
+              "size_bytes": 67108864,
+              "block_size": 1048576,
+              "duration_ms": 5.7,
+              "throughput_mbps": 11149.9
+            },
+            "rand_write_4k": {
+              "count": 10000,
+              "block_size": 4096,
+              "duration_ms": 1938.4,
+              "iops": 5158.9,
+              "throughput_mbps": 20.2
+            },
+            "rand_read_4k": {
+              "count": 10000,
+              "block_size": 4096,
+              "duration_ms": 22.5,
+              "iops": 443464.7,
+              "throughput_mbps": 1732.3
+            },
+            "io_profile": {
+              "path": "/var/log",
+              "size_mb": 64,
+              "random_ops": 2000,
+              "sequential": {
+                "4k": {
+                  "write": {
+                    "size_bytes": 67108864,
+                    "block_size": 4096,
+                    "count": 16384,
+                    "duration_ms": 85.4,
+                    "iops": 191835.1,
+                    "throughput_mbps": 749.4,
+                    "avg_latency_ms": 0.005
+                  },
+                  "read_cold": {
+                    "size_bytes": 67108864,
+                    "block_size": 4096,
+                    "count": 16384,
+                    "duration_ms": 68.9,
+                    "iops": 237880.5,
+                    "throughput_mbps": 929.2,
+                    "avg_latency_ms": 0.004
+                  },
+                  "read_warm": {
+                    "size_bytes": 67108864,
+                    "block_size": 4096,
+                    "count": 16384,
+                    "duration_ms": 20.2,
+                    "iops": 812758.3,
+                    "throughput_mbps": 3174.8,
+                    "avg_latency_ms": 0.001
+                  }
+                },
+                "64k": {
+                  "write": {
+                    "size_bytes": 67108864,
+                    "block_size": 65536,
+                    "count": 1024,
+                    "duration_ms": 55.1,
+                    "iops": 18600.2,
+                    "throughput_mbps": 1162.5,
+                    "avg_latency_ms": 0.054
+                  },
+                  "read_cold": {
+                    "size_bytes": 67108864,
+                    "block_size": 65536,
+                    "count": 1024,
+                    "duration_ms": 27.5,
+                    "iops": 37261.7,
+                    "throughput_mbps": 2328.9,
+                    "avg_latency_ms": 0.027
+                  },
+                  "read_warm": {
+                    "size_bytes": 67108864,
+                    "block_size": 65536,
+                    "count": 1024,
+                    "duration_ms": 8.4,
+                    "iops": 121937.5,
+                    "throughput_mbps": 7621.1,
+                    "avg_latency_ms": 0.008
+                  }
+                },
+                "1m": {
+                  "write": {
+                    "size_bytes": 67108864,
+                    "block_size": 1048576,
+                    "count": 64,
+                    "duration_ms": 86.0,
+                    "iops": 744.1,
+                    "throughput_mbps": 744.1,
+                    "avg_latency_ms": 1.344
+                  },
+                  "read_cold": {
+                    "size_bytes": 67108864,
+                    "block_size": 1048576,
+                    "count": 64,
+                    "duration_ms": 30.0,
+                    "iops": 2130.3,
+                    "throughput_mbps": 2130.3,
+                    "avg_latency_ms": 0.469
+                  },
+                  "read_warm": {
+                    "size_bytes": 67108864,
+                    "block_size": 1048576,
+                    "count": 64,
+                    "duration_ms": 6.8,
+                    "iops": 9438.7,
+                    "throughput_mbps": 9438.7,
+                    "avg_latency_ms": 0.106
+                  }
+                }
+              },
+              "random": {
+                "read_4k": {
+                  "size_bytes": 8192000,
+                  "block_size": 4096,
+                  "count": 2000,
+                  "duration_ms": 141.1,
+                  "iops": 14169.8,
+                  "throughput_mbps": 55.4,
+                  "avg_latency_ms": 0.071,
+                  "latency_ms": {
+                    "p50": 0.058,
+                    "p95": 0.111,
+                    "p99": 0.42,
+                    "max": 3.498
+                  }
+                },
+                "write_4k_sync": {
+                  "size_bytes": 8192000,
+                  "block_size": 4096,
+                  "count": 2000,
+                  "duration_ms": 152.4,
+                  "iops": 13119.1,
+                  "throughput_mbps": 51.2,
+                  "avg_latency_ms": 0.076,
+                  "latency_ms": {
+                    "p50": 0.06,
+                    "p95": 0.096,
+                    "p99": 0.369,
+                    "max": 2.712
+                  },
+                  "sync_each": true
+                }
+              }
+            }
+          },
+          "/run": {
+            "path": "/run",
+            "size_mb": 64,
+            "seq_write": {
+              "size_bytes": 67108864,
+              "block_size": 1048576,
+              "duration_ms": 83.8,
+              "throughput_mbps": 763.9
+            },
+            "seq_read_cold": {
+              "size_bytes": 67108864,
+              "block_size": 1048576,
+              "duration_ms": 17.4,
+              "throughput_mbps": 3670.1
+            },
+            "seq_read_warm": {
+              "size_bytes": 67108864,
+              "block_size": 1048576,
+              "duration_ms": 7.1,
+              "throughput_mbps": 8961.0
+            },
+            "rand_write_4k": {
+              "count": 10000,
+              "block_size": 4096,
+              "duration_ms": 1886.5,
+              "iops": 5300.8,
+              "throughput_mbps": 20.7
+            },
+            "rand_read_4k": {
+              "count": 10000,
+              "block_size": 4096,
+              "duration_ms": 20.9,
+              "iops": 477850.9,
+              "throughput_mbps": 1866.6
+            },
+            "io_profile": {
+              "path": "/run",
+              "size_mb": 64,
+              "random_ops": 2000,
+              "sequential": {
+                "4k": {
+                  "write": {
+                    "size_bytes": 67108864,
+                    "block_size": 4096,
+                    "count": 16384,
+                    "duration_ms": 93.6,
+                    "iops": 175030.7,
+                    "throughput_mbps": 683.7,
+                    "avg_latency_ms": 0.006
+                  },
+                  "read_cold": {
+                    "size_bytes": 67108864,
+                    "block_size": 4096,
+                    "count": 16384,
+                    "duration_ms": 69.4,
+                    "iops": 236148.9,
+                    "throughput_mbps": 922.5,
+                    "avg_latency_ms": 0.004
+                  },
+                  "read_warm": {
+                    "size_bytes": 67108864,
+                    "block_size": 4096,
+                    "count": 16384,
+                    "duration_ms": 20.5,
+                    "iops": 797777.6,
+                    "throughput_mbps": 3116.3,
+                    "avg_latency_ms": 0.001
+                  }
+                },
+                "64k": {
+                  "write": {
+                    "size_bytes": 67108864,
+                    "block_size": 65536,
+                    "count": 1024,
+                    "duration_ms": 52.7,
+                    "iops": 19446.7,
+                    "throughput_mbps": 1215.4,
+                    "avg_latency_ms": 0.051
+                  },
+                  "read_cold": {
+                    "size_bytes": 67108864,
+                    "block_size": 65536,
+                    "count": 1024,
+                    "duration_ms": 49.3,
+                    "iops": 20754.0,
+                    "throughput_mbps": 1297.1,
+                    "avg_latency_ms": 0.048
+                  },
+                  "read_warm": {
+                    "size_bytes": 67108864,
+                    "block_size": 65536,
+                    "count": 1024,
+                    "duration_ms": 8.7,
+                    "iops": 117575.4,
+                    "throughput_mbps": 7348.5,
+                    "avg_latency_ms": 0.009
+                  }
+                },
+                "1m": {
+                  "write": {
+                    "size_bytes": 67108864,
+                    "block_size": 1048576,
+                    "count": 64,
+                    "duration_ms": 50.3,
+                    "iops": 1272.8,
+                    "throughput_mbps": 1272.8,
+                    "avg_latency_ms": 0.786
+                  },
+                  "read_cold": {
+                    "size_bytes": 67108864,
+                    "block_size": 1048576,
+                    "count": 64,
+                    "duration_ms": 57.1,
+                    "iops": 1120.1,
+                    "throughput_mbps": 1120.1,
+                    "avg_latency_ms": 0.893
+                  },
+                  "read_warm": {
+                    "size_bytes": 67108864,
+                    "block_size": 1048576,
+                    "count": 64,
+                    "duration_ms": 9.9,
+                    "iops": 6452.8,
+                    "throughput_mbps": 6452.8,
+                    "avg_latency_ms": 0.155
+                  }
+                }
+              },
+              "random": {
+                "read_4k": {
+                  "size_bytes": 8192000,
+                  "block_size": 4096,
+                  "count": 2000,
+                  "duration_ms": 110.5,
+                  "iops": 18096.1,
+                  "throughput_mbps": 70.7,
+                  "avg_latency_ms": 0.055,
+                  "latency_ms": {
+                    "p50": 0.055,
+                    "p95": 0.065,
+                    "p99": 0.079,
+                    "max": 2.874
+                  }
+                },
+                "write_4k_sync": {
+                  "size_bytes": 8192000,
+                  "block_size": 4096,
+                  "count": 2000,
+                  "duration_ms": 128.8,
+                  "iops": 15528.9,
+                  "throughput_mbps": 60.7,
+                  "avg_latency_ms": 0.064,
+                  "latency_ms": {
+                    "p50": 0.059,
+                    "p95": 0.072,
+                    "p99": 0.188,
+                    "max": 3.386
+                  },
+                  "sync_each": true
+                }
+              }
+            }
+          }
+        }
+      },
+      "startup": {
+        "runs_per_command": 3,
+        "commands": {
+          "python3": {
+            "command": [
+              "python3",
+              "--version"
+            ],
+            "timings_ms": [
+              6.9,
+              6.1,
+              5.8
+            ],
+            "min_ms": 5.8,
+            "mean_ms": 6.3,
+            "max_ms": 6.9
+          },
+          "node": {
+            "command": [
+              "node",
+              "--version"
+            ],
+            "timings_ms": [
+              50.1,
+              47.2,
+              49.1
+            ],
+            "min_ms": 47.2,
+            "mean_ms": 48.8,
+            "max_ms": 50.1
+          },
+          "claude": {
+            "command": [
+              "claude",
+              "--version"
+            ],
+            "timings_ms": [
+              235.3,
+              289.2,
+              239.5
+            ],
+            "min_ms": 235.3,
+            "mean_ms": 254.7,
+            "max_ms": 289.2
+          },
+          "gemini": {
+            "command": [
+              "gemini",
+              "--version"
+            ],
+            "timings_ms": [
+              1084.3,
+              1067.9,
+              1079.3
+            ],
+            "min_ms": 1067.9,
+            "mean_ms": 1077.2,
+            "max_ms": 1084.3
+          },
+          "codex": {
+            "command": [
+              "codex",
+              "--version"
+            ],
+            "timings_ms": [
+              189.6,
+              179.6,
+              190.7
+            ],
+            "min_ms": 179.6,
+            "mean_ms": 186.6,
+            "max_ms": 190.7
+          }
+        }
+      },
+      "mock_server_protocol": {
+        "version": "1.1-rust",
+        "lane": "guest_capsem",
+        "base_url": "http://127.0.0.1:3713",
+        "total_requests": 50000,
+        "concurrency": 64,
+        "timeout_ms": 30000,
+        "selected_scenarios": [
+          "model_json_response",
+          "credential_response"
+        ],
+        "scenarios": [
+          {
+            "name": "model_json_response",
+            "path": "/model/response",
+            "body_kind": "model_json",
+            "total_requests": 50000,
+            "concurrency": 64,
+            "successful": 50000,
+            "failed": 0,
+            "transport_retries": 0,
+            "total_duration_ms": 12498.5,
+            "requests_per_sec": 4000.5,
+            "transfer_bytes": 32000000,
+            "bytes_per_sec": 2560299.4,
+            "latency_ms": {
+              "min": 0.6,
+              "max": 3991.4,
+              "mean": 15.9,
+              "p50": 10.3,
+              "p95": 17.1,
+              "p99": 22.6
+            },
+            "errors": {}
+          },
+          {
+            "name": "credential_response",
+            "path": "/credential/response",
+            "body_kind": "credential",
+            "total_requests": 50000,
+            "concurrency": 64,
+            "successful": 50000,
+            "failed": 0,
+            "transport_retries": 0,
+            "total_duration_ms": 18961.0,
+            "requests_per_sec": 2637.0,
+            "transfer_bytes": 11050000,
+            "bytes_per_sec": 582773.7,
+            "latency_ms": {
+              "min": 0.7,
+              "max": 4516.3,
+              "mean": 24.2,
+              "p50": 12.7,
+              "p95": 19.8,
+              "p99": 24.2
+            },
+            "errors": {},
+            "secret_shaped_fixture_seen": true,
+            "raw_secret_stored_in_result": false
+          }
+        ]
+      },
+      "http": {
+        "url": "http://127.0.0.1:3713/tiny",
+        "total_requests": 50000,
+        "successful": 50000,
+        "failed": 0,
+        "requests_per_sec": 2774.8,
+        "latency_ms": {
+          "min": 0.9,
+          "max": 5122.5,
+          "mean": 23.0,
+          "p50": 9.6,
+          "p95": 15.8,
+          "p99": 20.5
+        },
+        "bytes_per_sec": 66595.2,
+        "transfer_bytes": 1200000,
+        "source": "local"
+      },
+      "throughput": {
+        "url": "http://127.0.0.1:3713/bytes/10mb",
+        "http_code": 200,
+        "size_bytes": 10485760,
+        "throughput_mbps": 55.5,
+        "source": "local",
+        "duration_s": 0.18030000000000002
+      },
+      "host_recorded_at": 1791307335.0491865,
+      "arch": "x86_64",
+      "mock_server_base_url": "http://127.0.0.1:3713"
+    },
+    "fork/data_0.6.6_code_hosted.json": {
+      "version": "0.1.0",
+      "timestamp": 1791306339.0010817,
+      "runs": 3,
+      "fork": {
+        "fork_ms": {
+          "min": 196.6,
+          "mean": 227.2,
+          "max": 261.8,
+          "values": [
+            261.8,
+            223.3,
+            196.6
+          ]
+        },
+        "image_size_mb": {
+          "min": 19.1,
+          "mean": 19.2,
+          "max": 19.2,
+          "values": [
+            19.14,
+            19.15,
+            19.16
+          ]
+        },
+        "boot_provision_ms": {
+          "min": 196.8,
+          "mean": 206.6,
+          "max": 214.2,
+          "values": [
+            196.8,
+            208.7,
+            214.2
+          ]
+        },
+        "boot_ready_ms": {
+          "min": 503.4,
+          "mean": 538.5,
+          "max": 604.9,
+          "values": [
+            507.1,
+            604.9,
+            503.4
+          ]
+        }
+      },
+      "profile": "code",
+      "host_class": "hosted"
+    },
+    "fork/data_0.6.6_co-work_hosted.json": {
+      "version": "0.1.0",
+      "timestamp": 1791306847.307094,
+      "runs": 3,
+      "fork": {
+        "fork_ms": {
+          "min": 189.5,
+          "mean": 204.5,
+          "max": 223.3,
+          "values": [
+            223.3,
+            200.7,
+            189.5
+          ]
+        },
+        "image_size_mb": {
+          "min": 19.1,
+          "mean": 19.1,
+          "max": 19.1,
+          "values": [
+            19.12,
+            19.1,
+            19.1
+          ]
+        },
+        "boot_provision_ms": {
+          "min": 189.8,
+          "mean": 194.5,
+          "max": 197.2,
+          "values": [
+            197.2,
+            189.8,
+            196.6
+          ]
+        },
+        "boot_ready_ms": {
+          "min": 511.3,
+          "mean": 541.9,
+          "max": 558.3,
+          "values": [
+            558.3,
+            511.3,
+            556.1
+          ]
+        }
+      },
+      "profile": "co-work",
+      "host_class": "hosted"
+    },
+    "lifecycle/data_0.6.6_co-work_hosted.json": {
+      "version": "0.2.0",
+      "timestamp": 1791306841.0519714,
+      "runs": 3,
+      "operations": {
+        "provision_ms": {
+          "min": 96.2,
+          "mean": 134.8,
+          "p50": 150.4,
+          "p95": 157.1,
+          "p99": 157.7,
+          "max": 157.8,
+          "values": [
+            150.4,
+            96.2,
+            157.8
+          ]
+        },
+        "exec_ready_ms": {
+          "min": 453.9,
+          "mean": 485.5,
+          "p50": 501.1,
+          "p95": 501.5,
+          "p99": 501.5,
+          "max": 501.5,
+          "values": [
+            501.5,
+            501.1,
+            453.9
+          ]
+        },
+        "exec_ms": {
+          "min": 57.6,
+          "mean": 58.8,
+          "p50": 58.9,
+          "p95": 59.8,
+          "p99": 59.9,
+          "max": 59.9,
+          "values": [
+            57.6,
+            58.9,
+            59.9
+          ]
+        },
+        "delete_ms": {
+          "min": 33.3,
+          "mean": 42.9,
+          "p50": 38.5,
+          "p95": 55.0,
+          "p99": 56.4,
+          "max": 56.8,
+          "values": [
+            56.8,
+            38.5,
+            33.3
+          ]
+        },
+        "total_ms": {
+          "min": 694.7,
+          "mean": 722.0,
+          "p50": 704.9,
+          "p95": 760.2,
+          "p99": 765.1,
+          "max": 766.3,
+          "values": [
+            766.3,
+            694.7,
+            704.9
+          ]
+        }
+      },
+      "launch_span_contract": [
+        "capsem.launch.service",
+        "capsem.launch.gateway",
+        "capsem.launch.process_spawn",
+        "capsem.launch.vm_boot",
+        "capsem.launch.vsock_ready",
+        "capsem.launch.first_network_ready"
+      ],
+      "profile": "co-work",
+      "host_class": "hosted"
+    },
+    "lifecycle/data_0.6.6_code_hosted.json": {
+      "version": "0.2.0",
+      "timestamp": 1791306332.6068757,
+      "runs": 3,
+      "operations": {
+        "provision_ms": {
+          "min": 95.7,
+          "mean": 97.1,
+          "p50": 97.2,
+          "p95": 98.4,
+          "p99": 98.5,
+          "max": 98.5,
+          "values": [
+            98.5,
+            95.7,
+            97.2
+          ]
+        },
+        "exec_ready_ms": {
+          "min": 499.1,
+          "mean": 534.7,
+          "p50": 551.5,
+          "p95": 553.2,
+          "p99": 553.4,
+          "max": 553.4,
+          "values": [
+            553.4,
+            551.5,
+            499.1
+          ]
+        },
+        "exec_ms": {
+          "min": 57.1,
+          "mean": 57.9,
+          "p50": 58.0,
+          "p95": 58.4,
+          "p99": 58.5,
+          "max": 58.5,
+          "values": [
+            57.1,
+            58.5,
+            58.0
+          ]
+        },
+        "delete_ms": {
+          "min": 31.9,
+          "mean": 32.4,
+          "p50": 32.2,
+          "p95": 33.0,
+          "p99": 33.1,
+          "max": 33.1,
+          "values": [
+            31.9,
+            33.1,
+            32.2
+          ]
+        },
+        "total_ms": {
+          "min": 686.5,
+          "mean": 722.1,
+          "p50": 738.8,
+          "p95": 740.7,
+          "p99": 740.9,
+          "max": 740.9,
+          "values": [
+            740.9,
+            738.8,
+            686.5
+          ]
+        }
+      },
+      "launch_span_contract": [
+        "capsem.launch.service",
+        "capsem.launch.gateway",
+        "capsem.launch.process_spawn",
+        "capsem.launch.vm_boot",
+        "capsem.launch.vsock_ready",
+        "capsem.launch.first_network_ready"
+      ],
+      "profile": "code",
+      "host_class": "hosted"
+    },
+    "mock-server-protocol/data_0.6.6_x86_64.json": {
+      "version": "0.4.0-rust",
+      "timestamp": 1791306879.5242338,
+      "hostname": "unknown",
+      "benchmark": "capsem-bench-rs",
+      "mock_server_protocol": {
+        "version": "1.1-rust",
+        "lane": "host_direct",
+        "base_url": "http://127.0.0.1:3713",
+        "total_requests": 50000,
+        "concurrency": 64,
+        "timeout_ms": 30000,
+        "selected_scenarios": [
+          "model_json_response",
+          "credential_response"
+        ],
+        "scenarios": [
+          {
+            "name": "model_json_response",
+            "path": "/model/response",
+            "body_kind": "model_json",
+            "total_requests": 50000,
+            "concurrency": 64,
+            "successful": 50000,
+            "failed": 0,
+            "transport_retries": 0,
+            "total_duration_ms": 12278.8,
+            "requests_per_sec": 4072.1,
+            "transfer_bytes": 32000000,
+            "bytes_per_sec": 2606120.5,
+            "latency_ms": {
+              "min": 0.7,
+              "max": 4140.2,
+              "mean": 15.6,
+              "p50": 9.9,
+              "p95": 16.3,
+              "p99": 21.2
+            },
+            "errors": {}
+          },
+          {
+            "name": "credential_response",
+            "path": "/credential/response",
+            "body_kind": "credential",
+            "total_requests": 50000,
+            "concurrency": 64,
+            "successful": 50000,
+            "failed": 0,
+            "transport_retries": 0,
+            "total_duration_ms": 19144.1,
+            "requests_per_sec": 2611.8,
+            "transfer_bytes": 11050000,
+            "bytes_per_sec": 577200.2,
+            "latency_ms": {
+              "min": 0.7,
+              "max": 4578.4,
+              "mean": 24.4,
+              "p50": 12.5,
+              "p95": 19.9,
+              "p99": 24.9
+            },
+            "errors": {},
+            "secret_shaped_fixture_seen": true,
+            "raw_secret_stored_in_result": false
+          }
+        ]
+      },
+      "host_recorded_at": 1791306986.399356,
+      "arch": "x86_64",
+      "mock_server_base_url": "http://127.0.0.1:3713"
+    },
+    "parallel/data_1.0.json": {
+      "version": "1.0",
+      "timestamp": 1791307075.6650417,
+      "num_vms": 4,
+      "total_duration_ms": 86030.84713800036,
+      "results": [
+        {
+          "vm": "par-bench-5f1af2-0",
+          "status": "success",
+          "duration_ms": 83653.89865599992,
+          "stdout": ""
+        },
+        {
+          "vm": "par-bench-76b181-1",
+          "status": "success",
+          "duration_ms": 84427.06611200038,
+          "stdout": ""
+        },
+        {
+          "vm": "par-bench-310916-2",
+          "status": "success",
+          "duration_ms": 86029.88859700008,
+          "stdout": ""
+        },
+        {
+          "vm": "par-bench-30e38b-3",
+          "status": "success",
+          "duration_ms": 84968.9553039998,
+          "stdout": ""
+        }
+      ]
+    },
+    "route-latency/data_0.6.6.json": {
+      "version": "0.1.0",
+      "timestamp": 1791307076.968579,
+      "scenario": "service_stats_reads_during_profile_mutation_writes",
+      "reader": {
+        "route": "/stats",
+        "transport": "service_uds",
+        "summary": {
+          "label": "service /stats during profile-mutation writes",
+          "samples": 160,
+          "p50_ms": 0.071,
+          "p95_ms": 0.106,
+          "p99_ms": 0.161,
+          "max_ms": 1.539,
+          "service_cpu_s": 0.011621,
+          "gateway_cpu_s": null
+        }
+      },
+      "writer": {
+        "route": "/profiles/code/mcp/default/edit",
+        "transport": "service_uds",
+        "writes": 24,
+        "actions": [
+          "allow",
+          "ask",
+          "block",
+          "allow",
+          "ask",
+          "block",
+          "allow",
+          "ask",
+          "block",
+          "allow",
+          "ask",
+          "block",
+          "allow",
+          "ask",
+          "block",
+          "allow",
+          "ask",
+          "block",
+          "allow",
+          "ask",
+          "block",
+          "allow",
+          "ask",
+          "block"
+        ],
+        "unique_actions": [
+          "allow",
+          "ask",
+          "block"
+        ],
+        "final_default_action": "block",
+        "final_default_rule_id": "default.mcp"
+      },
+      "gates": {
+        "p95_ms_max": 15.0,
+        "p99_ms_max": 40.0,
+        "service_cpu_s_max": 0.6
+      }
+    }
+  }
+}
