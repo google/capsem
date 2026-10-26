@@ -279,14 +279,26 @@ def test_macos_package_outputs_share_the_admitted_cache_owner(
     assert not expected.exists(), "resolving the admitted destination must not write"
 
 
-def test_package_output_resolver_enters_the_locked_project_interpreter() -> None:
+@pytest.mark.parametrize("shared_authority", [False, True])
+def test_package_output_resolver_enters_the_locked_project_interpreter(
+    tmp_path: Path, shared_authority: bool,
+) -> None:
     # macOS shell python is 3.9; the existing bootstrap must enter the locked
     # builder before importing its typed cache/config dependencies.
-    from capsem_builder.cache.config import load_paths
+    from capsem_builder.cache.config import load_paths, load_policy
+    environment = {"PATH": "/usr/bin:/bin"}
+    if shared_authority:
+        environment[load_policy(ROOT).authority_environment] = str(tmp_path)
     result = subprocess.run(
         ["/usr/bin/python3", str(ROOT / "build_system/scripts/release/package-output-directory.py")],
-        cwd="/", env={"PATH": "/usr/bin:/bin"},
+        cwd="/", env=environment,
         capture_output=True, text=True, timeout=15, check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert Path(result.stdout.strip()) == load_paths(ROOT).stage("packages")
+    # Expected authority must use the same clean environment as the child,
+    # rather than inherit the candidate gate's shared cache authority.
+    expected = load_paths(ROOT, environment=environment).stage("packages")
+    assert Path(result.stdout.strip()) == expected
+    if shared_authority:
+        assert expected.is_relative_to(tmp_path)
+        assert not expected.exists(), "resolving the destination must not write"
