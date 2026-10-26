@@ -2,24 +2,8 @@ name: Publish Docs
 on:
   push:
     branches: [main]
-    paths:
-      - .github/workflows/docs.yaml
-      - README.md
-      - build_system/builder/gate/tools/web/check_docs_holding_build.py
-      - config/gate.toml
-      - build_system/scripts/web/check-docs-holding-build.py
-      - build_system/scripts/web/check-web-surface.sh
-      - build_system/scripts/build/lib/exec_lock.sh
-      - web/docs/**
-      - build_system/builder/docs_metrics/**
-      - build_system/tests/docs_metrics/**
-      - build_system/pyproject.toml
-      - build_system/uv.lock
-      - web/diagrams/**
-      - build_system/patches/**
-      - skills/use-capsem/**
-      - sdk/**
-      - mcp/typescript/**
+    # Architecture statistics follow source changes as well as documentation changes.
+  workflow_dispatch:
   pull_request:
     paths:
       - .github/workflows/docs.yaml
@@ -91,7 +75,7 @@ jobs:
       - name: Check interactive metrics pages on desktop and mobile
         run: uv run --project build_system --frozen --group docs python web/docs/tools/check-metrics-browser.py
       - name: Deploy
-        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
         uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -101,7 +85,7 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy web/docs/dist/ --project-name=capsem-docs
       - name: Smoke public docs site
-        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
         env:
           SITE_URL: https://docs.capsem.org
         run: bash build_system/scripts/web/smoke-docs-site.sh
