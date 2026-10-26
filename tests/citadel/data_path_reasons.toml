@@ -277,7 +277,7 @@ json = { count = 6, reason = "provider" }
 json = { count = 1, reason = "provider" }
 
 [sources."crates/capsem-core/src/net/ai_traffic/request_parser.rs"]
-json = { count = 12, reason = "provider" }
+json = { count = 11, reason = "provider" }
 
 [sources."crates/capsem-core/src/net/interpreters/anthropic_interpreter.rs"]
 json = { count = 6, reason = "provider" }
