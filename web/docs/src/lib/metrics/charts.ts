@@ -9,7 +9,7 @@ const format = (value: number) => value.toLocaleString(undefined, { maximumFract
 export function options(spec: ChartSpec, root: HTMLElement) {
   const style = getComputedStyle(root);
   const color = Array.from({ length: 14 }, (_, i) => style.getPropertyValue(`--metrics-series-${i + 1}`).trim());
-  const legendWidth = root.clientWidth < 480 ? 125 : 245;
+  const legendWidth = root.clientWidth < 480 ? (spec.type === 'pie' ? 165 : 125) : 245;
   const plotWidth = Math.max(100, root.clientWidth - legendWidth - 35);
   const text = style.color, grid = style.getPropertyValue('--metrics-grid').trim();
   const base = { animation: !matchMedia('(prefers-reduced-motion: reduce)').matches, color,
@@ -17,10 +17,12 @@ export function options(spec: ChartSpec, root: HTMLElement) {
     tooltip: { trigger: spec.type === 'pie' ? 'item' : 'axis', confine: true, valueFormatter: (v: number) => `${format(v)} ${spec.unit}` },
     legend: { type: 'scroll', orient: 'vertical', right: 10, top: 'middle', height: '88%', width: legendWidth, textStyle: { color: text, width: legendWidth - 35, overflow: 'break', fontSize: root.clientWidth < 480 ? 10 : 12, lineHeight: 15 }, pageTextStyle: { color: text }, pageIconColor: text },
   };
-  if (spec.type === 'pie') return { ...base, tooltip: { ...base.tooltip, trigger: 'item' }, series: [{ type: 'pie', radius: [Math.min(plotWidth * .14, 65), Math.min(plotWidth * (root.clientWidth < 480 ? .30 : .39), 135)], center: [plotWidth / 2 + 10, '50%'],
-    label: { show: true, position: 'outside', formatter: '{d}%', color: text, fontSize: 11 },
-    labelLine: { length: 6, length2: 4 }, avoidLabelOverlap: true,
-    emphasis: { label: { show: true } },
+  if (spec.type === 'pie') return { ...base, legend: { ...base.legend, formatter: (name: string) => {
+    const sum = spec.series[0].values.reduce<number>((a, v) => a + (v ?? 0), 0);
+    const value = spec.series[0].values[spec.labels.indexOf(name)] ?? 0;
+    return `${name} — ${(sum ? 100 * value / sum : 0).toFixed(2)}%`;
+  } }, tooltip: { ...base.tooltip, trigger: 'item' }, series: [{ type: 'pie', radius: [Math.min(plotWidth * .14, 65), Math.min(plotWidth * .39, 135)], center: [plotWidth / 2 + 10, '50%'],
+    label: { show: false }, emphasis: { label: { show: false } },
     data: spec.labels.map((name, i) => ({ name, value: spec.series[0].values[i] })) }] };
   if (spec.type === 'radar') return { ...base, tooltip: { ...base.tooltip, trigger: 'item' }, legend: { show: false },
     radar: { center: ['50%', '49%'], radius: root.clientWidth < 480 ? '44%' : '62%', indicator: spec.labels.map(name => ({ name, max: spec.radarMax ?? 100 })), axisName: { color: text, fontSize: root.clientWidth < 480 ? 9 : 10, width: root.clientWidth < 480 ? 65 : 85, overflow: 'break' },

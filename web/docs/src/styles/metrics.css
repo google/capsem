@@ -35,3 +35,5 @@
 @media (max-width: 1000px) { .metrics-dashboard .metric-grid { grid-template-columns: 1fr; } }
 @media (max-width: 480px) { .metrics-dashboard .metric-plot { height: 330px; } .metrics-dashboard .metric-kpis { grid-template-columns: 1fr; } .metrics-dashboard .metric-actions { flex-wrap: wrap; } }
 @media print { .metrics-dashboard .metric-actions { display: none; } .metrics-dashboard .metric-card { break-inside: avoid; } }
+
+@media (max-width: 480px) { .metrics-dashboard metric-chart[data-chart-type='pie'] .metric-plot { height: 440px; } }

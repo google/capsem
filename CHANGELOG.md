@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Show category names and percentages together in the pie-chart legend.
+
 - Display pie-chart percentages by default with readable labels on desktop and mobile.
 
 - Keep one overall code-composition pie, show client LOC as a radar, move chart legends to the right, and show release effort as monthly success percentages.

@@ -3,7 +3,6 @@
 import argparse
 import functools
 import http.server
-import re
 import threading
 from pathlib import Path
 
@@ -52,17 +51,20 @@ try:
             pie.locator("select").select_option("0")
             assert "1,020" in pie.locator("[data-chart-note]").inner_text()
             pie.locator("select").select_option(index=pie.locator("option").count() - 1)
-            percentages = pie.locator("svg text").filter(
-                has_text=re.compile(r"^\d+(?:\.\d+)?%$")
+            expected = pie.evaluate(
+                "e => { const s = JSON.parse(e.dataset.spec); return s.labels.map((name, i) => [name, s.series[0].values[i].toFixed(2) + '%']); }"
             )
-            assert percentages.count() == pie.evaluate(
-                "e => JSON.parse(e.dataset.spec).series[0].values.filter(v => v > 0).length"
-            ), "Every nonzero slice needs a default percentage label"
+            legend_text = " ".join(pie.locator("svg text").all_text_contents())
+            for name, percentage in expected:
+                assert name in legend_text, f"Missing category {name}"
+                assert percentage in legend_text, (
+                    f"Missing default percentage for {name}"
+                )
             plot = pie.locator(".metric-plot").bounding_box()
             legend = (
                 pie.locator("svg")
-                .get_by_text("Tests & support", exact=True)
-                .bounding_box()
+                .get_by_text("Tests & support", exact=False)
+                .first.bounding_box()
             )
             assert legend["x"] > plot["x"] + plot["width"] / 2, (
                 "Composition legend must be on the right"
