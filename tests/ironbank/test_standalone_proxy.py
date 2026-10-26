@@ -278,7 +278,8 @@ def test_standalone_proxy_serves_official_sdks_without_a_vm():
         _assert_no_raw_secret(db_path, session_dir)
 
         proxy_proc.send_signal(signal.SIGTERM)
-        assert proxy_proc.wait(timeout=15) == 0
+        output, _ = proxy_proc.communicate(timeout=15)
+        assert proxy_proc.returncode == 0, output.decode(errors="replace")
         assert proxy_proc.stdout is not None
         proxy_proc.stdout.close()
         proxy_proc = None

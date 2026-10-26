@@ -3,6 +3,47 @@ use serde_json::json;
 
 use super::*;
 
+#[tokio::test]
+async fn shutdown_keeps_upstream_authority_until_worker_stops() {
+    use std::os::fd::AsFd as _;
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    let state = crate::tests::make_test_state();
+    let id = "proxy-shutdown-order";
+    let mut proxy = running_proxy(&state, id, "secret").await;
+    let worker = crate::proxy_worker::tests::fake("shutdown_uses_upstream")
+        .await
+        .unwrap();
+    std::mem::replace(&mut proxy.worker, worker).shutdown().await.unwrap();
+    let (upstream, granted) = capsem_foundation::unix::fd::connected_unix_pair().unwrap();
+    proxy
+        .worker
+        .grant(ProxyCapability::Upstream, granted.into())
+        .await
+        .unwrap();
+    capsem_foundation::unix::fd::set_nonblocking(upstream.as_fd(), true).unwrap();
+    let mut upstream = tokio::net::UnixStream::from_std(upstream).unwrap();
+    let authority = proxy.authority.grant();
+    proxy.broker_task = tokio::spawn(async move {
+        tokio::select! {
+            biased;
+            _ = authority.revoked() => {}
+            request = upstream.read_u8() => {
+                assert_eq!(request.unwrap(), 1);
+                upstream.write_u8(2).await.unwrap();
+                authority.revoked().await;
+            }
+        }
+        crate::upstream_broker::BrokerCompletion {
+            cleanup_confirmed: true,
+            protocol_result: Ok(()),
+        }
+    });
+
+    cleanup(&state, id, proxy).await.unwrap();
+    assert!(!state.run_dir.join("sessions").join(id).exists());
+}
+
 async fn running_proxy(state: &ServiceState, session_id: &str, lease_token: &str) -> StandaloneProxy {
     let session_dir = state.run_dir.join("sessions").join(session_id);
     std::fs::create_dir_all(&session_dir).unwrap();

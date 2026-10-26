@@ -143,8 +143,13 @@ async fn fake_proxy_worker_child() {
                             }),
                             &[],
                         ).await.unwrap();
-                        if mode == "traffic_close" {
-                            assert_eq!(grant.capability(), ProxyCapability::HttpTraffic);
+                        if mode == "traffic_close" || mode == "required_close" {
+                            let expected = if mode == "required_close" {
+                                ProxyCapability::Upstream
+                            } else {
+                                ProxyCapability::HttpTraffic
+                            };
+                            assert_eq!(grant.capability(), expected);
                             control_tx.send(
                                 &encode_proxy_control_event(ProxyControlEvent::Closed {
                                     generation,
@@ -159,6 +164,14 @@ async fn fake_proxy_worker_child() {
                         std::future::pending::<()>().await;
                     }
                     ProxyControlRequest::Shutdown { .. } => {
+                        if mode == "shutdown_uses_upstream" {
+                            use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+                            let upstream = held.pop().expect("upstream grant");
+                            capsem_foundation::unix::fd::set_nonblocking(upstream.as_fd(), true).unwrap();
+                            let mut upstream = tokio::net::UnixStream::from_std(upstream).unwrap();
+                            upstream.write_u8(1).await.unwrap();
+                            assert_eq!(upstream.read_u8().await.unwrap(), 2);
+                        }
                         control_tx.send(
                             &encode_proxy_control_event(ProxyControlEvent::Stopped { generation }),
                             &[],
@@ -173,6 +186,21 @@ async fn fake_proxy_worker_child() {
 
 fn proxy_ledger_grant() -> LedgerChannelGrant {
     LedgerChannelGrant::new(LedgerGeneration::new([3; 16]), 29, LedgerClientRole::Proxy).unwrap()
+}
+
+#[tokio::test]
+async fn loss_of_required_grant_stops_running_worker() {
+    let worker = fake("required_close").await.unwrap();
+    let mut stopped = worker.stop_receiver();
+    let (_peer, granted) = capsem_foundation::unix::fd::connected_unix_pair().unwrap();
+    worker.grant(ProxyCapability::Upstream, granted.into()).await.unwrap();
+    let reason = tokio::time::timeout(STARTUP_TIMEOUT, stopped.wait_for(Option::is_some))
+        .await
+        .expect("required grant loss did not stop worker")
+        .unwrap()
+        .clone()
+        .unwrap();
+    assert!(reason.contains("closed required Upstream"), "{reason}");
 }
 
 pub(crate) async fn fake(mode: &'static str) -> Result<ProxyWorker> {

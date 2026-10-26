@@ -159,8 +159,8 @@ impl ServiceState {
         )
         .await
         {
-            authority.revoke();
             let _ = worker.shutdown().await;
+            authority.revoke();
             let _ = self.ledger_workers.shutdown(session_id).await;
             return Err(error);
         }
@@ -443,10 +443,12 @@ fn spawn_worker_monitor(
 }
 
 async fn cleanup(state: &ServiceState, session_id: &str, entry: StandaloneProxy) -> Result<()> {
-    entry.authority.revoke();
     entry.accept_task.abort();
     let _ = entry.accept_task.await;
+    // Required broker channels stay live until the worker has observed its
+    // shutdown request; early revocation looks like an unexpected grant loss.
     let worker_result = entry.worker.shutdown().await;
+    entry.authority.revoke();
     let ledger_result = state.ledger_workers.shutdown(session_id).await;
     let mut broker_task = entry.broker_task;
     let broker_result = match tokio::time::timeout(CLEANUP_TIMEOUT, &mut broker_task).await {

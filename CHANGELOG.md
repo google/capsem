@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Keep standalone proxy broker authority live until its worker stops, so successful shutdowns do not fail with a spurious required-grant disconnect.
+
 - Retrieve requested doctor bundles from the VM session data directory, so successful diagnostics also produce the requested tarball.
 
 - Coordinate doctor checks with the shared mock-server listener lock when diagnostics use private temporary directories.
