@@ -1618,7 +1618,7 @@ def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
         assert "push:" in workflow, workflow_name
         assert "branches: [main]" in workflow, workflow_name
         # Documentation metrics depend on the complete source tree and history.
-        if surface == "docs":
+        if workflow_name == "docs.yaml":
             assert _workflow_document(workflow_name)[True]["push"] == {"branches": ["main"]}
         else:
             assert "paths:" in push_trigger, workflow_name
@@ -1631,7 +1631,7 @@ def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
         assert f"bash build_system/scripts/web/check-web-surface.sh {surface}" in workflow
         allowed_event = (
             "(github.event_name == 'push' || github.event_name == 'workflow_dispatch')"
-            if surface == "docs" else "github.event_name == 'push'"
+            if workflow_name == "docs.yaml" else "github.event_name == 'push'"
         )
         assert f"if: ${{{{ {allowed_event} && github.ref == 'refs/heads/main' }}}}" in workflow
         assert f"pages deploy {directory}/dist/ --project-name={project_name}" in workflow
