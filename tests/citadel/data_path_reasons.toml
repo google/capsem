@@ -38,6 +38,7 @@ mcp-memory = "The external MCP JSON-RPC contract already owns serde_json::Value 
 forensic-mcp = "The security engine serializes existing durable rule/event forensic records and parses external MCP request/response previews into typed CEL facts. It does not encode internal binary forwarding or compute JSON envelope sizes."
 forensic-oracle = "The logger counter oracle reads persisted provider usage and forensic JSON records through its DB owner to independently compare committed counters; it is not an event transport or an encoded-size admission check."
 metric-fixture = "The opt-in mock collector exposes a bounded normalized summary as its test HTTP JSON response. Original OTLP ingestion remains protobuf through the production admission owner; raw payloads and headers are never converted to JSON."
+mock-readiness = "The doctor launcher reads the mock-server subprocess's existing stdout JSON readiness record to verify its service identity and obtain its listening URL. This preserves the diagnostic subprocess format."
 
 [sources."crates/capsem/src/client/gateway.rs"]
 json = { count = 5, reason = "http" }
@@ -48,11 +49,14 @@ json = { count = 3, reason = "http" }
 [sources."crates/capsem/src/container_image.rs"]
 json = { count = 1, reason = "http" }
 
+[sources."crates/capsem/src/doctor_mock_server.rs"]
+json = { count = 4, reason = "mock-readiness" }
+
 [sources."crates/capsem/src/image_commands.rs"]
 json = { count = 1, reason = "http" }
 
 [sources."crates/capsem/src/main.rs"]
-json = { count = 47, reason = "http" }
+json = { count = 43, reason = "http" }
 
 [sources."crates/capsem/src/network_commands.rs"]
 json = { count = 1, reason = "http" }
