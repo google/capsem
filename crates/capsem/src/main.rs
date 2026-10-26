@@ -1770,11 +1770,12 @@ async fn main() -> Result<()> {
             let ctrl_c = tokio::signal::ctrl_c();
             tokio::pin!(ctrl_c);
 
-            // Attach a terminal through the service, the same stream the web
-            // and TUI terminals use. The service waits for the VM to be ready.
-            let terminal = capsem_api::stream::StreamControl::Start {
-                kind: capsem_api::stream::StreamKind::Terminal,
-                command: None,
+            let bundle_arg = if *bundle { " --bundle /shared/doctor-bundle.tar" } else { "" };
+            // Headless diagnostics use typed exec output and exit events.
+            // Terminal streams carry rendered state, not shell-prompt bytes.
+            let doctor_stream = capsem_api::stream::StreamControl::Start {
+                kind: capsem_api::stream::StreamKind::Exec,
+                command: Some(format!("capsem-doctor --durations=10{bundle_arg}")),
             };
             let mut attached = tokio::select! {
                 _ = &mut ctrl_c => {
@@ -1782,60 +1783,17 @@ async fn main() -> Result<()> {
                     cleanup_doctor_vm(&client, &vm_id, DoctorSessionCleanup::Interrupted).await;
                     std::process::exit(130);
                 }
-                result = client.open_stream(&vm_id, terminal) => match result {
+                result = client.open_stream(&vm_id, doctor_stream) => match result {
                     Ok(attached) => attached,
                     Err(error) => {
-                        eprintln!("Session terminal did not start: {error:#}");
+                        eprintln!("Doctor execution did not start: {error:#}");
                         cleanup_doctor_vm(&client, &vm_id, DoctorSessionCleanup::Failed).await;
                         std::process::exit(1);
                     }
                 },
             };
 
-            // Wait for the shell prompt (the boot banner finishes first).
-            let boot_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
-            loop {
-                tokio::select! {
-                    _ = &mut ctrl_c => {
-                        eprintln!("\nInterrupted, cleaning up session...");
-                        cleanup_doctor_vm(&client, &vm_id, DoctorSessionCleanup::Interrupted).await;
-                        std::process::exit(130);
-                    }
-                    result = tokio::time::timeout_at(boot_deadline, attached.next_output()) => match result {
-                        Ok(Ok(StreamEvent::Output(data) | StreamEvent::ErrorOutput(data))) => {
-                            let text = String::from_utf8_lossy(&data);
-                            if text.contains("# ") || text.contains("$ ") {
-                                break;
-                            }
-                        }
-                        Ok(Ok(_)) | Ok(Err(_)) | Err(_) => {
-                            eprintln!("Shell did not become ready within 30s");
-                            cleanup_doctor_vm(&client, &vm_id, DoctorSessionCleanup::Failed).await;
-                            std::process::exit(1);
-                        }
-                    },
-                }
-            }
-
-            // Type the doctor command into the shell. T4: when --bundle
-            // is set, append `--bundle /shared/doctor-bundle.tar` so the
-            // in-VM doctor packages its diagnostic surface to virtiofs.
-            // The host-side reader (after the doctor exits) copies that
-            // tar into ~/.capsem/run/doctor-latest.tar so capsem
-            // support-bundle picks it up.
-            let bundle_arg = if *bundle {
-                " --bundle /shared/doctor-bundle.tar"
-            } else {
-                ""
-            };
-            let cmd = format!("capsem-doctor --durations=10{bundle_arg}\n");
-            if let Err(error) = attached.send_stdin(cmd.as_bytes()).await {
-                eprintln!("Session terminal closed: {error:#}");
-                cleanup_doctor_vm(&client, &vm_id, DoctorSessionCleanup::Failed).await;
-                std::process::exit(1);
-            }
-
-            // Stream output until we see the sentinel line
+            // Require both the script's final result and its actual exit.
             let mut stdout = tokio::io::stdout();
             let mut output_buf = String::new();
             let (exit_code, cleanup) = loop {
@@ -1856,18 +1814,17 @@ async fn main() -> Result<()> {
                                     let _ = std::io::Write::write_all(f, &data);
                                 }
                                 push_doctor_output_tail(&mut output_buf, &data);
-                                if output_buf.contains("RESULT: PASS") {
-                                    break (0, DoctorSessionCleanup::Completed);
-                                } else if output_buf.contains("RESULT: FAIL") {
-                                    break (1, DoctorSessionCleanup::Failed);
-                                }
                             }
+                            Ok(Ok(StreamEvent::Exit { code: 0, truncated: false }))
+                                if output_buf.contains("RESULT: PASS") => {
+                                    break (0, DoctorSessionCleanup::Completed);
+                                }
                             Ok(Ok(_)) => {
-                                eprintln!("Session terminal ended before the doctor finished");
+                                eprintln!("Doctor execution ended without a complete PASS result");
                                 break (1, DoctorSessionCleanup::Failed);
                             }
                             Ok(Err(e)) => {
-                                eprintln!("Session terminal error: {e:#}");
+                                eprintln!("Doctor execution error: {e:#}");
                                 break (1, DoctorSessionCleanup::Failed);
                             }
                             Err(_) => {
