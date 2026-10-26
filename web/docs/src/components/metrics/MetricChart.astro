@@ -1,0 +1,39 @@
+---
+import type { ChartSpec, Variant } from '../../lib/metrics/types';
+import '../../styles/metrics.css';
+interface Props { spec?: ChartSpec; variants?: Variant[]; selector?: string; group?: string; initial?: number }
+const { variants = [], initial = Math.max(0, variants.length - 1), spec = variants[initial]?.spec, selector = 'Measurement', group = '' } = Astro.props;
+if (!spec) throw new Error('A metric chart needs a specification');
+const selected = initial;
+---
+<metric-chart class="metric-card" data-spec={JSON.stringify(spec)} data-variants={JSON.stringify(variants)} data-group={group}>
+  <div class="metric-card-header">
+    <strong data-chart-title>{spec.title}</strong>
+    <div class="metric-actions">
+      {variants.length > 1 && <label>{selector}<select data-variant aria-label={`${selector} for ${spec.title}`}>
+        {variants.map((v, i) => <option value={i} selected={i === selected}>{v.label}</option>)}
+      </select></label>}
+      <button type="button" data-export="csv" title="Download this chart's data">CSV</button>
+      <button type="button" data-export="svg" title="Download a vector image">SVG</button>
+    </div>
+  </div>
+  <div class="metric-plot" role="img" aria-label={spec.title}></div>
+  <p class="metric-note" data-chart-note>{spec.note ?? `Values in ${spec.unit}. Select legend entries to show or hide a series.`}</p>
+  <noscript><p>Enable JavaScript for the interactive chart, or open the data table below.</p></noscript>
+  <details class="metric-table"><summary>Data table</summary>
+    <div data-table><table><thead><tr><th>Category / date</th>{spec.series.map(s => <th>{s.name} ({spec.unit})</th>)}</tr></thead>
+      <tbody>{spec.labels.map((label, i) => <tr><th>{label}</th>{spec.series.map(s => <td>{s.values[i]?.toLocaleString('en-US', { maximumFractionDigits: 3 }) ?? 'Not recorded'}</td>)}</tr>)}</tbody>
+    </table></div>
+  </details>
+</metric-chart>
+
+<script>
+  import { mountChart } from '../../lib/metrics/charts';
+  class MetricChart extends HTMLElement {
+    dispose?: () => void;
+    changeVariant?: (index: number) => void;
+    connectedCallback() { this.dispose = mountChart(this); }
+    disconnectedCallback() { this.dispose?.(); }
+  }
+  if (!customElements.get('metric-chart')) customElements.define('metric-chart', MetricChart);
+</script>

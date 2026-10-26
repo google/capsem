@@ -3,8 +3,9 @@
   "type": "module",
   "version": "0.1.0",
   "scripts": {
-    "dev": "astro dev --config astro.preview.config.mjs",
-    "build": "node --test tools/test-diagrams.mjs && astro build && uv run --project ../../build_system --frozen python tools/check-preview.py dist",
+    "generate:metrics": "uv run --project ../../build_system --frozen --group docs python -m capsem_builder.docs_metrics --repo ../..",
+    "dev": "pnpm run generate:metrics && astro dev --config astro.preview.config.mjs",
+    "build": "pnpm run generate:metrics && node --test tools/test-diagrams.mjs tools/test-metrics.mjs && astro build && uv run --project ../../build_system --frozen python tools/check-preview.py dist",
     "preview": "astro preview"
   },
   "dependencies": {
@@ -14,6 +15,7 @@
     "@capsem/diagrams": "file:../diagrams",
     "@tailwindcss/vite": "^4.3.3",
     "astro": "^7.3.3",
+    "echarts": "6.1.0",
     "sharp": "^0.35.5",
     "tailwindcss": "^4.3.3"
   },
@@ -33,5 +35,9 @@
     "patchedDependencies": {
       "http-cache-semantics@4.3.0": "../../build_system/patches/http-cache-semantics@4.3.0.patch"
     }
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.12",
+    "typescript": "5.9.3"
   }
 }

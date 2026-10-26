@@ -1,0 +1,67 @@
+---
+import MetricChart from './MetricChart.astro';
+import Dependencies from './Dependencies.astro';
+import { statistics as data } from '../../lib/metrics/data';
+import { composition, statisticCharts, total } from '../../lib/metrics/statistics';
+const latest = data.snapshots.at(-1)!;
+const charts = statisticCharts(data);
+---
+<statistics-dashboard class="metrics-dashboard">
+  <p class="metric-meta">Source history: {data.snapshots[0].date} – {latest.date} · UTC month-end snapshots, the initial commit and latest partial month.</p>
+  <div class="metric-kpis">
+    <div class="metric-kpi"><strong>{total(latest.loc).toLocaleString('en-US')}</strong><span>first-party source lines</span></div>
+    <div class="metric-kpi"><strong>{latest.crates.length}</strong><span>workspace crates</span></div>
+    <div class="metric-kpi"><strong>{total(latest.tests).toLocaleString('en-US')}</strong><span>declared correctness tests</span></div>
+  </div>
+  <div class="metric-downloads"><a href="/data/metrics/monthly-statistics.csv" download>Download monthly CSV</a><a href="/data/metrics/statistics.json" download>Download source data</a></div>
+  <h2 id="code-composition">Where the code lives</h2>
+  <p>Choose a snapshot to compare component shares. The radar and pie use the same percentages; every radar spoke has a 0–100% scale.</p>
+  <div class="metric-grid">
+    <MetricChart variants={composition(data.snapshots, 'radar')} selector="Snapshot" group="composition" />
+    <MetricChart variants={composition(data.snapshots, 'pie')} selector="Snapshot" group="composition" />
+  </div>
+  <MetricChart variants={data.snapshots.map(r => ({ label: r.date, spec: { id: 'client-breakdown', title: 'Client code breakdown', type: 'bar' as const, unit: 'LOC', labels: Object.keys(r.clientLoc).map(k => k.replaceAll('_', ' ')), series: [{ name: 'Source lines', values: Object.values(r.clientLoc) }], note: `SDK, MCP, app, TUI, CLI and tray code at ${r.date}; generated code and tests excluded.` } }))} selector="Snapshot" />
+  <h2 id="code-growth">Growth from the first commit</h2>
+  <p>Each point is an exact Git snapshot. The early Python implementation is included, Rust crate counts start at zero, and quiet months carry forward the last main-line commit.</p>
+  <MetricChart spec={charts.code} />
+  <MetricChart spec={charts.crates} />
+  <MetricChart spec={charts.dependencies} />
+  <h2 id="test-systems">Testing investment</h2>
+  <p>These are declared test definitions. Parameterized cases, architecture runs and reruns can produce more executions. Benchmark code and performance measurements are tracked separately.</p>
+  <MetricChart spec={charts.tests} />
+  <h2 id="release-effort">Release effort</h2>
+  <p>Each workflow rerun is a separate attempt. Binary and runtime workflows are included; scheduler and publication helpers are excluded from these totals. Cancellations are separate from failures.</p>
+  <MetricChart spec={charts.releases} />
+  <MetricChart spec={charts.failureIntervals} />
+  <MetricChart spec={charts.successTime} />
+  <MetricChart spec={charts.releaseTime} />
+  <h2 id="crate-dependencies">Crate dependency explorer</h2>
+  <p>Inspect the dependencies declared in each snapshot's Cargo workspace. Search for a crate to show its direct neighbours, or show the whole workspace. External libraries are counted in the trend chart above.</p>
+  <Dependencies snapshots={data.snapshots} />
+  <h2 id="statistics-sources">Sources and definitions</h2>
+  <details><summary>How these numbers are collected</summary>
+    <p>Source LOC excludes blank lines, comments, generated code, vendor code, data and lockfiles. Tests are assigned before production components; inline Rust test blocks are partitioned. Component ownership follows source paths, including historical layouts.</p>
+    <p>Direct external dependency counts deduplicate package names across workspaces, including development and build roles. Internal connections count distinct directed crate pairs. These describe size and structure rather than a quality score.</p>
+    <p>The June main reset has an explicit history-restoration merge. Collection follows that restored original main lineage and then current main, rather than selecting arbitrary feature branches by date. The initial commit already contains source code.</p>
+    <p>GitHub records are retained when older API evidence expires. GitHub observed at {data.githubObservedAt}. Publication timestamps do not establish that an entire release workflow passed.</p>
+    <p>Source commit: <a href={`https://github.com/google/capsem/tree/${data.sourceCommit}`}>{data.sourceCommit.slice(0, 12)}</a>. Generated at {data.generatedAt}. The Python collector and its tests live in <a href={`https://github.com/google/capsem/tree/${data.sourceCommit}/build_system/builder/docs_metrics`}>the repository</a>.</p>
+  </details>
+</statistics-dashboard>
+
+<script>
+  class StatisticsDashboard extends HTMLElement {
+    dispose?: () => void;
+    connectedCallback() {
+      const abort = new AbortController();
+      this.addEventListener('metrics:snapshot', ((event: CustomEvent) => {
+        if (event.detail.group !== 'composition') return;
+        this.querySelectorAll<HTMLElement & { changeVariant?: (i: number) => void }>('metric-chart[data-group="composition"]').forEach(chart => {
+          if (chart !== event.target) chart.changeVariant?.(event.detail.index);
+        });
+      }) as EventListener, { signal: abort.signal });
+      this.dispose = () => abort.abort();
+    }
+    disconnectedCallback() { this.dispose?.(); }
+  }
+  if (!customElements.get('statistics-dashboard')) customElements.define('statistics-dashboard', StatisticsDashboard);
+</script>

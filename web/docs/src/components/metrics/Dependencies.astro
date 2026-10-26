@@ -1,0 +1,73 @@
+---
+import Diagram from '@capsem/diagrams/Diagram.astro';
+import { dependencyView } from '../../lib/metrics/dependencies';
+import type { DependencySnapshot } from '../../lib/metrics/dependencies';
+import type { Snapshot } from '../../lib/metrics/types';
+interface Props { snapshots: Snapshot[] }
+const { snapshots } = Astro.props;
+const rows: DependencySnapshot[] = snapshots.map(({ date, commit, crates, edges }) => ({ date, commit, crates, edges }));
+const latest = rows.at(-1)!;
+const focus = latest.crates.includes('capsem-core') ? 'capsem-core' : '';
+const diagram = dependencyView(latest, focus);
+---
+<crate-dependencies data-snapshots={JSON.stringify(rows)}>
+  <div class="dependency-controls">
+    <label>Snapshot<select data-month aria-label="Dependency snapshot">{rows.map((r, i) => <option value={i} selected={i === rows.length - 1}>{r.date}</option>)}</select></label>
+    <label>Find a crate<input data-focus type="search" list="metric-crate-options" value={focus} placeholder="All crates" aria-label="Find a crate" /></label>
+    <datalist id="metric-crate-options">{latest.crates.map(name => <option value={name} />)}</datalist>
+    <label>Dependency kind<select data-kind aria-label="Dependency kind">
+      <option value="runtime">Runtime</option><option value="development">Development</option><option value="build">Build</option><option value="all">All kinds</option>
+    </select></label>
+    <button type="button" data-all>Show all crates</button>
+  </div>
+  <p class="metric-meta" data-status aria-live="polite">{latest.crates.length} workspace crates. Arrows point from a crate to a dependency. Search to focus on its direct neighbours.</p>
+  <Diagram diagram={diagram} />
+</crate-dependencies>
+
+<script>
+  import { dependencyView } from '../../lib/metrics/dependencies';
+  import type { DependencySnapshot } from '../../lib/metrics/dependencies';
+  class CrateDependencies extends HTMLElement {
+    dispose?: () => void;
+    connectedCallback() {
+      const rows: DependencySnapshot[] = JSON.parse(this.dataset.snapshots!);
+      const month = this.querySelector<HTMLSelectElement>('[data-month]')!;
+      const focus = this.querySelector<HTMLInputElement>('[data-focus]')!;
+      const kind = this.querySelector<HTMLSelectElement>('[data-kind]')!;
+      const abort = new AbortController();
+      const render = () => {
+        const snapshot = rows[Number(month.value)];
+        const current = this.querySelector<HTMLElement>('joint-diagram')!;
+        const known = !focus.value || snapshot.crates.includes(focus.value);
+        current.hidden = !snapshot.crates.length || !known;
+        const status = this.querySelector('[data-status]')!;
+        if (!snapshot.crates.length) { status.textContent = 'No Rust workspace crates in this snapshot. The project began as a Python implementation.'; return; }
+        if (!known) { status.textContent = `No crate named “${focus.value}” in this snapshot. Choose a name from the suggestions or show all crates.`; return; }
+        const diagram = dependencyView(snapshot, focus.value, kind.value);
+        const next = current.cloneNode(true) as HTMLElement;
+        next.hidden = false; next.dataset.diagram = JSON.stringify(diagram);
+        next.querySelector('.diagram-paper')!.replaceChildren();
+        const body = next.querySelector('tbody')!; body.replaceChildren();
+        for (const link of diagram.links) {
+          const row = document.createElement('tr');
+          for (const value of [link.from, link.label, link.to]) { const cell = document.createElement('td'); cell.textContent = value; row.append(cell); }
+          body.append(row);
+        }
+        current.replaceWith(next);
+        status.textContent = `${diagram.nodes.length} of ${snapshot.crates.length} crates · ${diagram.links.length} dependency pairs shown · ${snapshot.date}. Arrows point to dependencies.`;
+      };
+      month.addEventListener('change', () => {
+        const names = rows[Number(month.value)].crates;
+        this.querySelector('datalist')!.replaceChildren(...names.map(name => { const option = document.createElement('option'); option.value = name; return option; }));
+        if (!names.includes(focus.value)) focus.value = '';
+        render();
+      }, { signal: abort.signal });
+      focus.addEventListener('input', render, { signal: abort.signal });
+      kind.addEventListener('change', render, { signal: abort.signal });
+      this.querySelector('[data-all]')!.addEventListener('click', () => { focus.value = ''; render(); }, { signal: abort.signal });
+      this.dispose = () => abort.abort();
+    }
+    disconnectedCallback() { this.dispose?.(); }
+  }
+  if (!customElements.get('crate-dependencies')) customElements.define('crate-dependencies', CrateDependencies);
+</script>
