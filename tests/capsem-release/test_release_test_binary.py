@@ -292,6 +292,16 @@ def test_benchmark_selects_the_declared_frozen_binary_root(
     assert namespace["BENCH_BINARY"] == selected / "capsem-bench-rs"
 
 
+def test_benchmark_selects_the_shared_cargo_target_in_local_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    selected = tmp_path / "shared-cargo"
+    monkeypatch.delenv("CAPSEM_RELEASE_BIN_DIR", raising=False)
+    monkeypatch.setenv("CARGO_TARGET_DIR", str(selected))
+    namespace = runpy.run_path(str(ROOT / "tests/test_capsem_bench_rust.py"))
+    assert namespace["BENCH_BINARY"] == selected / "debug" / "capsem-bench-rs"
+
+
 def test_local_binary_fallback_takes_the_machine_lease(tmp_path: Path) -> None:
     runner = FakeRunner(tmp_path / "capsem-gateway")
     HELPER.ensure_host_test_binary(
