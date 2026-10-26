@@ -1,7 +1,6 @@
 # see rust-lang/cargo#315
 Cargo.lock
 
-target/
 **/*.rs.bk
 /config
 _dist/
