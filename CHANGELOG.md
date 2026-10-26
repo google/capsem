@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Bind credential-bearing protocol benchmarks to their hermetic admitted provider origin and finalize ledger writes before verifying previews and archived bodies.
+
 - Reuse the plugin catalog HTTP body within its existing policy generation, reducing polling CPU while immediately reflecting configuration edits.
 
 - Upgrade the compression stack to patched Zstandard bindings and replace the OCI client's unmaintained JWT dependency through its maintained release.

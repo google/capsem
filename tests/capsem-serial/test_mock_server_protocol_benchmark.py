@@ -27,6 +27,7 @@ from helpers.service import (
     vm_session_db_path,
     wait_exec_ready,
 )
+from helpers.session_ledger import stop_session_for_ledger_read
 
 pytestmark = [pytest.mark.serial, pytest.mark.benchmark]
 
@@ -83,34 +84,29 @@ def _assert_mock_server_protocol_succeeded(data):
 
 
 def _assert_session_db_contains_protocol_events(
-    capsem_home, client, vm_name, total_requests, selected_scenarios, *, include_websocket
+    capsem_home, client, vm_name, total_requests, selected_scenarios, *, domain, include_websocket
 ):
     db_path = vm_session_db_path(capsem_home, client, vm_name, must_exist=False)
+    stop_session_for_ledger_read(client, vm_name, db_path)
     expected_paths = {SCENARIO_PATHS[name] for name in selected_scenarios}
     expected_count = total_requests * len(selected_scenarios)
     if include_websocket:
         expected_paths.update({"/ws/echo", "/ws/close"})
         expected_count += 2
 
-    deadline = time.monotonic() + 5
-    rows = []
-    while time.monotonic() < deadline:
-        if db_path.exists():
-            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-            try:
-                rows = conn.execute(
-                    """
-                    SELECT path, status_code, decision
-                    FROM net_events
-                    WHERE domain = '127.0.0.1'
-                    ORDER BY id
-                    """
-                ).fetchall()
-            finally:
-                conn.close()
-            if len(rows) >= expected_count:
-                break
-        time.sleep(0.1)
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        rows = conn.execute(
+            """
+            SELECT path, status_code, decision
+            FROM net_events
+            WHERE domain = ?
+            ORDER BY id
+            """,
+            (domain,),
+        ).fetchall()
+    finally:
+        conn.close()
 
     assert db_path.exists(), f"session.db not found at {db_path}"
     assert len(rows) >= expected_count, (
@@ -153,12 +149,12 @@ def _assert_session_db_contains_protocol_events(
     assert archived_leaks == [], f"raw synthetic credential marker leaked into archived bodies: {archived_leaks}"
 
 
-def test_mock_server_protocol_benchmark_artifact():
+def test_mock_server_protocol_benchmark_artifact(monkeypatch):
     upstream_proc = None
     base_url = os.environ.get("CAPSEM_MOCK_SERVER_BASE_URL")
     dns_udp_addr = os.environ.get("CAPSEM_MOCK_SERVER_DNS_UDP_ADDR")
     if not base_url:
-        upstream_proc, ready = start_mock_server(capture_requests=False)
+        upstream_proc, ready = start_mock_server(capture_requests=False, dns_answers="routable")
         base_url = ready["base_url"]
         dns_udp_addr = ready["dns_udp_addr"]
         assert ready["request_log"] is None, (
@@ -186,11 +182,32 @@ def test_mock_server_protocol_benchmark_artifact():
     assert selected_scenarios, "release benchmark must select at least one scenario"
 
     svc = ServiceInstance()
-    svc.start()
-    client = svc.client()
+    # Credential-bearing responses exercise the broker at an admitted provider
+    # origin, while the explicit override keeps every connection hermetic.
+    protocol_base_url = "http://api.openai.com:3713"
+    corp_path = svc.tmp_dir / "corp.toml"
+    corp_path.write_text(
+        'refresh_policy = "24h"\n\n'
+        "[network.dns]\n"
+        f"upstreams = [{json.dumps(dns_udp_addr)}]\n\n"
+        '[network.upstream_overrides."api.openai.com:3713"]\n'
+        f"dial = {json.dumps(parsed_base.netloc)}\n"
+        'protocol = "http"\n\n'
+        "[ai.openai]\n"
+        'allowed_remote_targets = ["api.openai.com:3713"]\n\n'
+        "[ai.openai.rules.protocol_benchmark_binding]\n"
+        'name = "protocol_benchmark_binding"\n'
+        'action = "allow"\n'
+        'match = \'http.host == "api.openai.com" && tcp.port == "3713"\'\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CAPSEM_CORP_CONFIG", str(corp_path))
+    client = None
     name = f"mock-server-protocol-{uuid.uuid4().hex[:8]}"
 
     try:
+        svc.start()
+        client = svc.client()
         client.post("/vms/create", {
             "name": name,
             "ram_mb": DEFAULT_RAM_MB,
@@ -207,7 +224,7 @@ def test_mock_server_protocol_benchmark_artifact():
                 "--lane",
                 "guest_capsem",
                 "--base-url",
-                base_url,
+                protocol_base_url,
                 "--dns-udp-addr",
                 dns_udp_addr,
                 "--requests",
@@ -248,6 +265,7 @@ def test_mock_server_protocol_benchmark_artifact():
             name,
             total_requests,
             selected_scenarios,
+            domain=urlsplit(protocol_base_url).hostname,
             include_websocket=bool(data["mock_server_protocol"].get("websocket")),
         )
 
@@ -256,7 +274,8 @@ def test_mock_server_protocol_benchmark_artifact():
         data["mock_server_base_url"] = base_url
         _archive(data)
     finally:
-        with contextlib.suppress(Exception):
-            client.delete(f"/vms/{name}/delete")
+        if client is not None:
+            with contextlib.suppress(Exception):
+                client.delete(f"/vms/{name}/delete")
         svc.stop()
         stop_process(upstream_proc)
