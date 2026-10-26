@@ -183,10 +183,9 @@ with urllib.request.urlopen(request, timeout=30) as response:
             assert all(value not in json.dumps(info) for value in markers)
             assert {row["credential_ref"] for row in info["inventory"]} >= set(references.values())
             session = vm_session_dir(service.tmp_dir, client, vm_id)
-            status, stopped = client.call_json("POST", f"/vms/{vm_id}/stop", {})
-            assert status == 200 and stopped == {"success": True, "persistent": True}
-            # Stop awaits the owner, so these streams are flushed before delete.
-            for name in ("process.log", "serial.log"):
+            # The ledger connection already stopped and awaited the owner,
+            # so these streams are flushed before delete.
+            for name in ("process.log", "owner/logs/serial.log"):
                 text = read_log_stream(session / name)
                 assert text, name
                 assert all(value not in text for value in markers)
