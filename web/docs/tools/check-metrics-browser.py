@@ -3,6 +3,7 @@
 import argparse
 import functools
 import http.server
+import re
 import threading
 from pathlib import Path
 
@@ -51,6 +52,12 @@ try:
             pie.locator("select").select_option("0")
             assert "1,020" in pie.locator("[data-chart-note]").inner_text()
             pie.locator("select").select_option(index=pie.locator("option").count() - 1)
+            percentages = pie.locator("svg text").filter(
+                has_text=re.compile(r"^\d+(?:\.\d+)?%$")
+            )
+            assert percentages.count() == pie.evaluate(
+                "e => JSON.parse(e.dataset.spec).series[0].values.filter(v => v > 0).length"
+            ), "Every nonzero slice needs a default percentage label"
             plot = pie.locator(".metric-plot").bounding_box()
             legend = (
                 pie.locator("svg")
