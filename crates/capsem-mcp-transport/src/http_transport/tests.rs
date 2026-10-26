@@ -257,3 +257,18 @@ fn confined_http_child() {
     assert_eq!(body, "confined-tool-response");
     std::process::exit(0);
 }
+// Run the isolated probe before libtest creates a sibling thread: older
+// Landlock ABIs cannot synchronize confinement across existing threads.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[used]
+#[cfg_attr(target_os = "linux", unsafe(link_section = ".init_array"))]
+#[cfg_attr(target_os = "macos", unsafe(link_section = "__DATA,__mod_init_func"))]
+static HTTP_PROBE_ENTRY: extern "C" fn() = run_http_probe;
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+extern "C" fn run_http_probe() {
+    if std::env::var_os("CAPSEM_MCP_HTTP_CONFINEMENT_PROBE").is_some() {
+        confined_http_child();
+        std::process::exit(0);
+    }
+}

@@ -6,6 +6,22 @@ use capsem_proto::gateway_grant::metrics::{
 };
 use opentelemetry_http::HttpClient as _;
 
+// Enter the isolated worker before libtest starts its runner thread. Landlock
+// ABIs without TSYNC require the same single-threaded startup as production.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[used]
+#[cfg_attr(target_os = "linux", unsafe(link_section = ".init_array"))]
+#[cfg_attr(target_os = "macos", unsafe(link_section = "__DATA,__mod_init_func"))]
+static METRIC_PROBE_ENTRY: extern "C" fn() = run_metric_probe;
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+extern "C" fn run_metric_probe() {
+    if std::env::var_os("CAPSEM_METRIC_CONFINED_PORT").is_some() {
+        confined_metric_child();
+        std::process::exit(0);
+    }
+}
+
 #[tokio::test]
 async fn channel_uses_epoch_order_and_preserves_bytes_without_dialling_request_url() {
     let (local, remote) = std::os::unix::net::UnixStream::pair().unwrap();
