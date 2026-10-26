@@ -1,6 +1,7 @@
 """Strict supervisor readiness with explicit original retirement; no native job."""
 import errno
 import json
+import os
 import time
 from types import SimpleNamespace
 from typing import Any
@@ -15,13 +16,14 @@ from helpers.process_snapshot import OwnedProcess
 def test_ready_uses_strict_receipt_and_original_exit(tmp_path,monkeypatch,fault):
     from helpers import managed_observation
     old = subject.GatewayIdentity(1234,'private-old-token',111,112)
-    for name,value in {'gateway.port':'1235','gateway.token':'private-new-token','gateway.pid':'114'}.items():
+    current_pid = os.getpid()
+    for name,value in {'gateway.port':'1235','gateway.token':'private-new-token','gateway.pid':str(current_pid)}.items():
         (tmp_path/name).write_text(value)
     if fault == 'unchanged':
         (tmp_path/'gateway.token').write_text(old.token)
     service: Any = SimpleNamespace(tmp_dir=tmp_path)
     owner = subject.ManagedService(service)
-    monkeypatch.setattr(owner,'pid',lambda **kwargs:113)
+    monkeypatch.setattr(owner,'pid',lambda **kwargs:current_pid)
     monkeypatch.setattr(owner,'remember',lambda pid:None)
     monkeypatch.setattr(owner,'remember_gateway',lambda service,gateway:None)
     process: Any = SimpleNamespace(pid=111,create_time=lambda:1.,is_running=lambda:fault == 'old-alive',status=lambda:'running')
@@ -50,7 +52,7 @@ def test_ready_uses_strict_receipt_and_original_exit(tmp_path,monkeypatch,fault)
             owner.ready_observed(old,policy=policy,original=original)
     else:
         observed = owner.ready_observed(old,policy=policy,original=original)
-        assert observed.identity.service_pid == 113 and observed.identity.gateway_pid == 114
+        assert observed.identity.service_pid == current_pid and observed.identity.gateway_pid == current_pid
         assert observed.receipt is not None and observed.receipt.attempts == 1
         assert observed.outcomes == (('connect_refused','ready') if fault == 'refused-once' else ('ready',))
         assert 0 <= observed.retired_ns <= observed.complete_ns and 0 <= observed.ready_ns <= observed.complete_ns
@@ -62,15 +64,16 @@ def test_ordinary_ready_keeps_functional_owner_mode(tmp_path,monkeypatch):
     from helpers import managed_observation
     service: Any = SimpleNamespace(tmp_dir=tmp_path)
     owner = subject.ManagedService(service)
-    monkeypatch.setattr(owner,'pid',lambda:113)
+    current_pid = os.getpid()
+    monkeypatch.setattr(owner,'pid',lambda:current_pid)
     monkeypatch.setattr(owner,'remember',lambda pid:None)
-    for name,value in {'gateway.port':'1235','gateway.token':'private-new-token','gateway.pid':'114'}.items():
+    for name,value in {'gateway.port':'1235','gateway.token':'private-new-token','gateway.pid':str(current_pid)}.items():
         (tmp_path/name).write_text(value)
     monkeypatch.setattr(subject.GatewayIdentity,'get',lambda *args:(200,{'sandboxes':[]}))
     def unexpected_strict(*args,**kwargs):
         raise AssertionError('ordinary SDK readiness entered strict measurement')
     monkeypatch.setattr(managed_observation,'strict_probe',unexpected_strict)
-    assert owner.ready().service_pid == 113
+    assert owner.ready().service_pid == current_pid
 
 
 def test_original_fingerprints_required_before_any_probe(tmp_path):
