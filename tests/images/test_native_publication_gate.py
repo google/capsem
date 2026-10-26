@@ -177,7 +177,7 @@ def test_foreign_or_unknown_host_never_claims_native_arm(monkeypatch, platform):
 
 def test_missing_native_devices_are_a_failure_not_a_skip(monkeypatch):
     monkeypatch.setattr(qualify, "host_platform", lambda: "linux/arm64")
-    monkeypatch.setattr(Path, "exists", lambda _: False)
+    monkeypatch.setattr(qualify, "Path", lambda _: SimpleNamespace(exists=lambda: False))
     with pytest.raises(ValueError, match="/dev/kvm"):
         qualify.preflight("arm64")
 
