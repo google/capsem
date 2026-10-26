@@ -174,11 +174,13 @@ def test_selected_refusal_does_not_truncate_existing_sign_lock(binary, monkeypat
     monkeypatch.setenv("CAPSEM_RELEASE_INPUT_DIR", "original-release-inputs")
     lock = binary.with_suffix(".sign.lock")
     lock.write_bytes(b"existing lock contents")
+    # Make our later content read observably change atime under relatime.
+    os.utime(lock, (1, 2))
     before = lock.stat()
     with pytest.raises(RuntimeError, match="signature"):
         sign.sign_binary(binary)
-    assert lock.read_bytes() == b"existing lock contents"
     assert lock.stat() == before
+    assert lock.read_bytes() == b"existing lock contents"
 
 
 def test_cohort_and_release_authorities_cannot_mix(binary, monkeypatch):
