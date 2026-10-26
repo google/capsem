@@ -5,7 +5,7 @@ Tests the full guest-initiated lifecycle:
 - Persistent VM survives guest shutdown + resume with file persistence
 - CAPSEM_VM_ID and CAPSEM_VM_NAME env vars are injected
 - Hostname reflects the VM name
-- Suspend + warm resume round-trip (Apple VZ)
+- Disabled warm suspend preserves the persistent stop/start path
 """
 
 import time
@@ -228,8 +228,8 @@ class TestStopResumeE2E:
 
 class TestSuspendResume:
 
-    def test_suspend_resume_round_trip(self, client):
-        """Suspend a persistent VM, resume it, verify file survives."""
+    def test_disabled_suspend_preserves_persistent_stop_start(self, client):
+        """Warm suspend refuses without mutation; persistent stop/start survives."""
         name = vm_name("susp")
         create = client.post("/vms/create", {
             "name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": DEFAULT_CPUS, "persistent": True,
@@ -242,29 +242,33 @@ class TestSuspendResume:
         marker = f"suspend-test-{uuid.uuid4().hex[:8]}"
         client.upload_file(vm_id, f"/root/{marker}", f"hello from {marker}")
 
-        # Suspend via service API
+        # The retired warm checkpoint path must leave the running VM intact.
         suspend_resp = client.post(f"/vms/{vm_id}/pause", {}, timeout=EXEC_READY_TIMEOUT)
-        assert suspend_resp is not None and suspend_resp.get("success") is True, \
-            f"Suspend failed: {suspend_resp}"
+        assert suspend_resp is not None, "Suspend returned no refusal"
+        assert "warm suspend is disabled" in suspend_resp.get("error", ""), suspend_resp
+        assert "persistent stop/start" in suspend_resp["error"], suspend_resp
 
-        # Verify VM shows as Suspended
+        # A refused operation must not change VM state or guest files.
         listing = client.get("/vms/list")
         vm = next((s for s in listing["sandboxes"] if s["id"] == vm_id), None)
         assert vm is not None, f"Suspended VM {name} not in list"
         assert vm["name"] == name
-        assert vm["status"] == "Suspended", f"Expected Suspended, got {vm['status']}"
+        assert vm["status"] == "Running", f"Expected Running, got {vm['status']}"
+        assert marker.encode() in client.download_file(vm_id, f"/root/{marker}")
+        stopped = client.post(f"/vms/{vm_id}/stop", {})
+        assert stopped == {"success": True, "persistent": True}, stopped
 
-        # Resume (warm restore)
+        # Cold resume is the supported persistent stop/start path.
         resume_resp = client.post(f"/vms/{vm_id}/resume", {})
         assert resume_resp is not None
         resumed_id = resume_resp.get("id", name)
         assert wait_exec_ready(client, resumed_id, timeout=EXEC_READY_TIMEOUT), \
-            f"VM {resumed_id} never became exec-ready after warm resume"
+            f"VM {resumed_id} never became exec-ready after persistent restart"
 
         # Verify file survived
         read_resp = client.download_file(resumed_id, f"/root/{marker}")
         assert read_resp is not None and marker.encode() in read_resp, \
-            f"File did not survive suspend + resume: {read_resp}"
+            f"File did not survive persistent stop/start: {read_resp}"
 
         client.delete(f"/vms/{resumed_id}/delete")
 
