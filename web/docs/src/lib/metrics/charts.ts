@@ -19,7 +19,7 @@ export function options(spec: ChartSpec, root: HTMLElement) {
     label: { show: false }, emphasis: { label: { show: true, formatter: '{b}\n{d}%', color: text } },
     data: spec.labels.map((name, i) => ({ name, value: spec.series[0].values[i] })) }] };
   if (spec.type === 'radar') return { ...base, tooltip: { ...base.tooltip, trigger: 'item' }, legend: { show: false },
-    radar: { center: ['50%', '49%'], radius: '62%', indicator: spec.labels.map(name => ({ name, max: 100 })), axisName: { color: text, fontSize: 10, width: 85, overflow: 'break' },
+    radar: { center: ['50%', '49%'], radius: root.clientWidth < 480 ? '44%' : '62%', indicator: spec.labels.map(name => ({ name, max: 100 })), axisName: { color: text, fontSize: root.clientWidth < 480 ? 9 : 10, width: root.clientWidth < 480 ? 65 : 85, overflow: 'break' },
       splitArea: { show: false }, splitLine: { lineStyle: { color: grid } }, axisLine: { lineStyle: { color: grid } } },
     series: [{ type: 'radar', data: spec.series.map(s => ({ name: s.name, value: s.values })), areaStyle: { opacity: 0.18 }, symbolSize: 5 }] };
   return { ...base, grid: { left: 15, right: 20, top: 35, bottom: 68, containLabel: true },
