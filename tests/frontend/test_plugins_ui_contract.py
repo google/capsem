@@ -5,6 +5,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SETTINGS_PAGE = ROOT / "web/app/src/lib/components/shell/SettingsPage.svelte"
 PLUGIN_SECTION = ROOT / "web/app/src/lib/components/settings/PluginSection.svelte"
+CREDENTIAL_INVENTORY = PLUGIN_SECTION.with_name("CredentialInventory.svelte")
+CREDENTIAL_LIST = PLUGIN_SECTION.with_name("CredentialList.svelte")
 API = ROOT / "web/app/src/lib/api.ts"
 
 
@@ -24,18 +26,18 @@ def test_plugin_section_renders_route_owned_metadata_and_controls() -> None:
     source = read(PLUGIN_SECTION)
 
     assert "response = await listPlugins();" in source
-    assert "credentialBrokerInfo = await getCredentialBrokerInfo();" in source
-    assert "credentialBrokerInfo = await reloadCredentialBrokerStore();" in source
+    assert "import CredentialInventory from './CredentialInventory.svelte';" in source
+    assert "<CredentialInventory />" in source
+    inventory = read(CREDENTIAL_INVENTORY)
+    assert "info = await getCredentialBrokerInfo();" in inventory
+    assert "<CredentialList {info} sessions={vmStore.vms} />" in inventory
     assert "updatePlugin(plugin.id, { mode })" in source
     assert "updatePlugin(plugin.id, { detection_level })" in source
-    assert "credentialBrokerInfo?.grants.enabled" in source
 
     assert "{plugin.name}" in source
     assert "{plugin.description}" in source
     assert "{STAGE_LABELS[plugin.stage]} · v{plugin.version}" in source
     assert "plugin.capabilities.event_families" in source
-    assert "plugin.capabilities.credential_providers.join" in source
-    assert "plugin.capabilities.credential_sources.join" in source
     assert "plugin.runtime.execution_count" in source
     assert "plugin.runtime.applied_count" in source
     assert "plugin.runtime.max_duration_us" in source
@@ -49,12 +51,11 @@ def test_plugin_section_renders_route_owned_metadata_and_controls() -> None:
 
 
 def test_credential_rows_do_not_promote_raw_blake_refs_as_ui_identity() -> None:
-    source = read(PLUGIN_SECTION)
+    source = read(CREDENTIAL_LIST)
 
     assert "credential.provider ?? 'Unknown provider'" in source
-    assert "Last seen {credential.last_seen ?? 'never'}" in source
-    assert "{credential.observed_count} seen" in source
-    assert "{credential.injected_count} used" in source
+    assert "{credential.source ?? 'Not recorded'}" in source
+    assert "{credential.last_seen ?? 'Not recorded'}" in source
     assert "{credential.credential_ref}" not in source
     assert 'font-mono text-foreground truncate">{credential.credential_ref}</p>' not in source
 
