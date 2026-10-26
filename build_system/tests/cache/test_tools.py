@@ -98,3 +98,73 @@ def test_tool_policy_rejects_duplicate_platform_distributions() -> None:
         CachedToolPolicy.model_validate(
             _tool().model_dump() | {"distributions": (distribution, distribution)}
         )
+
+
+def _archive_policy(data: bytes, *, member: str = "scanner", digest: str | None = None):
+    distribution = _tool().distributions[0].model_dump() | {
+        "archive_sha256": digest or hashlib.sha256(data).hexdigest(),
+        "archive_member": member,
+    }
+    return CachedToolPolicy.model_validate(_tool().model_dump() | {"distributions": [distribution]})
+
+
+def _archive(*, kind: bytes | None = None, payload: bytes = PAYLOAD) -> bytes:
+    import io
+    import tarfile
+
+    output = io.BytesIO()
+    with tarfile.open(fileobj=output, mode="w:gz") as package:
+        member = tarfile.TarInfo("scanner")
+        if kind is not None:
+            member.type = kind
+            member.linkname = "elsewhere"
+            package.addfile(member)
+        else:
+            member.size = len(payload)
+            package.addfile(member, io.BytesIO(payload))
+    return output.getvalue()
+
+
+@pytest.mark.parametrize("failure", [None, "archive", "executable", "symlink", "hardlink"])
+def test_archive_tool_checks_both_pins_and_regular_member(tmp_path, failure):
+    import tarfile
+
+    kind = {"symlink": tarfile.SYMTYPE, "hardlink": tarfile.LNKTYPE}.get(failure)
+    data = _archive(kind=kind, payload=b"tampered" if failure == "executable" else PAYLOAD)
+    policy = _archive_policy(data, digest="0" * 64 if failure == "archive" else None)
+    calls = []
+
+    def download(_url, destination, _timeout):
+        calls.append(destination)
+        destination.write_bytes(data)
+
+    def resolve():
+        return materialize(
+            _paths(tmp_path), policy, system="Linux", machine="x86_64", download=download
+        )
+
+    if failure:
+        with pytest.raises(ValueError, match=r"checksum mismatch|regular file"):
+            resolve()
+        assert not [path for path in (tmp_path / "cache").rglob("scanner") if path.is_file()]
+    else:
+        result = resolve()
+        assert result.path.read_bytes() == PAYLOAD
+        assert resolve().cache_hit
+        assert len(calls) == 1
+    assert not list((tmp_path / "cache").rglob(".*"))
+
+
+@pytest.mark.parametrize(
+    "member", ["../scanner", "/scanner", "a/../../scanner", "a\\scanner", "", "./scanner"]
+)
+def test_archive_policy_rejects_unsafe_member(member):
+    with pytest.raises(ValueError, match="safe relative path"):
+        _archive_policy(b"archive", member=member)
+
+
+def test_archive_policy_requires_both_pin_and_member():
+    with pytest.raises(ValueError, match="supplied together"):
+        ToolDistribution.model_validate(
+            _tool().distributions[0].model_dump() | {"archive_member": "scanner"}
+        )

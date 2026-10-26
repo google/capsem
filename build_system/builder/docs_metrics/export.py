@@ -98,7 +98,7 @@ def generate(
 ) -> None:
     seed = repo / "web/docs/data"
     output.mkdir(parents=True, exist_ok=True)
-    data = statistics(repo, scanner or source_scanner(repo / "cache/tools/docs-metrics"))
+    data = statistics(repo, scanner or source_scanner(repo))
     captured = json.loads((seed / "github.json").read_text())
     attempts = captured["attempts"]
     publications = captured["publications"]

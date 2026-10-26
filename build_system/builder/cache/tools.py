@@ -5,9 +5,10 @@ from __future__ import annotations
 import os
 import platform
 import shutil
+import tarfile
 import urllib.request
 from collections.abc import Callable
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Annotated
 
 from pydantic import (
@@ -40,6 +41,24 @@ class ToolDistribution(BaseModel):
     machine: SafeToken
     url: HttpsUrl
     sha256: Sha256
+    archive_sha256: Sha256 | None = None
+    archive_member: StrictStr | None = None
+
+    @model_validator(mode="after")
+    def archive_contract(self) -> ToolDistribution:
+        if (self.archive_sha256 is None) != (self.archive_member is None):
+            raise ValueError("archive digest and member must be supplied together")
+        if self.archive_member is not None:
+            member = PurePosixPath(self.archive_member)
+            if (
+                not self.archive_member
+                or member.is_absolute()
+                or ".." in member.parts
+                or "\\" in self.archive_member
+                or member.as_posix() != self.archive_member
+            ):
+                raise ValueError("archive member must be a safe relative path")
+        return self
 
 
 class CachedToolPolicy(BaseModel):
@@ -121,8 +140,22 @@ def materialize(
 
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_name(f".{target.name}.{secrets.token_hex(6)}")
+    unpacked = temporary.with_name(temporary.name + ".unpacked")
     try:
         download(distribution.url, temporary, policy.download_timeout_seconds)
+        if distribution.archive_sha256 is not None and distribution.archive_member is not None:
+            if _sha256(temporary) != distribution.archive_sha256:
+                raise ValueError(f"{policy.name} archive checksum mismatch")
+            with tarfile.open(temporary, mode="r:gz") as package:
+                member = package.getmember(distribution.archive_member)
+                if not member.isfile():
+                    raise ValueError("tool archive member must be a regular file")
+                stream = package.extractfile(member)
+                if stream is None:
+                    raise ValueError("tool archive member is unreadable")
+                with stream, unpacked.open("wb") as output:
+                    shutil.copyfileobj(stream, output)
+            unpacked.replace(temporary)
         actual = _sha256(temporary)
         if actual != distribution.sha256:
             raise ValueError(
@@ -133,4 +166,5 @@ def materialize(
         temporary.replace(target)
     finally:
         temporary.unlink(missing_ok=True)
+        unpacked.unlink(missing_ok=True)
     return MaterializedTool(path=target, sha256=distribution.sha256, cache_hit=False)

@@ -20,6 +20,7 @@ from typing import Literal
 
 from pydantic import Field, ValidationError, model_validator
 
+from ..cache.tools import CachedToolPolicy
 from . import host
 from .assetschema import ArtifactsConfig, AssetsConfig
 from .benchmarkschema import BenchmarkConfig
@@ -88,6 +89,7 @@ class GateConfig(Strict):
     and was then read with the wrong meaning, which is worse than refusing it.
     """
     architectures: dict[str, Arch]
+    docs_metrics_scanner: CachedToolPolicy
     apt_snapshot: AptSnapshotConfig
     outputs: OutputRootsConfig
     pidfiles: PidfileConfig

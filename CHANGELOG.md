@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Verify cached documentation scanners against source-pinned executable digests and materialize pinned archives through the shared tool-cache owner.
+
 - Bind credential-bearing protocol benchmarks to their hermetic admitted provider origin and finalize ledger writes before verifying previews and archived bodies.
 
 - Reuse the plugin catalog HTTP body within its existing policy generation, reducing polling CPU while immediately reflecting configuration edits.

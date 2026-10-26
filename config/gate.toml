@@ -30,6 +30,45 @@ pkg_config_template = "/usr/lib/{gnu}/pkgconfig:/usr/share/pkgconfig"
 # and `/packages/` routes and installed `.capsem/assets` paths are product
 # semantics, not checkout output paths, and are intentionally outside this
 # table.
+# Source scanner: both download and extracted executable are independently pinned.
+[docs_metrics_scanner]
+name = "scc"
+version = "4.1.0"
+cache_stage = "toolchain"
+download_timeout_seconds = 60
+
+[[docs_metrics_scanner.distributions]]
+system = "Linux"
+machine = "x86_64"
+url = "https://github.com/boyter/scc/releases/download/v4.1.0/scc_Linux_x86_64.tar.gz"
+archive_sha256 = "c7328436d3027f4357d3d7853f7dc3ac2bbcb4ca08f1adad91a27c593884079b"
+archive_member = "scc"
+sha256 = "4763d7437218d2d642e2f2a4f7f078e044aa67e0e15b90bab6c70d5fc0ab4022"
+
+[[docs_metrics_scanner.distributions]]
+system = "Linux"
+machine = "aarch64"
+url = "https://github.com/boyter/scc/releases/download/v4.1.0/scc_Linux_arm64.tar.gz"
+archive_sha256 = "6e0d2a1f8d3540ba7df185477dec40bb7340f1b214bfd303147de5cad2bd7b8b"
+archive_member = "scc"
+sha256 = "5751b4f79502ec0fa40e2205347c79c19680fe4cbf4dd31f7daef7bcd4475af7"
+
+[[docs_metrics_scanner.distributions]]
+system = "Darwin"
+machine = "arm64"
+url = "https://github.com/boyter/scc/releases/download/v4.1.0/scc_Darwin_arm64.tar.gz"
+archive_sha256 = "7201c7aa4aace058d43308462cba72adb18f6094c08c0741727455976d0a0747"
+archive_member = "scc"
+sha256 = "84967748ef1cff481867adff389d0ec138542d30508f1b3aa1186e2bf83de9f0"
+
+[[docs_metrics_scanner.distributions]]
+system = "Darwin"
+machine = "x86_64"
+url = "https://github.com/boyter/scc/releases/download/v4.1.0/scc_Darwin_x86_64.tar.gz"
+archive_sha256 = "7f705031228add7e55edded409179a60de6b538d41f153ba2922dee95adda50d"
+archive_member = "scc"
+sha256 = "181240384c83fa8055d5676e58a96885846aa3b6757dcebb1d55ee60fe952bd8"
+
 [outputs]
 assets = "cache/target/assets"
 benchmarks = "cache/target/tests/benchmarks"
