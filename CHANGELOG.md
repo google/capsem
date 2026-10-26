@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Prepare the native packages, SDKs, and host MCP server for the 0.7.2 stable release.
+
 - Map reviewed Gemini 4 Argon Medium and Trial aliases to one canonical price entry, sharing its published rates and date changes.
 
 - Show `/home` as the file explorer root and include nested agent artifact directories.
