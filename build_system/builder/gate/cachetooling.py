@@ -149,15 +149,19 @@ class CompilerCache(Resource, name="compiler-cache"):
         if not self._active:
             return
         self._active = False
-        self._users.close()
         paths = cachelayout.cache_paths(self._config)
         stage = paths.stage("rust-sccache")
-        with exclusive_paths(stage / lock for lock in paths.policy.stages["rust-sccache"].mutation_locks) as idle:
-            if idle:
-                self._runner.capture(
-                    (self._config.toolchain.compiler_cache_command, "--stop-server"),
-                    env=self._environment,
-                )
+        # Serialize dropping use and deciding to stop with startup and other
+        # releases. Otherwise two final users can both leave, then each stop
+        # the same server after the other's mutation lease has been released.
+        with exclusive_path(stage / self._config.toolchain.compiler_cache_start_lock_name, wait=True):
+            self._users.close()
+            with exclusive_paths(stage / lock for lock in paths.policy.stages["rust-sccache"].mutation_locks) as idle:
+                if idle:
+                    self._runner.capture(
+                        (self._config.toolchain.compiler_cache_command, "--stop-server"),
+                        env=self._environment,
+                    )
 
     def environment(self) -> dict[str, str]:
         return self._environment
