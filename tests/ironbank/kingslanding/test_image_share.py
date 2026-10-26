@@ -27,7 +27,10 @@ __all__ = ["service"]
 pytestmark = pytest.mark.integration
 
 #: What the workspace stage may hold: the launcher's inputs and its markers.
-CONTROL_FILES = {"options.json", "launch.py", "runtime_console.py"}
+CONTROL_FILES = {"options.json"} | {
+    path.name
+    for path in (Path(__file__).resolve().parents[3] / "guest/artifacts/container").glob("*.py")
+}
 MARKERS = {"ready", "running", "failed", "exited"}
 MOUNT = "/run/image-share-probe"
 
