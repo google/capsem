@@ -147,11 +147,13 @@ class ModelClientEnv:
     @property
     def log_paths(self) -> tuple[Path, ...]:
         session_dir = vm_session_dir(self.service.tmp_dir, self.client, self.session_id)
+        serial = session_dir / "owner" / "logs" / "serial.log"
+        assert serial.is_file(), f"serial evidence missing: {serial}"
         return (
             *log_stream_files(self.service.tmp_dir / "service.log"),
             self.service.tmp_dir / "service.stderr.log",
             session_dir / "process.log",
-            session_dir / "serial.log",
+            serial,
         )
 
     def run_python(self, script: str, *, timeout_secs: int = 240) -> dict:
