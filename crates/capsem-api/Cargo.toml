@@ -10,9 +10,9 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
-capsem-proto = { path = "../capsem-proto", version = "0.7.1", features = ["schema"] }
+capsem-proto = { path = "../capsem-proto", version = "0.7.2", features = ["schema"] }
 base64.workspace = true
-capsem-crypto = { path = "../capsem-crypto", version = "0.7.1", default-features = false, features = ["secrets"] }
+capsem-crypto = { path = "../capsem-crypto", version = "0.7.2", default-features = false, features = ["secrets"] }
 serde.workspace = true
 serde_json.workspace = true
 utoipa = "5.4"
