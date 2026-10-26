@@ -83,6 +83,9 @@ REMOVAL_SITES: dict[str, str] = {
 
 # ORIGINAL public release bytes, never current runtime profile support.
 HISTORICAL_DOCUMENTS = {
+    # Original retained performance evidence predates OCI; never current inputs.
+    "web/docs/data/benchmarks.json":
+        "54ba1b559da5183ce9549e3707643b3449cbfff72b6b954a7492e5194c88c827",
     "tests/fixtures/release/public-stable-066-manifest.json":
         "2b04fb53657ee3146c66054c7bd4177248eec6ba21bb0e51f33482ebb4b966c8",
 }
@@ -202,8 +205,8 @@ def test_unrelated_meanings_pass(line: str) -> None:
     assert not violations("x", line), violations("x", line)
 
 
-def test_original_public_predecessor_is_history_only_at_its_exact_bytes_and_path() -> None:
-    path = "tests/fixtures/release/public-stable-066-manifest.json"
+@pytest.mark.parametrize("path", tuple(HISTORICAL_DOCUMENTS))
+def test_original_public_evidence_is_history_only_at_its_exact_bytes_and_path(path: str) -> None:
     payload = (PROJECT_ROOT / path).read_bytes()
     assert historical_document(path, payload)
     assert not historical_document(path, payload + b"\n")

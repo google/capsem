@@ -116,3 +116,10 @@ version = 1
 
 # S07-002 moves the same support-bundle member paths into their contracts module.
 "crates/capsem/src/support_bundle/contracts.rs" = "68e86f22e8068e0a3f0dac28fc30592fa4371263d2fd9b0c087c12f9824e2d77"
+
+# S01-049: historical monthly metrics classify old Git trees as well as the
+# current tree. These are historical source-root names and generic manifest
+# basenames, never paths used to resolve the current repository layout.
+"build_system/builder/docs_metrics/code.py" = "fd095fb6874bbc452ba965a309033f649ee75b73a2849bbb4657c1f7a438b2f6"
+"build_system/builder/docs_metrics/dependencies.py" = "cc4bd357ef462c233c3712f26e9bc55d6ec551ea1c22f0c0dbd4e5d4b8ba0921"
+"build_system/builder/docs_metrics/test_inventory.py" = "d4231d89c3e423e58b7fc95a2093ef9ff31c2254504eabb2a7c646e23071f7da"

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Reconcile repository guards with full-history documentation metrics, preserving exact historical evidence and enforcing refresh on every main update.
+
 - Type documentation benchmark sections explicitly and reject unreadable Git archive members during metrics generation.
 
 - Include documentation collector dependencies in the standard development environment so complete qualification can collect their tests after bootstrap.

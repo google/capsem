@@ -3,6 +3,7 @@ import json
 import zipfile
 
 from capsem_builder.docs_metrics.artifacts import refresh, snapshot_from_archive
+from capsem_builder.docs_metrics.github import GitHub
 
 
 def test_import_uses_regular_json_and_excludes_exploratory_subdirectories():
@@ -24,9 +25,8 @@ def test_import_uses_regular_json_and_excludes_exploratory_subdirectories():
 
 
 def test_expired_artifacts_do_not_erase_reviewed_recordings():
-    class Client:
-        def pages(self, *_):
-            return [{"expired": True, "created_at": "2026-10-10T00:00:00Z"}]
-
+    client = GitHub(
+        fetch=lambda _: {"artifacts": [{"expired": True, "created_at": "2026-10-10T00:00:00Z"}]}
+    )
     retained = {"source": {"artifact_created_at_utc": "2026-10-06T00:00:00Z"}}
-    assert refresh(retained, Client()) is retained
+    assert refresh(retained, client) is retained

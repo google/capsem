@@ -257,24 +257,20 @@ def _push_paths(name: str) -> set[str]:
     return set(trigger["push"]["paths"])
 
 
-def test_public_web_deployments_run_only_for_owned_and_shared_inputs() -> None:
+def test_docs_metrics_refresh_on_every_main_source_update() -> None:
+    # Statistics include every source tree and Git history, so every main
+    # update owns docs output even when it does not edit a docs input path.
+    trigger = yaml.safe_load((WORKFLOW.parent / "docs.yaml").read_text())[True]
+    assert trigger["push"] == {"branches": ["main"]}, CI_SCOPE_RATIONALE
+
+
+def test_marketing_deployment_runs_only_for_owned_and_shared_inputs() -> None:
     script_root = "build_system/scripts"
     shared = {
         "README.md",
         "web/diagrams/**",
         f"{script_root}/web/check-web-surface.sh",
         f"{script_root}/build/lib/exec_lock.sh",
-    }
-    assert _push_paths("docs.yaml") == shared | {
-        ".github/workflows/docs.yaml",
-        "sdk/**",
-        "mcp/typescript/**",
-        "skills/use-capsem/**",
-        "config/gate.toml",
-        "web/docs/**",
-        "build_system/patches/**",
-        f"{script_root}/web/check-docs-holding-build.py",
-        "build_system/builder/gate/tools/web/check_docs_holding_build.py",
     }
     assert _push_paths("site.yaml") == shared | {
         ".github/workflows/site.yaml",
