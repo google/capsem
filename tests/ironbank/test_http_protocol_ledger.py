@@ -29,7 +29,7 @@ from helpers.service import (
     vm_session_db_path,
     wait_exec_ready,
 )
-from helpers.session_ledger import open_session_ledger
+from helpers.session_ledger import open_session_ledger, stop_session_for_ledger_read
 from ironbank.approval_fixture import resolve_original_operation
 from log_streams import assert_service_log_evidence, read_log_stream
 
@@ -124,7 +124,9 @@ EXPECTED_SUBSTITUTION_COLUMNS = {
 
 
 def _connect_session_db(service: ServiceInstance, session_id: str) -> sqlite3.Connection:
-    db_path = vm_session_db_path(service.tmp_dir, service.client(), session_id)
+    client = service.client()
+    db_path = vm_session_db_path(service.tmp_dir, client, session_id)
+    stop_session_for_ledger_read(client, session_id, db_path)
     conn = open_session_ledger(db_path)
     conn.row_factory = sqlite3.Row
     return conn
@@ -320,7 +322,7 @@ def test_plain_json_http_request_pays_full_ledger_debt_blackbox() -> None:
             rows = conn.execute(
                 """
                 SELECT * FROM net_events
-                WHERE method = 'POST' AND path = '/echo' AND query = 'case=plain-json'
+                WHERE method = 'POST' AND path = '/echo' AND query = '[REDACTED]'
                 ORDER BY id
                 """
             ).fetchall()
@@ -376,7 +378,7 @@ def test_plain_json_http_request_pays_full_ledger_debt_blackbox() -> None:
             assert event_json["http"]["host"] == "127.0.0.1"
             assert event_json["http"]["method"] == "POST"
             assert event_json["http"]["path"] == "/echo"
-            assert event_json["http"]["query"] == "case=plain-json"
+            assert event_json["http"]["query"] == "[REDACTED]"
             assert event_json["http"]["status"] == "200"
             assert event_json["http"]["body"].find(nonce) != -1
             assert event_json["tcp"]["port"] == "3713"
@@ -646,38 +648,39 @@ def test_http_body_handling_matrix_pays_full_ledger_debt_blackbox() -> None:
         with closing(_connect_session_db(service, session_id)) as conn:
             assert _table_columns(conn, "net_events") == EXPECTED_NET_COLUMNS
             assert _table_columns(conn, "security_rule_events") == EXPECTED_SECURITY_COLUMNS
-            rows = _eventually(
-                lambda: conn.execute(
-                    """
-                    SELECT *
-                    FROM net_events
-                    WHERE method = 'GET'
-                      AND query IN (
-                        'case=gzip',
-                        'case=chunked',
-                        'case=sse',
-                        'case=truncated-preview',
-                        'case=https'
-                      )
-                    ORDER BY id
-                    """
-                ).fetchall(),
-                lambda found: len(found) == 5,
-            )
-            nets = {row["query"]: dict(row) for row in rows}
-            assert set(nets) == {
-                "case=gzip",
-                "case=chunked",
-                "case=sse",
-                "case=truncated-preview",
-                "case=https",
-            }
             expected_paths = {
                 "case=gzip": "/gzip/10kb",
                 "case=chunked": "/chunked",
                 "case=sse": "/sse/model",
                 "case=truncated-preview": "/bytes/10kb",
                 "case=https": "/tiny",
+            }
+            rows = _eventually(
+                lambda: conn.execute(
+                    """
+                    SELECT *
+                    FROM net_events
+                    WHERE method = 'GET'
+                      AND path IN (
+                        '/gzip/10kb',
+                        '/chunked',
+                        '/sse/model',
+                        '/bytes/10kb',
+                        '/tiny'
+                      )
+                    ORDER BY id
+                    """
+                ).fetchall(),
+                lambda found: len(found) == 5,
+            )
+            cases_by_path = {path: case for case, path in expected_paths.items()}
+            nets = {cases_by_path[row["path"]]: dict(row) for row in rows}
+            assert set(nets) == {
+                "case=gzip",
+                "case=chunked",
+                "case=sse",
+                "case=truncated-preview",
+                "case=https",
             }
             for query, net in nets.items():
                 event_id = _event_id(net["event_id"])
@@ -690,6 +693,7 @@ def test_http_body_handling_matrix_pays_full_ledger_debt_blackbox() -> None:
                 assert net["port"] == (443 if query == "case=https" else 3713)
                 assert net["method"] == "GET"
                 assert net["path"] == expected_paths[query]
+                assert net["query"] == "[REDACTED]"
                 assert net["status_code"] == 200
                 assert net["decision"] == "allowed"
                 assert net["matched_rule"] == "corp.rules.allow_ironbank_mock_http_body_matrix"
@@ -728,7 +732,7 @@ def test_http_body_handling_matrix_pays_full_ledger_debt_blackbox() -> None:
                 assert event_json["http"]["host"] == expected_host
                 assert event_json["http"]["method"] == "GET"
                 assert event_json["http"]["path"] == expected_paths[query]
-                assert event_json["http"]["query"] == query
+                assert event_json["http"]["query"] == "[REDACTED]"
                 assert event_json["http"]["status"] == "200"
                 assert event_json["tcp"]["port"] == str(net["port"])
                 if query == "case=https":
@@ -775,18 +779,19 @@ def test_http_body_handling_matrix_pays_full_ledger_debt_blackbox() -> None:
                 """
                 SELECT event_id, path, query, status_code, decision, conn_type, trace_id
                 FROM net_events
-                WHERE query IN (
-                  'case=gzip',
-                  'case=chunked',
-                  'case=sse',
-                  'case=truncated-preview',
-                  'case=https'
+                WHERE path IN (
+                  '/gzip/10kb',
+                  '/chunked',
+                  '/sse/model',
+                  '/bytes/10kb',
+                  '/tiny'
                 )
                 ORDER BY query
                 """,
             )
             assert len(uds_rows) == 5
-            assert {row["query"] for row in uds_rows} == set(nets)
+            assert {row["path"] for row in uds_rows} == set(expected_paths.values())
+            assert all(row["query"] == "[REDACTED]" for row in uds_rows)
             assert {row["decision"] for row in uds_rows} == {"allowed"}
             assert any(row["conn_type"] == "https-mitm" for row in uds_rows)
 
@@ -1012,6 +1017,10 @@ def test_brokered_http_rewrite_pays_full_ledger_debt_blackbox() -> None:
             )
             credential_ref = _credential_ref(response_access_token_refs[0]["substitution_ref"])
 
+        # The direct read above stopped the VM to flush its ledger.
+        client.post(f"/vms/{session_id}/start", {}, timeout=90)
+        assert wait_exec_ready(client, session_id, timeout=EXEC_READY_TIMEOUT)
+
         replay_script = textwrap.dedent(
             f"""
             import json
@@ -1183,7 +1192,7 @@ def test_brokered_http_rewrite_pays_full_ledger_debt_blackbox() -> None:
                 assert event_json["ip"]["value"] == "127.0.0.1"
 
             assert header_net["query"] in (None, "")
-            assert query_net["query"].startswith("access_token=")
+            assert query_net["query"] == "[REDACTED]"
             assert credential_ref not in query_net["query"]
             assert "capsem_test_oauth_access_" not in query_net["query"]
 
@@ -1489,7 +1498,7 @@ def test_denied_http_request_pays_full_ledger_debt_blackbox() -> None:
             rows = conn.execute(
                 """
                 SELECT * FROM net_events
-                WHERE method = 'POST' AND path = '/deny-target' AND query = 'case=blocked-json'
+                WHERE method = 'POST' AND path = '/deny-target' AND query = '[REDACTED]'
                 ORDER BY id
                 """
             ).fetchall()
@@ -1540,7 +1549,7 @@ def test_denied_http_request_pays_full_ledger_debt_blackbox() -> None:
             assert event_json["http"]["host"] == "127.0.0.1"
             assert event_json["http"]["method"] == "POST"
             assert event_json["http"]["path"] == "/deny-target"
-            assert event_json["http"]["query"] == "case=blocked-json"
+            assert event_json["http"]["query"] == "[REDACTED]"
             assert event_json["http"]["status"] == "403"
             assert event_json["http"]["body"] == result["request_body"]
             assert event_json["tcp"]["port"] == "3713"
@@ -1755,7 +1764,7 @@ def test_asked_http_request_pays_full_ledger_debt_blackbox() -> None:
             rows = conn.execute(
                 """
                 SELECT * FROM net_events
-                WHERE method = 'POST' AND path = '/ask-target' AND query = 'case=ask-json'
+                WHERE method = 'POST' AND path = '/ask-target' AND query = '[REDACTED]'
                 ORDER BY id
                 """
             ).fetchall()
@@ -1806,7 +1815,7 @@ def test_asked_http_request_pays_full_ledger_debt_blackbox() -> None:
             assert event_json["http"]["host"] == "127.0.0.1"
             assert event_json["http"]["method"] == "POST"
             assert event_json["http"]["path"] == "/ask-target"
-            assert event_json["http"]["query"] == "case=ask-json"
+            assert event_json["http"]["query"] == "[REDACTED]"
             assert event_json["http"]["status"] == "403"
             assert event_json["http"]["body"] == result["request_body"]
             assert event_json["tcp"]["port"] == "3713"
