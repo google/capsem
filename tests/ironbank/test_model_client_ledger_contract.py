@@ -558,10 +558,11 @@ def test_openai_two_tool_calls_have_exact_item_cardinality(
         assert all(row["model"] == HERMETIC_OPENAI_PRICED_MODEL for row in item_rows)
         assert all(
             isinstance(row["content_hash"], str)
-            and len(row["content_hash"]) == 71
-            and row["content_hash"].startswith("blake3:")
+            and len(row["content_hash"]) == 41
+            and row["content_hash"].startswith("xxh3-128:")
+            and all(character in "0123456789abcdef" for character in row["content_hash"][9:])
             for row in item_rows
-        )
+        ), [(row["kind"], row["content_hash"]) for row in item_rows]
 
         tool_calls = conn.execute(
             "SELECT * FROM tool_calls WHERE tool_name = 'exec_command' ORDER BY id"
