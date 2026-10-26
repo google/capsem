@@ -63,7 +63,7 @@ WORKLOAD_UID = 101000
 
 #: Every host the hermetic run may reach: the workload's fixture names, and
 #: the host-loopback mock the VM-root OAuth half dials.
-HERMETIC_HOSTS = (WORKLOAD_OLLAMA_HOST, WORKLOAD_REPLAY_HOST, "127.0.0.1")
+HERMETIC_HOSTS = (WORKLOAD_OLLAMA_HOST, WORKLOAD_REPLAY_HOST, "127.0.0.1", "api.openai.com")
 
 
 def _public_traffic(conn: sqlite3.Connection, session_id: str) -> tuple[list[dict], list[dict]]:
@@ -99,7 +99,7 @@ def _mock_routes(ready: dict) -> str:
         f'[network.upstream_overrides."{host}:{WORKLOAD_OLLAMA_PORT}"]\n'
         f"dial = {json.dumps(ready['http_addr'])}\n"
         'protocol = "http"\n\n'
-        for host in (WORKLOAD_OLLAMA_HOST, WORKLOAD_REPLAY_HOST)
+        for host in (WORKLOAD_OLLAMA_HOST, WORKLOAD_REPLAY_HOST, "api.openai.com")
     )
 
 RAW_SDK_SECRET = "capsem_test_sdk_api_key_repeat_0123456789abcdef"
@@ -334,7 +334,7 @@ def _broker_replay_script(base_url: str, credential_ref: str) -> str:
     ).strip()
 
 
-def _broker_oauth_replay_script(base_url: str) -> str:
+def _broker_oauth_replay_script(base_url: str, credential_base_url: str) -> str:
     """The OAuth token exchange and credential response, from VM root to the
     host-loopback mock.
 
@@ -342,11 +342,12 @@ def _broker_oauth_replay_script(base_url: str) -> str:
     (127.0.0.1, localhost): it captures the token bodies and redacts the
     response there. A container workload cannot reach that loopback, its own
     is its own, so this half of the replay stays a VM-target exec; it needs
-    only the runtime's python3.
+    only the runtime's python3. API-key response capture separately uses the
+    explicitly overridden provider origin, preserving its host binding.
     """
     payload = {
         "token_url": f"{base_url.rstrip('/')}/oauth/token",
-        "credential_response_url": f"{base_url.rstrip('/')}/credential/response",
+        "credential_response_url": f"{credential_base_url.rstrip('/')}/credential/response",
     }
     return textwrap.dedent(
         f"""
@@ -832,13 +833,13 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 modified = "2026-06-14T00:00:00Z"
 
                 [ai.openai]
-                allowed_remote_targets = ["api.openai.com:443", "model.capsem.test:3713"]
+                allowed_remote_targets = ["api.openai.com:443", "api.openai.com:3713", "model.capsem.test:3713"]
 
                 [ai.openai.rules.ironbank_broker_replay_binding]
                 name = "ironbank_broker_replay_binding"
                 action = "allow"
                 detection_level = "informational"
-                match = 'http.host == "model.capsem.test" && tcp.port == "3713"'
+                match = '(http.host == "model.capsem.test" || http.host == "api.openai.com") && tcp.port == "3713"'
 
                 [corp.rules.allow_ironbank_mock_model_server]
                 name = "allow_ironbank_mock_model_server"
@@ -846,7 +847,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 priority = -100
                 detection_level = "informational"
                 reason = "Allow the hermetic Ironbank model fixture while preserving local-network ask defaults."
-                match = '(http.host == "ollama.capsem.test" || http.host == "model.capsem.test") && tcp.port == "3713"'
+                match = '(http.host == "ollama.capsem.test" || http.host == "model.capsem.test" || http.host == "api.openai.com") && tcp.port == "3713"'
 
                 [corp.rules.allow_ironbank_mock_mcp_server]
                 name = "allow_ironbank_mock_mcp_server"
@@ -878,7 +879,8 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             )
         )
 
-        script = _sdk_probe_script(mock_base_url).encode()
+        # Capture and replay require the explicitly admitted provider origin.
+        script = _sdk_probe_script(mock_base_url.replace(WORKLOAD_OLLAMA_HOST, WORKLOAD_REPLAY_HOST)).encode()
         upload = client.post_bytes(
             f"/vms/{vm_id}/files/content?path={script_name}",
             script,
@@ -1165,7 +1167,9 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             }
 
             oauth_script_name = f"ironbank-broker-oauth-{uuid.uuid4().hex[:8]}.py"
-            oauth_script = _broker_oauth_replay_script(VM_LOOPBACK_MOCK_URL).encode()
+            oauth_script = _broker_oauth_replay_script(
+                VM_LOOPBACK_MOCK_URL, "http://api.openai.com:3713"
+            ).encode()
             oauth_upload = client.post_bytes(
                 f"/vms/{vm_id}/files/content?path={oauth_script_name}",
                 oauth_script,
@@ -1211,8 +1215,8 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 lambda rows: len(rows) >= 3,
             )
             assert [row["domain"] for row in net_rows] == [
-                "ollama.capsem.test",
-                "ollama.capsem.test",
+                "model.capsem.test",
+                "model.capsem.test",
                 "model.capsem.test",
             ]
             for row in net_rows:
@@ -1256,7 +1260,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             )
 
             query_echo = next(
-                row for row in echo_rows if row["query"] and "access_token=" in row["query"]
+                row for row in echo_rows if row["query"] == "[REDACTED]"
             )
             assert query_echo["credential_ref"] == credential_ref
             assert credential_ref not in (query_echo["query"] or "")
@@ -1322,8 +1326,8 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             )
             assert len(model_rows) >= 3
             assert [row["provider"] for row in model_rows] == [
-                "unknown",
-                "unknown",
+                "openai",
+                "openai",
                 "openai",
             ]
             model_trace_ids = {row["trace_id"] for row in model_rows}
@@ -1373,8 +1377,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             assert unknown_shape["input_tokens"] == 66
             assert unknown_shape["output_tokens"] == 390
             assert unknown_shape["text_content"] == EXPECTED_POEM
-            assert unknown_shape["credential_ref"] is not None
-            _assert_credential_ref(unknown_shape["credential_ref"])
+            assert unknown_shape["credential_ref"] is None
             assert "capsem_test_unknown_shape_key" not in (
                 unknown_shape["request_body_preview"] or ""
             )
@@ -1402,8 +1405,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             assert declared_tool_only["output_tokens"] == 52
             assert declared_tool_only["text_content"] == EXPECTED_POEM
             assert declared_tool_only["stop_reason"] == "end_turn"
-            assert declared_tool_only["credential_ref"] is not None
-            _assert_credential_ref(declared_tool_only["credential_ref"])
+            assert declared_tool_only["credential_ref"] is None
             assert "capsem_test_declared_tool_key" not in (
                 declared_tool_only["request_body_preview"] or ""
             )
@@ -1442,8 +1444,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             assert google_stream["stop_reason"] == "end_turn"
             assert google_stream["request_bytes"] > 0
             assert google_stream["response_bytes"] > 100
-            assert google_stream["credential_ref"] is not None
-            _assert_credential_ref(google_stream["credential_ref"])
+            assert google_stream["credential_ref"] is None
             assert "capsem_test_google_stream_key" not in (
                 google_stream["request_body_preview"] or ""
             )
@@ -1473,8 +1474,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             assert anthropic_stream["stop_reason"] == "end_turn"
             assert anthropic_stream["request_bytes"] > 0
             assert anthropic_stream["response_bytes"] > 100
-            assert anthropic_stream["credential_ref"] is not None
-            _assert_credential_ref(anthropic_stream["credential_ref"])
+            assert anthropic_stream["credential_ref"] is None
             assert "capsem_test_anthropic_stream_key" not in (
                 anthropic_stream["request_body_preview"] or ""
             )
@@ -1498,20 +1498,20 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
                 unknown_shape["id"],
             }
             assert declared_tool_only["id"] not in {row["model_call_id"] for row in tool_rows}
-            valid_tool_credential_refs = {
-                credential_ref,
-                unknown_shape["credential_ref"],
+            expected_tool_identity = {
+                model["id"]: (model["provider"], model["credential_ref"])
+                for model in [*model_rows, unknown_shape]
             }
             for row in tool_rows:
                 _assert_event_id(row["event_id"])
-                assert row["provider"] == "unknown"
+                assert (row["provider"], row["credential_ref"]) == expected_tool_identity[row["model_call_id"]]
                 assert row["status"] == "observed"
                 assert row["call_index"] == 0
                 assert row["arguments"] == '{"query":"Capsem ironbank poem"}'
                 assert row["origin"] == "native"
                 assert row["trace_id"] == row["model_trace_id"]
-                _assert_credential_ref(row["credential_ref"])
-                assert row["credential_ref"] in valid_tool_credential_refs
+                if row["credential_ref"] is not None:
+                    _assert_credential_ref(row["credential_ref"])
 
             observed_mcp_server = "observed:ollama.capsem.test:3713/mcp"
             assert "mcp_calls" not in {
@@ -1956,8 +1956,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             assert anthropic_sdk_row["output_tokens"] == 27
             assert anthropic_sdk_row["text_content"] == EXPECTED_POEM
             assert anthropic_sdk_row["stop_reason"] == "tool_use"
-            assert anthropic_sdk_row["credential_ref"] is not None
-            _assert_credential_ref(anthropic_sdk_row["credential_ref"])
+            assert anthropic_sdk_row["credential_ref"] is None
             assert "capsem_test_anthropic_sdk_key" not in (
                 anthropic_sdk_row["request_body_preview"] or ""
             )
@@ -1970,8 +1969,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
             assert litellm_row["output_tokens"] == 52
             assert litellm_row["text_content"] == EXPECTED_POEM
             assert litellm_row["stop_reason"] == "end_turn"
-            assert litellm_row["credential_ref"] is not None
-            _assert_credential_ref(litellm_row["credential_ref"])
+            assert litellm_row["credential_ref"] is None
             assert "capsem_test_litellm_sdk_key" not in (
                 litellm_row["request_body_preview"] or ""
             )
@@ -2071,7 +2069,13 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
         corp_path = service.tmp_dir / "corp.toml"
         corp_path.write_text(
             'refresh_policy = "24h"\n\n[network.dns]\n'
-            f'upstreams = [{json.dumps(ready["dns_udp_addr"])}]\n\n{_mock_routes(ready)}',
+            f'upstreams = [{json.dumps(ready["dns_udp_addr"])}]\n\n{_mock_routes(ready)}'
+            '[ai.openai]\n'
+            'allowed_remote_targets = ["ollama.capsem.test:3713"]\n\n'
+            '[ai.openai.rules.ironbank_cli_provider_binding]\n'
+            'name = "ironbank_cli_provider_binding"\n'
+            'action = "allow"\n'
+            'match = \'http.host == "ollama.capsem.test" && tcp.port == "3713"\'\n',
             encoding="utf-8",
         )
         os.environ["CAPSEM_CORP_CONFIG"] = str(corp_path)
@@ -2243,7 +2247,7 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             assert "host: ollama.capsem.test:3713" in (broker_echo_net["request_headers"] or "")
             assert "authorization: hash:" in (broker_echo_net["request_headers"] or "")
             assert "content-type: text/plain" in (broker_echo_net["request_headers"] or "")
-            assert broker_echo_net["request_body_preview"] is None
+            assert broker_echo_net["request_body_preview"] == "codex broker probe"
             assert '"authorization_is_broker_ref":false' in (
                 broker_echo_net["response_body_preview"] or ""
             )
@@ -2266,7 +2270,7 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             tool_model = model_rows[-2]
             codex_model = model_rows[-1]
             _assert_event_id(tool_model["event_id"])
-            assert tool_model["provider"] == "unknown"
+            assert tool_model["provider"] == "openai"
             assert tool_model["protocol"] == "openai"
             assert tool_model["model"] == "gemma4:latest"
             assert tool_model["method"] == "POST"
@@ -2286,7 +2290,7 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             assert '"name":"exec_command"' in tool_model_request
             assert "capsem_test_codex_cli_key" not in tool_model_request
             _assert_event_id(codex_model["event_id"])
-            assert codex_model["provider"] == "unknown"
+            assert codex_model["provider"] == "openai"
             assert codex_model["protocol"] == "openai"
             assert codex_model["model"] == "gemma4:latest"
             assert codex_model["method"] == "POST"
@@ -2323,7 +2327,7 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             tool_row = tool_rows[0]
             _assert_event_id(tool_row["event_id"])
             assert tool_row["model_call_id"] == tool_model["id"]
-            assert tool_row["provider"] == "unknown"
+            assert tool_row["provider"] == "openai"
             assert tool_row["status"] == "observed"
             assert tool_row["call_index"] == 0
             assert tool_row["tool_name"] == "exec_command"
@@ -2453,10 +2457,10 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
             assert "profiles.rules.default_model" in {
                 row["rule_id"] for row in by_event[tool_model["event_id"]]
             }
-            assert "profiles.rules.default_unknown_model_provider" in {
+            assert "profiles.rules.ai_openai_model_api" in {
                 row["rule_id"] for row in by_event[codex_model["event_id"]]
             }
-            assert "profiles.rules.default_unknown_model_provider" in {
+            assert "profiles.rules.ai_openai_model_api" in {
                 row["rule_id"] for row in by_event[tool_model["event_id"]]
             }
             assert "profiles.rules.default_http" in {

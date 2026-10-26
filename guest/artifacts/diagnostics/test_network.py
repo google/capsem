@@ -13,17 +13,21 @@ import pytest
 from .diagnostic_support import run
 
 LOCAL_MOCK_SERVER_ENV = "CAPSEM_MOCK_SERVER_BASE_URL"
+OPENAI_MOCK_SERVER_ENV = "CAPSEM_MOCK_OPENAI_BASE_URL"
+OAUTH_MOCK_SERVER_ENV = "CAPSEM_MOCK_OAUTH_BASE_URL"
 
 
-def _local_mock_url(path):
-    base_url = os.environ.get(LOCAL_MOCK_SERVER_ENV)
+def _local_mock_url(path, base_env=LOCAL_MOCK_SERVER_ENV):
+    # Credential capture is host-bound; ledger fixtures can select a known
+    # provider origin while ordinary HTTP and host-side MCP stay on loopback.
+    base_url = os.environ.get(base_env) or os.environ.get(LOCAL_MOCK_SERVER_ENV)
     if not base_url:
         return None
     return f"{base_url.rstrip('/')}/{path.lstrip('/')}"
 
 
-def _require_local_mock_url(path, reason):
-    url = _local_mock_url(path)
+def _require_local_mock_url(path, reason, *, base_env=LOCAL_MOCK_SERVER_ENV):
+    url = _local_mock_url(path, base_env)
     if not url:
         pytest.fail(
             f"{reason}; set {LOCAL_MOCK_SERVER_ENV} for deterministic local proof"
@@ -493,6 +497,7 @@ def test_local_openai_compatible_model_fixture():
     local_url = _require_local_mock_url(
         "/v1/chat/completions",
         "local OpenAI-compatible model smoke",
+        base_env=OPENAI_MOCK_SERVER_ENV,
     )
     result = run(
         "python3 - <<'PY'\n"
@@ -529,7 +534,7 @@ def test_local_openai_compatible_model_fixture():
 def test_local_credential_fixture_is_broker_stimulus_only():
     """Credential-shaped fixture traffic should trigger broker logging without
     dumping synthetic secret values into doctor output."""
-    local_url = _require_local_mock_url("/credential/response", "local broker smoke")
+    local_url = _require_local_mock_url("/credential/response", "local broker smoke", base_env=OPENAI_MOCK_SERVER_ENV)
     result = run(
         f"curl -sS -o /dev/null -w '%{{http_code}} %{{size_download}}'"
         f" --connect-timeout 5 {local_url}",
@@ -544,7 +549,7 @@ def test_local_credential_fixture_is_broker_stimulus_only():
 def test_local_oauth_token_fixture_is_broker_stimulus_only():
     """OAuth token exchange traffic must be exercised hermetically without
     dumping synthetic token values into doctor output."""
-    local_url = _require_local_mock_url("/oauth/token", "local OAuth token smoke")
+    local_url = _require_local_mock_url("/oauth/token", "local OAuth token smoke", base_env=OAUTH_MOCK_SERVER_ENV)
     result = run(
         "python3 - <<'PY'\n"
         "from pathlib import Path\n"

@@ -363,9 +363,11 @@ event: model.done\ndata: {\"finish_reason\":\"stop\"}\n\n",
         (&Method::GET, "/credential/response") => json_response(json!({
             "kind": "synthetic_credential_fixture",
             "api_key": "sk-capsem_test_api_key_0123456789abcdef",
+            // All three values belong to the OpenAI-bound response fixture.
+            // Google OAuth capture is exercised separately through /oauth/token.
             "oauth": {
-                "access_token": "capsem_test_oauth_access_0123456789abcdef",
-                "refresh_token": "capsem_test_oauth_refresh_0123456789abcdef",
+                "access_token": "sk-capsem_test_oauth_access_0123456789abcdef",
+                "refresh_token": "sk-capsem_test_oauth_refresh_0123456789abcdef",
             }
         })),
         (&Method::GET, "/api/tags") => json_response(json!({
