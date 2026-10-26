@@ -92,7 +92,8 @@ def test_explicit_executable_preserves_original_argv0(tmp_path):
             [original, "-c", "import sys; print(sys.orig_argv[0])"],
             executable=Path(sys.executable),
             cwd=tmp_path,
-            env=os.environ,
+            # Fake argv0 must not make CPython rediscover its library prefix.
+            env={**os.environ, "PYTHONHOME": sys.base_prefix},
             policy=POLICY,
             write_bytes=chunks.append,
             timeout_seconds=2,
