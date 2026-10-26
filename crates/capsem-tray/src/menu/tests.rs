@@ -478,7 +478,7 @@ fn persistent_running_vm_has_connect_stop_fork_delete() {
     let spec = menu_spec(&make_status(vec![named_vm("n1", "prod", "running")]));
     let sub = spec.iter().find(|e| matches!(e, MenuEntry::Sub { .. })).unwrap();
     let ids = submenu_child_ids(sub);
-    assert_eq!(ids, vec!["connect:n1", "suspend:n1", "stop:n1", "fork:n1", "delete:n1"]);
+    assert_eq!(ids, vec!["connect:n1", "stop:n1", "fork:n1", "delete:n1"]);
 }
 
 #[test]
@@ -488,26 +488,26 @@ fn ephemeral_running_vm_has_connect_save_delete() {
     let spec = menu_spec(&make_status(vec![temp_vm("t1", "running")]));
     let sub = spec.iter().find(|e| matches!(e, MenuEntry::Sub { .. })).unwrap();
     let ids = submenu_child_ids(sub);
-    assert_eq!(ids, vec!["connect:t1", "suspend:t1", "save:t1", "delete:t1"]);
+    assert_eq!(ids, vec!["connect:t1", "save:t1", "delete:t1"]);
 }
 
 #[test]
-fn persistent_suspended_vm_has_resume_fork_delete() {
-    // Suspended persistent VMs have no "stop" (already not running).
+fn persistent_suspended_vm_has_fork_delete_without_disabled_resume() {
+    // Warm checkpoint restore is disabled (#378); preserve fork and delete.
     let spec = menu_spec(&make_status(vec![named_vm("s1", "staging", "suspended")]));
     let sub = spec.iter().find(|e| matches!(e, MenuEntry::Sub { .. })).unwrap();
     let ids = submenu_child_ids(sub);
-    assert_eq!(ids, vec!["resume:s1", "fork:s1", "delete:s1"]);
+    assert_eq!(ids, vec!["fork:s1", "delete:s1"]);
 }
 
 #[test]
-fn ephemeral_suspended_vm_has_resume_delete() {
+fn ephemeral_suspended_vm_has_delete_without_disabled_resume() {
     // Edge case: ephemeral VM in a suspended state. No save (ephemeral
     // must be running to save), no fork (fork is persistent-only).
     let spec = menu_spec(&make_status(vec![temp_vm("t2", "suspended")]));
     let sub = spec.iter().find(|e| matches!(e, MenuEntry::Sub { .. })).unwrap();
     let ids = submenu_child_ids(sub);
-    assert_eq!(ids, vec!["resume:t2", "delete:t2"]);
+    assert_eq!(ids, vec!["delete:t2"]);
 }
 
 #[test]
@@ -616,12 +616,12 @@ fn a_capitalized_running_vm_still_offers_connect() {
 }
 
 #[test]
-fn a_capitalized_suspended_vm_still_offers_resume() {
+fn a_capitalized_suspended_vm_does_not_offer_disabled_resume() {
     let spec = menu_spec(&make_status(vec![named_vm("vm2", "dev", "Suspended")]));
 
     assert!(
-        collect_ids(&spec).iter().any(|id| id == "resume:vm2"),
-        "expected a resume entry, got {:?}",
+        !collect_ids(&spec).iter().any(|id| id == "resume:vm2"),
+        "disabled warm restore must not appear, got {:?}",
         collect_ids(&spec)
     );
 }
