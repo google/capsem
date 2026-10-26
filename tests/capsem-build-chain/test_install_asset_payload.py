@@ -990,7 +990,7 @@ def test_native_packages_make_full_doctor_mock_server_self_contained() -> None:
     linux = PROJECT_ROOT / "build_system" / "packaging" / "linux"
     repack_deb = (linux / "repack-deb.sh").read_text()
     deb_postinst = (linux / "deb-postinst.sh").read_text()
-    cli = (PROJECT_ROOT / "crates" / "capsem" / "src" / "main.rs").read_text()
+    cli = (PROJECT_ROOT / "crates/capsem/src/doctor_mock_server.rs").read_text()
     mock_server = (
         PROJECT_ROOT / "crates" / "capsem-mock-server" / "src" / "main.rs"
     ).read_text()
