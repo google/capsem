@@ -298,7 +298,7 @@ def assert_two_turn_model_ledger_exchange(
         assert all(row["provider"] == spec.provider for row in item_rows)
         assert all(row["path"] == spec.path for row in item_rows)
         assert all(row["model"] == spec.model for row in item_rows)
-        assert all(_is_blake3_ref(row["content_hash"]) for row in item_rows)
+        assert all(_is_model_item_hash(row["content_hash"]) for row in item_rows)
 
         by_trace: dict[str, list[sqlite3.Row]] = {}
         for row in item_rows:
@@ -729,8 +729,8 @@ def _assert_event_id(value: object) -> None:
     assert re.fullmatch(r"[0-9a-f]{12}", value), value
 
 
-def _is_blake3_ref(value: object) -> bool:
-    return isinstance(value, str) and re.fullmatch(r"blake3:[0-9a-f]{64}", value) is not None
+def _is_model_item_hash(value: object) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"xxh3-128:[0-9a-f]{32}", value) is not None
 
 
 def _trace_for_turn(

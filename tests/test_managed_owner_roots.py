@@ -1,4 +1,5 @@
 """Remembered native identities are the only sampler roots, with no commands."""
+import os
 import time
 from types import SimpleNamespace
 from typing import Any
@@ -36,10 +37,10 @@ def test_owned_cache_is_stamped_and_snapshot_calls_no_manager(tmp_path,monkeypat
 def test_new_ready_does_not_erase_live_original_or_skip_reconnection(tmp_path,monkeypatch):
     service: Any = SimpleNamespace(tmp_dir=tmp_path)
     owner = managed_service.ManagedService(service)
-    monkeypatch.setattr(owner,'pid',lambda **kwargs:113)
+    monkeypatch.setattr(owner,'pid',lambda **kwargs:os.getpid())
     monkeypatch.setattr(owner,'remember',lambda pid:None)
     monkeypatch.setattr(owner,'remember_gateway',lambda service,gateway:None)
-    for name,value in {'gateway.port':'1235','gateway.token':'private-new-token','gateway.pid':'114'}.items():
+    for name,value in {'gateway.port':'1235','gateway.token':'private-new-token','gateway.pid':str(os.getpid())}.items():
         (tmp_path/name).write_text(value)
     polls = []
     def live():
