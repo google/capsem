@@ -747,7 +747,11 @@ async fn runtime_download_deadline_is_shared_across_files() {
     let mut done = first.done;
     let mut elapsed = 0;
     while !task.is_finished() {
-        if !done {
+        // At the shared deadline, let the transfer observe its timeout without
+        // advancing again for progress already queued by the preceding byte.
+        // Otherwise scheduler order can make the observer report 920 seconds
+        // even though the request expired at 900.
+        if !done && elapsed < 900 {
             tokio::time::advance(Duration::from_secs(20)).await;
             elapsed += 20;
             next_byte.notify_one();
