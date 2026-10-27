@@ -307,16 +307,19 @@ a release to find out what is broken: the hosted lane takes hours per attempt
 and stops at the first failure, so it finds one bug per attempt. The 0.6.4
 stable release spent four dispatches, one per bug, that a local run catches in
 minutes. Nothing runs in CI that `just test` has not run locally first.
-The one escape is the release command's `force` argument, which the user
-asks for explicitly: it waives the local journal, never the citadel guards,
-release contracts, live advisory audit or hosted qualification.
+The release command's `force` argument, which the user asks for explicitly,
+permits a dirty outer checkout. It never waives the exact complete local proof,
+citadel guards, release contracts, live advisory audit or hosted qualification.
 
 A proof covers the tested commit and any commit with the identical Git tree.
 Fast-forward `main` to the tested commit (or merge only when the merge commit's
 tree equals it); anything else merged in needs its own proof, so do not merge
 anything else into `main` while its proof runs. Low-impact repeats are refused before expensive work and routed
 to focused owners; `just test <source-commit> force "<reason>"` is the audited
-exception and cannot be used twice consecutively. Direct release commands and `just test` own their timeouts,
+exception. After a failed or interrupted attempt, an explicitly approved,
+reasoned retry remains available even if that attempt was forced. Otherwise
+consecutive forced attempts are refused; only successful normal complete proof
+resets that rail. Direct release commands and `just test` own their timeouts,
 journal, teardown, and network boundary; do not wrap or nest them.
 
 Implementation-specific invariants belong beside their executable tests and in

@@ -290,8 +290,10 @@ valid identical-source journal returns immediately. Otherwise unknown and
 high-impact paths remain eligible, while explicitly low-impact paths under the
 ten-commit cadence are refused with their exact `focus-test` owners. The
 exceptional `just test <source-commit> force "<reason>"` records its reason
-before work and cannot be used twice consecutively; only a successful normal
-complete run resets it. A forced run that passes is complete proof for its
+before work. After a failed or interrupted attempt, an explicitly approved,
+reasoned retry remains available even if that attempt was forced. Otherwise
+consecutive forced attempts are refused; only a successful normal complete run
+resets the rail. A forced run that passes is complete proof for its
 exact commit like any other; failed and interrupted attempts never are.
 Admission state itself never authorizes publication or reuses a behavioral
 verdict across source identities.
