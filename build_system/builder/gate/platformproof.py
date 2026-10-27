@@ -21,7 +21,7 @@ from capsem_builder import crypto
 
 from . import cancellation
 from . import config as gate_config
-from .actions import Script
+from .actions import Run, Script
 from .config import GateConfig
 from .docker import Docker
 from .errors import GateError
@@ -58,6 +58,20 @@ def probe_container(repository: Path) -> Iterator[str]:
         yield container.container
 
 
+def input_commands(config: GateConfig) -> tuple[tuple[str, ...], ...]:
+    """Materialize each pinned index's native child before sealed probes.
+
+    An index may be cached while its required platform child is absent.
+    Explicit platform pulls repair that state and also support a cold daemon.
+    The daemon verifies the configured immutable digest; probes never pull.
+    """
+    platform = config.host_arch().docker_platform
+    return tuple(
+        ("docker", "pull", "--platform", platform, distribution.image())
+        for distribution in config.platforms.linux.distributions
+    )
+
+
 def platform_step(config: GateConfig, package: str | None) -> Step:
     """The release lane's step: prove the exact package about to be published.
 
@@ -70,6 +84,7 @@ def platform_step(config: GateConfig, package: str | None) -> Step:
         raise GateError("the platform support proof needs the exact package it proves")
     return step(
         "platform-support",
+        *(Run(argv) for argv in input_commands(config)),
         Script(config, config.modules.platform_support_script, "--package", package),
         contends=(config.exclusive("docker_daemon"),),
         kind=Kind.E2E,
@@ -81,11 +96,13 @@ def platform_step(config: GateConfig, package: str | None) -> Step:
 def prove(runner, config: GateConfig, package) -> None:
     """The local lane's call, before the install proof that cannot see this."""
     runner.step("Proving declared platform support")
-    runner.run(
-        [
+    for argv in (
+        *input_commands(config),
+        (
             "python3",
             str(runner.root / config.modules.platform_support_script),
             "--package",
             str(package),
-        ]
-    )
+        ),
+    ):
+        runner.run(argv)

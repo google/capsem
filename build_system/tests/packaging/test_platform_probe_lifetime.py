@@ -101,3 +101,39 @@ def test_parallel_invocations_never_reuse_or_preempt_names(monkeypatch: pytest.M
             assert first != second
         assert removed == [(second, True)]
     assert removed == [(second, True), (first, True)]
+
+
+@pytest.mark.parametrize("entrypoint", ["planned", "local"])
+@pytest.mark.parametrize("cached_platform", [None, "linux/other"])
+def test_matrix_prepares_missing_platform_children_before_sealed_proof(
+    monkeypatch, cached_platform, entrypoint
+):
+    from capsem_builder.gate.config import load
+    from capsem_builder.gate.context import Context
+    from capsem_builder.gate.platformproof import platform_step, prove
+    from capsem_builder.gate.proc import Runner
+
+    config = load(Path(__file__).resolve().parents[3])
+    platform = config.host_arch().docker_platform
+    cached = {row.image(): {cached_platform} for row in config.platforms.linux.distributions}
+    proof_calls = []
+    runner = Runner(config.root)
+
+    def run(argv, **_kwargs):
+        if tuple(argv[:2]) == ("docker", "pull"):
+            assert list(argv[2:4]) == ["--platform", platform]
+            cached[argv[-1]].add(platform)
+        else:
+            assert all(platform in children for children in cached.values()), (
+                "a cached index or foreign child cannot satisfy the sealed platform proof"
+            )
+            proof_calls.append(argv)
+
+    monkeypatch.setattr(runner, "run", run)
+    context = Context(config=config, runner=runner)
+    if entrypoint == "planned":
+        for action in platform_step(config, "candidate.deb").actions:
+            action.perform(context)
+    else:
+        prove(runner, config, Path("candidate.deb"))
+    assert len(proof_calls) == 1

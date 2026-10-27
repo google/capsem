@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Materialize each pinned distribution image for the selected architecture before offline package platform probes, including cold or incomplete Docker caches.
+
 - Register documentation collector tests in the exact build-system ownership inventory.
 
 - Document repository-wide metrics refresh on every main push and retain main-only production deployment checks in release doctor contracts.
