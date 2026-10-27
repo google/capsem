@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 import copy
+import tomllib
 from pathlib import Path
 
 import pytest
-import tomllib
 import yaml
 
 from images.ci.registry_catalog import INFRASTRUCTURE
@@ -63,7 +63,7 @@ def audit_errors(document):
 
 
 def test_only_documented_non_product_repositories_are_exempt():
-    assert INFRASTRUCTURE == {'base', 'catalog', 'capsem-debug'}, CATALOG_RATIONALE
+    assert {'base', 'catalog', 'capsem-debug'} == INFRASTRUCTURE, CATALOG_RATIONALE
 
 
 def test_every_source_image_is_in_the_catalog_and_both_publication_matrices():
