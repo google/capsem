@@ -31,7 +31,7 @@ from capsem_builder.gate import preflight
 from capsem_builder.gate.cachetooling import CompilerCache
 from capsem_builder.gate.plan import Plan
 from capsem_builder.gate.reaper import StaleProcesses
-from capsem_builder.gate.tools.ci.reap_stale_processes import reap
+from capsem_builder.gate.tools.ci.reap_stale_processes import main, reap
 from helpers.gate import RecordingRunner
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -191,6 +191,26 @@ def test_asking_what_a_plan_would_do_reaps_nothing() -> None:
     assert runner.observing
     StaleProcesses(CONFIG, runner).acquire()
     assert not runner.commands
+
+
+def test_read_only_shutdown_wait_refuses_a_live_server_without_signalling(short: Path) -> None:
+    cache = short / "cache"
+    with _server(cache / "tools/sccache.sock") as server:
+        result = main([
+            "--program", PROGRAM, "--socket-environment", SOCKET_ENV,
+            "--cache-root", str(cache), "--grace-seconds", "0.01", "--wait-only",
+        ])
+        assert result == 1, "a still-serving daemon cannot count as acknowledged exit"
+        assert server.is_running(), "the read-only observer must never signal a server"
+
+
+def test_mutating_reaper_refuses_missing_cache_leases(short: Path) -> None:
+    with pytest.raises(SystemExit) as error:
+        main([
+            "--program", PROGRAM, "--socket-environment", SOCKET_ENV,
+            "--cache-root", str(short), "--grace-seconds", "0.01",
+        ])
+    assert error.value.code == 2
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux exposes an unreaped foreign child as a zombie")

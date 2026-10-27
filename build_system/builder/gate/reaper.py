@@ -8,11 +8,39 @@ reap.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from . import cachelayout
 from .config import GateConfig
 from .lifecycle import Resource
 from .proc import Runner
 from .pythonenv import uv_run
+
+
+def _arguments(config: GateConfig, root: Path) -> tuple[object, ...]:
+    return (
+        "python", "-m", config.toolchain.reaper_module,
+        "--program", config.toolchain.compiler_cache_command,
+        "--socket-environment", config.environment.sccache_server_uds,
+        "--cache-root", root,
+        "--grace-seconds", config.toolchain.reaper_grace_seconds,
+    )
+
+
+def wait_for_shutdown(config: GateConfig, runner: Runner, environment: dict[str, str]) -> None:
+    """Observe exit while the caller retains startup and exclusive cache use.
+
+    sccache 0.17 replies ShuttingDown before draining clients and exiting:
+    https://github.com/mozilla/sccache/blob/v0.17.0/src/server.rs#L833-L846
+    The read-only helper neither acquires the caller's locks nor sends signals.
+    """
+    runner.run(
+        uv_run(
+            config, "--no-sync", *_arguments(config, cachelayout.stage_path(config, "rust-sccache")),
+            "--wait-only",
+        ),
+        env=environment,
+    )
 
 
 class StaleProcesses(Resource, name="stale-processes"):
@@ -23,7 +51,6 @@ class StaleProcesses(Resource, name="stale-processes"):
     def acquire(self) -> None:
         if self._runner.observing:
             return
-        toolchain = self._config.toolchain
         paths = cachelayout.cache_paths(self._config)
         stage = paths.stage("rust-sccache")
         locks = tuple(
@@ -34,17 +61,7 @@ class StaleProcesses(Resource, name="stale-processes"):
         self._runner.run(
             uv_run(
                 self._config,
-                "python",
-                "-m",
-                toolchain.reaper_module,
-                "--program",
-                toolchain.compiler_cache_command,
-                "--socket-environment",
-                self._config.environment.sccache_server_uds,
-                "--cache-root",
-                cachelayout.cache_paths(self._config).root,
-                "--grace-seconds",
-                toolchain.reaper_grace_seconds,
+                *_arguments(self._config, paths.root),
                 *locks,
             )
         )

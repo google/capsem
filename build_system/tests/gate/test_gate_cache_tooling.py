@@ -169,7 +169,17 @@ def test_compiler_cache_server_is_scoped_to_the_gate_command(
 
     assert [command.argv for command in runner.commands] == [
         ("sccache", "--dist-status"),
-    ] + ([] if other_compiler else [("sccache", "--stop-server")])
+    ] + ([] if other_compiler else [
+        ("sccache", "--stop-server"),
+        (
+            "uv", "run", "--project", CONFIG.suites.pytest.build_system_project,
+            "--frozen", "--no-sync", "python", "-m", CONFIG.toolchain.reaper_module,
+            "--program", CONFIG.toolchain.compiler_cache_command,
+            "--socket-environment", CONFIG.environment.sccache_server_uds,
+            "--cache-root", str(paths.stage("rust-sccache")),
+            "--grace-seconds", str(CONFIG.toolchain.reaper_grace_seconds), "--wait-only",
+        ),
+    ])
     assert all(
         command.env[CONFIG.environment.sccache_base_dirs] == str(ROOT)
         for command in runner.commands

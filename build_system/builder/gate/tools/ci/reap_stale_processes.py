@@ -66,24 +66,39 @@ def reap(servers: list[tuple[psutil.Process, Path]], grace_seconds: float) -> li
     return [proc for proc in alive if is_live(proc)]
 
 
+def wait_for_exit(servers: list[tuple[psutil.Process, Path]], grace_seconds: float) -> list[psutil.Process]:
+    """Observe the acknowledged shutdown without signalling or taking leases."""
+    _, alive = psutil.wait_procs([proc for proc, _ in servers], timeout=grace_seconds)
+    return [proc for proc in alive if is_live(proc)]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--program", required=True)
     parser.add_argument("--socket-environment", required=True)
     parser.add_argument("--cache-root", required=True, type=Path)
     parser.add_argument("--grace-seconds", required=True, type=float)
-    parser.add_argument("--lease-lock", required=True, action="append", type=Path)
+    parser.add_argument("--lease-lock", action="append", type=Path)
+    parser.add_argument("--wait-only", action="store_true")
     args = parser.parse_args(argv)
 
-    with exclusive_paths(args.lease_lock) as idle:
-        if not idle:
-            print("compiler cache is in use; preserving its servers")
-            return 0
-        survivors = reap(
+    if args.wait_only:
+        survivors = wait_for_exit(
             stale_servers(args.program, args.socket_environment, args.cache_root), args.grace_seconds
         )
+    else:
+        if not args.lease_lock:
+            parser.error("reaping requires --lease-lock; --wait-only never signals processes")
+        with exclusive_paths(args.lease_lock) as idle:
+            if not idle:
+                print("compiler cache is in use; preserving its servers")
+                return 0
+            survivors = reap(
+                stale_servers(args.program, args.socket_environment, args.cache_root), args.grace_seconds
+            )
     for proc in survivors:
-        print(f"pid {proc.pid} survived SIGKILL", file=sys.stderr)
+        detail = "is still running after acknowledged shutdown" if args.wait_only else "survived SIGKILL"
+        print(f"pid {proc.pid} {detail}", file=sys.stderr)
     return 1 if survivors else 0
 
 

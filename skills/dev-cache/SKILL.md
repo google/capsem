@@ -253,6 +253,12 @@ After a failed or interrupted full attempt, automatic retries are refused.
 Use focused checks; obtain explicit approval for each reasoned full retry.
 The existing run journals supply this guard, not another history store.
 
+`sccache --stop-server` acknowledges shutdown before its daemon drains clients
+and exits. The last cache owner retains startup and exclusive cache-use locks
+through a bounded, read-only process-exit wait. Test this with a real open UNIX
+connection; an immediate PID assertion alone once passed locally and raced in
+CI. Do not sleep in the test or let the observer reacquire its caller's locks.
+
 Working-tree gates derive their private prefix name from the exact source
 digest. Do not replace it with a random run ID: Cargo fingerprints contain
 absolute source paths, so random prefixes turn an unchanged repeat into a

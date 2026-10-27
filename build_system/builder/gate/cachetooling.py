@@ -17,6 +17,7 @@ from . import cachelayout
 from .config import GateConfig
 from .lifecycle import Resource
 from .proc import Runner
+from .reaper import wait_for_shutdown
 
 PYTHONPYCACHEPREFIX = gatelaunch.PYCACHE
 
@@ -162,6 +163,7 @@ class CompilerCache(Resource, name="compiler-cache"):
                         (self._config.toolchain.compiler_cache_command, "--stop-server"),
                         env=self._environment,
                     )
+                    wait_for_shutdown(self._config, self._runner, self._environment)
 
     def environment(self) -> dict[str, str]:
         return self._environment
