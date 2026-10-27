@@ -69,6 +69,25 @@ pub fn openapi() -> OpenApi {
             ),
         );
     doc.add("/vms/{id}/bodies/export.warc.gz", HttpMethod::Get, archive);
+    let rows_archive = doc
+        .operation::<ErrorResponse>("/vms/{id}/export/rows.ndjson.gz", "exportVmRows")
+        .parameters(Some(ExportRowsQuery::into_params(|| Some(ParameterIn::Query))))
+        .response(
+            "200",
+            ResponseBuilder::new()
+                .description("Session ledger table rows as a gzipped NDJSON stream (`capsem.rows.v1`)")
+                .content(
+                    "application/gzip",
+                    ContentBuilder::new()
+                        .schema(Some(
+                            ObjectBuilder::new()
+                                .schema_type(Type::String)
+                                .format(Some(SchemaFormat::KnownFormat(KnownFormat::Binary))),
+                        ))
+                        .build(),
+                ),
+        );
+    doc.add("/vms/{id}/export/rows.ndjson.gz", HttpMethod::Get, rows_archive);
     let timeline = doc
         .operation::<TimelineResponse>("/vms/{id}/timeline", "getVmTimeline")
         .parameters(Some(TimelineQuery::into_params(|| Some(ParameterIn::Query))));

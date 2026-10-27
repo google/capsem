@@ -8,7 +8,12 @@ from pathlib import Path
 import pytest
 from helpers.constants import ASSETS_DIR
 from helpers.gateway import GatewayInstance
-from helpers.sdk_packages import inspect_ai_gateway, python_gateway, typescript_gateway
+from helpers.sdk_packages import (
+    harbor_gateway,
+    inspect_ai_gateway,
+    python_gateway,
+    typescript_gateway,
+)
 from helpers.service import ServiceInstance
 
 from tests.fixtures.oci.registry import grant_exact, registry
@@ -77,6 +82,7 @@ def test_installed_sdk_oci_create_and_execution_targets(language: str, tmp_path:
 
 @pytest.mark.integration
 def test_inspect_ai_live_vm_sandbox_acceptance() -> None:
+    """Verify installed integrations/common and integrations/inspect-ai wheels/sdists against a live VM."""
     service = ServiceInstance()
     gateway = GatewayInstance(service.uds_path)
     try:
@@ -100,6 +106,36 @@ def test_inspect_ai_live_vm_sandbox_acceptance() -> None:
         assert "INSPECT_CAPSEM_CONTAINER_ACCEPTANCE_OK" in output
         assert "INSPECT_CAPSEM_HOST_BUILD_ACCEPTANCE_OK" in output
         assert "INSPECT_CAPSEM_VM_ACCEPTANCE_OK" in output
+        print(output.strip())
+    finally:
+        gateway.stop()
+        service.stop()
+
+
+@pytest.mark.integration
+def test_harbor_live_vm_sandbox_acceptance() -> None:
+    """Verify installed integrations/common and integrations/harbor wheels/sdists against a live VM."""
+    service = ServiceInstance()
+    gateway = GatewayInstance(service.uds_path)
+    try:
+        service.start()
+        gateway.start()
+        environment = {
+            **{key: value for key, value in os.environ.items() if key != "VIRTUAL_ENV"},
+            "CAPSEM_HOME": str(service.home_dir),
+            "CAPSEM_ASSETS_DIR": str(service.assets_dir or ASSETS_DIR),
+            "CAPSEM_GATEWAY_URL": gateway.base_url,
+            "CAPSEM_GATEWAY_TOKEN": gateway.token,
+        }
+        output = harbor_gateway(
+            ROOT,
+            environment,
+            probe="live_acceptance.py",
+            success_marker="HARBOR_CAPSEM_VM_ACCEPTANCE_OK",
+            timeout_seconds=240,
+        )
+        assert "SDK_IMAGE_PACKAGE_ACCEPTANCE_OK" in output
+        assert "HARBOR_CAPSEM_VM_ACCEPTANCE_OK" in output
         print(output.strip())
     finally:
         gateway.stop()

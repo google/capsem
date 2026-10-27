@@ -15,7 +15,7 @@ __all__ = [
 
 def __getattr__(name: str) -> Any:
     if name == "HostBuildGrant":
-        from inspect_capsem.containers.build_grant import HostBuildGrant
+        from capsem_integrations.containers.build_grant import HostBuildGrant
 
         return HostBuildGrant
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

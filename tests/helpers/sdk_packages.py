@@ -155,16 +155,27 @@ def typescript_gateway(
     return result
 
 
-def inspect_ai_gateway(
-    root: Path, environment: Mapping[str, str], *, probe: str = "live_acceptance.py",
-    success_marker: str = "INSPECT_CAPSEM_VM_ACCEPTANCE_OK", timeout_seconds: int = 240,
+def _integration_gateway(
+    root: Path,
+    environment: Mapping[str, str],
+    *,
+    section: str,
+    prefix_tag: str,
+    entry_point: str,
+    probe: str,
+    success_marker: str,
+    timeout_seconds: int = 240,
 ) -> str:
     gate_cfg = tomllib.loads((root / "config/gate.toml").read_text())
     sdk_settings = gate_cfg["sdk_python"]
     sdk_manifest = tomllib.loads((root / sdk_settings["manifest"]).read_text())["project"]
     sdk_stem = f"{sdk_manifest['name'].replace('-', '_')}-{sdk_manifest['version']}"
     sdk_wheel = _archive(root / sdk_settings["build_output"], f"{sdk_stem}-*.whl")
-    settings = gate_cfg["integrations_inspect_ai"]
+    common_settings = gate_cfg["integrations_common"]
+    common_manifest = tomllib.loads((root / common_settings["manifest"]).read_text())["project"]
+    common_stem = f"{common_manifest['name'].replace('-', '_')}-{common_manifest['version']}"
+    common_wheel = _archive(root / common_settings["build_output"], f"{common_stem}-*.whl")
+    settings = gate_cfg[section]
     project_python = root / settings["project"] / ".venv/bin/python"
     base_python = str(project_python.resolve()) if project_python.exists() else sys.executable
     manifest = tomllib.loads((root / settings["manifest"]).read_text())["project"]
@@ -174,7 +185,7 @@ def inspect_ai_gateway(
     for kind, pattern in (("wheel", f"{stem}-*.whl"), ("sdist", f"{stem}.tar.gz")):
         archive = _archive(output, pattern)
         digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-        with tempfile.TemporaryDirectory(prefix=f"braavos-inspect-{kind}-") as temporary:
+        with tempfile.TemporaryDirectory(prefix=f"braavos-{prefix_tag}-{kind}-") as temporary:
             work = Path(temporary)
             assert not work.resolve().is_relative_to(root.resolve())
             prefix = work / "runtime"
@@ -190,7 +201,7 @@ def inspect_ai_gateway(
             )
             pip_cmd = [
                 "uv", "pip", "install", "--offline", "--no-deps",
-                "--python", str(python), str(sdk_wheel), str(archive),
+                "--python", str(python), str(sdk_wheel), str(common_wheel), str(archive),
             ]
             _run(pip_cmd, work, environment)
             payload = work / "payload.py"
@@ -213,7 +224,7 @@ def inspect_ai_gateway(
             receipt = json.loads(report.read_text())
             assert receipt["ok"] and receipt["isolated"]
             assert receipt["sha256"] == digest and receipt["version"] == manifest["version"]
-            assert receipt["entry_point"] == "inspect_capsem._registry"
+            assert receipt["entry_point"] == entry_point
             assert Path(receipt["prefix"]).resolve() == prefix.resolve()
             result += _run([str(python), "-I", str(gateway)], work, environment,
                            timeout_seconds=timeout_seconds)
@@ -222,3 +233,23 @@ def inspect_ai_gateway(
         assert not work.exists()
         assert hashlib.sha256(archive.read_bytes()).hexdigest() == digest
     return "".join(results)
+def inspect_ai_gateway(
+    root: Path, environment: Mapping[str, str], *, probe: str = "live_acceptance.py",
+    success_marker: str = "INSPECT_CAPSEM_VM_ACCEPTANCE_OK", timeout_seconds: int = 240,
+) -> str:
+    return _integration_gateway(
+        root, environment, section="integrations_inspect_ai", prefix_tag="inspect",
+        entry_point="inspect_capsem._registry", probe=probe,
+        success_marker=success_marker, timeout_seconds=timeout_seconds,
+    )
+
+
+def harbor_gateway(
+    root: Path, environment: Mapping[str, str], *, probe: str = "live_acceptance.py",
+    success_marker: str = "HARBOR_CAPSEM_VM_ACCEPTANCE_OK", timeout_seconds: int = 240,
+) -> str:
+    return _integration_gateway(
+        root, environment, section="integrations_harbor", prefix_tag="harbor",
+        entry_point="harbor_capsem:CapsemEnvironment", probe=probe,
+        success_marker=success_marker, timeout_seconds=timeout_seconds,
+    )

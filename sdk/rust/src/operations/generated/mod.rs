@@ -39,6 +39,8 @@ mod exec_vm;
 pub use exec_vm::{exec_vm, ExecVmParams};
 mod export_vm_bodies;
 pub use export_vm_bodies::{export_vm_bodies, ExportVmBodiesParams};
+mod export_vm_rows;
+pub use export_vm_rows::{export_vm_rows, ExportVmRowsParams};
 mod fork_vm;
 pub use fork_vm::{fork_vm, ForkVmParams};
 mod get_asset_status;

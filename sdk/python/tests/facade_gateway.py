@@ -31,6 +31,8 @@ class GatewayState:
     sandboxes: dict[str, str] = field(default_factory=dict)
     created_vms: dict[str, tuple[str, bool]] = field(default_factory=dict)
     sandbox_labels: dict[str, dict[str, str] | None] = field(default_factory=dict)
+    rows_bytes: bytes = b""
+    warc_bytes: bytes = b""
 
 
 def response_model(schema_name: str, **fields: Any) -> dict[str, Any]:
@@ -145,6 +147,10 @@ async def gateway() -> AsyncIterator[tuple[str, GatewayState]]:
             ))
         if request.path.endswith("/preview-session") and state.preview_session_status is not None:
             return web.Response(status=state.preview_session_status, text="preview session refused")
+        if request.path.endswith("/export/rows.ndjson.gz"):
+            return web.Response(body=state.rows_bytes, content_type="application/gzip")
+        if request.path.endswith("/bodies/export.warc.gz"):
+            return web.Response(body=state.warc_bytes, content_type="application/warc")
         if request.path.endswith("/files/content"):
             path = request.query["path"]
             if request.method == "GET":

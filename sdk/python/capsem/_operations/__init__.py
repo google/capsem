@@ -28,6 +28,7 @@ from .disconnect_connection import disconnect_connection as disconnect_connectio
 from .download_vm_file import download_vm_file as download_vm_file
 from .exec_vm import exec_vm as exec_vm
 from .export_vm_bodies import export_vm_bodies as export_vm_bodies
+from .export_vm_rows import export_vm_rows as export_vm_rows
 from .fork_vm import fork_vm as fork_vm
 from .get_asset_status import get_asset_status as get_asset_status
 from .get_connection import get_connection as get_connection

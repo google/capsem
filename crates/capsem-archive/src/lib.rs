@@ -34,7 +34,7 @@ pub use format::{
 };
 pub use reader::{BlockExtent, BodyLogReader};
 pub use retain::{commit_retained, stage_retained_blocks, validate_block_extent, RetainedStaging};
-pub use warc::{write_record, WarcRecord};
+pub use warc::{gunzip_bytes, write_record, GzipChunkEncoder, WarcRecord};
 pub use writer::{BodyLogSync, BodyLogWriter, SegmentWritten};
 
 #[cfg(test)]

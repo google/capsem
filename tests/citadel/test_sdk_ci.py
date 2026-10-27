@@ -88,15 +88,20 @@ def test_sdk_ci_owns_cold_install_tests_and_complete_coverage() -> None:
 
 def test_inspect_extension_ci_owns_prewarm_tests_and_coverage() -> None:
     fast, ci, coverage = _documents()
-    prewarm = PYTHON_PREWARM.replace("sdk/python ", "integrations/inspect-ai ")
-    assert any(prewarm in step.get("run", "").splitlines() for step in fast["jobs"]["static"]["steps"]), RATIONALE
-    steps = ci["jobs"]["test"]["steps"]
-    test = next(step for step in steps if step.get("working-directory") == "integrations/inspect-ai")
-    assert "--junitxml=../../cache/target/coverage/junit/inspect-ai.xml" in test["run"], RATIONALE
-    upload = next(step for step in steps if step.get("with", {}).get("flags") == "inspect-ai")
-    assert upload["with"]["files"] == "cache/target/coverage/inspect-ai/coverage.xml", RATIONALE
-    assert coverage["flags"]["inspect-ai"]["paths"] == ["integrations/inspect-ai/inspect_capsem/**"], RATIONALE
-    assert coverage["coverage"]["status"]["project"]["inspect-ai"]["target"] == "90%", RATIONALE
+    for proj, flag, src_glob in (
+        ("integrations/common", "integrations-common", "integrations/common/capsem_integrations/**"),
+        ("integrations/inspect-ai", "inspect-ai", "integrations/inspect-ai/inspect_capsem/**"),
+        ("integrations/harbor", "harbor", "integrations/harbor/harbor_capsem/**"),
+    ):
+        prewarm = PYTHON_PREWARM.replace("sdk/python ", f"{proj} ")
+        assert any(prewarm in step.get("run", "").splitlines() for step in fast["jobs"]["static"]["steps"]), RATIONALE
+        steps = ci["jobs"]["test"]["steps"]
+        test = next(step for step in steps if step.get("working-directory") == proj)
+        assert f"--junitxml=../../cache/target/coverage/junit/{flag}.xml" in test["run"], RATIONALE
+        upload = next(step for step in steps if step.get("with", {}).get("flags") == flag)
+        assert upload["with"]["files"] == f"cache/target/coverage/{flag}/coverage.xml", RATIONALE
+        assert coverage["flags"][flag]["paths"] == [src_glob], RATIONALE
+        assert coverage["coverage"]["status"]["project"][flag]["target"] == "90%", RATIONALE
 
 
 @pytest.mark.parametrize("mutation", [

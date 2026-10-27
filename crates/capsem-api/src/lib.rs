@@ -37,7 +37,7 @@ pub use history::*;
 mod stats_detail;
 pub use stats_detail::*;
 pub mod bodies;
-pub use bodies::{BodyEncoding, EventBodiesQuery, EventBodiesResponse};
+pub use bodies::{BodyEncoding, EventBodiesQuery, EventBodiesResponse, ExportRowsQuery};
 mod interactions;
 pub use interactions::*;
 mod logs;

@@ -52,6 +52,11 @@ def test_built_distribution_installs_and_runs_in_an_isolated_runtime(kind: str) 
     sdk_stem = f"{sdk_manifest['name'].replace('-', '_')}-{sdk_manifest['version']}"
     sdk_wheel = _ensure_built_archive(root, sdk_cfg, f"{sdk_stem}-*.whl")
 
+    common_cfg = gate_cfg["integrations_common"]
+    common_manifest = tomllib.loads((root / common_cfg["manifest"]).read_text())["project"]
+    common_stem = f"{common_manifest['name'].replace('-', '_')}-{common_manifest['version']}"
+    common_wheel = _ensure_built_archive(root, common_cfg, f"{common_stem}-*.whl")
+
     config = gate_cfg["integrations_inspect_ai"]
     project_python = root / config["project"] / ".venv/bin/python"
     base_python = str(project_python.resolve()) if project_python.exists() else sys.executable
@@ -92,6 +97,7 @@ def test_built_distribution_installs_and_runs_in_an_isolated_runtime(kind: str) 
                 "--python",
                 str(python),
                 str(sdk_wheel),
+                str(common_wheel),
                 str(archive),
             ],
         ]

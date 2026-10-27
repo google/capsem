@@ -22,7 +22,7 @@ def _is_dockerfile_string(s: str) -> bool:
 
 def _validate_direct_volumes(cfg: CapsemSandboxConfig) -> CapsemSandboxConfig:
     if cfg.volumes:
-        from .containers import normalize_volumes
+        from capsem_integrations.containers import normalize_volumes
 
         normalize_volumes(cfg.volumes, None, cfg.allowed_host_paths)
     return cfg
@@ -34,7 +34,10 @@ def resolve_compose_file(
     """Resolve `cfg.compose_file` and return an updated `CapsemSandboxConfig`."""
     if not cfg.compose_file or not cfg.compose_file.strip():
         return _validate_direct_volumes(cfg)
-    from .containers import extract_capsem_compose_fields, parse_host_compose_yaml_file
+    from capsem_integrations.containers import (
+        extract_capsem_compose_fields,
+        parse_host_compose_yaml_file,
+    )
 
     compose_path = Path(cfg.compose_file)
     if not compose_path.is_file():
@@ -96,7 +99,7 @@ def coerce_config(
             return CapsemSandboxConfig(execution_mode="container", dockerfile=s)
         return CapsemSandboxConfig(execution_mode="container", image=s)
     if isinstance(config, ComposeConfig):
-        from .containers import extract_capsem_compose_fields
+        from capsem_integrations.containers import extract_capsem_compose_fields
 
         overrides = extract_capsem_compose_fields(
             config.model_dump(exclude_none=True), base_dir=None, sample_metadata=sample_metadata
