@@ -1737,7 +1737,7 @@ normative invariant and contract test in this document remains satisfied.
 
 ## Client registry publication
 
-Stable binary publication also publishes the Python, TypeScript and Rust SDKs,
+Stable binary publication also publishes the Python and TypeScript SDKs,
 the SDK-backed npm MCP server, and the Inspect adapter from that exact source.
 This is a continuation of the binary release, not another operator entrypoint
 or a VM runtime manifest family. Nightly native publication does not consume
@@ -1747,14 +1747,22 @@ The SDKs and MCP server use the native version. Inspect retains its own version
 and MUST require a compatible SDK. Qualification MUST build and verify the
 actual registry archives, preserve them across the workflow handoff, and test
 the packaged clients against the native service. Publication MUST validate
-archive identity and source before using registry credentials. Rust library
-dependencies precede the Rust SDK; the Python SDK precedes Inspect; the npm SDK
+archive identity and source before using registry credentials. The Python SDK precedes Inspect; the npm SDK
 precedes MCP.
+
+Rust SDK source and local archive qualification remain required. Cargo registry
+publication and its clean public registry consumer are deferred until publishing
+is configured, tracked in https://github.com/google/capsem/issues/382. Cargo
+publisher credentials and public crates are not prerequisites for this release.
 
 The existing binary release authority and its complete qualification remain
 required. Registry publication starts only after native publication and public
 native download/install verification succeed. Its prerequisites MUST fail early
-when publisher credentials are missing. Configured credentials do not by
+when required PyPI publisher credentials are missing. npm MUST use GitHub Actions
+OIDC trusted publishing without an npm registry token; both the calling binary
+workflow and the reusable publisher MUST grant `id-token: write`. The trusted
+publisher configuration authorizes the calling workflow `release.yaml` for
+both npm packages. Configured publishing authority does not by
 themselves establish package ownership; the registry must authorize each upload.
 
 Registries are immutable and independent. Publication is resumable only when

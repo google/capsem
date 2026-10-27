@@ -14,10 +14,8 @@ from pathlib import Path
 from ...gate.config import GateConfig, load
 from .client_package_archives import Package, collect
 from .client_registry import inspect
-from .package_rust_sdk import cargo_metadata
-from .verify_immutable_publication import file_identity
 
-CREDENTIALS = ("PYPI_TOKEN", "NPM_TOKEN", "CARGO_REGISTRY_TOKEN")
+CREDENTIALS = ("PYPI_TOKEN",)
 
 
 def require_credentials(environment: Mapping[str, str]) -> None:
@@ -53,7 +51,7 @@ def validate_order(packages: tuple[Package, ...]) -> None:
 
 
 def _read_only_environment(environment: Mapping[str, str]) -> dict[str, str]:
-    sensitive = {*CREDENTIALS, "NODE_AUTH_TOKEN", "UV_PUBLISH_TOKEN"}
+    sensitive = {*CREDENTIALS, "NPM_TOKEN", "CARGO_REGISTRY_TOKEN", "NODE_AUTH_TOKEN", "UV_PUBLISH_TOKEN"}
     return {key: value for key, value in environment.items() if key not in sensitive}
 
 
@@ -68,22 +66,18 @@ def _upload(config: GateConfig, package: Package, missing: list[Path], environme
         _run(config, ["uv", "publish", "--publish-url", "https://upload.pypi.org/legacy/",
                       "--trusted-publishing", "never", *map(str, missing)], child)
     elif package.registry == "npm":
-        child["NODE_AUTH_TOKEN"] = environment["NPM_TOKEN"]
+        # npm uses the workflow's short-lived OIDC authority, never a registry
+        # token. whoami cannot validate trusted-publisher permission.
+        if environment.get("GITHUB_ACTIONS") != "true" or any(
+            not environment.get(key, "").strip()
+            for key in ("ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN")
+        ):
+            raise ValueError("npm publication requires GitHub Actions OIDC authority")
         _run(config, ["npm", "publish", str(package.archives[0]), "--access", "public",
-                      "--registry=https://registry.npmjs.org", "--ignore-scripts", "--provenance"], child)
+                      "--registry=https://registry.npmjs.org", "--ignore-scripts", "--provenance",
+                      "--tag", "latest"], child)
     else:
-        # Verify the actual standalone payload without exposing a publish token
-        # to dependency build scripts. Cargo's upload then skips this same build.
-        _run(config, ["cargo", "package", "--locked", "--package", package.name], child)
-        target = Path(cargo_metadata(config.root)["target_directory"]) / "package" / package.archives[0].name
-        expected = file_identity(package.archives[0])
-        if file_identity(target) != expected:
-            raise ValueError(f"Cargo repackaged different bytes before upload: {package.name}")
-        child["CARGO_REGISTRY_TOKEN"] = environment["CARGO_REGISTRY_TOKEN"]
-        _run(config, ["cargo", "publish", "--locked", "--registry", "crates-io",
-                      "--package", package.name, "--no-verify"], child)
-        if file_identity(target) != expected:
-            raise ValueError(f"Cargo uploaded different archive bytes: {package.name}")
+        raise ValueError(f"registry publication is disabled: {package.registry}")
 
 
 def _await_public(package: Package) -> None:
@@ -98,23 +92,19 @@ def _await_public(package: Package) -> None:
 
 def publish(config: GateConfig, packages: tuple[Package, ...], environment: Mapping[str, str]) -> None:
     require_credentials(environment)
+    # Cargo remains locally qualified; registry publication is deferred in
+    # https://github.com/google/capsem/issues/382 until its CI setup is ready.
+    packages = tuple(package for package in packages if package.registry != "crates")
     validate_order(packages)
     # All immutable conflicts are checked before the first upload. A failure
     # resumes only exact existing bytes; there is no skip-existing escape hatch.
     existing = {package: inspect(package) for package in packages}
-    child = _read_only_environment(environment)
-    child["NODE_AUTH_TOKEN"] = environment["NPM_TOKEN"]
-    _run(config, ["npm", "whoami", "--registry=https://registry.npmjs.org"], child)
     for package in packages:
         missing = [archive for archive in package.archives if archive not in existing[package]]
         if missing:
             _upload(config, package, missing, environment)
         _await_public(package)
         print(f"Public verified: {package.registry} {package.name} {package.version}", flush=True)
-    for package in packages:
-        if package.registry == "npm":
-            _run(config, ["npm", "dist-tag", "add", f"{package.name}@{package.version}", "latest",
-                          "--registry=https://registry.npmjs.org"], child)
 
 
 def main() -> None:

@@ -56,13 +56,3 @@ try {
 } finally {await client.close(); await transport.close();}
 console.log('PUBLIC_NODE_MCP_OK');
 '''
-
-RUST = '''\
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = capsem_sdk::Hypervisor::local()?;
-    assert_eq!(client.info().await?.gateway_version, std::env::var("CLIENT_VERSION")?);
-    println!("PUBLIC_RUST_OK");
-    Ok(())
-}
-'''

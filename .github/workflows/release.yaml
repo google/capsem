@@ -72,8 +72,6 @@ jobs:
         if: ${{ inputs.channel == 'stable' && inputs.publish == true }}
         env:
           PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: uv run --project build_system --frozen python -m capsem_builder.release.tools.client_publishers check-credentials
 
   runtime-preflight:
@@ -1310,8 +1308,6 @@ jobs:
       release_tag: ${{ inputs.tag }}
     secrets:
       PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
   cleanup-unpublished-version-claim:
     needs: [verify-release-downloads]
