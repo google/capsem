@@ -84,7 +84,7 @@ def test_update_assets_hydrates_from_manifest_metadata_file_url(
     assert result.returncode == 0, (
         f"capsem update --assets failed\nstdout={result.stdout}\nstderr={result.stderr}"
     )
-    assert f"Using local asset source {source_assets}" in result.stdout
+    assert "Refreshed 3 asset(s)." in result.stdout
 
     for logical_name, data in files.items():
         digest = _blake3(data)
@@ -138,7 +138,7 @@ def test_update_assets_manifest_override_hydrates_from_file_url(
         f"stdout={result.stdout}\nstderr={result.stderr}"
     )
     assert f"Installed asset manifest from {manifest_path.as_uri()}" in result.stdout
-    assert f"Using local asset source {source_assets}" in result.stdout
+    assert "Refreshed 3 asset(s)." in result.stdout
 
     installed_manifest = json.loads((installed_assets / "manifest.json").read_text())
     assert installed_manifest == manifest

@@ -468,6 +468,25 @@ fn local_manifest_metadata_never_falls_back_on_invalid_or_missing_sources() {
     }
 }
 
+#[test]
+fn local_manifest_metadata_bare_path_explains_url_formats() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("manifest-metadata.json"),
+        serde_json::json!({"manifest_url":"/tmp/manifest.json"}).to_string(),
+    )
+    .unwrap();
+    let error = local_manifest_asset_source(dir.path()).unwrap_err().to_string();
+    for expected in [
+        "asset manifest metadata source must be a URL",
+        "https://...",
+        "http://...",
+        "file:///absolute/path",
+    ] {
+        assert!(error.contains(expected), "{error}");
+    }
+}
+
 fn declared_manifest(asset_base: String) -> ManifestV2 {
     let mut assets = std::collections::HashMap::new();
     for (name, bytes) in DECLARED_ASSETS {

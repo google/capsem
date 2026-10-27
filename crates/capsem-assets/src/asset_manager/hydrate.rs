@@ -40,7 +40,9 @@ pub fn local_manifest_asset_source(base_dir: &Path) -> Result<Option<PathBuf>> {
     let Some(source) = metadata.get("manifest_url").and_then(|value| value.as_str()) else {
         return Ok(None);
     };
-    let url = reqwest::Url::parse(source).context("asset manifest metadata source must be a URL")?;
+    let url = reqwest::Url::parse(source).context(
+        "asset manifest metadata source must be a URL: use https://..., http://..., or file:///absolute/path",
+    )?;
     if matches!(url.scheme(), "http" | "https") {
         return Ok(None);
     }
