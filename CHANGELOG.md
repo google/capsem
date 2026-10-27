@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Security: Except unpatched deepmerge 4.3.1 advisory GHSA-gcqx-w48m-w2h4 only in Svelte/Vite build tooling until November 10, 2026; the dependency does not ship in the static app, native binaries or VM runtime.
+
 - Give the standalone runtime boot probe a real descriptor-confined metadata authority for its writable VirtioFS share, preserving KVM admission and guest boot verification.
 
 - Preserve exact-source client-publication guards while requiring npm OIDC authority and excluding deferred Cargo credentials.

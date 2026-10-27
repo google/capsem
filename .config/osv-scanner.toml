@@ -9,6 +9,11 @@
 # all of this.
 
 [[IgnoredVulns]]
+id = "GHSA-gcqx-w48m-w2h4"
+ignoreUntil = 2026-11-10T00:00:00Z
+reason = "deepmerge 4.3.1 is used only for build-configuration merging by @astrojs/svelte 9.0.1 -> @sveltejs/vite-plugin-svelte 7.2.0 in web/app and web/marketing. The Vite plugin runs on the build host; it is not part of the emitted static browser app, native binaries or VM runtime. Reviewed 2026-10-27: npm's complete published-version list ends at 4.3.1 and GHSA-gcqx-w48m-w2h4 lists no patched version. Upstream must ship the fix; RELEASE.md section 8.2 permits this build-time-only exception. Recheck by 2026-11-10."
+
+[[IgnoredVulns]]
 id = "GHSA-qwgh-2vcv-g2f7"
 ignoreUntil = 2026-11-10T00:00:00Z
 reason = "block-buffer 0.10.4 keeps its cursor outside the payload and passes the advisory caught-panic PoC; 0.12.0 reproduces the failure and 0.12.1 fixes it. The live audit binds this review to the exact legacy Cargo checksum and rejects every out-of-scope finding; stable Axum and Tauri still require the legacy branch."
