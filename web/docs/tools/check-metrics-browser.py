@@ -38,35 +38,65 @@ try:
             errors = []
             page.on("pageerror", lambda e, collected=errors: collected.append(str(e)))
             page.goto(args.base_url + "/architecture/statistics/")
-            radar = page.locator('metric-chart[data-group="composition"]').first
-            radar.scroll_into_view_if_needed()
-            radar.locator("svg").wait_for()
-            pie = page.locator('metric-chart[data-group="composition"]').nth(1)
+            pie = page.locator('metric-chart[data-group="composition"]')
+            assert pie.count() == 1
             pie.scroll_into_view_if_needed()
             pie.locator("svg").wait_for()
-            radar.scroll_into_view_if_needed()
             assert (
-                page.locator('metric-chart[data-group="composition"] svg').count() == 2
+                page.locator(
+                    "[data-chart-title]", has_text="Code composition radar"
+                ).count()
+                == 0
             )
-            radar.locator("select").select_option("0")
-            assert (
-                page.locator('metric-chart[data-group="composition"]')
-                .nth(1)
-                .locator("select")
-                .input_value()
-                == "0"
+            pie.locator("select").select_option("0")
+            assert "1,020" in pie.locator("[data-chart-note]").inner_text()
+            pie.locator("select").select_option(index=pie.locator("option").count() - 1)
+            expected = pie.evaluate(
+                "e => { const s = JSON.parse(e.dataset.spec); return s.labels.map((name, i) => [name, s.series[0].values[i].toFixed(2) + '%']); }"
             )
-            assert "1,020" in radar.locator("[data-chart-note]").inner_text()
-            radar.locator("select").select_option(
-                index=radar.locator("option").count() - 1
+            legend_text = " ".join(pie.locator("svg text").all_text_contents())
+            for name, percentage in expected:
+                assert name in legend_text, f"Missing category {name}"
+                assert percentage in legend_text, (
+                    f"Missing default percentage for {name}"
+                )
+            plot = pie.locator(".metric-plot").bounding_box()
+            legend = (
+                pie.locator("svg")
+                .get_by_text("Tests & support", exact=False)
+                .first.bounding_box()
+            )
+            assert legend["x"] > plot["x"] + plot["width"] / 2, (
+                "Composition legend must be on the right"
             )
             for kind in ["csv", "svg"]:
                 with page.expect_download() as download:
-                    radar.locator(f'[data-export="{kind}"]').click()
+                    pie.locator(f'[data-export="{kind}"]').click()
                 path = out / f"{width}-{download.value.suggested_filename}"
                 download.value.save_as(path)
                 assert path.stat().st_size > 30
             page.screenshot(path=str(out / f"statistics-{width}.png"))
+            client = page.locator('metric-chart[data-group="clients"]')
+            assert client.evaluate("e => JSON.parse(e.dataset.spec).type") == "radar"
+            assert client.evaluate("e => JSON.parse(e.dataset.spec).unit") == "LOC"
+            client.scroll_into_view_if_needed()
+            client.locator("svg").wait_for()
+            client.locator("select").select_option("0")
+            client.locator("select").select_option(
+                index=client.locator("option").count() - 1
+            )
+            page.screenshot(path=str(out / f"client-radar-{width}.png"))
+            releases = page.locator("metric-chart").filter(
+                has=page.locator(
+                    "[data-chart-title]",
+                    has_text="Successful release attempts over time",
+                )
+            )
+            assert releases.count() == 1
+            assert releases.evaluate("e => JSON.parse(e.dataset.spec).unit") == "%"
+            releases.scroll_into_view_if_needed()
+            releases.locator("svg").wait_for()
+            page.screenshot(path=str(out / f"release-success-{width}.png"))
             dep = page.locator("crate-dependencies")
             dep.scroll_into_view_if_needed()
             dep.locator("[data-month]").select_option("0")
@@ -111,7 +141,7 @@ try:
             ), "Benchmarks overflow"
             assert not errors, errors
             print(
-                f"{width}px: synchronized charts, CSV/SVG downloads, dependency filtering/zoom, benchmark selections, no overflow or browser errors"
+                f"{width}px: composition pie/right legend, client radar, CSV/SVG downloads, dependency filtering/zoom, benchmark selections, no overflow or browser errors"
             )
             page.close()
         browser.close()

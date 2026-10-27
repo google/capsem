@@ -6,7 +6,7 @@ const { variants = [], initial = Math.max(0, variants.length - 1), spec = varian
 if (!spec) throw new Error('A metric chart needs a specification');
 const selected = initial;
 ---
-<metric-chart class="metric-card" data-spec={JSON.stringify(spec)} data-variants={JSON.stringify(variants)} data-group={group}>
+<metric-chart class="metric-card" data-chart-type={spec.type} data-spec={JSON.stringify(spec)} data-variants={JSON.stringify(variants)} data-group={group}>
   <div class="metric-card-header">
     <strong data-chart-title>{spec.title}</strong>
     <div class="metric-actions">
