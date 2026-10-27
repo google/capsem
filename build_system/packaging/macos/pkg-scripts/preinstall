@@ -20,6 +20,7 @@ if [ -n "${USER:-}" ] && [ "$USER" != "root" ]; then
     CAPSEM_DIR="$USER_HOME/.capsem"
     su "$USER" -c "CAPSEM_INSTALL_RUN_ID=$INSTALL_RUN_ID /bin/bash -s" <<'CAPSEM_USER'
 set -euo pipefail
+umask 077
 mkdir -p "$HOME/.capsem/logs"
 touch "$HOME/.capsem/logs/install.log" "$HOME/.capsem/logs/install-$CAPSEM_INSTALL_RUN_ID.log"
 printf '%s\n' "$CAPSEM_INSTALL_RUN_ID" > "$HOME/.capsem/logs/install-current-run"

@@ -31,6 +31,7 @@ CAPSEM_DIR="$USER_HOME/.capsem"
 INSTALL_LOG="$CAPSEM_DIR/logs/install.log"
 su "$USER" -c '/bin/bash -s' <<'CAPSEM_USER'
 set -euo pipefail
+umask 077
 mkdir -p "$HOME/.capsem/logs"
 CAPSEM_USER
 # HOME expands in the installing user's shell.
@@ -60,6 +61,7 @@ echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=start user=$USER 
 CAPSEM_INSTALL_PHASE="prepare_layout"
 su "$USER" -c '/bin/bash -s' <<'CAPSEM_USER'
 set -euo pipefail
+umask 077
 CAPSEM_DIR="$HOME/.capsem"
 rm -rf "$CAPSEM_DIR"/bin.backup*
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=retired_binary_backups_removed"

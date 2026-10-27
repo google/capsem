@@ -58,6 +58,7 @@ CAPSEM_INSTALL_FAILURE_AS_USER=1
 capsem_install_enable_failure_trap
 su "$TARGET_USER" -c "CAPSEM_INSTALL_RUN_ID=$INSTALL_RUN_ID /bin/bash -s" <<'CAPSEM_USER'
 set -euo pipefail
+umask 077
 mkdir -p "$HOME/.capsem/logs"
 touch "$HOME/.capsem/logs/install.log" "$HOME/.capsem/logs/install-$CAPSEM_INSTALL_RUN_ID.log"
 printf '%s\n' "$CAPSEM_INSTALL_RUN_ID" > "$HOME/.capsem/logs/install-current-run"

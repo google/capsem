@@ -5,10 +5,10 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
+
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-DIAGNOSTICS = (
-    PROJECT_ROOT / "build_system" / "packaging" / "shared" / "install-diagnostics"
-)
+DIAGNOSTICS = PROJECT_ROOT / "build_system" / "packaging" / "shared" / "install-diagnostics"
 
 
 def test_install_failure_trap_writes_actionable_report_and_preserves_status(
@@ -110,7 +110,7 @@ def test_linux_package_scripts_embed_and_enable_failure_diagnostics() -> None:
 
     assert "embed_install_diagnostics" in repack_deb
     assert "embed_native_cohort_retirement" in repack_deb
-    assert 'sed -n \'2,$p\' "$SCRIPT_DIR/../shared/$helper"' in repack_deb
+    assert "sed -n '2,$p' \"$SCRIPT_DIR/../shared/$helper\"" in repack_deb
     assert "embed_pkg_script install-diagnostics" in repack_deb
     assert "embed_pkg_script retire-cohort" in repack_deb
     assert 'capsem_retire_native_cohort "$CAPSEM_DIR" "$TARGET_UID"' in preinst
@@ -118,3 +118,39 @@ def test_linux_package_scripts_embed_and_enable_failure_diagnostics() -> None:
         assert "capsem_install_enable_failure_trap" in script
         assert 'CAPSEM_INSTALL_FAILURE_FILE="$CAPSEM_DIR/logs/install-failure.txt"' in script
         assert 'CAPSEM_INSTALL_RUN_LOG="$INSTALL_RUN_LOG"' in script
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "build_system/packaging/linux/deb-preinst.sh",
+        "build_system/packaging/linux/deb-postinst.sh",
+        "build_system/packaging/macos/pkg-scripts/preinstall",
+        "build_system/packaging/macos/pkg-scripts/postinstall",
+    ],
+)
+@pytest.mark.parametrize("inherited_umask", ["0000", "0002"])
+def test_user_log_initialization_is_private_under_shared_umasks(
+    tmp_path, relative, inherited_umask
+):
+    import os
+
+    source = (PROJECT_ROOT / relative).read_text()
+    bodies = [part.split("\nCAPSEM_USER", 1)[0] for part in source.split("<<'CAPSEM_USER'\n")[1:]]
+    bodies = [body for body in bodies if "mkdir " in body]
+    home = tmp_path / "home"
+    home.mkdir()
+    for body in bodies:
+        result = subprocess.run(
+            ["/bin/bash", "--noprofile", "--norc", "-c", f"umask {inherited_umask}\n" + body],
+            env={**os.environ, "HOME": str(home), "CAPSEM_INSTALL_RUN_ID": "fixture"},
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert result.returncode == 0, result.stderr
+    state = home / ".capsem"
+    assert state.is_dir() and (state / "logs").is_dir()
+    for path in [state, *state.rglob("*")]:
+        assert path.stat().st_mode & 0o077 == 0, f"non-private installer state: {path}"
