@@ -164,6 +164,15 @@ def test_antigravity_app_is_published_as_a_graphical_image_for_both_architecture
     assert "Antigravity App" in catalog.descriptions()["antigravity-desktop"]
 
 
+def test_claude_desktop_is_published_for_both_architectures() -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/images.yaml").read_text())
+    matrix = workflow["jobs"]["image-arch"]["strategy"]["matrix"]
+    assert "claude-desktop" in matrix["image"]
+    assert set(matrix["arch"]) == {"arm64", "amd64"}
+    assert not any(row["image"] == "claude-desktop" for row in matrix.get("exclude", []))
+    assert "arm64 only" not in catalog.descriptions()["claude-desktop"]
+
+
 def test_a_rebuilt_image_becomes_one_version() -> None:
     assert catalog.versions(_records(), REGISTRY) == {
         "dev": {

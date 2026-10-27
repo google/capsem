@@ -8,18 +8,16 @@
 # Claude comes from its signed apt repository, whose key is checked against
 # its fingerprint first. Xpra's exact package pins live in the shared installer.
 #
-# arm64 only: the spike never built x86_64, and these pins are arm64 debs.
 set -eu
 export DEBIAN_FRONTEND=noninteractive
 
-arch="${1:?usage: install-gui.sh <arm64>}"
-if [ "$arch" != arm64 ]; then
-    echo "images/claude-desktop supports arm64 only, not $arch" >&2
-    exit 1
-fi
-
+arch="${1:?usage: install-gui.sh <arm64|amd64>}"
 CLAUDE_VERSION=1.22209.0
-CLAUDE_SHA256=7323fe6c3ab6b7078e81a9bf0200806e3486e73bc5873420ee9d26f10b66e1e9
+case "$arch" in
+    arm64) CLAUDE_SHA256=7323fe6c3ab6b7078e81a9bf0200806e3486e73bc5873420ee9d26f10b66e1e9 ;;
+    amd64) CLAUDE_SHA256=6d18ae792c2bddad01edc97c2c3f4cf489004cefe8fed6760a696ed25c49bf61 ;;
+    *) echo "unsupported Claude Desktop architecture: $arch" >&2; exit 1 ;;
+esac
 CLAUDE_KEY_FINGERPRINT=31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE
 
 work="$(mktemp -d)"
@@ -41,12 +39,12 @@ if [ "$actual" != "$CLAUDE_KEY_FINGERPRINT" ]; then
     exit 1
 fi
 install -m 0644 "$work/claude.asc" /usr/share/keyrings/claude-desktop.asc
-echo "deb [arch=arm64 signed-by=/usr/share/keyrings/claude-desktop.asc] https://downloads.claude.ai/claude-desktop/apt/stable stable main" \
+echo "deb [arch=$arch signed-by=/usr/share/keyrings/claude-desktop.asc] https://downloads.claude.ai/claude-desktop/apt/stable stable main" \
     >/etc/apt/sources.list.d/claude-desktop.list
 apt-get -o Acquire::Check-Valid-Until=false update
 
 (cd "$debs" && apt-get download "claude-desktop=$CLAUDE_VERSION")
-echo "$CLAUDE_SHA256  $debs/claude-desktop_${CLAUDE_VERSION}_arm64.deb" | sha256sum -c -
+echo "$CLAUDE_SHA256  $debs/claude-desktop_${CLAUDE_VERSION}_${arch}.deb" | sha256sum -c -
 
 # One transaction, so trash-cli satisfies Claude's `kde-cli-tools | ... |
 # trash-cli` alternative instead of apt pulling the KDE closure (344 packages
