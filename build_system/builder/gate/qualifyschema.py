@@ -13,7 +13,7 @@ from typing import Literal
 
 from pydantic import PositiveFloat, PositiveInt, model_validator
 
-from ..cache.tools import CachedToolPolicy
+from ..cache.tools import CachedToolPolicy, Sha256
 from .configschema import SafeToken, Strict
 from .functionalschema import GreyjoyConfig as GreyjoyConfig
 from .functionalschema import KingslandingConfig as KingslandingConfig
@@ -107,6 +107,17 @@ class FunctionalConfig(Strict):
     assets_dir_variable: str
 
 
+class ScopedAdvisoryIgnore(Strict):
+    """Bind an OSV false-positive review to one immutable Cargo artifact."""
+
+    advisory: SafeToken
+    ecosystem: SafeToken
+    package: SafeToken
+    version: SafeToken
+    registry: str
+    checksum: Sha256
+
+
 class DependencyAuditConfig(Strict):
     """One maintained scanner over the configured dependency lockfiles."""
 
@@ -116,6 +127,7 @@ class DependencyAuditConfig(Strict):
     scanner_args: tuple[str, ...]
     timeout_seconds: PositiveInt
     tool: CachedToolPolicy
+    scoped_ignores: tuple[ScopedAdvisoryIgnore, ...] = ()
 
     @model_validator(mode="after")
     def lockfiles_are_explicit_source_inputs(self) -> DependencyAuditConfig:
@@ -127,6 +139,9 @@ class DependencyAuditConfig(Strict):
                 raise ValueError("dependency audit lockfiles must be repository-relative")
         if self.scanner_args[:2] != ("scan", "source"):
             raise ValueError("dependency audit scanner must use the source scan command")
+        reviewed = [scope.advisory for scope in self.scoped_ignores]
+        if len(reviewed) != len(set(reviewed)):
+            raise ValueError("scoped advisory ignores must be unique")
         return self
 
 

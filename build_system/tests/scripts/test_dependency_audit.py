@@ -7,6 +7,7 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
 from capsem_builder.cache.contract import CacheScope, PruneStrategy
 from capsem_builder.cache.models import CachePolicy, StagePolicy
 from capsem_builder.cache.paths import CachePaths
@@ -55,8 +56,16 @@ def _scanner(commands: list[list[str]], unfiltered: set[str]):
         commands.append(command)
         if command[command.index("--config") + 1] == POLICY.config:
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
-        groups = [{"ids": [advisory], "aliases": []} for advisory in sorted(unfiltered)]
-        report = {"results": [{"packages": [{"groups": groups}]}]}
+        scoped = {scope.advisory: scope for scope in POLICY.scoped_ignores}
+        packages = []
+        for advisory in sorted(unfiltered):
+            package: dict[str, object] = {"groups": [{"ids": [advisory], "aliases": []}]}
+            if scope := scoped.get(advisory):
+                package["package"] = {
+                    "name": scope.package, "version": scope.version, "ecosystem": scope.ecosystem,
+                }
+            packages.append(package)
+        report = {"results": [{"source": {"path": str(PROJECT_ROOT / "Cargo.lock")}, "packages": packages}]}
         return subprocess.CompletedProcess(command, 1, stdout=json.dumps(report), stderr="")
 
     return runner
@@ -260,3 +269,46 @@ def test_failed_scan_is_never_cached(monkeypatch, tmp_path: Path) -> None:
     assert audit.audit_dependencies(PROJECT_ROOT, POLICY, runner=runner, resolve=resolve) == 1
     assert audit.audit_dependencies(PROJECT_ROOT, POLICY, runner=runner, resolve=resolve) == 1
     assert calls == 2
+
+
+@pytest.mark.parametrize("changed", ["version", "package", "ecosystem", "checksum", "registry", "source", "missing", "scan-error", "alias", "review-dropped"])
+def test_scoped_ignore_refuses_every_unreviewed_artifact(monkeypatch, tmp_path: Path, changed: str) -> None:
+    """A reviewed old implementation must never hide the affected new one."""
+    import tomllib
+
+    scope = POLICY.scoped_ignores[0]
+    root = tmp_path / "subject"
+    root.mkdir()
+    (root / Path(POLICY.config).parent).mkdir(parents=True)
+    (root / POLICY.config).write_text(f'[[IgnoredVulns]]\nid = "{scope.advisory}"\n')
+    policy = POLICY.model_copy(update={"lockfiles": ("Cargo.lock",)})
+    if changed == "review-dropped":
+        policy = policy.model_copy(update={"scoped_ignores": ()})
+    package = {"name": scope.package, "version": scope.version, "source": scope.registry, "checksum": scope.checksum}
+    if changed in ("checksum", "registry"):
+        package[changed if changed != "registry" else "source"] = "unreviewed"
+    locked = {"package": [] if changed == "missing" else [package]}
+    content = '\n'.join(f'{key} = {json.dumps(value)}' for key, value in package.items())
+    (root / "Cargo.lock").write_text("" if changed == "missing" else f"[[package]]\n{content}\n")
+    assert tomllib.loads((root / "Cargo.lock").read_text()).get("package", []) == locked["package"]
+    reported = {"name": scope.package, "version": scope.version, "ecosystem": scope.ecosystem}
+    key = "name" if changed == "package" else changed
+    if key in reported:
+        reported[key] = "0.12.0" if changed == "version" else "unreviewed"
+    identifiers = {"ids": [scope.advisory], "aliases": []}
+    if changed == "alias":
+        reported["version"] = "0.12.0"
+        identifiers = {"ids": ["upstream-alias"], "aliases": [scope.advisory]}
+    report = {"results": [{
+        "source": {"path": str(root / ("foreign.lock" if changed == "source" else "Cargo.lock"))},
+        "packages": [{"package": reported, "groups": [identifiers]}],
+    }]}
+    monkeypatch.setattr(audit, "load_paths", lambda _root: _paths(tmp_path))
+
+    def runner(command, **_kwargs):
+        if command[command.index("--config") + 1] == policy.config:
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(command, 2 if changed == "scan-error" else 1, stdout=json.dumps(report), stderr="")
+
+    with pytest.raises(ValueError, match=r"scoped|unfiltered"):
+        audit.audit_dependencies(root, policy, runner=runner, resolve=lambda *_: _tool(tmp_path))

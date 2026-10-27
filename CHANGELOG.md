@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Bind reviewed dependency-advisory false positives to the exact package version, registry and Cargo checksum; reject out-of-scope findings and failed unfiltered scans.
+
 - Explain supported URL formats when installed asset metadata contains a bare path.
 
 - Keep package dependency derivation compatible with the offline builder's standard-library Python environment.

@@ -10,6 +10,7 @@ import tempfile
 import tomllib
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from capsem_builder.cache.config import load_paths
 from capsem_builder.cache.tools import MaterializedTool, materialize
@@ -61,6 +62,45 @@ def _exception_ids(root: Path, policy: DependencyAuditConfig) -> set[str]:
     return {entry["id"] for entry in document.get("IgnoredVulns", [])}
 
 
+def _check_scoped_finding(
+    root: Path,
+    policy: DependencyAuditConfig,
+    source: dict[str, Any],
+    package: dict[str, Any],
+    identifiers: set[str],
+    ignored: set[str],
+) -> None:
+    """An external OSV report may ignore only the exact reviewed Cargo bytes."""
+    metadata = package.get("package", {})
+    unscoped = (identifiers & ignored) - {scope.advisory for scope in policy.scoped_ignores}
+    if metadata.get("ecosystem") == "crates.io" and any(
+        not identifier.startswith("RUSTSEC-") for identifier in unscoped
+    ):
+        raise ValueError("Rust advisory ignores outside the mirrored RustSec list require a scoped artifact review")
+    for scope in policy.scoped_ignores:
+        if scope.advisory not in identifiers:
+            continue
+        identity = tuple(metadata.get(key) for key in ("name", "version", "ecosystem"))
+        if identity != (scope.package, scope.version, scope.ecosystem):
+            raise ValueError(f"scoped advisory ignore {scope.advisory} cannot admit {identity!r}")
+        reported = source.get("source", {}).get("path")
+        if not isinstance(reported, str):
+            raise ValueError(f"scoped advisory ignore {scope.advisory} requires a lockfile source")
+        path = Path(reported)
+        relative = path.relative_to(root) if path.is_absolute() else path
+        if relative.as_posix() not in policy.lockfiles:
+            raise ValueError(f"scoped advisory ignore {scope.advisory} names an unconfigured source")
+        document = tomllib.loads((root / relative).read_text(encoding="utf-8"))
+        selected = [
+            entry for entry in document.get("package", [])
+            if entry.get("name") == scope.package and entry.get("version") == scope.version
+        ]
+        if len(selected) != 1 or (
+            selected[0].get("source"), selected[0].get("checksum")
+        ) != (scope.registry, scope.checksum):
+            raise ValueError(f"scoped advisory ignore {scope.advisory} has no exact reviewed Cargo artifact")
+
+
 def _stale_exceptions(
     root: Path, policy: DependencyAuditConfig, configured: list[str], runner: Run
 ) -> list[str]:
@@ -71,6 +111,8 @@ def _stale_exceptions(
     stood ready to accept the next rand advisory without review.
     """
     exceptions = _exception_ids(root, policy)
+    if any(scope.advisory not in exceptions for scope in policy.scoped_ignores):
+        raise ValueError("scoped advisory reviews require a corresponding dated OSV ignore")
     if not exceptions:
         return []
     with tempfile.TemporaryDirectory() as scratch:
@@ -86,11 +128,19 @@ def _stale_exceptions(
             text=True,
             timeout=policy.timeout_seconds,
         )
+    if result.returncode not in (0, 1):
+        raise ValueError(f"unfiltered OSV exception check failed with exit code {result.returncode}")
     found: set[str] = set()
     for source in json.loads(result.stdout or "{}").get("results", []):
         for package in source.get("packages", []):
+            identifiers: set[str] = set()
             for group in package.get("groups", []):
-                found.update(group.get("ids", []), group.get("aliases", []))
+                identifiers.update(group.get("ids", []), group.get("aliases", []))
+            for vulnerability in package.get("vulnerabilities", []):
+                identifiers.add(vulnerability["id"])
+                identifiers.update(vulnerability.get("aliases", []))
+            _check_scoped_finding(root, policy, source, package, identifiers, exceptions)
+            found.update(identifiers)
     return sorted(exceptions - found)
 
 

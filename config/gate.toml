@@ -1950,6 +1950,18 @@ config = ".config/osv-scanner.toml"
 scanner_args = ["scan", "source", "--format=json", "--verbosity=error"]
 timeout_seconds = 120
 
+[[audits.dependency_policy.scoped_ignores]]
+# The inline-cursor panic defect is absent from the legacy separate-pos
+# implementation. Direct PoC: 0.10.4 PASS, 0.12.0 FAIL, 0.12.1 PASS.
+# https://github.com/RustCrypto/utils/blob/block-buffer-v0.10.4/block-buffer/src/lib.rs
+# Cargo's immutable archive checksum binds this review, not package spelling alone.
+advisory = "GHSA-qwgh-2vcv-g2f7"
+ecosystem = "crates.io"
+package = "block-buffer"
+version = "0.10.4"
+registry = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
+
 [audits.dependency_policy.tool]
 name = "osv-scanner"
 version = "2.5.1"
