@@ -1,8 +1,7 @@
 # check=skip=InvalidDefaultArgInFrom
 # Claude Desktop on the Capsem base, served as one application over Xpra's
-# websocket protocol. BASE is the base image by digest. arm64 only:
-# install-gui.sh refuses any other architecture, and the publication workflow
-# does not build this image for amd64.
+# websocket protocol. BASE is the base image by digest. Vendor packages are
+# pinned and verified independently for arm64 and amd64.
 ARG BASE
 FROM ${BASE}
 ARG TARGETARCH

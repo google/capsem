@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Support Claude Desktop on x86_64 with a verified vendor package and publish both desktop image architectures.
+
 - Explain supported URL formats when installed asset metadata contains a bare path.
 
 - Keep package dependency derivation compatible with the offline builder's standard-library Python environment.
