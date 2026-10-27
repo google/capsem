@@ -21,7 +21,7 @@ from capsem_builder import crypto
 
 from . import cancellation, platforminputs
 from . import config as gate_config
-from .actions import Run, Script
+from .actions import Script
 from .config import GateConfig
 from .docker import Docker
 from .errors import GateError
@@ -80,7 +80,6 @@ def platform_step(config: GateConfig, package: str | None) -> Step:
         raise GateError("the platform support proof needs the exact package it proves")
     return step(
         "platform-support",
-        *(Run(argv) for argv in input_commands(config)),
         Script(
             config,
             config.modules.platform_support_script,
@@ -98,14 +97,12 @@ def platform_step(config: GateConfig, package: str | None) -> Step:
 def prove(runner, config: GateConfig, package) -> None:
     """The local lane's call, before the install proof that cannot see this."""
     runner.step("Proving declared platform support")
-    for argv in (
-        *input_commands(config),
+    runner.run(
         (
             "python3",
             str(runner.root / config.modules.platform_support_script),
             "--package",
             str(package),
             *platforminputs.proof_arguments(config),
-        ),
-    ):
-        runner.run(argv)
+        )
+    )

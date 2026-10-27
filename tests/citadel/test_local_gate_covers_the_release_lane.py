@@ -221,3 +221,28 @@ def test_the_rehearsal_publishes_nothing_and_fetches_nothing() -> None:
         if "https://" in rendered or "http://" in rendered or rendered.startswith("gh ")
     ]
     assert not reaching, "the rehearsal reaches outside this machine:\n  " + "\n  ".join(reaching)
+
+
+def test_platform_inputs_precede_local_and_pulled_offline_proofs() -> None:
+    local, pulled = _plans()
+    for plan, target in (
+        (local, "glowup.install"),
+        (local, "rehearsal.platform-support"),
+        (pulled, "glowup.platform-support"),
+    ):
+        ancestors = set()
+        pending = list(plan.after_of(target))
+        while pending:
+            label = pending.pop()
+            if label not in ancestors:
+                ancestors.add(label)
+                pending.extend(plan.after_of(label))
+        assert "platform-inputs" in ancestors, f"{target} lacks its prepared inputs"
+    ancestors = set()
+    pending = list(local.after_of("platform-inputs"))
+    while pending:
+        label = pending.pop()
+        if label not in ancestors:
+            ancestors.add(label)
+            pending.extend(local.after_of(label))
+    assert "fast.citadel" in ancestors, "platform materialization must follow source qualification"

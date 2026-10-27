@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from .. import crypto
+from .actions import Run
 from .config import GateConfig
+from .execution import Kind, Needs, Speed, Step, step
 from .imagebases import build_config
 from .platformschema import LinuxDistribution
 
@@ -84,4 +86,16 @@ def proof_arguments(config: GateConfig) -> tuple[str, ...]:
         for row in config.platforms.linux.distributions
         if row.probe_suite is not None
         for part in ("--probe-image", row.image(), prepared_image(config, row))
+    )
+
+
+def prepare_step(config: GateConfig) -> Step:
+    """One shared network frontier, outside every offline proof/rehearsal."""
+    return step(
+        "platform-inputs",
+        *(Run(argv) for argv in commands(config)),
+        contends=(config.exclusive("docker_daemon"),),
+        kind=Kind.COMPILE,
+        needs=frozenset({Needs.DOCKER, Needs.DISK, Needs.NETWORK}),
+        speed=Speed.SLOW,
     )

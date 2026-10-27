@@ -110,6 +110,7 @@ def test_matrix_prepares_missing_platform_children_before_sealed_proof(
 ):
     from capsem_builder.gate.config import load
     from capsem_builder.gate.context import Context
+    from capsem_builder.gate.platforminputs import prepare_step
     from capsem_builder.gate.platformproof import platform_step, prove
     from capsem_builder.gate.proc import Runner
 
@@ -133,6 +134,8 @@ def test_matrix_prepares_missing_platform_children_before_sealed_proof(
 
     monkeypatch.setattr(runner, "run", run)
     context = Context(config=config, runner=runner)
+    for action in prepare_step(config).actions:
+        action.perform(context)
     if entrypoint == "planned":
         for action in platform_step(config, "candidate.deb").actions:
             action.perform(context)

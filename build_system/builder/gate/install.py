@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from . import cachelayout, installplan, platformproof, referenceimage
+from . import cachelayout, installplan, platforminputs, platformproof, referenceimage
 from . import config as gate_config
 from .actions import Call
 from .cachecontrol import CacheControl
@@ -265,6 +265,7 @@ class InstallCommand(
         # Own the sealed image prerequisite. In the complete plan this shares
         # the static preflight step; standalone install builds it once here.
         image = installplan.fragment(plan, self._config)
+        platforms = plan.shared(platforminputs.prepare_step(self._config))
         selected = getattr(self._args, "selected_content_root", None)
         if selected:
             root = Path(selected)
@@ -274,7 +275,7 @@ class InstallCommand(
             )
         else:
             content = LocalInstallContent(RuntimeContent.standalone(self._config))
-        plan.add(install_step(self._config, content=content), after=(image,))
+        plan.add(install_step(self._config, content=content), after=(image, platforms))
         return plan
 
 

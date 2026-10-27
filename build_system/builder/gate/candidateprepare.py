@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from . import bench, host, packagepreflight, runtimeprepare
+from . import bench, host, packagepreflight, platforminputs, runtimeprepare
 from .actions import Call, Run, Script
 from .cachecontrol import CacheControl
 from .config import GateConfig
-from .execution import Kind, Needs, Speed, Step, step
+from .execution import Kind, Needs, Requires, Speed, Step, step
 from .fileactions import Remove
 from .opacity import CallJustification, Effect, OpaqueKind, machine_effects
 from .plan import Plan
@@ -101,7 +101,9 @@ def prepare(
     harness, fitness = bench.fitness(config)
     built_harness = phase.add(harness, after=(checked,))
     fit = phase.add(fitness, after=(built_harness,))
-    dependencies = packagepreflight.fragment(plan, config, after=(fit,))
+    platforms = plan.shared(platforminputs.prepare_step(config))
+    plan.edge(before=fit, after=platforms, requires=Requires.ORDER)
+    dependencies = packagepreflight.fragment(plan, config, after=(platforms,))
     return runtimeprepare.prepare(plan, config, after=(dependencies,), permission=permission)
 
 

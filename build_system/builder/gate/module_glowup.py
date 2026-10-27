@@ -14,6 +14,7 @@ from . import (
     installplan,
     managedrestart,
     module_artifacts,
+    platforminputs,
     platformproof,
     referenceimage,
     runtimeprepare,
@@ -79,6 +80,8 @@ def glowup(
 ) -> Step:
     """Build the release packages and prove an install upgrades cleanly."""
     phase = plan.phase("glowup")
+    platforms = plan.shared(platforminputs.prepare_step(config))
+    after = (*after, platforms)
     if qualification.pulled:
         content = staged or RuntimeContent.standalone(config)
         native = managedrestart.fragment(plan, config, after=after, content=content)

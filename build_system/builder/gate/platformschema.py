@@ -34,7 +34,6 @@ class LinuxDistribution(Strict):
     tag_suffix: str = ""
     digest: str
     libc: str
-    probe_suite: str | None = None
     """The libc this release ships, e.g. `glibc 2.39` or `musl 1.2.5`.
 
     A fact about the distribution rather than about Capsem, recorded so the
@@ -43,6 +42,8 @@ class LinuxDistribution(Strict):
     the image and refuses to pass if it disagrees, so this cannot quietly rot
     into a wrong claim the way a hand-written support list does.
     """
+
+    probe_suite: str | None = None
 
     def image(self) -> str:
         """The digest-pinned probe, e.g. `debian:13-slim@sha256:...`."""
