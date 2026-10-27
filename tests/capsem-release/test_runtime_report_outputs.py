@@ -9,9 +9,13 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from capsem_builder.gate.versions import workspace_version
 from helpers.bounded import bounded
 from helpers.constants import PROJECT_ROOT
 from helpers.workflow_contract import workflow_step
+
+RUNTIME_REVISION = f"{workspace_version(PROJECT_ROOT)}-000000000000"
+PUBLICATION_IDENTITY = f"runtime-stable-{RUNTIME_REVISION}"
 
 
 def _consume_report(
@@ -39,8 +43,8 @@ def _consume_report(
             "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}",
             "CHANNEL": "stable",
             "SOURCE_COMMIT": "0" * 40,
-            "RUNTIME_REVISION": "0.7.2-000000000000",
-            "PUBLICATION_IDENTITY": "runtime-stable-0.7.2-000000000000",
+            "RUNTIME_REVISION": RUNTIME_REVISION,
+            "PUBLICATION_IDENTITY": PUBLICATION_IDENTITY,
             "GITHUB_REPOSITORY": "google/capsem",
             "GITHUB_OUTPUT": str(output),
             "FUNCTIONAL_READY": str(functional_ready).lower(),
@@ -56,7 +60,7 @@ def test_runtime_report_preserves_staging_and_activation(
     tmp_path: Path, compatible: bool, functional_ready: bool,
 ) -> None:
     result, output = _consume_report(tmp_path, {
-        "publication_identity": "runtime-stable-0.7.2-000000000000",
+        "publication_identity": PUBLICATION_IDENTITY,
         "compatible_with_current_binary": compatible,
     }, functional_ready=functional_ready)
     assert result.returncode == 0, result.stderr
@@ -69,7 +73,7 @@ def test_runtime_report_preserves_staging_and_activation(
 @pytest.mark.parametrize("value", [None, "false", "true", 0, 1, [], {}])
 def test_runtime_report_rejects_non_boolean_compatibility(tmp_path: Path, value: object) -> None:
     result, output = _consume_report(tmp_path, {
-        "publication_identity": "runtime-stable-0.7.2-000000000000",
+        "publication_identity": PUBLICATION_IDENTITY,
         "compatible_with_current_binary": value,
     })
     assert result.returncode != 0, "Malformed reports must not authorize runtime publication"
@@ -88,7 +92,7 @@ def test_runtime_report_rejects_missing_or_wrong_identity(tmp_path: Path, identi
 
 def test_runtime_report_requires_compatibility(tmp_path: Path) -> None:
     result, output = _consume_report(tmp_path, {
-        "publication_identity": "runtime-stable-0.7.2-000000000000",
+        "publication_identity": PUBLICATION_IDENTITY,
     })
     assert result.returncode != 0
     assert not output

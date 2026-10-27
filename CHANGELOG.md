@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Derive staged-runtime workflow test identities from the authoritative workspace version.
+
 - Upgrade the debug image's LiteLLM to 1.100.4 to fix GHSA-7hp6-4w63-5g45 privilege escalation through reused secret and session-token encryption keys.
 
 - Preserve valid incompatible-runtime reports during staged publication while rejecting missing or non-boolean compatibility values.
