@@ -20,6 +20,7 @@ EXPECTED = {
     "Dockerfile.linux-rust-base",
     "Dockerfile.package",
     "Dockerfile.package-builder",
+    "Dockerfile.platform-probe",
     "materialize-host-apt.sh",
     "materialize-install-os.sh",
     "sources-multiarch.sh",

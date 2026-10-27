@@ -139,7 +139,7 @@ def test_install_focus_produces_the_complete_cohort_before_packaging(monkeypatch
     config = gate_config.load(ROOT)
     expected = original(RuntimeContent, config)
     assert selected == [expected]
-    assert plan.after_of("glowup.content") == {"artifacts.build-chain"}
+    assert plan.after_of("glowup.content") == {"artifacts.build-chain", "platform-inputs"}
     assert str(expected.root) in "\n".join(plan.step_named("glowup.content").render())
     waves = [{step.label for step in wave} for wave in plan.order()]
     for arch in config.architectures:

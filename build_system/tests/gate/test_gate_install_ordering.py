@@ -149,13 +149,14 @@ def _checkout(tmp_path: Path, *, dpkg_arch: str) -> Path:
     nobody executes.
     """
     (tmp_path / "Cargo.toml").write_text(WORKSPACE)
-    (tmp_path / "config").mkdir()
-    (tmp_path / "config" / "gate.toml").write_text(
-        (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
-    )
-    (tmp_path / "config" / "cache.toml").write_text(
-        (PROJECT_ROOT / "config" / "cache.toml").read_text(encoding="utf-8")
-    )
+    for relative in (
+        "config/gate.toml", "config/cache.toml",
+        f"{CONFIG.imagebuild.source_config}/build.toml",
+        CONFIG.platforms.linux.probe_inputs.dockerfile,
+    ):
+        destination = tmp_path / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(PROJECT_ROOT / relative, destination)
     packages = tmp_path / CONFIG.outputs.packages
     packages.mkdir(parents=True)
     (packages / f"Capsem_{VERSION}_{dpkg_arch}.deb").write_text("package bytes")
