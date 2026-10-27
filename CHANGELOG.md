@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Refuse official catalog publication when GHCR workload repositories, pinned manifest platforms, or supported image builds disagree; guard complete amd64 and arm64 coverage in Citadel.
+
 - Support Claude Desktop on x86_64 with a verified vendor package and publish both desktop image architectures.
 
 - Explain supported URL formats when installed asset metadata contains a bare path.

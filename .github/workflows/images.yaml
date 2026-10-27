@@ -433,6 +433,10 @@ jobs:
           changed="$(uv run --project build_system --frozen python images/ci/catalog.py --channel "$CHANNEL" \
             --registry "$REGISTRY" --records records "${previous[@]}" --out catalog/catalog.json)"
           echo "changed=$changed" >> "$GITHUB_OUTPUT"
+      - name: Verify GHCR and catalog coverage
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run --project build_system --frozen python -m images.ci.registry_catalog --catalog catalog/catalog.json --registry "$REGISTRY"
       - name: Publish the catalog
         if: steps.merge.outputs.changed == 'true'
         working-directory: catalog
