@@ -13,6 +13,7 @@ import re
 import shutil
 import struct
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -235,3 +236,22 @@ def test_derived_floor_matches_objdump_on_a_real_binary(tmp_path):
     expected = max(tuple(int(part) for part in groups if part) for groups in found)
 
     assert derive.floor_for(tmp_path) == expected
+
+
+@pytest.mark.skipif(sys.platform != "linux" or shutil.which("dpkg-shlibdeps") is None, reason="needs native Debian symbol mappings")
+def test_predepends_generation_uses_builder_stdlib_python(tmp_path):
+    """The sealed package helper has no gate-only Python dependencies."""
+    binary = tmp_path / "usr/bin/capsem-ledger"
+    binary.parent.mkdir(parents=True)
+    shutil.copy2(_ELF_SOURCE, binary)
+    machine = int.from_bytes(binary.read_bytes()[18:20], "little")
+    architecture = {62: "amd64", 183: "arm64"}[machine]
+    control = tmp_path / "DEBIAN/control"
+    control.parent.mkdir()
+    control.write_text(f"Package: capsem\nArchitecture: {architecture}\nDescription: metadata probe\n")
+    result = subprocess.run(
+        [sys.executable, "-I", "-S", str(SCRIPT), str(tmp_path), "--preinstall-control"],
+        text=True, capture_output=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "procps" in control.read_text().split("Pre-Depends:", 1)[1]

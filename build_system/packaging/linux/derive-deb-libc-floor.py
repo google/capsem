@@ -24,6 +24,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import tomllib
 from email.parser import Parser
 from pathlib import Path
 
@@ -127,9 +128,9 @@ def write_preinstall_dependencies(root: Path) -> None:
     clauses = [value.strip() for value in dependencies.split(",")]
     if clause(version, "libc6") not in clauses or any(not value for value in clauses):
         raise SystemExit("candidate glibc floor disagrees with actual target dependency mapping")
-    from capsem_builder.gate.config import for_root
-
-    clauses.extend(for_root(repository).install.package_preinstall_packages)
+    # The sealed package helper intentionally has only standard-library Python.
+    settings = tomllib.loads((repository / "config/gate.toml").read_text())["install"]
+    clauses.extend(settings["package_preinstall_packages"])
     dependencies = ", ".join(clauses)
     match = re.search(r"(?ms)^Pre-Depends:[ \t]*(.*?)(?=^[^ \t]|\Z)", original)
     if match:

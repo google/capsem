@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Keep package dependency derivation compatible with the offline builder's standard-library Python environment.
+
 - Declare installer process utilities before package unpack and prepare minimal Debian platform fixtures from the shared signed snapshot before their offline admission tests.
 
 - Create installer-owned user state and logs privately even when the installing account has a permissive group-shared umask, preserving ledger admission ownership checks.
