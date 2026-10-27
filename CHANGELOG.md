@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Preserve exact-source client-publication guards while requiring npm OIDC authority and excluding deferred Cargo credentials.
+
 - Patch MCP's qs dependency to 6.16.1 to prevent comma-format serialization denial of service (GHSA-6pq8-jhm2-2vcw).
 
 - Publish npm clients through GitHub trusted publishing without registry tokens; defer crates.io publication and its public consumer to issue #382 while retaining Rust SDK qualification.
