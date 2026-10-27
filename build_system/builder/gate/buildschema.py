@@ -179,6 +179,7 @@ class WebSurfacesConfig(Strict):
     targets: tuple[str, ...]
     blocks_clippy: str
     needs_generated_settings: str
+    needs_docs_metrics_scanner: str
     building: tuple[str, ...]
     """Which surfaces run a bundler, and so which declare `COMPILE` and take
     the Astro claim. Read per target rather than assumed of all of them: one

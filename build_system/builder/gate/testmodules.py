@@ -159,6 +159,7 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
     guards = source_guards(plan, config, after=after)
     python, syntax = guards.python, guards.syntax
     node = phase.add(toolchain.node(config), after=(python,))
+    scanner = phase.add(toolchain.docs_metrics_scanner(config), after=(python,))
     rust = phase.add(toolchain.rust(config), after=(python,))
     formatted = phase.add(audits.rust_format(config), after=(syntax, rust))
 
@@ -206,6 +207,7 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
         phase.add(
             surface,
             after=(syntax, node)
+            + ((scanner,) if surface.label.endswith(config.websurfaces.needs_docs_metrics_scanner) else ())
             + ((settings,) if surface.label.endswith(consumer) else ())
             + ((sdk_built,) if surface.label.endswith((consumer, config.frontend.build_target)) else ()),
         )
@@ -229,6 +231,7 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
         cohort,
         *guards.leaves,
         formatted,
+        scanner,
         digest,
         *(surface for surface in surfaces if surface is not blocking),
         channel,

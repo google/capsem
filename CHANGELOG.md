@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Prepare the pinned documentation scanner before sealed qualification, retain GitHub evidence inside offline builds, and fetch complete source history on documentation CI runners.
+
 - Apply canonical Python lint rules to the official-image catalog coverage guard.
 
 - Bind reviewed dependency-advisory false positives to the exact package version, registry and Cargo checksum; reject out-of-scope findings and failed unfiltered scans.

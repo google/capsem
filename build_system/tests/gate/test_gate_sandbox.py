@@ -77,6 +77,8 @@ ONLINE_FAST = {
     "integrations.inspect-ai.prewarm",
     "fast.toolchain.node",
     "fast.toolchain.rust",
+    # The verified scanner is a pinned tool; documentation compilation stays sealed.
+    "fast.toolchain.docs-metrics-scanner",
 }
 
 

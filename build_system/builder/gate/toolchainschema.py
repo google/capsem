@@ -80,6 +80,7 @@ class ToolchainConfig(Strict):
     node_fetch: tuple[str, ...]
     node_install: tuple[str, ...]
     node_env: dict[str, str]
+    docs_metrics_prepare: tuple[str, ...]
     rust_targets: tuple[str, ...]
     rust_components: tuple[str, ...]
     linux: LinuxWorkspaceConfig

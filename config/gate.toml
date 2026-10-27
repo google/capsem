@@ -1401,6 +1401,7 @@ node_workspaces = ["web/app", "web/docs", "web/marketing", "build_system/release
 node_fetch = ["pnpm", "fetch", "--frozen-lockfile"]
 node_install = ["pnpm", "install", "--offline", "--frozen-lockfile"]
 node_env = { CI = "true" }
+docs_metrics_prepare = ["uv", "run", "--project", "build_system", "--frozen", "--no-sync", "python", "-m", "capsem_builder.docs_metrics", "--prepare-tools"]
 
 # Every non-native Rust target the gate compiles. The GNU pair exercises both
 # KVM architecture branches under Clippy; the musl pair builds guest binaries.
@@ -2156,6 +2157,7 @@ blocks_clippy = "frontend-build"
 # dependency; it reached clippy only because the tests shared a step with the
 # build.
 needs_generated_settings = "frontend-verify"
+needs_docs_metrics_scanner = "docs"
 # The surfaces that run a bundler, and therefore the ones that take
 # `astro_build`. The claim exists because Astro stages prerendering in a path
 # derived from the project root; a surface that only type-checks or runs vitest

@@ -75,6 +75,17 @@ def node(config: GateConfig, workspaces: tuple[str, ...] | None = None) -> Step:
     )
 
 
+def docs_metrics_scanner(config: GateConfig) -> Step:
+    """Fetch the source-pinned scanner before documentation compiles offline."""
+    return step(
+        "toolchain.docs-metrics-scanner",
+        Run(config.toolchain.docs_metrics_prepare, outside_sandbox=True),
+        kind=Kind.COMPILE,
+        needs=frozenset({Needs.DISK, Needs.NETWORK}),
+        speed=Speed.FAST,
+    )
+
+
 def rust(config: GateConfig) -> Step:
     """Cross-compilation targets, components, and the cargo-installed tools.
 

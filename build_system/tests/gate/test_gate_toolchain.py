@@ -6,11 +6,27 @@ from capsem_builder.gate import toolchain
 from capsem_builder.gate.context import Context
 from capsem_builder.gate.errors import GateError
 from capsem_builder.gate.packageinputs import pinned_toolchain
-from helpers.gate import RecordingRunner
+from helpers.gate import RecordingRunner, gate_plan, plan_ancestors
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 CONFIG = gate_config.load(PROJECT_ROOT)
 PIN = pinned_toolchain(PROJECT_ROOT)
+
+
+@pytest.mark.parametrize("command", ["test-fast", "candidate"])
+def test_docs_scanner_preparation_precedes_only_its_sealed_consumer(command):
+    plan = gate_plan(command)
+    label = "fast.toolchain.docs-metrics-scanner"
+    prepared = plan.step_named(label)
+    ordinary = RecordingRunner(PROJECT_ROOT)
+    capability = RecordingRunner(PROJECT_ROOT)
+    prepared.run(Context(ordinary, CONFIG, outside_runner=capability))
+
+    assert ordinary.rendered == []
+    assert "--prepare-tools" in "\n".join(capability.rendered)
+    assert "--no-sync" in "\n".join(capability.rendered)
+    assert label in plan_ancestors(plan, "fast.web.docs")
+    assert label not in plan_ancestors(plan, "fast.web.frontend-build")
 
 
 EXPECTED_TOOLS = {

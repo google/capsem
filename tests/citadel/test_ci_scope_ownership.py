@@ -264,6 +264,31 @@ def test_docs_metrics_refresh_on_every_main_source_update() -> None:
     assert trigger["push"] == {"branches": ["main"]}, CI_SCOPE_RATIONALE
 
 
+def _has_complete_history(steps: list[dict[str, Any]]) -> bool:
+    checkouts = [row for row in steps if row.get("uses", "").startswith("actions/checkout@")]
+    return bool(checkouts) and all(row.get("with", {}).get("fetch-depth") == 0 for row in checkouts)
+
+
+@pytest.mark.parametrize("workflow,job", [("fast-gate.yaml", "static"), ("ci.yaml", "docs-build"), ("docs.yaml", "build")])
+def test_docs_collectors_receive_complete_history(workflow: str, job: str) -> None:
+    document = yaml.safe_load((WORKFLOW.parent / workflow).read_text())
+    assert _has_complete_history(document["jobs"][job]["steps"]), (
+        "Documentation metrics sample initial and monthly source history; a shallow "
+        "checkout silently replaces that evidence with one recent commit. " + CI_SCOPE_RATIONALE
+    )
+
+
+@pytest.mark.parametrize("depth", [None, 1, 5])
+def test_docs_history_guard_rejects_missing_or_shallow_depth(depth: int | None) -> None:
+    steps = [{"uses": "actions/checkout@pinned", "with": {"fetch-depth": 0}}]
+    assert _has_complete_history(steps)
+    if depth is None:
+        steps[0].pop("with")
+    else:
+        steps[0]["with"]["fetch-depth"] = depth
+    assert not _has_complete_history(steps)
+
+
 def test_marketing_deployment_runs_only_for_owned_and_shared_inputs() -> None:
     script_root = "build_system/scripts"
     shared = {

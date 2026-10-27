@@ -149,6 +149,12 @@ prefetch. Never hand the external runner to any other qualification work.
 Release CI downloads immutable inputs and materializes locked dependencies
 before invoking its sandboxed modules.
 
+The fast graph owns pinned documentation-scanner preparation through its narrow
+egress capability before the docs consumer runs. Prove the cold-cache path;
+a warm developer cache once hid a download attempted inside Bubblewrap. Sealed
+docs generation uses retained GitHub evidence, while ordinary publication
+refreshes it and checks out complete Git history.
+
 Native supervisor restart uses its existing glow-up owner because supervisor
 setup must precede inherited privilege confinement. Linux then runs the SDK
 worker as the original user with `no_new_privs` in a loopback-only namespace;
