@@ -156,11 +156,7 @@ jobs:
       matrix:
         image: [dev, codex-cli, claude-code, agy, claude-desktop, antigravity-desktop]
         arch: [arm64, amd64]
-        # Claude Desktop's pinned debs are arm64 only; its catalog entry lists
-        # linux/arm64 alone, and install-gui.sh refuses any other architecture.
-        exclude:
-          - image: claude-desktop
-            arch: amd64
+        exclude: []
         include:
           - arch: arm64
             runner: ubuntu-24.04-arm
@@ -437,6 +433,10 @@ jobs:
           changed="$(uv run --project build_system --frozen python images/ci/catalog.py --channel "$CHANNEL" \
             --registry "$REGISTRY" --records records "${previous[@]}" --out catalog/catalog.json)"
           echo "changed=$changed" >> "$GITHUB_OUTPUT"
+      - name: Verify GHCR and catalog coverage
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run --project build_system --frozen python -m images.ci.registry_catalog --catalog catalog/catalog.json --registry "$REGISTRY"
       - name: Publish the catalog
         if: steps.merge.outputs.changed == 'true'
         working-directory: catalog

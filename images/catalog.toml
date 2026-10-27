@@ -51,7 +51,7 @@ icon = "/icons/products/claude.png"
 category = "desktop_apps"
 interfaces = ["graphical"]
 surface = "xpra"
-description = "Claude Desktop on the Capsem base, streamed as a single-application GUI over Xpra (arm64 only)."
+description = "Claude Desktop on the Capsem base, streamed as a single-application GUI over Xpra."
 
 [images.antigravity-desktop]
 display_name = "Antigravity App 2"
