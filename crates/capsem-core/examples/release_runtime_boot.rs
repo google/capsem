@@ -5,12 +5,56 @@
 
 use std::collections::BTreeMap;
 use std::io::Read;
+use std::os::unix::ffi::OsStrExt as _;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
-use capsem_core::{boot_vm, create_virtiofs_session, guest_share_dir, BootOptions, VirtioFsShare};
-use capsem_proto::VSOCK_PORT_CONTROL;
+use capsem_core::{
+    boot_vm, create_virtiofs_session, guest_share_dir, BootOptions, GuestMetadataAuthority, VirtioFsShare,
+};
+use capsem_foundation::unix::contained::{ContainedDir, FileTimeSpec};
+use capsem_proto::{upstream_grant::GuestFileTime, VSOCK_PORT_CONTROL};
+
+#[cfg(test)]
+#[path = "release_runtime_boot/tests.rs"]
+mod tests;
+
+// This standalone harness is the trusted host owner, without the production
+// coordinator's metadata broker. Keep its authority confined to the open share
+// descriptor, including when the guest replaces names with symlinks.
+struct BootMetadataAuthority(ContainedDir);
+
+impl GuestMetadataAuthority for BootMetadataAuthority {
+    fn set_mode(&self, relative_path: &[u8], mode: u16) -> std::io::Result<()> {
+        self.0
+            .set_relative_mode(Path::new(std::ffi::OsStr::from_bytes(relative_path)), u32::from(mode))
+    }
+
+    fn set_times(&self, relative_path: &[u8], atime: GuestFileTime, mtime: GuestFileTime) -> std::io::Result<()> {
+        let convert = |value| match value {
+            GuestFileTime::Omit => FileTimeSpec::Omit,
+            GuestFileTime::Now => FileTimeSpec::Now,
+            GuestFileTime::Exact { seconds, nanoseconds } => FileTimeSpec::Exact { seconds, nanoseconds },
+        };
+        self.0.set_relative_times(
+            Path::new(std::ffi::OsStr::from_bytes(relative_path)),
+            convert(atime),
+            convert(mtime),
+        )
+    }
+}
+
+fn runtime_share(guest_dir: PathBuf) -> std::io::Result<VirtioFsShare> {
+    let authority = BootMetadataAuthority(ContainedDir::open_root(&guest_dir)?);
+    Ok(VirtioFsShare {
+        tag: "capsem".to_string(),
+        host_path: guest_dir,
+        read_only: false,
+        metadata_authority: Some(Arc::new(authority)),
+    })
+}
 
 fn arguments() -> Result<BTreeMap<String, String>> {
     let mut values = BTreeMap::new();
@@ -102,12 +146,7 @@ fn run() -> Result<()> {
     let system_overlay = capsem_core::session::system_overlay_image_path(&session_root);
     let serial_log = session_root.join("serial.log");
     let machine_identifier = session_root.join("machine_identifier");
-    let shares = [VirtioFsShare {
-        tag: "capsem".to_string(),
-        host_path: guest_dir,
-        read_only: false,
-        metadata_authority: None,
-    }];
+    let shares = [runtime_share(guest_dir).context("authorize boot-proof share metadata")?];
 
     let result = (|| -> Result<()> {
         let (vm, mut connections, _) = boot_vm(BootOptions {

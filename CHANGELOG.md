@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Give the standalone runtime boot probe a real descriptor-confined metadata authority for its writable VirtioFS share, preserving KVM admission and guest boot verification.
+
 - Preserve exact-source client-publication guards while requiring npm OIDC authority and excluding deferred Cargo credentials.
 
 - Patch MCP's qs dependency to 6.16.1 to prevent comma-format serialization denial of service (GHSA-6pq8-jhm2-2vcw).

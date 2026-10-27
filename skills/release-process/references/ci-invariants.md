@@ -9,6 +9,13 @@ then convert it to text before consuming the strict jq exit status. Execute
 the actual workflow report consumer locally for both decisions and malformed
 reports; producer tests alone do not cover the shell's exit semantics.
 
+Run the actual `release_runtime_boot` example against the selected runtime
+when changing its setup. Its writable KVM share needs a real metadata authority;
+the standalone trusted host confines that authority to an open share descriptor.
+Keep production broker admission and the guest control-plane connection proof
+intact. Manifest-input tests and service-owned VM boots do not exercise this
+standalone fixture's ownership setup.
+
 
 #### Local/CI execution parity
 
