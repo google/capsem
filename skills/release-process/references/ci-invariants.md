@@ -2,6 +2,13 @@
 
 Reference for /release-process: the Ironbank parity rule and every burned-release lesson. Read before editing any release workflow.
 
+Runtime report compatibility is a boolean decision, including a successful
+`false` when the runtime must wait for a new binary. Under `set -e`, `jq -e`
+on raw `false` aborts the expected staging path. Require the boolean type,
+then convert it to text before consuming the strict jq exit status. Execute
+the actual workflow report consumer locally for both decisions and malformed
+reports; producer tests alone do not cover the shell's exit semantics.
+
 
 #### Local/CI execution parity
 

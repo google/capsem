@@ -546,7 +546,7 @@ jobs:
             --runtime-revision "$RUNTIME_REVISION" \
             --json > cache/target/runtime-release.json
           test "$(jq -er .publication_identity cache/target/runtime-release.json)" = "$PUBLICATION_IDENTITY"
-          PRODUCT_COMPATIBLE=$(jq -er .compatible_with_current_binary cache/target/runtime-release.json)
+          PRODUCT_COMPATIBLE=$(jq -er '.compatible_with_current_binary | select(type == "boolean") | tostring' cache/target/runtime-release.json)
           ACTIVATION_READY=false
           if [[ "$PRODUCT_COMPATIBLE" == "true" && "$FUNCTIONAL_READY" == "true" ]]; then
             ACTIVATION_READY=true

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Preserve valid incompatible-runtime reports during staged publication while rejecting missing or non-boolean compatibility values.
+
 - Wait for acknowledged compiler-cache shutdown to finish under its existing cache locks, preventing daemon exit races between qualification runs.
 
 - Prepare the pinned documentation scanner before its declared sealed web consumer, retain GitHub evidence inside offline builds, and fetch complete source history on documentation CI runners.
