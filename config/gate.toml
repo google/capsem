@@ -2157,7 +2157,8 @@ blocks_clippy = "frontend-build"
 # dependency; it reached clippy only because the tests shared a step with the
 # build.
 needs_generated_settings = "frontend-verify"
-needs_docs_metrics_scanner = "docs"
+# Fully qualified web node that consumes the prepared source scanner.
+needs_docs_metrics_scanner = "web.docs"
 # The surfaces that run a bundler, and therefore the ones that take
 # `astro_build`. The claim exists because Astro stages prerendering in a path
 # derived from the project root; a surface that only type-checks or runs vitest
