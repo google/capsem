@@ -122,7 +122,9 @@ def test_matrix_prepares_missing_platform_children_before_sealed_proof(
     def run(argv, **_kwargs):
         if tuple(argv[:2]) == ("docker", "pull"):
             assert list(argv[2:4]) == ["--platform", platform]
-            cached[argv[-1]].add(platform)
+            cached.setdefault(argv[-1], set()).add(platform)
+        elif tuple(argv[:2]) == ("docker", "build"):
+            cached[argv[argv.index("-t") + 1]] = {platform}
         else:
             assert all(platform in children for children in cached.values()), (
                 "a cached index or foreign child cannot satisfy the sealed platform proof"
@@ -137,3 +139,36 @@ def test_matrix_prepares_missing_platform_children_before_sealed_proof(
     else:
         prove(runner, config, Path("candidate.deb"))
     assert len(proof_calls) == 1
+
+
+def test_debian_matrix_materializes_process_tools_before_offline_admission():
+    from capsem_builder.gate.config import load
+    from capsem_builder.gate.platformproof import input_commands
+
+    config = load(Path(__file__).resolve().parents[3])
+    builds = [argv for argv in input_commands(config) if argv[:2] == ("docker", "build")]
+    assert len(builds) == len([row for row in config.platforms.linux.distributions if row.repository == "debian"])
+    for argv in builds:
+        assert "--network" in argv
+        assert any("snapshot.debian.org" in value for value in argv)
+        assert "PROBE_PACKAGES=procps" in argv
+
+
+def test_probe_helper_identity_changes_with_snapshot_and_platform(monkeypatch):
+    from capsem_builder.gate import platforminputs
+    from capsem_builder.gate.config import GateConfig, load
+
+    config = load(Path(__file__).resolve().parents[3])
+    row = next(row for row in config.platforms.linux.distributions if row.probe_suite)
+    first = platforminputs.prepared_image(config, row)
+    build = platforminputs.build_config(config)
+    changed = build.model_copy(update={"asset_tools": build.asset_tools.model_copy(
+        update={"debian_snapshot_id": "20260811T000000Z"}
+    )})
+    monkeypatch.setattr(platforminputs, "build_config", lambda _config: changed)
+    assert platforminputs.prepared_image(config, row) != first
+    monkeypatch.setattr(platforminputs, "build_config", lambda _config: build)
+    native = config.host_arch()
+    other = next(arch for arch in config.architectures.values() if arch.name != native.name)
+    monkeypatch.setattr(GateConfig, "host_arch", lambda _config: other)
+    assert platforminputs.prepared_image(config, row) != first

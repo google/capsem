@@ -117,8 +117,9 @@ def test_candidate_predepends_uses_actual_symbol_mapping_and_preserves_other_fie
     monkeypatch.setattr(derive.subprocess, "run", mapping)
     derive.write_preinstall_dependencies(tmp_path)
     result = control.read_text()
+    assert "procps" in result.split("Pre-Depends:", 1)[1].split("\n", 1)[0]
     assert "Depends: gui-lib (>= 9)\n" in result
-    assert "Pre-Depends: original-tool, libc6 (>= 2.39), libgcc-s1 (>= 4.2)\n" in result
+    assert "Pre-Depends: original-tool, libc6 (>= 2.39), libgcc-s1 (>= 4.2), procps\n" in result
     assert "2.99" not in result
     assert result.startswith("Package: capsem\nArchitecture: arm64\n")
     assert result.endswith("Description: original\n")

@@ -160,6 +160,7 @@ class InstallConfig(Strict):
     proof_content_mount: str
     proof_assets_name: str
     package_runtime_packages: tuple[str, ...]
+    package_preinstall_packages: tuple[SafeToken, ...] = Field(min_length=1)
     layout: InstallLayout
     guest_user: GuestUser
     suite: InstallSuite
@@ -169,6 +170,11 @@ class InstallConfig(Strict):
         runtime = self.package_runtime_packages
         if not runtime or len(runtime) != len(set(runtime)):
             raise ValueError("install package_runtime_packages must be non-empty and unique")
+        preinstall = self.package_preinstall_packages
+        if len(preinstall) != len(set(preinstall)):
+            raise ValueError("install package_preinstall_packages must be unique")
+        if any(name not in self.builder.apt_packages for name in preinstall):
+            raise ValueError("install helper apt_packages omit preinstall dependencies")
         missing = tuple(name for name in runtime if name not in self.builder.apt_packages)
         if missing:
             raise ValueError(

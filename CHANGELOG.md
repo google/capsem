@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Declare installer process utilities before package unpack and prepare minimal Debian platform fixtures from the shared signed snapshot before their offline admission tests.
+
 - Create installer-owned user state and logs privately even when the installing account has a permissive group-shared umask, preserving ledger admission ownership checks.
 
 - Materialize each pinned distribution image for the selected architecture before offline package platform probes, including cold or incomplete Docker caches.

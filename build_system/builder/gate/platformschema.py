@@ -9,6 +9,7 @@ support tables, so it is worth being able to find.
 
 from __future__ import annotations
 
+from ..policy.dockerpolicy import BuildNetwork
 from .configschema import Strict
 
 
@@ -33,6 +34,7 @@ class LinuxDistribution(Strict):
     tag_suffix: str = ""
     digest: str
     libc: str
+    probe_suite: str | None = None
     """The libc this release ships, e.g. `glibc 2.39` or `musl 1.2.5`.
 
     A fact about the distribution rather than about Capsem, recorded so the
@@ -61,6 +63,12 @@ class LinuxDistribution(Strict):
         return tuple(int(part) for part in self.version.split("."))
 
 
+class LinuxProbeInputs(Strict):
+    dockerfile: str
+    tag_template: str
+    materialize_network: BuildNetwork
+
+
 class LinuxPlatform(Strict):
     """The Linux floor, expressed as the glibc the binaries are built against.
 
@@ -70,6 +78,7 @@ class LinuxPlatform(Strict):
     """
 
     minimum_glibc: str
+    probe_inputs: LinuxProbeInputs
     distributions: tuple[LinuxDistribution, ...]
     """Every release the glow-up proof runs the package on.
 

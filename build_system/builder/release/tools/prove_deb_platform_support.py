@@ -23,7 +23,10 @@ The admin executable remains a separate global-floor control; it cannot stand
 in for candidate admission. Alpine remains explicitly a musl executable
 negative control, never a missing-dpkg dependency-refusal result.
 
-Matrix images must already be prepared at their configured digests. All probes
+Pinned distribution bases and Debian's declared preinstall tools are prepared
+before this script, using the shared signed snapshot. Prepared layers are
+accepted only under their source-keyed references and resolved to exact IDs.
+All probes
 are network-disabled, use the package architecture and require their actual OS
 tools; no runtime installation or host-path sharing is used. Cross-architecture
 Docker execution does not certify native CPU/hypervisor qualification. This
@@ -42,7 +45,11 @@ import sys
 import tomllib
 from pathlib import Path
 
+from capsem_builder.gate import config as gate_config
+from capsem_builder.gate import platforminputs
+from capsem_builder.gate.docker import Docker
 from capsem_builder.gate.platformproof import probe_container
+from capsem_builder.gate.proc import Runner
 
 from .deb_preunpack_probe import check_preunpack, validate_package
 from .generate_host_binary_sbom import deb_data_member
@@ -197,6 +204,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--package", type=Path, required=True)
     parser.add_argument("--config", type=Path, default=Path("config/gate.toml"))
+    parser.add_argument("--probe-image", nargs=2, action="append", default=[])
     args = parser.parse_args(argv)
 
     if not args.package.is_file():
@@ -222,6 +230,24 @@ def main(argv: list[str] | None = None) -> int:
             "bytes disagree"
         )
 
+    overrides = dict(args.probe_image)
+    if len(overrides) != len(args.probe_image):
+        raise SystemExit("duplicate platform probe image override")
+    if overrides:
+        repository = Path(__file__).resolve().parents[4]
+        config = gate_config.for_root(repository)
+        expected = {
+            row.image(): platforminputs.prepared_image(config, row)
+            for row in config.platforms.linux.distributions
+            if row.probe_suite is not None
+        }
+        if any(expected.get(source) != target for source, target in overrides.items()):
+            raise SystemExit("platform probe override does not match its source inputs")
+        docker = Docker(Runner(repository))
+        overrides = {
+            source: docker.image_id(target, platform=f"linux/{architecture}")
+            for source, target in overrides.items()
+        }
     name, data = deb_data_member(args.package)
     selected = f"/{PROBE_BINARY}"
     binary = tar_payload_files(data, name, select=lambda path: path == selected)[selected]
@@ -229,7 +255,7 @@ def main(argv: list[str] | None = None) -> int:
         suffix = row.get("tag_suffix", "")
         image = f"{row['repository']}:{row['version']}{suffix}@{row['digest']}"
         failures += check(
-            image,
+            overrides.get(image, image),
             f"{row['name']} {row['version']}",
             row["libc"],
             binary,

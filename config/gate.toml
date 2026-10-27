@@ -138,6 +138,11 @@ minimum_release_name = "Sonoma"
 # a build-base change, not a source change; see issue #181.
 minimum_glibc = "2.39"
 
+[platforms.linux.probe_inputs]
+dockerfile = "build_system/docker/Dockerfile.platform-probe"
+tag_template = "capsem-platform-probe:{version}-{arch}-{digest}"
+materialize_network = "default"
+
 # Every release the glow-up proof runs the package on. One list: the proof
 # reads each image's real glibc and derives whether the package must run or
 # must be refused, so a release cannot sit in the wrong bucket and still pass.
@@ -173,6 +178,7 @@ digest = "sha256:8feb4d8ca5354def3d8fce243717141ce31e2c428701f6682bd2fafe1538821
 [[platforms.linux.distributions]]
 name = "Debian"
 version = "13"
+probe_suite = "trixie"
 libc = "glibc 2.41"
 repository = "debian"
 tag_suffix = "-slim"
@@ -181,6 +187,7 @@ digest = "sha256:3a39a0592364683e6bab97937b72cad5a8fa6dcbbee90edb3bb48c7f8e94f25
 [[platforms.linux.distributions]]
 name = "Debian"
 version = "12"
+probe_suite = "bookworm"
 libc = "glibc 2.36"
 repository = "debian"
 tag_suffix = "-slim"
@@ -377,6 +384,7 @@ proof_content_mount = "/mnt/capsem-proof-content"
 proof_assets_name = "assets"
 # The package's complete runtime dependency names.  Release hosts verify the
 # actual Depends field against this tuple before installing from apt_snapshot.
+package_preinstall_packages = ["procps"]
 package_runtime_packages = [
     "libwebkit2gtk-4.1-0",
     "libgtk-3-0",
@@ -425,6 +433,7 @@ apt_archives_cache_id = "capsem-install-apt-archives"
 # `dpkg -i` succeeds once; qualification never repairs through apt.
 apt_packages = [
     "systemd",
+    "procps",
     "systemd-container",
     "dbus",
     "dbus-user-session",

@@ -157,3 +157,19 @@ def test_failed_or_wrong_receipt_cannot_certify_supported(
         returncode=code, stdout=output, stderr=b"tool or candidate failure",
     ))
     assert probe.check_preunpack("fixture", package, "arm64", True)
+
+
+@pytest.mark.parametrize("overrides", [
+    ["foreign-source", "foreign-image"],
+    ["foreign-source", "foreign-image", "--probe-image", "foreign-source", "other-image"],
+])
+def test_platform_probe_refuses_unbound_or_duplicate_prepared_images(package, overrides, monkeypatch):
+    from capsem_builder.release.tools import prove_deb_platform_support as platform
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("an unbound prepared image must not reach a container")
+
+    monkeypatch.setattr(platform, "check", forbidden)
+    with pytest.raises(SystemExit, match="override"):
+        platform.main(["--package", str(package), "--config", str(ROOT / "config/gate.toml"),
+                       "--probe-image", *overrides])

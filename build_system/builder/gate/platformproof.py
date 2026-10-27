@@ -19,7 +19,7 @@ from pathlib import Path
 
 from capsem_builder import crypto
 
-from . import cancellation
+from . import cancellation, platforminputs
 from . import config as gate_config
 from .actions import Run, Script
 from .config import GateConfig
@@ -65,11 +65,7 @@ def input_commands(config: GateConfig) -> tuple[tuple[str, ...], ...]:
     Explicit platform pulls repair that state and also support a cold daemon.
     The daemon verifies the configured immutable digest; probes never pull.
     """
-    platform = config.host_arch().docker_platform
-    return tuple(
-        ("docker", "pull", "--platform", platform, distribution.image())
-        for distribution in config.platforms.linux.distributions
-    )
+    return platforminputs.commands(config)
 
 
 def platform_step(config: GateConfig, package: str | None) -> Step:
@@ -85,7 +81,13 @@ def platform_step(config: GateConfig, package: str | None) -> Step:
     return step(
         "platform-support",
         *(Run(argv) for argv in input_commands(config)),
-        Script(config, config.modules.platform_support_script, "--package", package),
+        Script(
+            config,
+            config.modules.platform_support_script,
+            "--package",
+            package,
+            *platforminputs.proof_arguments(config),
+        ),
         contends=(config.exclusive("docker_daemon"),),
         kind=Kind.E2E,
         needs=frozenset({Needs.DOCKER, Needs.DISK}),
@@ -103,6 +105,7 @@ def prove(runner, config: GateConfig, package) -> None:
             str(runner.root / config.modules.platform_support_script),
             "--package",
             str(package),
+            *platforminputs.proof_arguments(config),
         ),
     ):
         runner.run(argv)

@@ -1,0 +1,22 @@
+# check=skip=InvalidDefaultArgInFrom
+ARG TRUSTSTORE_IMAGE
+ARG BASE_IMAGE
+FROM ${TRUSTSTORE_IMAGE} AS truststore
+FROM ${BASE_IMAGE}
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+ARG DEBIAN_SNAPSHOT_BASE
+ARG DEBIAN_SNAPSHOT_ID
+ARG PROBE_SUITE
+ARG PROBE_PACKAGES
+# Bootstrap TLS from an already digest-pinned trust store. Package versions
+# are selected by the same immutable signed Debian snapshot as asset tools.
+COPY --from=truststore /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+RUN set -eux; \
+    rm -f /etc/apt/sources.list.d/*; \
+    printf 'Acquire::https::CaInfo "/etc/ssl/certs/ca-certificates.crt";\n' > /etc/apt/apt.conf.d/99capsem-truststore; \
+    printf 'deb [check-valid-until=no] %s/%s %s main\n' \
+        "$DEBIAN_SNAPSHOT_BASE" "$DEBIAN_SNAPSHOT_ID" "$PROBE_SUITE" > /etc/apt/sources.list; \
+    apt-get -o Acquire::Check-Date=false update; \
+    read -r -a packages <<< "$PROBE_PACKAGES"; \
+    apt-get install -y --no-install-recommends "${packages[@]}"; \
+    rm -rf /var/lib/apt/lists/*

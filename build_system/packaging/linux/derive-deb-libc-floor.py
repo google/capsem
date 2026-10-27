@@ -80,7 +80,7 @@ def clause(version: tuple[int, ...], package: str) -> str:
 
 
 def write_preinstall_dependencies(root: Path) -> None:
-    """Map ONLY the validated candidate through dpkg's actual target symbols."""
+    """Map candidate symbols and required installer tools before unpack."""
     repository = Path(__file__).resolve().parents[3]
     if importlib.util.find_spec("capsem_builder") is None:
         sys.path.insert(0, str(repository / "build_system/builder"))
@@ -127,6 +127,10 @@ def write_preinstall_dependencies(root: Path) -> None:
     clauses = [value.strip() for value in dependencies.split(",")]
     if clause(version, "libc6") not in clauses or any(not value for value in clauses):
         raise SystemExit("candidate glibc floor disagrees with actual target dependency mapping")
+    from capsem_builder.gate.config import for_root
+
+    clauses.extend(for_root(repository).install.package_preinstall_packages)
+    dependencies = ", ".join(clauses)
     match = re.search(r"(?ms)^Pre-Depends:[ \t]*(.*?)(?=^[^ \t]|\Z)", original)
     if match:
         existing = match.group(1).replace("\n", " ").strip()

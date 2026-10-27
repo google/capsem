@@ -617,6 +617,16 @@ repository = "capsem-install-builder"
 maximum_count = 3
 maximum_age_hours = 336
 
+[control.docker.images.capsem-platform-probe]
+description = "Snapshot-provisioned process tools for pinned Debian platform probes."
+scope = "docker"
+warm_size_bytes = 536870912 # 512 MiB: two Debian releases for both architectures
+max_size_bytes = 1073741824 # 1 GiB: retain an additional source generation
+prune_strategy = "generational"
+repository = "capsem-platform-probe"
+maximum_count = 8
+maximum_age_hours = 336
+
 [control.failure_artifacts]
 stage = "test-evidence"
 minimum_count = 5
