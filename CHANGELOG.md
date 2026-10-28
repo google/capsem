@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Security: Patch MCP's transitive @hono/node-server dependency to 2.1.3 for static-path middleware bypass advisory GHSA-rmxm-3fg6-px4f.
+
 - Keep the selected runtime record separate from the optional architecture argument so manifest fixtures pass Python type checks.
 
 - Reject permanent service-socket errors immediately instead of retrying invalid Unix socket paths until the CLI startup deadline.
