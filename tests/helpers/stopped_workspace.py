@@ -28,9 +28,9 @@ def manifest_asset_pins(assets_dir: Path, *, architecture: str | None = None) ->
         "arm64" if platform.machine().lower() in ("arm64", "aarch64") else "x86_64"
     )
     if "runtime" in manifest:
-        architecture = _active_runtime_architecture(manifest, arch)
+        selected = _active_runtime_architecture(manifest, arch)
         entries = {}
-        for image in architecture["images"]:
+        for image in selected["images"]:
             kind = image["kind"]
             if kind not in BOOT_ASSETS or image.get("status") == "revoked":
                 continue

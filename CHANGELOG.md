@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Keep the selected runtime record separate from the optional architecture argument so manifest fixtures pass Python type checks.
+
 - Reject permanent service-socket errors immediately instead of retrying invalid Unix socket paths until the CLI startup deadline.
 
 - Preserve approval expiry when cancellation arrives after the deadline, while retaining cancellation that occurred before it and keeping both outcomes fail closed.
