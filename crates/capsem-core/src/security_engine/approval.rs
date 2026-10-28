@@ -56,7 +56,7 @@ struct Entry {
     deadline: Instant,
     expires_ms: i64,
     delivery: Option<oneshot::Sender<ApprovalOutcome>>,
-    cancel: watch::Sender<bool>,
+    cancel: watch::Sender<Option<ApprovalOutcome>>,
     audit: Arc<tokio::sync::Mutex<()>>,
 }
 
@@ -161,7 +161,7 @@ impl ApprovalBroker {
             .ok_or(ApprovalError::Invalid)?;
         let deadline = Instant::now() + self.limits.timeout;
         let (sender, delivery) = oneshot::channel();
-        let (cancel, cancelled) = watch::channel(false);
+        let (cancel, cancelled) = watch::channel(None);
         let audit = Arc::new(tokio::sync::Mutex::new(()));
         let identity = Arc::new(());
         state.held_bytes = total_bytes;
@@ -201,7 +201,7 @@ impl ApprovalBroker {
         let key = (binding.clone(), ask_id.to_string());
         let mut state = self.state.lock().unwrap();
         let entry = state.entries.get_mut(&key).ok_or(ApprovalError::Missing)?;
-        if !entry.published || entry.deadline <= Instant::now() || *entry.cancel.borrow() {
+        if !entry.published || entry.deadline <= Instant::now() || entry.cancel.borrow().is_some() {
             return Err(ApprovalError::Missing);
         }
         let delivery = entry.delivery.take().ok_or(ApprovalError::AlreadyResolving)?;
@@ -236,7 +236,7 @@ impl ApprovalBroker {
             .unwrap()
             .entries
             .get(&(binding.clone(), ask_id.to_string()))
-            .filter(|entry| entry.published && entry.deadline > Instant::now() && !*entry.cancel.borrow())
+            .filter(|entry| entry.published && entry.deadline > Instant::now() && entry.cancel.borrow().is_none())
             .map(|entry| ApprovalSnapshot {
                 request: entry.request.clone(),
                 created_ms: entry.created_ms,
@@ -257,7 +257,7 @@ impl ApprovalBroker {
                     && entry.published
                     && entry.delivery.is_some()
                     && entry.deadline > Instant::now()
-                    && !*entry.cancel.borrow()
+                    && entry.cancel.borrow().is_none()
             })
             .map(|(_, entry)| ApprovalSnapshot {
                 request: entry.request.clone(),
@@ -317,7 +317,15 @@ impl ApprovalBroker {
 fn remove(state: &mut State, key: &Key) -> bool {
     if let Some(entry) = state.entries.remove(key) {
         state.held_bytes -= entry.request.held_bytes as usize;
-        let _ = entry.cancel.send(true);
+        // Capture the cause when cancellation arrives, before a delayed waiter
+        // polls both its timer and cancellation. Earlier cancellation stays
+        // cancelled; cancellation after the deadline cannot replace expiry.
+        let outcome = if Instant::now() >= entry.deadline {
+            ApprovalOutcome::Expired
+        } else {
+            ApprovalOutcome::Cancelled
+        };
+        let _ = entry.cancel.send(Some(outcome));
         true
     } else {
         false
@@ -336,8 +344,8 @@ pub struct PendingApproval {
     key: Key,
     identity: Arc<()>,
     delivery: oneshot::Receiver<ApprovalOutcome>,
-    cancel: watch::Receiver<bool>,
-    _cancel_keepalive: watch::Sender<bool>,
+    cancel: watch::Receiver<Option<ApprovalOutcome>>,
+    _cancel_keepalive: watch::Sender<Option<ApprovalOutcome>>,
     deadline: Instant,
     /// Serializes only bounded audit I/O, never the human decision wait.
     pub audit: Arc<tokio::sync::Mutex<()>>,
@@ -356,7 +364,7 @@ impl PendingApproval {
         let mut state = self.broker.state.lock().unwrap();
         let entry = state.entries.get_mut(&self.key)?;
         let remaining_ms = entry.deadline.saturating_duration_since(Instant::now()).as_millis() as u64;
-        if !Arc::ptr_eq(&entry.identity, &self.identity) || remaining_ms == 0 || *entry.cancel.borrow() {
+        if !Arc::ptr_eq(&entry.identity, &self.identity) || remaining_ms == 0 || self.cancel.borrow().is_some() {
             return None;
         }
         entry.published = true;
@@ -374,7 +382,7 @@ impl PendingApproval {
     pub async fn wait(mut self) -> ApprovalOutcome {
         let outcome = tokio::select! {
             biased;
-            _ = self.cancel.changed() => ApprovalOutcome::Cancelled,
+            _ = self.cancel.changed() => self.cancel.borrow().unwrap_or(ApprovalOutcome::Unavailable),
             outcome = &mut self.delivery => outcome.unwrap_or(ApprovalOutcome::Unavailable),
             _ = tokio::time::sleep_until(self.deadline) => ApprovalOutcome::Expired,
         };
@@ -409,7 +417,7 @@ impl ApprovalTicket {
             entry.published
                 && Arc::ptr_eq(&entry.identity, &self.identity)
                 && entry.deadline > Instant::now()
-                && !*entry.cancel.borrow()
+                && entry.cancel.borrow().is_none()
         });
         if !live || !matches!(outcome, ApprovalOutcome::Approved | ApprovalOutcome::Denied) {
             return false;

@@ -19,6 +19,35 @@ fn request(id: u64, bytes: u64) -> ApprovalRequest {
     }
 }
 
+#[tokio::test(start_paused = true)]
+async fn cancellation_preserves_whether_it_preceded_the_deadline() {
+    for before_deadline in [true, false] {
+        let broker = ApprovalBroker::new(ApprovalLimits {
+            timeout: Duration::from_secs(1),
+            ..Default::default()
+        })
+        .unwrap();
+        let owner = binding("cancel-deadline");
+        let pending = broker.register(owner.clone(), request(1, 7)).unwrap();
+        if before_deadline {
+            broker.cancel_generation(&owner);
+        }
+        tokio::time::advance(Duration::from_secs(2)).await;
+        if !before_deadline {
+            broker.cancel_generation(&owner);
+        }
+        assert_eq!(
+            pending.wait().await,
+            if before_deadline {
+                ApprovalOutcome::Cancelled
+            } else {
+                ApprovalOutcome::Expired
+            }
+        );
+        assert_eq!(broker.pending_count(&owner), 0);
+    }
+}
+
 #[tokio::test]
 async fn registered_publication_reports_original_identity_and_cannot_revive_expired_or_cancelled_work() {
     let broker = ApprovalBroker::new(ApprovalLimits {

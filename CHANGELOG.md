@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Preserve approval expiry when cancellation arrives after the deadline, while retaining cancellation that occurred before it and keeping both outcomes fail closed.
+
 - Resolve stopped-session fixture pins from local and release manifests, reject invalid runtime selections, and keep asset-integrity checks active for release graphs.
 
 - Remove repeated Python startup from audit-readiness transport fixtures while preserving real retry waits, the existing timeout and fail-closed startup checks.

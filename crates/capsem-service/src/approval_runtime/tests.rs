@@ -127,6 +127,19 @@ async fn retired_generation_cannot_resolve_or_resume_an_original_operation() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn cancellation_after_deadline_keeps_the_expiry_audit_reason() {
+    let (runtime, session, _db, _authority, _dir) = fixture().await;
+    let pending = session.begin(request()).await.unwrap();
+    tokio::time::advance(std::time::Duration::from_secs(2)).await;
+    runtime.broker.cancel(&session.binding, "0123456789ab");
+    assert_eq!(session.wait("0123456789ab", pending).await, ApprovalOutcome::Expired);
+    let record = session.record("0123456789ab").await.unwrap().unwrap();
+    assert_eq!(record.status, SecurityAskStatus::Denied);
+    assert_eq!(record.reason.as_deref(), Some("deadline"));
+    assert_eq!(runtime.broker.pending_count(&session.binding), 0);
+}
+
+#[tokio::test(start_paused = true)]
 async fn deadline_denies_and_appends_terminal_audit_without_an_approval_poll() {
     let (runtime, session, _db, _authority, _dir) = fixture().await;
     let pending = session.begin(request()).await.unwrap();
