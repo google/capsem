@@ -259,26 +259,31 @@ impl ServiceAdminClient {
                 tokio::time::timeout(std::time::Duration::from_millis(500), UnixStream::connect(uds_path)).await;
             match attempt {
                 Ok(Ok(stream)) => Some(Ok(stream)),
-                // Retry loops must classify errors (see
-                // /dev-rust-patterns lesson 19). `NotFound` /
-                // `ConnectionRefused` are "service down" under FailFast
-                // (permanent -> Some(Err)) but "socket not bound yet"
-                // under AwaitStartup (retryable -> None).
+                // Only startup can make an absent/refused socket available.
                 Ok(Err(e))
                     if matches!(
                         e.kind(),
                         std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
-                    ) && matches!(mode, ConnectMode::FailFast) =>
+                    ) && matches!(mode, ConnectMode::AwaitStartup) =>
                 {
-                    Some(Err(anyhow::anyhow!(
-                        "service socket unavailable at {}: {e}",
-                        uds_path.display()
-                    )))
+                    None
                 }
-                // Everything else (other io errors, per-attempt 500ms
-                // timeout, NotFound/Refused under AwaitStartup) is
-                // retryable.
-                _ => None,
+                Ok(Err(e))
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::Interrupted | std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    None
+                }
+                // Invalid paths, permissions and other permanent errors cannot
+                // recover by waiting, even when the service is starting.
+                Ok(Err(e)) => Some(Err(anyhow::anyhow!(
+                    "service socket unavailable at {}: {e}",
+                    uds_path.display()
+                ))),
+                // An individual connect attempt exceeded its 500ms budget.
+                Err(_) => None,
             }
         })
         .await;

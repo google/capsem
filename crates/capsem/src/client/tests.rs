@@ -715,6 +715,19 @@ async fn connect_fail_fast_errors_immediately_on_missing_socket() {
 }
 
 #[tokio::test]
+async fn connect_rejects_an_invalid_socket_path_without_retrying() {
+    let socket = std::path::PathBuf::from(format!("/{}", "x".repeat(256)));
+    let client = ServiceAdminClient::new(socket.clone(), false);
+    for mode in [ConnectMode::FailFast, ConnectMode::AwaitStartup] {
+        let error = tokio::time::timeout(std::time::Duration::from_millis(250), client.connect_with_timeout(mode))
+            .await
+            .expect("a permanent invalid socket path must not consume the startup retry budget")
+            .unwrap_err();
+        assert!(error.to_string().contains(&socket.display().to_string()));
+    }
+}
+
+#[tokio::test]
 async fn connect_await_startup_waits_for_late_binder() {
     use tokio::net::UnixListener;
 
