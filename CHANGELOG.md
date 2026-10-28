@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Drain signing-fixture entitlement pipes before returning, preventing false signature failures under hosted scheduling while preserving signature verification.
+
 - Route native gateway fixture lessons through a testing reference while retaining the skill's context budget.
 
 - Preserve the selected native binary's startup provenance across per-test gate-environment isolation, preventing packaged gateway, benchmark and mock-server tests from requesting unrelated rebuilds.

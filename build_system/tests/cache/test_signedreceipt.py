@@ -38,10 +38,12 @@ name=Path(sys.argv[0]).name
 args=sys.argv[1:]
 if name=="uname": print("Darwin")
 elif name=="perl": pass
-elif name=="plutil": print("<entitlements/>")
+elif name=="plutil":
+ if args[-1]=="-": sys.stdin.read()
+ print("<entitlements/>")
 elif name=="codesign":
  if os.environ.get("SOURCE_DOUBLE_SIGNATURE_FAIL"): sys.exit(1)
- if "--display" in args: print("<entitlements/>")
+ if "--display" in args: print("<entitlements/>"+" "*int(os.environ.get("SOURCE_DOUBLE_ENTITLEMENTS_PADDING","0")))
 elif name=="cp": shutil.copy2(*[a for a in args if a!="-c"])
 elif name=="stat":
  for path in args[2:]:
@@ -87,12 +89,28 @@ def test_normal_runner_exec_and_assets_contract_is_unchanged(runner):
         capture_output=True,
         text=True,
         timeout=15,
-        check=True,
     )
+    assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == {
         "assets": str(root / "assets"),
         "args": ["--source-double"],
     }
+
+
+def test_signing_pipeline_consumes_entitlements_before_exiting(runner):
+    _, script, original, environment = runner
+    # Exceed the pipe buffer so an early-exiting plutil double deterministically
+    # breaks codesign's stdout, rather than depending on hosted scheduling.
+    environment["SOURCE_DOUBLE_ENTITLEMENTS_PADDING"] = "131072"
+    result = subprocess.run(
+        ["bash", str(script), str(original), "--source-double"],
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["args"] == ["--source-double"]
 
 
 def test_failed_existing_signature_validation_cannot_emit_receipt(runner):
