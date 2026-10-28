@@ -352,18 +352,8 @@ See `tests/capsem-service/test_svc_exec_ready.py` for the regression tests that 
 
 `wait_exec_ready` (in `tests/helpers/service.py`, `tests/helpers/mcp.py`, `tests/capsem-gateway/test_gw_e2e.py`) makes one exec call with the server-side timeout passed through. The server's `handle_exec` calls `wait_for_vm_ready` internally, which polls until the VM is ready. Do NOT add client-side retry loops -- that creates a double-wait where each retry can block for the full server timeout (30s client retries x 30s server wait = pathological cascade). One wait, one place.
 
-Gateway marker files are prepared empty before sandbox confinement. Their
-existence is not readiness: the gateway writes ports first and the complete
-64-character ASCII alphanumeric token last. Startup fixtures must check that
-published state before parsing ports or probing HTTP. Cover empty and partial
-real-file states directly; keep the existing bounded readiness poll and sandbox
-authority intact.
-
-Bind native test-binary authorization to the immutable startup environment
-that selected its path (`host_binary_environment()`), rather than re-reading per-test
-environment state. Synthetic gate-plan tests deliberately clear release
-markers; that isolation must not strip a runtime fixture's already-selected
-package provenance or trigger a source rebuild inside release qualification.
+For gateway readiness and selected native-binary provenance, read
+[native gateway fixtures](references/native-gateway-fixtures.md).
 
 ### Exec latency regression gate
 

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Route native gateway fixture lessons through a testing reference while retaining the skill's context budget.
+
 - Preserve the selected native binary's startup provenance across per-test gate-environment isolation, preventing packaged gateway, benchmark and mock-server tests from requesting unrelated rebuilds.
 
 - Honor the gateway's complete-token readiness marker in test fixtures before parsing prepared port files, preventing startup races from aborting release qualification.
