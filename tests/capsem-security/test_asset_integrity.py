@@ -1,36 +1,29 @@
 """Asset integrity: hashes match manifest, corrupted assets detected."""
 
-import json
-import os
 import subprocess
 from pathlib import Path
 
 import pytest
+from capsem_builder.release.tools.prove_release_runtime_assets import (
+    host_architecture as _host_arch,
+)
 from helpers.constants import ASSETS_DIR
+from helpers.stopped_workspace import manifest_asset_pins
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 pytestmark = pytest.mark.security
 
 
-def _host_arch():
-    return "arm64" if os.uname().machine == "arm64" else "x86_64"
-
-
 def _arch_manifest(arch):
-    """Return the per-arch asset entries from manifest.json (v2) or skip."""
+    """Read the selected boot-asset hashes from local or release manifests."""
     manifest = ASSETS_DIR / "manifest.json"
     if not manifest.exists():
         pytest.skip("Missing manifest")
-    data = json.loads(manifest.read_text())
-    current = data.get("assets", {}).get("current")
-    if current is None:
-        pytest.skip("manifest missing assets.current")
-    arches = data["assets"]["releases"].get(current, {}).get("arches", {})
-    entries = arches.get(arch)
-    if entries is None:
-        pytest.skip(f"manifest has no {arch} entry for version {current}")
-    return entries
+    return {
+        pin["name"]: {"hash": pin["hash"].removeprefix("blake3:")}
+        for pin in manifest_asset_pins(ASSETS_DIR, architecture=arch).values()
+    }
 
 
 def _b3sum(path):

@@ -7,6 +7,9 @@ import platform
 import shutil
 from pathlib import Path
 
+from capsem_builder.release.tools.release_inputs import required_digest
+from capsem_builder.release.tools.stage_release_test_inputs import _active_runtime_architecture
+
 from .constants import DEFAULT_CPUS, DEFAULT_RAM_MB
 
 VM_ID = "f02b6a6c-a141-4411-a032-cc79912fb248"
@@ -18,12 +21,30 @@ BODY_URL = f"/vms/{VM_ID}/bodies/{BODY_EVENT_ID}?max_bytes=64"
 BOOT_ASSETS = {"kernel": "vmlinuz", "initrd": "initrd.img", "rootfs": "rootfs.erofs"}
 
 
-def manifest_asset_pins(assets_dir: Path) -> dict[str, dict[str, str]]:
-    """The registry pins of the installed manifest's current asset release."""
+def manifest_asset_pins(assets_dir: Path, *, architecture: str | None = None) -> dict[str, dict[str, str]]:
+    """Pin the selected local asset release or manifest-owned runtime graph."""
     manifest = json.loads((assets_dir / "manifest.json").read_text())
-    release = manifest["assets"]["releases"][manifest["assets"]["current"]]
-    arch = "arm64" if platform.machine().lower() in ("arm64", "aarch64") else "x86_64"
-    entries = release["arches"][arch]
+    arch = architecture or (
+        "arm64" if platform.machine().lower() in ("arm64", "aarch64") else "x86_64"
+    )
+    if "runtime" in manifest:
+        architecture = _active_runtime_architecture(manifest, arch)
+        entries = {}
+        for image in architecture["images"]:
+            kind = image["kind"]
+            if kind not in BOOT_ASSETS or image.get("status") == "revoked":
+                continue
+            name = BOOT_ASSETS[kind]
+            if name in entries:
+                raise ValueError(f"runtime repeats boot image {kind}")
+            _, digest, _ = required_digest(image, f"runtime/{arch}/{kind}")
+            entries[name] = {"hash": digest}
+        missing = set(BOOT_ASSETS.values()) - entries.keys()
+        if missing:
+            raise ValueError(f"runtime lacks boot images: {sorted(missing)}")
+    else:
+        release = manifest["assets"]["releases"][manifest["assets"]["current"]]
+        entries = release["arches"][arch]
     return {
         key: {
             "name": name,
