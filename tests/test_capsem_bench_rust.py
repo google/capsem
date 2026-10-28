@@ -4,13 +4,14 @@ import json
 import subprocess
 from pathlib import Path
 
-from helpers.constants import host_bin_root
+from helpers.constants import host_bin_root, host_binary_environment
 from helpers.mock_server import start_mock_server, stop_process
 
 from build_system.scripts.release.release_test_binary import ensure_host_test_binary
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-BENCH_BINARY = host_bin_root() / "capsem-bench-rs"
+_BINARY_ENV = host_binary_environment()
+BENCH_BINARY = host_bin_root(_BINARY_ENV) / "capsem-bench-rs"
 
 
 def _ensure_bench_binary() -> None:
@@ -19,6 +20,7 @@ def _ensure_bench_binary() -> None:
         source_paths=(PROJECT_ROOT / "crates" / "capsem-bench").rglob("*.rs"),
         build_command=("cargo", "build", "-p", "capsem-bench"),
         project_root=PROJECT_ROOT,
+        env=_BINARY_ENV,
     )
 
 

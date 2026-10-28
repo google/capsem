@@ -16,10 +16,11 @@ from typing import Any, TextIO
 from capsem_builder.cache.config import load_paths
 
 from build_system.scripts.release.release_test_binary import ensure_host_test_binary
-from tests.helpers.constants import host_bin_root
+from tests.helpers.constants import host_bin_root, host_binary_environment
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-MOCK_SERVER_BINARY = host_bin_root() / "capsem-mock-server"
+_BINARY_ENV = host_binary_environment()
+MOCK_SERVER_BINARY = host_bin_root(_BINARY_ENV) / "capsem-mock-server"
 MOCK_SERVER_CRATE = PROJECT_ROOT / "crates" / "capsem-mock-server"
 GUARD_CRATE = PROJECT_ROOT / "crates" / "capsem-guard"
 MOCK_SERVER_ADDR = "127.0.0.1:3713"
@@ -148,6 +149,7 @@ def _ensure_mock_server_binary() -> None:
         source_paths=_mock_server_sources(),
         build_command=("cargo", "build", "-p", "capsem-mock-server"),
         project_root=PROJECT_ROOT,
+        env=_BINARY_ENV,
     )
 
 

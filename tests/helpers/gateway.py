@@ -21,11 +21,12 @@ from log_streams import read_log_stream
 
 from build_system.scripts.release.release_test_binary import ensure_host_test_binary
 
-from .constants import BIN_DIR
+from .constants import host_bin_root, host_binary_environment
 from .http_transport import Transport
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-GATEWAY_BINARY = BIN_DIR / "capsem-gateway"
+_BINARY_ENV = host_binary_environment()
+GATEWAY_BINARY = host_bin_root(_BINARY_ENV) / "capsem-gateway"
 # Every gateway source: a list of three files let a stream.rs change run the
 # tests against the previous binary.
 GATEWAY_SOURCE_PATHS = sorted(
@@ -39,6 +40,7 @@ def _ensure_gateway_binary_current() -> None:
         source_paths=GATEWAY_SOURCE_PATHS,
         build_command=("cargo", "build", "-p", "capsem-gateway"),
         project_root=PROJECT_ROOT,
+        env=_BINARY_ENV,
     )
 
 

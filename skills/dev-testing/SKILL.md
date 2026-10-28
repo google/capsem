@@ -359,6 +359,12 @@ published state before parsing ports or probing HTTP. Cover empty and partial
 real-file states directly; keep the existing bounded readiness poll and sandbox
 authority intact.
 
+Bind native test-binary authorization to the immutable startup environment
+that selected its path (`host_binary_environment()`), rather than re-reading per-test
+environment state. Synthetic gate-plan tests deliberately clear release
+markers; that isolation must not strip a runtime fixture's already-selected
+package provenance or trigger a source rebuild inside release qualification.
+
 ### Exec latency regression gate
 
 `tests/capsem-serial/test_boot_timing.py::test_exec_latency_within_gate` asserts that provision-to-first-exec completes within `EXEC_LATENCY_GATE`. If this test fails, investigate boot time (process.log boot_timeline spans), not the wait mechanism.

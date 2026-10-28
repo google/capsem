@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Preserve the selected native binary's startup provenance across per-test gate-environment isolation, preventing packaged gateway, benchmark and mock-server tests from requesting unrelated rebuilds.
+
 - Honor the gateway's complete-token readiness marker in test fixtures before parsing prepared port files, preventing startup races from aborting release qualification.
 
 - Security: Except unpatched deepmerge 4.3.1 advisory GHSA-gcqx-w48m-w2h4 only in Svelte/Vite build tooling until November 10, 2026; the dependency does not ship in the static app, native binaries or VM runtime.

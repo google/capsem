@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from pathlib import Path
+from types import MappingProxyType
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ASSETS_VARIABLE = "CAPSEM_ASSETS_DIR"
@@ -43,6 +44,15 @@ def host_bin_root(environment: Mapping[str, str] | None = None) -> Path:
         return Path(release)
     target = source.get("CARGO_TARGET_DIR") or PROJECT_ROOT / "cache" / "target" / "cargo"
     return Path(target) / "debug"
+
+
+def host_binary_environment(environment: Mapping[str, str] | None = None) -> Mapping[str, str]:
+    """Capture artifact authority with a fixture's selected binary directory.
+
+    Per-test gate-plan isolation may clear mutable environment markers later;
+    it must not turn an already-selected package into a source-build request.
+    """
+    return MappingProxyType(dict(os.environ if environment is None else environment))
 
 
 ASSETS_DIR = content_assets_root()
