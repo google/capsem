@@ -4,10 +4,8 @@ The command fixture supplies kernel status replies and configuration failures;
 native VM qualification separately proves real audit registration and recording.
 """
 
-import json
 import shlex
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -25,42 +23,40 @@ def audit_startup(tmp_path):
     daemon.chmod(0o755)
     commands = tmp_path / "commands"
     commands.mkdir()
-    calls = tmp_path / "calls.jsonl"
+    calls = tmp_path / "calls"
     status_count = tmp_path / "status-count"
     chroot = commands / "chroot"
     chroot.write_text(
-        f"#!{sys.executable}\n"
-        "import json, os, sys\n"
-        "from pathlib import Path\n"
-        "args = sys.argv[2:]\n"
-        "counter = Path(os.environ['STATUS_COUNT'])\n"
-        "count = int(counter.read_text()) if counter.exists() else 0\n"
-        "if args == ['/usr/sbin/auditctl', '-s']:\n"
-        "    count += 1\n"
-        "    counter.write_text(str(count))\n"
-        "with Path(os.environ['AUDIT_CALLS']).open('a') as output:\n"
-        "    output.write(json.dumps({'args': args, 'status_count': count}) + '\\n')\n"
-        "if args[0] == '/usr/sbin/auditd':\n"
-        "    raise SystemExit(0)\n"
-        "if args == ['/usr/sbin/auditctl', '-s']:\n"
-        "    if os.environ.get('STATUS_REPLY'):\n"
-        "        print(os.environ['STATUS_REPLY'])\n"
-        "    else:\n"
-        "        print('pid ' + ('571' if count > int(os.environ['READY_AFTER']) else '0'))\n"
-        "    raise SystemExit(int(os.environ.get('STATUS_EXIT', '0')))\n"
-        "if count <= int(os.environ['READY_AFTER']):\n"
-        "    raise SystemExit(1)\n"
-        "raise SystemExit(1 if args[1] == os.environ.get('FAIL_COMMAND') else 0)\n"
+        """#!/bin/sh
+shift
+count=0
+if [ -f "$STATUS_COUNT" ]; then read -r count < "$STATUS_COUNT"; fi
+if [ "$1" = /usr/sbin/auditctl ] && [ "$2" = -s ]; then
+    count=$((count + 1))
+    printf '%s\\n' "$count" > "$STATUS_COUNT"
+fi
+printf '%s\\0' "$count" "$#" "$@" >> "$AUDIT_CALLS"
+if [ "$1" = /usr/sbin/auditd ]; then exit 0; fi
+if [ "$1" = /usr/sbin/auditctl ] && [ "$2" = -s ]; then
+    if [ -n "${STATUS_REPLY:-}" ]; then
+        printf '%s\\n' "$STATUS_REPLY"
+    elif [ "$count" -gt "$READY_AFTER" ]; then
+        printf 'pid 571\\n'
+    else
+        printf 'pid 0\\n'
+    fi
+    exit "${STATUS_EXIT:-0}"
+fi
+[ "$count" -gt "$READY_AFTER" ] || exit 1
+[ "$2" != "${FAIL_COMMAND:-}" ]
+"""
     )
     chroot.chmod(0o755)
     sleep = commands / "sleep"
     sleep.write_text(
-        f"#!{sys.executable}\n"
-        "import json, os, sys\n"
-        "from pathlib import Path\n"
-        "with Path(os.environ['AUDIT_CALLS']).open('a') as output:\n"
-        "    output.write(json.dumps({'sleep': sys.argv[1:]}) + '\\n')\n"
-        "os.execv('/bin/sleep', ['/bin/sleep', *sys.argv[1:]])\n"
+        "#!/bin/sh\n"
+        "printf '%s\\0' sleep \"$#\" \"$@\" >> \"$AUDIT_CALLS\"\n"
+        'exec /bin/sleep "$@"\n'
     )
     sleep.chmod(0o755)
     source = (ROOT / "guest/artifacts/capsem-init").read_text()
@@ -80,7 +76,16 @@ def audit_startup(tmp_path):
             bounded(["/bin/sh", "-c", section], 15, env=environment),
             text=True, capture_output=True, check=False,
         )
-        recorded = [json.loads(line) for line in calls.read_text().splitlines()]
+        # NUL framing preserves arbitrary argv without starting Python for each
+        # transport call. Real sleeps and the production retry budget stay intact.
+        fields = iter(calls.read_text().split("\0")[:-1])
+        recorded = []
+        for kind in fields:
+            arguments = [next(fields) for _ in range(int(next(fields)))]
+            recorded.append(
+                {"sleep": arguments} if kind == "sleep"
+                else {"args": arguments, "status_count": int(kind)}
+            )
         return result, recorded
 
     return run
