@@ -352,6 +352,13 @@ See `tests/capsem-service/test_svc_exec_ready.py` for the regression tests that 
 
 `wait_exec_ready` (in `tests/helpers/service.py`, `tests/helpers/mcp.py`, `tests/capsem-gateway/test_gw_e2e.py`) makes one exec call with the server-side timeout passed through. The server's `handle_exec` calls `wait_for_vm_ready` internally, which polls until the VM is ready. Do NOT add client-side retry loops -- that creates a double-wait where each retry can block for the full server timeout (30s client retries x 30s server wait = pathological cascade). One wait, one place.
 
+Gateway marker files are prepared empty before sandbox confinement. Their
+existence is not readiness: the gateway writes ports first and the complete
+64-character ASCII alphanumeric token last. Startup fixtures must check that
+published state before parsing ports or probing HTTP. Cover empty and partial
+real-file states directly; keep the existing bounded readiness poll and sandbox
+authority intact.
+
 ### Exec latency regression gate
 
 `tests/capsem-serial/test_boot_timing.py::test_exec_latency_within_gate` asserts that provision-to-first-exec completes within `EXEC_LATENCY_GATE`. If this test fails, investigate boot time (process.log boot_timeline spans), not the wait mechanism.

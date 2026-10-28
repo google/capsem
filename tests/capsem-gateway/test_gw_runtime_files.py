@@ -6,9 +6,46 @@ Verifies token, port, and PID files are written correctly and cleaned up.
 import os
 
 import pytest
-from helpers.gateway import GatewayInstance
+from helpers.gateway import GatewayInstance, _runtime_connection
 
 pytestmark = pytest.mark.gateway
+
+
+@pytest.mark.parametrize(
+    ("token", "port"),
+    [
+        ("", ""),
+        ("", "19222"),
+        ("a" * 63, "19222"),
+        ("a" * 65, "19222"),
+        ("a" * 63 + "_", "19222"),
+        ("a" * 64 + "\n", "19222"),
+        (" " + "a" * 64, "19222"),
+        ("é" * 64, "19222"),
+        ("a" * 64, ""),
+        ("a" * 64, "0"),
+        ("a" * 64, "65536"),
+        ("a" * 64, "-1"),
+        ("a" * 64, "1x"),
+        ("a" * 64, "١٢"),
+    ],
+)
+def test_prepared_runtime_files_are_not_gateway_readiness(tmp_path, token, port):
+    """Real files exist before confinement; only complete publication is ready."""
+    (tmp_path / "gateway.token").write_text(token)
+    (tmp_path / "gateway.port").write_text(port)
+    assert _runtime_connection(tmp_path) is None
+
+
+def test_runtime_readiness_requires_the_final_complete_token(tmp_path):
+    assert _runtime_connection(tmp_path) is None
+    (tmp_path / "gateway.port").write_text("19222")
+    (tmp_path / "gateway.token").write_text("")
+    assert _runtime_connection(tmp_path) is None
+    (tmp_path / "gateway.token").write_text("a" * 63)
+    assert _runtime_connection(tmp_path) is None
+    (tmp_path / "gateway.token").write_text("a" * 64)
+    assert _runtime_connection(tmp_path) == ("a" * 64, 19222)
 
 
 class TestRuntimeFiles:

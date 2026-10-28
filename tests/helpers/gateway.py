@@ -42,6 +42,21 @@ def _ensure_gateway_binary_current() -> None:
     )
 
 
+def _runtime_connection(run_dir: Path) -> tuple[str, int] | None:
+    # AuthState prepares empty files before confinement, then stamps the
+    # complete token last. Existence alone is not the readiness protocol.
+    try:
+        token = (run_dir / "gateway.token").read_text()
+        if len(token) != 64 or not token.isascii() or not token.isalnum():
+            return None
+        port = (run_dir / "gateway.port").read_text().strip()
+    except (OSError, UnicodeError):
+        return None
+    if not port.isascii() or not port.isdecimal() or not 1 <= int(port) <= 65535:
+        return None
+    return token, int(port)
+
+
 class GatewayInstance:
     """A running capsem-gateway on an isolated temp dir."""
 
@@ -133,13 +148,11 @@ class GatewayInstance:
         grant_client.close()
 
         # Wait for gateway to start and write runtime files
-        token_path = run_dir / "gateway.token"
-        port_path = run_dir / "gateway.port"
         start = time.time()
         while time.time() - start < 10:
-            if token_path.exists() and port_path.exists():
-                self.token = token_path.read_text().strip()
-                self.port = int(port_path.read_text().strip())
+            connection = _runtime_connection(run_dir)
+            if connection is not None:
+                self.token, self.port = connection
                 # Verify HTTP health check responds
                 probe = Transport(host="127.0.0.1", port=self.port)
                 try:
