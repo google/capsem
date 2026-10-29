@@ -43,3 +43,13 @@ concurrent run sees restore permission errors, loop-device corruption,
 connection-refused startup races, or readiness misses, fix the lifecycle rail.
 Full context and failure signatures live in
 `web/docs/src/content/docs/gotchas/concurrent-suspend-resume.md`.
+
+### Managed policy narrowing counts the owner's existing lease age
+
+A policy reload does not renew ownership: its shorter lifetime is anchored to
+the last authorized claim. VM boot and setup can already exceed a short cap.
+An acceptance test of active narrowing must explicitly claim ownership after
+setup, before applying that cap, and assert that the generation stays the same.
+Include a case with prior client work longer than the cap. Keep the original
+lease durations, retirement deadline and the checks that relaxing policy cannot
+extend the existing narrowed reservation.

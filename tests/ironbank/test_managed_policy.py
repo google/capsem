@@ -21,8 +21,14 @@ def write_policy(service: ServiceInstance, lease_seconds: int, renew_after_secon
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("invalid", [False, True], ids=["narrow-then-relax", "invalid-policy"])
-def test_live_managed_policy_reloads_retire_original_native_owner(invalid: bool) -> None:
+@pytest.mark.parametrize(
+    ("invalid", "work_seconds"),
+    [(False, 0), (False, 7), (True, 0)],
+    ids=["narrow-then-relax", "narrow-after-client-work", "invalid-policy"],
+)
+def test_live_managed_policy_reloads_retire_original_native_owner(
+    invalid: bool, work_seconds: int,
+) -> None:
     service = ServiceInstance()
     request_id, capability = str(uuid.uuid4()), secrets.token_hex(32)
     try:
@@ -54,6 +60,13 @@ def test_live_managed_policy_reloads_retire_original_native_owner(invalid: bool)
             })
             assert status == 500 and rejected["code"] == "store_unavailable", rejected
         else:
+            # Boot and client work may outlive the later six-second policy cap.
+            time.sleep(work_seconds)
+            status, refreshed = client.call_json("POST", f"/vms/managed/{request_id}/claim", {
+                "ownership_token": capability,
+            })
+            assert status == 200 and refreshed["state"] == "active", refreshed
+            assert refreshed["ownership"]["generation"] == created["ownership"]["generation"]
             write_policy(service, 6, 1)
             status, reloaded = client.call_json("POST", "/corp/reload", {})
             assert status == 200 and reloaded["success"] is True, reloaded

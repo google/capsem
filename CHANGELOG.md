@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Refresh managed-policy acceptance ownership after VM setup and cover prior client work longer than the narrowed lease, preserving the production expiry rule and retirement checks.
+
 - Prepare the exact logger restart test target before concurrent VM acceptance in local and pulled-package qualification, retaining the existing execution deadline and correctness checks.
 
 - Preserve selected package authority in the mock-server parent-death launcher's child process, preventing an unintended source build during release acceptance.
