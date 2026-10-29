@@ -7,9 +7,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-from helpers.mock_server import start_mock_server, stop_process
+from helpers.constants import host_binary_environment
+from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_BINARY_ENV = host_binary_environment()
 
 
 def test_mock_server_exits_when_its_launcher_dies() -> None:
@@ -27,15 +29,18 @@ def test_mock_server_exits_when_its_launcher_dies() -> None:
 import os
 import sys
 sys.path.insert(0, "tests")
-from helpers.mock_server import start_mock_server
+from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server
+
+assert str(MOCK_SERVER_BINARY) == sys.argv[2], "launcher lost selected package authority"
 
 child, _ready = start_mock_server(addr=sys.argv[1], timeout_s=5)
 print(child.pid, flush=True)
 os._exit(0)
 """
     launcher = subprocess.Popen(
-        [sys.executable, "-c", launcher_code, addr],
+        [sys.executable, "-c", launcher_code, addr, str(MOCK_SERVER_BINARY)],
         cwd=PROJECT_ROOT,
+        env=_BINARY_ENV,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
