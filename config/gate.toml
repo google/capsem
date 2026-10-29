@@ -2450,6 +2450,10 @@ assets_dir = "cache/target/assets"
 # out, and only ever passed on a checkout an earlier phase had warmed.
 node_workspaces = ["build_system/release_site", "sdk/typescript", "mcp/typescript"]
 sdk_rust_example = ["cargo", "build", "--frozen", "-p", "capsem-sdk", "--example", "gateway_acceptance"]
+# Compile this source-only correctness fixture before VM execution. Pulled
+# package qualification has no earlier workspace test build to prepare it.
+logger_rehydration_cargo = ["cargo", "test", "--frozen", "-p", "capsem-logger", "db_query_exact_after_flush_and_restart"]
+logger_rehydration_build_timeout_seconds = 1800
 # Overridable so a release lane can point the same proof at pulled artifacts
 # instead of source-built ones.
 binary_variable = "CAPSEM_TEST_BINARY"

@@ -37,6 +37,25 @@ def _ancestors(plan, label: str) -> set[str]:
     return seen
 
 
+def test_logger_restart_target_is_prepared_before_concurrent_vm_acceptance() -> None:
+    """A cold compiler must not spend the logger's bounded correctness-test budget."""
+    for qualification in (
+        None,
+        BinaryQualification(input_dir="/staged", package="/candidate.deb", bin_dir="/bin"),
+        RuntimeQualification(input_dir="/staged", package="/candidate.deb", bin_dir="/bin"),
+    ):
+        plan = gate_plan("test-functional", qualification=qualification)
+        label = "functional.logger-rehydration.compile"
+        assert label in _ancestors(plan, "functional.pytest.broad")
+        action = plan.step_named(label).actions[0]
+        config = gate_config.load(PROJECT_ROOT)
+        assert action.render() == " ".join(
+            (*config.functional.logger_rehydration_cargo, "--no-run")
+        ) + f" [timeout {config.functional.logger_rehydration_build_timeout_seconds}s]"
+        assert "--frozen" in action.render()
+        assert "db_query_exact_after_flush_and_restart" in action.render()
+
+
 def test_python_sdk_tests_cannot_start_before_the_archives_they_install_are_built() -> None:
     plan = gate_plan("test-fast")
     assert "fast.sdk.python.build" in _ancestors(plan, "fast.sdk.python.tests"), (

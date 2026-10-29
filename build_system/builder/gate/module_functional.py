@@ -15,6 +15,7 @@ from . import (
     toolchain,
     vmproofs,
 )
+from .actions import Run
 from .command import GateCommand
 from .config import GateConfig
 from .content import RuntimeContent
@@ -143,7 +144,21 @@ def functional(
         )
 
     native = nativeacceptance.prepare(phase, config, qualification, after=first)
-    fixture = phase.add(kingslanding.prefetch(config), after=(native,))
+    logger = phase.add(
+        step(
+            "logger-rehydration.compile",
+            Run(
+                (*config.functional.logger_rehydration_cargo, "--no-run"),
+                timeout_seconds=config.functional.logger_rehydration_build_timeout_seconds,
+            ),
+            contends=(config.exclusive("workspace_binaries"),),
+            kind=Kind.COMPILE,
+            needs=frozenset({Needs.DISK}),
+            speed=Speed.SLOW,
+        ),
+        after=(native,),
+    )
+    fixture = phase.add(kingslanding.prefetch(config), after=(logger,))
     # The suites that can share the machine, in order: they claim Apple VZ and
     # the workspace binaries shared, and the xdist suite claims the VM fleet
     # alone so its four VMs never overlap another fleet.

@@ -102,6 +102,8 @@ class FunctionalConfig(Strict):
     assets_dir: str
     node_workspaces: tuple[str, ...]
     sdk_rust_example: tuple[str, ...]
+    logger_rehydration_cargo: tuple[str, ...]
+    logger_rehydration_build_timeout_seconds: PositiveInt
     binary_variable: str
     assets_variable: str
     assets_dir_variable: str

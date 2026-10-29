@@ -10,6 +10,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from capsem_builder.gate import config as gate_config
 from helpers.bounded import bounded
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -18,11 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 def test_logger_db_query_exact_after_flush_and_restart() -> None:
     result = subprocess.run(
         bounded([
-            "cargo",
-            "test",
-            "-p",
-            "capsem-logger",
-            "db_query_exact_after_flush_and_restart",
+            *gate_config.load(ROOT).functional.logger_rehydration_cargo,
             "--",
             "--nocapture",
         ], 180),

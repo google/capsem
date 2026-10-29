@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Prepare the exact logger restart test target before concurrent VM acceptance in local and pulled-package qualification, retaining the existing execution deadline and correctness checks.
+
 - Preserve selected package authority in the mock-server parent-death launcher's child process, preventing an unintended source build during release acceptance.
 
 - Security: Patch MCP's transitive @hono/node-server dependency to 2.1.3 for static-path middleware bypass advisory GHSA-rmxm-3fg6-px4f.
