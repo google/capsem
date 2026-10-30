@@ -9,4 +9,6 @@ onlyBuiltDependencies:
 
 overrides:
   esbuild: 0.28.1
+  # GHSA-g3hv-75wg-m249: bound globparts amplification in SDK lint tooling.
+  minimatch: 11.0.1
   vite: 8.3.3

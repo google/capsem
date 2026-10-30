@@ -8,7 +8,7 @@
   "engines": {"node": ">=20"},
   "bin": {"capsem-mcp": "./dist/cli.js"},
   "files": ["dist", "README.md"],
-  "pnpm": {"overrides": {"@hono/node-server": "2.1.3", "body-parser": "2.4.0", "fast-uri": "3.1.9", "hono": "4.13.11", "ip-address": "10.7.4", "qs": "6.16.1", "vite": "8.3.3"}},
+  "pnpm": {"overrides": {"@hono/node-server": "2.1.3", "body-parser": "2.4.0", "fast-uri": "3.1.9", "hono": "4.13.11", "ip-address": "10.7.4", "minimatch": "11.0.1", "qs": "6.16.1", "vite": "8.3.3"}},
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "tsc --noEmit -p tsconfig.test.json",
