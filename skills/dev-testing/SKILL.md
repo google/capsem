@@ -70,10 +70,8 @@ the canonical source phase.
 | `just install` | Complete local macOS package build and native install for hands-on testing | Yes |
 | `just test` | Complete local verification; required, passing, before a release | Yes |
 
-A release normally requires a passing `just test` for its source first. An
-explicit operator-approved release `force` may follow focused test-only fixes
-without another complete local run; source guards, fresh audits and full hosted
-qualification remain. See `RELEASE.md` section8.
+A release normally needs passing `just test`; explicitly approved release `force`
+may follow focused test-only fixes. Source guards, audits and hosted proof remain.
 `just fast-test` and `just focus-test <group>` are broader feedback tools for a
 phase boundary or a failure that needs their scope. During TDD use the smallest
 native test directly; use complete verification at major phase boundaries.

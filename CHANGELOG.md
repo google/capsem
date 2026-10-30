@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Keep the revised testing guidance within its existing skill context budget.
+
 - Remove the obsolete block-buffer advisory exception after the live scanner stopped reporting the finding; preserve exact-artifact review regression coverage independently of live exceptions.
 
 - Add `just focus-test inspect` to run the same installed Inspect acceptance independently of the other VM suites.
