@@ -44,11 +44,12 @@ class FunctionalModule(
 
     uses_qualification = True
     outside_egress = True
+    inspect_only = False
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
         if self.qualification.pulled:
-            functional(plan, self._config, qualification=self.qualification)
+            functional(plan, self._config, qualification=self.qualification, inspect_only=self.inspect_only)
         else:
             permission = self.rebuild_permission
             prepared = runtimeprepare.prepare(plan, self._config, permission=permission)
@@ -58,8 +59,15 @@ class FunctionalModule(
                 qualification=self.qualification,
                 after=(prepared.ready,),
                 signed=prepared.ready,
+                inspect_only=self.inspect_only,
             )
         return plan
+
+
+class InspectModule(
+    FunctionalModule, name="test-inspect", help="installed Inspect acceptance against the real runtime",
+):
+    inspect_only = True
 
 
 def functional(
@@ -74,6 +82,7 @@ def functional(
     node: Step | None = None,
     signed: Step | None = None,
     source_contracts_proved: bool = False,
+    inspect_only: bool = False,
 ) -> Step:
     """Every VM-owned suite, against the runtime under test.
 
@@ -142,6 +151,9 @@ def functional(
             if signed is not None
             else (phase.add(hostpackage.sign_step(config), after=settled),)
         )
+
+    if inspect_only:
+        return phase.add(content.suite(pytestsuite.inspect_live(config)).as_step(config), after=first)
 
     native = nativeacceptance.prepare(phase, config, qualification, after=first)
     logger = phase.add(

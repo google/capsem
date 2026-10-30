@@ -103,6 +103,18 @@ def test_release_system_focus_is_source_only_and_needs_no_local_package() -> Non
     assert "rehearsal.cohort" not in plan
 
 
+def test_inspect_focus_runs_the_owned_acceptance_without_other_vm_suites() -> None:
+    plan = focus.FocusTestCommand(
+        RecordingRunner(ROOT), _args("inspect"),
+        qualification=LocalQualification(bin_dir="cache/target/cargo/debug"),
+    ).plan()
+    assert "functional.pytest.inspect" in plan.labels
+    assert "functional.pytest.broad" not in plan.labels
+    assert not any("kingslanding" in label or "benchmark" in label for label in plan.labels)
+    assert "fast.integrations.inspect-ai.build" in plan.labels
+    assert plan.step_named("functional.pytest.inspect").concurrency == 2
+
+
 def test_rust_focus_uses_the_configured_affected_selector() -> None:
     assert focus.TARGETS["rust"] is focus.RustAffectedCommand
     command = focus.FocusTestCommand(

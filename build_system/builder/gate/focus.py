@@ -15,6 +15,7 @@ from .actions import Script
 from .command import GateCommand
 from .execution import SATURATES, Kind, Needs, Speed, step
 from .lifecycle import Resource
+from .module_functional import InspectModule
 from .plan import Plan
 from .proc import Runner
 from .qualification import Qualification
@@ -53,6 +54,7 @@ TARGETS: dict[str, type[GateCommand]] = {
     "greyjoy": kingslanding.GreyjoyModule,
     "kingslanding": kingslanding.KingslandingModule,
     "install": vmmodules.GlowupModule,
+    "inspect": InspectModule,
     "release-system": module_contracts.ReleaseContractsModule,
     "rust": RustAffectedCommand,
 }

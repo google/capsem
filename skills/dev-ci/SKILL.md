@@ -15,6 +15,7 @@ use a generous finite ceiling, then ratchet it after successful CI evidence.
 Inspect acceptance owns a separate two-worker fleet and a provisional one-hour
 per-archive limit; other suites retain their configured worker counts. Preserve
 every assertion and diagnose an OOM from evidence rather than assuming one.
+Use `just focus-test inspect` to rerun only that owned acceptance locally.
 
 ## Release input authority
 
