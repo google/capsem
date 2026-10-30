@@ -12,8 +12,10 @@ conventions.
 `just test` is **one process, one machine lock, one workspace, one plan**. Its
 dry run reports the current totals; conditional asset staging makes a literal
 step/action count depend on machine state. Its exact-source journal is the
-proof both release commands require before they tag or dispatch. Only the
-unattended nightly scheduler is exempt (`[release].unattended_channels` in
+proof both release commands require by default before they tag or dispatch.
+An explicit operator-approved release `force` waives that local journal while
+retaining source guards, fresh audits and full hosted qualification. The
+unattended nightly scheduler is also exempt (`[release].unattended_channels` in
 [`config/gate.toml`](../../config/gate.toml); see
 [`RELEASE.md`](../../RELEASE.md) section 8). Proof selection is owned by
 `qualificationflow.decide` and `qualificationevidence.find_release_proof`.

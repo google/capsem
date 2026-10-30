@@ -70,8 +70,10 @@ the canonical source phase.
 | `just install` | Complete local macOS package build and native install for hands-on testing | Yes |
 | `just test` | Complete local verification; required, passing, before a release | Yes |
 
-A release requires a passing `just test` for its source first; hosted release
-lanes then qualify what they publish.
+A release normally requires a passing `just test` for its source first. An
+explicit operator-approved release `force` may follow focused test-only fixes
+without another complete local run; source guards, fresh audits and full hosted
+qualification remain. See `RELEASE.md` section8.
 `just fast-test` and `just focus-test <group>` are broader feedback tools for a
 phase boundary or a failure that needs their scope. During TDD use the smallest
 native test directly; use complete verification at major phase boundaries.
@@ -87,8 +89,8 @@ reproduce the failure with the smallest focused test, run that test red/green,
 and batch adjacent parity fixes before paying for the complete gate. Run it
 only when explicitly requested. Later fixes use focused owners; a gate-policy
 edit is not permission for another full run. The one full run a change always
-needs is the passing `just test` a release of it requires; the release command
-refuses without it.
+needs by default is the passing `just test` a release of it requires. Use the
+documented operator-approved release override only when explicitly authorized.
 
 `just test` deliberately accepts committed or uncommitted developer work. It
 records `HEAD` plus a digest of every tracked and untracked non-ignored source

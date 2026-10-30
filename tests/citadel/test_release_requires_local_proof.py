@@ -26,11 +26,11 @@ installed-package glow-up checking one version's binary names against the
 previous package -- that the local glow-up and functional lanes find in
 minutes. That cost a day.
 
-The rule is now: nothing runs in CI that `just test` has not run locally
-first. Both release commands refuse a source without a passing journal
-(`qualificationflow.decide`), and the hosted lane still qualifies what it
-publishes. Say that, not the old model. The only exemption is the unattended
-nightly scheduler, `[release].unattended_channels` in config/gate.toml.
+The default is complete local proof before release. Explicit operator-approved
+release force may waive that journal after focused test-only verification,
+while preserving source guards, advisory audits and full hosted qualification.
+The unattended nightly scheduler is also exempt. Keep these named exceptions
+explicit rather than presenting hosted qualification as the general substitute.
 """
 
 #: Agent-facing sources: the contract, the release spec, every skill and its

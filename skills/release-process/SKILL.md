@@ -24,7 +24,7 @@ lessons; it does not restate product policy.
 - Read `references/qualification-and-test-composition.md` before changing public
   release commands, source guards, sandbox/egress, execution-envelope or
   workflow/shell parity, test composition, artifact staging, `RuntimeContent`, or
-  `--force` (dirty outer checkout only; never the `just test` journal).
+  `--force` (explicit operator override of clean-tree and local-journal checks).
 - Read `references/lane-workflows.md` before changing channel locking, preview
   deployment, runtime/binary ownership, nightly sequencing, staged activation,
   base-image materialization, or corporate authoring.
@@ -59,9 +59,12 @@ Do not dispatch downstream workflows or author source manifests by hand.
 source without a complete, passing journal on this machine, because a hosted
 attempt takes hours to find what the local glow-up and functional lanes find in
 minutes. The hosted lane still qualifies what it publishes. Only the
-unattended nightly scheduler (`[release].unattended_channels`) is exempt, and
-release `--force` never waives the journal. Failed or interrupted runs never
-count; an approved `just test <commit> force "<reason>"` that passes does.
+unattended nightly scheduler (`[release].unattended_channels`) is exempt by
+default. An explicitly authorized release `force` can instead follow focused
+verification of a test-only deadline or fixture fix; it retains Citadel,
+release contracts, fresh advisory audits and complete hosted qualification.
+Record the earlier proof and delta honestly. Failed or interrupted runs never
+count as complete proof.
 
 The proof is matched by source identity, the Git tree (every tracked byte,
 lockfile, and submodule pin), so the intended flow is: fix on a branch, run

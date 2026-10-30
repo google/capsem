@@ -5,6 +5,17 @@ description: CI triage and red-gate discipline. Use when an Actions run is red, 
 
 # CI Triage and Red-Gate Discipline
 
+## Size test budgets for the actual runner
+
+Hosted CI is not the high-end development workstation. Its lower CPU, RAM and
+disk capacity must inform VM concurrency and deadlines; local timings alone
+do not establish a hosted completion budget. Record actual hosted phase times
+and memory pressure before tightening bounds. For an explicit measurement run,
+use a generous finite ceiling, then ratchet it after successful CI evidence.
+Inspect acceptance owns a separate two-worker fleet and a provisional one-hour
+per-archive limit; other suites retain their configured worker counts. Preserve
+every assertion and diagnose an OOM from evidence rather than assuming one.
+
 ## Release input authority
 
 The selected manifest is the bible: an artifact absent from it does not exist

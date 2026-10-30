@@ -94,7 +94,7 @@ def test_inspect_ai_live_vm_sandbox_acceptance() -> None:
             environment,
             probe="live_acceptance.py",
             success_marker="INSPECT_CAPSEM_VM_ACCEPTANCE_OK",
-            timeout_seconds=240,
+            timeout_seconds=3600,
         )
         assert "SDK_IMAGE_PACKAGE_ACCEPTANCE_OK" in output
         assert "INSPECT_CAPSEM_CONTAINER_ACCEPTANCE_OK" in output

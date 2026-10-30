@@ -49,7 +49,7 @@ automation. Each Python release plan has this non-negotiable order:
 ```text
 just release-binaries <channel> <source-commit>
   0. refuse unless `just test <source-commit>` passed on this machine
-     (skipped only for `[release].unattended_channels`, i.e. nightly)
+     (except unattended channels or explicitly operator-authorized release force)
   1. require the detached source commit on fresh origin/main and fetch the
      serialized channel source manifest read-only; fail immediately if the
      manifest has no staged channel runtime authority
@@ -58,7 +58,7 @@ just release-binaries <channel> <source-commit>
 
 just release-assets <channel> <source-commit>
   0. refuse unless `just test <source-commit>` passed on this machine
-     (skipped only for `[release].unattended_channels`, i.e. nightly)
+     (except unattended channels or explicitly operator-authorized release force)
   1. require the detached source commit on fresh origin/main and publish its ref
   2. invoke capsem-admin and watch the exact runtime workflow, which qualifies
      its artifacts before publication
@@ -311,12 +311,15 @@ runs the whole source proof and then dies at `channel-source` with "GITHUB_TOKEN
 is required to resolve source manifests" -- four minutes in, naming the variable
 but not where to get it.
 
-`--force` waives exactly one thing: the refusal to release while the outer
-checkout has uncommitted changes. It never waives the exact `just test` journal
-(there is no waiver for that), and it never waives the hosted lane.
+An explicitly operator-authorized release `--force` waives the clean-tree
+refusal and the exact local `just test` journal. For a test-only deadline or
+fixture correction, run its focused acceptance and record the prior complete
+proof and changed scope rather than repeating the complete local pipeline.
+This never waives the hosted lane or claims the earlier journal proves the
+changed source.
 
 - The clean-worktree refusal is skipped, while Citadel and release-source
   contracts run before dispatch, so the tree still has to be one you
   would publish -- a release publishes the commit, never the working tree.
-- `qualification.accept` still runs first, and the command still refuses a
-  commit without a passing `just test` before any of that.
+- `qualification.accept` is omitted; fresh advisory audits, Citadel and release
+  contracts run before immutable source publication and dispatch.

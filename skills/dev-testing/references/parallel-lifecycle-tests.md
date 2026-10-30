@@ -18,7 +18,13 @@ runs them immediately after the `-n 4` canary. That is not a flake escape
 hatch: it prevents another benchmark file from stealing the same Apple VZ
 launch budget and corrupting the number we are trying to publish.
 
-The host has plenty of headroom (48 GB RAM, 14 cores; 4 VMs at 2 GB / 2 CPU each = 8 GB / 8 cores). If concurrency surfaces a flake, fix the product, then re-run. Bumping `-n` higher (8, 12) is the natural follow-on once n=4 is stable -- real users will run more.
+The development host's headroom is not the hosted runner's headroom. Size
+concurrency and deadlines from actual CI CPU, RAM, disk and phase measurements,
+not workstation timings. Inspect's installed-package acceptance runs separately
+with two workers and a provisional one-hour per-archive limit; tighten that
+limit only after successful hosted measurements. Other suites retain n=4.
+Capacity exhaustion is distinct from a product race; preserve every assertion
+and use observed memory pressure or OOM evidence before diagnosing either.
 
 ### Orphan processes across runs are a product bug (not a test bug)
 

@@ -37,6 +37,27 @@ def _ancestors(plan, label: str) -> set[str]:
     return seen
 
 
+def test_inspect_acceptance_has_its_own_two_worker_fleet_without_changing_broad() -> None:
+    for qualification in (
+        None,
+        BinaryQualification(input_dir="/staged", package="/candidate.deb", bin_dir="/bin"),
+        RuntimeQualification(input_dir="/staged", package="/candidate.deb", bin_dir="/bin"),
+    ):
+        plan = gate_plan("test-functional", qualification=qualification)
+        inspect = plan.step_named("functional.pytest.inspect")
+        broad = plan.step_named("functional.pytest.broad")
+        assert broad.label in _ancestors(plan, inspect.label)
+        assert inspect.concurrency == 2
+        assert broad.concurrency == 4
+        assert "-n 2" in inspect.actions[0].render()
+        assert "-n 4" in broad.actions[0].render()
+        config = gate_config.load(PROJECT_ROOT)
+        for node in config.suites.pytest.inspect_live:
+            assert f"--deselect={node}" in broad.actions[0].render()
+            assert node in inspect.actions[0].render()
+        assert config.exclusive("vm_fleet") in inspect.contends
+
+
 def test_logger_restart_target_is_prepared_before_concurrent_vm_acceptance() -> None:
     """A cold compiler must not spend the logger's bounded correctness-test budget."""
     for qualification in (

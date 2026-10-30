@@ -536,10 +536,16 @@ already prepared and committed on a local branch (the release branch, or
 `main`). It MUST
 materialize and diagnose an independent detached repository at a prefix named
 by that full commit. The mutable outer checkout and branch are not
-diagnostic inputs and MAY advance while it runs. Release commands MUST
+diagnostic inputs and MAY advance while it runs. By default release commands MUST
 refuse unless that machine-local journal holds a complete successful run for
 the release commit, or for a tested commit with the identical Git tree (unattended
-channels named in `[release].unattended_channels` are exempt). They MUST validate and freeze the supplied
+channels named in `[release].unattended_channels` are exempt). An operator MAY
+explicitly authorize release `force` after focused verification of a test-only
+deadline or fixture correction, without repeating the complete local pipeline.
+This override MUST retain Citadel, release contracts, fresh advisory audits and
+complete hosted artifact qualification. Record the earlier proof and changed
+scope honestly; the earlier journal does not qualify the changed tree.
+They MUST validate and freeze the supplied
 commit, dispatch the hosted artifact lane, and allow publication only after
 that lane's qualification succeeds. They MUST NOT repeat the local candidate,
 edit tracked source, create a preparation commit, or push `main`. They MUST
@@ -1682,9 +1688,10 @@ An implementation conforming to this specification MUST demonstrate:
       on local `main`, diagnoses its detached full-SHA prefix once, reuses or
       structurally resumes its journal, and remains valid while the outer
       checkout advances.
-- [ ] Both release commands refuse without a passing local `just test` journal
+- [ ] Both release commands normally refuse without a passing local `just test` journal
       for the release commit or an identical tree, dispatch hosted
-      qualification, and never repeat the local candidate.
+      qualification, and never repeat the local candidate. Explicitly authorized
+      release `force` retains source guards and full hosted qualification.
 - [ ] Binary release accepts exactly one channel and one source commit.
 - [ ] Runtime release accepts exactly one channel and source commit and derives
       its runtime revision and immutable publication identity.

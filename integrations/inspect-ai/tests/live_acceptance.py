@@ -7,6 +7,7 @@ import functools
 import os
 import sqlite3
 import tempfile
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -71,11 +72,14 @@ async def _run_inspect_self_check(
     for name in inspect_self_check.__all__:
         if skip and name in skip:
             continue
+        started = time.monotonic()
+        print(f"INSPECT_SELF_CHECK_START {name}", flush=True)
         try:
             await getattr(inspect_self_check, name)(env)
             results[name] = True
         except Exception as exc:
             results[name] = f"{type(exc).__name__}: {exc}"
+        print(f"INSPECT_SELF_CHECK_END {name} {time.monotonic() - started:.3f}s", flush=True)
     return results
 
 

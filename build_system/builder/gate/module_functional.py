@@ -169,6 +169,7 @@ def functional(
         after=(fixture,),
     )
     for owned in (
+        pytestsuite.inspect_live(config),
         kingslanding.suite(config, benchmark=False),
         kingslanding.greyjoy_suite(config),
         pytestsuite.host_snapshot(config),

@@ -59,7 +59,9 @@ class Suite:
     ignores: tuple[str, ...] = ()
     ignore_globs: tuple[str, ...] = ()
     deselect: str = ""
+    deselect_nodes: tuple[str, ...] = ()
     parallel: bool = False
+    workers: int | None = None
     coverage: CoverageMode = CoverageMode.NONE
     stop_at_first_failure: bool = True
     assets_dir: str = ""
@@ -81,7 +83,7 @@ class Suite:
         if self.parallel:
             argv += [
                 "-n",
-                str(settings.parallel_workers),
+                str(self.workers or settings.parallel_workers),
                 f"--dist={settings.parallel_distribution}",
             ]
         coverage_flags = {
@@ -96,6 +98,7 @@ class Suite:
             argv += ["-m", self.markers]
         if self.deselect:
             argv += ["-k", self.deselect]
+        argv += [f"--deselect={node}" for node in self.deselect_nodes]
 
         argv += [f"--ignore={path}" for path in self.ignores]
         argv += [f"--ignore-glob={pattern}" for pattern in self.ignore_globs]
@@ -123,7 +126,7 @@ class Suite:
             kind=Kind.UNIT_TEST,
             needs=frozenset({Needs.DISK}),
             speed=Speed.SLOW,
-            concurrency=(config.suites.pytest.parallel_workers if self.parallel else 1),
+            concurrency=((self.workers or config.suites.pytest.parallel_workers) if self.parallel else 1),
         )
 
 
@@ -193,8 +196,21 @@ def broad(config: GateConfig, *, source_contracts_proved: bool = False) -> Suite
         markers="not serial",
         ignores=(*settings.host_snapshot_serial, *settings.broad_ignores, *proven_paths),
         ignore_globs=proven_globs,
+        deselect_nodes=settings.inspect_live,
         parallel=True,
         coverage=(CoverageMode.FINISH if source_contracts_proved else CoverageMode.SINGLE),
+        contends=_fleet(config),
+    )
+
+
+def inspect_live(config: GateConfig) -> Suite:
+    """Installed Inspect consumers run apart from the broad VM fleet."""
+    settings = config.suites.pytest
+    return Suite(
+        label="pytest.inspect",
+        paths=settings.inspect_live,
+        parallel=True,
+        workers=settings.inspect_workers,
         contends=_fleet(config),
     )
 

@@ -82,8 +82,10 @@ Never use diagnostic continuation with `release-binaries` or
 `release-assets`, and never let it authorize publication. After the fix, use
 the smallest owning `focus-test` group. Before release, run `just test <commit>`
 to success: the public release command requires its complete local journal for
-that commit or an identical Git tree. Only the unattended nightly scheduler is
-exempt (`[release].unattended_channels` in
+that commit or an identical Git tree by default. An explicitly authorized
+release `force` permits a focused test-only correction without repeating the
+complete local run; source guards and full hosted qualification remain.
+The unattended nightly scheduler is also exempt (`[release].unattended_channels` in
 [`config/gate.toml`](../../config/gate.toml); see
 [`RELEASE.md`](../../RELEASE.md) section 8). The hosted lane then independently
 qualifies the artifact pairing it publishes.

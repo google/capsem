@@ -2369,6 +2369,10 @@ stop_at_first = "--maxfail=5"
 # than half without adding a second concurrency policy.
 parallel_workers = 4
 parallel_distribution = "loadfile"
+# Installed Inspect wheel/sdist acceptance owns a separate, smaller VM fleet.
+# Measure hosted completion before tightening its provisional one-hour bound.
+inspect_workers = 2
+inspect_live = ["tests/ironbank/test_sdk_live.py::test_inspect_ai_live_vm_sandbox_acceptance"]
 coverage_flags = ["--cov=build_system/builder", "--cov-report=xml:cache/target/coverage/python/codecov.xml"]
 # A composed qualification executes source contracts before it builds anything,
 # then appends the VM-owned cohort without executing those files again.  The

@@ -307,9 +307,12 @@ a release to find out what is broken: the hosted lane takes hours per attempt
 and stops at the first failure, so it finds one bug per attempt. The 0.6.4
 stable release spent four dispatches, one per bug, that a local run catches in
 minutes. Nothing runs in CI that `just test` has not run locally first.
-The release command's `force` argument, which the user asks for explicitly,
-permits a dirty outer checkout. It never waives the exact complete local proof,
-citadel guards, release contracts, live advisory audit or hosted qualification.
+The release command's `force` argument requires explicit user authorization.
+It permits a dirty outer checkout and waives a new complete local proof, so a
+test-only deadline or fixture fix can proceed after focused verification.
+It retains Citadel guards, release contracts, the live advisory audit and full
+hosted qualification. Record the earlier proof and verified delta honestly;
+the earlier journal does not qualify the changed tree.
 
 A proof covers the tested commit and any commit with the identical Git tree.
 Fast-forward `main` to the tested commit (or merge only when the merge commit's

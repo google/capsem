@@ -52,7 +52,7 @@ class ReleaseBinariesCommand(
             "--force",
             choices=("true", "false"),
             default="false",
-            help="release even though the working tree has uncommitted changes",
+            help="operator-approved release without local journal or clean tree; retain source guards and hosted qualification",
         )
 
     def source_commit(self) -> SourceCommit:
@@ -185,7 +185,7 @@ class ReleaseAssetsCommand(
             "--force",
             choices=("true", "false"),
             default="false",
-            help="release even though the working tree has uncommitted changes",
+            help="operator-approved release without local journal or clean tree; retain source guards and hosted qualification",
         )
 
     def source_commit(self) -> SourceCommit:
