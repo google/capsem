@@ -152,6 +152,7 @@ class RuntimeResource(BaseModel):
     identity: StrictStr
     names: tuple[StrictStr, ...]
     logical_bytes: NonNegativeInt
+    #: Zero denotes unknown metadata; it does not establish age for expiry.
     created_ns: NonNegativeInt
     last_used_ns: NonNegativeInt
     active: StrictBool

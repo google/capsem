@@ -353,3 +353,6 @@ just cache contract <cache-id>
 
 If runtime inventory fails, diagnose Docker/Colima or Tart through `/dev-setup`.
 Do not add fallback accounting or silently treat a required runtime as empty.
+OCI image creation time is optional. Keep its existing zero unknown-age sentinel
+and complete byte accounting; use a missing-key-safe projection for both bulk
+inventory and exact anchors rather than fabricating a creation date.

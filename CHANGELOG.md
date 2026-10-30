@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Preserve Docker cache inventory and exact-image anchors when valid OCI images omit creation time, retaining unknown-age accounting and ownership protection.
+
 - Security: Upgrade TypeScript SDK and MCP development tooling to minimatch 11.0.1 for globparts amplification advisory GHSA-g3hv-75wg-m249.
 
 - Publish managed-session admission tickets before concurrent claims can observe their durable records, preventing a spurious ownership recovery error during SDK creation.

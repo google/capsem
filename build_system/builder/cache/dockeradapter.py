@@ -17,6 +17,10 @@ from .runtimemodels import (
     RuntimeResource,
 )
 
+# OCI creation time is optional. Render it empty for the existing unknown-age
+# sentinel, without exposing the image's environment in the inventory output.
+_IMAGE_FORMAT = '{{.Id}}\\t{{with index . "Created"}}{{.}}{{end}}\\t{{.Size}}\\t{{json .RepoTags}}'
+
 
 def _categories(output: str) -> tuple[RuntimeCategory, ...]:
     rows = []
@@ -83,7 +87,7 @@ def _owned_images(
             "image",
             "inspect",
             "--format",
-            "{{.Id}}\\t{{.Created}}\\t{{.Size}}\\t{{json .RepoTags}}",
+            _IMAGE_FORMAT,
             *ids,
         ),
         policy.timeout_seconds,
@@ -132,7 +136,7 @@ def inspect_image(
             "image",
             "inspect",
             "--format",
-            "{{.Id}}\\t{{.Created}}\\t{{.Size}}\\t{{json .RepoTags}}",
+            _IMAGE_FORMAT,
             reference,
         ),
         policy.timeout_seconds,
