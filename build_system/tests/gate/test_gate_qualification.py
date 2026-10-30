@@ -358,6 +358,7 @@ def test_the_capability_is_declared_rather_than_guessed() -> None:
         "test-candidate",
         "test-artifacts",
         "test-functional",
+        "test-inspect",
         "test-glowup",
         # It replays the release lane's pulled path, so it has to know which
         # lane it is in -- and refuse to rehearse inside a release, where that
