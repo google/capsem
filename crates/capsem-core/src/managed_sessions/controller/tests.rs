@@ -4,6 +4,59 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::sync::Semaphore;
 
 #[tokio::test]
+async fn admitted_claim_does_not_wait_for_create_worker_to_resume() {
+    let root = tempfile::tempdir().unwrap();
+    let owner = controller(&root.path().join("ownership"));
+    let fixture = Fixture::new();
+    let request = capsem_crypto::uuid_v4();
+    let cap = Capability::from_bytes([98; 32]);
+    let work = Arc::new(Work {
+        recovering: false,
+        capability_hash: Some(cap.hash(request)),
+        ticket: std::sync::Mutex::new(None),
+        binding: std::sync::Mutex::new(None),
+        intent: std::sync::Mutex::new(None),
+        effects: effects(&fixture),
+        cancel: CancellationToken::new(),
+        created: watch::channel(None).0,
+        deadline: watch::channel(None).0,
+        cleanup: Mutex::new(None),
+    });
+    owner.0.works.lock().await.insert(request, work.clone());
+    let mut creating = std::pin::pin!(owner.create_worker(
+        request,
+        cap.clone(),
+        LeasePolicy::new(Duration::from_secs(10)).unwrap(),
+        work.clone(),
+    ));
+    {
+        // Start the actual blocking admission, but keep it from completing
+        // during this single poll. Do not resume the async worker afterward.
+        let _deadlines = owner.0.registry.runtime_deadlines().unwrap();
+        assert!(creating.as_mut().now_or_never().is_none());
+    }
+    // This queues behind admission on the real I/O semaphore. Its result is
+    // visible before the async create continuation gets another poll.
+    let admitted = owner.inspect(request, cap.clone()).await.unwrap().unwrap();
+    assert_eq!(admitted.state(), State::Creating);
+    assert!(matches!(
+        owner.claim(request, Capability::from_bytes([99; 32])).await,
+        Err(Failure::Forbidden)
+    ));
+    let claimed = owner.claim(request, cap.clone()).await.unwrap();
+    assert_eq!(claimed.state(), State::Creating);
+    assert_eq!(claimed.generation(), admitted.generation());
+    assert_eq!(fixture.creates.load(Ordering::SeqCst), 0);
+    fixture.create_release.add_permits(1);
+    creating.await;
+    assert_eq!(wait_created(&work).await.unwrap().state(), State::Active);
+    fixture.cleanup_release.add_permits(1);
+    assert_eq!(owner.close(request, cap).await.unwrap().state(), State::Closed);
+    assert_eq!(fixture.creates.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.cleanups.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
 async fn obsolete_policy_failure_cannot_cancel_current_validated_owner() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("ownership");

@@ -507,6 +507,7 @@ impl Controller {
     }
 
     async fn create_worker(&self, request: Uuid, capability: Capability, policy: LeasePolicy, work: Arc<Work>) {
+        let admitted = Arc::clone(&work);
         let admission = self
             .io(move |registry| {
                 let Reservation::New(ticket) = registry.reserve(request, &capability)? else {
@@ -518,6 +519,13 @@ impl Controller {
                     "managed creation closed before admission"
                 );
                 let deadline = registry.runtime_deadline(&ticket)?;
+                // A claim can inspect the durable admission as soon as this
+                // I/O permit is released, before this async worker resumes.
+                // Publish its matching ticket within that same boundary.
+                *admitted
+                    .ticket
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("managed worker ticket lock poisoned"))? = Some(ticket.clone());
                 Ok((ticket, deadline))
             })
             .await;
@@ -529,7 +537,6 @@ impl Controller {
                 return;
             }
         };
-        *work.ticket.lock().expect("worker ticket lock poisoned") = Some(ticket.clone());
         work.update_deadline(deadline);
         let owner = self.clone();
         let expiry = Arc::clone(&work);

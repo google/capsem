@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Publish managed-session admission tickets before concurrent claims can observe their durable records, preventing a spurious ownership recovery error during SDK creation.
+
 - Move hosted macOS jobs to macOS 15 before macOS 14 runner retirement, retain Xcode 16.2 and the macOS 14 deployment floor, and separate the new host's compiler caches.
 
 - Register the focused Inspect owner's existing qualification capability in the exact command inventory.

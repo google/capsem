@@ -16,6 +16,12 @@ JSON require a concrete, documented contract; neither is a default safety step.
 
 Capsem uses tokio for all async I/O. The MITM proxy, vsock manager, and file monitor are all async.
 
+Publish matching in-memory ownership inside the serialized blocking admission,
+before releasing its I/O permit. A reader can observe the durable record before
+the async caller resumes after `spawn_blocking`; publishing its ticket after
+`.await` exposed valid managed-session claims to `recovery_pending`. The
+controller regression pauses that continuation and claims through the real store.
+
 ### Never block the tokio runtime
 
 Long-running synchronous work (FUSE request processing, disk I/O, compression) must run on a dedicated thread via `tokio::task::spawn_blocking` or a dedicated `std::thread`. Blocking inside a tokio task starves other tasks.
