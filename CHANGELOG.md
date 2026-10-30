@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Remove the obsolete block-buffer advisory exception after the live scanner stopped reporting the finding; preserve exact-artifact review regression coverage independently of live exceptions.
+
 - Add `just focus-test inspect` to run the same installed Inspect acceptance independently of the other VM suites.
 
 - Give installed Inspect acceptance a provisional one-hour per-archive limit and its own two-worker VM fleet, report self-check durations, and retain every acceptance case while measuring hosted runner performance.

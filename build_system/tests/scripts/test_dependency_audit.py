@@ -13,6 +13,7 @@ from capsem_builder.cache.models import CachePolicy, StagePolicy
 from capsem_builder.cache.paths import CachePaths
 from capsem_builder.cache.tools import MaterializedTool
 from capsem_builder.gate.config import for_root
+from capsem_builder.gate.qualifyschema import ScopedAdvisoryIgnore
 from capsem_builder.gate.tools.audit import dependencies as audit
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -276,12 +277,18 @@ def test_scoped_ignore_refuses_every_unreviewed_artifact(monkeypatch, tmp_path: 
     """A reviewed old implementation must never hide the affected new one."""
     import tomllib
 
-    scope = POLICY.scoped_ignores[0]
+    # Exercise review matching even when the live policy needs no scoped ignore.
+    scope = ScopedAdvisoryIgnore(
+        advisory="GHSA-qwgh-2vcv-g2f7", ecosystem="crates.io",
+        package="block-buffer", version="0.10.4",
+        registry="registry+https://github.com/rust-lang/crates.io-index",
+        checksum="3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71",
+    )
     root = tmp_path / "subject"
     root.mkdir()
     (root / Path(POLICY.config).parent).mkdir(parents=True)
     (root / POLICY.config).write_text(f'[[IgnoredVulns]]\nid = "{scope.advisory}"\n')
-    policy = POLICY.model_copy(update={"lockfiles": ("Cargo.lock",)})
+    policy = POLICY.model_copy(update={"lockfiles": ("Cargo.lock",), "scoped_ignores": (scope,)})
     if changed == "review-dropped":
         policy = policy.model_copy(update={"scoped_ignores": ()})
     package = {"name": scope.package, "version": scope.version, "source": scope.registry, "checksum": scope.checksum}
