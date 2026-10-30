@@ -188,7 +188,7 @@ jobs:
 
   preflight:
     needs: [runtime-preflight, fast-gate]
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
@@ -276,7 +276,9 @@ jobs:
           rm -rf "$RUNNER_TEMP/private_keys"
   build-app-macos:
     needs: [preflight, resolve-channel-source]
-    runs-on: macos-14
+    runs-on: macos-15
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "14.0"
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
@@ -299,7 +301,7 @@ jobs:
           toolchain: 1.97.1
       - uses: ./.github/actions/rust-cache
         with:
-          key: build-app-macos
+          key: build-app-macos-15-xcode16.2-target14
 
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
 
@@ -707,7 +709,7 @@ jobs:
 
   test-native-macos-package:
     needs: [build-app-macos, author-binary-candidate]
-    runs-on: macos-14
+    runs-on: macos-15
     name: Install exact candidate macOS package
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd

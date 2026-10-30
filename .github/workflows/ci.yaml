@@ -212,13 +212,18 @@ jobs:
   test:
     needs: scope
     if: ${{ contains(fromJSON(needs.scope.outputs.owners), 'test') }}
-    runs-on: macos-14
+    runs-on: macos-15
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "14.0"
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
 
       # tests/capsem-release/ shells out to `just` to prove the release recipes
       # sequence their side effects; without it those contracts cannot run.
       - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b
+
+      - name: Select Xcode 16.2
+        run: sudo xcode-select -s /Applications/Xcode_16.2.app
 
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:
@@ -227,6 +232,8 @@ jobs:
           components: llvm-tools
 
       - uses: ./.github/actions/rust-cache
+        with:
+          key: test-macos-15-xcode16.2-target14
 
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:

@@ -17,6 +17,11 @@ per-archive limit; other suites retain their configured worker counts. Preserve
 every assertion and diagnose an OOM from evidence rather than assuming one.
 Use `just focus-test inspect` to rerun only that owned acceptance locally.
 
+A cancelled job with no runner or steps can be an image brownout: inspect its
+check-run annotations before blaming source or credentials. macOS14 retires on
+2026-11-02; use macOS15 with pinned Xcode16.2 and the macOS14 product deployment
+floor. Change compiler-cache keys when moving the build host.
+
 ## Release input authority
 
 The selected manifest is the bible: an artifact absent from it does not exist
@@ -54,7 +59,7 @@ so every merged commit retains a post-merge signal and Codecov baseline.
 | Job | Runner | Covers | Common failure causes |
 |-----|--------|--------|----------------------|
 | `test-linux` | ubuntu-24.04-arm | KVM-backend unit tests + coverage | Linux-only cfg regressions; KVM absent is a warning, not a failure |
-| `test` | macos-14 | Full Rust unit+integration, frontend, Python suites, schema drift, cross-compile check | Missing JS/Python dep installs for suites that shell out (see gotcha below); schema drift |
+| `test` | macos-15 | Full Rust unit+integration, frontend, Python suites, schema drift, cross-compile check | Missing JS/Python dep installs for suites that shell out (see gotcha below); schema drift |
 | `test-install` | ubuntu-24.04 | Docker install layout + systemd e2e (builds the x86_64 package) | Dockerfile/install-script drift; Linux bind-mount ownership, which macOS cannot reproduce |
 | `docs-build` / `site-build` / `release-site-build` | ubuntu-latest | Astro builds + release-site contract | pnpm lockfile drift; release-channel fixture drift |
 

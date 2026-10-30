@@ -24,6 +24,20 @@ JUSTFILE = (PROJECT_ROOT / "justfile").read_text(encoding="utf-8")
 
 CONFIG = _gate_config.load(PROJECT_ROOT)
 
+
+def test_macos_jobs_avoid_the_retired_runner_and_preserve_the_product_floor() -> None:
+    import json
+
+    floor = json.loads((PROJECT_ROOT / "crates/capsem-app/tauri.conf.json").read_text())["bundle"]["macOS"]["minimumSystemVersion"]
+    for filename, builder in (("release.yaml", "build-app-macos"), ("ci.yaml", "test")):
+        jobs = workflow_jobs(PROJECT_ROOT / ".github/workflows" / filename)
+        macos = [job for job in jobs.values() if str(job.get("runs-on", "")).startswith("macos-")]
+        assert macos and all(job["runs-on"] == "macos-15" for job in macos), filename
+        assert jobs[builder].get("env", {}).get("MACOSX_DEPLOYMENT_TARGET") == floor
+        assert "/Applications/Xcode_16.2.app" in " ".join(
+            step.get("run", "") for step in jobs[builder]["steps"]
+        )
+
 #: The inventory, from the one place that owns it. It was a 47-line array in
 #: the justfile until `_test-candidate-run` was ported out of shell, and the
 #: duplication is how eleven gate test files ended up in neither the fast
