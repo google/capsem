@@ -40,6 +40,7 @@ BOUNDARY_FILES = frozenset(
         "build_system/tests/gate/test_gate_incomplete_reports.py",
         "build_system/tests/gate/test_install_cleanup_settlement.py",
         "build_system/tests/gate/test_native_restart_handoff.py",
+        "build_system/tests/gate/test_terminal_acceptance_readiness.py",
         "build_system/tests/gate/test_criterion_collector.py",
         "build_system/tests/fixtures/criterion_cargo_1_97_1/cargo-bench-no-run.jsonl",
         "build_system/tests/fixtures/criterion_cargo_1_97_1/metadata.json",

@@ -215,7 +215,11 @@ finally:
     termios.tcsetattr(0, termios.TCSANOW, before)
 """
             send(socket, ("python3 -c " + shlex.quote(script) + "\n").encode())
-            before = next_state(socket, lambda state: state["title"] == "Persisted terminal")
+            before = next_state(socket, lambda state: state["title"] == "Persisted terminal"
+                                and state.get("last_notification") is not None
+                                and state["last_notification"]["title"] == "Suspend"
+                                and state["last_notification"]["body"] == "Retained"
+                                and state["bell_count"] == baseline["bell_count"] + 1)
             assert before["modes"]["alternate_screen"] is True
             assert before["modes"]["application_cursor"] is True
             assert before["modes"]["bracketed_paste"] is True
@@ -224,7 +228,10 @@ finally:
             assert before["last_notification"]["title"] == "Suspend"
             assert before["last_notification"]["body"] == "Retained"
             assert b"38;2;23;89;144" in display(socket, b"ALTERNATE-DISPLAY")
-            summary = terminal_summary(client, vm_id, "Persisted terminal")
+            summary = terminal_summary(
+                client, vm_id, "Persisted terminal", notification=("Suspend", "Retained"),
+                bell_count=before["bell_count"],
+            )
             foreground = workload_exec(client, vm_id, "cat /workspace/terminal-suspend-pid")
             assert foreground["exit_code"] == 0, foreground
 
@@ -235,7 +242,10 @@ finally:
         assert status == 200, (status, resumed)
         assert resumed["id"] == vm_id, resumed
         assert client.get(f"/vms/{vm_id}/info")["pid"] != original["pid"]
-        retained = terminal_summary(client, vm_id, "Persisted terminal")
+        retained = terminal_summary(
+            client, vm_id, "Persisted terminal", notification=("Suspend", "Retained"),
+            bell_count=summary["bell_count"],
+        )
         for field in ["title", "bell_count", "last_notification"]:
             assert retained[field] == summary[field], (field, retained, summary)
 

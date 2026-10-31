@@ -17,16 +17,25 @@ __all__ = ["service"]
 pytestmark = pytest.mark.integration
 
 
-def terminal_summary(client, vm_id, title):
-    end = time.monotonic() + 5
+def terminal_summary(client, vm_id, title, *, notification=None, bell_count=None, timeout=5):
+    end = time.monotonic() + timeout
     summary = None
     while time.monotonic() < end:
         row = next(row for row in client.get("/vms/list")["sandboxes"] if row["id"] == vm_id)
         summary = row.get("terminal")
         if summary and summary["title"] == title:
-            return summary
+            notice = summary.get("last_notification")
+            if (bell_count is None or summary["bell_count"] == bell_count) and (
+                notification is None or (
+                    notice is not None and (notice["title"], notice["body"]) == notification
+                )
+            ):
+                return summary
         time.sleep(0.05)
-    raise AssertionError(f"/vms/list did not report terminal title {title!r}: {summary!r}")
+    raise AssertionError(
+        f"/vms/list did not report terminal title {title!r}, "
+        f"notification {notification!r}, bell count {bell_count!r}: {summary!r}"
+    )
 
 
 def test_terminal_title_bell_and_notification_are_listed_without_a_viewer(service, tmp_path):
@@ -38,7 +47,9 @@ def test_terminal_title_bell_and_notification_are_listed_without_a_viewer(servic
             r"printf '\033]2;Capsem verification\007\007\033]777;notify;Review;Ready\007' > /proc/1/fd/1",
         )
         assert result["exit_code"] == 0, result
-        summary = terminal_summary(client, vm_id, "Capsem verification")
+        summary = terminal_summary(
+            client, vm_id, "Capsem verification", notification=("Review", "Ready"), bell_count=1,
+        )
         assert summary["bell_count"] == 1, summary
         assert summary["last_notification"]["title"] == "Review", summary
         assert summary["last_notification"]["body"] == "Ready", summary
@@ -69,7 +80,7 @@ def test_terminal_snapshot_keeps_colors_and_focus_controls_the_actual_pty(servic
             r"printf '\033[2J\033[HRGB\033]2;Snapshot ready\007\007') > /proc/1/fd/1"
         ))
         assert result["exit_code"] == 0, result
-        summary = terminal_summary(client, vm_id, "Snapshot ready")
+        summary = terminal_summary(client, vm_id, "Snapshot ready", bell_count=1)
         with terminal(service, vm_id) as first:
             snapshot = next_state(first, lambda state: state["reset"] and state["title"] == "Snapshot ready")
             assert snapshot["events"] == [], "attaching cannot replay a bell"
@@ -170,13 +181,13 @@ def test_unterminated_control_string_burst_recovers_without_replacing_title(serv
             r"printf '\007\033]777;notify;Recovered;Ready\007') > /proc/1/fd/1"
         ))
         assert result["exit_code"] == 0, result
-        end = time.monotonic() + 10
-        while time.monotonic() < end:
-            summary = terminal_summary(client, vm_id, "Retained")
-            if summary["last_notification"] and summary["last_notification"]["title"] == "Recovered":
-                break
-            time.sleep(0.05)
+        # The retained title predates the burst. PTY drainage and notification
+        # parsing can still be in flight after the workload RPC completes.
+        summary = terminal_summary(
+            client, vm_id, "Retained", notification=("Recovered", "Ready"), timeout=10,
+        )
         assert summary["title"] == "Retained", summary
+        assert summary["last_notification"]["title"] == "Recovered", summary
         assert summary["last_notification"]["body"] == "Ready", summary
 
 
@@ -205,8 +216,15 @@ finally:
     termios.tcsetattr(0, termios.TCSANOW, before)
 """
         socket.send(msgpack.packb({"stdin": ("python3 -c " + shlex.quote(script) + "\n").encode()}, use_bin_type=True))
-        state = next_state(socket, lambda state: state["title"] == "Quiet synchronized")
-        summary = terminal_summary(client, vm_id, "Quiet synchronized")
+        state = next_state(socket, lambda state: state["title"] == "Quiet synchronized"
+                           and state.get("last_notification") is not None
+                           and state["last_notification"]["title"] == "Sync"
+                           and state["last_notification"]["body"] == "Expired"
+                           and state["bell_count"] == baseline["bell_count"] + 1)
+        summary = terminal_summary(
+            client, vm_id, "Quiet synchronized", notification=("Sync", "Expired"),
+            bell_count=baseline["bell_count"] + 1,
+        )
         assert state["bell_count"] == summary["bell_count"] == baseline["bell_count"] + 1
         assert summary["last_notification"]["title"] == "Sync", summary
         assert summary["last_notification"]["body"] == "Expired", summary
