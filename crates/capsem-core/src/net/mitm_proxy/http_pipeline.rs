@@ -1,5 +1,6 @@
 //! Connection-owned HTTP pipeline and MCP completion drain.
 use super::*;
+use http_body_util::BodyExt;
 
 /// Drive the hyper HTTP/1.1 server over the supplied IO. The service
 /// closure resolves the per-request `(domain, upstream_port)`:
@@ -44,6 +45,25 @@ pub(super) async fn serve_pipeline<IO>(
         let mcp_responses = Arc::clone(&request_mcp_responses);
 
         async move {
+            // This adapter is an origin endpoint, never a forward proxy or
+            // CONNECT tunnel. Reject the original URI before path extraction
+            // discards its authority and before policy, credentials or dialing.
+            if matches!(&target, PipelineTarget::Standalone(_))
+                && (req.method() == hyper::Method::CONNECT
+                    || req.uri().scheme().is_some()
+                    || req.uri().authority().is_some()
+                    || !req.uri().path().starts_with('/'))
+            {
+                let body = Full::new(Bytes::from_static(
+                    b"standalone endpoint requires an origin-form request",
+                ))
+                .map_err(|never| match never {})
+                .boxed();
+                return Ok(hyper::Response::builder()
+                    .status(400)
+                    .body(body)
+                    .expect("static response"));
+            }
             let (request_domain, upstream_port, protocol, upstream_protocol, authoritative_host, fixed_identity) =
                 match target {
                     PipelineTarget::Dynamic {

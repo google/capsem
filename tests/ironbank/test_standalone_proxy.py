@@ -102,7 +102,6 @@ def _wait_for_model_rows(db_path: Path, minimum: int = 8) -> list[sqlite3.Row]:
 def _raw_http(port: int, request: bytes) -> bytes:
     with socket.create_connection(("127.0.0.1", port), timeout=3) as stream:
         stream.sendall(request)
-        stream.shutdown(socket.SHUT_WR)
         chunks: list[bytes] = []
         while chunk := stream.recv(65536):
             chunks.append(chunk)
@@ -208,6 +207,27 @@ def test_standalone_proxy_serves_official_sdks_without_a_vm():
         assert base_url.endswith("/v1")
         assert client.get("/vms/list")["sandboxes"] == []
 
+        # Probe rejection before SDK cancellation leaves asynchronous upstream
+        # work in flight. Connection: close lets us read a complete response;
+        # half-closing the write side could instead abort Hyper before rejection.
+        port = int(base_url.split(":", 2)[2].split("/", 1)[0])
+        before_rejection = len(_records(transcript))
+        for request_line in (
+            b"CONNECT attacker.invalid:443 HTTP/1.1\r\n",
+            b"GET http://attacker.invalid/secret HTTP/1.1\r\n",
+            b"GET https://attacker.invalid/secret HTTP/1.1\r\n",
+            b"OPTIONS * HTTP/1.1\r\n",
+        ):
+            response = _raw_http(
+                port,
+                request_line + b"Host: attacker.invalid\r\nConnection: close\r\n\r\n",
+            )
+            assert response.startswith(b"HTTP/1.1 400 "), (request_line, response)
+            assert len(_records(transcript)) == before_rejection, (
+                "standalone endpoint must reject non-origin requests before forwarding",
+                request_line,
+            )
+
         python_result = _run_json(
             [
                 "uv",
@@ -227,27 +247,6 @@ def test_standalone_proxy_serves_official_sdks_without_a_vm():
         )
         _assert_sdk_result(python_result, "python")
         _assert_sdk_result(typescript_result, "typescript")
-
-        port = int(base_url.split(":", 2)[2].split("/", 1)[0])
-        before_connect = len(_records(transcript))
-        connect_response = _raw_http(
-            port,
-            b"CONNECT attacker.invalid:443 HTTP/1.1\r\nHost: attacker.invalid:443\r\n\r\n",
-        )
-        assert not connect_response.startswith(b"HTTP/1.1 2")
-        assert len(_records(transcript)) == before_connect, (
-            "standalone endpoint must reject CONNECT instead of forwarding it"
-        )
-
-        absolute_response = _raw_http(
-            port,
-            b"GET http://attacker.invalid/secret HTTP/1.1\r\n"
-            b"Host: attacker.invalid\r\nConnection: close\r\n\r\n",
-        )
-        assert not absolute_response.startswith(b"HTTP/1.1 2")
-        assert len(_records(transcript)) == before_connect, (
-            "standalone endpoint must reject absolute-form forward-proxy requests"
-        )
 
         session_dir = service.tmp_dir / "sessions" / session_id
         db_path = session_dir / "session.db"
