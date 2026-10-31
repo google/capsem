@@ -494,7 +494,9 @@ jobs:
             --issuer "$APPLE_API_ISSUER" \
             --wait --timeout 30m
           xcrun stapler staple "cache/target/packages/Capsem-$VERSION.pkg"
-          xcrun stapler validate "cache/target/packages/Capsem-$VERSION.pkg"
+          uv run --project build_system --frozen python \
+            -m capsem_builder.release.tools.validate_apple_ticket \
+            "cache/target/packages/Capsem-$VERSION.pkg"
 
       - name: Verify exact notarized package identity and Gatekeeper acceptance
         run: |

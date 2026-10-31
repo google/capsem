@@ -2026,6 +2026,9 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     assert "Build .pkg installer" in macos_build
     assert "Verify macOS package installation path policy" in macos_build
     assert "Notarize and staple .pkg" in macos_build
+    assert "-m capsem_builder.release.tools.validate_apple_ticket" in macos_build
+    assert "xcrun stapler staple" in macos_build
+    assert "spctl -a -vv -t install" in macos_build
     assert "Verify exact notarized package identity and Gatekeeper acceptance" in macos_build
     assert "Build Linux package through the shared hermetic rail" in linux_build
     assert "uv run --project build_system --frozen capsem-gate cross-compile" in linux_build

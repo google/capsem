@@ -28,6 +28,7 @@ PACKAGE_LOCAL_TEST_SOURCES = frozenset({"build_system/release_site/src/lib/relea
 # exactly instead of weakening reconciliation for the 176 inventoried files.
 BOUNDARY_FILES = frozenset(
     {
+        "build_system/tests/release/test_apple_ticket_validation.py",
         "build_system/tests/docs_metrics/test_artifacts.py",
         "build_system/tests/docs_metrics/test_benchmarks.py",
         "build_system/tests/docs_metrics/test_github.py",

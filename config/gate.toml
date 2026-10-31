@@ -1575,6 +1575,14 @@ token_variable = "GITHUB_TOKEN"
 channel = "stable"
 sha256 = "e8ddf88034a3e73beb605811d5efe5e03c04e79d1ba4b656ff6ca837ef54640e"
 
+[release.apple_ticket_validation]
+# Apple accepted and stapled the package, but separate CloudKit lookups lost
+# their connections (-1005/exit68). Retry only that observed transport error;
+# require a successful validation and retain the following Gatekeeper proof.
+attempts = 4
+retry_delay_seconds = 5
+timeout_seconds = 60
+
 [devloop]
 setup_sentinel = ".dev-setup"
 dev_lock = "run/execution.lock"

@@ -22,6 +22,15 @@ Shipping artifact on macOS is a **`.pkg`** (productbuild), not a `.dmg`. Flow:
 3. `xcrun notarytool submit ... --wait --timeout 30m` -- synchronous.
 4. `xcrun stapler staple` + `xcrun stapler validate`.
 
+The separate ticket validation uses the release-owned `validate_apple_ticket`
+module. Apple accepted and stapled packages whose following CloudKit lookup
+lost its connection (`NSURLErrorDomain -1005`, exit 68). Only that exact
+transport failure retries, with finite config-owned attempts, delays and
+per-attempt deadlines. Invalid/missing tickets, other exits and timeouts fail;
+retry exhaustion fails too. Successful validation and the following Gatekeeper
+check remain mandatory. Retrying the entire macOS job rebuilt every binary
+for a lookup that completed in seconds.
+
 Verify credentials locally (before touching a tag):
 ```bash
 xcrun notarytool history --key private/apple-certificate/capsem.p8 --key-id KEY_ID --issuer ISSUER_ID

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Retry only diagnosed Apple CloudKit ticket-validation connection losses within a finite configured budget, retaining mandatory ticket validation and Gatekeeper acceptance.
+
 - Security: Reject CONNECT and non-origin request targets at the standalone model endpoint before policy or upstream access; make the black-box rejection probe wait for a complete response before SDK cancellation traffic.
 
 - Give explicit ledger durability and retention barriers their own bounded deadline, preserving short admission deadlines and fail-closed behavior after a stall.

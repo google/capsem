@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from pydantic import StringConstraints, field_validator
+from pydantic import Field, StringConstraints, field_validator
 
 from ..release.releasechannel import FirstPartyChannel
 from .configschema import Strict
@@ -69,6 +69,12 @@ class RetiredPublicGraphConfig(Strict):
     sha256: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 
 
+class AppleTicketValidationConfig(Strict):
+    attempts: Annotated[int, Field(ge=1, le=5)]
+    retry_delay_seconds: Annotated[float, Field(ge=0, le=30)]
+    timeout_seconds: Annotated[float, Field(gt=0, le=300)]
+
+
 class ReleaseConfig(Strict):
     line: Annotated[str, StringConstraints(pattern=r"^\d+\.\d+$")]
     unattended_channels: tuple[str, ...]
@@ -93,6 +99,7 @@ class ReleaseConfig(Strict):
     repository_variable: str
     token_variable: str
     retired_public_graphs: tuple[RetiredPublicGraphConfig, ...]
+    apple_ticket_validation: AppleTicketValidationConfig
 
     @field_validator("source_ref_template")
     @classmethod
