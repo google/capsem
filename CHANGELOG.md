@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Serialize the audit startup fixture's counter and command frames across background daemon and concurrent status calls, preserving production retries and readiness assertions.
+
 - Run the real-Docker cache metadata regression in functional acceptance, keeping source-contract checks independent of a running Docker daemon.
 
 - Preserve Docker cache inventory and exact-image anchors when valid OCI images omit creation time, retaining unknown-age accounting and ownership protection.

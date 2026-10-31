@@ -6,6 +6,7 @@ native VM qualification separately proves real audit registration and recording.
 
 import shlex
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -25,10 +26,19 @@ def audit_startup(tmp_path):
     commands.mkdir()
     calls = tmp_path / "calls"
     status_count = tmp_path / "status-count"
+    # auditd starts in the background. Its transport can overlap auditctl:
+    # protect both the read/modify/write counter and each complete NUL frame.
+    # Shell noclobber provides atomic creation without a host utility's
+    # existence-check race when another caller releases its directory lock.
+    lock_record = """while ! (set -C; : > "$AUDIT_CALL_LOCK") 2>/dev/null; do /bin/sleep 0.001; done
+trap 'rm -f "$AUDIT_CALL_LOCK"' 0
+"""
+    unlock_record = 'rm -f "$AUDIT_CALL_LOCK"\ntrap - 0\n'
     chroot = commands / "chroot"
     chroot.write_text(
         """#!/bin/sh
 shift
+""" + lock_record + """
 count=0
 if [ -f "$STATUS_COUNT" ]; then read -r count < "$STATUS_COUNT"; fi
 if [ "$1" = /usr/sbin/auditctl ] && [ "$2" = -s ]; then
@@ -36,6 +46,7 @@ if [ "$1" = /usr/sbin/auditctl ] && [ "$2" = -s ]; then
     printf '%s\\n' "$count" > "$STATUS_COUNT"
 fi
 printf '%s\\0' "$count" "$#" "$@" >> "$AUDIT_CALLS"
+""" + unlock_record + """
 if [ "$1" = /usr/sbin/auditd ]; then exit 0; fi
 if [ "$1" = /usr/sbin/auditctl ] && [ "$2" = -s ]; then
     if [ -n "${STATUS_REPLY:-}" ]; then
@@ -55,8 +66,10 @@ fi
     sleep = commands / "sleep"
     sleep.write_text(
         "#!/bin/sh\n"
-        "printf '%s\\0' sleep \"$#\" \"$@\" >> \"$AUDIT_CALLS\"\n"
-        'exec /bin/sleep "$@"\n'
+        + lock_record
+        + "printf '%s\\0' sleep \"$#\" \"$@\" >> \"$AUDIT_CALLS\"\n"
+        + unlock_record
+        + 'exec /bin/sleep "$@"\n'
     )
     sleep.chmod(0o755)
     source = (ROOT / "guest/artifacts/capsem-init").read_text()
@@ -64,14 +77,24 @@ fi
     section = section.split('boot_mark "audit"', 1)[0]
     section = section.replace("/newroot", shlex.quote(str(root)))
 
-    def run(**overrides):
+    def run(*, concurrent_queries=0, **overrides):
         environment = {
             "PATH": f"{commands}:/usr/local/bin:/usr/bin:/bin",
             "AUDIT_CALLS": str(calls),
             "STATUS_COUNT": str(status_count),
+            "AUDIT_CALL_LOCK": str(tmp_path / "record.lock"),
             "READY_AFTER": "0",
             **overrides,
         }
+        if concurrent_queries:
+            def query(_index):
+                return subprocess.run(
+                    [str(chroot), str(root), "/usr/sbin/auditctl", "-s"],
+                    env=environment, stdin=subprocess.DEVNULL,
+                    text=True, capture_output=True, check=True, timeout=10,
+                )
+            with ThreadPoolExecutor(max_workers=16) as pool:
+                list(pool.map(query, range(concurrent_queries)))
         result = subprocess.run(
             bounded(["/bin/sh", "-c", section], 15, env=environment),
             text=True, capture_output=True, check=False,
@@ -89,6 +112,14 @@ fi
         return result, recorded
 
     return run
+
+
+def test_concurrent_transport_records_keep_complete_frames_and_status_counts(audit_startup):
+    result, calls = audit_startup(concurrent_queries=64)
+    assert result.returncode == 0, result.stderr
+    queries = [row for row in calls if row.get("args") == ["/usr/sbin/auditctl", "-s"]]
+    assert len(queries) == 65, calls
+    assert [row["status_count"] for row in queries] == list(range(1, 66)), calls
 
 
 @pytest.mark.parametrize("ready_after", [0, 2])
