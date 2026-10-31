@@ -86,7 +86,7 @@ test -f "$CAPSEM_HOME/assets/{config.install.manifest_name}"
 grep -F {quote(stable_manifest_url)} "$CAPSEM_HOME/assets/manifest-metadata.json"
 dpkg-query -W -f='${{Version}}' capsem | grep -Fx {quote(expected_version)}
 for bin in {binaries}; do
-  test -x "$CAPSEM_HOME/bin/$bin"
+  test -x "$(command -v "$bin")"
 done
 for bin in {versioned}; do
   "$CAPSEM_HOME/bin/$bin" --version
