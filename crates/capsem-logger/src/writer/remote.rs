@@ -18,6 +18,9 @@ const OPERATION_TIMEOUT: Duration = Duration::from_secs(5);
 #[cfg(test)]
 // Covers archive compression and SQLite commit on loaded builders.
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(2);
+// A full archive barrier includes the complete index backlog and fsync. Keep
+// admissions short without abandoning a healthy durable commit mid-flight.
+const DURABILITY_TIMEOUT: Duration = Duration::from_secs(capsem_proto::LEDGER_DURABILITY_TIMEOUT_SECONDS);
 const BACKPRESSURE_MAX_WAIT: Duration = Duration::from_millis(5);
 
 type ClientSender = ipc_channel::Sender<LedgerClientMessage>;
@@ -241,7 +244,7 @@ fn run(
             Err(_) => {
                 let result = runtime.block_on(async {
                     tokio::time::timeout(
-                        OPERATION_TIMEOUT,
+                        DURABILITY_TIMEOUT,
                         dispatch(&sender, &receiver, request_id, LedgerCommand::Flush),
                     )
                     .await
@@ -302,6 +305,10 @@ fn send_commands(
 ) -> Result<(), String> {
     let mut pending = vec![(command, replies)];
     while let Some((command, mut replies)) = pending.pop() {
+        let timeout = match command {
+            LedgerCommand::Flush | LedgerCommand::Retain { .. } => DURABILITY_TIMEOUT,
+            _ => OPERATION_TIMEOUT,
+        };
         let message = LedgerClientMessage::Request {
             request: LedgerRequest::new(*request_id, command).map_err(|error| error.to_string())?,
         };
@@ -335,12 +342,9 @@ fn send_commands(
         drop(message);
         let result = runtime
             .block_on(async {
-                tokio::time::timeout(
-                    OPERATION_TIMEOUT,
-                    dispatch_prepared(sender, receiver, *request_id, frame),
-                )
-                .await
-                .map_err(|_| "ledger client operation timed out".to_string())?
+                tokio::time::timeout(timeout, dispatch_prepared(sender, receiver, *request_id, frame))
+                    .await
+                    .map_err(|_| "ledger client operation timed out".to_string())?
             })
             .and_then(|reply| {
                 let expected = match (replies.first(), &reply) {

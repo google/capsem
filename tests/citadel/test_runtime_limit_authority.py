@@ -43,6 +43,7 @@ CONFIG_OWNED_NAMES = {
     "LEDGER_ADMISSION_BATCH_CAPACITY",
     "LEDGER_ADMISSION_COALESCE_WAIT_MICROSECONDS",
     "LEDGER_ARCHIVE_INDEX_ROWS_PER_FLUSH",
+    "LEDGER_DURABILITY_TIMEOUT_SECONDS",
     "LEDGER_SQLITE_MMAP_BYTES",
     "CACHE_DNS_ANSWER_ENTRIES",
     "CACHE_DNS_MAX_TTL_SECONDS",
@@ -95,6 +96,8 @@ REQUIRED_WIRING = {
         "pub const LEDGER_DISK_FLUSH_INTERVAL_MILLISECONDS: u64 = {ledger_disk_flush_interval_milliseconds}",
         'get("disk_flush_max_pending_events")',
         "pub const LEDGER_DISK_FLUSH_MAX_PENDING_EVENTS: usize = {ledger_disk_flush_max_pending_events}",
+        'get("durability_timeout_seconds")',
+        "pub const LEDGER_DURABILITY_TIMEOUT_SECONDS: u64 = {ledger_durability_timeout_seconds}",
         'cache_integer("dns_answer_entries"',
         'cache_integer("dns_max_ttl_seconds"',
         'cache_integer("dns_negative_ttl_seconds"',
@@ -134,9 +137,13 @@ REQUIRED_WIRING = {
         "ensure_open_file_limit",
     ),
     "crates/capsem-logger/src/writer/remote.rs": (
+        "capsem_proto::LEDGER_DURABILITY_TIMEOUT_SECONDS",
         "LEDGER_ADMISSION_BATCH_CAPACITY",
         "LEDGER_ADMISSION_COALESCE_WAIT_MICROSECONDS",
         "AdmitBatch",
+    ),
+    "crates/capsem-logger/src/ledger_client.rs": (
+        "capsem_proto::LEDGER_DURABILITY_TIMEOUT_SECONDS",
     ),
     "crates/capsem-logger/src/db.rs": (
         "LEDGER_PRODUCER_QUEUE_CAPACITY",
@@ -363,6 +370,12 @@ def test_runtime_limit_config_is_valid_and_wired_to_every_consumer() -> None:
         type(disk_flush_max_pending_events) is int
         and admission_batch_capacity <= disk_flush_max_pending_events <= 10_000_000
         and disk_flush_max_pending_events % admission_batch_capacity == 0
+    ), RUNTIME_LIMIT_RATIONALE
+
+    durability_timeout_seconds = config.get("ledger", {}).get("durability_timeout_seconds")
+    assert (
+        type(durability_timeout_seconds) is int
+        and 10 <= durability_timeout_seconds <= 300
     ), RUNTIME_LIMIT_RATIONALE
 
     cache = config.get("cache", {})

@@ -316,7 +316,13 @@ async fn one_reply(
     request_id: u64,
     command: LedgerCommand,
 ) -> Result<LedgerReply, String> {
-    one_reply_with_timeout(sender, receiver, request_id, command, OPERATION_TIMEOUT).await
+    let timeout = match command {
+        LedgerCommand::Flush | LedgerCommand::Retain { .. } => {
+            Duration::from_secs(capsem_proto::LEDGER_DURABILITY_TIMEOUT_SECONDS)
+        }
+        _ => OPERATION_TIMEOUT,
+    };
+    one_reply_with_timeout(sender, receiver, request_id, command, timeout).await
 }
 
 async fn one_reply_with_timeout(

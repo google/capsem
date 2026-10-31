@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Give explicit ledger durability and retention barriers their own bounded deadline, preserving short admission deadlines and fail-closed behavior after a stall.
+
 - Wait for complete terminal notification and bell state in acceptance tests, preserving control-burst size, expected metadata, and existing readiness deadlines.
 
 - Register the private supervisor bus regressions in the exact build-system test ownership inventory.

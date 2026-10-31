@@ -280,3 +280,86 @@ async fn a_stalled_owner_fails_the_pending_operation_and_bounded_shutdown() {
     assert!(started.elapsed() < std::time::Duration::from_secs(3));
     server.abort();
 }
+
+async fn delayed_durability_keeps_admission_usable(retain: bool) {
+    use crate::ledger_protocol::{LedgerCommand, LedgerReply, LedgerResponse};
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("session.db");
+    let grant = LedgerChannelGrant::new(LedgerGeneration::new([7; 16]), 11, LedgerClientRole::VmOwner).unwrap();
+    let (client, worker) = UnixStream::pair().unwrap();
+    let server = tokio::spawn(async move {
+        let (sender, receiver) =
+            capsem_foundation::ipc_channel::channel_from_std::<LedgerServerMessage, LedgerClientMessage>(worker)
+                .unwrap();
+        let LedgerClientMessage::Hello { hello } = receiver.recv().await.unwrap() else {
+            panic!("expected hello")
+        };
+        grant.validate_hello(&hello).unwrap();
+        sender
+            .send(LedgerServerMessage::Welcome {
+                welcome: capsem_proto::ledger::LedgerWelcome::for_grant(&grant),
+            })
+            .await
+            .unwrap();
+        let mut first = true;
+        let mut admitted = false;
+        while let Ok(LedgerClientMessage::Request { request }) = receiver.recv().await {
+            let id = request.request_id();
+            if first {
+                // Exercise the real client actor beyond its admission deadline;
+                // durability includes compression, index insertion and fsync.
+                tokio::time::sleep(super::OPERATION_TIMEOUT + std::time::Duration::from_millis(100)).await;
+                first = false;
+            }
+            let reply = match request.into_operation() {
+                LedgerCommand::Flush => LedgerReply::Durable {
+                    through_admission_id: 0,
+                },
+                LedgerCommand::Retain { .. } => LedgerReply::Retained {
+                    outcome: Default::default(),
+                },
+                LedgerCommand::AdmitBatch { events } => {
+                    admitted = true;
+                    LedgerReply::AcceptedBatch {
+                        first_admission_id: 1,
+                        through_admission_id: events.len() as u64,
+                        accepted: events.len() as u16,
+                    }
+                }
+                other => panic!("unexpected request: {other:?}"),
+            };
+            sender
+                .send(LedgerServerMessage::Response {
+                    response: LedgerResponse::success(id, reply).unwrap(),
+                })
+                .await
+                .unwrap();
+        }
+        admitted
+    });
+    let writer = tokio::task::spawn_blocking(move || crate::DbWriter::from_ledger_channel(client, grant, &path, 2))
+        .await
+        .unwrap()
+        .unwrap();
+    if retain {
+        writer.retain_bodies_since("2026-01-01T00:00:00Z").await.unwrap();
+    } else {
+        writer.flush_checked().await.unwrap();
+    }
+    writer.write_checked(event("after-durability.example")).await.unwrap();
+    tokio::task::spawn_blocking(move || writer.shutdown_blocking())
+        .await
+        .unwrap();
+    assert!(server.await.unwrap(), "admission must remain usable after durability");
+}
+
+#[tokio::test]
+async fn durable_flush_can_outlast_admission_without_closing_the_channel() {
+    delayed_durability_keeps_admission_usable(false).await;
+}
+
+#[tokio::test]
+async fn durable_retention_can_outlast_admission_without_closing_the_channel() {
+    delayed_durability_keeps_admission_usable(true).await;
+}

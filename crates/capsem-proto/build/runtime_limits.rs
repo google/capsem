@@ -129,6 +129,14 @@ pub fn write_runtime_limits() {
         .unwrap_or_else(|| {
             panic!("runtime limits: ledger.disk_flush_max_pending_events must be a batch multiple between the batch capacity and 10000000")
         });
+    let ledger_durability_timeout_seconds = config
+        .get("ledger")
+        .and_then(|ledger| ledger.get("durability_timeout_seconds"))
+        .and_then(toml::Value::as_integer)
+        .filter(|value| (10..=300).contains(value))
+        .unwrap_or_else(|| {
+            panic!("runtime limits: ledger.durability_timeout_seconds must be an integer between 10 and 300")
+        });
     let cache = config
         .get("cache")
         .and_then(toml::Value::as_table)
@@ -227,6 +235,8 @@ pub fn write_runtime_limits() {
              pub const LEDGER_DISK_FLUSH_INTERVAL_MILLISECONDS: u64 = {ledger_disk_flush_interval_milliseconds};\n\
              /// Pending events that force a disk flush before the timer.\n\
              pub const LEDGER_DISK_FLUSH_MAX_PENDING_EVENTS: usize = {ledger_disk_flush_max_pending_events};\n\
+             /// Deadline for explicit archive durability and retention barriers.\n\
+             pub const LEDGER_DURABILITY_TIMEOUT_SECONDS: u64 = {ledger_durability_timeout_seconds};\n\
              /// DNS answers retained per session.\n\
              pub const CACHE_DNS_ANSWER_ENTRIES: usize = {cache_dns_answer_entries};\n\
              /// Longest positive DNS answer reuse.\n\
