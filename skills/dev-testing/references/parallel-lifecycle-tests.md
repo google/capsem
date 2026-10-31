@@ -21,8 +21,10 @@ launch budget and corrupting the number we are trying to publish.
 The development host's headroom is not the hosted runner's headroom. Size
 concurrency and deadlines from actual CI CPU, RAM, disk and phase measurements,
 not workstation timings. Inspect's installed-package acceptance runs separately
-with two workers and a provisional one-hour per-archive limit; tighten that
-limit only after successful hosted measurements. Other suites retain n=4.
+with two workers and a 600-second per-archive limit, exceeding twice the
+257.29-second wheel-and-sdist completion in hosted run 41161525613 on
+2026-10-31 (Inspect passed; installed update proof later failed). Other suites
+retain n=4.
 Capacity exhaustion is distinct from a product race; preserve every assertion
 and use observed memory pressure or OOM evidence before diagnosing either.
 

@@ -78,6 +78,7 @@ def manager_environment(
             *( ["--property=PrivateNetwork=yes"] if private_network else
                [f"--property=NetworkNamespacePath=/proc/{os.getpid()}/ns/net"] ),
             f"--setenv=XDG_RUNTIME_DIR={runtime}",
+            f"--setenv=DBUS_SESSION_BUS_ADDRESS={environment['DBUS_SESSION_BUS_ADDRESS']}",
             "--setenv=SYSTEMD_UNIT_PATH=/usr/lib/systemd/user",
             "/usr/lib/systemd/systemd", "--user", "--unit=basic.target",
         )

@@ -157,7 +157,7 @@ def typescript_gateway(
 
 def inspect_ai_gateway(
     root: Path, environment: Mapping[str, str], *, probe: str = "live_acceptance.py",
-    success_marker: str = "INSPECT_CAPSEM_VM_ACCEPTANCE_OK", timeout_seconds: int = 3600,
+    success_marker: str = "INSPECT_CAPSEM_VM_ACCEPTANCE_OK", timeout_seconds: int = 600,
 ) -> str:
     gate_cfg = tomllib.loads((root / "config/gate.toml").read_text())
     sdk_settings = gate_cfg["sdk_python"]

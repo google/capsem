@@ -62,12 +62,15 @@ def main() -> int:
 
     signal.signal(signal.SIGTERM, interrupted)
     try:
+        caller_environment = dict(os.environ)
         with (
             tempfile.TemporaryDirectory(prefix="capsem-sdk-manager-") as directory,
             manager_environment(Path(directory), Path(directory).name, lambda: None, private_network=True) as manager,
         ):
+            # Session hooks must see the caller's bus. The authenticated private
+            # manager is rebound by --inside after sudo/PAM have completed.
             # Preserve names, never serialize or render inherited values.
-            preserve = ",".join(sorted(manager.environment))
+            preserve = ",".join(sorted(caller_environment))
             groups = os.getgroups()
             group_flag = f"--groups={','.join(map(str, groups))}" if groups else "--clear-groups"
             assert __spec__ is not None, "run the supervisor owner as a Python module"
@@ -81,7 +84,7 @@ def main() -> int:
                 "--manager-runtime", manager.environment["XDG_RUNTIME_DIR"],
                 "--manager-pid", str(manager.pid), "--", *command,
             ]
-            return subprocess.run(argv, env=manager.environment, check=False).returncode
+            return subprocess.run(argv, env=caller_environment, check=False).returncode
     finally:
         signal.signal(signal.SIGTERM, previous)
 

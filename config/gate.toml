@@ -2358,7 +2358,8 @@ stop_at_first = "--maxfail=5"
 parallel_workers = 4
 parallel_distribution = "loadfile"
 # Installed Inspect wheel/sdist acceptance owns a separate, smaller VM fleet.
-# Measure hosted completion before tightening its provisional one-hour bound.
+# Both archives passed hosted acceptance in 257.29s (run 41161525613).
+# The 600s per-archive bound exceeds twice that whole-cohort measurement.
 inspect_workers = 2
 inspect_live = ["tests/ironbank/test_sdk_live.py::test_inspect_ai_live_vm_sandbox_acceptance"]
 coverage_flags = ["--cov=build_system/builder", "--cov-report=xml:cache/target/coverage/python/codecov.xml"]

@@ -12,9 +12,12 @@ disk capacity must inform VM concurrency and deadlines; local timings alone
 do not establish a hosted completion budget. Record actual hosted phase times
 and memory pressure before tightening bounds. For an explicit measurement run,
 use a generous finite ceiling, then ratchet it after successful CI evidence.
-Inspect acceptance owns a separate two-worker fleet and a provisional one-hour
-per-archive limit; other suites retain their configured worker counts. Preserve
-every assertion and diagnose an OOM from evidence rather than assuming one.
+Inspect acceptance owns a separate two-worker fleet and a 600-second
+per-archive limit. Its wheel and sdist together passed in 257.29 seconds in
+[hosted run 41161525613](https://github.com/google/capsem/actions/runs/41161525613)
+on 2026-10-31; that run later failed installed update proof. The limit exceeds
+twice that whole-cohort measurement. Other suites retain their configured
+worker counts. Preserve assertions and diagnose OOMs from evidence.
 Use `just focus-test inspect` to rerun only that owned acceptance locally.
 
 A cancelled job with no runner or steps can be an image brownout: inspect its

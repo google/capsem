@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Bind private supervisor managers to their own D-Bus address before unit activation and keep the caller bus through sudo, preventing SDK acceptance from contaminating installed update proof.
+
+- Ratchet Inspect acceptance to 600 seconds per archive after its wheel and sdist passed hosted CI in 257.29 seconds, retaining its two workers and all assertions.
+
 - Serialize the audit startup fixture's counter and command frames across background daemon and concurrent status calls, preserving production retries and readiness assertions.
 
 - Run the real-Docker cache metadata regression in functional acceptance, keeping source-contract checks independent of a running Docker daemon.
