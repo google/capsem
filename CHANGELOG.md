@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Register the private supervisor bus regressions in the exact build-system test ownership inventory.
+
 - Bind private supervisor managers to their own D-Bus address before unit activation and keep the caller bus through sudo, preventing SDK acceptance from contaminating installed update proof.
 
 - Ratchet Inspect acceptance to 600 seconds per archive after its wheel and sdist passed hosted CI in 257.29 seconds, retaining its two workers and all assertions.
