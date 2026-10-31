@@ -77,7 +77,7 @@ COMMANDS = {
     "write-release-notes.py": "write_release_notes",
     "write-release-summary.py": "write_release_summary",
 }
-SUPPORT = {"public_install_smoke", "release_pairing_baseline", "remote_ci_gate"}
+SUPPORT = {"public_install_smoke", "release_pairing_baseline", "remote_ci_gate", "validate_apple_ticket"}
 EXECUTABLES = {
     "local-release-glowup.py",
     "write-binary-channel-staging-proof.py",
