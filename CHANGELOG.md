@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Include wrapper bootstrap and teardown in process-cleanup test watchdogs on slower CI runners, retaining command deadlines and complete descendant-reaping assertions.
+
 - Isolate private supervisor managers from machine-wide environment generators so hosted runtime-directory defaults cannot contaminate the installed service's D-Bus address.
 
 - Register Apple ticket validation in the exact release-tool ownership inventory, retaining exact membership and import-boundary checks.

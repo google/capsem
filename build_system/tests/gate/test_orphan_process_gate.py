@@ -35,6 +35,9 @@ JUSTFILE = ROOT / "justfile"
 SEALED_MACOS = (
     sys.platform == "darwin" and os.environ.get("CAPSEM_GATE_COMMAND_SANDBOX_MODE") == "enforce"
 )
+# The command deadline starts after wrapper bootstrap. Include cold imports,
+# repository/cache setup and process-tree teardown on slower CI runners.
+WRAPPER_WATCHDOG_SECONDS = 30
 
 def _pid_is_alive(pid: int) -> bool:
     result = subprocess.run(
@@ -124,7 +127,7 @@ def test_direct_development_timeout_reaps_the_complete_process_group(tmp_path: P
         check=False,
         capture_output=True,
         text=True,
-        timeout=5,
+        timeout=WRAPPER_WATCHDOG_SECONDS,
     )
 
     assert result.returncode == 124
@@ -164,7 +167,7 @@ def test_direct_development_wrapper_reaps_a_helper_after_its_leader_exits(
         check=False,
         capture_output=True,
         text=True,
-        timeout=5,
+        timeout=WRAPPER_WATCHDOG_SECONDS,
     )
 
     assert result.returncode == 0, result.stderr
@@ -223,7 +226,7 @@ def test_interrupting_the_wrapper_reaps_its_complete_process_group(tmp_path: Pat
                 time.sleep(0.01)
 
             wrapper.terminate()
-            _stdout, stderr = wrapper.communicate(timeout=5)
+            _stdout, stderr = wrapper.communicate(timeout=WRAPPER_WATCHDOG_SECONDS)
             assert wrapper.returncode == 128 + signal.SIGTERM, stderr
             parent_pid, child_pid = (int(value) for value in pids.read_text().split())
             assert not _pid_is_alive(parent_pid)
