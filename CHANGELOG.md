@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Run the real-Docker cache metadata regression in functional acceptance, keeping source-contract checks independent of a running Docker daemon.
+
 - Preserve Docker cache inventory and exact-image anchors when valid OCI images omit creation time, retaining unknown-age accounting and ownership protection.
 
 - Security: Upgrade TypeScript SDK and MCP development tooling to minimatch 11.0.1 for globparts amplification advisory GHSA-g3hv-75wg-m249.
