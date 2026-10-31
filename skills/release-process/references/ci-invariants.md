@@ -19,6 +19,17 @@ standalone fixture's ownership setup.
 
 #### Local/CI execution parity
 
+The Ubuntu hosted image sets `XDG_RUNTIME_DIR` in `/etc/environment`
+([runner-images#14649](https://github.com/actions/runner-images/issues/14649)).
+The user environment generator can therefore override a private manager's
+explicit runtime before `dbus.socket` activates; its `ExecStartPost` then
+publishes the temporary bus address to the ambient manager. Give disposable
+managers an owned empty `SYSTEMD_ENVIRONMENT_GENERATOR_PATH`, alongside their
+owned unit path and explicit bus. Reproduce with that actual environment file
+inside an owned container, run the real SDK tests, and compare ambient manager
+defaults before testing installed automatic updates. A print-only namespace
+handoff never activated the bus and missed this failure.
+
 ##### Ironbank parity rule
 
 The Ironbank parity rule is that every portable release gate must be owned by

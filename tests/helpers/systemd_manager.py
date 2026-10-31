@@ -58,6 +58,8 @@ def manager_environment(
         return
     runtime = root / "systemd-runtime"
     runtime.mkdir(mode=0o700)
+    generators = root / "systemd-environment-generators"
+    generators.mkdir(mode=0o700)
     environment = {
         **os.environ,
         "XDG_RUNTIME_DIR": str(runtime),
@@ -79,6 +81,11 @@ def manager_environment(
                [f"--property=NetworkNamespacePath=/proc/{os.getpid()}/ns/net"] ),
             f"--setenv=XDG_RUNTIME_DIR={runtime}",
             f"--setenv=DBUS_SESSION_BUS_ADDRESS={environment['DBUS_SESSION_BUS_ADDRESS']}",
+            # Hosted /etc/environment pins XDG_RUNTIME_DIR to the ambient
+            # user. Its generator overrides our explicit runtime, letting
+            # dbus.socket's ExecStartPost modify that unrelated manager.
+            # This disposable manager owns its environment as well as units.
+            f"--setenv=SYSTEMD_ENVIRONMENT_GENERATOR_PATH={generators}",
             "--setenv=SYSTEMD_UNIT_PATH=/usr/lib/systemd/user",
             "/usr/lib/systemd/systemd", "--user", "--unit=basic.target",
         )

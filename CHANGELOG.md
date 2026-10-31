@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Isolate private supervisor managers from machine-wide environment generators so hosted runtime-directory defaults cannot contaminate the installed service's D-Bus address.
+
 - Register Apple ticket validation in the exact release-tool ownership inventory, retaining exact membership and import-boundary checks.
 
 - Retry only diagnosed Apple CloudKit ticket-validation connection losses within a finite configured budget, retaining mandatory ticket validation and Gatekeeper acceptance.

@@ -63,6 +63,20 @@ def test_unbound_systemd_supervisor_cannot_touch_an_ambient_unit(monkeypatch: py
 
 @pytest.mark.integration
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux user-manager handoff")
+def test_private_manager_defaults_keep_the_owned_runtime() -> None:
+    result = subprocess.run(
+        ["systemctl", "--user", "show-environment"],
+        check=True, capture_output=True, text=True, timeout=5,
+    )
+    environment = dict(line.split("=", 1) for line in result.stdout.splitlines())
+    assert environment["XDG_RUNTIME_DIR"] == os.environ["XDG_RUNTIME_DIR"], (
+        "a machine environment generator redirected the private manager's child units"
+    )
+    assert environment["DBUS_SESSION_BUS_ADDRESS"] == os.environ["DBUS_SESSION_BUS_ADDRESS"]
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux user-manager handoff")
 def test_supervisor_worker_keeps_explicit_manager_across_environment_changes(tmp_path: Path) -> None:
     from helpers.systemd_manager import manager_pid
 
