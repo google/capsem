@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Update async-executor to1.14.1 for its [upstream use-after-free fix](https://github.com/smol-rs/async-executor/releases/tag/v1.14.1) in the Linux desktop dependency chain; already-published0.7.2 native artifacts remain immutable and require a subsequent native patch release.
+
+- Keep publisher/native dependency audits independent of the retained Python/npm client archive locks while Cargo publishing is deferred.
+
 - Pass native CI handoff outputs through quoted environment variables, preventing shell-template command injection while preserving original image, deadline and artifact bindings.
 
 - Resume attested SDK/MCP registry publication after a native release without rebuilding native packages or changing their immutable source, validating the original successful proof and public native fixture.

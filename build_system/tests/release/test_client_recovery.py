@@ -105,3 +105,48 @@ def test_dispatch_continuation_never_replaces_the_native_identity(monkeypatch, m
         assert release_binaries._resume_clients(release_binaries.Runner(), "v0.7.2", SOURCE, controller) == "456"
         assert calls == [{"ref": f"capsem-source-{controller}", "source_commit": controller,
                           "tag": "v0.7.2", "channel": "stable", "publish": True, "client_run_id": "123"}]
+
+
+@pytest.mark.parametrize("path,allowed", [("Cargo.lock", True), ("sdk/typescript/pnpm-lock.yaml", False),
+                                         ("sdk/python/uv.lock", False), ("mcp/typescript/pnpm-lock.yaml", False),
+                                         ("integrations/inspect-ai/uv.lock", False), ("sdk/rust/Cargo.lock", False)])
+def test_controller_native_lock_is_separate_from_qualified_client_locks(tmp_path, monkeypatch, path, allowed):
+    import json
+    import subprocess
+
+    from capsem_builder.release.tools import client_recovery
+
+    def git(*args):
+        return subprocess.check_output(["git", "-C", str(tmp_path), "-c", "commit.gpgsign=false", *args],
+                                       text=True, stderr=subprocess.DEVNULL, timeout=10).strip()
+
+    git("init")
+    git("config", "user.name", "Fixture")
+    git("config", "user.email", "fixture@example.invalid")
+    target = tmp_path / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("version = 1\n")
+    git("add", ".")
+    git("commit", "-qm", "qualified source")
+    source = git("rev-parse", "HEAD")
+    git("tag", "v0.7.2")
+    target.write_text("version = 2\n")
+    git("commit", "-qam", "controller dependency change")
+    original_capture = client_recovery.capture
+    record = run_record()
+    record.update(headSha=source, headBranch=f"capsem-source-{source}")
+
+    def capture(root, *argv):
+        if argv[:3] == ("gh", "run", "view"):
+            return json.dumps(record)
+        if argv[:3] == ("gh", "release", "view"):
+            return json.dumps({"isDraft": False, "isPrerelease": False,
+                               "targetCommitish": source, "tagName": "v0.7.2"})
+        return original_capture(root, *argv)
+
+    monkeypatch.setattr(client_recovery, "capture", capture)
+    if allowed:
+        assert client_recovery.original_run(tmp_path, "123", "v0.7.2") == source
+    else:
+        with pytest.raises(ValueError, match="client source or dependency locks"):
+            client_recovery.original_run(tmp_path, "123", "v0.7.2")

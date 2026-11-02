@@ -378,6 +378,7 @@ def _resume_release(
 
 def _resume_clients(runner: RunCommand, tag: str, native_source: str, controller: str) -> str:
     """An existing public native identity permits only its exact client continuation."""
+    from .client_recovery import CLIENT_SOURCE_PATHS, RUN_FIELDS
     from .verify_release_recovery_run import verify_client_recovery_run
 
     try:
@@ -388,13 +389,12 @@ def _resume_clients(runner: RunCommand, tag: str, native_source: str, controller
     if release != {"isDraft": False, "isPrerelease": False, "targetCommitish": native_source, "tagName": tag}:
         raise ValueError("immutable native identity is not the expected public stable release")
     changed = _capture(runner, "git", "diff", "--name-only", native_source, controller,
-                       "--", "sdk", "mcp", "integrations", "Cargo.toml", "Cargo.lock")
+                       "--", *CLIENT_SOURCE_PATHS)
     if changed:
         raise ValueError("client continuation cannot change qualified clients or dependency locks")
     rows = json.loads(_capture(runner, "gh", "run", "list", "--repo", "google/capsem", "--workflow",
                               "release.yaml", "--commit", native_source, "--event", "workflow_dispatch",
                               "--limit", "20", "--json", "databaseId"))
-    from .client_recovery import RUN_FIELDS
     for row in rows:
         run_id = str(row["databaseId"])
         record = json.loads(_capture(runner, "gh", "run", "view", run_id, "--repo", "google/capsem", "--json", RUN_FIELDS))
@@ -402,6 +402,7 @@ def _resume_clients(runner: RunCommand, tag: str, native_source: str, controller
             verify_client_recovery_run(record, run_id, native_source)
         except ValueError:
             continue
+        print(f"Client-only continuation for {tag}: native source {native_source}; publisher source {controller}", flush=True)
         return _resume_release(runner, ref=SOURCE_REF_TEMPLATE.format(source_commit=controller),
                                source_commit=controller, tag=tag, channel="stable", publish=True,
                                client_run_id=run_id)

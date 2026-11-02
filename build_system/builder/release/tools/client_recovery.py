@@ -18,6 +18,7 @@ from .client_package_archives import Package
 from .verify_immutable_publication import file_identity
 from .verify_release_recovery_run import verify_client_recovery_run
 
+CLIENT_SOURCE_PATHS = ("sdk", "mcp", "integrations", "Cargo.toml")
 RUN_FIELDS = "databaseId,headSha,headBranch,event,workflowName,status,conclusion,jobs"
 
 
@@ -35,7 +36,10 @@ def original_run(root: Path, run_id: str, tag: str) -> str:
                                  "--json", "isDraft,isPrerelease,targetCommitish,tagName"))
     if release != {"isDraft": False, "isPrerelease": False, "targetCommitish": source, "tagName": tag}:
         raise ValueError("client recovery requires the already-public exact stable native release")
-    if capture(root, "git", "diff", "--name-only", source, "HEAD", "--", "sdk", "mcp", "integrations", "Cargo.toml", "Cargo.lock"):
+    # Root Cargo.lock audits the controller/native workspace. Enabled Python/npm
+    # archives retain every client lock under these roots; Rust publication is
+    # deferred (#382), and original Rust archives are never rebuilt here.
+    if capture(root, "git", "diff", "--name-only", source, "HEAD", "--", *CLIENT_SOURCE_PATHS):
         raise ValueError("client recovery may not change qualified client source or dependency locks")
     return source
 
