@@ -150,3 +150,37 @@ def test_controller_native_lock_is_separate_from_qualified_client_locks(tmp_path
     else:
         with pytest.raises(ValueError, match="client source or dependency locks"):
             client_recovery.original_run(tmp_path, "123", "v0.7.2")
+
+
+def test_native_verification_uses_the_supported_public_release_reader(tmp_path, monkeypatch):
+    import io
+    import json
+    import urllib.error
+    import urllib.request
+    from email.message import Message
+
+    from capsem_builder.release.tools import client_recovery, verify_channel_downloads
+    from capsem_builder.release.tools.verify_immutable_publication import file_identity
+
+    package = tmp_path / "candidate.deb"
+    package.write_bytes(b"original qualified package")
+    size, digest = file_identity(package)
+    manifest = {"channel": "stable", "packages": [{"name": package.name, "source_commit": SOURCE,
+                "platform": "linux", "bytes": size, "digest": {"sha256": digest}}]}
+    requests = []
+
+    def open_request(request, *, timeout):
+        headers = getattr(request, "headers", {})
+        if headers.get("User-agent") != verify_channel_downloads.AGENT["User-Agent"]:
+            raise urllib.error.HTTPError(str(request), 403, "default agent rejected", Message(), None)
+        assert request.full_url == "https://release.capsem.org/assets/stable/manifest.json"
+        assert timeout == verify_channel_downloads.TIMEOUT
+        requests.append(request)
+        return io.BytesIO(json.dumps(manifest).encode())
+
+    monkeypatch.setattr(urllib.request, "urlopen", open_request)
+    monkeypatch.setattr(client_recovery, "original_run", lambda *_: SOURCE)
+    monkeypatch.setattr("sys.argv", ["client-recovery", "--run-id", "123", "--release-tag", "v0.7.2",
+                                    "--native-dir", str(tmp_path)])
+    client_recovery.main()
+    assert len(requests) == 1

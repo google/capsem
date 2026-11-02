@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Reuse the supported public release HTTP reader for client continuation and isolate npm publisher configuration from legacy registry credentials while preserving GitHub OIDC authority.
+
 - Record the deliberate async-executor1.14.1 native lock/cache identity update while preserving the original published client and native artifacts.
 
 - Update async-executor to1.14.1 for its [upstream use-after-free fix](https://github.com/smol-rs/async-executor/releases/tag/v1.14.1) in the Linux desktop dependency chain; already-published0.7.2 native artifacts remain immutable and require a subsequent native patch release.

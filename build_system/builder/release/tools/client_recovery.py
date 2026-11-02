@@ -9,12 +9,12 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
-import urllib.request
 from pathlib import Path
 from typing import Any
 
 from ...gate.config import GateConfig, load
 from .client_package_archives import Package
+from .verify_channel_downloads import fetch
 from .verify_immutable_publication import file_identity
 from .verify_release_recovery_run import verify_client_recovery_run
 
@@ -78,8 +78,7 @@ def main() -> None:
     packages = list(args.native_dir.glob("*.deb"))
     if len(packages) != 1:
         raise ValueError("client recovery requires exactly one original native fixture")
-    with urllib.request.urlopen("https://release.capsem.org/assets/stable/manifest.json", timeout=30) as response:
-        manifest = json.load(response)
+    manifest = json.loads(fetch("https://release.capsem.org/assets/stable/manifest.json"))
     verify_native(packages[0], manifest, source)
 
 
