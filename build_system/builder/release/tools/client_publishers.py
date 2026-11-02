@@ -51,7 +51,7 @@ def validate_order(packages: tuple[Package, ...]) -> None:
 
 
 def _read_only_environment(environment: Mapping[str, str]) -> dict[str, str]:
-    sensitive = {*CREDENTIALS, "NPM_TOKEN", "CARGO_REGISTRY_TOKEN", "NODE_AUTH_TOKEN", "UV_PUBLISH_TOKEN"}
+    sensitive = {*CREDENTIALS, "NPM_TOKEN", "CARGO_REGISTRY_TOKEN", "NODE_AUTH_TOKEN", "UV_PUBLISH_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"}
     return {key: value for key, value in environment.items() if key not in sensitive}
 
 
@@ -94,7 +94,11 @@ def publish(config: GateConfig, packages: tuple[Package, ...], environment: Mapp
     require_credentials(environment)
     # Cargo remains locally qualified; registry publication is deferred in
     # https://github.com/google/capsem/issues/382 until its CI setup is ready.
-    packages = tuple(package for package in packages if package.registry != "crates")
+    # Inspect PyPI authorization is deferred in issue #392; its archive and
+    # service acceptance stay required before publication.
+    packages = tuple(package for package in packages
+                     if package.registry != "crates"
+                     and (package.registry, package.name) != ("pypi", "inspect-capsem-sandbox"))
     validate_order(packages)
     # All immutable conflicts are checked before the first upload. A failure
     # resumes only exact existing bytes; there is no skip-existing escape hatch.
@@ -114,6 +118,7 @@ def main() -> None:
     publication = commands.add_parser("publish")
     publication.add_argument("--source-commit", required=True)
     publication.add_argument("--release-tag", required=True)
+    publication.add_argument("--original-run-id", default="")
     arguments = parser.parse_args()
     if arguments.action == "check-credentials":
         require_credentials(os.environ)
@@ -125,10 +130,19 @@ def main() -> None:
     version = tomllib.loads(config.path("Cargo.toml").read_text())["workspace"]["package"]["version"]
     if arguments.release_tag != f"v{version}":
         raise ValueError("client cohort differs from selected native release version")
-    require_source_context(arguments.source_commit, os.environ, capture("git", "rev-parse", "HEAD"),
-                           capture("git", "rev-parse", f"{arguments.release_tag}^{{commit}}"),
+    source = arguments.source_commit
+    context_tag = f"capsem-source-{source}" if arguments.original_run_id else arguments.release_tag
+    require_source_context(source, os.environ, capture("git", "rev-parse", "HEAD"),
+                           capture("git", "rev-parse", f"{context_tag}^{{commit}}"),
                            bool(capture("git", "status", "--porcelain")))
-    publish(config, collect(config, arguments.source_commit), os.environ)
+    if arguments.original_run_id:
+        from .client_recovery import original_run, verify_archives
+        source = original_run(config.root, arguments.original_run_id, arguments.release_tag)
+        packages = collect(config, source)
+        verify_archives(config, packages, source)
+    else:
+        packages = collect(config, source)
+    publish(config, packages, os.environ)
 
 
 if __name__ == "__main__":

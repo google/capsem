@@ -280,6 +280,7 @@ def _dispatch_release(
     channel: str,
     publish: bool,
     dispatch_id: str,
+    client_run_id: str = "",
 ) -> None:
     runner.run(
         (
@@ -299,6 +300,7 @@ def _dispatch_release(
             f"dispatch_id={dispatch_id}",
             "-f",
             f"source_commit={source_commit}",
+            *(("-f", f"client_run_id={client_run_id}") if client_run_id else ()),
         )
     )
 
@@ -350,6 +352,7 @@ def _resume_release(
     channel: str,
     publish: bool,
     force_rebuild: bool = False,
+    client_run_id: str = "",
 ) -> str:
     run = _matching_run(runner, ref, source_commit, tag, channel)
     if run is not None:
@@ -367,9 +370,42 @@ def _resume_release(
         channel=channel,
         publish=publish,
         dispatch_id=dispatch_id,
+        **({"client_run_id": client_run_id} if client_run_id else {}),
     )
     run = _wait_for_run(runner, ref, source_commit, tag, channel, dispatch_id)
     return _complete_run(runner, run, tag, channel, source_commit, ref)
+
+
+def _resume_clients(runner: RunCommand, tag: str, native_source: str, controller: str) -> str:
+    """An existing public native identity permits only its exact client continuation."""
+    from .verify_release_recovery_run import verify_client_recovery_run
+
+    try:
+        release = json.loads(_capture(runner, "gh", "release", "view", tag, "--repo", "google/capsem",
+                                      "--json", "isDraft,isPrerelease,targetCommitish,tagName"))
+    except (json.JSONDecodeError, subprocess.CalledProcessError) as error:
+        raise RuntimeError(f"immutable version tag {tag} points at {native_source}, not {controller}; no public client continuation") from error
+    if release != {"isDraft": False, "isPrerelease": False, "targetCommitish": native_source, "tagName": tag}:
+        raise ValueError("immutable native identity is not the expected public stable release")
+    changed = _capture(runner, "git", "diff", "--name-only", native_source, controller,
+                       "--", "sdk", "mcp", "integrations", "Cargo.toml", "Cargo.lock")
+    if changed:
+        raise ValueError("client continuation cannot change qualified clients or dependency locks")
+    rows = json.loads(_capture(runner, "gh", "run", "list", "--repo", "google/capsem", "--workflow",
+                              "release.yaml", "--commit", native_source, "--event", "workflow_dispatch",
+                              "--limit", "20", "--json", "databaseId"))
+    from .client_recovery import RUN_FIELDS
+    for row in rows:
+        run_id = str(row["databaseId"])
+        record = json.loads(_capture(runner, "gh", "run", "view", run_id, "--repo", "google/capsem", "--json", RUN_FIELDS))
+        try:
+            verify_client_recovery_run(record, run_id, native_source)
+        except ValueError:
+            continue
+        return _resume_release(runner, ref=SOURCE_REF_TEMPLATE.format(source_commit=controller),
+                               source_commit=controller, tag=tag, channel="stable", publish=True,
+                               client_run_id=run_id)
+    raise ValueError("no completed native release run failed only at client publication")
 
 
 def precheck_release_binaries(channel: str, source_commit: str, runner: RunCommand) -> None:
@@ -384,7 +420,10 @@ def release_binaries(channel: str, source_commit: str, runner: RunCommand) -> tu
     version = _project_version()
     _validate_version_cohort(version)
     tag = f"v{version}"
-    claimed = remote_version_target(runner, tag) is None
+    target = remote_version_target(runner, tag)
+    if channel == "stable" and target is not None and target != source_commit:
+        return tag, _resume_clients(runner, tag, target, source_commit)
+    claimed = target is None
     publish = ensure_version_tag(
         runner,
         tag=tag,

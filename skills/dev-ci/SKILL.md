@@ -25,6 +25,14 @@ check-run annotations before blaming source or credentials. macOS14 retires on
 2026-11-02; use macOS15 with pinned Xcode16.2 and the macOS14 product deployment
 floor. Change compiler-cache keys when moving the build host.
 
+## Keep step outputs as shell data
+
+Pass dynamic step outputs through `env` and quote shell variables, including
+paths, numeric deadlines and artifact IDs. Quoting a `${{ steps.* }}` expression
+inside `run` does not prevent runner-time command injection. The native image
+handoff guard resolves environment bindings for exact argument checks, while
+real Bash regressions prove quote breaks and command substitutions stay literal.
+
 ## Release input authority
 
 The selected manifest is the bible: an artifact absent from it does not exist

@@ -31,7 +31,22 @@ def _require_publication_contract(native: dict, client: dict) -> None:
     checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))
     assert checkout["with"]["ref"] == "${{ inputs.source_commit }}", RATIONALE
     download = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/download-artifact@"))
-    assert download["with"] == {"name": "client-packages", "path": "cache/target"}, RATIONALE
+    assert download["with"] == {"name": "client-packages", "path": "cache/target",
+                                "github-token": "${{ github.token }}",
+                                "run-id": "${{ inputs.original_run_id || github.run_id }}"}, RATIONALE
+    assert native["jobs"]["source-identity"]["if"] == "${{ inputs.client_run_id == '' }}", RATIONALE
+    assert "inputs.client_run_id == ''" in native["jobs"]["cleanup-unpublished-version-claim"]["if"], RATIONALE
+    recovery = native["jobs"]["resume-client-packages"]
+    assert recovery["if"] == "${{ inputs.client_run_id != '' && inputs.channel == 'stable' && inputs.publish == true }}", RATIONALE
+    assert recovery["uses"] == call["uses"], RATIONALE
+    assert recovery["with"] == {**call["with"], "original_run_id": "${{ inputs.client_run_id }}"}, RATIONALE
+    assert recovery["permissions"]["id-token"] == "write", RATIONALE
+    resolvers = [step for step in job["steps"] if step.get("name") == "Resolve the qualified original client artifact run"]
+    assert len(resolvers) == 1, RATIONALE
+    resolver = resolvers[0]
+    assert "-m capsem_builder.release.tools.client_recovery" in resolver["run"], RATIONALE
+    assert resolver["if"] == "${{ inputs.original_run_id != '' }}", RATIONALE
+    assert job["steps"].index(resolver) < job["steps"].index(download), RATIONALE
     publish = next(step for step in job["steps"] if "client_publishers publish" in step.get("run", ""))
     assert not {"NPM_TOKEN", "NODE_AUTH_TOKEN", "CARGO_REGISTRY_TOKEN"} & publish["env"].keys(), RATIONALE
 
@@ -60,12 +75,22 @@ def test_client_publication_is_an_exact_source_native_release_continuation() -> 
 @pytest.mark.parametrize("mutation", [
     "dispatch", "early", "channel", "source", "archive", "credentials",
     "caller-oidc", "callee-oidc", "npm-token", "cargo-token",
+    "recovery-source", "recovery-channel", "recovery-oidc", "recovery-resolver",
 ])
 def test_publication_guard_rejects_independent_or_unqualified_routes(mutation: str) -> None:
     native, client = deepcopy(_workflows())
     _require_publication_contract(native, client)
     _require_prerequisites(native)
-    if mutation == "dispatch":
+    if mutation == "recovery-source":
+        native["jobs"]["resume-client-packages"]["with"]["source_commit"] = "main"
+    elif mutation == "recovery-channel":
+        native["jobs"]["resume-client-packages"]["if"] = "${{ inputs.publish == true }}"
+    elif mutation == "recovery-oidc":
+        native["jobs"]["resume-client-packages"]["permissions"]["id-token"] = "none"
+    elif mutation == "recovery-resolver":
+        client["jobs"]["publish"]["steps"] = [step for step in client["jobs"]["publish"]["steps"]
+                                               if step.get("name") != "Resolve the qualified original client artifact run"]
+    elif mutation == "dispatch":
         client.get("on", client.get(True))["workflow_dispatch"] = {}
     elif mutation == "early":
         native["jobs"]["publish-client-packages"]["needs"] = ["create-release"]

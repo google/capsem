@@ -1762,6 +1762,12 @@ publication and its clean public registry consumer are deferred until publishing
 is configured, tracked in https://github.com/google/capsem/issues/382. Cargo
 publisher credentials and public crates are not prerequisites for this release.
 
+Inspect adapter PyPI publication and its clean public-registry consumer are
+temporarily deferred pending project publishing authorization, tracked in
+https://github.com/google/capsem/issues/392. Inspect wheel/sdist construction
+and pre-publication service acceptance remain required. Core Python SDK and
+npm SDK/MCP publication remain required.
+
 The existing binary release authority and its complete qualification remain
 required. Registry publication starts only after native publication and public
 native download/install verification succeed. Its prerequisites MUST fail early
@@ -1777,9 +1783,26 @@ already-public archive bytes exactly match the qualified archives. A version
 collision MUST fail, never silently skip a different artifact or overwrite it.
 No atomic transaction across native hosting and the registries is implied;
 a client failure leaves that native release public and the client cohort
-incomplete until the same-source retry succeeds. Completion requires anonymous
+incomplete until the same-source retry succeeds.
+
+When only client publication failed after all native qualification, publication,
+deployment and public-install gates succeeded, `release-binaries` MAY continue
+that client cohort using a newer committed publisher revision on main. This is
+still the binary release continuation, with no new operator command. The
+controller revision MUST be recorded separately from the original native source;
+GITHUB_SHA MUST describe the actual controller. Client source trees and dependency
+locks MUST remain identical to the original source. The continuation MUST verify
+the original run identity and every native proof, the already-public native tag,
+and original signed client archive attestations before any upload. Native
+artifacts and channel manifests MUST NOT be rebuilt or mutated. Publication
+provenance describes the continuation; original build attestations remain the
+proof of the qualified archive source. The exact original native package MUST
+match the live manifest before clean public consumers run.
+
+Completion requires anonymous
 public archive verification and clean registry installations exercising the real
-service, Inspect entry point, and MCP protocol handshake.
+service and MCP protocol handshake. The Inspect entry point remains covered
+by pre-publication archive acceptance while its registry publication is deferred.
 
 ## 23. Summary of the governing contract
 

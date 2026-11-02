@@ -46,9 +46,17 @@ def invocation(action, section, budget):
     )
 
 
+def resolved_run(step):
+    """Compare bindings as data; the shell guard separately forbids interpolation."""
+    body = step["run"]
+    for name, value in step.get("env", {}).items():
+        body = body.replace("${" + name + "}", str(value))
+    return body
+
+
 def held(step, section, *, base=False):
     assert not step.get("if") and not step.get("continue-on-error"), RATIONALE
-    assert step["run"].strip().splitlines() == [
+    assert resolved_run(step).strip().splitlines() == [
         invocation("hold", section, "base_outer_seconds" if base else "outer_seconds")
         + ' > "'
         + expression("control_dir")
@@ -108,7 +116,7 @@ def validate(workflow, settings):
         for operation, command in expected.items():
             step = indexed[operation + "_" + label + "_candidate"]
             assert not step.get("if") and not step.get("continue-on-error"), RATIONALE
-            assert shlex.split(step["run"]) == [*UV.split(), *command], RATIONALE
+            assert shlex.split(resolved_run(step)) == [*UV.split(), *command], RATIONALE
             positions.append(steps.index(step))
         if image == "dev":
             held(indexed["retain_native_base"], "base", base=True)
@@ -155,7 +163,7 @@ def validate(workflow, settings):
         }, RATIONALE
         release = indexed["release_" + label + "_candidate"]
         assert (
-            release["run"]
+            resolved_run(release)
             == invocation("release", section, "settle_seconds")
             + ' --artifact-id "${{ steps.upload_'
             + label
@@ -163,7 +171,7 @@ def validate(workflow, settings):
         ), RATIONALE
         assert not release.get("if") and not release.get("continue-on-error"), RATIONALE
         abort = indexed["abort_" + label + "_candidate"]
-        assert abort["run"] == invocation("abort", section, "settle_seconds"), RATIONALE
+        assert resolved_run(abort) == invocation("abort", section, "settle_seconds"), RATIONALE
         assert (
             abort.get("if")
             == "${{ always() && steps.retain_"
@@ -176,7 +184,7 @@ def validate(workflow, settings):
         positions += [steps.index(step) for step in (upload, download, release, abort)]
     assert positions == sorted(set(positions)), RATIONALE
     release_base = indexed["release_native_base"]
-    assert release_base["run"] == invocation(
+    assert resolved_run(release_base) == invocation(
         "release", "base", "settle_seconds"
     ) and not release_base.get("if"), RATIONALE
     finish = indexed["finish_native_candidates"]
@@ -202,7 +210,7 @@ def validate(workflow, settings):
     ), RATIONALE
     assert steps.index(finish) < steps.index(upload), RATIONALE
     abort_base = indexed["abort_native_base"]
-    assert abort_base["run"] == invocation("abort", "base", "settle_seconds"), RATIONALE
+    assert resolved_run(abort_base) == invocation("abort", "base", "settle_seconds"), RATIONALE
     assert (
         abort_base.get("if")
         == "${{ always() && steps.retain_native_base.outcome != 'skipped' && steps.release_native_base.outcome != 'success' }}"
@@ -222,6 +230,9 @@ def test_existing_native_job_keeps_fixed_qualification_and_nonpublishing_transfe
 @pytest.mark.parametrize(
     "defect",
     [
+        "layout-binding",
+        "deadline-binding",
+        "artifact-binding",
         "permission",
         "timeout",
         "runner",
@@ -248,6 +259,12 @@ def test_guard_rejects_authority_proof_or_lifetime_evasions(defect):
     job = workflow["jobs"]["test-install"]
     steps = job["steps"]
     indexed = {step.get("id"): step for step in steps if step.get("id")}
+    if defect == "layout-binding":
+        indexed["qualify_debug_candidate"]["env"]["NATIVE_CANDIDATE_LAYOUT"] = "wrong-layout"
+    if defect == "deadline-binding":
+        indexed["retain_debug_candidate"]["env"]["NATIVE_TRANSFER_OUTER_SECONDS"] = "99999"
+    if defect == "artifact-binding":
+        indexed["release_debug_candidate"]["env"]["NATIVE_CANDIDATE_ARTIFACT_ID"] = "foreign-artifact"
     if defect == "permission":
         workflow["permissions"]["packages"] = "write"
     if defect == "timeout":
