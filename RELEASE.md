@@ -1790,8 +1790,11 @@ deployment and public-install gates succeeded, `release-binaries` MAY continue
 that client cohort using a newer committed publisher revision on main. This is
 still the binary release continuation, with no new operator command. The
 controller revision MUST be recorded separately from the original native source;
-GITHUB_SHA MUST describe the actual controller. Client source trees and dependency
-locks MUST remain identical to the original source. The continuation MUST verify
+GITHUB_SHA MUST describe the actual controller. Client source trees and their dependency
+locks MUST remain identical to the original source. While Cargo publication is
+deferred, the controller's root native Cargo.lock MAY receive audited fixes
+without changing the retained qualified client archives. This does not patch or
+requalify already-published native artifacts; a native fix needs a new version. The continuation MUST verify
 the original run identity and every native proof, the already-public native tag,
 and original signed client archive attestations before any upload. Native
 artifacts and channel manifests MUST NOT be rebuilt or mutated. Publication
