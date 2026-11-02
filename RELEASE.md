@@ -1762,6 +1762,12 @@ publication and its clean public registry consumer are deferred until publishing
 is configured, tracked in https://github.com/google/capsem/issues/382. Cargo
 publisher credentials and public crates are not prerequisites for this release.
 
+Inspect adapter PyPI publication and its clean public-registry consumer are
+temporarily deferred pending project publishing authorization, tracked in
+https://github.com/google/capsem/issues/392. Inspect wheel/sdist construction
+and pre-publication service acceptance remain required. Core Python SDK and
+npm SDK/MCP publication remain required.
+
 The existing binary release authority and its complete qualification remain
 required. Registry publication starts only after native publication and public
 native download/install verification succeed. Its prerequisites MUST fail early
@@ -1779,7 +1785,8 @@ No atomic transaction across native hosting and the registries is implied;
 a client failure leaves that native release public and the client cohort
 incomplete until the same-source retry succeeds. Completion requires anonymous
 public archive verification and clean registry installations exercising the real
-service, Inspect entry point, and MCP protocol handshake.
+service and MCP protocol handshake. The Inspect entry point remains covered
+by pre-publication archive acceptance while its registry publication is deferred.
 
 ## 23. Summary of the governing contract
 

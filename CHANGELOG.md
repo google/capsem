@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Temporarily defer Inspect adapter PyPI upload and public registry consumption pending publishing authorization (#392); retain its archive and service acceptance and all core SDK/MCP publication.
+
 - Check all native package executables on PATH during public install verification, while retaining version checks for every user-prefix CLI companion; the desktop app is installed under the native system path.
 
 - Include wrapper bootstrap and teardown in process-cleanup test watchdogs on slower CI runners, retaining command deadlines and complete descendant-reaping assertions.

@@ -85,10 +85,11 @@ def test_trusted_npm_upload_preserves_oidc_and_discards_registry_tokens(tmp_path
     assert not {"PYPI_TOKEN", "NPM_TOKEN", "CARGO_REGISTRY_TOKEN", "NODE_AUTH_TOKEN"} & child.keys()
 
 
-def test_cargo_is_deferred_before_any_registry_access(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    package = Package("crates", "capsem-sdk", "0.7.1", "sdk/rust", (tmp_path / "sdk.crate",))
+@pytest.mark.parametrize("registry,name", [("crates", "capsem-sdk"), ("pypi", "inspect-capsem-sandbox")])
+def test_deferred_packages_do_not_access_registries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, registry: str, name: str) -> None:
+    package = Package(registry, name, "0.7.1", "fixture", (tmp_path / "archive",))
     def forbidden(*_args):
-        pytest.fail("Deferred Cargo publication must not access a registry or run a command")
+        pytest.fail("Deferred publication must not access a registry or run a command")
     monkeypatch.setattr(client_publishers, "inspect", forbidden)
     monkeypatch.setattr(client_publishers, "_run", forbidden)
     client_publishers.publish(load(Path(__file__).resolve().parents[3]), (package,), {"PYPI_TOKEN": "fixture"})
