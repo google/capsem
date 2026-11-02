@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Record the deliberate async-executor1.14.1 native lock/cache identity update while preserving the original published client and native artifacts.
+
 - Update async-executor to1.14.1 for its [upstream use-after-free fix](https://github.com/smol-rs/async-executor/releases/tag/v1.14.1) in the Linux desktop dependency chain; already-published0.7.2 native artifacts remain immutable and require a subsequent native patch release.
 
 - Keep publisher/native dependency audits independent of the retained Python/npm client archive locks while Cargo publishing is deferred.
