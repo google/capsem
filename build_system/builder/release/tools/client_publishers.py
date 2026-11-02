@@ -6,6 +6,7 @@ import argparse
 import os
 import re
 import subprocess
+import tempfile
 import time
 import tomllib
 from collections.abc import Mapping
@@ -52,7 +53,7 @@ def validate_order(packages: tuple[Package, ...]) -> None:
 
 def _read_only_environment(environment: Mapping[str, str]) -> dict[str, str]:
     sensitive = {*CREDENTIALS, "NPM_TOKEN", "CARGO_REGISTRY_TOKEN", "NODE_AUTH_TOKEN", "UV_PUBLISH_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"}
-    return {key: value for key, value in environment.items() if key not in sensitive}
+    return {key: value for key, value in environment.items() if key not in sensitive and not key.lower().startswith("npm_")}
 
 
 def _run(config: GateConfig, argv: list[str], environment: Mapping[str, str]) -> None:
@@ -73,9 +74,16 @@ def _upload(config: GateConfig, package: Package, missing: list[Path], environme
             for key in ("ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN")
         ):
             raise ValueError("npm publication requires GitHub Actions OIDC authority")
-        _run(config, ["npm", "publish", str(package.archives[0]), "--access", "public",
-                      "--registry=https://registry.npmjs.org", "--ignore-scripts", "--provenance",
-                      "--tag", "latest"], child)
+        # setup-node's legacy .npmrc and ambient npm configuration cannot
+        # supply registry credentials or override this OIDC-only publication.
+        with tempfile.TemporaryDirectory(prefix="capsem-npm-publisher-") as directory:
+            for kind in ("USER", "GLOBAL"):
+                path = Path(directory) / f"{kind.lower()}.npmrc"
+                path.write_text("")
+                child[f"NPM_CONFIG_{kind}CONFIG"] = str(path)
+            _run(config, ["npm", "publish", str(package.archives[0]), "--access", "public",
+                          "--registry=https://registry.npmjs.org", "--ignore-scripts", "--provenance",
+                          "--tag", "latest"], child)
     else:
         raise ValueError(f"registry publication is disabled: {package.registry}")
 

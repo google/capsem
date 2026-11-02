@@ -104,3 +104,26 @@ def test_npm_upload_requires_trusted_ci_context(tmp_path: Path, missing: str) ->
     environment.pop(missing)
     with pytest.raises(ValueError, match="OIDC"):
         client_publishers._upload(load(Path(__file__).resolve().parents[3]), package, list(package.archives), environment)
+
+
+def test_trusted_npm_upload_does_not_read_legacy_registry_credential_files(tmp_path, monkeypatch):
+    import os
+
+    package = Package("npm", "@capsem/sdk", "0.7.2", "sdk/typescript", (tmp_path / "sdk.tgz",))
+    legacy = tmp_path / "legacy.npmrc"
+    legacy.write_text("//registry.npmjs.org/:_authToken=fixture-registry-canary\n")
+    environment = {"PATH": os.defpath, "GITHUB_ACTIONS": "true",
+                   "ACTIONS_ID_TOKEN_REQUEST_URL": "https://example.invalid/oidc",
+                   "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "ephemeral",
+                   "NPM_CONFIG_USERCONFIG": str(legacy), "NPM_CONFIG_GLOBALCONFIG": str(legacy),
+                   "NpM_CoNfIg__authToken": "fixture-registry-canary"}
+
+    def run(_config, _argv, child):
+        assert "fixture-registry-canary" not in child.values()
+        assert child["NPM_CONFIG_USERCONFIG"] != child["NPM_CONFIG_GLOBALCONFIG"]
+        for name in ("NPM_CONFIG_USERCONFIG", "NPM_CONFIG_GLOBALCONFIG"):
+            assert "fixture-registry-canary" not in Path(child[name]).read_text()
+        assert child["ACTIONS_ID_TOKEN_REQUEST_TOKEN"] == "ephemeral"
+
+    monkeypatch.setattr(client_publishers, "_run", run)
+    client_publishers._upload(load(Path(__file__).resolve().parents[3]), package, list(package.archives), environment)
