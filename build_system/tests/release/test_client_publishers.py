@@ -1,6 +1,7 @@
 """Only the exact native release may publish its dependency-ordered clients."""
 
 from pathlib import Path
+from typing import Literal
 
 import pytest
 from capsem_builder.gate.config import load
@@ -86,7 +87,7 @@ def test_trusted_npm_upload_preserves_oidc_and_discards_registry_tokens(tmp_path
 
 
 @pytest.mark.parametrize("registry,name", [("crates", "capsem-sdk"), ("pypi", "inspect-capsem-sandbox")])
-def test_deferred_packages_do_not_access_registries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, registry: str, name: str) -> None:
+def test_deferred_packages_do_not_access_registries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, registry: Literal["crates", "pypi"], name: str) -> None:
     package = Package(registry, name, "0.7.1", "fixture", (tmp_path / "archive",))
     def forbidden(*_args):
         pytest.fail("Deferred publication must not access a registry or run a command")

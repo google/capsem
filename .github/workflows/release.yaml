@@ -3,6 +3,11 @@ run-name: Release ${{ inputs.channel }} ${{ inputs.tag }} ${{ inputs.dispatch_id
 on:
   workflow_dispatch:
     inputs:
+      client_run_id:
+        description: Original qualified native run for client-only continuation; supplied by release-binaries.
+        required: false
+        type: string
+        default: ""
       tag:
         description: Immutable v* tag to release
         required: true
@@ -45,6 +50,7 @@ env:
 
 jobs:
   source-identity:
+    if: ${{ inputs.client_run_id == '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -1315,7 +1321,7 @@ jobs:
 
   cleanup-unpublished-version-claim:
     needs: [verify-release-downloads]
-    if: ${{ always() && inputs.publish == true && (failure() || cancelled()) }}
+    if: ${{ always() && inputs.client_run_id == '' && inputs.publish == true && (failure() || cancelled()) }}
     runs-on: ubuntu-24.04
     # Deletes the unpublished version's claim tag.
     permissions:
@@ -1333,3 +1339,18 @@ jobs:
             --tag "$RELEASE_TAG" \
             --source-commit "$SOURCE_COMMIT" \
             --repository "$GITHUB_REPOSITORY"
+
+  resume-client-packages:
+    if: ${{ inputs.client_run_id != '' && inputs.channel == 'stable' && inputs.publish == true }}
+    uses: ./.github/workflows/release-client-packages.yaml
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+      attestations: write
+    with:
+      source_commit: ${{ inputs.source_commit }}
+      release_tag: ${{ inputs.tag }}
+      original_run_id: ${{ inputs.client_run_id }}
+    secrets:
+      PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}

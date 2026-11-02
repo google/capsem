@@ -142,6 +142,17 @@ uv run --project build_system --frozen python build_system/release_site/scripts/
   --base-url https://release.capsem.org --channel stable --attempts 1
 ```
 
+## Client-only publication continuation
+
+If a stable native release is already public and its run failed only at registry
+publication, fix the publisher on a committed main revision while preserving all
+client source and lock bytes. `just release-binaries stable <publisher-commit>`
+recognizes the existing native tag and selects the original qualified run. It
+runs only client publication in `release.yaml`, preserving npm's trusted caller.
+The controller and original build sources stay distinct; original archive
+attestations and native/public manifest hashes are checked before upload. It
+never rebuilds native packages, reactivates a channel or fabricates GITHUB_SHA.
+
 ## Failure and retry discipline
 
 - A red gate stops publication.

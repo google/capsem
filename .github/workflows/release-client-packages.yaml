@@ -3,6 +3,10 @@ name: Publish verified client packages
 on:
   workflow_call:
     inputs:
+      original_run_id:
+        required: false
+        type: string
+        default: ""
       source_commit:
         required: true
         type: string
@@ -39,15 +43,43 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: client-packages
-          path: cache/target
       - name: Materialize locked publication dependencies
         run: |
           uv sync --project build_system --frozen
           cargo fetch --locked
+      - name: Resolve the qualified original client artifact run
+        if: ${{ inputs.original_run_id != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ORIGINAL_RUN_ID: ${{ inputs.original_run_id }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: >
+          uv run --project build_system --frozen python -m capsem_builder.release.tools.client_recovery
+          --run-id "$ORIGINAL_RUN_ID" --release-tag "$RELEASE_TAG"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.original_run_id || github.run_id }}
+          name: client-packages
+          path: cache/target
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.original_run_id || github.run_id }}
+          name: release-linux-x86_64
+          path: cache/target/release/staging/client-native/
+      - name: Verify the original public native package for client continuation
+        if: ${{ inputs.original_run_id != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ORIGINAL_RUN_ID: ${{ inputs.original_run_id }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: >
+          uv run --project build_system --frozen python -m capsem_builder.release.tools.client_recovery
+          --run-id "$ORIGINAL_RUN_ID" --release-tag "$RELEASE_TAG"
+          --native-dir cache/target/release/staging/client-native/
       - name: Attest the tested registry archives
+        if: ${{ inputs.original_run_id == '' }}
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373
         with:
           subject-path: |
@@ -63,13 +95,11 @@ jobs:
           SOURCE_COMMIT: ${{ inputs.source_commit }}
           RELEASE_TAG: ${{ inputs.release_tag }}
           PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          ORIGINAL_RUN_ID: ${{ inputs.original_run_id }}
         run: >
           uv run --project build_system --frozen python -m capsem_builder.release.tools.client_publishers publish
-          --source-commit "$SOURCE_COMMIT" --release-tag "$RELEASE_TAG"
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: release-linux-x86_64
-          path: cache/target/release/staging/client-native/
+          --source-commit "$SOURCE_COMMIT" --release-tag "$RELEASE_TAG" --original-run-id "$ORIGINAL_RUN_ID"
       - name: Extract the qualified native service for public SDK consumers
         shell: bash
         run: |

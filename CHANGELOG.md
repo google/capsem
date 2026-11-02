@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Resume attested SDK/MCP registry publication after a native release without rebuilding native packages or changing their immutable source, validating the original successful proof and public native fixture.
+
+- Fix the deferred publisher test type, pin ordinary CI Python to 3.14, and raise the Linux MCP builtin coverage floor to match both hosted architectures.
+
 - Temporarily defer Inspect adapter PyPI upload and public registry consumption pending publishing authorization (#392); retain its archive and service acceptance and all core SDK/MCP publication.
 
 - Check all native package executables on PATH during public install verification, while retaining version checks for every user-prefix CLI companion; the desktop app is installed under the native system path.

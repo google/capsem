@@ -115,6 +115,38 @@ def verify_recovery_run(
         )
 
 
+CLIENT_JOB = "publish-client-packages / publish"
+CLIENT_QUALIFIED_JOBS = (
+    *(name for name in QUALIFIED_JOBS if not name.startswith("runtime-preflight /")),
+    "runtime-preflight / Verify the public runtime graph", "client-publication-prerequisites",
+    ASSEMBLY_JOB, CANDIDATE_JOB, DEPLOY_JOB, POST_DEPLOY_JOB,
+)
+
+
+def verify_client_recovery_run(run: dict[str, Any], run_id: str, source: str) -> None:
+    """Only resume a registry failure after every native publication proof passed."""
+    expected = {"databaseId": int(run_id), "headSha": source,
+                "headBranch": f"capsem-source-{source}", "event": "workflow_dispatch",
+                "workflowName": "Release", "status": "completed", "conclusion": "failure"}
+    if SOURCE_COMMIT.fullmatch(source) is None or any(run.get(k) != v for k, v in expected.items()):
+        raise ValueError("client recovery requires the exact completed native release run")
+    jobs = run.get("jobs")
+    if not isinstance(jobs, list) or any(not isinstance(job, dict) for job in jobs):
+        raise ValueError("client recovery requires a complete job inventory")
+    conclusions = {job.get("name"): job.get("conclusion") for job in jobs}
+    if len(conclusions) != len(jobs):
+        raise ValueError("duplicate client recovery jobs")
+    required = dict.fromkeys(CLIENT_QUALIFIED_JOBS, "success")
+    required[CLIENT_JOB] = "failure"
+    if any(conclusions.get(name) != result for name, result in required.items()):
+        raise ValueError("native release proof was incomplete before client publication")
+    for name, result in conclusions.items():
+        if name == "cleanup-unpublished-version-claim" and result == "skipped":
+            continue
+        if name not in required and result != "success":
+            raise ValueError("another failed or skipped job prevents client recovery")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", type=Path, required=True)

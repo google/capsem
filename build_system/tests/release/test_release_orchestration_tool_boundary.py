@@ -21,6 +21,7 @@ EXISTING_TOOLS = {
     "client_package_archives",
     "client_publishers",
     "client_registry",
+    "client_recovery",
     "fetch_channel_source_manifest",
     "fetch_release_artifacts",
     "finalize_binary_staging_fixtures",

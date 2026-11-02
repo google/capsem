@@ -99,7 +99,7 @@ def _has_cross_run_resolver(job: dict) -> bool:
     """The job proves which immutable prior run may supply artifacts."""
     commands = [step.get("run") or "" for step in _steps(job)]
     return any(
-        isinstance(command, str) and "verify-release-recovery-run.py" in command
+        isinstance(command, str) and any(marker in command for marker in ("verify-release-recovery-run.py", "-m capsem_builder.release.tools.client_recovery"))
         for command in commands
     )
 
@@ -124,7 +124,7 @@ def _cross_run_downloads(job: dict, jobs: dict[str, dict]) -> set[str]:
     axes = _matrix_values(job)
     for step in _steps(job):
         command = step.get("run") or ""
-        if isinstance(command, str) and "verify-release-recovery-run.py" in command:
+        if isinstance(command, str) and any(marker in command for marker in ("verify-release-recovery-run.py", "-m capsem_builder.release.tools.client_recovery")):
             verified = True
         uses = step.get("uses") or ""
         if not uses.startswith(DOWNLOAD):

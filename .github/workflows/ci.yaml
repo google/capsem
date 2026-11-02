@@ -75,6 +75,8 @@ jobs:
 
       - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+        with:
+          python-version: "3.14"
       - run: uv sync --project build_system --frozen
 
       # `just` recipes reach `_pnpm-install`, which installs every Node
@@ -247,6 +249,8 @@ jobs:
             sdk/typescript/pnpm-lock.yaml
             build_system/release_site/pnpm-lock.yaml
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+        with:
+          python-version: "3.14"
       - run: uv sync --project build_system --frozen
       - name: Build release administration CLI
         run: cargo build -p capsem-admin
@@ -560,6 +564,8 @@ jobs:
 
       - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+        with:
+          python-version: "3.14"
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:
           toolchain: 1.97.1
@@ -1019,6 +1025,8 @@ jobs:
           cache: pnpm
           cache-dependency-path: web/docs/pnpm-lock.yaml
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+        with:
+          python-version: "3.14"
 
       - name: Install docs dependencies
         run: cd web/docs && pnpm install --frozen-lockfile
@@ -1073,6 +1081,8 @@ jobs:
           key: release-site-build
 
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+        with:
+          python-version: "3.14"
 
       - name: Install Python dependencies
         run: uv sync --project build_system --frozen
