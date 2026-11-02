@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Pass native CI handoff outputs through quoted environment variables, preventing shell-template command injection while preserving original image, deadline and artifact bindings.
+
 - Resume attested SDK/MCP registry publication after a native release without rebuilding native packages or changing their immutable source, validating the original successful proof and public native fixture.
 
 - Fix the deferred publisher test type, pin ordinary CI Python to 3.14, and raise the Linux MCP builtin coverage floor to match both hosted architectures.
