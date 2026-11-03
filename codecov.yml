@@ -26,10 +26,18 @@ coverage:
         target: 90%
         flags:
           - python-sdk
+      integrations-common:
+        target: 90%
+        flags:
+          - integrations-common
       inspect-ai:
         target: 90%
         flags:
           - inspect-ai
+      harbor:
+        target: 90%
+        flags:
+          - harbor
       typescript-sdk:
         target: 90%
         flags:
@@ -54,9 +62,17 @@ flags:
     paths:
       - sdk/python/capsem/**
     carryforward: true
+  integrations-common:
+    paths:
+      - integrations/common/capsem_integrations/**
+    carryforward: true
   inspect-ai:
     paths:
       - integrations/inspect-ai/inspect_capsem/**
+    carryforward: true
+  harbor:
+    paths:
+      - integrations/harbor/harbor_capsem/**
     carryforward: true
   mcp-server:
     paths:
@@ -70,6 +86,7 @@ flags:
       - build_system/release_site/scripts/**
       - build_system/release_site/src/**
       - build_system/builder/**
+      - integrations/common/capsem_integrations/**
       - integrations/inspect-ai/inspect_capsem/**
     carryforward: true
   integration:
@@ -107,10 +124,20 @@ component_management:
       paths:
         - sdk/python/capsem/**
 
+    - component_id: integrations-common
+      name: Integrations Common
+      paths:
+        - integrations/common/capsem_integrations/**
+
     - component_id: inspect-ai
       name: Inspect AI Extension
       paths:
         - integrations/inspect-ai/inspect_capsem/**
+
+    - component_id: harbor
+      name: Harbor Extension
+      paths:
+        - integrations/harbor/harbor_capsem/**
 
     # MITM HTTPS proxy, TLS, cert authority, domain/HTTP policy,
     # AI traffic parsing (SSE, providers, pricing). All of net/

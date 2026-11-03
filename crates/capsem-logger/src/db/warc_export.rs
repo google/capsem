@@ -421,7 +421,8 @@ pub(super) fn capture_warc(
     drop(archive_lock);
     super::bodies::pause_archive_capture_for_tests(db_path);
 
-    let mut spool = tempfile::tempfile().map_err(|error| format!("create WARC metadata spool: {error}"))?;
+    let mut spool = tempfile::tempfile_in(db_path.parent().unwrap_or_else(|| std::path::Path::new(".")))
+        .map_err(|error| format!("create WARC metadata spool: {error}"))?;
     let mut spool_bytes = 0usize;
     let mut last = (-1i64, -1i64, -1i64);
     loop {

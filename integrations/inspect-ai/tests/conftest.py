@@ -9,7 +9,6 @@ import sys
 from collections.abc import Iterator
 from pathlib import Path
 
-import inspect_capsem._lifecycle as lifecycle_mod
 import pytest
 from inspect_capsem import CapsemSandboxEnvironment
 
@@ -139,14 +138,11 @@ def _host_guest_tools_bin_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 @pytest.fixture(autouse=True)
-def _clear_process_owned_vms(
+def _clear_active_environments(
     _host_guest_tools_bin_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> Iterator[None]:
-    monkeypatch.delenv("CAPSEM_VM_PREFIX", raising=False)
     cur_path = os.environ.get("PATH", "/usr/bin:/bin")
     monkeypatch.setenv("PATH", f"{_host_guest_tools_bin_dir}:{cur_path}")
-    lifecycle_mod._PROCESS_OWNED_VMS.clear()
     CapsemSandboxEnvironment._active_environments.clear()
     yield
-    lifecycle_mod._PROCESS_OWNED_VMS.clear()
     CapsemSandboxEnvironment._active_environments.clear()

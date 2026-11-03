@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-import inspect_capsem.containers.image_build as image_build_mod
+import capsem_integrations.containers.image_build as image_build_mod
 from capsem import Hypervisor
 from inspect_capsem import CapsemSandboxConfig, CapsemSandboxEnvironment, HostBuildGrant
 from inspect_capsem._tools import (

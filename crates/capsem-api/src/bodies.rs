@@ -37,3 +37,12 @@ pub struct EventBodiesQuery {
     /// protocol limit.
     pub max_bytes: Option<usize>,
 }
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct ExportRowsQuery {
+    /// Comma-separated list of exportable ledger table names. When omitted,
+    /// exports all non-security ledger tables (`DEFAULT_EXPORT_LEDGER_TABLES`).
+    #[serde(default)]
+    pub tables: Option<String>,
+}

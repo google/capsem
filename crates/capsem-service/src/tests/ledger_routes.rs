@@ -7,6 +7,7 @@ mod bodies_export;
 mod counts;
 mod freshness;
 mod history;
+mod rows_export;
 mod timeline;
 
 #[tokio::test]

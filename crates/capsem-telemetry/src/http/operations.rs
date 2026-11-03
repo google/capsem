@@ -83,6 +83,7 @@ pub const ROUTES: &[&str] = &[
     "/vms/{id}/enforcement/latest",
     "/vms/{id}/enforcement/status",
     "/vms/{id}/exec",
+    "/vms/{id}/export/rows.ndjson.gz",
     "/vms/{id}/exposures",
     "/vms/{id}/exposures/{exposure_id}",
     "/vms/{id}/exposures/{exposure_id}/preview-session",
