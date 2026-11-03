@@ -31,6 +31,7 @@ def clean_environment(environment: dict[str, str]) -> dict[str, str]:
 
 def verify(config: GateConfig, environment: dict[str, str]) -> None:
     version = tomllib.loads(config.path("Cargo.toml").read_text())["workspace"]["package"]["version"]
+    extension = tomllib.loads(config.path(config.integrations_inspect_ai.manifest).read_text())["project"]["version"]
     with tempfile.TemporaryDirectory(prefix="capsem-public-clients-") as directory:
         work = Path(directory)
         if work.is_relative_to(config.root.resolve()):
@@ -40,7 +41,7 @@ def verify(config: GateConfig, environment: dict[str, str]) -> None:
         home.mkdir()
         (home / ".npmrc").write_text("")
         child.update(HOME=str(home), NPM_CONFIG_USERCONFIG=str(home / ".npmrc"),
-                     CLIENT_VERSION=version)
+                     CLIENT_VERSION=version, INSPECT_VERSION=extension)
 
         def run(argv: list[str], *, timeout: int = 300) -> None:
             subprocess.run(argv, cwd=work, env=child, check=True, timeout=timeout)
@@ -48,7 +49,7 @@ def verify(config: GateConfig, environment: dict[str, str]) -> None:
         python = work / "python/bin/python"
         run(["uv", "venv", "--python", sys.executable, str(python.parent.parent)])
         run(["uv", "pip", "install", "--no-cache", "--index-url", "https://pypi.org/simple",
-             "--python", str(python), f"capsem=={version}"])
+             "--python", str(python), f"capsem=={version}", f"inspect-capsem-sandbox=={extension}"])
         run(["uv", "pip", "check", "--python", str(python)])
         (work / "probe.py").write_text(probes.PYTHON)
         run([str(python), "-I", str(work / "probe.py")])
