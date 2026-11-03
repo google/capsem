@@ -9,12 +9,16 @@ import capsem
 from capsem import Hypervisor
 
 assert metadata.version("capsem") == os.environ["CLIENT_VERSION"]
+assert metadata.version("inspect-capsem-sandbox") == os.environ["INSPECT_VERSION"]
 assert Path(capsem.__file__).resolve().is_relative_to(Path(os.sys.prefix))
+entries = metadata.entry_points(group="inspect_ai", name="capsem")
+assert len(entries) == 1
+entries[0].load()
 async def main():
     async with Hypervisor() as client:
         assert (await client.info()).gateway_version == os.environ["CLIENT_VERSION"]
 asyncio.run(main())
-print("PUBLIC_PYTHON_SDK_OK")
+print("PUBLIC_PYTHON_INSPECT_OK")
 '''
 
 NODE = '''\

@@ -2,6 +2,7 @@
 
 import ast
 import json
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -34,6 +35,9 @@ def test_isolated_python_probe_is_valid_python() -> None:
 def test_public_consumers_install_only_the_enabled_registries(monkeypatch: pytest.MonkeyPatch) -> None:
     config = load(Path(__file__).resolve().parents[3])
     version = workspace_version(config.root)
+    inspect_version = tomllib.loads(
+        config.path(config.integrations_inspect_ai.manifest).read_text()
+    )["project"]["version"]
     commands = []
 
     def run(argv, *, cwd, env, **_kwargs):
@@ -48,10 +52,11 @@ def test_public_consumers_install_only_the_enabled_registries(monkeypatch: pytes
 
     monkeypatch.setattr(client_consumers.subprocess, "run", run)
     client_consumers.verify(config, {"PATH": "/bin", "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "publisher-only"})
-    installs = [argv for argv in commands if argv[:3] == ["uv", "pip", "install"]]
-    assert installs
-    assert f"capsem=={version}" in installs[0]
-    assert not any("inspect-capsem-sandbox" in part for argv in commands for part in argv)
-    assert "inspect-capsem-sandbox" not in PYTHON
+    python_installs = [argv for argv in commands if argv[:3] == ["uv", "pip", "install"]]
+    assert len(python_installs) == 1
+    assert f"capsem=={version}" in python_installs[0]
+    assert f"inspect-capsem-sandbox=={inspect_version}" in python_installs[0]
+    assert 'metadata.entry_points(group="inspect_ai", name="capsem")' in PYTHON
+    assert 'metadata.version("inspect-capsem-sandbox") == os.environ["INSPECT_VERSION"]' in PYTHON
     assert any(argv[:2] == ["npm", "install"] for argv in commands)
     assert ["node", "probe.mjs"] in commands
