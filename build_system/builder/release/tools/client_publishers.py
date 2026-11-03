@@ -102,11 +102,7 @@ def publish(config: GateConfig, packages: tuple[Package, ...], environment: Mapp
     require_credentials(environment)
     # Cargo remains locally qualified; registry publication is deferred in
     # https://github.com/google/capsem/issues/382 until its CI setup is ready.
-    # Inspect PyPI authorization is deferred in issue #392; its archive and
-    # service acceptance stay required before publication.
-    packages = tuple(package for package in packages
-                     if package.registry != "crates"
-                     and (package.registry, package.name) != ("pypi", "inspect-capsem-sandbox"))
+    packages = tuple(package for package in packages if package.registry != "crates")
     validate_order(packages)
     # All immutable conflicts are checked before the first upload. A failure
     # resumes only exact existing bytes; there is no skip-existing escape hatch.
