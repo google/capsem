@@ -1300,7 +1300,7 @@ fn binary_installer_for_layout_selects_matching_deb_arch() {
     ];
 
     let installer = binary_installer_for_layout(&files, &InstallLayout::LinuxDeb).unwrap();
-
+    assert_eq!(binary_installer_for_layout(&files, &InstallLayout::SystemPackage), None);
     assert_eq!(installer.name, format!("Capsem_99.99.99_{}.deb", deb_arch()));
     assert_eq!(installer.sha256, "2".repeat(64));
     assert_eq!(installer.blake3, "b".repeat(64));

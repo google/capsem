@@ -1204,7 +1204,7 @@ fn graph_package_matches_layout(package: &ReleaseGraphPackage, install_layout: &
             package.kind == "macos_pkg" && package.platform == "macos" && package.name.ends_with(".pkg")
         }
         InstallLayout::LinuxDeb => graph_linux_package_matches_architecture(package, package_architecture()),
-        InstallLayout::UserDir | InstallLayout::Development => false,
+        InstallLayout::SystemPackage | InstallLayout::UserDir | InstallLayout::Development => false,
     }
 }
 
@@ -1219,7 +1219,7 @@ fn graph_install_layout_name(install_layout: &InstallLayout) -> Option<&'static 
     match install_layout {
         InstallLayout::MacosPkg => Some("macos_pkg"),
         InstallLayout::LinuxDeb => Some("linux_deb"),
-        InstallLayout::UserDir | InstallLayout::Development => None,
+        InstallLayout::SystemPackage | InstallLayout::UserDir | InstallLayout::Development => None,
     }
 }
 
@@ -1306,7 +1306,7 @@ fn binary_installer_for_layout(
             let suffix = format!("_{}.deb", deb_arch());
             LayoutMatcher::LinuxDeb { suffix }
         }
-        InstallLayout::UserDir | InstallLayout::Development => return None,
+        InstallLayout::SystemPackage | InstallLayout::UserDir | InstallLayout::Development => return None,
     };
 
     files
@@ -1867,7 +1867,7 @@ pub async fn run_update(
                     println!("Re-run with --yes to download and verify the installer package.");
                 }
             } else {
-                println!("No installer package in release manifest matches this install layout ({layout:?}).");
+                println!("{}", layout.no_installer_message());
             }
         }
         Some(_) => println!("Capsem binary is current ({current})."),
@@ -1990,7 +1990,7 @@ fn print_update_check_summary(check: &UpdateCheck, current: &str, layout: &Insta
                 println!("Package:   {} ({mb:.1} MB)", installer.name);
                 println!("SHA-256:   {}", installer.sha256);
             } else {
-                println!("No installer package in release manifest matches this install layout ({layout:?}).");
+                println!("{}", layout.no_installer_message());
             }
         }
         Some(_) => println!("Capsem binary is current ({current})."),
