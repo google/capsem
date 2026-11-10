@@ -664,6 +664,30 @@ pub(super) fn companion_stdio(log_path: &std::path::Path) -> (std::process::Stdi
     }
 }
 
+/// Directory for companion process logs (gateway.log, tray.log).
+///
+/// Tests set CAPSEM_RUN_DIR for isolation; when it is set, keep logs under
+/// that run_dir so parallel test workers do not trample each other's
+/// gateway.log in the shared per-user location.
+pub(super) fn companion_log_dir(run_dir: &std::path::Path, isolated_run_dir: bool) -> PathBuf {
+    if isolated_run_dir {
+        return run_dir.join("logs");
+    }
+    // ~/Library/Logs is where macOS keeps per-user logs and where the
+    // LaunchAgent writes service.log. Elsewhere it is not a convention, so
+    // the companions log beside the rest of Capsem's per-user state.
+    #[cfg(target_os = "macos")]
+    {
+        std::env::var("HOME")
+            .map(|h| std::path::PathBuf::from(h).join("Library/Logs/capsem"))
+            .unwrap_or_else(|_| run_dir.join("logs"))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        capsem_foundation::paths::capsem_logs_dir()
+    }
+}
+
 /// Spawn the gateway and tray as child processes of the service.
 pub(super) async fn spawn_companions(
     state: Arc<ServiceState>,
@@ -682,16 +706,7 @@ pub(super) async fn spawn_companions(
 
     let mut children = Vec::new();
 
-    // Log files for companion processes. Tests set CAPSEM_RUN_DIR for isolation;
-    // when it is set, keep logs under that run_dir so parallel test workers do
-    // not trample each other's gateway.log in ~/Library/Logs/capsem.
-    let log_dir = if std::env::var("CAPSEM_RUN_DIR").is_ok() {
-        run_dir.join("logs")
-    } else {
-        std::env::var("HOME")
-            .map(|h| std::path::PathBuf::from(h).join("Library/Logs/capsem"))
-            .unwrap_or_else(|_| run_dir.join("logs"))
-    };
+    let log_dir = companion_log_dir(run_dir, std::env::var_os("CAPSEM_RUN_DIR").is_some());
     let _ = std::fs::create_dir_all(&log_dir);
 
     // 1. Spawn capsem-gateway (TCP reverse proxy -> UDS)
