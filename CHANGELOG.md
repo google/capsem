@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Stop treating every `/usr/bin` install on Linux as a `.deb` install. On a host without apt (a distribution's own package), `capsem update` downloaded the `.deb`, asked for sudo and then failed, and automatic updates repeated that while never reaching the VM assets. Such an install is now recognised as a system package: the package manager updates the programs and Capsem keeps updating the VM assets.
+
 - Reuse the supported public release HTTP reader for client continuation and isolate npm publisher configuration from legacy registry credentials while preserving GitHub OIDC authority.
 
 - Record the deliberate async-executor1.14.1 native lock/cache identity update while preserving the original published client and native artifacts.

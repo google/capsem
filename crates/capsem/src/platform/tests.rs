@@ -50,6 +50,39 @@ fn detect_linux_deb_layout() {
     assert_eq!(detect_layout_from_path(path), InstallLayout::LinuxDeb);
 }
 
+/// A distribution's own package installs to /usr/bin as well. Without apt
+/// the .deb the release channel offers cannot be installed, so that host is
+/// not a .deb install.
+#[test]
+fn usr_bin_without_apt_is_a_system_package_not_a_deb() {
+    assert_eq!(
+        layout_for_package_manager(InstallLayout::LinuxDeb, false),
+        InstallLayout::SystemPackage
+    );
+    assert_eq!(
+        layout_for_package_manager(InstallLayout::LinuxDeb, true),
+        InstallLayout::LinuxDeb
+    );
+}
+
+#[test]
+fn a_missing_apt_changes_no_other_layout() {
+    for layout in [
+        InstallLayout::MacosPkg,
+        InstallLayout::UserDir,
+        InstallLayout::Development,
+    ] {
+        assert_eq!(layout_for_package_manager(layout.clone(), false), layout);
+    }
+}
+
+/// The package manager owns a system package's binaries: the updater has no
+/// directory to install into and uninstall removes nothing from /usr/bin.
+#[test]
+fn a_system_package_has_no_install_bin_dir() {
+    assert_eq!(install_bin_dir_for(&InstallLayout::SystemPackage), None);
+}
+
 #[test]
 fn detect_no_false_positive_on_substring() {
     // Path that contains "/usr/local/bin" as a substring of a component name
@@ -87,4 +120,16 @@ fn install_bin_dir_for_names_each_layout_package_directory() {
         );
     }
     assert_eq!(install_bin_dir_for(&InstallLayout::Development), None);
+}
+
+#[test]
+fn a_system_package_is_told_to_update_with_its_package_manager() {
+    let message = InstallLayout::SystemPackage.no_installer_message();
+    assert!(message.contains("package manager"), "{message}");
+    assert!(
+        InstallLayout::UserDir
+            .no_installer_message()
+            .contains("No installer package in release manifest"),
+        "other layouts keep the existing wording"
+    );
 }

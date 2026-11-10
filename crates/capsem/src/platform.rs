@@ -7,10 +7,26 @@ pub enum InstallLayout {
     MacosPkg,
     /// Linux .deb installer (/usr/bin)
     LinuxDeb,
+    /// Linux, installed to /usr/bin by a distribution's own package manager
+    /// on a host without apt. That package manager updates the programs;
+    /// the updater still refreshes the VM assets.
+    SystemPackage,
     /// Linux/macOS user-dir install (~/.capsem/bin)
     UserDir,
     /// Development build (cargo target directory)
     Development,
+}
+
+impl InstallLayout {
+    /// What to tell the user when the release offers this install no installer.
+    pub fn no_installer_message(&self) -> String {
+        match self {
+            Self::SystemPackage => "This Capsem was installed by your system's package manager, which \
+                 also updates it. VM assets are still updated here."
+                .to_string(),
+            _ => format!("No installer package in release manifest matches this install layout ({self:?})."),
+        }
+    }
 }
 
 /// Detect the install layout from the current executable path.
@@ -23,7 +39,21 @@ pub fn detect_install_layout() -> InstallLayout {
 
     let macos_pkg_marker =
         cfg!(target_os = "macos") && std::path::Path::new("/usr/local/share/capsem/bin/capsem").is_file();
-    detect_layout_from_path_with_macos_pkg_marker(&exe, macos_pkg_marker)
+    let layout = detect_layout_from_path_with_macos_pkg_marker(&exe, macos_pkg_marker);
+    layout_for_package_manager(layout, std::path::Path::new(APT_GET).is_file())
+}
+
+/// The apt the .deb update is installed with.
+const APT_GET: &str = "/usr/bin/apt-get";
+
+/// A path under /usr/bin only means a .deb install where apt exists. Other
+/// distributions package Capsem there too, and the .deb the release channel
+/// offers cannot be installed on them.
+fn layout_for_package_manager(layout: InstallLayout, apt_get_present: bool) -> InstallLayout {
+    match layout {
+        InstallLayout::LinuxDeb if !apt_get_present => InstallLayout::SystemPackage,
+        other => other,
+    }
 }
 
 /// Testable core: detect layout from an arbitrary path.
@@ -99,7 +129,7 @@ pub fn install_bin_dir_for(layout: &InstallLayout) -> Option<PathBuf> {
         InstallLayout::MacosPkg => Some(capsem_foundation::paths::capsem_bin_dir()),
         InstallLayout::LinuxDeb => Some(PathBuf::from("/usr/bin")),
         InstallLayout::UserDir => Some(capsem_foundation::paths::capsem_bin_dir()),
-        InstallLayout::Development => None,
+        InstallLayout::SystemPackage | InstallLayout::Development => None,
     }
 }
 
