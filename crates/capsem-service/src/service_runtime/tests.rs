@@ -44,3 +44,24 @@ fn gateway_readiness_requires_complete_stamped_runtime_files() {
     std::fs::write(&preview, "0").unwrap();
     assert!(!gateway_runtime_ready(&token, &port, &preview));
 }
+
+#[test]
+fn companion_logs_stay_under_an_isolated_run_dir() {
+    let run = std::path::Path::new("/tmp/capsem-test-run");
+    assert_eq!(companion_log_dir(run, true), run.join("logs"));
+}
+
+// ~/Library/Logs is a macOS convention. Every other host keeps companion
+// logs beside the rest of Capsem's per-user state.
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn companion_logs_use_the_capsem_log_dir_off_macos() {
+    let run = std::path::Path::new("/tmp/capsem-test-run");
+    let dir = companion_log_dir(run, false);
+    assert_eq!(dir, capsem_foundation::paths::capsem_logs_dir());
+    assert!(
+        !dir.components().any(|c| c.as_os_str() == "Library"),
+        "{}",
+        dir.display()
+    );
+}
