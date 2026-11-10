@@ -99,6 +99,16 @@ fn main() -> Result<()> {
         }
     }
 
+    // tray-icon needs GTK initialised on this thread before it builds the
+    // icon. GTK cannot start without a display, which is the normal state of
+    // a headless host or a service started before anyone logged in: there is
+    // no tray to draw, so leave quietly rather than report a failure.
+    #[cfg(target_os = "linux")]
+    if let Err(error) = gtk::init() {
+        info!(%error, "no graphical session for the tray; exiting 0");
+        return Ok(());
+    }
+
     // Channel: async poller -> main thread (std mpsc is fine for non-tokio main thread)
     let (poll_tx, poll_rx) = mpsc::channel::<PollResult>();
     // Channel: main thread -> async runtime (tokio mpsc for async recv)
@@ -271,6 +281,13 @@ fn main() -> Result<()> {
                     None => break,
                 }
             }
+        }
+        // tray-icon's Linux backend lives on the GTK main loop: without
+        // iterating it the icon is never registered and menu clicks never
+        // arrive. Drain what is pending, then sleep like the other platforms.
+        #[cfg(target_os = "linux")]
+        while gtk::events_pending() {
+            gtk::main_iteration_do(false);
         }
         #[cfg(not(target_os = "macos"))]
         std::thread::sleep(std::time::Duration::from_millis(16));

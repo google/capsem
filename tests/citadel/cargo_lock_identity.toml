@@ -1,2 +1,2 @@
-sha256 = "e22ec21f1b7b6127fe3a07751ebcb6c6ac16365c382bf0346e69124c7c0075f2"
-reason = "Deliberately add the capsem-api -> capsem-config edge with optional schema support enabled, sharing selector-only environment drafts instead of duplicate DTO option bags. No third-party package versions change; prior security fixes remain. Guest/native builder cache invalidation is intentional."
+sha256 = "d9199c8ea85529cf05600008623e283aff2df11a07b418296fd51ad3b100251c"
+reason = "capsem-tray gains a direct Linux dependency on gtk 0.18 so it can initialise GTK and run its main loop for the tray icon. No package version moves and none is added: gtk 0.18 was already locked through tray-icon and muda, and the only lock change is the new edge in capsem-tray's dependency list."
