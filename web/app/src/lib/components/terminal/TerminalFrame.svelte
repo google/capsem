@@ -9,6 +9,7 @@
   import { WebLinksAddon } from '@xterm/addon-web-links';
   import '@xterm/xterm/css/xterm.css';
   import { TERMINAL_OPTIONS } from '../../terminal/terminal-config';
+  import { loadTerminalFont } from '../../terminal/fonts';
   import { getTheme, DEFAULT_THEME } from '../../terminal/themes';
   import { TerminalInputCoalescer } from '../../terminal/io-coalescer';
   import { SessionProjection } from '../../terminal/session-projection';
@@ -51,6 +52,7 @@
   const initialMode = (params.get('mode') === 'light' ? 'light' : 'dark') as 'light' | 'dark';
   const initialFontSize = Math.max(8, Math.min(32, Number(params.get('fontSize')) || 14));
   const initialFontFamily = params.get('fontFamily') ?? '';
+  let wantedFontFamily = initialFontFamily;
 
   // Sync the body background to the terminal theme BEFORE first paint so the
   // overlay (which inherits body bg) matches the eventual terminal surface.
@@ -235,7 +237,18 @@
     const bg = terminal.options.theme?.background ?? '#000';
     document.body.style.backgroundColor = bg;
     if (fontSize >= 8 && fontSize <= 32) terminal.options.fontSize = fontSize;
-    if (fontFamily) terminal.options.fontFamily = fontFamily;
+    // The latest request wins, however long an earlier font takes to load.
+    wantedFontFamily = fontFamily;
+    if (fontFamily && fontFamily !== terminal.options.fontFamily) {
+      // Measure only once the font is here; see lib/terminal/fonts.ts.
+      const target = terminal;
+      void loadTerminalFont(document.fonts, fontFamily, target.options.fontSize ?? initialFontSize).then(() => {
+        if (terminal !== target || wantedFontFamily !== fontFamily) return;
+        target.options.fontFamily = fontFamily;
+        requestDimensions();
+        target.refresh(0, target.rows - 1);
+      });
+    }
     requestDimensions();
     terminal.refresh(0, terminal.rows - 1);
   }
@@ -262,6 +275,11 @@
     window.addEventListener('message', onMessage);
     window.addEventListener('focus', onWindowFocus);
 
+    await loadTerminalFont(
+      document.fonts,
+      initialFontFamily || (TERMINAL_OPTIONS.fontFamily ?? 'monospace'),
+      initialFontSize,
+    );
     await document.fonts.ready;
 
     terminal = new Terminal({

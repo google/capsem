@@ -1,6 +1,8 @@
 ---
 // Iframe entry point for VM terminals.
 // No Layout -- this page IS the iframe document. No shell theme, no global.css.
+// It does load fonts.css: the terminal can only draw a bundled font that is
+// declared in this document.
 //
 // Initial config (vm id, theme, fontSize, fontFamily) arrives via URL query
 // params; runtime changes arrive via postMessage. The iframe owns its own
@@ -11,6 +13,7 @@
 // script-src needs 'unsafe-inline'. The real protection here is connect-src:
 // the iframe can only open connections back to the gateway, nowhere else.
 
+import "../../styles/fonts.css";
 import TerminalFrame from "../../lib/components/terminal/TerminalFrame.svelte";
 
 const isProd = import.meta.env.PROD;
