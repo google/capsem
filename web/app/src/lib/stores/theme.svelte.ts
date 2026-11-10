@@ -115,7 +115,7 @@ function saveAccentTheme(theme: string): void {
 export const FONT_SIZES = [10, 11, 12, 13, 14, 15, 16, 18, 20] as const;
 export const DEFAULT_FONT_SIZE = 14;
 
-// Bundled monospace fonts (loaded via @font-face in global.css, zero external deps).
+// Bundled monospace fonts (loaded via @font-face in fonts.css, zero external deps).
 export const FONT_FAMILIES = [
   { value: '"Google Sans Code", ui-monospace, monospace', label: 'Google Sans Code' },
   { value: '"JetBrains Mono", ui-monospace, monospace', label: 'JetBrains Mono' },

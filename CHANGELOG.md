@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fixed: Draw the terminal in the font chosen in Settings. The terminal iframe now declares and loads bundled fonts before measuring terminal cells, avoiding proportional-font gaps on Linux.
+
 - Fixed: Stop treating every `/usr/bin` install on Linux as a `.deb` install. On a host without apt, the system package manager owns program updates while Capsem continues updating VM assets.
 
 - Fixed: Show the Capsem tray icon on Linux desktops: the tray now initialises GTK and runs its event loop, and the service starts it on Linux as it does on macOS. Hosts without a graphical session are unaffected.
