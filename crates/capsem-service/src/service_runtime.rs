@@ -673,11 +673,10 @@ pub(super) async fn spawn_companions(
     gateway_port: Option<u16>,
     tray_bin: Option<PathBuf>,
 ) -> Vec<tokio::process::Child> {
-    // tray_bin is only consumed by the macOS-gated tray-spawn block below.
-    // On Linux there's no system tray, so the parameter is intentionally
-    // unused -- silence the unused-variable warning without breaking the
-    // platform-agnostic signature.
-    #[cfg(not(target_os = "macos"))]
+    // tray_bin is only consumed by the tray-spawn block below, which exists
+    // on macOS and Linux. Elsewhere the parameter is intentionally unused --
+    // silence the warning without breaking the platform-agnostic signature.
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let _ = tray_bin;
 
     let mut children = Vec::new();
@@ -773,8 +772,10 @@ pub(super) async fn spawn_companions(
                 gateway_span.record("status", "error");
             }
 
-            // 2. Spawn capsem-tray (menu bar) -- only on macOS, only after gateway ready
-            #[cfg(target_os = "macos")]
+            // 2. Spawn capsem-tray (macOS menu bar, Linux system tray) -- only
+            // after gateway ready. On a Linux host with no graphical session
+            // the tray exits 0 by itself.
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             if token_path.exists() {
                 let tray_bin = tray_bin.unwrap_or_else(|| find_sibling_binary("capsem-tray"));
                 let (tray_out, tray_err) = companion_stdio(&log_dir.join("tray.log"));
