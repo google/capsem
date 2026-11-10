@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fixed: Write the gateway and tray companion logs to `~/.capsem/logs` on Linux instead of the macOS-only `~/Library/Logs/capsem`, which the service created in the home directory of every Linux user.
+
 - Security: Materialize brokered credentials only in provider-approved authentication fields, and restore opaque references if an upstream reflects a credential through response headers, trailers, compressed streams or inspected response bodies.
 
 - Security: Remote corporate configuration authorities require HTTPS across every redirect; local provisioning continues to use absolute `file://` URLs.
