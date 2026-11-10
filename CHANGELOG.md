@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Draw the terminal in the font chosen in Settings. The terminal iframe never declared the bundled fonts, so it fell back to the host's `ui-monospace`: SF Mono on macOS, and on Linux a proportional font that left gaps between characters.
+
 - Reuse the supported public release HTTP reader for client continuation and isolate npm publisher configuration from legacy registry credentials while preserving GitHub OIDC authority.
 
 - Record the deliberate async-executor1.14.1 native lock/cache identity update while preserving the original published client and native artifacts.
