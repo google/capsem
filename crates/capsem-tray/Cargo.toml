@@ -32,5 +32,10 @@ clap = { workspace = true }
 objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSRunningApplication", "NSEvent"] }
 objc2-foundation = "0.3"
 
+# tray-icon draws the Linux tray through GTK (libayatana-appindicator), and
+# leaves initialising GTK and running its main loop to the application.
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+
 [lints]
 workspace = true
