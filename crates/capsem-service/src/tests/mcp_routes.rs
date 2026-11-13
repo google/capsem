@@ -134,7 +134,7 @@ async fn a_tool_permission_edit_is_written_to_settings_and_recorded() {
     assert_eq!(rule.action, SecurityRuleAction::Ask);
     assert_eq!(
         rule.condition,
-        r#"mcp.server.name == "local" && mcp.tool_call.name == "fetch_http""#
+        r#"mcp.server.name == "local" && mcp.tool_call.name == "local__fetch_http""#
     );
 
     let tools = get(&app, "/mcp/servers/local/tools/list").await;
