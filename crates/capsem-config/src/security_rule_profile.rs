@@ -17,6 +17,11 @@ pub const CORP_PRIORITY_MAX: i32 = -10;
 pub const USER_PRIORITY_MIN: i32 = 10;
 pub const USER_PRIORITY_MAX: i32 = 1000;
 pub const DEFAULT_RULE_PRIORITY: i32 = USER_PRIORITY_MAX + 1;
+/// Where a settings-managed permission ranks unless the user ranked it higher:
+/// behind every rule the user wrote, ahead of the built-in defaults. At the
+/// defaults' own priority the tie went to `default_mcp` by rule id, and the
+/// permission never enforced.
+pub const MANAGED_PERMISSION_PRIORITY: i32 = USER_PRIORITY_MAX;
 
 pub const SECURITY_EVENT_CEL_ROOTS: &[&str] = &[
     "http",
@@ -184,6 +189,23 @@ impl SecurityRuleManagedTarget {
             Self::McpTool { server, tool, .. } => format!("{server}/{tool}"),
             Self::Plugin { plugin, .. } => plugin.clone(),
             Self::Skill { skill, .. } => skill.clone(),
+        }
+    }
+
+    /// The condition a managed rule enforces, when its target fixes one.
+    ///
+    /// The target, not the stored `match` text, is what the user chose, so the
+    /// compiler derives the condition from it. A tool call carries the
+    /// namespaced name (`server__tool`); settings files written before this
+    /// existed stored the bare tool name and matched nothing.
+    pub fn enforced_condition(&self) -> Option<String> {
+        match self {
+            Self::McpTool { server, tool, .. } => Some(format!(
+                "mcp.server.name == {} && mcp.tool_call.name == {}",
+                condition_string(server),
+                condition_string(&capsem_proto::mcp_contracts::namespace_name(server, tool)),
+            )),
+            Self::McpServer { .. } | Self::Plugin { .. } | Self::Skill { .. } => None,
         }
     }
 
@@ -572,8 +594,16 @@ impl SecurityRuleProfile {
         compiled: &mut Vec<CompiledSecurityRule>,
     ) -> Result<(), String> {
         for (rule_key, rule) in &group.rules {
-            let priority = rule.effective_priority(source)?;
-            let compiled_condition = rule.compile_match()?;
+            let mut priority = rule.effective_priority(source)?;
+            let managed_condition = rule
+                .managed
+                .as_ref()
+                .and_then(SecurityRuleManagedTarget::enforced_condition);
+            if managed_condition.is_some() {
+                priority = priority.min(MANAGED_PERMISSION_PRIORITY);
+            }
+            let condition = managed_condition.unwrap_or_else(|| rule.condition.clone());
+            let compiled_condition = compile_security_event_match(&condition)?;
             compiled.push(CompiledSecurityRule {
                 rule_id: format!("{namespace}.rules.{rule_key}"),
                 provider: provider.to_string(),
@@ -583,7 +613,7 @@ impl SecurityRuleProfile {
                 enabled: rule.enabled,
                 name: rule.name.clone(),
                 action: rule.action,
-                condition: rule.condition.clone(),
+                condition,
                 compiled_condition,
                 detection_level: rule.detection_level,
                 priority,
@@ -888,6 +918,11 @@ fn track_managed_target(
 
 pub fn validate_security_event_match(condition: &str) -> Result<(), String> {
     validate_condition_with(condition, validate_security_event_field)
+}
+
+/// A string literal in the condition language.
+pub fn condition_string(value: &str) -> String {
+    serde_json::to_string(value).expect("string serialization cannot fail")
 }
 
 pub fn compile_security_event_match(condition: &str) -> Result<CompiledCondition, String> {
