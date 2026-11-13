@@ -150,3 +150,90 @@ fn content_plugin_options_are_typed_and_reject_unknown_entities() {
     assert!(encoded.contains("phone = false"));
     assert!(toml::from_str::<super::SecurityPluginConfig>("mode='block'\n[content]\npassport=true").is_err());
 }
+
+/// A tool permission saved from Settings names the tool the way the settings
+/// page does (`fetch_http`), while a call carries the namespaced name
+/// (`local__fetch_http`), and it used to share the built-in default's priority,
+/// where `default_mcp` sorts first. Either alone left a tool the user had
+/// blocked fully callable while the settings page reported it blocked. The
+/// rule as old settings files stored it must enforce.
+#[test]
+fn a_managed_tool_permission_enforces_over_the_default_mcp_rule() {
+    let profile = SecurityRuleProfile::parse_toml(
+        r#"[default.mcp]
+name = "mcp"
+action = "allow"
+priority = "default"
+match = 'has(mcp.method) || has(mcp.tool_call.name)'
+
+[profiles.rules.mcp_local_fetch_http_permission]
+name = "mcp_local_fetch_http_permission"
+action = "block"
+priority = "default"
+match = 'mcp.server.name == "local" && mcp.tool_call.name == "fetch_http"'
+
+[profiles.rules.mcp_local_fetch_http_permission.managed]
+kind = "mcp_tool"
+server = "local"
+tool = "fetch_http"
+operation = "permission"
+"#,
+    )
+    .expect("stored managed rule parses");
+    let rules = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).expect("rules compile");
+    let call =
+        |tool: &str| json!({"mcp": {"method": "tools/call", "server": {"name": "local"}, "tool_call": {"name": tool}}});
+
+    let blocked = call("local__fetch_http");
+    let evaluation = rules.evaluate(&blocked).expect("call evaluates");
+    let enforced = evaluation.enforcement_rules()[0];
+    assert_eq!(enforced.rule_id, "profiles.rules.mcp_local_fetch_http_permission");
+    assert_eq!(enforced.action, SecurityRuleAction::Block);
+    assert_eq!(enforced.priority, MANAGED_PERMISSION_PRIORITY);
+
+    let other = call("local__echo");
+    let evaluation = rules.evaluate(&other).expect("call evaluates");
+    assert_eq!(evaluation.enforcement_rules()[0].rule_id, "profiles.rules.default_mcp");
+}
+
+/// A managed rule the user ranked ahead of their other rules keeps that rank,
+/// and corp's managed rules stay in the corp band.
+#[test]
+fn a_managed_tool_permission_never_loses_rank_it_was_given() {
+    let managed = SecurityRuleManagedTarget::McpTool {
+        server: "wiki".to_string(),
+        tool: "search".to_string(),
+        operation: SecurityRuleManagedOperation::Permission,
+    };
+    assert_eq!(
+        managed.enforced_condition().as_deref(),
+        Some(r#"mcp.server.name == "wiki" && mcp.tool_call.name == "wiki__search""#)
+    );
+    let mut profile = SecurityRuleProfile::default();
+    profile.profiles.rules.insert(
+        "mcp_wiki_search_permission".to_string(),
+        SecurityRule {
+            name: "mcp_wiki_search_permission".to_string(),
+            action: SecurityRuleAction::Ask,
+            condition: "has(mcp.method)".to_string(),
+            enabled: true,
+            detection_level: None,
+            priority: Some(SecurityRulePriority::Explicit(USER_PRIORITY_MIN)),
+            corp_locked: false,
+            reason: None,
+            managed: Some(managed),
+            plugin_config: BTreeMap::new(),
+        },
+    );
+    let user = profile.compile(SecurityRuleSource::User).expect("user rule compiles");
+    assert_eq!(user[0].priority, USER_PRIORITY_MIN);
+    profile
+        .profiles
+        .rules
+        .get_mut("mcp_wiki_search_permission")
+        .unwrap()
+        .priority = None;
+    let corp = profile.compile(SecurityRuleSource::Corp).expect("corp rule compiles");
+    assert_eq!(corp[0].priority, CORP_PRIORITY_MAX);
+    assert!(corp[0].condition.contains("wiki__search"));
+}

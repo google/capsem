@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Enforce per-tool MCP permissions saved from Settings. A tool set to Block or Ask was still allowed: the saved rule named the bare tool while calls carry the `server__tool` name, and it tied with the built-in `default.mcp` rule, which won. Rules already saved in `settings.toml` are enforced without being edited.
+
 - Reuse the supported public release HTTP reader for client continuation and isolate npm publisher configuration from legacy registry credentials while preserving GitHub OIDC authority.
 
 - Record the deliberate async-executor1.14.1 native lock/cache identity update while preserving the original published client and native artifacts.
