@@ -12,7 +12,7 @@ use axum::{
 use capsem_api::{AgentAccessScope, AgentAccessSummary, CreateAgentAccessRequest, CreateAgentAccessResponse};
 use capsem_core::{
     agent_access::{Failure, Grant, Reservation},
-    managed_sessions::LeaseClock,
+    managed_sessions::{Capability, LeaseClock},
 };
 use capsem_logger::{HostEvent, HostEventKind};
 use serde::{Deserialize, Serialize};
@@ -126,8 +126,7 @@ pub(crate) async fn issue(
 ) -> Result<Json<CreateAgentAccessResponse>, AppError> {
     actor.require_operator()?;
     let id = identity(&request.request_id)?;
-    let capability =
-        crate::managed_routes::capability(&request.ownership_token).map_err(|_| failure(Failure::Invalid))?;
+    let capability = Capability::from_bytes(request.ownership_token.to_bytes());
     let _mutation = state.caller_authority.agent_mutation.lock().await;
     let reservation = state
         .caller_authority

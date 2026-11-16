@@ -126,3 +126,21 @@ fn managed_schemas_keep_secrets_write_only_and_close_acknowledgements_terminal()
         json!({"name": null, "persistent": false})
     );
 }
+
+#[test]
+fn managed_capability_decodes_every_nibble_without_changing_the_wire_secret() {
+    let wire = "0123456789abcdef".repeat(4);
+    let token = ManagedOwnershipToken::new(wire.clone()).unwrap();
+    assert_eq!(
+        token.to_bytes(),
+        [0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef].repeat(4).as_slice()
+    );
+    assert_eq!(token.as_str(), wire);
+    assert_eq!(format!("{token:?}"), "ManagedOwnershipToken([REDACTED])");
+    assert_eq!(serde_json::to_value(&token).unwrap(), wire);
+    assert_eq!(ManagedOwnershipToken::new("00".repeat(32)).unwrap().to_bytes(), [0; 32]);
+    assert_eq!(
+        ManagedOwnershipToken::new("ff".repeat(32)).unwrap().to_bytes(),
+        [255; 32]
+    );
+}

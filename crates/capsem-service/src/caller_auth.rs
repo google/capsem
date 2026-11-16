@@ -60,7 +60,7 @@ impl Authority {
             let id = uuid::Uuid::parse_str(id).map_err(|_| StatusCode::UNAUTHORIZED)?;
             let token =
                 capsem_api::ManagedOwnershipToken::new(token.to_owned()).map_err(|_| StatusCode::UNAUTHORIZED)?;
-            let capability = crate::managed_routes::capability(&token).map_err(|_| StatusCode::UNAUTHORIZED)?;
+            let capability = capsem_core::managed_sessions::Capability::from_bytes(token.to_bytes());
             let grant = self
                 .agents
                 .authenticate(id, &capability, || {

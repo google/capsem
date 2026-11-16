@@ -190,15 +190,6 @@ fn request_id(value: &str) -> Result<uuid::Uuid, ManagedError> {
     Ok(id)
 }
 
-pub(crate) fn capability(token: &api::ManagedOwnershipToken) -> Result<Capability, ManagedError> {
-    let mut bytes = [0; 32];
-    for (index, byte) in bytes.iter_mut().enumerate() {
-        *byte =
-            u8::from_str_radix(&token.as_str()[index * 2..index * 2 + 2], 16).map_err(|_| ManagedError::invalid())?;
-    }
-    Ok(Capability::from_bytes(bytes))
-}
-
 fn ownership(snapshot: &Snapshot, policy: ManagedSessionPolicy) -> Result<api::ManagedSessionOwnership, ManagedError> {
     let lease_seconds = match snapshot.lease_duration() {
         Some(duration) => u32::try_from(duration.as_secs()).map_err(|_| Failure::StoreUnavailable)?,
@@ -254,7 +245,7 @@ pub(crate) async fn create(
     }
     let managed = payload.managed.take().ok_or_else(ManagedError::invalid)?;
     let request = request_id(&managed.request_id)?;
-    let token = capability(&managed.ownership_token)?;
+    let token = Capability::from_bytes(managed.ownership_token.to_bytes());
     let effects = managed_sessions::ManagedLifecycle::new_with_broker(
         Arc::clone(&state),
         payload,
@@ -288,7 +279,7 @@ pub(crate) async fn claim(
     let snapshot = state
         .managed
         .controller
-        .claim(request, capability(&payload.ownership_token)?)
+        .claim(request, Capability::from_bytes(payload.ownership_token.to_bytes()))
         .await?;
     let status = match snapshot.state() {
         OwnershipState::Reserved | OwnershipState::Creating => api::ManagedSessionState::Pending,
@@ -322,7 +313,7 @@ pub(crate) async fn close(
     let snapshot = state
         .managed
         .controller
-        .close(request, capability(&payload.ownership_token)?)
+        .close(request, Capability::from_bytes(payload.ownership_token.to_bytes()))
         .await?;
     if snapshot.state() != OwnershipState::Closed {
         return Err(Failure::CleanupFailed.into());

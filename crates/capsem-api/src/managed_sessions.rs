@@ -21,6 +21,15 @@ impl ManagedOwnershipToken {
         Ok(Self(value))
     }
 
+    /// Decode the validated managed capability for hashing or private IPC.
+    /// Construction enforces lowercase ASCII and the exact byte length.
+    pub fn to_bytes(&self) -> [u8; 32] {
+        std::array::from_fn(|index| {
+            u8::from_str_radix(&self.as_str()[index * 2..index * 2 + 2], 16)
+                .expect("validated lowercase ownership token")
+        })
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
