@@ -2,6 +2,8 @@
 
 pub const ROUTES: &[&str] = &[
     "/",
+    "/agent-access",
+    "/agent-access/{id}",
     "/assets/ensure",
     "/assets/status",
     "/connections",
