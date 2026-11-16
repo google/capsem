@@ -197,7 +197,7 @@ def test_oversized_external_mcp_response_is_refused_and_next_call_succeeds():
     finally:
         if vm_id is not None:
             with suppress(Exception):
-                service.client().delete(f"/vms/{vm_id}")
+                service.client().delete(f"/vms/{vm_id}/delete")
         service.stop()
         if mock_proc is not None:
             stop_process(mock_proc)
@@ -363,7 +363,7 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
     finally:
         if vm_id is not None:
             with suppress(Exception):
-                service.client().delete(f"/vms/{vm_id}")
+                service.client().delete(f"/vms/{vm_id}/delete")
         service.stop()
         if mock_proc is not None:
             stop_process(mock_proc)
