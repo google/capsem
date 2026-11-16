@@ -10,8 +10,8 @@
 
 [[IgnoredVulns]]
 id = "GHSA-gcqx-w48m-w2h4"
-ignoreUntil = 2026-11-10T00:00:00Z
-reason = "deepmerge 4.3.1 is used only for build-configuration merging by @astrojs/svelte 9.0.1 -> @sveltejs/vite-plugin-svelte 7.2.0 in web/app and web/marketing. The Vite plugin runs on the build host; it is not part of the emitted static browser app, native binaries or VM runtime. Reviewed 2026-10-27: npm's complete published-version list ends at 4.3.1 and GHSA-gcqx-w48m-w2h4 lists no patched version. Upstream must ship the fix; RELEASE.md section 8.2 permits this build-time-only exception. Recheck by 2026-11-10."
+ignoreUntil = 2026-12-16T00:00:00Z
+reason = "deepmerge 4.3.1 is used only for build-configuration merging by @astrojs/svelte 9.1.2 -> @sveltejs/vite-plugin-svelte 7.3.1 in web/app and web/marketing. The Vite plugin runs on the build host; it is not part of emitted static browser assets, native binaries or the VM runtime. Rechecked 2026-11-16 against npm: 4.3.1 remains the latest published version and the advisory lists no patched release. RELEASE.md section 8.2 permits this build-time-only upstream exception for at most 30 days. Recheck by 2026-12-16."
 
 [[IgnoredVulns]]
 id = "RUSTSEC-2024-0429"
