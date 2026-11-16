@@ -547,3 +547,24 @@ fn late_create_result_after_lease_expiry_is_bound_only_for_cleanup() {
     store.complete_cleanup(&ticket, &binding).unwrap();
     assert_eq!(store.inspect(request, &cap).unwrap().unwrap().state(), State::Closed);
 }
+
+#[test]
+fn delegated_capability_verification_is_bound_to_identity_secret_and_purpose() {
+    let id = capsem_crypto::uuid_v4();
+    let other_id = capsem_crypto::uuid_v4();
+    let secret = Capability::from_bytes([17; 32]);
+    let wrong = Capability::from_bytes([18; 32]);
+    let delegated = secret.verifier(id, CapabilityPurpose::DelegatedAgent);
+    let managed = secret.verifier(id, CapabilityPurpose::ManagedSession);
+    assert!(delegated.authenticate(id, &secret));
+    assert!(!delegated.authenticate(other_id, &secret));
+    assert!(!delegated.authenticate(id, &wrong));
+    assert_ne!(delegated.digest, managed.digest);
+    // Existing durable managed ownership bytes are unchanged.
+    let mut legacy = capsem_crypto::blake3::Hasher::new_derive_key("capsem managed session capability v1");
+    legacy.update(id.as_bytes());
+    legacy.update(&[17; 32]);
+    assert_eq!(managed.digest, legacy.finalize());
+    assert_eq!(secret.hash(id), managed.digest);
+    assert_eq!(format!("{delegated:?}"), "CapabilityVerifier([REDACTED])");
+}

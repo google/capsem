@@ -97,3 +97,36 @@ fn unavailable_policy_denies_admission_and_renewal_until_validated_reload() {
         State::Closing
     );
 }
+
+#[test]
+fn delegated_lease_expires_on_either_clock_and_never_revives() {
+    let now = Instant::now();
+    let issued = LeaseClock::new(1000, now);
+    let policy = LeasePolicy::new(Duration::from_secs(10)).unwrap();
+    for (wall, monotonic) in [(11000, now), (1000, now + Duration::from_secs(10))] {
+        let mut lease = policy.issue(issued).unwrap();
+        assert_eq!(lease.expires_wall_ms(), 11000);
+        assert_eq!(lease.deadline(), now + Duration::from_secs(10));
+        assert!(lease.is_live(issued));
+        assert!(!lease.is_live(LeaseClock::new(wall, monotonic)));
+        assert!(!lease.is_live(issued), "expired authority must never revive");
+    }
+}
+
+#[test]
+fn delegated_lease_latches_clock_rollback_and_rejects_deadline_overflow() {
+    let now = Instant::now();
+    let issued = LeaseClock::new(1000, now);
+    let policy = LeasePolicy::new(Duration::from_secs(10)).unwrap();
+    for rollback in [
+        LeaseClock::new(1999, now + Duration::from_secs(1)),
+        LeaseClock::new(2000, now + Duration::from_millis(999)),
+    ] {
+        let mut lease = policy.issue(issued).unwrap();
+        assert!(lease.is_live(LeaseClock::new(2000, now + Duration::from_secs(1))));
+        assert!(!lease.is_live(rollback));
+        assert!(!lease.is_live(LeaseClock::new(3000, now + Duration::from_secs(2))));
+    }
+    assert!(policy.issue(LeaseClock::new(u64::MAX, now)).is_err());
+    assert!(LeasePolicy::new(Duration::ZERO).is_err());
+}

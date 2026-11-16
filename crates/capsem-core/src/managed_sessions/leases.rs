@@ -41,6 +41,48 @@ impl LeasePolicy {
         ensure!(duration_ms > 0, "managed lease must have a finite positive duration");
         Ok(Self { duration_ms })
     }
+
+    /// Nonrenewable authority, confined to the issuing service's lifetime.
+    pub fn issue(self, clock: LeaseClock) -> Result<CapabilityLease> {
+        let (expires_wall_ms, expires) = checked_deadline(self.duration_ms, clock)?;
+        Ok(CapabilityLease {
+            last: clock,
+            expires_wall_ms,
+            expires,
+            expired: false,
+        })
+    }
+}
+
+/// An ephemeral capability lease. Expiry or observed clock rollback latches;
+/// a later clock correction cannot resurrect authority.
+#[derive(Debug)]
+pub struct CapabilityLease {
+    last: LeaseClock,
+    expires_wall_ms: u64,
+    expires: Instant,
+    expired: bool,
+}
+
+impl CapabilityLease {
+    pub fn expires_wall_ms(&self) -> u64 {
+        self.expires_wall_ms
+    }
+
+    pub fn deadline(&self) -> Instant {
+        self.expires
+    }
+
+    pub fn is_live(&mut self, clock: LeaseClock) -> bool {
+        self.expired |= clock.wall_ms < self.last.wall_ms
+            || clock.monotonic < self.last.monotonic
+            || clock.wall_ms >= self.expires_wall_ms
+            || clock.monotonic >= self.expires;
+        if !self.expired {
+            self.last = clock;
+        }
+        !self.expired
+    }
 }
 
 /// Sampled by the trusted service, never from an HTTP request body.
@@ -55,7 +97,7 @@ impl LeaseClock {
         Self { wall_ms, monotonic }
     }
 
-    pub(super) fn now() -> Result<Self> {
+    pub fn now() -> Result<Self> {
         let wall = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default();
@@ -308,14 +350,7 @@ fn lease_deadline(
     clock: LeaseClock,
     revision: u64,
 ) -> Result<(LeaseFacts, RuntimeLease)> {
-    let expires_wall_ms = clock
-        .wall_ms
-        .checked_add(duration_ms)
-        .context("managed wall deadline overflow")?;
-    let expires = clock
-        .monotonic
-        .checked_add(Duration::from_millis(duration_ms))
-        .context("managed monotonic deadline overflow")?;
+    let (expires_wall_ms, expires) = checked_deadline(duration_ms, clock)?;
     Ok((
         LeaseFacts {
             duration_ms,
@@ -329,4 +364,17 @@ fn lease_deadline(
             revision,
         },
     ))
+}
+
+// Shared by durable managed ownership and ephemeral delegated authority.
+fn checked_deadline(duration_ms: u64, clock: LeaseClock) -> Result<(u64, Instant)> {
+    let expires_wall_ms = clock
+        .wall_ms
+        .checked_add(duration_ms)
+        .context("managed wall deadline overflow")?;
+    let expires = clock
+        .monotonic
+        .checked_add(Duration::from_millis(duration_ms))
+        .context("managed monotonic deadline overflow")?;
+    Ok((expires_wall_ms, expires))
 }

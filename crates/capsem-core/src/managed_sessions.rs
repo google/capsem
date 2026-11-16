@@ -12,7 +12,7 @@ use capsem_foundation::unix::{
     fs::ensure_private_dir,
     lock::{try_acquire, FileLock, LockAttempt, LockMode},
 };
-pub use leases::{LeaseClock, LeasePolicy};
+pub use leases::{CapabilityLease, LeaseClock, LeasePolicy};
 use leases::{LeaseDeadline, LeaseFacts, LeaseLimitState, RuntimeLease};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -26,11 +26,57 @@ impl Capability {
         Self(capsem_crypto::secrets::Zeroizing::new(bytes))
     }
 
+    pub fn verifier(&self, identity: Uuid, purpose: CapabilityPurpose) -> CapabilityVerifier {
+        CapabilityVerifier {
+            identity,
+            purpose,
+            digest: self.hash_for(identity, purpose),
+        }
+    }
+
     fn hash(&self, request: Uuid) -> capsem_crypto::blake3::Hash {
-        let mut hash = capsem_crypto::blake3::Hasher::new_derive_key("capsem managed session capability v1");
+        self.hash_for(request, CapabilityPurpose::ManagedSession)
+    }
+
+    fn hash_for(&self, request: Uuid, purpose: CapabilityPurpose) -> capsem_crypto::blake3::Hash {
+        // The trusted purpose and identity bind the existing secret to exactly
+        // one authority namespace; a digest never grants a different purpose.
+        let context = match purpose {
+            CapabilityPurpose::ManagedSession => "capsem managed session capability v1",
+            CapabilityPurpose::DelegatedAgent => "capsem delegated agent capability v1",
+        };
+        let mut hash = capsem_crypto::blake3::Hasher::new_derive_key(context);
         hash.update(request.as_bytes());
         hash.update(self.0.as_ref());
         hash.finalize()
+    }
+}
+
+/// Chosen by the trusted authority owner, never supplied by a caller.
+#[derive(Clone, Copy)]
+pub enum CapabilityPurpose {
+    ManagedSession,
+    DelegatedAgent,
+}
+
+/// Retains only a purpose/identity-bound digest, never the capability secret.
+/// This is process-local authority and has no persisted or wire serializer.
+pub struct CapabilityVerifier {
+    identity: Uuid,
+    purpose: CapabilityPurpose,
+    digest: capsem_crypto::blake3::Hash,
+}
+
+impl CapabilityVerifier {
+    pub fn authenticate(&self, identity: Uuid, capability: &Capability) -> bool {
+        // Hash equality is constant time; the identity itself is public.
+        self.identity == identity && self.digest == capability.hash_for(identity, self.purpose)
+    }
+}
+
+impl fmt::Debug for CapabilityVerifier {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("CapabilityVerifier([REDACTED])")
     }
 }
 
