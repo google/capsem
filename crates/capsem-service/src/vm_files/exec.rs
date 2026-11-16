@@ -10,6 +10,7 @@
 use super::*;
 
 pub(crate) async fn handle_exec(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
     Json(payload): Json<ExecRequest>,

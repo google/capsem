@@ -64,9 +64,12 @@ pub(crate) struct MutationRoute<'a> {
 /// before the route answers. Rejections are logged with the route's identity.
 pub(crate) async fn apply_policy_mutation(
     state: &Arc<ServiceState>,
+    actor: &crate::caller_auth::AuthenticatedActor,
     route: MutationRoute<'_>,
-    mutate: impl FnOnce(SettingsPolicyEdit, &SettingsFile) -> Result<PolicyMutationSummary, String> + Send + 'static,
+    mutate: impl FnOnce(SettingsPolicyEdit, &SettingsFile, &str) -> Result<PolicyMutationSummary, String> + Send + 'static,
 ) -> Result<capsem_logger::PolicyMutationEvent, AppError> {
+    actor.require_operator()?;
+    let actor_id = actor.evidence().ledger_id();
     let MutationRoute {
         name,
         target_kind,
@@ -79,7 +82,7 @@ pub(crate) async fn apply_policy_mutation(
         target_kind,
         target_key,
         operation,
-        actor = "service-api",
+        actor = actor_id.as_str(),
         "policy mutation route requested"
     );
     let rejected = |error: &AppError| {
@@ -90,7 +93,7 @@ pub(crate) async fn apply_policy_mutation(
             target_kind,
             target_key,
             operation,
-            actor = "service-api",
+            actor = actor_id.as_str(),
             error,
             "policy mutation route rejected"
         )
@@ -98,8 +101,15 @@ pub(crate) async fn apply_policy_mutation(
     let mutation = state.policy_mutation.begin().await;
     let edit = mutation.settings_edit().inspect_err(rejected)?;
     // settings.toml and the corp files are read and written on the blocking pool.
+    let mutation_actor = actor_id.clone();
     let summary = state
-        .off_worker(move |_| mutate(edit, &capsem_core::net::policy_config::load_corp_files()))
+        .off_worker(move |_| {
+            mutate(
+                edit,
+                &capsem_core::net::policy_config::load_corp_files(),
+                &mutation_actor,
+            )
+        })
         .await?
         .map_err(bad_request)
         .inspect_err(rejected)?;

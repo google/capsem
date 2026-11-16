@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from helpers.gateway import GatewayInstance
+from helpers.service_gateway import ServiceGateway
 from ironbank.model_client_scripts import openai_responses_api_script
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 def test_sdk_observes_real_model_and_tool_events(model_client_env, tmp_path: Path) -> None:
     script = tmp_path / "model-proof.py"
     script.write_text(openai_responses_api_script("https://api.openai.com"))
-    gateway = GatewayInstance(model_client_env.service.uds_path)
+    gateway = ServiceGateway(model_client_env.service)
     try:
         gateway.start()
         result = subprocess.run(

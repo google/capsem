@@ -10,6 +10,7 @@ fn insert_ephemeral_instance(state: &ServiceState, id: &str) -> PathBuf {
 
 async fn persist(state: &Arc<ServiceState>, id: &str, name: &str) -> Result<Json<PersistResponse>, AppError> {
     handle_persist(
+        crate::tests::operator_actor(),
         State(Arc::clone(state)),
         Path(id.to_string()),
         Json(PersistRequest { name: name.to_string() }),
@@ -364,10 +365,14 @@ fn register_defunct_entry(state: &ServiceState, name: &str, session_dir: PathBuf
 }
 
 async fn purge_all(state: &Arc<ServiceState>, all: bool) -> PurgeResponse {
-    handle_purge(State(Arc::clone(state)), Json(PurgeRequest { all }))
-        .await
-        .expect("purge completes")
-        .0
+    handle_purge(
+        crate::tests::operator_actor(),
+        State(Arc::clone(state)),
+        Json(PurgeRequest { all }),
+    )
+    .await
+    .expect("purge completes")
+    .0
 }
 
 #[tokio::test]

@@ -277,6 +277,7 @@ pub(crate) async fn create(
 }
 
 pub(crate) async fn claim(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
     payload: Result<Json<api::ManagedSessionClaimRequest>, axum::extract::rejection::JsonRejection>,
@@ -311,6 +312,7 @@ pub(crate) async fn claim(
 }
 
 pub(crate) async fn close(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
     payload: Result<Json<api::ManagedSessionCloseRequest>, axum::extract::rejection::JsonRejection>,

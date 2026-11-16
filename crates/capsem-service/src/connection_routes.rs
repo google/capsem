@@ -142,6 +142,7 @@ pub(crate) async fn list(
     Ok(Json(result))
 }
 pub(crate) async fn authorize(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     payload: Result<Json<api::AuthorizeGoogleRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Result<(StatusCode, Json<api::AuthorizeGoogleResponse>), CredentialError> {
@@ -160,6 +161,7 @@ pub(crate) async fn authorization(
     Ok(Json(state.connections.broker().await?.authorization(&id).await?))
 }
 pub(crate) async fn cancel(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<Json<api::AuthorizationTransaction>, CredentialError> {
@@ -172,6 +174,7 @@ pub(crate) async fn get_connection(
     Ok(Json(state.connections.broker().await?.connection(&id).await?))
 }
 pub(crate) async fn disconnect(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<(StatusCode, Json<api::DisconnectResponse>), CredentialError> {
@@ -295,6 +298,7 @@ pub(crate) async fn grants(
     ))
 }
 pub(crate) async fn create_grant(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
     payload: Result<Json<api::CreateSessionGrantRequest>, axum::extract::rejection::JsonRejection>,
@@ -320,6 +324,7 @@ pub(crate) async fn create_grant(
     ))
 }
 pub(crate) async fn revoke_grant(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Path((id, grant)): Path<(String, String)>,
 ) -> Result<Json<api::RevokeSessionGrantResponse>, CredentialError> {

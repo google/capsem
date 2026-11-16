@@ -6,11 +6,10 @@ intentionally reads the operator's private fixture runtime files.
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
 
-from .gateway import _runtime_connection
 from .http_transport import Transport
+from .service_gateway import wait_for_connection
 from .uds_client import HttpClient
 
 
@@ -22,15 +21,7 @@ class OperatorServiceClient(HttpClient):
         super().__init__(Transport(host="127.0.0.1", port=port), before_vm_delete=before_vm_delete)
 
     def _ready_connection(self):
-        deadline = time.monotonic() + 15
-        while time.monotonic() < deadline:
-            if not self.run_dir.exists():
-                raise ConnectionError("service fixture runtime is unavailable")
-            connection = _runtime_connection(self.run_dir)
-            if connection is not None:
-                return connection
-            time.sleep(0.05)
-        raise ConnectionError("service fixture gateway did not publish authenticated readiness")
+        return wait_for_connection(self.run_dir)
 
     def call(self, method, path, *, body=None, headers=None, timeout=60, translate=True):
         connection = self._ready_connection()

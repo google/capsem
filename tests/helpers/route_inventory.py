@@ -1,4 +1,5 @@
 """Fail-closed inventory of the repository's explicit Axum registrations."""
+
 from __future__ import annotations
 
 import re
@@ -16,12 +17,13 @@ def _methods(expression: str) -> set[str]:
         match = re.match(r"([a-z_]+)\s*\(", rest)
         assert match, f"unknown MethodRouter shape: {rest}"
         name = match[1]
-        assert name in METHODS | {"layer", "route_layer"}, f"unknown Axum method: {name}"
+        assert name in METHODS | {"layer", "route_layer", "merge"}, f"unknown Axum method: {name}"
         if name in METHODS:
             assert name not in found, f"duplicate HTTP method: {name}"
             found.add(name)
         offset = len(expression) - len(rest)
         cursor = offset + match.end()
+        argument_start = cursor
         depth = 1
         quoted = False
         escaped = False
@@ -39,6 +41,10 @@ def _methods(expression: str) -> set[str]:
             elif char == ")":
                 depth -= 1
             cursor += 1
+        if name == "merge":
+            merged = _methods(expression[argument_start : cursor - 1].strip())
+            assert not found & merged, f"duplicate merged HTTP methods: {found & merged}"
+            found.update(merged)
         if not expression[cursor:].strip().strip(","):
             break
     assert found, "route has no explicit HTTP method"
@@ -54,7 +60,7 @@ def route_operations(body: str) -> set[str]:
             start += 1
         assert body[start] == '"', "route path must be an explicit ordinary literal"
         end = body.index('"', start + 1)
-        path = body[start + 1:end]
+        path = body[start + 1 : end]
         assert "\\" not in path, "escaped route path is not supported"
         cursor = end + 1
         depth = 1
@@ -74,7 +80,7 @@ def route_operations(body: str) -> set[str]:
             elif char == ")":
                 depth -= 1
             cursor += 1
-        expression = body[end + 1:cursor - 1].lstrip().removeprefix(",").strip()
+        expression = body[end + 1 : cursor - 1].lstrip().removeprefix(",").strip()
         for method in _methods(expression):
             operation = f"{method.upper()} {path}"
             assert operation not in found, f"duplicate route operation: {operation}"
@@ -86,6 +92,6 @@ def function_operations(source: Path, function: str) -> set[str]:
     text = source.read_text(encoding="utf-8")
     start = text.index(function)
     end = text.find("\nfn ", start + len(function))
-    result = route_operations(text[start:end if end != -1 else len(text)])
+    result = route_operations(text[start : end if end != -1 else len(text)])
     assert result, f"no route operations found in {source}:{function}"
     return result

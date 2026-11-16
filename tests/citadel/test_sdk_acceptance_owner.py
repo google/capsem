@@ -36,7 +36,7 @@ def _problems(files: dict[str, str], ignored: list[str]) -> list[str]:
     suite = files.get(BRAAVOS, "")
     if not all(f'"{language}"' in suite for language in DRIVERS):
         problems.append("three-language parameterization")
-    if not all(token in suite for token in ("GatewayInstance", "SDK_GATEWAY_TOKEN", "BRAAVOS_SDK_ACCEPTANCE_OK")):
+    if not all(token in suite for token in ("ServiceGateway", "SDK_GATEWAY_TOKEN", "BRAAVOS_SDK_ACCEPTANCE_OK")):
         problems.append("authenticated gateway fixture")
     required = ("incorrect-token", "mcp", "panics", "triage", "files")
     for language, path in DRIVERS.items():

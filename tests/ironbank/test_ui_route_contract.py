@@ -10,9 +10,10 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from helpers.gateway import GatewayInstance, TcpHttpClient
+from helpers.gateway import TcpHttpClient
 from helpers.route_matrix import RouteSpec, assert_settings_route_matrix
 from helpers.service import ServiceInstance
+from helpers.service_gateway import ServiceGateway
 
 
 def _service_request(client: Any, spec: RouteSpec) -> Any:
@@ -42,10 +43,10 @@ def _gateway_post_status_and_body(client: TcpHttpClient, spec: RouteSpec) -> tup
 
 def test_settings_ui_routes_exist_through_service_and_gateway() -> None:
     service = ServiceInstance()
-    gateway: GatewayInstance | None = None
+    gateway: ServiceGateway | None = None
     try:
         service.start()
-        gateway = GatewayInstance(uds_path=service.uds_path)
+        gateway = ServiceGateway(service)
         gateway.start()
         assert gateway.token is not None
         service_client = service.client()

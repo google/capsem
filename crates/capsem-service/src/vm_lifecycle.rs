@@ -422,8 +422,17 @@ pub(super) async fn shutdown_vm_process(
     Ok(Some((session_dir, persistent, pid)))
 }
 
-#[tracing::instrument(skip_all, fields(vm_id = %id))]
 pub(super) async fn handle_suspend(
+    _actor: crate::caller_auth::AuthenticatedActor,
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+) -> Result<Json<api::VmActionResponse>, AppError> {
+    suspend_registered_vm(State(state), Path(id)).await
+}
+
+/// The kernel-bound guest lifecycle owner also uses the shared suspend effect.
+#[tracing::instrument(name = "handle_suspend", skip_all, fields(vm_id = %id))]
+pub(super) async fn suspend_registered_vm(
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<Json<api::VmActionResponse>, AppError> {
@@ -568,6 +577,7 @@ pub(super) async fn handle_suspend(
 }
 
 pub(super) async fn handle_stop(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<Json<api::StopResponse>, AppError> {
@@ -599,6 +609,7 @@ pub(super) async fn handle_stop(
 }
 
 pub(super) async fn handle_delete(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<Json<api::VmActionResponse>, AppError> {
@@ -687,6 +698,7 @@ pub(super) fn provision_response_for_running(state: &ServiceState, id: String) -
 }
 
 pub(super) async fn handle_persist(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
     Json(payload): Json<PersistRequest>,
@@ -786,6 +798,7 @@ pub(super) async fn handle_persist(
 }
 
 pub(super) async fn handle_purge(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Json(payload): Json<PurgeRequest>,
 ) -> Result<Json<PurgeResponse>, AppError> {

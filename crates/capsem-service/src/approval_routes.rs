@@ -144,6 +144,7 @@ pub(crate) async fn list(
 }
 
 pub(crate) async fn resolve(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Path((id, ask_id)): Path<(String, String)>,
     Json(body): Json<api::SecurityAskResolveRequest>,
@@ -174,9 +175,12 @@ pub(crate) async fn resolve(
     }
     let snapshot = state.approvals.broker.active(&binding, &ask_id).ok_or_else(conflict)?;
     session
-        .resolve(&ask_id, body.decision == api::SecurityAskDecision::Approve)
+        .resolve(&_actor, &ask_id, body.decision == api::SecurityAskDecision::Approve)
         .await
         .map_err(|error| match error {
+            approval_runtime::ResolveError::Forbidden => {
+                AppError::new(StatusCode::FORBIDDEN, "operator authority required".into())
+            }
             approval_runtime::ResolveError::Missing | approval_runtime::ResolveError::Conflict => conflict(),
             approval_runtime::ResolveError::Unavailable => {
                 AppError::new(StatusCode::SERVICE_UNAVAILABLE, "approval audit unavailable".into())

@@ -4,9 +4,10 @@ use axum::{
     body::Bytes,
     extract::{Path, Query, State},
     response::IntoResponse,
-    routing::{delete, get, patch, post, put},
+    routing::get,
     Json, Router,
 };
+use caller_auth::routing::{delete, patch, post, put};
 use capsem_cache::{BoundedCache, GenerationCache, IdentityCache, KeyedIdentityCache};
 use capsem_core::{
     mcp::ToolCacheEntry,

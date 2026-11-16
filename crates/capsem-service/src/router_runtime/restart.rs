@@ -3,6 +3,7 @@
 use super::*;
 
 pub(super) async fn handle_restart(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
 ) -> Result<(StatusCode, Json<api::RestartResponse>), AppError> {
     let _update = state

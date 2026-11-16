@@ -4,6 +4,7 @@
 use super::*;
 
 pub(crate) async fn handle_resume(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<Json<ProvisionResponse>, AppError> {

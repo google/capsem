@@ -1,37 +1,5 @@
 use super::*;
 
-#[test]
-fn tempdir_test_states_use_distinct_host_ledgers() {
-    let (first, first_dir) = make_test_state_with_tempdir();
-    let (second, second_dir) = make_test_state_with_tempdir();
-
-    let first_db = first.host_ledger.path().to_path_buf();
-    let second_db = second.host_ledger.path().to_path_buf();
-
-    assert!(
-        first_db.starts_with(first_dir.path()),
-        "first test database escaped its tempdir: {}",
-        first_db.display()
-    );
-    assert!(
-        second_db.starts_with(second_dir.path()),
-        "second test database escaped its tempdir: {}",
-        second_db.display()
-    );
-    assert_ne!(
-        first_db, second_db,
-        "independent test states must not share a host ledger"
-    );
-
-    let first_owned = make_test_state();
-    let second_owned = make_test_state();
-    assert_ne!(
-        first_owned.host_ledger.path().to_path_buf(),
-        second_owned.host_ledger.path().to_path_buf(),
-        "test states that own their tempdirs must not share a host ledger"
-    );
-}
-
 #[tokio::test]
 async fn handle_persist_preserves_asset_pins() {
     let (state, _dir) = make_test_state_with_tempdir();
@@ -50,6 +18,7 @@ async fn handle_persist_preserves_asset_pins() {
     );
 
     let _ = handle_persist(
+        crate::tests::operator_actor(),
         State(state.clone()),
         Path("persist-src".into()),
         Json(PersistRequest {
@@ -433,7 +402,7 @@ async fn handle_suspend_rejects_ephemeral_vm() {
         );
     }
 
-    let result = handle_suspend(State(state), Path("eph-vm".into())).await;
+    let result = handle_suspend(crate::tests::operator_actor(), State(state), Path("eph-vm".into())).await;
     let err = result.unwrap_err();
     assert_eq!(err.status, StatusCode::BAD_REQUEST);
     assert!(err.body.error.contains("ephemeral"));
@@ -442,7 +411,7 @@ async fn handle_suspend_rejects_ephemeral_vm() {
 #[tokio::test]
 async fn handle_suspend_returns_not_found_for_missing_vm() {
     let (state, _dir) = make_test_state_with_tempdir();
-    let result = handle_suspend(State(state), Path("nonexistent".into())).await;
+    let result = handle_suspend(crate::tests::operator_actor(), State(state), Path("nonexistent".into())).await;
     let err = result.unwrap_err();
     assert_eq!(err.status, StatusCode::NOT_FOUND);
 }

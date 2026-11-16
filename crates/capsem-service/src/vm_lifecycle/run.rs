@@ -4,6 +4,7 @@ use super::*;
 
 /// One-shot exec: provision a temp VM, run a command, return output, destroy VM.
 pub(crate) async fn handle_run(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Json(payload): Json<RunRequest>,
 ) -> Result<Json<ExecResponse>, AppError> {

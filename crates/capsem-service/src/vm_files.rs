@@ -518,6 +518,7 @@ pub(super) async fn handle_download_file(
 }
 
 pub(super) async fn handle_upload_file(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
     Query(params): Query<FileContentQuery>,

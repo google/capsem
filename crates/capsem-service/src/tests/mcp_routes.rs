@@ -162,7 +162,7 @@ async fn a_tool_permission_edit_is_written_to_settings_and_recorded() {
     let rows: serde_json::Value = serde_json::from_str(
         &reader
             .query_raw(
-                "SELECT category, target_kind, target_key, operation, affected_path, status \
+                "SELECT actor, category, target_kind, target_key, operation, affected_path, status \
                  FROM policy_mutation_events",
             )
             .expect("query policy mutation events"),
@@ -171,6 +171,7 @@ async fn a_tool_permission_edit_is_written_to_settings_and_recorded() {
     assert_eq!(
         rows["rows"][0],
         json!([
+            "operator",
             "mcp",
             "mcp_tool",
             "local/fetch_http",

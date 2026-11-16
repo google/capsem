@@ -197,7 +197,11 @@ async fn prove(state: Arc<ServiceState>, run: &StdPath) {
                 ["pending", null, null, receipt["event_id"]],
                 [
                     terminal,
-                    "authenticated_client",
+                    if decision == "cancel" {
+                        format!("vm:{id}/{}", listing["generation"].as_str().unwrap())
+                    } else {
+                        "operator".to_owned()
+                    },
                     if decision == "cancel" {
                         "request_cancelled"
                     } else {

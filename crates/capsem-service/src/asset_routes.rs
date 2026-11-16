@@ -178,6 +178,7 @@ pub(super) async fn handle_asset_status(
 /// POST /assets/ensure -- download missing or corrupt runtime assets in the
 /// background and answer the status that started it.
 pub(super) async fn handle_asset_ensure(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
 ) -> Result<Json<api::AssetStatus>, AppError> {
     let started = asset_background::start_asset_ensure(&state);

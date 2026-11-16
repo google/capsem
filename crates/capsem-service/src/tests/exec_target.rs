@@ -25,6 +25,7 @@ fn exec_ok(message: &ServiceToProcess) -> FakeProcessReply {
 
 async fn exec(state: &Arc<ServiceState>, vm: &str, target: Option<capsem_api::ExecTarget>) -> Result<(), AppError> {
     handle_exec(
+        crate::tests::operator_actor(),
         State(Arc::clone(state)),
         Path(vm.to_string()),
         Json(ExecRequest {
@@ -164,7 +165,9 @@ async fn exec_timeout_and_missing_vm_routes_return_structured_error_codes() {
     install_test_runtime_assets(&state);
     let st = || State(Arc::clone(&state));
     let run_req: RunRequest = serde_json::from_value(json!({"command": "sleep", "timeout_secs": 1})).unwrap();
-    let run_err = handle_run(st(), Json(run_req)).await.unwrap_err();
+    let run_err = handle_run(crate::tests::operator_actor(), st(), Json(run_req))
+        .await
+        .unwrap_err();
     let owner_logs: Vec<_> = std::fs::read_dir(state.run_dir.join("sessions"))
         .unwrap()
         .filter_map(Result::ok)
@@ -185,7 +188,7 @@ async fn exec_timeout_and_missing_vm_routes_return_structured_error_codes() {
     let plain = || Path("plain-vm".to_string());
     let req = |cmd: &str, t: u64| {
         let body: ExecRequest = serde_json::from_value(json!({"command": cmd, "timeout_secs": t})).unwrap();
-        handle_exec(st(), plain(), Json(body))
+        handle_exec(crate::tests::operator_actor(), st(), plain(), Json(body))
     };
     let timeout_err = req("sleep", 1).await.unwrap_err();
     assert_eq!(timeout_err.status, StatusCode::GATEWAY_TIMEOUT);
@@ -198,7 +201,9 @@ async fn exec_timeout_and_missing_vm_routes_return_structured_error_codes() {
     let _ = owner.await;
     let _ = std::fs::remove_file(&uds_path);
     let fork_req = |n: &str| Json(serde_json::from_value::<ForkRequest>(json!({"name": n})).unwrap());
-    let fork_ipc_err = handle_fork(st(), plain(), fork_req("f")).await.unwrap_err();
+    let fork_ipc_err = handle_fork(crate::tests::operator_actor(), st(), plain(), fork_req("f"))
+        .await
+        .unwrap_err();
     assert_eq!(fork_ipc_err.status, StatusCode::INTERNAL_SERVER_ERROR);
     let existing = test_persistent_entry("unresumable", dir.path().join("unresumable"));
     let existing_id = existing.id.clone();
@@ -209,7 +214,9 @@ async fn exec_timeout_and_missing_vm_routes_return_structured_error_codes() {
         .data
         .vms
         .insert("unresumable".into(), existing);
-    let resume_existing_err = handle_resume(st(), Path(existing_id)).await.unwrap_err();
+    let resume_existing_err = handle_resume(crate::tests::operator_actor(), st(), Path(existing_id))
+        .await
+        .unwrap_err();
     assert_eq!(resume_existing_err.status, StatusCode::INTERNAL_SERVER_ERROR);
     assert_eq!(resume_existing_err.body.code, None);
     assert_eq!(resume_existing_err.body.vm_id, None);
@@ -222,19 +229,35 @@ async fn exec_timeout_and_missing_vm_routes_return_structured_error_codes() {
     let persist_req = Json(serde_json::from_str::<PersistRequest>(r#"{"name":"s"}"#).unwrap());
     let attach = crate::network_routes::handle_network_attach;
     let not_found_errors = [
-        attach(st(), net_path).await.unwrap_err(),
-        handle_preserve_failure(st(), missing()).await.unwrap_err(),
+        attach(crate::tests::operator_actor(), st(), net_path)
+            .await
+            .unwrap_err(),
+        handle_preserve_failure(crate::tests::operator_actor(), st(), missing())
+            .await
+            .unwrap_err(),
         handle_logs(st(), missing(), Query(log_q)).await.unwrap_err(),
         handle_info(st(), missing()).await.unwrap_err(),
         handle_vm_status(st(), missing()).await.unwrap_err(),
         running_uds_path(&state, "missing-vm").unwrap_err(),
         resolve_session_dir(&state, "missing-vm").unwrap_err(),
-        handle_suspend(st(), missing()).await.unwrap_err(),
-        handle_stop(st(), missing()).await.unwrap_err(),
-        handle_delete(st(), missing()).await.unwrap_err(),
-        handle_persist(st(), missing(), persist_req).await.unwrap_err(),
-        handle_resume(st(), missing()).await.unwrap_err(),
-        handle_fork(st(), missing(), fork_req("forked")).await.unwrap_err(),
+        handle_suspend(crate::tests::operator_actor(), st(), missing())
+            .await
+            .unwrap_err(),
+        handle_stop(crate::tests::operator_actor(), st(), missing())
+            .await
+            .unwrap_err(),
+        handle_delete(crate::tests::operator_actor(), st(), missing())
+            .await
+            .unwrap_err(),
+        handle_persist(crate::tests::operator_actor(), st(), missing(), persist_req)
+            .await
+            .unwrap_err(),
+        handle_resume(crate::tests::operator_actor(), st(), missing())
+            .await
+            .unwrap_err(),
+        handle_fork(crate::tests::operator_actor(), st(), missing(), fork_req("forked"))
+            .await
+            .unwrap_err(),
     ];
     for err in not_found_errors {
         assert_eq!(err.status, StatusCode::NOT_FOUND);

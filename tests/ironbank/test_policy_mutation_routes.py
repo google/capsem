@@ -66,7 +66,7 @@ def _mutation_rows(service: ServiceInstance) -> list[dict[str, Any]]:
 
 def _assert_applied(row: dict[str, Any], *, category: str, target_kind: str, target_key: str,
                     operation: str, rule_id: str | None) -> None:
-    assert row["actor"] == "service-api"
+    assert row["actor"] == "operator"
     assert row["category"] == category
     assert row["target_kind"] == target_kind
     assert row["target_key"] == target_key

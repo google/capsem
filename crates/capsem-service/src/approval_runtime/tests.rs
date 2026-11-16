@@ -74,7 +74,12 @@ async fn unverified_reservations_are_not_actionable_or_visible_to_resolvers() {
     let _pending = session.reserve(&request()).unwrap();
     assert_eq!(runtime.broker.pending_count(&session.binding), 0);
     assert!(runtime.broker.active(&session.binding, "0123456789ab").is_none());
-    assert_eq!(session.resolve("0123456789ab", true).await, Err(ResolveError::Missing));
+    assert_eq!(
+        session
+            .resolve(&crate::tests::operator_actor(), "0123456789ab", true)
+            .await,
+        Err(ResolveError::Missing)
+    );
 }
 
 #[tokio::test]
@@ -83,7 +88,10 @@ async fn human_decision_is_flushed_before_original_waiter_resumes_once() {
         let (runtime, session, _db, _authority, _dir) = fixture().await;
         let pending = session.begin(request()).await.unwrap();
         assert_eq!(runtime.broker.pending_count(&session.binding), 1);
-        session.resolve("0123456789ab", approve).await.unwrap();
+        session
+            .resolve(&crate::tests::operator_actor(), "0123456789ab", approve)
+            .await
+            .unwrap();
         let record = session.record("0123456789ab").await.unwrap().unwrap();
         assert_eq!(
             record.status,
@@ -93,10 +101,16 @@ async fn human_decision_is_flushed_before_original_waiter_resumes_once() {
                 SecurityAskStatus::Denied
             }
         );
+        assert_eq!(record.resolver.as_deref(), Some("operator"));
         assert!(!serde_json::to_string(&record).unwrap().contains("fixture-secret"));
         assert_eq!(session.wait("0123456789ab", pending).await.is_allowed(), approve);
         assert_eq!(runtime.broker.pending_count(&session.binding), 0);
-        assert_eq!(session.resolve("0123456789ab", true).await, Err(ResolveError::Missing));
+        assert_eq!(
+            session
+                .resolve(&crate::tests::operator_actor(), "0123456789ab", true)
+                .await,
+            Err(ResolveError::Missing)
+        );
     }
 }
 
@@ -109,7 +123,12 @@ async fn retired_generation_cannot_resolve_or_resume_an_original_operation() {
     assert!(runtime.get(&wrong).is_none());
     authority.revoke();
     runtime.retire(&session.binding);
-    assert_eq!(session.resolve("0123456789ab", true).await, Err(ResolveError::Conflict));
+    assert_eq!(
+        session
+            .resolve(&crate::tests::operator_actor(), "0123456789ab", true)
+            .await,
+        Err(ResolveError::Conflict)
+    );
     assert_eq!(session.wait("0123456789ab", pending).await, ApprovalOutcome::Cancelled);
     assert_eq!(
         session.record("0123456789ab").await.unwrap().unwrap().status,
@@ -119,7 +138,12 @@ async fn retired_generation_cannot_resolve_or_resume_an_original_operation() {
     runtime.finish(&session.binding).await.unwrap();
     assert!(
         session
-            .append_resolution("0123456789ab", SecurityAskStatus::Denied, "request_cancelled")
+            .append_resolution(
+                "0123456789ab",
+                SecurityAskStatus::Denied,
+                "request_cancelled",
+                &session.owner_actor()
+            )
             .await
             .is_err(),
         "retired producer remained open"
@@ -136,6 +160,13 @@ async fn cancellation_after_deadline_keeps_the_expiry_audit_reason() {
     let record = session.record("0123456789ab").await.unwrap().unwrap();
     assert_eq!(record.status, SecurityAskStatus::Denied);
     assert_eq!(record.reason.as_deref(), Some("deadline"));
+    assert_eq!(
+        record.resolver,
+        Some(format!(
+            "vm:{}/{}",
+            session.binding.session_id, session.binding.generation
+        ))
+    );
     assert_eq!(runtime.broker.pending_count(&session.binding), 0);
 }
 
@@ -244,4 +275,50 @@ async fn mounted_approval_routes_bind_session_generation_and_reject_repeated_dec
     let missing = format!("/vms/{}/security/asks/0123456789ab/resolve", capsem_crypto::uuid_v4());
     let (status, _) = route_request(build_service_router(state), Method::POST, &missing, Some(decision)).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn delegated_actor_cannot_consume_or_resolve_an_original_waiter() {
+    use capsem_core::{
+        agent_access::Reservation,
+        managed_sessions::{Capability, LeaseClock},
+    };
+    let (_runtime, session, _db, _owner, _dir) = fixture().await;
+    let pending = session.begin(request()).await.unwrap();
+    let authority = crate::caller_auth::fixture_authority();
+    let id = capsem_crypto::uuid_v4();
+    let scope = capsem_api::AgentAccessScope::new(vec![capsem_api::AgentOperation::Propose], vec![], vec![]).unwrap();
+    let Reservation::New(admission) = authority
+        .agents
+        .reserve(
+            id,
+            &Capability::from_bytes([0x21; 32]),
+            scope,
+            std::time::Duration::from_secs(60),
+            || LeaseClock::now().ok(),
+        )
+        .unwrap()
+    else {
+        panic!("new admitted fixture")
+    };
+    admission.commit(|| LeaseClock::now().ok()).unwrap();
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert(
+        axum::http::header::AUTHORIZATION,
+        format!("Bearer {id}.{}", "21".repeat(32)).parse().unwrap(),
+    );
+    let agent = authority.authenticate_gateway(&headers).unwrap();
+    assert_eq!(
+        session.resolve(&agent, "0123456789ab", true).await,
+        Err(ResolveError::Forbidden)
+    );
+    assert_eq!(
+        session.record("0123456789ab").await.unwrap().unwrap().status,
+        SecurityAskStatus::Pending
+    );
+    session
+        .resolve(&crate::tests::operator_actor(), "0123456789ab", true)
+        .await
+        .unwrap();
+    assert!(session.wait("0123456789ab", pending).await.is_allowed());
 }

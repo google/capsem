@@ -319,6 +319,7 @@ pub(crate) async fn refresh_policies(state: &Arc<ServiceState>) -> Result<(usize
 }
 
 pub(crate) async fn handle_create(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Json(request): Json<CreateProxyRequest>,
 ) -> Result<Json<CreateProxyResponse>, AppError> {
@@ -326,6 +327,7 @@ pub(crate) async fn handle_create(
 }
 
 pub(crate) async fn handle_heartbeat(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
     Json(request): Json<ProxyLeaseRequest>,
@@ -334,6 +336,7 @@ pub(crate) async fn handle_heartbeat(
 }
 
 pub(crate) async fn handle_stop(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
     Json(request): Json<ProxyLeaseRequest>,

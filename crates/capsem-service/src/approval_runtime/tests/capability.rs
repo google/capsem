@@ -75,7 +75,12 @@ async fn inherited_capability_releases_original_work_once_after_scoped_route_aud
                 SecurityAskStatus::Denied
             }
         );
-        assert_eq!(session.resolve("0123456789ab", true).await, Err(ResolveError::Missing));
+        assert_eq!(
+            session
+                .resolve(&crate::tests::operator_actor(), "0123456789ab", true)
+                .await,
+            Err(ResolveError::Missing)
+        );
         state.evict_instance(&id, session.binding.generation).unwrap();
         drop(capability);
         drop(upstream);

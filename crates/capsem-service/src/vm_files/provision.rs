@@ -1,6 +1,7 @@
 use super::*;
 
 pub(crate) async fn handle_provision(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     payload: Result<Json<ProvisionRequest>, axum::extract::rejection::JsonRejection>,
 ) -> axum::response::Response {

@@ -23,7 +23,7 @@ from helpers.constants import (
     ASSETS_DIR,
 )
 from helpers.debug_session import debug_session
-from helpers.gateway import GatewayInstance, TcpHttpClient
+from helpers.gateway import TcpHttpClient
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
 from helpers.service import (
     ServiceInstance,
@@ -31,6 +31,7 @@ from helpers.service import (
     vm_name,
     vm_session_db_path,
 )
+from helpers.service_gateway import ServiceGateway
 from helpers.session_ledger import ledger_totals, open_session_ledger
 from ironbank.model_client_config import (
     HERMETIC_ANTHROPIC_MODEL,
@@ -807,7 +808,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
     service = ServiceInstance()
     client = None
     mock_proc = None
-    gateway: GatewayInstance | None = None
+    gateway: ServiceGateway | None = None
     gateway_client: TcpHttpClient | None = None
     session_id = vm_name("ironbank-sdk")
     sessions = contextlib.ExitStack()
@@ -864,7 +865,7 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
         os.environ["CAPSEM_CORP_CONFIG"] = str(corp_path)
         service.start()
         client = service.client()
-        gateway = GatewayInstance(uds_path=service.uds_path)
+        gateway = ServiceGateway(service)
         gateway.start()
         gateway_client = TcpHttpClient(gateway.base_url, gateway.token)
         mock_base_url = WORKLOAD_OLLAMA_URL

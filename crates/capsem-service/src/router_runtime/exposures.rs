@@ -60,6 +60,7 @@ fn unexpected(reply: &ProcessToService) -> AppError {
 
 /// POST /vms/{id}/exposures -- listen on a host loopback port for a guest port.
 pub(crate) async fn handle_create_exposure(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
     Json(request): Json<ExposureRequest>,
@@ -162,6 +163,15 @@ pub(crate) async fn handle_list_exposures(
 
 /// DELETE /vms/{id}/exposures/{exposure_id} -- close an exposure for good.
 pub(crate) async fn handle_delete_exposure(
+    _actor: crate::caller_auth::AuthenticatedActor,
+    State(state): State<Arc<ServiceState>>,
+    Path((id, exposure_id)): Path<(String, String)>,
+) -> Result<Json<api::VmActionResponse>, AppError> {
+    revoke_exposure(State(state), Path((id, exposure_id))).await
+}
+
+/// Trusted workload retirement shares the effect without fabricating a caller.
+pub(crate) async fn revoke_exposure(
     State(state): State<Arc<ServiceState>>,
     Path((id, exposure_id)): Path<(String, String)>,
 ) -> Result<Json<api::VmActionResponse>, AppError> {
@@ -217,6 +227,7 @@ async fn preview_publication(
 }
 
 pub(crate) async fn handle_create_preview_session(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Path((vm_id, exposure_id)): Path<(String, String)>,
 ) -> Result<Json<PreviewSessionMaterial>, AppError> {
@@ -252,6 +263,7 @@ pub(crate) async fn handle_create_preview_session(
 /// End every session of a preview exposure and the flows they admitted,
 /// without deleting the exposure (google/capsem#222).
 pub(crate) async fn handle_revoke_preview_sessions(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Path((vm_id, exposure_id)): Path<(String, String)>,
 ) -> Result<Json<PreviewSessionsRevokedResponse>, AppError> {
@@ -276,6 +288,7 @@ pub(crate) async fn handle_revoke_preview_sessions(
 }
 
 pub(crate) async fn handle_exchange_preview_bootstrap(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Path((vm_id, exposure_id)): Path<(String, String)>,
     Json(request): Json<PreviewBootstrapExchangeRequest>,
@@ -308,6 +321,7 @@ pub(crate) async fn handle_exchange_preview_bootstrap(
 }
 
 pub(crate) async fn handle_admit_preview_connection(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Path((vm_id, exposure_id)): Path<(String, String)>,
     Json(request): Json<PreviewConnectionAdmissionRequest>,

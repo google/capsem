@@ -16,7 +16,7 @@ from helpers.constants import (
     DEFAULT_RAM_MB,
     EXEC_READY_TIMEOUT,
 )
-from helpers.gateway import GatewayInstance, TcpHttpClient
+from helpers.gateway import TcpHttpClient
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
 from helpers.service import (
     ServiceInstance,
@@ -24,6 +24,7 @@ from helpers.service import (
     vm_session_db_path,
     wait_exec_ready,
 )
+from helpers.service_gateway import ServiceGateway
 from helpers.session_ledger import open_session_ledger, stop_session_for_ledger_read
 from helpers.settings_policy import apply_settings_rule
 
@@ -68,7 +69,7 @@ def native_approval_session(policy: str = ""):
         os.environ["CAPSEM_CORP_CONFIG"] = str(corp)
         service.start()
         client = service.client()
-        gateway = GatewayInstance(uds_path=service.uds_path)
+        gateway = ServiceGateway(service)
         gateway.start()
         api = TcpHttpClient(gateway.base_url, gateway.token)
         created = client.post(
@@ -113,15 +114,18 @@ def assert_approval_audit(service, client, session_id, receipt, *, cancelled=Fal
 
 def assert_approval_audits(service, client, session_id, receipts, *, table=None):
     """Stop our named fixture to drain all operation producers before disk reads."""
+    owner = client.get(f"/vms/{session_id}/security/asks")
+    assert owner["vm_id"] == session_id
+    owner_actor = f"vm:{session_id}/{owner['generation']}"
     path = vm_session_db_path(service.tmp_dir, client, session_id)
     stop_session_for_ledger_read(client, session_id, path)
     with closing(open_session_ledger(path)) as conn:
         conn.row_factory = sqlite3.Row
         for receipt, cancelled in receipts:
-            _assert_approval_rows(conn, receipt, cancelled=cancelled, table=table)
+            _assert_approval_rows(conn, receipt, cancelled=cancelled, table=table, owner_actor=owner_actor)
 
 
-def _assert_approval_rows(conn, receipt, *, cancelled, table):
+def _assert_approval_rows(conn, receipt, *, cancelled, table, owner_actor):
     rows = conn.execute(
         "SELECT status,resolver,reason,event_id FROM security_ask_events "
         "WHERE ask_id=? ORDER BY id",
@@ -131,7 +135,7 @@ def _assert_approval_rows(conn, receipt, *, cancelled, table):
     terminal = "denied" if cancelled or expired else receipt["status"]
     assert [row["status"] for row in rows] == ["pending", terminal], [dict(row) for row in rows]
     assert rows[0]["event_id"] == rows[1]["event_id"] == receipt["event_id"]
-    assert rows[1]["resolver"] == "authenticated_client"
+    assert rows[1]["resolver"] == (owner_actor if cancelled or expired else "operator")
     assert rows[1]["reason"] == (
         "request_cancelled" if cancelled else "deadline" if expired else "human_decision"
     )

@@ -563,6 +563,7 @@ pub(super) async fn handle_plugin_info(
 /// POST /plugins/credential_broker/credentials/reload -- retry the durable
 /// credential store and re-read every session's counters.
 pub(super) async fn handle_credential_broker_credentials_reload(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
 ) -> Result<Json<CredentialBrokerDetailResponse>, AppError> {
     match capsem_core::credential_broker::hydrate_credential_runtime_cache_from_durable_store() {
@@ -588,6 +589,7 @@ pub(super) async fn handle_credential_broker_credentials_reload(
 /// PATCH /plugins/{plugin_id}/edit -- set one plugin's mode or detection level
 /// in settings.toml and put it in force in every running VM.
 pub(super) async fn handle_plugin_update(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Path(plugin_id): Path<String>,
     Json(update): Json<PluginUpdate>,
@@ -607,7 +609,7 @@ pub(super) async fn handle_plugin_update(
     let id = plugin_id.clone();
     // The current config is read under the boundary: it is the "read" of a
     // read-modify-write, and a concurrent edit must not be overwritten.
-    apply_policy_mutation(&state, route, move |edit, corp| {
+    apply_policy_mutation(&state, &_actor, route, move |edit, corp, actor| {
         let mut config = edit.plugin_config(&id).unwrap_or(catalog_entry.default_config);
         if let Some(mode) = update.mode {
             config.mode = mode;
@@ -621,7 +623,7 @@ pub(super) async fn handle_plugin_update(
             }
             config.content = content;
         }
-        edit.set_plugin_config(corp, &id, config, "service-api")
+        edit.set_plugin_config(corp, &id, config, actor)
     })
     .await?;
     Ok(Json(plugin_info_for(&state, &plugin_id, true).await?))

@@ -10,9 +10,9 @@ from typing import Literal
 import pytest
 from helpers.bounded import bounded
 from helpers.constants import ASSETS_DIR
-from helpers.gateway import GatewayInstance
 from helpers.sdk_packages import python_gateway, typescript_gateway
 from helpers.service import ServiceInstance
+from helpers.service_gateway import ServiceGateway
 from helpers.stopped_workspace import VM_ID, seed_stopped_workspace
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -24,7 +24,7 @@ def test_braavos_sdk_against_real_gateway_and_stopped_workspace(
     language: Literal["python", "typescript", "rust"],
 ) -> None:
     service = ServiceInstance()
-    gateway = GatewayInstance(service.uds_path)
+    gateway = ServiceGateway(service)
     project = ROOT / "sdk" / language
     try:
         seed_stopped_workspace(service.tmp_dir, ASSETS_DIR)
@@ -33,7 +33,7 @@ def test_braavos_sdk_against_real_gateway_and_stopped_workspace(
         environment = {**{key: value for key, value in os.environ.items() if key != "VIRTUAL_ENV"},
                        "SDK_GATEWAY_URL": f"http://127.0.0.1:{gateway.port}",
                        "SDK_GATEWAY_TOKEN": gateway.token, "SDK_VM_ID": VM_ID,
-                       "CAPSEM_RUN_DIR": str(gateway.tmp_dir / ".capsem" / "run")}
+                       "CAPSEM_RUN_DIR": str(service.tmp_dir)}
         if language == "python":
             output = python_gateway(ROOT, environment)
         elif language == "typescript":

@@ -139,6 +139,7 @@ pub(super) async fn handle_networks_list(State(state): State<Arc<ServiceState>>)
 }
 
 pub(super) async fn handle_network_create(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Json(payload): Json<CreateNetworkRequest>,
 ) -> Result<(StatusCode, Json<NetworkInfo>), AppError> {
@@ -168,6 +169,7 @@ pub(super) async fn handle_network_inspect(
 /// Retire an empty network. Members must be disconnected first; the
 /// network's database stays for its audit history.
 pub(super) async fn handle_network_delete(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
@@ -182,6 +184,7 @@ pub(super) async fn handle_network_delete(
 }
 
 pub(super) async fn handle_network_attach(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Path((id, vm_id)): Path<(String, String)>,
 ) -> Result<Json<NetworkInfo>, AppError> {
@@ -210,6 +213,7 @@ pub(super) async fn handle_network_attach(
 }
 
 pub(super) async fn handle_network_detach(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Path((id, vm_id)): Path<(String, String)>,
 ) -> Result<Json<NetworkInfo>, AppError> {

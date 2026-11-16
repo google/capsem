@@ -33,6 +33,7 @@ async fn handle_fork_creates_persistent_sandbox() {
     install_test_runtime_assets(&state);
     running_fork_source(&state, &dir, None);
     let result = handle_fork(
+        crate::tests::operator_actor(),
         State(state.clone()),
         Path("fork-src".into()),
         Json(ForkRequest {
@@ -77,6 +78,7 @@ async fn a_fork_whose_guest_will_not_freeze_fails_and_leaves_nothing() {
     install_test_runtime_assets(&state);
     running_fork_source(&state, &dir, Some("timed out waiting for SnapshotReady"));
     let error = handle_fork(
+        crate::tests::operator_actor(),
         State(state.clone()),
         Path("fork-src".into()),
         Json(ForkRequest {
@@ -104,6 +106,7 @@ async fn handle_fork_not_found() {
     let (state, _dir) = make_test_state_with_tempdir();
     // state is already Arc<ServiceState> from make_test_state*
     let err = handle_fork(
+        crate::tests::operator_actor(),
         State(state),
         Path("ghost".into()),
         Json(ForkRequest {
@@ -142,6 +145,7 @@ async fn handle_fork_duplicate_returns_conflict() {
     // state is already Arc<ServiceState> from make_test_state*
     // First fork succeeds
     let _ = handle_fork(
+        crate::tests::operator_actor(),
         State(state.clone()),
         Path("dup-src".into()),
         Json(ForkRequest {
@@ -154,6 +158,7 @@ async fn handle_fork_duplicate_returns_conflict() {
     .unwrap();
     // Second fork with same name returns CONFLICT
     let err = handle_fork(
+        crate::tests::operator_actor(),
         State(state),
         Path("dup-src".into()),
         Json(ForkRequest {
@@ -190,6 +195,7 @@ async fn handle_fork_from_persistent_registry() {
     }
     // state is already Arc<ServiceState> from make_test_state*
     let result = handle_fork(
+        crate::tests::operator_actor(),
         State(state.clone()),
         Path(vm_id.clone()),
         Json(ForkRequest {
@@ -218,6 +224,7 @@ async fn handle_fork_from_persistent_registry() {
     // Overriding labels on fork replaces source labels; empty map `{}` clears them to `None`.
     let overridden = HashMap::from([("suite".into(), "override".into())]);
     let _ = handle_fork(
+        crate::tests::operator_actor(),
         State(state.clone()),
         Path(vm_id.clone()),
         Json(ForkRequest {
@@ -240,6 +247,7 @@ async fn handle_fork_from_persistent_registry() {
     );
 
     let _ = handle_fork(
+        crate::tests::operator_actor(),
         State(state.clone()),
         Path(vm_id.clone()),
         Json(ForkRequest {
@@ -263,6 +271,7 @@ async fn handle_fork_from_persistent_registry() {
     );
 
     let bad = handle_fork(
+        crate::tests::operator_actor(),
         State(state.clone()),
         Path(vm_id),
         Json(ForkRequest {
@@ -298,6 +307,7 @@ async fn handle_fork_refuses_a_profile_era_vm() {
         .insert("profile-era".into(), entry);
 
     let err = handle_fork(
+        crate::tests::operator_actor(),
         State(Arc::clone(&state)),
         Path(vm_id),
         Json(ForkRequest {

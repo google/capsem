@@ -20,7 +20,7 @@ from helpers.constants import (
     DEFAULT_RAM_MB,
     EXEC_READY_TIMEOUT,
 )
-from helpers.gateway import GatewayInstance, TcpHttpClient
+from helpers.gateway import TcpHttpClient
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
 from helpers.service import (
     ServiceInstance,
@@ -29,6 +29,7 @@ from helpers.service import (
     vm_session_db_path,
     wait_exec_ready,
 )
+from helpers.service_gateway import ServiceGateway
 from helpers.session_ledger import ledger_totals, open_session_ledger
 from log_streams import assert_service_log_evidence
 
@@ -63,7 +64,7 @@ def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
 
 
 def _query_rows(client, session_id: str, sql: str) -> list[dict]:
-    db_path = vm_session_db_path(Path(client.socket_path).parent, client, session_id)
+    db_path = vm_session_db_path(client.run_dir, client, session_id)
     with closing(open_session_ledger(db_path)) as conn:
         conn.row_factory = sqlite3.Row
         return [dict(row) for row in conn.execute(sql).fetchall()]
@@ -184,7 +185,7 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
 
         service.start()
         client = service.client()
-        gateway = GatewayInstance(service.uds_path)
+        gateway = ServiceGateway(service)
         gateway.start()
         gateway_client = TcpHttpClient(gateway.base_url, gateway.token)
         mock_proc, ready = start_mock_server()
@@ -496,10 +497,10 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
         assert sdk.returncode == 0, sdk.stdout + sdk.stderr
         assert "SDK_MCP_ACCEPTANCE_OK" in sdk.stdout
 
-        gateway_log = gateway.stop_and_read_log()
         client.delete(f"/vms/{vm_id}/delete", timeout=60)
         vm_id = None
         service_log = service.stop_and_read_log()
+        gateway_log = gateway.stop_and_read_log()
         assert "gateway.proxy.ok" in gateway_log
         assert "security_latest" in service_log or "/security/latest" in service_log
         # MCP observation belongs to capsem-process. The service owns the

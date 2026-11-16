@@ -78,6 +78,7 @@ fn delegated_bearer_requires_issued_live_capability_and_preserves_its_scope() {
         }
     );
     assert_eq!(actor.agent_grant().unwrap().scope(), &scope);
+    assert!(actor.require_operator().is_err());
     assert!(authority.authenticate_gateway(&headers(&"11".repeat(32))).is_err());
     assert!(authority
         .authenticate_gateway(&headers(&format!("{id}.{}", "22".repeat(32))))

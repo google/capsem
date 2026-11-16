@@ -192,6 +192,7 @@ fn current_collector_url() -> Result<reqwest::Url, AppError> {
 
 /// Relay one worker's encoded OTLP metrics to the current fixed collector.
 pub(crate) async fn handle_metric_relay(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<ServicePeer>,
     Path(id): Path<String>,

@@ -131,6 +131,7 @@ async fn exec_response_preserves_non_utf8_output() {
     setup_vm_with_workspace_and_uds(&state, dir.path(), "binary-exec-vm", uds_path);
 
     let response = handle_exec(
+        crate::tests::operator_actor(),
         State(state),
         Path("binary-exec-vm".to_string()),
         Json(ExecRequest {
@@ -181,6 +182,7 @@ async fn upload_logs_file_import_before_writing_workspace_file() {
     setup_vm_with_workspace_and_uds(&state, dir.path(), "up-ledger-vm", uds_path);
 
     let result = handle_upload_file(
+        crate::tests::operator_actor(),
         State(state),
         Path("up-ledger-vm".to_string()),
         Query(FileContentQuery {
@@ -417,6 +419,7 @@ async fn upload_does_not_write_workspace_file_when_import_ledger_fails() {
     setup_vm_with_workspace_and_uds(&state, dir.path(), "deny-ledger-vm", uds_path);
 
     let err = handle_upload_file(
+        crate::tests::operator_actor(),
         State(state),
         Path("deny-ledger-vm".to_string()),
         Query(FileContentQuery {
@@ -601,6 +604,7 @@ async fn upload_refuses_a_dangling_symlink_target() {
     std::os::unix::fs::symlink(&planted, tree.workspace().join("notes.txt")).unwrap();
 
     let err = handle_upload_file(
+        crate::tests::operator_actor(),
         State(state),
         Path("up-dangling-vm".to_string()),
         Query(FileContentQuery {
@@ -624,6 +628,7 @@ async fn upload_refuses_a_symlinked_parent_even_when_the_leaf_directory_is_missi
     std::os::unix::fs::symlink(&tree.outside, tree.workspace().join("link")).unwrap();
 
     let err = handle_upload_file(
+        crate::tests::operator_actor(),
         State(state),
         Path("up-parent-vm".to_string()),
         Query(FileContentQuery {
@@ -794,6 +799,7 @@ async fn handle_provision_attaches_labels_and_list_fingerprint_tracks_label_chan
     ]);
     let created: ProvisionResponse = decode_response_json(
         handle_provision(
+            crate::tests::operator_actor(),
             State(Arc::clone(&state)),
             Ok(Json(ProvisionRequest {
                 name: Some("labeled-vm".into()),
@@ -901,6 +907,7 @@ async fn handle_provision_attaches_labels_and_list_fingerprint_tracks_label_chan
 
     let empty_created: ProvisionResponse = decode_response_json(
         handle_provision(
+            crate::tests::operator_actor(),
             State(Arc::clone(&state)),
             Ok(Json(ProvisionRequest {
                 name: Some("empty-labels-vm".into()),
@@ -947,6 +954,7 @@ async fn handle_provision_rejects_invalid_labels_with_bad_request() {
     ];
     for bad_labels in invalid_cases {
         let resp = handle_provision(
+            crate::tests::operator_actor(),
             State(Arc::clone(&state)),
             Ok(Json(ProvisionRequest {
                 labels: Some(bad_labels.clone()),

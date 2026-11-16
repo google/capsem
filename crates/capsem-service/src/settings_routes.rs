@@ -21,9 +21,11 @@ pub(super) async fn handle_get_settings() -> Json<serde_json::Value> {
 
 /// PATCH /settings/edit -- batch-update settings and return the refreshed tree.
 pub(super) async fn handle_save_settings(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Json(raw): Json<HashMap<String, serde_json::Value>>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    _actor.require_operator()?;
     let _mutation = state.policy_mutation.begin().await;
     capsem_core::net::policy_config::batch_update_settings_json(&raw)
         .map_err(|e| AppError::new(StatusCode::BAD_REQUEST, e))?;
@@ -34,9 +36,11 @@ pub(super) async fn handle_save_settings(
 
 /// PUT /corp/edit -- apply corporate config from URL or inline TOML.
 pub(super) async fn handle_corp_config(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Json(payload): Json<CorpConfigRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    _actor.require_operator()?;
     use capsem_core::net::policy_config::corp_provision;
     let _mutation = state.policy_mutation.begin().await;
     let capsem_dir = capsem_foundation::paths::capsem_home_opt()
@@ -92,8 +96,10 @@ pub(super) fn corp_info_value() -> Result<serde_json::Value, AppError> {
 
 /// POST /corp/validate -- validate corporate config from URL or inline TOML without installing it.
 pub(super) async fn handle_corp_validate(
+    _actor: crate::caller_auth::AuthenticatedActor,
     Json(payload): Json<CorpConfigRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    _actor.require_operator()?;
     use capsem_core::net::policy_config::corp_provision;
 
     if let Some(source) = &payload.source {
@@ -116,8 +122,10 @@ pub(super) async fn handle_corp_validate(
 
 /// POST /corp/reload -- refresh/re-read the corp overlay and reload running VMs.
 pub(super) async fn handle_corp_reload(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    _actor.require_operator()?;
     use capsem_core::net::policy_config::corp_provision;
 
     let capsem_dir = capsem_foundation::paths::capsem_home_opt()

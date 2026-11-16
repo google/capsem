@@ -71,6 +71,7 @@ async fn exact_keeps_the_path_literal() {
     setup_vm_with_workspace_and_uds(&state, dir.path(), "exact-vm", uds_path);
 
     let uploaded = handle_upload_file(
+        crate::tests::operator_actor(),
         State(state),
         Path("exact-vm".to_string()),
         Query(FileContentQuery {

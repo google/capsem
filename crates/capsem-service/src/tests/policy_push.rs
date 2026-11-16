@@ -118,9 +118,13 @@ async fn every_edit_route_materializes_and_reloads_running_vms() {
     // One IPC connection per mutation route below.
     let process = spawn_fake_process_reload_ack(&uds_path(&state, "push-vm"), 3);
 
-    let _ = handle_mcp_default_edit(State(Arc::clone(&state)), permission(SecurityRuleAction::Block))
-        .await
-        .expect("mcp default edit");
+    let _ = handle_mcp_default_edit(
+        crate::tests::operator_actor(),
+        State(Arc::clone(&state)),
+        permission(SecurityRuleAction::Block),
+    )
+    .await
+    .expect("mcp default edit");
     assert_eq!(
         active_policy(session_dir).user_rules.default["mcp"].action,
         SecurityRuleAction::Block,
@@ -128,6 +132,7 @@ async fn every_edit_route_materializes_and_reloads_running_vms() {
     );
 
     let _ = handle_mcp_tool_edit(
+        crate::tests::operator_actor(),
         State(Arc::clone(&state)),
         Path(("wiki".to_string(), "search".to_string())),
         permission(SecurityRuleAction::Block),
@@ -138,6 +143,7 @@ async fn every_edit_route_materializes_and_reloads_running_vms() {
     assert_eq!(rules["mcp_wiki_search_permission"].action, SecurityRuleAction::Block);
 
     let Json(plugin) = handle_plugin_update(
+        crate::tests::operator_actor(),
         State(Arc::clone(&state)),
         Path("dummy_pre_eicar".to_string()),
         block_plugin(Some(DetectionLevel::Critical)),
@@ -170,6 +176,7 @@ async fn an_edit_of_a_corp_owned_setting_is_refused() {
     let settings_before = std::fs::read(dir.path().join("settings.toml")).unwrap();
 
     let error = handle_plugin_update(
+        crate::tests::operator_actor(),
         State(Arc::clone(&state)),
         Path("dummy_pre_eicar".to_string()),
         block_plugin(None),
@@ -210,9 +217,13 @@ async fn a_reload_acknowledging_another_active_policy_fails_the_push() {
         Box::pin(async move { reply })
     });
 
-    let error = handle_mcp_default_edit(State(Arc::clone(&state)), permission(SecurityRuleAction::Block))
-        .await
-        .expect_err("an acknowledgement of another policy is not this edit applied");
+    let error = handle_mcp_default_edit(
+        crate::tests::operator_actor(),
+        State(Arc::clone(&state)),
+        permission(SecurityRuleAction::Block),
+    )
+    .await
+    .expect_err("an acknowledgement of another policy is not this edit applied");
     assert_eq!(error.status, StatusCode::INTERNAL_SERVER_ERROR);
     assert!(
         error
@@ -250,9 +261,13 @@ async fn a_reload_ack_from_a_replaced_generation_cannot_update_its_broker() {
         }
     });
 
-    let error = handle_mcp_default_edit(State(Arc::clone(&state)), permission(SecurityRuleAction::Block))
-        .await
-        .expect_err("a stale generation cannot publish into its replacement's broker");
+    let error = handle_mcp_default_edit(
+        crate::tests::operator_actor(),
+        State(Arc::clone(&state)),
+        permission(SecurityRuleAction::Block),
+    )
+    .await
+    .expect_err("a stale generation cannot publish into its replacement's broker");
     assert_eq!(error.status, StatusCode::INTERNAL_SERVER_ERROR);
     assert!(
         error
@@ -303,6 +318,7 @@ async fn race_edit_b_against_held_edit_a(
     });
 
     let mut edit_a = tokio::spawn(handle_mcp_tool_edit(
+        crate::tests::operator_actor(),
         State(Arc::clone(&state)),
         Path(("wiki".to_string(), "search".to_string())),
         permission(SecurityRuleAction::Block),
@@ -339,9 +355,13 @@ async fn concurrent_edits_keep_both_updates_and_their_own_acknowledgements() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
     let active = race_edit_b_against_held_edit_a(|state| {
         tokio::spawn(async move {
-            handle_mcp_default_edit(State(state), permission(SecurityRuleAction::Block))
-                .await
-                .map(drop)
+            handle_mcp_default_edit(
+                crate::tests::operator_actor(),
+                State(state),
+                permission(SecurityRuleAction::Block),
+            )
+            .await
+            .map(drop)
         })
     })
     .await;
@@ -359,9 +379,14 @@ async fn a_plugin_edit_is_serialized_with_a_concurrent_mcp_edit() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
     let active = race_edit_b_against_held_edit_a(|state| {
         tokio::spawn(async move {
-            handle_plugin_update(State(state), Path("dummy_pre_eicar".to_string()), block_plugin(None))
-                .await
-                .map(drop)
+            handle_plugin_update(
+                crate::tests::operator_actor(),
+                State(state),
+                Path("dummy_pre_eicar".to_string()),
+                block_plugin(None),
+            )
+            .await
+            .map(drop)
         })
     })
     .await;
@@ -386,9 +411,13 @@ async fn partial_apply_reaches_every_healthy_vm_and_names_the_failed_one() {
     std::fs::write(sessions[1].join("vm"), b"not a directory").unwrap();
     let healthy = spawn_fake_process_reload_ack(&uds_path(&state, "healthy-vm"), 1);
 
-    let error = handle_mcp_default_edit(State(Arc::clone(&state)), permission(SecurityRuleAction::Block))
-        .await
-        .expect_err("an edit that did not reach every running VM is not a success");
+    let error = handle_mcp_default_edit(
+        crate::tests::operator_actor(),
+        State(Arc::clone(&state)),
+        permission(SecurityRuleAction::Block),
+    )
+    .await
+    .expect_err("an edit that did not reach every running VM is not a success");
 
     assert_eq!(error.status, StatusCode::INTERNAL_SERVER_ERROR);
     assert!(
@@ -414,6 +443,7 @@ async fn an_edit_is_recorded_in_the_host_ledger() {
     let (state, _, _env) = state_with_running_vms(&dir, &[]);
 
     let Json(response) = handle_mcp_tool_edit(
+        crate::tests::operator_actor(),
         State(Arc::clone(&state)),
         Path(("wiki".to_string(), "search".to_string())),
         permission(SecurityRuleAction::Ask),
@@ -440,6 +470,7 @@ async fn a_tool_of_an_undeclared_server_is_refused() {
     let (state, _, _env) = state_with_running_vms(&dir, &[]);
 
     let error = handle_mcp_tool_edit(
+        crate::tests::operator_actor(),
         State(Arc::clone(&state)),
         Path(("nowhere".to_string(), "search".to_string())),
         permission(SecurityRuleAction::Allow),

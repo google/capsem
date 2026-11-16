@@ -87,7 +87,7 @@ async fn handle_save_settings_rejects_unknown_key() {
     let mut changes = HashMap::new();
     changes.insert("nonexistent.setting.xyz".into(), serde_json::json!("value"));
     let (state, _dir) = make_test_state_with_tempdir();
-    let result = handle_save_settings(State(state), Json(changes)).await;
+    let result = handle_save_settings(crate::tests::operator_actor(), State(state), Json(changes)).await;
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert_eq!(err.status, StatusCode::BAD_REQUEST);
@@ -113,7 +113,7 @@ async fn handle_save_settings_rejects_retired_policy_rule_keys_atomically() {
     );
 
     let (state, _dir) = make_test_state_with_tempdir();
-    let err = handle_save_settings(State(state), Json(changes))
+    let err = handle_save_settings(crate::tests::operator_actor(), State(state), Json(changes))
         .await
         .expect_err("retired policy rule key should be rejected by settings handler");
 

@@ -198,6 +198,7 @@ async fn stopping_a_vm_keeps_its_membership_and_a_fork_has_none() {
     let uds_path = state.instances.lock().unwrap()["fork-src"].uds_path.clone();
     spawn_fake_fork_owner(&uds_path, session_dir, None);
     let fork = handle_fork(
+        crate::tests::operator_actor(),
         State(Arc::clone(&state)),
         Path("fork-src".into()),
         Json(ForkRequest {

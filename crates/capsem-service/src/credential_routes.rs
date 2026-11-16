@@ -5,9 +5,11 @@ use capsem_credentials::CredentialPersistence;
 pub(crate) mod startup;
 
 pub(crate) async fn inject(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     payload: Result<Json<api::CredentialInjectRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<api::CredentialInjectResponse>, AppError> {
+    _actor.require_operator()?;
     let Json(request) =
         payload.map_err(|_| AppError::new(StatusCode::BAD_REQUEST, "invalid credential injection request".into()))?;
     let storage = request.storage;

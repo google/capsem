@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 from helpers.constants import ASSETS_DIR
-from helpers.gateway import GatewayInstance
 from helpers.sdk_packages import inspect_ai_gateway, python_gateway, typescript_gateway
 from helpers.service import ServiceInstance
+from helpers.service_gateway import ServiceGateway
 
 from tests.fixtures.oci.registry import grant_exact, registry
 
@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[2]
 @pytest.mark.parametrize("language", ["python", "typescript"])
 def test_sdk_live_vm_lifecycle_and_binary_files(language: str) -> None:
     service = ServiceInstance()
-    gateway = GatewayInstance(service.uds_path)
+    gateway = ServiceGateway(service)
     try:
         service.start()
         gateway.start()
@@ -46,7 +46,7 @@ def test_sdk_live_vm_lifecycle_and_binary_files(language: str) -> None:
 @pytest.mark.parametrize("language", ["python", "typescript"])
 def test_installed_sdk_oci_create_and_execution_targets(language: str, tmp_path: Path) -> None:
     service = ServiceInstance()
-    gateway = GatewayInstance(service.uds_path)
+    gateway = ServiceGateway(service)
     try:
         with registry(tmp_path) as (reference, certificate, requests):
             grant_exact(service.home_dir, reference)
@@ -78,7 +78,7 @@ def test_installed_sdk_oci_create_and_execution_targets(language: str, tmp_path:
 @pytest.mark.integration
 def test_inspect_ai_live_vm_sandbox_acceptance() -> None:
     service = ServiceInstance()
-    gateway = GatewayInstance(service.uds_path)
+    gateway = ServiceGateway(service)
     try:
         service.start()
         gateway.start()

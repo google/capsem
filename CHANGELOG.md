@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Security: Require sealed caller proof on every mutating service handler. Record authenticated operator identities in policy edits and ask decisions, and attribute automatic ask expiry/cancellation to the original VM owner generation.
+
 - Security: Revoke private service connections when their gateway control channel ends, preventing later credentials from reactivating an old connection.
 
 - Security: Reject competing bearer headers at the service identity boundary, keeping delegated capability proofs separate from operator authority.

@@ -21,9 +21,13 @@ async fn warm_restore_disabled_without_consuming_saved_state() {
         .data
         .vms
         .insert("saved".into(), entry);
-    let error = handle_resume(State(Arc::clone(&state)), Path(id.clone()))
-        .await
-        .unwrap_err();
+    let error = handle_resume(
+        crate::tests::operator_actor(),
+        State(Arc::clone(&state)),
+        Path(id.clone()),
+    )
+    .await
+    .unwrap_err();
     assert_eq!(error.status, StatusCode::NOT_IMPLEMENTED);
     assert_eq!(error.body.error, capsem_proto::WARM_SUSPEND_UNAVAILABLE);
     assert_eq!(std::fs::read(&checkpoint).unwrap(), b"existing checkpoint");

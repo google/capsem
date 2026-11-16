@@ -20,6 +20,7 @@ failing test in every module that imports it by name.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 # Files that are themselves a module root, so `mod tests;` resolves beside
@@ -54,3 +55,45 @@ def sibling_tests(path: Path) -> str:
             f"layout rule in CLAUDE.md"
         )
     return module.read_text(encoding="utf-8")
+
+
+def masked_code(source: str) -> str:
+    """Mask Rust comments and literals, preserving source offsets and newlines."""
+    start = re.compile(
+        r'//|/\*|(?:br|r)(?P<hashes>\#*)"|b?"|'
+        r"b?'(?:\\(?:u\{[0-9a-fA-F_]+\}|x[0-9a-fA-F]{2}|.)|[^\\'])'",
+        re.S,
+    )
+    chars = list(source)
+    offset = 0
+    while match := start.search(source, offset):
+        token = match.group()
+        if token == "//":
+            end = source.find("\n", match.end())
+            end = len(source) if end < 0 else end
+        elif token == "/*":
+            depth, end = 1, match.end()
+            while depth:
+                nested = re.search(r"/\*|\*/", source[end:])
+                if nested is None:
+                    raise ValueError("unclosed Rust comment")
+                depth += 1 if nested.group() == "/*" else -1
+                end += nested.end()
+        elif match.group("hashes") is not None:
+            closing = '"' + match.group("hashes")
+            end = source.find(closing, match.end())
+            if end < 0:
+                raise ValueError("unclosed Rust raw string")
+            end += len(closing)
+        elif token.endswith('"'):
+            closing = re.match(r'(?:\\.|[^"\\])*"', source[match.end() :], re.S)
+            if closing is None:
+                raise ValueError("unclosed Rust string")
+            end = match.end() + closing.end()
+        else:
+            end = match.end()
+        chars[match.start() : end] = [
+            "\n" if char == "\n" else " " for char in source[match.start() : end]
+        ]
+        offset = end
+    return "".join(chars)

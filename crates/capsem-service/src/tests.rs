@@ -49,6 +49,38 @@ mod session_housekeeping_tests;
 
 pub(crate) static SETTINGS_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+#[test]
+fn tempdir_test_states_use_distinct_host_ledgers() {
+    let (first, first_dir) = make_test_state_with_tempdir();
+    let (second, second_dir) = make_test_state_with_tempdir();
+
+    let first_db = first.host_ledger.path().to_path_buf();
+    let second_db = second.host_ledger.path().to_path_buf();
+
+    assert!(
+        first_db.starts_with(first_dir.path()),
+        "first test database escaped its tempdir: {}",
+        first_db.display()
+    );
+    assert!(
+        second_db.starts_with(second_dir.path()),
+        "second test database escaped its tempdir: {}",
+        second_db.display()
+    );
+    assert_ne!(
+        first_db, second_db,
+        "independent test states must not share a host ledger"
+    );
+
+    let first_owned = make_test_state();
+    let second_owned = make_test_state();
+    assert_ne!(
+        first_owned.host_ledger.path().to_path_buf(),
+        second_owned.host_ledger.path().to_path_buf(),
+        "test states that own their tempdirs must not share a host ledger"
+    );
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn overlay_prewarm_creates_the_default_size_and_reuses_it() {
@@ -167,6 +199,18 @@ pub(crate) fn make_test_state_owned() -> ServiceState {
     let test_tempdir = tempfile::tempdir().unwrap();
     let root = test_tempdir.path().to_path_buf();
     test_state(root.join("run"), root.join("assets"), Some(test_tempdir))
+}
+
+/// Internal handler tests receive proof through actual credential validation.
+pub(crate) fn operator_actor() -> crate::caller_auth::AuthenticatedActor {
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert(
+        axum::http::header::AUTHORIZATION,
+        axum::http::HeaderValue::from_static("Bearer AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
+    );
+    crate::caller_auth::fixture_authority()
+        .authenticate_gateway(&headers)
+        .unwrap()
 }
 
 /// Stable transport authority for ordinary unit clients. Control-lifetime

@@ -588,7 +588,7 @@ pub(crate) async fn grant_surface(state: &Arc<ServiceState>, id: &str, generatio
     if !recorded {
         // The admission RPC can outlive this workload generation. Its new
         // exposure belongs to this attempt and must not escape retirement.
-        let revoked = crate::router_runtime::exposures::handle_delete_exposure(
+        let revoked = crate::router_runtime::exposures::revoke_exposure(
             State(Arc::clone(state)),
             Path((id.to_owned(), exposure.id.clone())),
         )

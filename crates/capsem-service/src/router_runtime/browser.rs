@@ -31,6 +31,7 @@ fn clear(state: &ServiceState, id: &str, generation: uuid::Uuid, request_id: u64
 }
 
 pub(super) async fn handle_acknowledge(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
     Json(request): Json<BrowserAcknowledgeRequest>,

@@ -141,6 +141,16 @@ impl AuthenticatedActor {
     pub(crate) fn evidence(&self) -> &capsem_api::CallerActor {
         &self.evidence
     }
+    pub(crate) fn require_operator(&self) -> Result<(), crate::AppError> {
+        if !matches!(self.evidence, capsem_api::CallerActor::Operator) {
+            return Err(crate::AppError::new(
+                StatusCode::FORBIDDEN,
+                "operator authority required".into(),
+            ));
+        }
+        Ok(())
+    }
+
     pub(crate) fn agent_grant(&self) -> Option<&Arc<capsem_core::agent_access::Grant>> {
         self.agent.as_ref()
     }
@@ -151,6 +161,8 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthenticatedActor {
         parts.extensions.get::<Self>().cloned().ok_or(StatusCode::UNAUTHORIZED)
     }
 }
+
+pub(crate) mod routing;
 
 #[cfg(test)]
 mod tests;

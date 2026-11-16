@@ -9,10 +9,11 @@ from contextlib import closing
 
 import psutil
 import pytest
-from helpers.gateway import GatewayInstance, TcpHttpClient
+from helpers.gateway import TcpHttpClient
 from helpers.image_session import image_session, workload_exec
 from helpers.mock_server import start_mock_server, stop_process
 from helpers.service import ServiceInstance, vm_name, vm_session_dir
+from helpers.service_gateway import ServiceGateway
 from log_streams import read_log_stream
 
 from tests.ironbank.test_credential_store_lifecycle import _credential_reference
@@ -40,7 +41,7 @@ def test_credential_broker_capture_injects_and_reports_full_ledger_blackbox() ->
 def test_explicit_file_and_memory_injection_reaches_a_running_owner(monkeypatch, source: str) -> None:
     """Host secrets reach upstream; guest, persisted memory and audit stay clean."""
     service = ServiceInstance()
-    gateway = GatewayInstance(uds_path=service.uds_path)
+    gateway = ServiceGateway(service)
     upstream = None
     secrets = {"memory": "capsem_test_host_memory_only", "file": "capsem_test_host_file"}
     unselected = "capsem_test_host_not_selected"
@@ -189,8 +190,8 @@ with urllib.request.urlopen(request, timeout=30) as response:
                 text = read_log_stream(session / name)
                 assert text, name
                 assert all(value not in text for value in markers)
-        gateway_log = gateway.stop_and_read_log()
         service_log = service.stop_and_read_log()
+        gateway_log = gateway.stop_and_read_log()
         assert all(value not in gateway_log + service_log for value in markers)
         for log in service.tmp_dir.rglob("*.log"):
             assert all(value not in read_log_stream(log) for value in markers)

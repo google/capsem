@@ -20,7 +20,7 @@ from helpers.constants import (
     DEFAULT_RAM_MB,
     EXEC_READY_TIMEOUT,
 )
-from helpers.gateway import GatewayInstance, TcpHttpClient
+from helpers.gateway import TcpHttpClient
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
 from helpers.service import (
     ServiceInstance,
@@ -29,9 +29,10 @@ from helpers.service import (
     vm_session_db_path,
     wait_exec_ready,
 )
+from helpers.service_gateway import ServiceGateway
 from helpers.session_ledger import open_session_ledger, stop_session_for_ledger_read
 from ironbank.approval_fixture import resolve_original_operation
-from log_streams import assert_service_log_evidence, read_log_stream
+from log_streams import assert_service_log_evidence
 
 pytestmark = pytest.mark.integration
 
@@ -137,7 +138,7 @@ def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
 
 
 def _query_rows(client, session_id: str, sql: str) -> list[dict]:
-    db_path = vm_session_db_path(Path(client.socket_path).parent, client, session_id)
+    db_path = vm_session_db_path(client.run_dir, client, session_id)
     with closing(open_session_ledger(db_path)) as conn:
         conn.row_factory = sqlite3.Row
         return [dict(row) for row in conn.execute(sql).fetchall()]
@@ -179,7 +180,7 @@ def test_plain_json_http_request_pays_full_ledger_debt_blackbox() -> None:
     assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
 
     service = ServiceInstance()
-    gateway: GatewayInstance | None = None
+    gateway: ServiceGateway | None = None
     mock_proc = None
     client = None
     vm_deleted = False
@@ -223,7 +224,7 @@ def test_plain_json_http_request_pays_full_ledger_debt_blackbox() -> None:
         os.environ["CAPSEM_CORP_CONFIG"] = str(corp_path)
         service.start()
         client = service.client()
-        gateway = GatewayInstance(uds_path=service.uds_path)
+        gateway = ServiceGateway(service)
         gateway.start()
         gateway_client = TcpHttpClient(gateway.base_url, gateway.token)
         _prove_gateway_proxy(gateway_client)
@@ -445,10 +446,10 @@ def test_plain_json_http_request_pays_full_ledger_debt_blackbox() -> None:
         assert by_action["allow"] >= 1
         assert by_event_type["http.request"] >= 1
 
-        gateway_log = gateway.stop_and_read_log()
         client.delete(f"/vms/{session_id}/delete", timeout=60)
         vm_deleted = True
         service_log = service.stop_and_read_log()
+        gateway_log = gateway.stop_and_read_log()
         assert_service_log_evidence(service_log)
         assert "gateway.proxy.ok" in gateway_log
     finally:
@@ -470,7 +471,7 @@ def test_http_body_handling_matrix_pays_full_ledger_debt_blackbox() -> None:
     assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
 
     service = ServiceInstance()
-    gateway: GatewayInstance | None = None
+    gateway: ServiceGateway | None = None
     mock_proc = None
     client = None
     vm_deleted = False
@@ -522,7 +523,7 @@ def test_http_body_handling_matrix_pays_full_ledger_debt_blackbox() -> None:
         os.environ["CAPSEM_CORP_CONFIG"] = str(corp_path)
         service.start()
         client = service.client()
-        gateway = GatewayInstance(uds_path=service.uds_path)
+        gateway = ServiceGateway(service)
         gateway.start()
         gateway_client = TcpHttpClient(gateway.base_url, gateway.token)
         _prove_gateway_proxy(gateway_client)
@@ -814,10 +815,10 @@ def test_http_body_handling_matrix_pays_full_ledger_debt_blackbox() -> None:
             assert by_action["allow"] >= 5
             assert by_event_type["http.request"] >= 5
 
-        gateway_log = gateway.stop_and_read_log()
         client.delete(f"/vms/{session_id}/delete", timeout=60)
         vm_deleted = True
         service_log = service.stop_and_read_log()
+        gateway_log = gateway.stop_and_read_log()
         assert_service_log_evidence(service_log)
         assert "gateway.proxy.ok" in gateway_log
     finally:
@@ -839,7 +840,7 @@ def test_brokered_http_rewrite_pays_full_ledger_debt_blackbox() -> None:
     assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
 
     service = ServiceInstance()
-    gateway: GatewayInstance | None = None
+    gateway: ServiceGateway | None = None
     mock_proc = None
     client = None
     session_name = vm_name("ironbank-http-rewrite")
@@ -896,7 +897,7 @@ def test_brokered_http_rewrite_pays_full_ledger_debt_blackbox() -> None:
         os.environ["CAPSEM_CORP_CONFIG"] = str(corp_path)
         service.start()
         client = service.client()
-        gateway = GatewayInstance(uds_path=service.uds_path)
+        gateway = ServiceGateway(service)
         gateway.start()
         gateway_client = TcpHttpClient(gateway.base_url, gateway.token)
         _prove_gateway_proxy(gateway_client)
@@ -1335,7 +1336,7 @@ def test_brokered_http_rewrite_pays_full_ledger_debt_blackbox() -> None:
             assert by_action["allow"] >= 3
             assert by_event_type["http.request"] >= 3
 
-        service_log = read_log_stream(service.tmp_dir / "service.log")
+        service_log = service.stop_and_read_log()
         gateway_log = gateway.stop_and_read_log()
         assert "capsem_test_oauth_access_" not in service_log
         assert "capsem_test_oauth_refresh_" not in service_log
@@ -1359,7 +1360,7 @@ def test_denied_http_request_pays_full_ledger_debt_blackbox() -> None:
     assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
 
     service = ServiceInstance()
-    gateway: GatewayInstance | None = None
+    gateway: ServiceGateway | None = None
     mock_proc = None
     client = None
     vm_deleted = False
@@ -1404,7 +1405,7 @@ def test_denied_http_request_pays_full_ledger_debt_blackbox() -> None:
         os.environ["CAPSEM_CORP_CONFIG"] = str(corp_path)
         service.start()
         client = service.client()
-        gateway = GatewayInstance(uds_path=service.uds_path)
+        gateway = ServiceGateway(service)
         gateway.start()
         gateway_client = TcpHttpClient(gateway.base_url, gateway.token)
         _prove_gateway_proxy(gateway_client)
@@ -1592,10 +1593,10 @@ def test_denied_http_request_pays_full_ledger_debt_blackbox() -> None:
         assert by_action["block"] >= 1
         assert by_event_type["http.request"] >= 1
 
-        gateway_log = gateway.stop_and_read_log()
         client.delete(f"/vms/{session_id}/delete", timeout=60)
         vm_deleted = True
         service_log = service.stop_and_read_log()
+        gateway_log = gateway.stop_and_read_log()
         assert_service_log_evidence(service_log)
         assert "gateway.proxy.ok" in gateway_log
     finally:
@@ -1617,7 +1618,7 @@ def test_asked_http_request_pays_full_ledger_debt_blackbox() -> None:
     assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
 
     service = ServiceInstance()
-    gateway: GatewayInstance | None = None
+    gateway: ServiceGateway | None = None
     mock_proc = None
     client = None
     vm_deleted = False
@@ -1662,7 +1663,7 @@ def test_asked_http_request_pays_full_ledger_debt_blackbox() -> None:
         os.environ["CAPSEM_CORP_CONFIG"] = str(corp_path)
         service.start()
         client = service.client()
-        gateway = GatewayInstance(uds_path=service.uds_path)
+        gateway = ServiceGateway(service)
         gateway.start()
         gateway_client = TcpHttpClient(gateway.base_url, gateway.token)
         _prove_gateway_proxy(gateway_client)
@@ -1831,7 +1832,7 @@ def test_asked_http_request_pays_full_ledger_debt_blackbox() -> None:
                 (event_id,),
             ).fetchall()
             assert [row["status"] for row in ask_rows] == ["pending", "denied"], [dict(row) for row in ask_rows]
-            assert ask_rows[-1]["resolver"] == "authenticated_client"
+            assert ask_rows[-1]["resolver"] == "operator"
             assert ask_rows[-1]["reason"] == "human_decision"
             ask_row = dict(ask_rows[0])
             ask_id = _event_id(ask_row["ask_id"])
@@ -1917,10 +1918,10 @@ def test_asked_http_request_pays_full_ledger_debt_blackbox() -> None:
         assert by_action["ask"] >= 1
         assert by_event_type["http.request"] >= 1
 
-        gateway_log = gateway.stop_and_read_log()
         client.delete(f"/vms/{session_id}/delete", timeout=60)
         vm_deleted = True
         service_log = service.stop_and_read_log()
+        gateway_log = gateway.stop_and_read_log()
         assert_service_log_evidence(service_log)
         assert "gateway.proxy.ok" in gateway_log
     finally:

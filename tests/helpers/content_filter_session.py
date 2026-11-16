@@ -11,10 +11,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from helpers.body_archive import security_payload
-from helpers.gateway import GatewayInstance, TcpHttpClient
+from helpers.gateway import TcpHttpClient
 from helpers.image_session import WORKSPACE, image_session, workload_exec
 from helpers.mock_server import start_mock_server, stop_process
 from helpers.service import ServiceInstance, vm_session_db_path
+from helpers.service_gateway import ServiceGateway
 from helpers.session_ledger import stop_session_for_ledger_read
 from helpers.uds_client import UdsHttpClient
 
@@ -174,7 +175,7 @@ def filter_session(workdir: Path, plugin: str, mode: str, *, content=None, captu
         os.environ["CAPSEM_CORP_CONFIG"] = str(corp)
         service.start()
         client = service.client()
-        gateway = GatewayInstance(service.uds_path)
+        gateway = ServiceGateway(service)
         gateway.start()
         public = TcpHttpClient(gateway.base_url, gateway.token)
         patch = {"mode": mode}

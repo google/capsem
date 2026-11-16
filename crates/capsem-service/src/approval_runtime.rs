@@ -149,7 +149,7 @@ impl Session {
                 _ => "unavailable",
             };
             if self
-                .append_resolution(ask_id, SecurityAskStatus::Denied, reason)
+                .append_resolution(ask_id, SecurityAskStatus::Denied, reason, &self.owner_actor())
                 .await
                 .is_err()
             {
@@ -159,7 +159,13 @@ impl Session {
         outcome
     }
 
-    pub(crate) async fn resolve(&self, ask_id: &str, approve: bool) -> Result<(), ResolveError> {
+    pub(crate) async fn resolve(
+        &self,
+        actor: &crate::caller_auth::AuthenticatedActor,
+        ask_id: &str,
+        approve: bool,
+    ) -> Result<(), ResolveError> {
+        actor.require_operator().map_err(|_| ResolveError::Forbidden)?;
         if self.authority.is_revoked() {
             return Err(ResolveError::Conflict);
         }
@@ -179,7 +185,7 @@ impl Session {
         } else {
             SecurityAskStatus::Denied
         };
-        self.append_resolution(ask_id, status, "human_decision")
+        self.append_resolution(ask_id, status, "human_decision", actor.evidence())
             .await
             .map_err(|_| ResolveError::Unavailable)?;
         if self.authority.is_revoked() || !ticket.complete_after_audit(outcome) {
@@ -188,7 +194,20 @@ impl Session {
         Ok(())
     }
 
-    async fn append_resolution(&self, ask_id: &str, status: SecurityAskStatus, reason: &str) -> Result<(), String> {
+    fn owner_actor(&self) -> capsem_api::CallerActor {
+        capsem_api::CallerActor::VmOwner {
+            session_id: self.binding.session_id.clone(),
+            owner_generation: self.binding.generation.to_string(),
+        }
+    }
+
+    async fn append_resolution(
+        &self,
+        ask_id: &str,
+        status: SecurityAskStatus,
+        reason: &str,
+        actor: &capsem_api::CallerActor,
+    ) -> Result<(), String> {
         let record = self.record(ask_id).await?.ok_or("missing approval audit row")?;
         let event = SecurityAskEvent {
             timestamp_unix_ms: now_ms(),
@@ -200,7 +219,7 @@ impl Session {
             status,
             rule_json: record.rule_json,
             event_json: "{}".into(),
-            resolver: Some("authenticated_client".into()),
+            resolver: Some(actor.ledger_id()),
             reason: Some(reason.into()),
             trace_id: record.trace_id,
         };
@@ -211,6 +230,7 @@ impl Session {
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum ResolveError {
+    Forbidden,
     Missing,
     Conflict,
     Unavailable,

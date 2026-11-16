@@ -45,7 +45,7 @@ pub(super) fn spawn_suspend_listener(state: Arc<ServiceState>, id: String, gener
                                 continue;
                             }
                             if let Err(error) =
-                                vm_lifecycle::handle_suspend(State(Arc::clone(&state)), Path(id.clone())).await
+                                vm_lifecycle::suspend_registered_vm(State(Arc::clone(&state)), Path(id.clone())).await
                             {
                                 warn!(id, error = %error.body.error, "guest suspend request refused");
                             }

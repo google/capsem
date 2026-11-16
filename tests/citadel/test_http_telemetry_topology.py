@@ -1,4 +1,5 @@
 """Normalized labels must cover registered templates without admitting raw URIs."""
+
 import re
 from pathlib import Path
 
@@ -12,7 +13,9 @@ RATIONALE = "HTTP telemetry admits a finite catalogue of actual route templates,
 def test_metric_route_labels_match_real_service_and_gateway_topology() -> None:
     service = ROOT / "crates/capsem-service/src/router_runtime.rs"
     gateway = ROOT / "crates/capsem-gateway/src/main.rs"
-    operations = function_operations(service, "fn build_service_router") | route_operations(gateway.read_text())
+    operations = function_operations(service, "fn build_service_router") | route_operations(
+        gateway.read_text()
+    )
     for filename in ("schema.rs", "surface.rs"):
         operations |= function_operations(gateway.parent / filename, "fn routes()")
     source = (ROOT / "crates/capsem-telemetry/src/http/operations.rs").read_text()
@@ -25,7 +28,15 @@ def validate(admitted: list[str], operations: set[str]) -> None:
     assert set(admitted) == {entry.split(" ", 1)[1] for entry in operations}, RATIONALE
 
 
-@pytest.mark.parametrize("labels", [[], ["/vms/private-id/info"], ["/vms/{id}/info", "/vms/{id}/info"], ["/extra", "/vms/{id}/info"]])
+@pytest.mark.parametrize(
+    "labels",
+    [
+        [],
+        ["/vms/private-id/info"],
+        ["/vms/{id}/info", "/vms/{id}/info"],
+        ["/extra", "/vms/{id}/info"],
+    ],
+)
 def test_missing_concrete_duplicate_or_unregistered_labels_fail(labels: list[str]) -> None:
     with pytest.raises(AssertionError, match="finite catalogue"):
         validate(labels, {"GET /vms/{id}/info"})
@@ -33,3 +44,21 @@ def test_missing_concrete_duplicate_or_unregistered_labels_fail(labels: list[str
 
 def test_method_additions_reuse_the_same_finite_template() -> None:
     validate(["/vms/{id}/info"], {"GET /vms/{id}/info", "HEAD /vms/{id}/info"})
+
+
+def test_merged_actor_checked_methods_preserve_registration_without_scanning_layers() -> None:
+    source = 'Router::new().route("/example", get(read).merge(post(write).merge(delete(remove))).layer(layer(put(not_a_route))))'
+    assert route_operations(source) == {"GET /example", "POST /example", "DELETE /example"}
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "get(read).merge(get(duplicate))",
+        "get(read).merge(layer(post(hidden)))",
+        "get(read).merge(arbitrary_service(handler))",
+    ],
+)
+def test_invalid_or_duplicate_merged_routes_fail_closed(expression: str) -> None:
+    with pytest.raises(AssertionError):
+        route_operations(f'Router::new().route("/example", {expression})')

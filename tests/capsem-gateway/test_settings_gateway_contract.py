@@ -11,8 +11,9 @@ from __future__ import annotations
 import json
 
 import pytest
-from helpers.gateway import GatewayInstance, TcpHttpClient
+from helpers.gateway import TcpHttpClient
 from helpers.service import ServiceInstance
+from helpers.service_gateway import ServiceGateway
 
 pytestmark = [pytest.mark.gateway, pytest.mark.integration]
 
@@ -25,10 +26,10 @@ def _json_status(client: TcpHttpClient, path: str) -> tuple[int, object]:
 
 def test_settings_routes_are_forwarded_through_gateway() -> None:
     svc = ServiceInstance()
-    gw: GatewayInstance | None = None
+    gw: ServiceGateway | None = None
     try:
         svc.start()
-        gw = GatewayInstance(uds_path=svc.uds_path)
+        gw = ServiceGateway(svc)
         gw.start()
         client = TcpHttpClient(gw.base_url, gw.token)
 

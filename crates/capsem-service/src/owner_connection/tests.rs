@@ -141,7 +141,11 @@ async fn disabled_suspend_preserves_its_original_child_without_contacting_it() {
     }
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(10),
-        handle_suspend(State(Arc::clone(&state)), Path("owner".into())),
+        handle_suspend(
+            crate::tests::operator_actor(),
+            State(Arc::clone(&state)),
+            Path("owner".into()),
+        ),
     )
     .await
     .unwrap();

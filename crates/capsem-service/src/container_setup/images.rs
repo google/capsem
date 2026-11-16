@@ -643,6 +643,7 @@ pub(crate) async fn handle_list_images(
 /// image cache, admit. A refused source answers 403 before any registry is
 /// contacted.
 pub(crate) async fn handle_pull_image(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Json(request): Json<ImagePullRequest>,
 ) -> Result<Json<ImagePullResponse>, AppError> {

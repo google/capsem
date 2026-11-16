@@ -62,6 +62,7 @@ async fn visible_to(state: &ServiceState, source_vm: &str) -> Vec<Visible> {
 /// see: `<vm>.<network>` names one member, `<vm>` alone only when one
 /// member across the asker's networks has that name.
 pub(super) async fn handle_private_resolve(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<ServicePeer>,
     Json(request): Json<PrivateResolveRequest>,

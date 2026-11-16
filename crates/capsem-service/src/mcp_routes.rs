@@ -198,6 +198,7 @@ pub(super) async fn handle_mcp_server_tools(
 /// POST /mcp/servers/{server_id}/refresh -- rediscover one server's tools in
 /// every running VM.
 pub(super) async fn handle_mcp_server_refresh(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Path(server_id): Path<String>,
 ) -> Result<Json<api::McpRefreshResponse>, AppError> {
@@ -267,6 +268,7 @@ pub(super) async fn handle_mcp_server_refresh(
 
 /// PATCH /mcp/default/edit -- set the default MCP permission in settings.toml.
 pub(super) async fn handle_mcp_default_edit(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Json(update): Json<McpPermissionEditRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
@@ -278,8 +280,8 @@ pub(super) async fn handle_mcp_default_edit(
     };
     let action = update.action;
     // MCP permissions compile to enforcement rules: enforced before returning.
-    let event = apply_policy_mutation(&state, route, move |edit, corp| {
-        edit.set_mcp_default_permission(corp, action, "service-api")
+    let event = apply_policy_mutation(&state, &_actor, route, move |edit, corp, actor| {
+        edit.set_mcp_default_permission(corp, action, actor)
     })
     .await?;
     Ok(Json(json!({ "action": update.action, "mutation": event })))
@@ -288,6 +290,7 @@ pub(super) async fn handle_mcp_default_edit(
 /// PATCH /mcp/servers/{server_id}/tools/{tool_id}/edit -- allow, ask or
 /// block one tool in settings.toml.
 pub(super) async fn handle_mcp_tool_edit(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Path((server_id, tool_id)): Path<(String, String)>,
     Json(update): Json<McpPermissionEditRequest>,
@@ -300,8 +303,8 @@ pub(super) async fn handle_mcp_tool_edit(
         operation: "permission",
     };
     let (server, tool, action) = (server_id.clone(), tool_id.clone(), update.action);
-    let event = apply_policy_mutation(&state, route, move |edit, corp| {
-        edit.set_mcp_tool_permission(corp, &server, &tool, action, "service-api")
+    let event = apply_policy_mutation(&state, &_actor, route, move |edit, corp, actor| {
+        edit.set_mcp_tool_permission(corp, &server, &tool, action, actor)
     })
     .await?;
     Ok(Json(json!({
@@ -315,6 +318,7 @@ pub(super) async fn handle_mcp_tool_edit(
 /// POST /mcp/servers/{server_id}/tools/{tool_id}/call -- call a tool through
 /// a running VM's aggregator, under that VM's policy.
 pub(super) async fn handle_mcp_tool_call(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Path((server_id, tool_id)): Path<(String, String)>,
     Json(arguments): Json<serde_json::Value>,

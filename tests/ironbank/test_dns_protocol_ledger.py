@@ -19,7 +19,7 @@ from helpers.constants import (
     DEFAULT_RAM_MB,
     EXEC_READY_TIMEOUT,
 )
-from helpers.gateway import GatewayInstance, TcpHttpClient
+from helpers.gateway import TcpHttpClient
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
 from helpers.service import (
     ServiceInstance,
@@ -29,6 +29,7 @@ from helpers.service import (
     vm_session_dir,
     wait_exec_ready,
 )
+from helpers.service_gateway import ServiceGateway
 from helpers.session_ledger import open_session_ledger
 from log_streams import read_log_stream
 
@@ -86,7 +87,7 @@ def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
 
 
 def _query_rows(client, session_id: str, sql: str) -> list[dict]:
-    db_path = vm_session_db_path(Path(client.socket_path).parent, client, session_id)
+    db_path = vm_session_db_path(client.run_dir, client, session_id)
     with closing(open_session_ledger(db_path)) as conn:
         conn.row_factory = sqlite3.Row
         return [dict(row) for row in conn.execute(sql).fetchall()]
@@ -134,7 +135,7 @@ def test_dns_query_and_block_matrix_pays_full_ledger_debt_blackbox() -> None:
     assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
 
     service = ServiceInstance()
-    gateway: GatewayInstance | None = None
+    gateway: ServiceGateway | None = None
     mock_proc = None
     client = None
     session_id = vm_name("ironbank-dns")
@@ -178,7 +179,7 @@ def test_dns_query_and_block_matrix_pays_full_ledger_debt_blackbox() -> None:
         os.environ["CAPSEM_CORP_CONFIG"] = str(corp_path)
         service.start()
         client = service.client()
-        gateway = GatewayInstance(uds_path=service.uds_path)
+        gateway = ServiceGateway(service)
         gateway.start()
         gateway_client = TcpHttpClient(gateway.base_url, gateway.token)
         _prove_gateway_proxy(gateway_client)
@@ -491,10 +492,9 @@ def test_dns_query_and_block_matrix_pays_full_ledger_debt_blackbox() -> None:
         )
         assert error_rows
 
-        service_log = read_log_stream(service.tmp_dir / "service.log")
-        process_log = read_log_stream(
-            vm_session_dir(service.tmp_dir, client, vm_id) / "process.log"
-        )
+        process_log_path = vm_session_dir(service.tmp_dir, client, vm_id) / "process.log"
+        service_log = service.stop_and_read_log()
+        process_log = read_log_stream(process_log_path)
         gateway_log = gateway.stop_and_read_log()
         assert "handle_exec" in service_log or "exec" in service_log
         assert "dns" in process_log.lower()

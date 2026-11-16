@@ -13,8 +13,9 @@ from helpers.constants import (
     EXEC_TIMEOUT_SECS,
     HTTP_TIMEOUT,
 )
-from helpers.gateway import GatewayInstance, TcpHttpClient
+from helpers.gateway import TcpHttpClient
 from helpers.service import ServiceInstance, exec_output_text, vm_name
+from helpers.service_gateway import ServiceGateway
 
 pytestmark = [pytest.mark.gateway, pytest.mark.e2e]
 
@@ -24,7 +25,7 @@ def e2e_env():
     """Start real capsem-service + capsem-gateway."""
     svc = ServiceInstance()
     svc.start()
-    gw = GatewayInstance(uds_path=svc.uds_path)
+    gw = ServiceGateway(svc)
     gw.start()
     yield gw, svc
     gw.stop()

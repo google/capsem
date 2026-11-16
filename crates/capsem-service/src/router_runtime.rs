@@ -21,11 +21,11 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
         )
         .route(
             "/networks",
-            get(network_routes::handle_networks_list).post(network_routes::handle_network_create),
+            get(network_routes::handle_networks_list).merge(post(network_routes::handle_network_create)),
         )
         .route(
             "/networks/{id}",
-            get(network_routes::handle_network_inspect).delete(network_routes::handle_network_delete),
+            get(network_routes::handle_network_inspect).merge(delete(network_routes::handle_network_delete)),
         )
         .route("/networks/{id}/logs", get(network_routes::handle_network_logs))
         .route(
@@ -40,7 +40,7 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
         )
         .route(
             "/networks/{id}/members/{vm_id}",
-            put(network_routes::handle_network_attach).delete(network_routes::handle_network_detach),
+            put(network_routes::handle_network_attach).merge(delete(network_routes::handle_network_detach)),
         )
         .route("/images", get(container_setup::images::handle_list_images))
         .route(
@@ -52,15 +52,15 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route("/connections/google/authorize", post(connection_routes::authorize))
         .route(
             "/connections/authorizations/{transaction_id}",
-            get(connection_routes::authorization).delete(connection_routes::cancel),
+            get(connection_routes::authorization).merge(delete(connection_routes::cancel)),
         )
         .route(
             "/connections/{connection_id}",
-            get(connection_routes::get_connection).delete(connection_routes::disconnect),
+            get(connection_routes::get_connection).merge(delete(connection_routes::disconnect)),
         )
         .route(
             "/vms/{id}/credential-grants",
-            get(connection_routes::grants).post(connection_routes::create_grant),
+            get(connection_routes::grants).merge(post(connection_routes::create_grant)),
         )
         .route(
             "/vms/{id}/credential-grants/{grant_id}",
@@ -80,7 +80,7 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route("/vms/{id}/stream", get(streams::handle_stream))
         .route(
             "/vms/{id}/exposures",
-            get(exposures::handle_list_exposures).post(exposures::handle_create_exposure),
+            get(exposures::handle_list_exposures).merge(post(exposures::handle_create_exposure)),
         )
         .route(
             "/vms/{id}/exposures/{exposure_id}",
@@ -192,7 +192,7 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route("/vms/{id}/files/list", get(handle_list_files))
         .route(
             "/vms/{id}/files/content",
-            get(handle_download_file).post(handle_upload_file),
+            get(handle_download_file).merge(post(handle_upload_file)),
         )
         // Accept what the gateway forwards; axum's implicit 2 MiB default
         // refused file uploads the API documents.
@@ -302,6 +302,7 @@ pub(super) fn read_manifest_metadata_status_document(path: &StdPath) -> Result<s
 }
 
 pub(super) async fn handle_update_check(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Json(request): Json<api::UpdateCheckRequest>,
 ) -> Result<Json<api::UpdateActionResponse>, AppError> {
@@ -313,6 +314,7 @@ pub(super) async fn handle_update_check(
 }
 
 pub(super) async fn handle_update_apply(
+    _actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Json(request): Json<api::UpdateApplyRequest>,
 ) -> Result<Json<api::UpdateActionResponse>, AppError> {
