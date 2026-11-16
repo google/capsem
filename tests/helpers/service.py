@@ -1,5 +1,6 @@
 """Shared service startup helper for integration tests."""
 
+import json
 import os
 import shutil
 import subprocess
@@ -483,8 +484,11 @@ class ServiceInstance:
                 # Socket file exists -- verify server is actually accepting connections
                 probe = Transport(socket_path=str(self.uds_path))
                 try:
-                    probe.request("GET", "/vms/list", timeout=2)
-                    return
+                    status, _, body = probe.request("GET", "/version", timeout=2)
+                    version = json.loads(body)
+                    if (status == 200 and isinstance(version, dict) and set(version) == {"version"}
+                            and isinstance(version["version"], str) and version["version"]):
+                        return
                 except Exception:
                     pass
                 finally:

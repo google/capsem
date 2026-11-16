@@ -258,3 +258,30 @@ def test_registry_entry_has_the_current_shape_and_manifest_pins(tmp_path: Path) 
 
     bare = registry_entry(run, "bare-id", "bare-name", assets_dir=assets, overlay=False)
     assert not (Path(bare["session_dir"]) / "system").exists()
+
+
+@pytest.mark.parametrize("first", [
+    (403, {}, b'{"error":"forbidden"}'), (200, {}, b'not-json'),
+    (200, {}, b'{}'), (200, {}, b'{"version":0}'), (200, {}, b'{"version":""}'),
+])
+def test_start_uses_successful_named_bootstrap_probe(monkeypatch: pytest.MonkeyPatch, first) -> None:
+    from types import SimpleNamespace
+
+    service = service_helper.ServiceInstance(sign_binaries=False)
+    service.uds_path.touch()
+    replies = [first, (200, {}, b'{"version":"0.7.3"}')]
+    calls = []
+
+    def request(method, path, **_kwargs):
+        calls.append((method, path))
+        return replies.pop(0)
+
+    monkeypatch.setattr(service_helper, "Transport", lambda **_kwargs: SimpleNamespace(request=request, close=lambda: None))
+    monkeypatch.setattr(service_helper.subprocess, "Popen", lambda *_args, **_kwargs: SimpleNamespace(poll=lambda: None))
+    monkeypatch.setattr(service_helper.time, "sleep", lambda _: None)
+    try:
+        service.start()
+        assert calls == [("GET", "/version"), ("GET", "/version")]
+    finally:
+        service.proc = None
+        service.stop()
