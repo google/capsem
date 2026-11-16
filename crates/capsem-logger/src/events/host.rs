@@ -23,13 +23,14 @@ pub enum HostEventKind {
     ImageDenied,
     GrantMinted,
     GrantRevoked,
+    AccessDenied,
     SettingsChanged,
     ServiceStarted,
     ServiceStopped,
 }
 
 impl HostEventKind {
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 16] = [
         Self::SessionCreated,
         Self::SessionStarted,
         Self::SessionStopped,
@@ -42,6 +43,7 @@ impl HostEventKind {
         Self::ImageDenied,
         Self::GrantMinted,
         Self::GrantRevoked,
+        Self::AccessDenied,
         Self::SettingsChanged,
         Self::ServiceStarted,
         Self::ServiceStopped,
@@ -61,6 +63,7 @@ impl HostEventKind {
             Self::ImageDenied => "image_denied",
             Self::GrantMinted => "grant_minted",
             Self::GrantRevoked => "grant_revoked",
+            Self::AccessDenied => "access_denied",
             Self::SettingsChanged => "settings_changed",
             Self::ServiceStarted => "service_started",
             Self::ServiceStopped => "service_stopped",

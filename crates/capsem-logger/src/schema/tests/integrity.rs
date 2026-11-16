@@ -340,3 +340,20 @@ fn stale_digest_checks_are_refused_without_rewriting_the_ledger() {
         1
     );
 }
+
+#[test]
+fn host_event_schema_accepts_every_canonical_kind_and_rejects_unknown() {
+    let conn = Connection::open_in_memory().unwrap();
+    create_tables(&conn).unwrap();
+    let insert = |kind: &str| {
+        conn.execute(
+            "INSERT INTO host_events(timestamp_unix_ms,kind,actor,detail) VALUES(1,?1,'operator',x'80')",
+            [kind],
+        )
+    };
+    for kind in crate::events::HostEventKind::ALL {
+        insert(kind.as_str()).unwrap();
+    }
+    assert!(insert("access_denied").is_ok());
+    assert!(insert("unrecognized_event").is_err());
+}

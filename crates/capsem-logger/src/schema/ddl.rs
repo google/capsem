@@ -553,7 +553,7 @@ pub const CREATE_SCHEMA: &str = "
         kind TEXT NOT NULL CHECK (kind IN (
             'session_created', 'session_started', 'session_stopped', 'session_restarted',
             'session_forked', 'session_destroyed', 'session_suspended', 'session_resumed',
-            'image_admitted', 'image_denied', 'grant_minted', 'grant_revoked',
+            'image_admitted', 'image_denied', 'grant_minted', 'grant_revoked', 'access_denied',
             'settings_changed', 'service_started', 'service_stopped'
         )),
         session_id TEXT,

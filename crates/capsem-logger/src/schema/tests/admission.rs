@@ -112,6 +112,7 @@ fn existing_host_admission_refuses_malformed_schema_and_empty_existing_database(
 fn existing_host_admission_and_writer_share_security_and_integrity_constraint_refusal() {
     for (table, expected) in [
         ("security_rule_events", "security ledgers"),
+        ("host_events", "host event kinds"),
         ("net_events", "integrity checks"),
     ] {
         let (_root, path) = existing("");
@@ -119,7 +120,9 @@ fn existing_host_admission_and_writer_share_security_and_integrity_constraint_re
         let canonical: String = conn
             .query_row("SELECT sql FROM sqlite_master WHERE name=?1", [table], |row| row.get(0))
             .unwrap();
-        let stale = if table == "net_events" {
+        let stale = if table == "host_events" {
+            canonical.replace(", 'access_denied'", "")
+        } else if table == "net_events" {
             canonical.replace(&"[0-9a-f]".repeat(64), "[0-9a-f]*")
         } else {
             canonical.replace(", 'network.connect'", "")
@@ -133,5 +136,9 @@ fn existing_host_admission_and_writer_share_security_and_integrity_constraint_re
         let conn = Connection::open(&path).unwrap();
         let writer = create_tables(&conn).unwrap_err().to_string();
         assert_eq!(admitted, writer);
+        if table == "host_events" {
+            let reader = validate_ready_schema(&conn).unwrap_err();
+            assert!(reader.contains(expected), "{reader}");
+        }
     }
 }

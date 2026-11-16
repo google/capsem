@@ -63,3 +63,25 @@ async fn the_db_object_replays_host_events_with_their_detail() {
     assert_eq!(events[1].trace_id.as_deref(), Some("t"));
     assert_eq!(events[0].session_id.as_deref(), Some("s1"));
 }
+
+#[tokio::test]
+async fn host_access_denial_preserves_actor_target_and_detail_across_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("host.db");
+    let event = crate::HostEvent {
+        timestamp_unix_ms: 42,
+        kind: crate::HostEventKind::AccessDenied,
+        session_id: Some("target-session".into()),
+        actor: "agent:access-id".into(),
+        detail: vec![0x81, 0xa1, b'a', 0x05],
+        trace_id: Some("request-trace".into()),
+    };
+    {
+        let db = crate::DbHandle::open(&path).unwrap();
+        db.write(WriteOp::HostEvent(event.clone())).await.unwrap();
+        db.flush().await.unwrap();
+        assert_eq!(db.host_events().await.unwrap().as_slice(), std::slice::from_ref(&event));
+    }
+    let reader = crate::reader::DbReader::open(&path).unwrap();
+    assert_eq!(reader.host_events().unwrap(), [event]);
+}
