@@ -76,7 +76,7 @@ async fn connect(
             .parse()
             .unwrap(),
     );
-    let socket = crate::gateway_channel::prepare(router).unwrap();
+    let socket = crate::gateway_channel::prepare(router, crate::tests::fixture_gateway_grant()).unwrap();
     let socket = tokio::net::UnixStream::from_std(socket).unwrap();
     if let Some(protocol) = protocol {
         request

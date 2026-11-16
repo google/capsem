@@ -169,6 +169,13 @@ pub(crate) fn make_test_state_owned() -> ServiceState {
     test_state(root.join("run"), root.join("assets"), Some(test_tempdir))
 }
 
+/// Stable transport authority for ordinary unit clients. Control-lifetime
+/// regressions use the real descriptor broker, which owns its own authority.
+pub(crate) fn fixture_gateway_grant() -> crate::instance::WorkerGrant {
+    static CONTROL: std::sync::OnceLock<crate::instance::WorkerAuthority> = std::sync::OnceLock::new();
+    CONTROL.get_or_init(Default::default).grant()
+}
+
 /// Unit clients use the real private HTTP seat and credential validation.
 pub(crate) trait OperatorRequestExt {
     async fn operator_request(
@@ -192,7 +199,7 @@ impl OperatorRequestExt for axum::Router {
             .or_insert(axum::http::HeaderValue::from_static(
                 "Bearer AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
             ));
-        let socket = gateway_channel::prepare(self).unwrap();
+        let socket = gateway_channel::prepare(self, fixture_gateway_grant()).unwrap();
         let socket = tokio::net::UnixStream::from_std(socket).unwrap();
         let (mut client, connection) = hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(socket))
             .await

@@ -81,7 +81,7 @@ pub(super) async fn serve(socket: std::os::unix::net::UnixStream, state: Arc<Ser
                     (GatewayGrantKind::Metrics, prepared.descriptor)
                 })
             }
-            request => open(&state, &service_router, request).await,
+            request => open(&state, &service_router, authority.grant(), request).await,
         };
         match opened {
             Ok((kind, descriptor)) => {
@@ -150,13 +150,14 @@ async fn send_grant(
 async fn open(
     state: &Arc<ServiceState>,
     service_router: &axum::Router,
+    control: crate::instance::WorkerGrant,
     request: GatewayGrantRequest,
 ) -> Result<(GatewayGrantKind, std::os::unix::net::UnixStream), GatewayGrantDenial> {
     match request {
         GatewayGrantRequest::Adopted { .. } | GatewayGrantRequest::OpenMetrics { .. } => {
             Err(GatewayGrantDenial::InvalidRequest)
         }
-        GatewayGrantRequest::OpenService { .. } => crate::gateway_channel::prepare(service_router.clone())
+        GatewayGrantRequest::OpenService { .. } => crate::gateway_channel::prepare(service_router.clone(), control)
             .map(|socket| (GatewayGrantKind::Service, socket))
             .map_err(|_| GatewayGrantDenial::Unavailable),
         GatewayGrantRequest::OpenOwnerHandoff { vm_id, .. } => {

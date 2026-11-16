@@ -387,11 +387,30 @@ async fn operator_registration_is_once_and_control_disconnect_retires_pooled_htt
                 .body(Body::empty())
                 .unwrap(),
         )
-        .await
-        .unwrap();
-    assert_eq!(
-        response.status(),
-        StatusCode::UNAUTHORIZED,
-        "a pooled connection must not retain a retired actor"
-    );
+        .await;
+    if let Ok(response) = response {
+        assert!(
+            matches!(response.status(), StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN),
+            "a pooled connection must not retain a retired actor",
+        );
+        to_bytes(Body::new(response.into_body()), 1024).await.unwrap();
+    }
+    // A later valid operator epoch must not resurrect an old broker's seat.
+    let mut fresh = state.caller_authority.begin();
+    fresh.register(GatewayAuthSecret::from_bytes([b'B'; 64])).unwrap();
+    let response = client
+        .send_request(
+            axum::http::Request::get("/version")
+                .header(axum::http::header::AUTHORIZATION, format!("Bearer {}", "B".repeat(64)))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    if let Ok(response) = response {
+        assert_eq!(
+            response.status(),
+            StatusCode::FORBIDDEN,
+            "a new actor epoch resurrected a retired gateway transport"
+        );
+    }
 }

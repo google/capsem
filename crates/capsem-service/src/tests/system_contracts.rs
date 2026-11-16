@@ -138,7 +138,7 @@ async fn gateway_status_route_returns_vms_assets_and_updates_in_one_response() {
             [b'A'; 64],
         ))
         .unwrap();
-    let socket = gateway_channel::prepare(build_service_router(state)).unwrap();
+    let socket = gateway_channel::prepare(build_service_router(state), fixture_gateway_grant()).unwrap();
     let socket = tokio::net::UnixStream::from_std(socket).unwrap();
     let (mut client, connection) = hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(socket))
         .await

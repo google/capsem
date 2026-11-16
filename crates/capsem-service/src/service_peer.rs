@@ -55,11 +55,10 @@ pub(crate) async fn restrict_owner_routes(
             .insert(crate::caller_auth::AuthenticatedActor::vm_owner(&owner));
         return next.run(request).await;
     }
-    if request
-        .extensions()
-        .get::<crate::gateway_channel::GatewayChannel>()
-        .is_some()
-    {
+    if let Some(channel) = request.extensions().get::<crate::gateway_channel::GatewayChannel>() {
+        if channel.is_revoked() {
+            return forbidden("gateway control epoch ended");
+        }
         if let Some(value) = request.headers_mut().get_mut(axum::http::header::AUTHORIZATION) {
             value.set_sensitive(true);
         }
