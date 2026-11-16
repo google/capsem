@@ -6,13 +6,6 @@
 //! The owner proves itself with the kernel identity of its service connection.
 use super::*;
 
-/// The asker is the running owner of `vm`, or nobody.
-fn owner_of(state: &ServiceState, vm: &str, peer: ServicePeer) -> Result<(), AppError> {
-    owner_connection::OwnerConnection::current(state, vm, peer.0)
-        .map(|_| ())
-        .map_err(|error| AppError::new(StatusCode::FORBIDDEN, error))
-}
-
 /// What a VM is called on the private zone: its display name.
 fn vm_display_name(state: &ServiceState, vm_id: &str) -> String {
     if let Some(instance) = state.instances.lock().unwrap().get(vm_id) {
@@ -73,15 +66,21 @@ pub(super) async fn handle_private_resolve(
     axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<ServicePeer>,
     Json(request): Json<PrivateResolveRequest>,
 ) -> Result<Json<PrivateResolveResponse>, AppError> {
-    owner_of(&state, &request.source_vm, peer)?;
-    resolve_private(&state, request).await.map(Json)
+    let owner = owner_connection::OwnerConnection::from_peer(&state, peer.0)
+        .map_err(|error| AppError::new(StatusCode::FORBIDDEN, error))?;
+    let response = resolve_private(&state, owner.id(), request).await?;
+    owner
+        .validate(&state, false)
+        .map_err(|error| AppError::new(StatusCode::FORBIDDEN, error))?;
+    Ok(Json(response))
 }
 
 pub(crate) async fn resolve_private(
     state: &ServiceState,
+    source_vm: &str,
     request: PrivateResolveRequest,
 ) -> Result<PrivateResolveResponse, AppError> {
-    let visible = visible_to(state, &request.source_vm).await;
+    let visible = visible_to(state, source_vm).await;
     let found = match (&request.name, request.address) {
         (Some(name), None) => {
             let name = name.trim_matches('.').to_ascii_lowercase();

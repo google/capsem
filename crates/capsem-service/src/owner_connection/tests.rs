@@ -263,3 +263,28 @@ async fn disabled_guest_suspend_never_reaches_the_owner() {
         .unwrap();
     assert!(!state.instances.lock().unwrap().contains_key("owner"));
 }
+
+#[test]
+fn kernel_peer_resolves_only_one_current_nonrevoked_owner() {
+    let (state, granted) = fixture();
+    let owner = OwnerConnection::from_peer(&state, Some(granted.identity)).unwrap();
+    assert_eq!(owner.id(), "owner");
+    assert_eq!(owner.generation(), granted.generation());
+    assert!(OwnerConnection::from_peer(&state, None).is_err());
+    let foreign_uid = peer::PeerIdentity {
+        uid: granted.identity.uid.wrapping_add(1),
+        ..granted.identity
+    };
+    assert!(OwnerConnection::from_peer(&state, Some(foreign_uid)).is_err());
+    insert_fake_instance_with_session_dir(
+        &state,
+        "sibling",
+        std::process::id(),
+        state.run_dir.join("sessions/sibling"),
+    );
+    assert!(OwnerConnection::from_peer(&state, Some(granted.identity)).is_err());
+    state.instances.lock().unwrap().remove("sibling");
+    state.instances.lock().unwrap().get("owner").unwrap().authority.revoke();
+    assert!(OwnerConnection::from_peer(&state, Some(granted.identity)).is_err());
+    assert!(owner.authenticate_identity(&state, granted.identity).is_err());
+}

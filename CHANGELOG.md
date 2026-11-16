@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Security: Derive private-name lookup identity from the registered kernel peer and VM generation, refuse revoked or ambiguous owners, and reject the old caller-supplied VM identity field.
+
 - Security: Isolate gateway service traffic on coordinator-minted socket pairs, preventing direct service peers from reaching the gateway’s private status route using forged headers.
 
 - Security: Replace the Linux desktop activation backend with maintained zbus 6 and open validated URLs through the native launcher, removing all three expiring zbus 5 maintenance exceptions. Keep other platforms’ single-instance implementations unchanged.

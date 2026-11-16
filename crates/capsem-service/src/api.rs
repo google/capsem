@@ -5,8 +5,8 @@ use std::net::Ipv4Addr;
 
 /// Internal owner-authenticated private-name lookup.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct PrivateResolveRequest {
-    pub source_vm: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

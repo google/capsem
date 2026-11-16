@@ -28,17 +28,15 @@ pub(crate) async fn serve(state: Arc<ServiceState>, vm_id: String, stream: UnixS
             let address_lookup = matches!(&request, ProxyPrivateNameRequest::AddressOf { .. });
             let query = match request {
                 ProxyPrivateNameRequest::AddressOf { name, .. } => PrivateResolveRequest {
-                    source_vm: vm_id.clone(),
                     name: Some(name),
                     address: None,
                 },
                 ProxyPrivateNameRequest::NameOf { address, .. } => PrivateResolveRequest {
-                    source_vm: vm_id.clone(),
                     name: None,
                     address: Some(address),
                 },
             };
-            match crate::private_routes::resolve_private(&state, query).await {
+            match crate::private_routes::resolve_private(&state, &vm_id, query).await {
                 Ok(answer) => {
                     if address_lookup {
                         ProxyPrivateNameResponse::Address {

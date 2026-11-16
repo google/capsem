@@ -30,6 +30,31 @@ impl OwnerConnection {
         Ok(owner)
     }
 
+    /// Resolve exactly one registered spawn from kernel credentials. No VM
+    /// identifier supplied by an HTTP caller participates in this lookup.
+    pub(crate) fn from_peer(state: &ServiceState, identity: Option<peer::PeerIdentity>) -> Result<Self, String> {
+        let identity = identity.ok_or_else(|| "service peer identity unavailable".to_string())?;
+        if identity.uid != process::current_uid() {
+            return Err("Unix peer is not a local VM owner".into());
+        }
+        let instances = state.instances.lock().unwrap();
+        let mut matching = instances.values().filter(|instance| instance.pid == identity.pid.get());
+        let owner = matching
+            .next()
+            .ok_or_else(|| "Unix peer has no registered VM owner".to_string())?;
+        if matching.next().is_some() {
+            return Err("Unix peer has ambiguous VM ownership".into());
+        }
+        let owner = Self::capture(owner)?;
+        drop(instances);
+        owner.authenticate_identity(state, identity)?;
+        Ok(owner)
+    }
+
+    pub(crate) fn id(&self) -> &str {
+        &self.id
+    }
+
     pub(crate) fn pid(&self) -> u32 {
         self.identity.pid.get()
     }
@@ -101,7 +126,7 @@ impl OwnerConnection {
             None => retiring,
         };
         drop(instances);
-        if !current {
+        if !current || (!retiring && self.authority.is_revoked()) {
             return Err("VM owner changed during IPC admission".into());
         }
         Ok(())

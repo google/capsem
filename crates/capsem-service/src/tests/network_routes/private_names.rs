@@ -13,7 +13,7 @@ fn private_name_wrong_process_client() {
         .block_on(capsem_core::service_uds::post_json(
             std::path::Path::new(&socket),
             "/networks/private/resolve",
-            &json!({"source_vm": "vm-a", "name": "vm-a"}),
+            &json!({"name": "vm-a"}),
         ))
         .unwrap();
     assert_eq!(status, StatusCode::FORBIDDEN.as_u16());
@@ -27,13 +27,10 @@ async fn private_names_reject_a_real_same_uid_wrong_process() {
     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
     let router = app(&state).into_make_service_with_connect_info::<ServicePeer>();
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-    let (owner_status, _) = capsem_core::service_uds::post_json(
-        &socket,
-        "/networks/private/resolve",
-        &json!({"source_vm": "vm-a", "name": "nobody"}),
-    )
-    .await
-    .unwrap();
+    let (owner_status, _) =
+        capsem_core::service_uds::post_json(&socket, "/networks/private/resolve", &json!({"name": "nobody"}))
+            .await
+            .unwrap();
     assert_eq!(
         owner_status,
         StatusCode::NOT_FOUND.as_u16(),

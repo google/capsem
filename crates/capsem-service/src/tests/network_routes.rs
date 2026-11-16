@@ -866,7 +866,9 @@ async fn private_names_resolve_only_to_members_the_asker_shares_a_network_with()
         ("vm-d", "beta"),
         ("vm-e", "echo"),
     ] {
-        insert_fake_instance(&state, id, std::process::id());
+        // Only the querying member has a running owner. Passive members
+        // remain discoverable through the durable network membership.
+        insert_fake_instance(&state, id, if id == "vm-a" { std::process::id() } else { 0 });
         state.instances.lock().unwrap().get_mut(id).unwrap().name = name.into();
     }
     // Each VM but vm-a is in one network, so its lease there is its address.
@@ -905,7 +907,7 @@ async fn private_names_resolve_only_to_members_the_asker_shares_a_network_with()
         addresses.insert(vm, lease);
     }
     let ask = |name: Option<&str>, address: Option<&str>| {
-        let mut request = json!({ "source_vm": "vm-a" });
+        let mut request = json!({});
         if let Some(name) = name {
             request["name"] = json!(name);
         }
@@ -955,6 +957,14 @@ async fn private_names_resolve_only_to_members_the_asker_shares_a_network_with()
         private_resolve_from(&state, ask(Some("beta.team"), None), 1).await.0,
         StatusCode::FORBIDDEN,
         "a same-UID process outside the registered owner PID is not authority"
+    );
+
+    assert_eq!(
+        private_resolve(&state, json!({"source_vm": "vm-b", "name": "beta.team"}))
+            .await
+            .0,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "the old caller-supplied identity field must fail loudly, never select a VM"
     );
 
     // Leaving takes the name with it at once.
