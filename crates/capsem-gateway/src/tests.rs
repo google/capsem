@@ -468,7 +468,7 @@ fn token_comparison_does_not_depend_on_prefix_agreement() {
 // URI at debug, and the gateway log runs `tower_http=debug`, so every such
 // request wrote the bearer token into gateway.log in clear text.
 
-static HTTP_TRACE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+pub(crate) static HTTP_TRACE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[derive(Default)]
 struct TraceCapture {

@@ -85,6 +85,9 @@ async fn status_of(app: Router, method: &str, uri: &str) -> StatusCode {
 
 #[tokio::test]
 async fn pending_proxy_poll_does_not_leave_request_span_entered() {
+    // Dispatcher callsite interests are process-global, just like the two
+    // router privacy captures that already share this ownership lock.
+    let _trace = crate::tests::HTTP_TRACE_LOCK.lock().await;
     use std::future::Future;
     use std::task::{Context, Waker};
 
