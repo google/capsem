@@ -171,20 +171,29 @@ fn the_export_registry_rejects_a_second_session_and_a_third_process_export() {
 
 #[test]
 fn the_sql_deadline_interrupts_a_capture_and_is_removed_on_drop() {
-    let conn = rusqlite::Connection::open_in_memory().unwrap();
-    {
-        let _deadline = ArchiveSqlDeadline::install(&conn, std::time::Instant::now());
-        let error = conn
-            .query_row(
-                "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x + 1 FROM n WHERE x < 1000000) \
+    let reader = crate::DbReader::open_in_memory().unwrap();
+    let conn = reader.connection();
+    for _ in 0..2 {
+        {
+            let _deadline = ArchiveSqlDeadline::install(&reader, std::time::Instant::now());
+            let error = conn
+                .query_row(
+                    "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x + 1 FROM n WHERE x < 1000000) \
                  SELECT max(x) FROM n",
-                [],
-                |row| row.get::<_, i64>(0),
-            )
-            .unwrap_err();
-        assert!(matches!(error, rusqlite::Error::SqliteFailure(_, _)), "{error}");
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap_err();
+            assert!(
+                matches!(error, rusqlite::Error::SqliteFailure(ref code, _) if code.code == rusqlite::ErrorCode::OperationInterrupted),
+                "{error}"
+            );
+        }
+        assert_eq!(
+            reader.query_raw("SELECT 1").unwrap(),
+            r#"{"columns":["1"],"rows":[[1]]}"#
+        );
     }
-    assert_eq!(conn.query_row("SELECT 1", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
 }
 
 #[test]

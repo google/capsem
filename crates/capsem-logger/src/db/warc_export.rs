@@ -393,7 +393,7 @@ fn warc_page_sql() -> String {
 }
 
 pub(super) fn capture_warc(
-    conn: &Connection,
+    db_reader: &crate::DbReader,
     db_path: &std::path::Path,
     codecs: &ArchiveCodecs,
 ) -> DbResult<CapturedWarc> {
@@ -404,8 +404,9 @@ pub(super) fn capture_warc(
         (std::time::Instant::now() + Duration::from_secs(5)).min(deadline),
     )
     .map_err(|error| format!("acquire WARC archive capture lock: {error}"))?;
-    let sql_deadline = ArchiveSqlDeadline::install(conn, deadline);
-    let tx = conn
+    let sql_deadline = ArchiveSqlDeadline::install(db_reader, deadline);
+    let tx = db_reader
+        .connection()
         .unchecked_transaction()
         .map_err(|error| format!("begin WARC capture snapshot: {error}"))?;
     let state = crate::schema::archive_state(&tx).map_err(|error| format!("read archive_state: {error}"))?;

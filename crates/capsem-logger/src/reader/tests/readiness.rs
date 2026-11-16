@@ -45,29 +45,35 @@ fn seed_ledger(path: &std::path::Path, rows: usize) {
 /// Steps, not time: a full scan is proportional to the rows it visits and the
 /// count says so on any machine, where a timing bound would only say it on a
 /// quiet one.
-fn readiness_steps(reader: &DbReader) -> u64 {
+fn readiness_steps(reader: &mut DbReader) -> u64 {
     let steps = Arc::new(AtomicU64::new(0));
     let counter = Arc::clone(&steps);
-    reader.connection().progress_handler(
-        1,
-        Some(move || {
-            counter.fetch_add(1, Ordering::Relaxed);
-            false
-        }),
-    );
+    reader
+        .connection_mut()
+        .progress_handler(
+            1,
+            Some(move || {
+                counter.fetch_add(1, Ordering::Relaxed);
+                false
+            }),
+        )
+        .unwrap();
     reader.ready().expect("a healthy ledger is ready");
-    reader.connection().progress_handler(0, None::<fn() -> bool>);
+    reader
+        .connection_mut()
+        .progress_handler(0, None::<fn() -> bool>)
+        .unwrap();
     steps.load(Ordering::Relaxed)
 }
 
 #[test]
 fn readiness_cost_does_not_grow_with_the_ledger() {
     let dir = tempfile::tempdir().unwrap();
-    let small = DbReader::open(&ledger_with_rows(dir.path(), 10)).unwrap();
-    let large = DbReader::open(&ledger_with_rows(dir.path(), 20_000)).unwrap();
+    let mut small = DbReader::open(&ledger_with_rows(dir.path(), 10)).unwrap();
+    let mut large = DbReader::open(&ledger_with_rows(dir.path(), 20_000)).unwrap();
 
-    let small_steps = readiness_steps(&small);
-    let large_steps = readiness_steps(&large);
+    let small_steps = readiness_steps(&mut small);
+    let large_steps = readiness_steps(&mut large);
 
     // Two thousand times the rows; the schema is identical, so the check must
     // be too. Any per-row work shows up here as orders of magnitude.
@@ -132,22 +138,25 @@ fn failed_readiness_stays_a_structural_check() {
         .unwrap()
         .execute_batch("DROP TABLE policy_mutation_events;")
         .unwrap();
-    let broken = DbReader::open(&path).unwrap();
-    let healthy = DbReader::open(&ledger_with_rows(dir.path(), 10)).unwrap();
-    let healthy_steps = readiness_steps(&healthy);
+    let mut broken = DbReader::open(&path).unwrap();
+    let mut healthy = DbReader::open(&ledger_with_rows(dir.path(), 10)).unwrap();
+    let healthy_steps = readiness_steps(&mut healthy);
 
     // A failure is retried by every caller that polls, so it must not be the
     // expensive path. It stops at the first missing table, which is no more
     // work than a full healthy check.
     let steps = Arc::new(AtomicU64::new(0));
     let counter = Arc::clone(&steps);
-    broken.connection().progress_handler(
-        1,
-        Some(move || {
-            counter.fetch_add(1, Ordering::Relaxed);
-            false
-        }),
-    );
+    broken
+        .connection_mut()
+        .progress_handler(
+            1,
+            Some(move || {
+                counter.fetch_add(1, Ordering::Relaxed);
+                false
+            }),
+        )
+        .unwrap();
     for _ in 0..3 {
         broken.ready().expect_err("broken ledger is not ready");
     }

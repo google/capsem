@@ -5,6 +5,27 @@
 //! flushed yet, so there is nothing in it a reader could want (#213).
 
 use super::*;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
+use std::time::Instant;
+
+impl super::rawquery::QueryDeadline {
+    pub(super) fn install(conn: &mut Connection) -> rusqlite::Result<Self> {
+        let epoch = Instant::now();
+        let expires = Arc::new(AtomicU64::new(0));
+        let observed = Arc::clone(&expires);
+        conn.progress_handler(
+            1_000,
+            Some(move || {
+                let deadline = observed.load(Ordering::Relaxed);
+                deadline != 0 && epoch.elapsed().as_nanos() >= u128::from(deadline)
+            }),
+        )?;
+        Ok(Self { epoch, expires })
+    }
+}
 
 impl DbReader {
     /// Open a query-only connection that reads the ledger file.
@@ -25,7 +46,7 @@ impl DbReader {
         schema::transport::assert_current(&conn)?;
         schema::apply_reader_pragmas(&conn)?;
         schema::record_sqlite_mmap_telemetry(&conn, path, "reader", "open");
-        Ok(Self::with_connection(conn))
+        Self::with_connection(conn)
     }
 
     /// Open an in-memory database (for testing; typically unused since
@@ -34,17 +55,19 @@ impl DbReader {
         let conn = Connection::open_in_memory()?;
         schema::apply_pragmas(&conn)?; // in-memory is read-write, pragmas are fine
         schema::create_tables(&conn)?;
-        Ok(Self::with_connection(conn))
+        Self::with_connection(conn)
     }
 
-    fn with_connection(conn: Connection) -> Self {
+    fn with_connection(mut conn: Connection) -> rusqlite::Result<Self> {
         // Route SQL is a fixed set of statements polled on a timer; compiling
         // each one again on every poll was a measurable share of a route's
         // CPU. Room for every polled route's statements, as the writer has.
         conn.set_prepared_statement_cache_capacity(capsem_proto::CACHE_SQLITE_PREPARED_STATEMENTS);
-        Self {
+        let query_deadline = super::rawquery::QueryDeadline::install(&mut conn)?;
+        Ok(Self {
             conn,
             sync: Default::default(),
-        }
+            query_deadline,
+        })
     }
 }

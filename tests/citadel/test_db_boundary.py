@@ -80,7 +80,6 @@ LOGGER_DB_INTERNALS = {
     Path("crates/capsem-logger/src/host_admission.rs"),
     Path("crates/capsem-logger/src/counters.rs"),
     Path("crates/capsem-logger/src/db.rs"),
-    Path("crates/capsem-logger/src/db/bodies.rs"),
     Path("crates/capsem-logger/src/db/handle_tests.rs"),
     Path("crates/capsem-logger/src/db/handle_tests/bodies.rs"),
     Path("crates/capsem-logger/src/db/handle_tests/external_reader.rs"),

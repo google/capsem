@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use capsem_archive::{ArchiveCodecs, ArchiveError, BlockExtent, BodyLogReader, BodyRef};
 use capsem_foundation::unix::contained::ContainedDir;
 use capsem_foundation::unix::lock::{self, LockMode};
-use rusqlite::{Connection, Row};
+use rusqlite::Row;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -103,14 +103,16 @@ pub(super) struct CapturedBodies {
 }
 
 pub(super) struct ArchiveSqlDeadline<'a> {
-    conn: &'a Connection,
+    _guard: crate::reader::QueryDeadlineGuard<'a>,
     deadline: Instant,
 }
 
 impl<'a> ArchiveSqlDeadline<'a> {
-    pub(super) fn install(conn: &'a Connection, deadline: Instant) -> Self {
-        conn.progress_handler(1_000, Some(move || Instant::now() >= deadline));
-        Self { conn, deadline }
+    pub(super) fn install(reader: &'a crate::DbReader, deadline: Instant) -> Self {
+        Self {
+            _guard: reader.sql_deadline(deadline),
+            deadline,
+        }
     }
 
     pub(super) fn check(&self, operation: &str) -> DbResult<()> {
@@ -119,12 +121,6 @@ impl<'a> ArchiveSqlDeadline<'a> {
         } else {
             Ok(())
         }
-    }
-}
-
-impl Drop for ArchiveSqlDeadline<'_> {
-    fn drop(&mut self) {
-        self.conn.progress_handler(0, None::<fn() -> bool>);
     }
 }
 
@@ -464,7 +460,7 @@ pub(super) fn read_one_checked(reader: &BodyLogReader, row: IndexRow) -> Result<
 }
 
 pub(super) fn capture_body_rows(
-    conn: &Connection,
+    db_reader: &crate::DbReader,
     db_path: &std::path::Path,
     queries: Vec<super::DbQueryOwned>,
     requested_ids: usize,
@@ -482,8 +478,9 @@ pub(super) fn capture_body_rows(
         deadline,
     )
     .map_err(|error| format!("acquire archive capture lock: {error}"))?;
-    let sql_deadline = ArchiveSqlDeadline::install(conn, deadline);
-    let tx = conn
+    let sql_deadline = ArchiveSqlDeadline::install(db_reader, deadline);
+    let tx = db_reader
+        .connection()
         .unchecked_transaction()
         .map_err(|error| format!("begin archive capture snapshot: {error}"))?;
     let state = crate::schema::archive_state(&tx).map_err(|error| format!("read archive_state: {error}"))?;

@@ -46,15 +46,26 @@ fn archive_index_flush_batches_actual_sql_and_preserves_order_and_metadata() {
         }
         archive.flush_segment();
         INDEX_STATEMENTS.with(|count| count.set(0));
-        conn.trace(Some(count_index_statements));
+        conn.trace_v2(
+            rusqlite::trace::TraceEventCodes::SQLITE_TRACE_STMT,
+            Some(|event: rusqlite::trace::TraceEvent<'_>| {
+                if let rusqlite::trace::TraceEvent::Stmt(_, sql) = event {
+                    count_index_statements(sql);
+                }
+            }),
+        )
+        .unwrap();
         commit(&mut archive, &conn);
-        conn.trace(None);
+        conn.trace_v2(
+            rusqlite::trace::TraceEventCodes::empty(),
+            None::<fn(rusqlite::trace::TraceEvent<'_>)>,
+        )
+        .unwrap();
         assert_eq!(INDEX_STATEMENTS.with(Cell::get), size.div_ceil(64));
         assert_eq!(
-            conn.query_row("SELECT COUNT(*) FROM event_body_blobs", [], |row| row
-                .get::<_, usize>(0))
+            conn.query_row("SELECT COUNT(*) FROM event_body_blobs", [], |row| row.get::<_, i64>(0))
                 .unwrap(),
-            size
+            size as i64
         );
         for index in 0..size {
             let id = format!("{index:012x}");

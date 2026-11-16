@@ -2,11 +2,15 @@
 //!
 //! The route names its intent as a SELECT; this module owns validation,
 //! binding, row shaping and the 5 s interrupt.
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-use super::{validate_select_only, DbReader};
+use super::{validate_select_only, DbReader, QueryDeadlineGuard};
 
 /// One encoding for the public columnar JSON contract, with metadata already
 /// known by the SQLite reader. Telemetry must never decode it again.
@@ -21,20 +25,44 @@ struct QueryRows {
     rows: Vec<Vec<Value>>,
 }
 
+/// Install the hook while the connection is exclusively owned. Queries only
+/// arm its deadline; changing hooks through a shared connection is forbidden
+/// by rusqlite. The reader is thread-owned, so deadlines cannot overlap.
+pub(super) struct QueryDeadline {
+    pub(super) epoch: Instant,
+    pub(super) expires: Arc<AtomicU64>,
+}
+
+impl QueryDeadline {
+    pub(super) fn arm(&self, duration: Duration) -> QueryDeadlineGuard<'_> {
+        let deadline = u64::try_from(self.epoch.elapsed().saturating_add(duration).as_nanos())
+            .unwrap_or(u64::MAX)
+            .max(1);
+        self.expires.store(deadline, Ordering::Relaxed);
+        QueryDeadlineGuard(&self.expires)
+    }
+}
+
+impl Drop for QueryDeadlineGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(0, Ordering::Relaxed);
+    }
+}
+
 impl DbReader {
+    pub(crate) fn sql_deadline(&self, deadline: Instant) -> QueryDeadlineGuard<'_> {
+        self.query_deadline
+            .arm(deadline.saturating_duration_since(Instant::now()))
+    }
+
     fn with_query_timeout<F>(&self, run_query: F) -> Result<QueryOutput, String>
     where
         F: FnOnce() -> Result<QueryOutput, String>,
     {
         const TIMEOUT_MS: u64 = 5_000;
-        const PROGRESS_OPS: i32 = 10_000;
-
         self.record_query_executed();
-        let deadline = Instant::now() + Duration::from_millis(TIMEOUT_MS);
-        self.conn
-            .progress_handler(PROGRESS_OPS, Some(move || Instant::now() >= deadline));
+        let _deadline = self.query_deadline.arm(Duration::from_millis(TIMEOUT_MS));
         let result = run_query();
-        self.conn.progress_handler(0, None::<fn() -> bool>);
 
         result.map_err(|e| {
             if e.contains("interrupted") {
@@ -82,7 +110,7 @@ impl DbReader {
     fn query_rows(&self, sql: &str, params: &[Value], max_rows: usize) -> rusqlite::Result<QueryRows> {
         let mut stmt = self.conn.prepare_cached(sql)?;
 
-        let columns: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
+        let columns: Vec<String> = stmt.column_names().map(str::to_owned).collect();
         let col_count = columns.len();
 
         // Convert serde_json::Value params to rusqlite dynamic params.

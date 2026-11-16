@@ -60,7 +60,7 @@ fn fixture_model_counters_carry_current_writer_fields_and_price_coverage() {
     // Inspect stored shape before serde defaults can hide a stale snapshot.
     let stored: serde_json::Value = rmp_serde::from_slice(&bytes).unwrap();
 
-    let priced: u64 = conn
+    let priced: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM model_calls WHERE estimated_cost_usd IS NOT NULL",
             [],
@@ -68,15 +68,15 @@ fn fixture_model_counters_carry_current_writer_fields_and_price_coverage() {
         )
         .unwrap();
     assert!(priced > 0, "fixture must exercise explicit price coverage");
-    assert_eq!(stored["model"]["total"]["priced_calls"].as_u64(), Some(priced));
+    assert_eq!(stored["model"]["total"]["priced_calls"].as_i64(), Some(priced));
     for (provider, models) in stored["model"]["by_model"].as_object().unwrap() {
         for (model, usage) in models.as_object().unwrap() {
-            let expected: u64 = conn.query_row(
+            let expected: i64 = conn.query_row(
                 "SELECT COUNT(*) FROM model_calls WHERE provider = ?1 AND COALESCE(model, 'unknown') = ?2 AND estimated_cost_usd IS NOT NULL",
                 [provider, model], |row| row.get(0),
             ).unwrap();
             assert_eq!(
-                usage["priced_calls"].as_u64().unwrap_or(0),
+                usage["priced_calls"].as_i64().unwrap_or(0),
                 expected,
                 "per-model explicit price coverage"
             );

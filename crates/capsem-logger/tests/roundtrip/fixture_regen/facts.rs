@@ -32,13 +32,14 @@ fn from_source() -> Vec<Fact> {
         .open(archive_lock_path(&database))
         .unwrap();
     let index = Connection::open_with_flags(&database, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
-    let (rows, bytes): (usize, usize) = index
+    let (rows, bytes): (i64, i64) = index
         .query_row(
             "SELECT COUNT(*), COALESCE(SUM(stored_bytes), 0) FROM event_body_blobs",
             [],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .unwrap();
+    let (rows, bytes) = (usize::try_from(rows).unwrap(), usize::try_from(bytes).unwrap());
     assert!(rows > 0 && rows <= MAX_RECORDS && bytes > 0 && bytes <= MAX_TOTAL_BYTES);
     let mut statement = index
         .prepare("SELECT DISTINCT event_id FROM event_body_blobs ORDER BY event_id")

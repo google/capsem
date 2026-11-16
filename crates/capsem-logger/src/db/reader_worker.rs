@@ -172,18 +172,18 @@ pub(super) fn reader_loop(
                 reply,
             } => {
                 let result = observe_change(&reader).and_then(|observed| {
-                    super::bodies::capture_body_rows(reader.connection(), &path, queries, requested_ids, &codecs).map(
-                        |value| Observed {
+                    super::bodies::capture_body_rows(&reader, &path, queries, requested_ids, &codecs).map(|value| {
+                        Observed {
                             changed: commit(&reader, observed),
                             value,
-                        },
-                    )
+                        }
+                    })
                 });
                 let _ = reply.send(result);
             }
             ReadRequest::CaptureWarc { reply } => {
                 let result = observe_change(&reader).and_then(|observed| {
-                    super::warc_export::capture_warc(reader.connection(), &path, &codecs).map(|value| Observed {
+                    super::warc_export::capture_warc(&reader, &path, &codecs).map(|value| Observed {
                         changed: commit(&reader, observed),
                         value,
                     })

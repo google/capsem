@@ -23,7 +23,7 @@ fn unchanged_read_only(path: &Path) -> rusqlite::Result<()> {
     };
     let entries = names();
     let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
-    assert!(conn.is_readonly(rusqlite::DatabaseName::Main).unwrap());
+    assert!(conn.is_readonly("main").unwrap());
     assert!(conn.is_autocommit());
     let result = validate_existing_host_schema(&conn);
     assert_eq!(conn.total_changes(), 0);

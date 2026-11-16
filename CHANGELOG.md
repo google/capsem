@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Security: Upgrade bundled SQLite through rusqlite 0.41.1, retaining read-only ledger boundaries, durable snapshots, and bounded query and archive-capture deadlines.
+
 - Security: Require patched Soup Sieve 4 for Inspect HTML parsing and Python 3.11.5 or newer, preventing vulnerable transitive resolutions.
 
 - Security: Enforce saved per-tool MCP Block and Ask permissions against namespaced calls ahead of the built-in default, while preserving user and corporate rule priorities. Existing settings take effect without being rewritten.

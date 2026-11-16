@@ -199,24 +199,24 @@ fn refuse_existing_destination(db: &Path, archive: &Path, lock: &Path) -> anyhow
 }
 
 fn snapshot_session_db(src: &Path, dst: &Path, deadline: Instant) -> anyhow::Result<SnapshotDatabase> {
-    let src_conn = Connection::open_with_flags(
+    let mut src_conn = Connection::open_with_flags(
         src,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .with_context(|| format!("open source session database {}", src.display()))?;
-    src_conn.progress_handler(10_000, Some(move || Instant::now() >= deadline));
+    src_conn.progress_handler(10_000, Some(move || Instant::now() >= deadline))?;
     let escaped = dst.to_string_lossy().replace('\'', "''");
     let vacuum = src_conn.execute_batch(&format!("VACUUM INTO '{escaped}';"));
-    src_conn.progress_handler(0, None::<fn() -> bool>);
+    src_conn.progress_handler(0, None::<fn() -> bool>)?;
     vacuum.with_context(|| format!("VACUUM INTO destination session database {}", dst.display()))?;
     drop(src_conn);
 
-    let dst_conn = Connection::open_with_flags(
+    let mut dst_conn = Connection::open_with_flags(
         dst,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .with_context(|| format!("open destination session database {}", dst.display()))?;
-    dst_conn.progress_handler(10_000, Some(move || Instant::now() >= deadline));
+    dst_conn.progress_handler(10_000, Some(move || Instant::now() >= deadline))?;
     let quick_check: String = dst_conn
         .pragma_query_value(None, "quick_check", |row| row.get(0))
         .context("quick-check destination session database")?;

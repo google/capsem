@@ -101,7 +101,7 @@ fn admit(home: &Path, timeout: Duration, physical_archive: bool) -> anyhow::Resu
         None
     };
     let uri = readonly_uri(&db_path);
-    let conn = Connection::open_with_flags(
+    let mut conn = Connection::open_with_flags(
         uri,
         OpenFlags::SQLITE_OPEN_READ_ONLY
             | OpenFlags::SQLITE_OPEN_NO_MUTEX
@@ -109,7 +109,7 @@ fn admit(home: &Path, timeout: Duration, physical_archive: bool) -> anyhow::Resu
             | OpenFlags::SQLITE_OPEN_URI,
     )?;
     conn.busy_timeout(remaining(deadline)?)?;
-    conn.progress_handler(1_000, Some(move || Instant::now() >= deadline));
+    conn.progress_handler(1_000, Some(move || Instant::now() >= deadline))?;
     let transaction = conn.unchecked_transaction()?;
     crate::schema::validate_existing_host_schema(&transaction)?;
     let archive_reader = if physical_archive {

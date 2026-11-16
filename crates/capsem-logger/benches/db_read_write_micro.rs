@@ -6,7 +6,7 @@ use memmap2::Mmap;
 use rusqlite::{
     params,
     serialize::{Data, OwnedData},
-    Connection, DatabaseName,
+    Connection,
 };
 
 #[path = "support/net_bodies.rs"]
@@ -255,7 +255,7 @@ fn deserialize_scan_1m_rows() -> (f64, f64, String) {
     let deserialize_started = Instant::now();
     let data = sqlite_owned_data_from_mmap(&path);
     let mut conn = Connection::open_in_memory().expect("open in-memory deserialize db");
-    conn.deserialize(DatabaseName::Main, data, true)
+    conn.deserialize("main", data, true)
         .expect("deserialize disk DB into memory");
     let deserialize_elapsed = deserialize_started.elapsed();
 
@@ -286,11 +286,11 @@ fn serialize_deserialize_scan_1m_rows() -> (f64, f64, String) {
     seed_dns_rows(&path, READ_ROWS);
 
     let deserialize_started = Instant::now();
-    let source = Connection::open(&path).expect("open source db for sqlite serialize");
-    let data = source.serialize(DatabaseName::Main).expect("serialize source DB");
+    let mut source = Connection::open(&path).expect("open source db for sqlite serialize");
+    let data = source.serialize("main").expect("serialize source DB");
     let data = sqlite_owned_data_from_serialized(data);
     let mut conn = Connection::open_in_memory().expect("open in-memory sqlite serialize db");
-    conn.deserialize(DatabaseName::Main, data, true)
+    conn.deserialize("main", data, true)
         .expect("deserialize sqlite serialized DB into memory");
     let deserialize_elapsed = deserialize_started.elapsed();
 

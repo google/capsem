@@ -11,6 +11,9 @@ use crate::events::{
     ToolResponseEntry,
 };
 use crate::schema;
+
+pub(crate) struct QueryDeadlineGuard<'a>(&'a std::sync::atomic::AtomicU64);
+
 mod columns;
 mod file_events;
 
@@ -184,11 +187,17 @@ pub fn validate_select_only(sql: &str) -> Result<(), String> {
 pub struct DbReader {
     conn: Connection,
     sync: schema_sync::SyncState,
+    query_deadline: rawquery::QueryDeadline,
 }
 
 impl DbReader {
     pub(crate) fn connection(&self) -> &Connection {
         &self.conn
+    }
+
+    #[cfg(test)]
+    pub(crate) fn connection_mut(&mut self) -> &mut Connection {
+        &mut self.conn
     }
 
     /// Every host event in database-owned insertion order.

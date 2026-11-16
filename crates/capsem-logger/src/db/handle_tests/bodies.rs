@@ -32,9 +32,9 @@ pub(super) async fn count(db: &DbHandle, sql: &str) -> i64 {
 
 #[test]
 fn interactive_capture_refuses_id_and_metadata_budgets_before_unbounded_work() {
-    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    let reader = crate::DbReader::open_in_memory().unwrap();
     let error = crate::db::bodies::capture_body_rows(
-        &conn,
+        &reader,
         std::path::Path::new("unused.db"),
         Vec::new(),
         10_001,
