@@ -34,6 +34,7 @@ mod asset_background;
 mod asset_routes;
 mod blocking;
 mod container_setup;
+mod gateway_channel;
 mod gateway_grant;
 mod guest_lifecycle;
 mod host_ledger;

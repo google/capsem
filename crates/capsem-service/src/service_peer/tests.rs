@@ -26,3 +26,17 @@ async fn registered_owner_cannot_call_the_public_service_api() {
     let response = app.oneshot(request).await.unwrap();
     assert_eq!(response.status(), axum::http::StatusCode::FORBIDDEN);
 }
+
+#[tokio::test]
+async fn caller_supplied_gateway_headers_cannot_reach_the_gateway_status_route() {
+    let state = make_test_state();
+    let app = crate::router_runtime::build_service_router(state);
+    let request = axum::http::Request::get("/internal/gateway/status")
+        .header("x-capsem-actor", "operator")
+        .header("x-capsem-gateway", "true")
+        .header("authorization", "Bearer forged-gateway-identity")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::FORBIDDEN);
+}

@@ -14,6 +14,7 @@ authors.workspace = true
 native-acceptance = []
 
 [dependencies]
+tower = { version = "0.5", features = ["util"] }
 capsem-mcp-transport = { path = "../capsem-mcp-transport" }
 capsem-crypto = { path = "../capsem-crypto", default-features = false, features = ["random", "secrets"] }
 capsem-credentials = { path = "../capsem-credentials" }
@@ -65,7 +66,6 @@ tokio-tungstenite = "0.30.0"
 capsem-config = { path = "../capsem-config" }
 tempfile = "3"
 filetime = "0.2"
-tower = { version = "0.5", features = ["util"] }
 rusqlite = { workspace = true }
 # test-util enables tokio's paused clock, so the image catalog's refresh and
 # retry intervals are tested at their real lengths. Dev-only; no prod impact.

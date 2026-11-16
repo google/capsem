@@ -131,13 +131,25 @@ async fn gateway_status_route_returns_vms_assets_and_updates_in_one_response() {
     install_test_runtime_assets(&state);
     insert_fake_instance(&state, "gateway-status-vm", std::process::id());
 
-    let (status, body) = route_request(
-        build_service_router(state),
-        axum::http::Method::GET,
-        "/internal/gateway/status",
-        None,
-    )
-    .await;
+    let socket = gateway_channel::prepare(build_service_router(state)).unwrap();
+    let socket = tokio::net::UnixStream::from_std(socket).unwrap();
+    let (mut client, connection) = hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(socket))
+        .await
+        .unwrap();
+    tokio::spawn(connection);
+    let response = client
+        .send_request(
+            axum::http::Request::get("/internal/gateway/status")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = to_bytes(Body::new(response.into_body()), capsem_api::MAX_REQUEST_BODY_BYTES)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
 
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["sandboxes"][0]["id"], "gateway-status-vm");

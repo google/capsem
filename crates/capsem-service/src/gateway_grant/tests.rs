@@ -6,8 +6,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 #[tokio::test]
 async fn grants_only_the_service_and_registry_derived_owner_seats() {
     let state = crate::tests::make_test_state();
-    std::fs::create_dir_all(state.service_socket.parent().unwrap()).unwrap();
-    let listener = tokio::net::UnixListener::bind(&state.service_socket).unwrap();
     let (client, server) = std::os::unix::net::UnixStream::pair().unwrap();
     let broker = tokio::spawn(serve(server, Arc::clone(&state)));
     let requests =
@@ -31,15 +29,22 @@ async fn grants_only_the_service_and_registry_derived_owner_seats() {
         )
         .await
         .unwrap();
-    let (mut service_peer, _) = listener.accept().await.unwrap();
     let mut granted = tokio::net::UnixStream::from_std(std::os::unix::net::UnixStream::from(
         response.fds.into_iter().next().unwrap(),
     ))
     .unwrap();
-    service_peer.write_all(b"s").await.unwrap();
-    let mut byte = [0];
-    granted.read_exact(&mut byte).await.unwrap();
-    assert_eq!(byte, [b's']);
+    granted
+        .write_all(b"GET /internal/gateway/status HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .await
+        .unwrap();
+    let mut reply = Vec::new();
+    tokio::time::timeout(std::time::Duration::from_secs(5), granted.read_to_end(&mut reply))
+        .await
+        .unwrap()
+        .unwrap();
+    let reply = String::from_utf8(reply).unwrap();
+    assert!(reply.starts_with("HTTP/1.1 200 OK\r\n"), "{reply}");
+    assert!(reply.contains("\"sandboxes\""), "{reply}");
 
     let request = encode_gateway_grant_request(&GatewayGrantRequest::OpenOwnerHandoff {
         request_id: 2,
@@ -168,8 +173,6 @@ async fn metrics_grant_is_one_per_control_epoch_and_revokes_on_control_disconnec
     corp.corp_rule_files.open_telemetry = Some("http://127.0.0.1:1".into());
     capsem_core::net::policy_config::write_settings_file(&corp_path, &corp).unwrap();
     let state = crate::tests::make_test_state();
-    std::fs::create_dir_all(state.service_socket.parent().unwrap()).unwrap();
-    let listener = tokio::net::UnixListener::bind(&state.service_socket).unwrap();
     let (server, client) = std::os::unix::net::UnixStream::pair().unwrap();
     let broker = tokio::spawn(serve(server, state));
     let requests = WireSender::new(client.try_clone().unwrap()).unwrap();
@@ -250,7 +253,10 @@ async fn metrics_grant_is_one_per_control_epoch_and_revokes_on_control_disconnec
         )
         .await
         .unwrap();
-    let _service = listener.accept().await.unwrap();
+    // A real coordinator-owned socket pair is issued without touching the
+    // public UDS listener, including after optional metrics were refused.
+    assert_eq!(response.fds.len(), 1);
+    drop(response);
     drop((requests, responses));
     assert!(
         tokio::time::timeout(std::time::Duration::from_secs(2), metrics_responses.recv())

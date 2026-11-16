@@ -260,6 +260,7 @@ struct GatewayStatusResponse {
 /// sections in one HTTP exchange avoids tripling broker and parser work while
 /// preserving a fresh `/vms/list` read for every gateway status refresh.
 async fn handle_gateway_status(
+    _channel: gateway_channel::GatewayChannel,
     State(state): State<Arc<ServiceState>>,
 ) -> Result<Json<GatewayStatusResponse>, AppError> {
     let list = sandbox_info::list_response(&state).await?;

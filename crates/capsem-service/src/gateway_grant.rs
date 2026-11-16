@@ -16,6 +16,7 @@ pub(super) async fn serve(socket: std::os::unix::net::UnixStream, state: Arc<Ser
     let requests = WireReceiver::new(socket.try_clone()?)?;
     let responses = WireSender::new(socket)?;
     let authority = crate::instance::WorkerAuthority::default();
+    let service_router = crate::router_runtime::build_service_router(Arc::clone(&state));
     let mut metrics_issued = false;
     let mut expected_id = 1_u64;
     loop {
@@ -49,7 +50,7 @@ pub(super) async fn serve(socket: std::os::unix::net::UnixStream, state: Arc<Ser
                     (GatewayGrantKind::Metrics, prepared.descriptor)
                 })
             }
-            request => open(&state, request).await,
+            request => open(&state, &service_router, request).await,
         };
         match opened {
             Ok((kind, descriptor)) => {
@@ -97,15 +98,14 @@ async fn send_grant(
 
 async fn open(
     state: &Arc<ServiceState>,
+    service_router: &axum::Router,
     request: GatewayGrantRequest,
 ) -> Result<(GatewayGrantKind, std::os::unix::net::UnixStream), GatewayGrantDenial> {
     match request {
         GatewayGrantRequest::Adopted { .. } | GatewayGrantRequest::OpenMetrics { .. } => {
             Err(GatewayGrantDenial::InvalidRequest)
         }
-        GatewayGrantRequest::OpenService { .. } => tokio::net::UnixStream::connect(&state.service_socket)
-            .await
-            .and_then(|socket| socket.into_std())
+        GatewayGrantRequest::OpenService { .. } => crate::gateway_channel::prepare(service_router.clone())
             .map(|socket| (GatewayGrantKind::Service, socket))
             .map_err(|_| GatewayGrantDenial::Unavailable),
         GatewayGrantRequest::OpenOwnerHandoff { vm_id, .. } => {

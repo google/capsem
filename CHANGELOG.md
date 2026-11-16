@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Security: Isolate gateway service traffic on coordinator-minted socket pairs, preventing direct service peers from reaching the gateway’s private status route using forged headers.
+
 - Security: Replace the Linux desktop activation backend with maintained zbus 6 and open validated URLs through the native launcher, removing all three expiring zbus 5 maintenance exceptions. Keep other platforms’ single-instance implementations unchanged.
 
 - Security: Temporarily except the unmaintained astral-tokio-tar dependency used only by upstream OCI registry test tooling through December 16, 2026; it is absent from shipped binaries and runtime bundles.
