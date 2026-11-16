@@ -904,3 +904,9 @@ json = { count = 2, reason = "http" }
 
 [sources."crates/capsem-config/src/security_rule_profile.rs"]
 json = { count = 1, reason = "config" }
+
+[sources."sdk/rust/src/operations/generated/create_agent_access.rs"]
+json = { count = 2, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/revoke_agent_access.rs"]
+json = { count = 1, reason = "http" }

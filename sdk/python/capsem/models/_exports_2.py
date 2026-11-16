@@ -1,5 +1,11 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .provider_revocation_state import ProviderRevocationState
+from .provision_request import ProvisionRequest
+from .provision_response import ProvisionResponse
+from .proxy_heartbeat_response import ProxyHeartbeatResponse
+from .proxy_lease_request import ProxyLeaseRequest
+from .purge_request import PurgeRequest
 from .purge_response import PurgeResponse
 from .raw_content import RawContent
 from .raw_content_kind import RawContentKind
@@ -74,14 +80,14 @@ from .update_track_status import UpdateTrackStatus
 from .upload_response import UploadResponse
 from .validation_status import ValidationStatus
 from .value import Value
-from .vm_action import VmAction
-from .vm_action_response import VmActionResponse
-from .vm_ai_info import VmAiInfo
-from .vm_files_info import VmFilesInfo
-from .vm_lifecycle_state import VmLifecycleState
-from .vm_network_info import VmNetworkInfo
 
 __all__ = [
+    'ProviderRevocationState',
+    'ProvisionRequest',
+    'ProvisionResponse',
+    'ProxyHeartbeatResponse',
+    'ProxyLeaseRequest',
+    'PurgeRequest',
     'PurgeResponse',
     'RawContent',
     'RawContentKind',
@@ -156,10 +162,4 @@ __all__ = [
     'UploadResponse',
     'ValidationStatus',
     'Value',
-    'VmAction',
-    'VmActionResponse',
-    'VmAiInfo',
-    'VmFilesInfo',
-    'VmLifecycleState',
-    'VmNetworkInfo',
 ]

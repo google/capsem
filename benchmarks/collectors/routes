@@ -54,6 +54,8 @@ ROOT = Path(__file__).resolve().parents[2]
 WARMUP = 2
 MANAGED_REQUEST_ID = "fc120782-2272-4b3d-a2e6-a26ee2f8ab61"
 MANAGED_TOKEN = "af" * 32
+AGENT_ISSUE_ID = "d61cc17c-d5c7-410f-b2f8-767a2f8d5405"
+AGENT_REVOKE_ID = "2bba540e-c785-43f7-9c9b-e19225426132"
 LIVE_ROUTES = {"/vms/{id}/exposures", "/vms/{id}/security/status"}
 
 
@@ -69,6 +71,8 @@ def route_load_config() -> dict[str, int]:
 
 def request_path(route: str, live_session_id: str | None = None) -> str:
     """Resolve a configured route template against the stopped VM fixture."""
+    if route == "/agent-access/{id}":
+        return f"/agent-access/{AGENT_REVOKE_ID}"
     if route == BODY_ROUTE:
         return BODY_URL
     if route in LIVE_ROUTES and live_session_id is None:
@@ -82,6 +86,13 @@ def request_path(route: str, live_session_id: str | None = None) -> str:
 
 def request_input(path: str) -> tuple[str, bytes | None]:
     """Return the method and body for one repeatable benchmark request."""
+    if path == "/agent-access":
+        return "POST", json.dumps({
+            "request_id": AGENT_ISSUE_ID, "ownership_token": MANAGED_TOKEN,
+            "scope": {"operations": ["discover"]}, "lease_seconds": 86400,
+        }).encode()
+    if path == f"/agent-access/{AGENT_REVOKE_ID}":
+        return "DELETE", None
     if path.endswith("/claim"):
         return "POST", json.dumps({"ownership_token": MANAGED_TOKEN}).encode()
     if path.endswith("/close"):
@@ -233,6 +244,11 @@ def main() -> int:
         with redirect_stdout(sys.stderr):
             service.start()
             gateway.start()
+            if "/agent-access/{id}" in routes:
+                _, body = request_input("/agent-access")
+                grant = json.loads(body)
+                grant["request_id"] = AGENT_REVOKE_ID
+                service.client().post("/agent-access", grant)
         service_proc = psutil.Process(service.proc.pid)
         gateway_proc = psutil.Process(gateway.proc.pid)
         target = Target(

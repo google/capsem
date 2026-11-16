@@ -118,3 +118,6 @@ max_active = 1024
 max_issued_per_epoch = 16384
 # Operator-issued credentials are leased; there is no indefinite agent bearer.
 max_lease_seconds = 86400
+
+# Bound delegated issuance JSON before allocating scope arrays.
+max_request_bytes = 65536

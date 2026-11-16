@@ -19,6 +19,9 @@ pub fn openapi() -> OpenApi {
     let restart = doc.operation_status::<RestartResponse>("/restart", "restartHypervisor", "202")
         .description(Some("Restart a managed hypervisor with no active or starting VMs. The gateway rotates its bearer token; obtain fresh credentials and reconnect explicitly. Never replay this mutation."));
     doc.add("/restart", HttpMethod::Post, restart);
+    doc.post::<CreateAgentAccessRequest, CreateAgentAccessResponse>("/agent-access", "createAgentAccess");
+    let revoke = doc.operation::<VmActionResponse>("/agent-access/{id}", "revokeAgentAccess");
+    doc.add("/agent-access/{id}", HttpMethod::Delete, revoke);
     doc.get::<ListResponse>("/vms/list", "listVms");
     doc.post::<ProvisionRequest, ProvisionResponse>("/vms/create", "createVm");
     doc.post::<ManagedSessionClaimRequest, ManagedSessionClaimResponse>(

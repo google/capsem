@@ -5,6 +5,90 @@
     "version": "3.6.0"
   },
   "paths": {
+    "/agent-access": {
+      "post": {
+        "operationId": "createAgentAccess",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAgentAccessRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateAgentAccessResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agent-access/{id}": {
+      "delete": {
+        "operationId": "revokeAgentAccess",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VmActionResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/assets/status": {
       "get": {
         "operationId": "getAssetStatus",
@@ -3567,6 +3651,84 @@
   },
   "components": {
     "schemas": {
+      "AgentAccessScope": {
+        "type": "object",
+        "description": "Empty target lists convey no target access; there is no wildcard or default\nenvironment. New sessions launched within this scope are bound by the\nservice to this access id and their actual generation before use.",
+        "required": [
+          "operations",
+          "environment_ids",
+          "sessions"
+        ],
+        "properties": {
+          "environment_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "operations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentOperation"
+            }
+          },
+          "sessions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentSessionScope"
+            }
+          }
+        }
+      },
+      "AgentAccessSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "scope",
+          "expires_at"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/AgentAccessScope"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AgentOperation": {
+        "type": "string",
+        "description": "These are the only delegable operations. Each still requires target\nvisibility/ownership; none conveys approval or configuration authority.",
+        "enum": [
+          "discover",
+          "inspect",
+          "propose",
+          "cancel_own",
+          "execute",
+          "launch",
+          "manage_owned_sessions"
+        ]
+      },
+      "AgentSessionScope": {
+        "type": "object",
+        "description": "Exact existing generation; deletion/name reuse cannot retarget a grant.",
+        "required": [
+          "session_id",
+          "owner_generation"
+        ],
+        "properties": {
+          "owner_generation": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          }
+        }
+      },
       "ArchivedEventBody": {
         "type": "object",
         "required": [
@@ -4572,6 +4734,48 @@
             "minimum": 0
           }
         }
+      },
+      "CreateAgentAccessRequest": {
+        "type": "object",
+        "description": "The operator supplies a random managed capability using the same format as\nmanaged-session ownership. It is write-only; responses never echo it.",
+        "required": [
+          "request_id",
+          "ownership_token",
+          "scope",
+          "lease_seconds"
+        ],
+        "properties": {
+          "lease_seconds": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "ownership_token": {
+            "type": "string",
+            "writeOnly": true,
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/AgentAccessScope"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateAgentAccessResponse": {
+        "type": "object",
+        "required": [
+          "access"
+        ],
+        "properties": {
+          "access": {
+            "$ref": "#/components/schemas/AgentAccessSummary"
+          }
+        },
+        "additionalProperties": false
       },
       "CreateNetworkRequest": {
         "type": "object",

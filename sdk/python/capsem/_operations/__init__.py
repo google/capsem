@@ -14,6 +14,7 @@ from .cancel_connection_authorization import (
 from .check_hypervisor_update import check_hypervisor_update as check_hypervisor_update
 from .claim_managed_session import claim_managed_session as claim_managed_session
 from .close_managed_session import close_managed_session as close_managed_session
+from .create_agent_access import create_agent_access as create_agent_access
 from .create_network import create_network as create_network
 from .create_proxy import create_proxy as create_proxy
 from .create_session_credential_grant import (
@@ -79,6 +80,7 @@ from .refresh_mcp_server import refresh_mcp_server as refresh_mcp_server
 from .resolve_security_ask import resolve_security_ask as resolve_security_ask
 from .restart_hypervisor import restart_hypervisor as restart_hypervisor
 from .resume_vm import resume_vm as resume_vm
+from .revoke_agent_access import revoke_agent_access as revoke_agent_access
 from .revoke_session_credential_grant import (
     revoke_session_credential_grant as revoke_session_credential_grant,
 )

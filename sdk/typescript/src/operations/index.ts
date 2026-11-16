@@ -8,6 +8,7 @@ export {cancelConnectionAuthorization} from "./cancelConnectionAuthorization.js"
 export {checkHypervisorUpdate} from "./checkHypervisorUpdate.js";
 export {claimManagedSession} from "./claimManagedSession.js";
 export {closeManagedSession} from "./closeManagedSession.js";
+export {createAgentAccess} from "./createAgentAccess.js";
 export {createNetwork} from "./createNetwork.js";
 export {createProxy} from "./createProxy.js";
 export {createSessionCredentialGrant} from "./createSessionCredentialGrant.js";
@@ -65,6 +66,7 @@ export {refreshMcpServer} from "./refreshMcpServer.js";
 export {resolveSecurityAsk} from "./resolveSecurityAsk.js";
 export {restartHypervisor} from "./restartHypervisor.js";
 export {resumeVm} from "./resumeVm.js";
+export {revokeAgentAccess} from "./revokeAgentAccess.js";
 export {revokeSessionCredentialGrant} from "./revokeSessionCredentialGrant.js";
 export {revokeVmPreviewSessions} from "./revokeVmPreviewSessions.js";
 export {runVm} from "./runVm.js";

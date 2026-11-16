@@ -10,12 +10,14 @@ use capsem_proto::gateway_grant::auth::{GatewayAuthDenial, GatewayAuthSecret};
 
 pub(crate) struct Authority {
     operator: Mutex<Option<Operator>>,
+    pub(crate) agent_mutation: tokio::sync::Mutex<()>,
     pub(crate) agents: capsem_core::agent_access::Registry,
 }
 impl Default for Authority {
     fn default() -> Self {
         Self {
             operator: Mutex::new(None),
+            agent_mutation: tokio::sync::Mutex::new(()),
             agents: capsem_core::agent_access::Registry::new(
                 capsem_proto::AGENT_ACCESS_MAX_ACTIVE,
                 capsem_proto::AGENT_ACCESS_MAX_ISSUED_PER_EPOCH,

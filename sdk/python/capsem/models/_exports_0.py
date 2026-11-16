@@ -1,5 +1,9 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .agent_access_scope import AgentAccessScope
+from .agent_access_summary import AgentAccessSummary
+from .agent_operation import AgentOperation
+from .agent_session_scope import AgentSessionScope
 from .archived_event_body import ArchivedEventBody
 from .asset_file_state import AssetFileState
 from .asset_file_status import AssetFileStatus
@@ -29,6 +33,8 @@ from .container_status_response import ContainerStatusResponse
 from .container_surface import ContainerSurface
 from .container_surface_kind import ContainerSurfaceKind
 from .cost_coverage import CostCoverage
+from .create_agent_access_request import CreateAgentAccessRequest
+from .create_agent_access_response import CreateAgentAccessResponse
 from .create_network_request import CreateNetworkRequest
 from .create_proxy_request import CreateProxyRequest
 from .create_proxy_response import CreateProxyResponse
@@ -74,14 +80,12 @@ from .history_details import HistoryDetails
 from .history_entry import HistoryEntry
 from .history_layer import HistoryLayer
 from .history_layer_filter import HistoryLayerFilter
-from .history_response import HistoryResponse
-from .host_log_source import HostLogSource
-from .host_logs_response import HostLogsResponse
-from .host_triage_response import HostTriageResponse
-from .http_event import HttpEvent
-from .hypervisor_info import HypervisorInfo
 
 __all__ = [
+    'AgentAccessScope',
+    'AgentAccessSummary',
+    'AgentOperation',
+    'AgentSessionScope',
     'ArchivedEventBody',
     'AssetFileState',
     'AssetFileStatus',
@@ -111,6 +115,8 @@ __all__ = [
     'ContainerSurface',
     'ContainerSurfaceKind',
     'CostCoverage',
+    'CreateAgentAccessRequest',
+    'CreateAgentAccessResponse',
     'CreateNetworkRequest',
     'CreateProxyRequest',
     'CreateProxyResponse',
@@ -156,10 +162,4 @@ __all__ = [
     'HistoryEntry',
     'HistoryLayer',
     'HistoryLayerFilter',
-    'HistoryResponse',
-    'HostLogSource',
-    'HostLogsResponse',
-    'HostTriageResponse',
-    'HttpEvent',
-    'HypervisorInfo',
 ]

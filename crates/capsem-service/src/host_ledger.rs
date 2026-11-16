@@ -3,7 +3,7 @@
 //!
 //! Each session's ledger records what happened inside its VM; this one, in
 //! the home's `sessions/host.db`, records what happened to it -- created,
-//! stopped and how -- as hash-chained events. A stopped event carries the
+//! stopped and how -- in SQLite insertion order. A stopped event carries the
 //! session's final counter snapshot, so `/stats` is a fold held in memory:
 //! finished snapshots replayed from this ledger at startup, plus every
 //! running session's live counters. The old `main.db` is never opened.
@@ -50,6 +50,12 @@ pub(crate) struct HostStats {
 
 impl HostStats {
     pub(crate) fn apply(&mut self, event: &HostEvent) {
+        if !matches!(
+            event.kind,
+            HostEventKind::SessionCreated | HostEventKind::SessionStopped
+        ) {
+            return;
+        }
         let Some(id) = event.session_id.clone() else {
             return;
         };
@@ -122,7 +128,7 @@ impl ServiceState {
     /// Record an event and put it on disk before returning: host events are
     /// rare, and a forensic record that waits for the next periodic flush can
     /// lose a session's stop to a crash.
-    async fn record_host_event(&self, event: HostEvent) -> anyhow::Result<()> {
+    pub(crate) async fn record_host_event(&self, event: HostEvent) -> anyhow::Result<()> {
         self.host_stats.lock().unwrap().apply(&event);
         let kind = event.kind.as_str();
         self.host_ledger

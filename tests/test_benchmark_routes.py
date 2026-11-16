@@ -23,6 +23,8 @@ loader.exec_module(collector)
 @pytest.mark.parametrize(
     ("pattern", "expected"),
     [
+        ("/agent-access", "/agent-access"),
+        ("/agent-access/{id}", f"/agent-access/{collector.AGENT_REVOKE_ID}"),
         ("/connections", "/connections"),
         ("/status", "/status"),
         ("/vms/{id}/status", f"/vms/{collector.VM_ID}/status"),
@@ -107,3 +109,13 @@ def test_fixture_diagnostics_do_not_corrupt_collector_json(
     assert "SERVICE LOG:" in captured.err
     assert "GATEWAY LOG:" in captured.err
     assert stopped == ["gateway", "service"]
+
+
+def test_agent_grant_benchmark_mutations_have_distinct_idempotent_fixtures():
+    method, payload = collector.request_input("/agent-access")
+    assert method == "POST"
+    body = json.loads(payload)
+    assert body["request_id"] == collector.AGENT_ISSUE_ID
+    assert body["scope"] == {"operations": ["discover"]}
+    assert body["request_id"] != collector.AGENT_REVOKE_ID
+    assert collector.request_input(f"/agent-access/{collector.AGENT_REVOKE_ID}") == ("DELETE", None)

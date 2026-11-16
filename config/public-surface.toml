@@ -86,8 +86,11 @@ approved = [
 ]
 
 [http]
-count = 115
+count = 117
 approved = [
+  # Operator-issued delegated access, explicitly approved by milestone #407.
+  "POST /agent-access",
+  "DELETE /agent-access/{id}",
   # All nine connection/grant routes approved by the user on 2026-10-14.
   "GET /connections",
   "POST /connections/google/authorize",

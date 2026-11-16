@@ -1,5 +1,9 @@
 // Generated from Capsem OpenAPI. Do not edit.
 
+export {AgentAccessScopeSchema} from "./AgentAccessScope.js";
+export {AgentAccessSummarySchema} from "./AgentAccessSummary.js";
+export {AgentOperationSchema} from "./AgentOperation.js";
+export {AgentSessionScopeSchema} from "./AgentSessionScope.js";
 export {ArchivedEventBodySchema} from "./ArchivedEventBody.js";
 export {AssetFileStateSchema} from "./AssetFileState.js";
 export {AssetFileStatusSchema} from "./AssetFileStatus.js";
@@ -29,6 +33,8 @@ export {ContainerStatusResponseSchema} from "./ContainerStatusResponse.js";
 export {ContainerSurfaceSchema} from "./ContainerSurface.js";
 export {ContainerSurfaceKindSchema} from "./ContainerSurfaceKind.js";
 export {CostCoverageSchema} from "./CostCoverage.js";
+export {CreateAgentAccessRequestSchema} from "./CreateAgentAccessRequest.js";
+export {CreateAgentAccessResponseSchema} from "./CreateAgentAccessResponse.js";
 export {CreateNetworkRequestSchema} from "./CreateNetworkRequest.js";
 export {CreateProxyRequestSchema} from "./CreateProxyRequest.js";
 export {CreateProxyResponseSchema} from "./CreateProxyResponse.js";

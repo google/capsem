@@ -1,5 +1,9 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from ._exports_0 import AgentAccessScope as AgentAccessScope
+from ._exports_0 import AgentAccessSummary as AgentAccessSummary
+from ._exports_0 import AgentOperation as AgentOperation
+from ._exports_0 import AgentSessionScope as AgentSessionScope
 from ._exports_0 import ArchivedEventBody as ArchivedEventBody
 from ._exports_0 import AssetFileState as AssetFileState
 from ._exports_0 import AssetFileStatus as AssetFileStatus
@@ -29,6 +33,8 @@ from ._exports_0 import ContainerStatusResponse as ContainerStatusResponse
 from ._exports_0 import ContainerSurface as ContainerSurface
 from ._exports_0 import ContainerSurfaceKind as ContainerSurfaceKind
 from ._exports_0 import CostCoverage as CostCoverage
+from ._exports_0 import CreateAgentAccessRequest as CreateAgentAccessRequest
+from ._exports_0 import CreateAgentAccessResponse as CreateAgentAccessResponse
 from ._exports_0 import CreateNetworkRequest as CreateNetworkRequest
 from ._exports_0 import CreateProxyRequest as CreateProxyRequest
 from ._exports_0 import CreateProxyResponse as CreateProxyResponse
@@ -74,12 +80,12 @@ from ._exports_0 import HistoryDetails as HistoryDetails
 from ._exports_0 import HistoryEntry as HistoryEntry
 from ._exports_0 import HistoryLayer as HistoryLayer
 from ._exports_0 import HistoryLayerFilter as HistoryLayerFilter
-from ._exports_0 import HistoryResponse as HistoryResponse
-from ._exports_0 import HostLogSource as HostLogSource
-from ._exports_0 import HostLogsResponse as HostLogsResponse
-from ._exports_0 import HostTriageResponse as HostTriageResponse
-from ._exports_0 import HttpEvent as HttpEvent
-from ._exports_0 import HypervisorInfo as HypervisorInfo
+from ._exports_1 import HistoryResponse as HistoryResponse
+from ._exports_1 import HostLogSource as HostLogSource
+from ._exports_1 import HostLogsResponse as HostLogsResponse
+from ._exports_1 import HostTriageResponse as HostTriageResponse
+from ._exports_1 import HttpEvent as HttpEvent
+from ._exports_1 import HypervisorInfo as HypervisorInfo
 from ._exports_1 import ImageApp as ImageApp
 from ._exports_1 import ImageCacheState as ImageCacheState
 from ._exports_1 import ImageDownloadPhase as ImageDownloadPhase
@@ -154,12 +160,12 @@ from ._exports_1 import PersistResponse as PersistResponse
 from ._exports_1 import PreviewSessionResponse as PreviewSessionResponse
 from ._exports_1 import PreviewSessionsRevokedResponse as PreviewSessionsRevokedResponse
 from ._exports_1 import ProcessEvent as ProcessEvent
-from ._exports_1 import ProviderRevocationState as ProviderRevocationState
-from ._exports_1 import ProvisionRequest as ProvisionRequest
-from ._exports_1 import ProvisionResponse as ProvisionResponse
-from ._exports_1 import ProxyHeartbeatResponse as ProxyHeartbeatResponse
-from ._exports_1 import ProxyLeaseRequest as ProxyLeaseRequest
-from ._exports_1 import PurgeRequest as PurgeRequest
+from ._exports_2 import ProviderRevocationState as ProviderRevocationState
+from ._exports_2 import ProvisionRequest as ProvisionRequest
+from ._exports_2 import ProvisionResponse as ProvisionResponse
+from ._exports_2 import ProxyHeartbeatResponse as ProxyHeartbeatResponse
+from ._exports_2 import ProxyLeaseRequest as ProxyLeaseRequest
+from ._exports_2 import PurgeRequest as PurgeRequest
 from ._exports_2 import PurgeResponse as PurgeResponse
 from ._exports_2 import RawContent as RawContent
 from ._exports_2 import RawContentKind as RawContentKind
@@ -234,12 +240,12 @@ from ._exports_2 import UpdateTrackStatus as UpdateTrackStatus
 from ._exports_2 import UploadResponse as UploadResponse
 from ._exports_2 import ValidationStatus as ValidationStatus
 from ._exports_2 import Value as Value
-from ._exports_2 import VmAction as VmAction
-from ._exports_2 import VmActionResponse as VmActionResponse
-from ._exports_2 import VmAiInfo as VmAiInfo
-from ._exports_2 import VmFilesInfo as VmFilesInfo
-from ._exports_2 import VmLifecycleState as VmLifecycleState
-from ._exports_2 import VmNetworkInfo as VmNetworkInfo
+from ._exports_3 import VmAction as VmAction
+from ._exports_3 import VmActionResponse as VmActionResponse
+from ._exports_3 import VmAiInfo as VmAiInfo
+from ._exports_3 import VmFilesInfo as VmFilesInfo
+from ._exports_3 import VmLifecycleState as VmLifecycleState
+from ._exports_3 import VmNetworkInfo as VmNetworkInfo
 from ._exports_3 import VmStatsDetailResponse as VmStatsDetailResponse
 from ._exports_3 import VmStatsSummaryResponse as VmStatsSummaryResponse
 from ._exports_3 import VmStatusResponse as VmStatusResponse

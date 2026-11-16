@@ -31,6 +31,7 @@ mod active_policy;
 mod approval_routes;
 mod approval_runtime;
 use active_policy::push_policy_to_running_instances;
+mod agent_access;
 mod asset_background;
 mod asset_routes;
 mod blocking;

@@ -3,6 +3,7 @@ use std::fmt::Write;
 pub fn render(config: &toml::Value) -> String {
     let mut generated = String::new();
     for (field, constant, ceiling) in [
+        ("max_request_bytes", "AGENT_ACCESS_MAX_REQUEST_BYTES", 1048576),
         ("max_environment_ids", "AGENT_ACCESS_MAX_ENVIRONMENT_IDS", 1024),
         ("max_session_bindings", "AGENT_ACCESS_MAX_SESSION_BINDINGS", 1024),
         ("max_active", "AGENT_ACCESS_MAX_ACTIVE", 16384),

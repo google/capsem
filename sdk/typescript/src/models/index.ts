@@ -1,5 +1,9 @@
 // Generated from Capsem OpenAPI. Do not edit.
 
+export type { AgentAccessScope } from "./AgentAccessScope.js";
+export type { AgentAccessSummary } from "./AgentAccessSummary.js";
+export { AgentOperation } from "./AgentOperation.js";
+export type { AgentSessionScope } from "./AgentSessionScope.js";
 export type { ArchivedEventBody } from "./ArchivedEventBody.js";
 export { AssetFileState } from "./AssetFileState.js";
 export type { AssetFileStatus } from "./AssetFileStatus.js";
@@ -29,6 +33,8 @@ export type { ContainerStatusResponse } from "./ContainerStatusResponse.js";
 export type { ContainerSurface } from "./ContainerSurface.js";
 export { ContainerSurfaceKind } from "./ContainerSurfaceKind.js";
 export type { CostCoverage } from "./CostCoverage.js";
+export type { CreateAgentAccessRequest } from "./CreateAgentAccessRequest.js";
+export type { CreateAgentAccessResponse } from "./CreateAgentAccessResponse.js";
 export type { CreateNetworkRequest } from "./CreateNetworkRequest.js";
 export type { CreateProxyRequest } from "./CreateProxyRequest.js";
 export type { CreateProxyResponse } from "./CreateProxyResponse.js";

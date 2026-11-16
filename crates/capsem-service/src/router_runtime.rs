@@ -8,6 +8,13 @@ mod updates;
 
 pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
     Router::new()
+        .route(
+            "/agent-access",
+            post(agent_access::issue).layer(axum::extract::DefaultBodyLimit::max(
+                capsem_proto::AGENT_ACCESS_MAX_REQUEST_BYTES,
+            )),
+        )
+        .route("/agent-access/{id}", delete(agent_access::revoke))
         .route("/status", get(handle_service_status))
         .route("/restart", post(restart::handle_restart))
         .route("/update/status", get(handle_update_status))
