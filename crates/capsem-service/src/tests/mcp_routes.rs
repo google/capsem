@@ -132,10 +132,25 @@ async fn a_tool_permission_edit_is_written_to_settings_and_recorded() {
     let settings = capsem_core::net::policy_config::load_settings_file(&dir.path().join("settings.toml")).unwrap();
     let rule = &settings.profiles.rules["mcp_local_fetch_http_permission"];
     assert_eq!(rule.action, SecurityRuleAction::Ask);
+    // The service owns persisted intent and API/ledger truth; the config and
+    // core tests own the exact stored condition representation.
+    let active = capsem_core::net::policy_config::ActivePolicyFile::from_settings_and_corp(
+        &settings,
+        &capsem_core::net::policy_config::SettingsFile::default(),
+    )
+    .unwrap();
+    let rules = active.compile_security_rule_set().unwrap();
+    let event = json!({"mcp": {
+        "method": "tools/call",
+        "server": {"name": "local"},
+        "tool_call": {"name": "local__fetch_http"},
+    }});
+    let evaluated = rules.evaluate(&event).unwrap();
     assert_eq!(
-        rule.condition,
-        r#"mcp.server.name == "local" && mcp.tool_call.name == "fetch_http""#
+        evaluated.enforcement_rules()[0].rule_id,
+        "profiles.rules.mcp_local_fetch_http_permission"
     );
+    assert_eq!(evaluated.enforcement_rules()[0].action, SecurityRuleAction::Ask);
 
     let tools = get(&app, "/mcp/servers/local/tools/list").await;
     assert_eq!(tools[0]["namespaced_name"], "local__fetch_http");
