@@ -333,7 +333,6 @@ hash = { count = 4, reason = "hash-policy" }
 json = { count = 5, reason = "config" }
 
 [sources."crates/capsem-core/src/net/policy_config/settings_policy.rs"]
-json = { count = 1, reason = "config" }
 hash = { count = 1, reason = "hash-policy" }
 
 [sources."crates/capsem-core/src/security_engine/forensics.rs"]

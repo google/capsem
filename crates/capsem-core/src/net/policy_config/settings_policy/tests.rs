@@ -150,6 +150,15 @@ fn a_tool_permission_is_one_managed_rule_updated_in_place() {
         .set_mcp_tool_permission(&none, "local", "fetch_http", SecurityRuleAction::Ask, "test")
         .expect("second tool edit applies");
     let loaded = home.loaded();
+    let stored = &loaded.profiles.rules["mcp_local_fetch_http_permission"];
+    assert_eq!(
+        stored.condition,
+        r#"mcp.server.name == "local" && mcp.tool_call.name == "local__fetch_http""#
+    );
+    assert_eq!(
+        stored.effective_priority(SecurityRuleSource::User).unwrap(),
+        super::super::security_rule_profile::USER_PRIORITY_MAX
+    );
     assert_eq!(loaded.profiles.rules.len(), 1, "{:?}", loaded.profiles.rules.keys());
     assert_eq!(
         mcp_tool_permission(&loaded, &none, "local", "fetch_http").unwrap(),

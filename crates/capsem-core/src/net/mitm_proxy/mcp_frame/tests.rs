@@ -932,3 +932,45 @@ async fn each_transport_is_recorded_under_its_own_name() {
         assert_eq!(rows["rows"][0][1], "codex", "{rows}");
     }
 }
+
+/// What the settings page saves has to be what a VM enforces. The saved rule
+/// once named the bare tool at the built-in default's priority, so it never
+/// matched a call and would have lost the tie to `default_mcp` if it had: the
+/// page said "blocked" and the tool ran. This drives a real settings edit
+/// through the active policy and the event a framed call is judged by.
+#[test]
+fn a_saved_tool_permission_is_the_rule_a_call_is_enforced_by() {
+    use crate::net::policy_config::{
+        load_settings_file, ActivePolicyFile, SecurityRuleAction, SettingsFile, SettingsPolicyEdit,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.toml");
+    let none = SettingsFile::default();
+    SettingsPolicyEdit::open(&path)
+        .expect("settings open for edit")
+        .set_mcp_tool_permission(&none, "local", "fetch_http", SecurityRuleAction::Block, "test")
+        .expect("tool edit applies");
+    let rules = ActivePolicyFile::from_settings_and_corp(&load_settings_file(&path).unwrap(), &none)
+        .expect("active policy builds")
+        .compile_security_rule_set()
+        .expect("rules compile");
+
+    let enforced = |tool: &str| {
+        let summary = interpret_mcp_method(&request("tools/call", json!({"name": tool, "arguments": {}})));
+        let event = mcp_security_event_from_summary(RuntimeSecurityEventType::McpToolCall, &summary, "agent", None);
+        let evaluation = rules.evaluate(&event).expect("call evaluates");
+        let rule = evaluation.enforcement_rules()[0];
+        (rule.rule_id.clone(), rule.action)
+    };
+    assert_eq!(
+        enforced("local__fetch_http"),
+        (
+            "profiles.rules.mcp_local_fetch_http_permission".to_string(),
+            SecurityRuleAction::Block
+        )
+    );
+    assert_eq!(
+        enforced("local__echo"),
+        ("profiles.rules.default_mcp".to_string(), SecurityRuleAction::Allow)
+    );
+}

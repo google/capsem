@@ -15,7 +15,7 @@ use super::loader::{load_settings_document, write_local_settings_document};
 use super::provider_profile::ProviderRuleProfile;
 use super::security_rule_profile::{
     SecurityPluginConfig, SecurityRule, SecurityRuleAction, SecurityRuleManagedOperation, SecurityRuleManagedTarget,
-    SecurityRulePriority, SecurityRulePriorityName, SecurityRuleProfile, SecurityRuleSource,
+    SecurityRulePriority, SecurityRuleProfile, SecurityRuleSource, MANAGED_PERMISSION_PRIORITY,
 };
 use super::types::SettingsFile;
 use crate::mcp::policy::McpConfig;
@@ -194,14 +194,12 @@ impl SettingsPolicyEdit {
             SecurityRule {
                 name: rule_key.clone(),
                 action,
-                condition: format!(
-                    "mcp.server.name == {} && mcp.tool_call.name == {}",
-                    cel_string(server),
-                    cel_string(tool)
-                ),
+                condition: managed
+                    .enforced_condition()
+                    .ok_or("an MCP tool permission has no enforced condition")?,
                 enabled: true,
                 detection_level: None,
-                priority: Some(SecurityRulePriority::Named(SecurityRulePriorityName::Default)),
+                priority: Some(SecurityRulePriority::Explicit(MANAGED_PERMISSION_PRIORITY)),
                 corp_locked: false,
                 reason: Some(format!("Settings-managed MCP tool permission for {server}/{tool}.")),
                 managed: Some(managed.clone()),
@@ -358,10 +356,6 @@ fn content_identity(path: &Path) -> Result<(String, u64), String> {
         format!("blake3:{}", capsem_crypto::blake3::hash(&bytes).to_hex()),
         bytes.len() as u64,
     ))
-}
-
-fn cel_string(value: &str) -> String {
-    serde_json::to_string(value).expect("string serialization cannot fail")
 }
 
 fn managed_mcp_rule_key(server: &str, tool: &str) -> String {
