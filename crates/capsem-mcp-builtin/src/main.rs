@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use rmcp::handler::server::{router::Router, wrapper::Parameters, ServerHandler};
-use rmcp::model::{CallToolResult, ContentBlock, Implementation, InitializeResult, Meta, ServerCapabilities};
+use rmcp::model::{CallToolResult, ContentBlock, Implementation, InitializeResult, ServerCapabilities};
 use rmcp::schemars::{self, JsonSchema};
 use rmcp::{tool, tool_router, ServiceExt};
 use serde::{Deserialize, Serialize};
@@ -200,9 +200,10 @@ fn tool_result(outcome: Result<String, String>, records: &[BuiltinLedgerRecord])
         Err(text) => CallToolResult::error(vec![ContentBlock::text(text)]),
     };
     if !records.is_empty() {
-        let mut meta = Meta::new();
-        meta.insert(BUILTIN_LEDGER_META_KEY.to_string(), builtin_ledger::encode(records));
-        result.meta = Some(meta);
+        result
+            .meta
+            .get_or_insert_with(Default::default)
+            .insert(BUILTIN_LEDGER_META_KEY.to_string(), builtin_ledger::encode(records));
     }
     result
 }
