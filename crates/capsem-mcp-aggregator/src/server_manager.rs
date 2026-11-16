@@ -15,7 +15,9 @@ use anyhow::{bail, Context, Result};
 use capsem_mcp_transport::http_transport::BrokerHttpClient;
 use capsem_mcp_transport::native_worker::McpSpawnClient;
 use capsem_proto::mcp_worker::MCP_SERVER_HEADER;
-use futures::{stream::BoxStream, StreamExt};
+mod http_response;
+
+use futures::stream::BoxStream;
 use http::header::{ACCEPT, WWW_AUTHENTICATE};
 use http::{HeaderName, HeaderValue};
 use rmcp::model::{
@@ -30,7 +32,7 @@ use rmcp::transport::streamable_http_client::{
     StreamableHttpClientTransportConfig, StreamableHttpError, StreamableHttpPostResponse,
 };
 use rmcp::{RoleClient, ServiceExt};
-use sse_stream::{Sse, SseStream};
+use sse_stream::Sse;
 use tracing::{debug, info, warn};
 
 use capsem_proto::mcp_contracts::*;
@@ -162,16 +164,38 @@ impl StreamableHttpClient for CapsemMcpHttpClient {
     async fn get_stream(
         &self,
         uri: Arc<str>,
-        session_id: Arc<str>,
+        session_id: Option<Arc<str>>,
         last_event_id: Option<String>,
         auth_header: Option<String>,
         custom_headers: HashMap<HeaderName, HeaderValue>,
     ) -> Result<BoxStream<'static, Result<Sse, SseError>>, StreamableHttpError<Self::Error>> {
+        self.get_stream_with_max_sse_event_size(
+            uri,
+            session_id,
+            last_event_id,
+            auth_header,
+            custom_headers,
+            capsem_proto::MCP_FRAME_MAX_SIZE,
+        )
+        .await
+    }
+
+    async fn get_stream_with_max_sse_event_size(
+        &self,
+        uri: Arc<str>,
+        session_id: Option<Arc<str>>,
+        last_event_id: Option<String>,
+        auth_header: Option<String>,
+        custom_headers: HashMap<HeaderName, HeaderValue>,
+        max_sse_event_size: usize,
+    ) -> Result<BoxStream<'static, Result<Sse, SseError>>, StreamableHttpError<Self::Error>> {
         let mut request_builder = self
             .client
             .get(uri.as_ref())
-            .header(ACCEPT, [EVENT_STREAM_MIME_TYPE, JSON_MIME_TYPE].join(", "))
-            .header(MCP_HEADER_SESSION_ID, session_id.as_ref());
+            .header(ACCEPT, [EVENT_STREAM_MIME_TYPE, JSON_MIME_TYPE].join(", "));
+        if let Some(session_id) = session_id {
+            request_builder = request_builder.header(MCP_HEADER_SESSION_ID, session_id.as_ref());
+        }
         if let Some(last_event_id) = last_event_id {
             request_builder = request_builder.header(MCP_HEADER_LAST_EVENT_ID, last_event_id);
         }
@@ -198,7 +222,10 @@ impl StreamableHttpClient for CapsemMcpHttpClient {
             }
             None => return Err(StreamableHttpError::UnexpectedContentType(None)),
         }
-        Ok(SseStream::from_bytes_stream(response.bytes_stream()).boxed())
+        Ok(http_response::sse(
+            response.bytes_stream(),
+            max_sse_event_size.min(capsem_proto::MCP_FRAME_MAX_SIZE),
+        ))
     }
 
     async fn delete_session(
@@ -234,6 +261,26 @@ impl StreamableHttpClient for CapsemMcpHttpClient {
         session_id: Option<Arc<str>>,
         auth_header: Option<String>,
         custom_headers: HashMap<HeaderName, HeaderValue>,
+    ) -> Result<StreamableHttpPostResponse, StreamableHttpError<Self::Error>> {
+        self.post_message_with_max_sse_event_size(
+            uri,
+            message,
+            session_id,
+            auth_header,
+            custom_headers,
+            capsem_proto::MCP_FRAME_MAX_SIZE,
+        )
+        .await
+    }
+
+    async fn post_message_with_max_sse_event_size(
+        &self,
+        uri: Arc<str>,
+        message: ClientJsonRpcMessage,
+        session_id: Option<Arc<str>>,
+        auth_header: Option<String>,
+        custom_headers: HashMap<HeaderName, HeaderValue>,
+        max_sse_event_size: usize,
     ) -> Result<StreamableHttpPostResponse, StreamableHttpError<Self::Error>> {
         let mut request = self
             .client
@@ -294,10 +341,10 @@ impl StreamableHttpClient for CapsemMcpHttpClient {
             .map(|value| value.to_string());
 
         if !status.is_success() {
-            let body = response
-                .text()
+            let bytes = http_response::body(response, capsem_proto::MCP_FRAME_MAX_SIZE)
                 .await
-                .unwrap_or_else(|_| "<failed to read response body>".to_owned());
+                .map_err(StreamableHttpError::Client)?;
+            let body = String::from_utf8_lossy(&bytes);
             if content_type
                 .as_deref()
                 .is_some_and(|ct| ct.as_bytes().starts_with(JSON_MIME_TYPE.as_bytes()))
@@ -315,12 +362,18 @@ impl StreamableHttpClient for CapsemMcpHttpClient {
         match content_type.as_deref() {
             Some(ct) if ct.as_bytes().starts_with(EVENT_STREAM_MIME_TYPE.as_bytes()) => {
                 Ok(StreamableHttpPostResponse::Sse(
-                    SseStream::from_bytes_stream(response.bytes_stream()).boxed(),
+                    http_response::sse(
+                        response.bytes_stream(),
+                        max_sse_event_size.min(capsem_proto::MCP_FRAME_MAX_SIZE),
+                    ),
                     session_id,
                 ))
             }
             Some(ct) if ct.as_bytes().starts_with(JSON_MIME_TYPE.as_bytes()) => {
-                match response.json::<ServerJsonRpcMessage>().await {
+                let bytes = http_response::body(response, capsem_proto::MCP_FRAME_MAX_SIZE)
+                    .await
+                    .map_err(StreamableHttpError::Client)?;
+                match serde_json::from_slice::<ServerJsonRpcMessage>(&bytes) {
                     Ok(message) => Ok(StreamableHttpPostResponse::Json(message, session_id)),
                     Err(error) => {
                         tracing::warn!(

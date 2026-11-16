@@ -21,8 +21,9 @@ anyhow.workspace = true
 tracing.workspace = true
 reqwest.workspace = true
 futures.workspace = true
+bytes.workspace = true
 http.workspace = true
-rmcp = { workspace = true, features = ["transport-streamable-http-client-reqwest", "transport-child-process"] }
+rmcp = { workspace = true, features = ["transport-streamable-http-client", "transport-child-process"] }
 sse-stream.workspace = true
 clap = { workspace = true, features = ["derive"] }
 capsem-guard = { path = "../capsem-guard" }

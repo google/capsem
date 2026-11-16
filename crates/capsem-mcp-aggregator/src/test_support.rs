@@ -7,7 +7,7 @@ use axum::http::HeaderMap;
 use axum::middleware::Next;
 use axum::Router;
 use rmcp::handler::server::{router::tool::ToolRouter, wrapper::Parameters};
-use rmcp::model::{ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool};
+use rmcp::model::{ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool};
 use rmcp::service::{MaybeSendFuture, RequestContext};
 use rmcp::transport::streamable_http_server::{
     session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
@@ -116,8 +116,8 @@ impl RecordingMcpHandler {
 
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for RecordingMcpHandler {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_instructions("Local recording MCP server for Capsem tests")
     }
 }
@@ -126,8 +126,8 @@ impl ServerHandler for RecordingMcpHandler {
 struct DuplicateToolMcpHandler;
 
 impl ServerHandler for DuplicateToolMcpHandler {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
     }
 
     fn list_tools(
@@ -153,8 +153,8 @@ struct HangingMcpHandler {
 }
 
 impl ServerHandler for HangingMcpHandler {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
     }
 
     fn list_tools(
@@ -172,7 +172,7 @@ impl ServerHandler for HangingMcpHandler {
         &self,
         request: rmcp::model::CallToolRequestParams,
         context: RequestContext<RoleServer>,
-    ) -> impl Future<Output = Result<rmcp::model::CallToolResult, rmcp::ErrorData>> + MaybeSendFuture + '_ {
+    ) -> impl Future<Output = Result<rmcp::model::CallToolResponse, rmcp::ErrorData>> + MaybeSendFuture + '_ {
         let state = self.state.clone();
         async move {
             context.ct.cancelled().await;

@@ -480,7 +480,9 @@ hash = { count = 3, reason = "hash-model-item" }
 json = { count = 3, reason = "mcp" }
 
 [sources."crates/capsem-mcp-aggregator/src/server_manager.rs"]
-json = { count = 18, reason = "mcp" }
+# Parse the admitted external MCP JSON-RPC bytes explicitly, replacing the
+# unbounded reqwest Response::json collector (not an internal JSON envelope).
+json = { count = 19, reason = "mcp" }
 
 [sources."crates/capsem-mcp-builtin/src/main.rs"]
 json = { count = 6, reason = "mcp" }

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Security: Upgrade the Rust MCP SDK and enforce transport limits before buffering JSON/error bodies or parsing SSE events, rejecting oversized responses explicitly without truncating tool results.
+
 - Security: Upgrade bundled SQLite through rusqlite 0.41.1, retaining read-only ledger boundaries, durable snapshots, and bounded query and archive-capture deadlines.
 
 - Security: Require patched Soup Sieve 4 for Inspect HTML parsing and Python 3.11.5 or newer, preventing vulnerable transitive resolutions.
