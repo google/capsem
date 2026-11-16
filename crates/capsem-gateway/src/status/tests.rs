@@ -351,7 +351,11 @@ async fn uds_get_times_out_while_reading_a_stalled_body() {
 
     let result = tokio::time::timeout(
         Duration::from_secs(6),
-        uds_get(&test_app_state(&path).service_client, "/internal/gateway/status"),
+        uds_get(
+            &test_app_state(&path).service_client,
+            "/internal/gateway/status",
+            "test-token",
+        ),
     )
     .await
     .expect("uds_get must enforce its own five-second deadline");
@@ -368,9 +372,13 @@ async fn uds_get_rejects_an_oversized_status_body() {
     );
     let (path, handle, _dir) = mock_uds(mock).await;
 
-    let error = uds_get(&test_app_state(&path).service_client, "/internal/gateway/status")
-        .await
-        .unwrap_err();
+    let error = uds_get(
+        &test_app_state(&path).service_client,
+        "/internal/gateway/status",
+        "test-token",
+    )
+    .await
+    .unwrap_err();
 
     assert!(error.to_string().contains("length limit"), "{error:#}");
     handle.abort();

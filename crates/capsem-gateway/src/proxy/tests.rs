@@ -421,7 +421,7 @@ async fn oversized_unsized_json_response_is_rejected() {
 }
 
 #[tokio::test]
-async fn preserves_client_headers_except_auth_and_host() {
+async fn preserves_credentials_for_service_validation_and_strips_identity_claims() {
     let mock = axum::Router::new().route(
         "/headers",
         axum::routing::get(|req: axum::extract::Request| async move {
@@ -429,11 +429,15 @@ async fn preserves_client_headers_except_auth_and_host() {
             let has_x_custom = req.headers().contains_key("x-custom");
             let has_auth = req.headers().contains_key("authorization");
             let has_host = req.headers().contains_key("host");
+            let has_actor = req.headers().contains_key("x-capsem-actor");
+            let has_gateway = req.headers().contains_key("x-capsem-gateway");
             axum::Json(serde_json::json!({
                 "has_accept": has_accept,
                 "has_x_custom": has_x_custom,
                 "has_auth": has_auth,
                 "has_host": has_host,
+                "has_actor": has_actor,
+                "has_gateway": has_gateway,
             }))
         }),
     );
@@ -447,6 +451,8 @@ async fn preserves_client_headers_except_auth_and_host() {
                 .header("accept", "application/json")
                 .header("x-custom", "should-be-preserved")
                 .header("authorization", "Bearer test-token")
+                .header("x-capsem-actor", "operator")
+                .header("x-capsem-gateway", "true")
                 .header("host", "example.com")
                 .body(Body::empty())
                 .unwrap(),
@@ -458,7 +464,9 @@ async fn preserves_client_headers_except_auth_and_host() {
 
     assert_eq!(json["has_accept"], true);
     assert_eq!(json["has_x_custom"], true);
-    assert_eq!(json["has_auth"], false);
+    assert_eq!(json["has_auth"], true);
+    assert_eq!(json["has_actor"], false);
+    assert_eq!(json["has_gateway"], false);
     assert_eq!(json["has_host"], false);
     h.abort();
 }

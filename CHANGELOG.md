@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Security: Register operator authority through the private gateway control channel, validate credentials on every brokered service request, and revoke that authority when its control epoch ends.
+
 - Security: Derive private-name lookup identity from the registered kernel peer and VM generation, refuse revoked or ambiguous owners, and reject the old caller-supplied VM identity field.
 
 - Security: Isolate gateway service traffic on coordinator-minted socket pairs, preventing direct service peers from reaching the gateway’s private status route using forged headers.

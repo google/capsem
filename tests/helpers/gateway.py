@@ -200,7 +200,21 @@ class GatewayInstance:
     def _serve_grants(self, channel: socket.socket, run_dir: Path) -> None:
         """Test coordinator: mint only connections to this fixture's service."""
         try:
+            operator_registered = False
             while request := self._recv_exact(channel, 80):
+                if request[:3] == b"GA\x01":
+                    response = bytearray(80)
+                    response[:3] = b"GA\x01"
+                    response[4:12] = request[4:12]
+                    if request[3] == 1 and request[13] == 64 and not operator_registered:
+                        operator_registered = True
+                        response[3] = 101
+                    else:
+                        # This mock parent owns no delegated grants.
+                        response[3] = 103
+                        response[12] = 1
+                    channel.sendall(response)
+                    continue
                 if request[:3] != b"GG\x01":
                     return
                 request_id = request[4:12]

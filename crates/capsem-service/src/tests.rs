@@ -145,6 +145,7 @@ pub(crate) fn test_state(
         shutdown_lock: tokio::sync::Mutex::new(()),
         update_lock: Arc::new(tokio::sync::Mutex::new(())),
         policy_mutation: policy_mutation::PolicyMutationLock::default(),
+        caller_authority: Arc::new(caller_auth::Authority::default()),
         update_restart: tokio::sync::Notify::new(),
         run_dir,
         _test_tempdir: test_tempdir,

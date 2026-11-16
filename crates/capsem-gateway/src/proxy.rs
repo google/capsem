@@ -154,7 +154,13 @@ async fn forward(state: &AppState, mut req: Request) -> anyhow::Result<Response>
     // Clean up headers
     let headers = req.headers_mut();
     headers.remove(http::header::HOST);
-    headers.remove(http::header::AUTHORIZATION);
+    // The service validates the credential on its sealed gateway channel.
+    // Caller claims never become authenticated actor evidence.
+    headers.remove("x-capsem-actor");
+    headers.remove("x-capsem-gateway");
+    if let Some(value) = headers.get_mut(http::header::AUTHORIZATION) {
+        value.set_sensitive(true);
+    }
     strip_hop_by_hop_request_headers(headers);
 
     // Build the absolute upstream URI while retaining the parsed path/query.

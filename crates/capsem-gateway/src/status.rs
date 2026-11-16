@@ -164,7 +164,7 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
         updates: None,
     };
 
-    let list = match uds_get(&state.service_client, "/internal/gateway/status").await {
+    let list = match uds_get(&state.service_client, "/internal/gateway/status", &state.token).await {
         Ok(body) => match serde_json::from_slice::<ListResponse>(&body) {
             Ok(l) => l,
             Err(_) => return unavailable,
@@ -238,16 +238,17 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
 }
 
 /// One GET to the service over the pooled client, bounded in time and size.
-async fn uds_get(client: &ServiceClient, path: &str) -> anyhow::Result<Bytes> {
-    tokio::time::timeout(STATUS_REQUEST_TIMEOUT, uds_get_inner(client, path))
+async fn uds_get(client: &ServiceClient, path: &str, token: &str) -> anyhow::Result<Bytes> {
+    tokio::time::timeout(STATUS_REQUEST_TIMEOUT, uds_get_inner(client, path, token))
         .await
         .map_err(|_| anyhow::anyhow!("status request timed out"))?
 }
 
-async fn uds_get_inner(client: &ServiceClient, path: &str) -> anyhow::Result<Bytes> {
+async fn uds_get_inner(client: &ServiceClient, path: &str, token: &str) -> anyhow::Result<Bytes> {
     let req = hyper::Request::builder()
         .method("GET")
         .uri(format!("http://localhost{path}"))
+        .header(http::header::AUTHORIZATION, format!("Bearer {token}"))
         .body(axum::body::Body::empty())?;
     let res = client.request(req).await?;
     if !res.status().is_success() {

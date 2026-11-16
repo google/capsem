@@ -307,6 +307,7 @@ async fn start_and_serve(args: Args, run_dir: PathBuf, on_ready: impl FnOnce(Arc
         shutdown_lock: tokio::sync::Mutex::new(()),
         update_lock: Arc::new(tokio::sync::Mutex::new(())),
         policy_mutation: policy_mutation::PolicyMutationLock::default(),
+        caller_authority: Arc::new(caller_auth::Authority::default()),
         update_restart: tokio::sync::Notify::new(),
         #[cfg(test)]
         _test_tempdir: None,

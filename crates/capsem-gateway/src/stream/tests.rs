@@ -76,7 +76,7 @@ fn request(address: std::net::SocketAddr, query: &str, vm: &str) -> http::Reques
 }
 
 #[tokio::test]
-async fn authenticated_stream_is_tunnelled_byte_for_byte_without_credentials() {
+async fn authenticated_stream_is_tunnelled_with_credentials_for_service_validation() {
     let dir = tempfile::tempdir().unwrap();
     let (service, mut forwarded) = fake_service(dir.path()).await;
     let address = gateway(&service).await;
@@ -92,10 +92,9 @@ async fn authenticated_stream_is_tunnelled_byte_for_byte_without_credentials() {
     let headers = forwarded.recv().await.unwrap();
     assert_eq!(headers["sec-websocket-protocol"], "capsem.stream.v3");
     assert_eq!(headers[http::header::HOST], "localhost");
-    assert!(headers.get(http::header::AUTHORIZATION).is_none());
-    assert!(
-        !format!("{headers:?}").contains(TOKEN),
-        "the gateway token must not reach the service"
+    assert_eq!(
+        headers.get(http::header::AUTHORIZATION).unwrap(),
+        &format!("Bearer {TOKEN}")
     );
 }
 

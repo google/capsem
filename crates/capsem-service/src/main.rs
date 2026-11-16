@@ -33,6 +33,7 @@ use active_policy::push_policy_to_running_instances;
 mod asset_background;
 mod asset_routes;
 mod blocking;
+mod caller_auth;
 mod container_setup;
 mod gateway_channel;
 mod gateway_grant;
@@ -218,6 +219,7 @@ const ACTIVE_POLICY_DIR: &str = "vm";
 const ACTIVE_POLICY_FILE: &str = "active_policy.toml";
 
 pub struct ServiceState {
+    caller_authority: Arc<caller_auth::Authority>,
     managed: managed_routes::Runtime,
     connections: connection_routes::Runtime,
     approvals: approval_runtime::Runtime,

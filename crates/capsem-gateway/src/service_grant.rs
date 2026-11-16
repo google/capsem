@@ -6,6 +6,10 @@ use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
 use capsem_foundation::unix::router_channel::{DescriptorReceiver, DescriptorSender};
+use capsem_proto::gateway_grant::auth::{
+    decode_gateway_auth_response, encode_gateway_auth_request, GatewayAuthRequest, GatewayAuthResponse,
+    GatewayAuthSecret,
+};
 use capsem_proto::gateway_grant::{
     decode_gateway_grant_response, encode_gateway_grant_request, GatewayGrantKind, GatewayGrantRequest,
     GatewayGrantResponse, GATEWAY_GRANT_FRAME_SIZE, GATEWAY_GRANT_MAX_FDS,
@@ -19,6 +23,10 @@ type WireSender = DescriptorSender<GATEWAY_GRANT_FRAME_SIZE, GATEWAY_GRANT_MAX_F
 type WireReceiver = DescriptorReceiver<GATEWAY_GRANT_FRAME_SIZE, GATEWAY_GRANT_MAX_FDS>;
 
 enum Command {
+    RegisterOperator {
+        token: GatewayAuthSecret<64>,
+        reply: oneshot::Sender<io::Result<()>>,
+    },
     Service(oneshot::Sender<io::Result<OwnedFd>>),
     Metrics(oneshot::Sender<io::Result<OwnedFd>>),
     Owner {
@@ -44,6 +52,22 @@ impl GatewayGrantClient {
             }
         });
         Ok(Self { commands })
+    }
+
+    pub(crate) async fn register_operator(&self, token: &str) -> io::Result<()> {
+        let bytes = token
+            .as_bytes()
+            .try_into()
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid operator credential length"))?;
+        let (reply, result) = oneshot::channel();
+        self.commands
+            .send(Command::RegisterOperator {
+                token: GatewayAuthSecret::from_bytes(bytes),
+                reply,
+            })
+            .await
+            .map_err(|_| closed())?;
+        result.await.map_err(|_| closed())?
     }
 
     pub(crate) async fn open_service(&self) -> io::Result<tokio::net::UnixStream> {
@@ -82,7 +106,33 @@ async fn run(
 ) -> io::Result<()> {
     let mut request_id = 1_u64;
     while let Some(command) = commands.recv().await {
+        if let Command::RegisterOperator { token, reply } = command {
+            let request = GatewayAuthRequest::RegisterOperator { request_id, token };
+            request_id = request_id
+                .checked_add(1)
+                .ok_or_else(|| io::Error::other("gateway grant request id exhausted"))?;
+            let exchanged = exchange_auth(&sender, &receiver, request).await;
+            let failed = exchanged.is_err();
+            let result = match exchanged {
+                Ok(GatewayAuthResponse::RegisteredOperator { .. }) => Ok(()),
+                Ok(GatewayAuthResponse::Denied { .. }) => Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "operator bootstrap was refused",
+                )),
+                Ok(_) => Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "unexpected operator bootstrap response",
+                )),
+                Err(error) => Err(error),
+            };
+            let _ = reply.send(result);
+            if failed {
+                return Err(io::Error::other("gateway authentication exchange failed"));
+            }
+            continue;
+        }
         let (request, expected, reply) = match command {
+            Command::RegisterOperator { .. } => return Err(io::Error::other("invalid gateway command dispatch")),
             Command::Service(reply) => (
                 GatewayGrantRequest::OpenService { request_id },
                 GatewayGrantKind::Service,
@@ -166,6 +216,46 @@ async fn exchange(
         _ => Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "invalid gateway descriptor grant response",
+        )),
+    }
+}
+
+async fn exchange_auth(
+    sender: &WireSender,
+    receiver: &WireReceiver,
+    request: GatewayAuthRequest,
+) -> io::Result<GatewayAuthResponse> {
+    let request_id = request.request_id();
+    let frame = encode_gateway_auth_request(&request).map_err(io::Error::other)?;
+    tokio::time::timeout(WIRE_TIMEOUT, sender.send(&frame, &[]))
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "gateway authentication request timed out"))??;
+    let response = tokio::time::timeout(WIRE_TIMEOUT, receiver.recv())
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "gateway authentication response timed out"))??;
+    if !response.fds.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "gateway authentication response carried descriptors",
+        ));
+    }
+    let response = decode_gateway_auth_response(&response.bytes).map_err(io::Error::other)?;
+    if response.request_id() != request_id {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "gateway authentication response identity mismatch",
+        ));
+    }
+    match (&request, response) {
+        (_, GatewayAuthResponse::Denied { .. })
+        | (GatewayAuthRequest::RegisterOperator { .. }, GatewayAuthResponse::RegisteredOperator { .. }) => Ok(response),
+        (
+            GatewayAuthRequest::AuthenticateAgent { access_id, .. },
+            GatewayAuthResponse::AuthenticatedAgent { access_id: actual, .. },
+        ) if *access_id == actual => Ok(response),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "gateway authentication response direction mismatch",
         )),
     }
 }

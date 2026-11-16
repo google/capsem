@@ -131,7 +131,14 @@ async fn gateway_status_route_returns_vms_assets_and_updates_in_one_response() {
     install_test_runtime_assets(&state);
     insert_fake_instance(&state, "gateway-status-vm", std::process::id());
 
-    let socket = gateway_channel::prepare(build_service_router(state)).unwrap();
+    let authority = Arc::clone(&state.caller_authority);
+    let mut epoch = authority.begin();
+    epoch
+        .register(capsem_proto::gateway_grant::auth::GatewayAuthSecret::from_bytes(
+            [b'A'; 64],
+        ))
+        .unwrap();
+    let socket = gateway_channel::prepare(build_service_router(state), authority).unwrap();
     let socket = tokio::net::UnixStream::from_std(socket).unwrap();
     let (mut client, connection) = hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(socket))
         .await
@@ -140,6 +147,7 @@ async fn gateway_status_route_returns_vms_assets_and_updates_in_one_response() {
     let response = client
         .send_request(
             axum::http::Request::get("/internal/gateway/status")
+                .header(axum::http::header::AUTHORIZATION, format!("Bearer {}", "A".repeat(64)))
                 .body(Body::empty())
                 .unwrap(),
         )

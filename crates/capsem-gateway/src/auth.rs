@@ -237,7 +237,7 @@ fn is_surface_launcher_path(path: &str) -> bool {
 /// routes except `GET /health` and the surface launcher.
 pub async fn auth_middleware(
     State(state): State<Arc<AppState>>,
-    req: Request<axum::body::Body>,
+    mut req: Request<axum::body::Body>,
     next: Next,
 ) -> Response {
     if !request_names_loopback_host(&req) {
@@ -274,6 +274,17 @@ pub async fn auth_middleware(
             .is_some_and(|t| token_matches(t, &state.token));
 
     if header_valid || query_valid {
+        if query_valid {
+            // Canonicalize the already-verified browser credential before
+            // the stream tunnel drops its query string. Never substitute an
+            // operator credential for a header-authenticated caller.
+            let value = http::HeaderValue::from_str(&format!("Bearer {}", state.token))
+                .expect("generated operator token is a valid header");
+            req.headers_mut().insert(http::header::AUTHORIZATION, value);
+        }
+        if let Some(value) = req.headers_mut().get_mut(http::header::AUTHORIZATION) {
+            value.set_sensitive(true);
+        }
         next.run(req).await
     } else {
         let shape = classify_auth_header(req.headers().get("authorization"));

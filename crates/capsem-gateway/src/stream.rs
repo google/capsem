@@ -11,7 +11,7 @@ use http::header::{
 use hyper_util::rt::TokioIo;
 
 /// Handshake headers carried to the service and back; everything else,
-/// including the client's credentials, stays at the gateway.
+/// except the authenticated credential, stays at the gateway.
 const REQUEST_HEADERS: [http::HeaderName; 5] = [
     CONNECTION,
     UPGRADE,
@@ -57,6 +57,13 @@ pub async fn handle_stream_tunnel(
         .method(http::Method::GET)
         .uri(format!("/vms/{id}/stream"))
         .header(http::header::HOST, "localhost");
+    let Some(authorization) = request.headers().get(http::header::AUTHORIZATION) else {
+        return refuse(
+            http::StatusCode::UNAUTHORIZED,
+            "stream requires authenticated caller context",
+        );
+    };
+    upstream = upstream.header(http::header::AUTHORIZATION, authorization);
     for name in REQUEST_HEADERS {
         for value in request.headers().get_all(&name) {
             upstream = upstream.header(&name, value);

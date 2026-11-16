@@ -308,7 +308,7 @@ async fn credential_injection_forwards_exact_authenticated_material_once() {
         axum::routing::post(move |request: http::Request<Body>| {
             let received = received.clone();
             async move {
-                assert!(!request.headers().contains_key("authorization"));
+                assert_eq!(request.headers().get("authorization").unwrap(), "Bearer test");
                 assert_eq!(axum::body::to_bytes(request.into_body(), 1024).await.unwrap(), body);
                 received.fetch_add(1, Ordering::SeqCst);
                 (

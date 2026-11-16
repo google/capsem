@@ -155,6 +155,10 @@ async fn run(args: Args) -> Result<()> {
         tracing::warn!(path = %uds_path.display(), "service socket not found -- requests will return 502 until service starts");
     }
     let grants = service_grant::GatewayGrantClient::start(grant_socket)?;
+    grants
+        .register_operator(&token)
+        .await
+        .context("register operator authority with service")?;
     let metric_export = metric_export::start(grants.clone());
     let service_client = ServiceClient::granted(grants);
     let state = Arc::new(AppState {

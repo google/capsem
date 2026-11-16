@@ -12,19 +12,32 @@ async fn grants_only_the_service_and_registry_derived_owner_seats() {
         DescriptorSender::<GATEWAY_GRANT_FRAME_SIZE, GATEWAY_GRANT_MAX_FDS>::new(client.try_clone().unwrap()).unwrap();
     let responses = DescriptorReceiver::<GATEWAY_GRANT_FRAME_SIZE, GATEWAY_GRANT_MAX_FDS>::new(client).unwrap();
 
-    let request = encode_gateway_grant_request(&GatewayGrantRequest::OpenService { request_id: 1 }).unwrap();
+    let register =
+        capsem_proto::gateway_grant::auth::encode_gateway_auth_request(&GatewayAuthRequest::RegisterOperator {
+            request_id: 1,
+            token: capsem_proto::gateway_grant::auth::GatewayAuthSecret::from_bytes([b'A'; 64]),
+        })
+        .unwrap();
+    requests.send(&register, &[]).await.unwrap();
+    let registered = responses.recv().await.unwrap();
+    assert!(registered.fds.is_empty());
+    assert_eq!(
+        capsem_proto::gateway_grant::auth::decode_gateway_auth_response(&registered.bytes).unwrap(),
+        GatewayAuthResponse::RegisteredOperator { request_id: 1 }
+    );
+    let request = encode_gateway_grant_request(&GatewayGrantRequest::OpenService { request_id: 2 }).unwrap();
     requests.send(&request, &[]).await.unwrap();
     let response = responses.recv().await.unwrap();
     assert!(matches!(
         decode_gateway_grant_response(&response.bytes).unwrap(),
         GatewayGrantResponse::Granted {
-            request_id: 1,
+            request_id: 2,
             kind: GatewayGrantKind::Service
         }
     ));
     requests
         .send(
-            &encode_gateway_grant_request(&GatewayGrantRequest::Adopted { request_id: 1 }).unwrap(),
+            &encode_gateway_grant_request(&GatewayGrantRequest::Adopted { request_id: 2 }).unwrap(),
             &[],
         )
         .await
@@ -33,10 +46,8 @@ async fn grants_only_the_service_and_registry_derived_owner_seats() {
         response.fds.into_iter().next().unwrap(),
     ))
     .unwrap();
-    granted
-        .write_all(b"GET /internal/gateway/status HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
-        .await
-        .unwrap();
+    let request = format!("GET /internal/gateway/status HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {}\r\nConnection: close\r\n\r\n", "A".repeat(64));
+    granted.write_all(request.as_bytes()).await.unwrap();
     let mut reply = Vec::new();
     tokio::time::timeout(std::time::Duration::from_secs(5), granted.read_to_end(&mut reply))
         .await
@@ -47,7 +58,7 @@ async fn grants_only_the_service_and_registry_derived_owner_seats() {
     assert!(reply.contains("\"sandboxes\""), "{reply}");
 
     let request = encode_gateway_grant_request(&GatewayGrantRequest::OpenOwnerHandoff {
-        request_id: 2,
+        request_id: 3,
         vm_id: "not-running".into(),
     })
     .unwrap();
@@ -57,7 +68,7 @@ async fn grants_only_the_service_and_registry_derived_owner_seats() {
     assert!(matches!(
         decode_gateway_grant_response(&response.bytes).unwrap(),
         GatewayGrantResponse::Denied {
-            request_id: 2,
+            request_id: 3,
             reason: GatewayGrantDenial::NotFound
         }
     ));
@@ -265,4 +276,122 @@ async fn metrics_grant_is_one_per_control_epoch_and_revokes_on_control_disconnec
             .is_err()
     );
     assert!(broker.await.unwrap().is_err());
+}
+
+#[tokio::test]
+async fn operator_registration_is_once_and_control_disconnect_retires_pooled_http_authority() {
+    use axum::body::{to_bytes, Body};
+    use capsem_proto::gateway_grant::auth::{
+        decode_gateway_auth_response, encode_gateway_auth_request, GatewayAuthSecret,
+    };
+    let state = crate::tests::make_test_state();
+    let (client, server) = std::os::unix::net::UnixStream::pair().unwrap();
+    let broker = tokio::spawn(serve(server, Arc::clone(&state)));
+    let requests = WireSender::new(client.try_clone().unwrap()).unwrap();
+    let responses = WireReceiver::new(client).unwrap();
+    for (request_id, expected) in [
+        (1, GatewayAuthResponse::RegisteredOperator { request_id: 1 }),
+        (
+            2,
+            GatewayAuthResponse::Denied {
+                request_id: 2,
+                reason: GatewayAuthDenial::Forbidden,
+            },
+        ),
+    ] {
+        let request = GatewayAuthRequest::RegisterOperator {
+            request_id,
+            token: GatewayAuthSecret::from_bytes([b'A'; 64]),
+        };
+        requests
+            .send(&encode_gateway_auth_request(&request).unwrap(), &[])
+            .await
+            .unwrap();
+        let response = responses.recv().await.unwrap();
+        assert!(response.fds.is_empty());
+        assert_eq!(decode_gateway_auth_response(&response.bytes).unwrap(), expected);
+    }
+    let mut access_id = [0; 16];
+    access_id[6] = 0x40;
+    access_id[8] = 0x80;
+    let request = GatewayAuthRequest::AuthenticateAgent {
+        request_id: 3,
+        access_id,
+        capability: GatewayAuthSecret::from_bytes([0; 32]),
+    };
+    requests
+        .send(&encode_gateway_auth_request(&request).unwrap(), &[])
+        .await
+        .unwrap();
+    let response = responses.recv().await.unwrap();
+    assert_eq!(
+        decode_gateway_auth_response(&response.bytes).unwrap(),
+        GatewayAuthResponse::Denied {
+            request_id: 3,
+            reason: GatewayAuthDenial::Forbidden
+        }
+    );
+    // An invalid capability must not stop the shared control channel.
+    requests
+        .send(
+            &encode_gateway_grant_request(&GatewayGrantRequest::OpenService { request_id: 4 }).unwrap(),
+            &[],
+        )
+        .await
+        .unwrap();
+    let response = responses.recv().await.unwrap();
+    assert_eq!(
+        decode_gateway_grant_response(&response.bytes).unwrap(),
+        GatewayGrantResponse::Granted {
+            request_id: 4,
+            kind: GatewayGrantKind::Service
+        }
+    );
+    requests
+        .send(
+            &encode_gateway_grant_request(&GatewayGrantRequest::Adopted { request_id: 4 }).unwrap(),
+            &[],
+        )
+        .await
+        .unwrap();
+    let socket = tokio::net::UnixStream::from_std(std::os::unix::net::UnixStream::from(
+        response.fds.into_iter().next().unwrap(),
+    ))
+    .unwrap();
+    let (mut client, connection) = hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(socket))
+        .await
+        .unwrap();
+    tokio::spawn(connection);
+    for (token, expected) in [("B", StatusCode::UNAUTHORIZED), ("A", StatusCode::OK)] {
+        let response = client
+            .send_request(
+                axum::http::Request::get("/version")
+                    .header(
+                        axum::http::header::AUTHORIZATION,
+                        format!("Bearer {}", token.repeat(64)),
+                    )
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected);
+        to_bytes(Body::new(response.into_body()), 1024).await.unwrap();
+    }
+    drop((requests, responses));
+    assert!(broker.await.unwrap().is_err());
+    let response = client
+        .send_request(
+            axum::http::Request::get("/version")
+                .header(axum::http::header::AUTHORIZATION, format!("Bearer {}", "A".repeat(64)))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::UNAUTHORIZED,
+        "a pooled connection must not retain a retired actor"
+    );
 }
