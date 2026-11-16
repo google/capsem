@@ -67,3 +67,9 @@ reason = "zvariant 5.15.0 unmaintained via zbus 5.19.0 -> stable Tauri 2 opener 
 id = "RUSTSEC-2026-0372"
 ignoreUntil = 2026-11-18T00:00:00Z
 reason = "zvariant_derive 5.15.0 unmaintained via zbus 5.19.0 -> stable Tauri 2 opener and single-instance Linux plugins; no stable plugin release has migrated to zbus 6"
+
+# Upstream container test harness, never part of the shipped OCI client.
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0440"
+ignoreUntil = 2026-12-16T00:00:00Z
+reason = "astral-tokio-tar 0.6.4 is used only by testcontainers 0.28.0, a dev-dependency in third_party/rust/oci-client/Cargo.lock for upstream registry tests. Neither package occurs in the product Cargo.lock, and neither is compiled into native binaries or the guest runtime. Rechecked crates.io and RustSec on 2026-11-16: latest testcontainers 0.28.0 still uses it, latest tar 0.7.1 is also unmaintained, and RUSTSEC-2026-0440 has no patched versions. RELEASE.md section 8.2 permits this upstream build-tool-only exception through 2026-12-16; retain upstream tests and recheck by then."

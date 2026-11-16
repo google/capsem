@@ -13,6 +13,11 @@
 
 [advisories]
 ignore = [
+  # Upstream oci-client's standalone testcontainers dev dependency only.
+  # No product lockfile/runtime linkage; no maintained tar version exists.
+  # RELEASE.md 8.2 build-tool exception expires 2026-12-16 (OSV mirror).
+  "RUSTSEC-2026-0440",
+
   # --- glib VariantStrIter unsoundness (RUSTSEC-2024-0429) ---------------
   # Via webkit2gtk -> wry -> Tauri, and tray-icon/muda, on Linux: all pin
   # gtk-rs 0.18. We never use VariantStrIter. Leaves when Tauri moves on.

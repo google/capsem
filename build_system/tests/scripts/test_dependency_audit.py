@@ -196,13 +196,19 @@ def test_every_rust_exception_names_a_crate_still_in_the_lock() -> None:
     """
     import tomllib
 
-    locked = {package["name"] for package in tomllib.loads((PROJECT_ROOT / "Cargo.lock").read_text())["package"]}
+    # The scanner owns every configured lockfile, including upstream
+    # standalone dev tools that are absent from the product lockfile.
+    locked = {
+        package["name"]
+        for lockfile in POLICY.lockfiles if Path(lockfile).name == "Cargo.lock"
+        for package in tomllib.loads((PROJECT_ROOT / lockfile).read_text())["package"]
+    }
     stale = [
         f"{advisory} ({reason.split()[0]})"
         for advisory, reason in _osv_ignored().items()
         if advisory.startswith("RUSTSEC-") and reason.split()[0] not in locked
     ]
-    assert not stale, f"exceptions for crates no longer in Cargo.lock: {stale}"
+    assert not stale, f"exceptions for crates no longer in any audited Cargo.lock: {stale}"
 
 
 def test_osv_and_cargo_audit_ignore_the_same_reviewed_advisories() -> None:

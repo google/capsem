@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Security: Temporarily except the unmaintained astral-tokio-tar dependency used only by upstream OCI registry test tooling through December 16, 2026; it is absent from shipped binaries and runtime bundles.
+
 - Security: Upgrade the Rust MCP SDK and enforce transport limits before buffering JSON/error bodies or parsing SSE events, rejecting oversized responses explicitly without truncating tool results.
 
 - Security: Upgrade bundled SQLite through rusqlite 0.41.1, retaining read-only ledger boundaries, durable snapshots, and bounded query and archive-capture deadlines.
