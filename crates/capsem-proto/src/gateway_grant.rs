@@ -4,6 +4,7 @@
 //! service connection, or name a VM whose current owner handoff endpoint the
 //! coordinator derives and authenticates from its registry.
 
+pub mod auth;
 pub mod metrics;
 
 use anyhow::{bail, Result};

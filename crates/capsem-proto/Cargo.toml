@@ -15,7 +15,7 @@ schema = ["dep:utoipa"]
 
 [dependencies]
 utoipa = { version = "5.4", optional = true }
-capsem-crypto = { path = "../capsem-crypto", version = "0.7.2", default-features = false }
+capsem-crypto = { path = "../capsem-crypto", version = "0.7.2", default-features = false, features = ["secrets"] }
 serde = { workspace = true }
 serde_bytes = { workspace = true }
 serde_json = { workspace = true }
