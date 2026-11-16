@@ -506,10 +506,10 @@ event: model.done\ndata: {\"finish_reason\":\"stop\"}\n\n",
         (&Method::POST, "/api/client/features") => json_response(json!({"version": 1, "features": []})),
         (&Method::POST, "/mcp") => {
             let payload = parse_json(&request_body);
-            if mcp_payload_should_delay(&payload) {
+            if mcp::should_delay(&payload) {
                 tokio::time::sleep(Duration::from_secs(2)).await;
             }
-            json_response(mcp_response(payload))
+            json_response(mcp::response(payload))
         }
         (&Method::POST, "/echo") => json_response(echo_response(query, headers, request_body.len())),
         (&Method::POST, _) if path.starts_with("/v1internal") => {
@@ -859,80 +859,6 @@ fn json_compact(value: Value) -> String {
     serde_json::to_string(&value).expect("serialize compact JSON")
 }
 
-fn mcp_response(payload: Value) -> Value {
-    let id = payload.get("id").cloned().unwrap_or(json!(1));
-    let method = payload.get("method").and_then(Value::as_str).unwrap_or("");
-    match method {
-        "initialize" => json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "result": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {"tools": {"listChanged": false}, "resources": {}},
-                "serverInfo": {"name": "capsem-mock-server", "version": "1.0.0"}
-            }
-        }),
-        "tools/list" => json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "result": {
-                "tools": [
-                    {"name": "fixture_lookup", "description": "Return deterministic debug content.", "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}}},
-                    {"name": "fetch_http", "description": "Fetch a local mock server URL.", "inputSchema": {"type": "object", "properties": {"url": {"type": "string"}}}},
-                    {"name": "slow_sleep", "description": "Sleep before returning deterministic text.", "inputSchema": {"type": "object", "properties": {}}}
-                ]
-            }
-        }),
-        "tools/call" => {
-            let name = payload
-                .pointer("/params/name")
-                .and_then(Value::as_str)
-                .unwrap_or("fixture_lookup");
-            json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "result": {
-                    "content": [{"type": "text", "text": format!("capsem-mock-server:mcp:{name}")}],
-                    "isError": false
-                }
-            })
-        }
-        "resources/list" => json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "result": {
-                "resources": [{
-                    "uri": "doc://slow",
-                    "name": "slow-doc",
-                    "description": "Slow deterministic resource.",
-                    "mimeType": "text/plain"
-                }]
-            }
-        }),
-        "resources/read" => json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "result": {
-                "contents": [{"uri": payload.pointer("/params/uri").and_then(Value::as_str).unwrap_or("doc://unknown"), "mimeType": "text/plain", "text": "capsem-mock-server:mcp:resource"}]
-            }
-        }),
-        _ => {
-            json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32601, "message": "method not found"}})
-        }
-    }
-}
-
-fn mcp_payload_should_delay(payload: &Value) -> bool {
-    match payload.get("method").and_then(Value::as_str) {
-        Some("tools/call") => payload.pointer("/params/name").and_then(Value::as_str) == Some("slow_sleep"),
-        Some("resources/read") => payload
-            .pointer("/params/uri")
-            .and_then(Value::as_str)
-            .is_some_and(|uri| uri == "doc://slow" || uri.ends_with("/doc://slow")),
-        _ => false,
-    }
-}
-
 fn now_unix() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -990,6 +916,8 @@ fn log_request(
         let _ = writeln!(file, "{record}");
     }
 }
+
+mod mcp;
 
 #[cfg(test)]
 mod tests;

@@ -497,7 +497,11 @@ json = { count = 9, reason = "benchmark" }
 json = { count = 2, reason = "benchmark" }
 
 [sources."crates/capsem-mock-server/src/main.rs"]
-json = { count = 46, reason = "benchmark" }
+json = { count = 39, reason = "benchmark" }
+
+# Existing external MCP fixture encoding moved from main into its owner.
+[sources."crates/capsem-mock-server/src/mcp.rs"]
+json = { count = 8, reason = "benchmark" }
 
 [sources."crates/capsem-mock-server/src/google.rs"]
 json = { count = 7, reason = "benchmark" }
