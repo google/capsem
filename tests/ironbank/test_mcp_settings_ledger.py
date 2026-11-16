@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import sqlite3
 import time
 from contextlib import contextmanager, suppress
@@ -21,6 +22,7 @@ from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_proc
 from helpers.npm_mcp import packed_npm_mcp, structured
 from helpers.service import (
     ServiceInstance,
+    exec_output_text,
     vm_name,
     vm_session_db_path,
     wait_exec_ready,
@@ -84,6 +86,199 @@ def _rows(conn: sqlite3.Connection, sql: str, params: tuple = ()) -> list[sqlite
 def _assert_event_id(value: object) -> None:
     assert isinstance(value, str)
     assert re.fullmatch(r"[0-9a-f]{12}", value), value
+
+
+def test_saved_and_live_mcp_block_prevents_host_and_guest_dispatch():
+    """A settings Block must agree with discovery and never reach upstream."""
+    service = ServiceInstance(isolated_corp_config=True)
+    mock_proc = None
+    vm_id = None
+    request_log = service.tmp_dir / "upstream.jsonl"
+    # Exercise the actual legacy saved shape, including the default-rank tie.
+    (service.home_dir / "settings.toml").write_text(
+        """[default.mcp]
+name = "mcp"
+action = "allow"
+priority = "default"
+match = 'has(mcp.method) || has(mcp.tool_call.name)'
+
+[profiles.rules.mcp_local_http_headers_permission]
+name = "mcp_local_http_headers_permission"
+action = "block"
+priority = "default"
+match = 'mcp.server.name == "local" && mcp.tool_call.name == "http_headers"'
+[profiles.rules.mcp_local_http_headers_permission.managed]
+kind = "mcp_tool"
+server = "local"
+tool = "http_headers"
+operation = "permission"
+""",
+        encoding="utf-8",
+    )
+    (service.home_dir / "corp.toml").write_text(
+        """[corp.rules.allow_mcp_permission_fixture]
+name = "allow_mcp_permission_fixture"
+action = "allow"
+priority = -100
+match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
+""",
+        encoding="utf-8",
+    )
+    try:
+        mock_proc, ready = start_mock_server(request_log=request_log)
+        service.start()
+        client = service.client()
+        created = client.post(
+            "/vms/create",
+            {
+                "name": vm_name("mcp-permission"),
+                "ram_mb": DEFAULT_RAM_MB,
+                "cpus": DEFAULT_CPUS,
+            },
+            timeout=90,
+        )
+        vm_id = created["id"]
+        assert wait_exec_ready(client, vm_id, timeout=EXEC_READY_TIMEOUT)
+        client.post("/mcp/servers/local/refresh", timeout=30)
+        arguments = {"url": f"{ready['base_url']}/html/about", "method": "GET"}
+        call = {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {"name": "local__http_headers", "arguments": arguments},
+        }
+
+        def upstream_calls():
+            return [
+                json.loads(line)
+                for line in request_log.read_text().splitlines()
+                if json.loads(line)["path"] == "/html/about"
+            ]
+
+        def guest_call():
+            messages = [
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {},
+                        "clientInfo": {"name": "permission-proof", "version": "1"},
+                    },
+                },
+                {"jsonrpc": "2.0", "method": "notifications/initialized"},
+                call,
+            ]
+            payload = "\n".join(json.dumps(message) for message in messages) + "\n"
+            command = f"printf '%s' {shlex.quote(payload)} | /run/capsem-mcp-server"
+            result = client.post(
+                f"/vms/{vm_id}/exec",
+                {"target": "vm", "command": command, "timeout_secs": 30},
+                timeout=60,
+            )
+            assert result["exit_code"] == 0, result
+            replies = [
+                json.loads(line)
+                for line in exec_output_text(result).splitlines()
+                if line.strip()
+            ]
+            return next(reply for reply in replies if reply.get("id") == 2)
+
+        def inspect_block():
+            tools = client.get("/mcp/servers/local/tools/list")
+            tool = next(
+                tool
+                for tool in tools
+                if tool["namespaced_name"] == "local__http_headers"
+            )
+            assert tool["permission_action"] == "block"
+            assert tool["permission_source"] == "settings"
+
+        with packed_npm_mcp(service.tmp_dir) as mcp:
+
+            def host_call(*, blocked=False):
+                response = mcp.request(
+                    "tools/call",
+                    {
+                        "name": "capsem_mcp_call",
+                        "arguments": {
+                            "server_id": "local",
+                            "tool_id": "local__http_headers",
+                            "arguments": arguments,
+                        },
+                    },
+                )
+                assert "error" not in response, response
+                result = response["result"]
+                if blocked:
+                    assert result["isError"] is True, result
+                    assert result["structuredContent"] == {
+                        "error": {"kind": "http", "status": 502}
+                    }
+                    return None
+                assert result.get("isError") is not True, result
+                return structured(result)["result"]
+
+            inspect_block()
+            host_call(blocked=True)
+            assert "error" in guest_call()
+            assert upstream_calls() == []
+
+            route = "/mcp/servers/local/tools/http_headers/edit"
+            allowed = client.patch(route, {"action": "allow"})
+            assert allowed["mutation"]["status"] == "applied", allowed
+            assert "Status: 200 OK" in host_call()["result"]["content"][0]["text"]
+            assert len(upstream_calls()) == 1
+
+            blocked = client.patch(route, {"action": "block"})
+            assert blocked["mutation"]["status"] == "applied", blocked
+            inspect_block()
+            host_call(blocked=True)
+            assert "error" in guest_call()
+            assert len(upstream_calls()) == 1
+
+        with _connect_session_db(service, client, vm_id) as conn:
+            rows = _eventually(
+                lambda: _rows(
+                    conn,
+                    """
+                SELECT event_id, decision FROM tool_calls
+                WHERE origin = 'mcp' AND method = 'tools/call'
+                  AND tool_name IN ('http_headers', 'local__http_headers')
+                ORDER BY id
+            """,
+                ),
+                lambda rows: len(rows) == 5,
+            )
+            assert [row["decision"] for row in rows] == [
+                "denied",
+                "denied",
+                "allowed",
+                "denied",
+                "denied",
+            ]
+            for row in rows:
+                _assert_event_id(row["event_id"])
+                if row["decision"] == "denied":
+                    rules = _rows(
+                        conn,
+                        "SELECT rule_id, rule_action FROM security_rule_events WHERE event_id = ?",
+                        (row["event_id"],),
+                    )
+                    assert any(
+                        rule["rule_id"]
+                        == "profiles.rules.mcp_local_http_headers_permission"
+                        and rule["rule_action"] == "block"
+                        for rule in rules
+                    )
+    finally:
+        if vm_id is not None:
+            with suppress(Exception):
+                service.client().delete(f"/vms/{vm_id}")
+        service.stop()
+        if mock_proc is not None:
+            stop_process(mock_proc)
 
 
 def test_mcp_call_pays_full_ledger_blackbox():
@@ -188,12 +383,14 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             assert route_http_tool["original_name"] == "http_headers"
             assert route_http_tool["server_name"] == "local"
             assert route_http_tool["permission_action"] in {"allow", "ask"}
-            assert route_http_tool["permission_source"] in {"corp", "settings", "default"}
+            assert route_http_tool["permission_source"] in {
+                "corp",
+                "settings",
+                "default",
+            }
             assert route_http_tool["pin_changed"] is False
 
-            mcp_servers = structured(
-                mcp.call_tool("capsem_mcp_servers", {})
-            )
+            mcp_servers = structured(mcp.call_tool("capsem_mcp_servers", {}))
             assert isinstance(mcp_servers, dict)
             assert any(server["name"] == "local" for server in mcp_servers["servers"])
 
