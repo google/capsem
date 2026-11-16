@@ -39,7 +39,6 @@ use capsem_assets::asset_manager::{
     hash_filename, host_manifest_arch, AssetEntry, AssetRelease, AssetsSection, BinariesSection, ManifestV2,
 };
 use std::sync::atomic::{AtomicU64, AtomicUsize};
-use tower::ServiceExt;
 
 mod asset_status;
 mod asset_wait;
@@ -145,7 +144,7 @@ pub(crate) fn test_state(
         shutdown_lock: tokio::sync::Mutex::new(()),
         update_lock: Arc::new(tokio::sync::Mutex::new(())),
         policy_mutation: policy_mutation::PolicyMutationLock::default(),
-        caller_authority: Arc::new(caller_auth::Authority::default()),
+        caller_authority: caller_auth::fixture_authority(),
         update_restart: tokio::sync::Notify::new(),
         run_dir,
         _test_tempdir: test_tempdir,
@@ -170,25 +169,60 @@ pub(crate) fn make_test_state_owned() -> ServiceState {
     test_state(root.join("run"), root.join("assets"), Some(test_tempdir))
 }
 
+/// Unit clients use the real private HTTP seat and credential validation.
+pub(crate) trait OperatorRequestExt {
+    async fn operator_request(
+        self,
+        request: axum::http::Request<Body>,
+    ) -> Result<axum::response::Response, std::convert::Infallible>;
+}
+
+impl OperatorRequestExt for axum::Router {
+    async fn operator_request(
+        self,
+        mut request: axum::http::Request<Body>,
+    ) -> Result<axum::response::Response, std::convert::Infallible> {
+        request
+            .headers_mut()
+            .entry(axum::http::header::HOST)
+            .or_insert(axum::http::HeaderValue::from_static("localhost"));
+        request
+            .headers_mut()
+            .entry(axum::http::header::AUTHORIZATION)
+            .or_insert(axum::http::HeaderValue::from_static(
+                "Bearer AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            ));
+        let socket = gateway_channel::prepare(self).unwrap();
+        let socket = tokio::net::UnixStream::from_std(socket).unwrap();
+        let (mut client, connection) = hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(socket))
+            .await
+            .unwrap();
+        tokio::spawn(connection);
+        let response = client.send_request(request).await.expect("route should respond");
+        Ok(response.map(Body::new))
+    }
+}
+
 pub(crate) async fn route_request(
     app: axum::Router,
     method: axum::http::Method,
     uri: &str,
     body: Option<serde_json::Value>,
 ) -> (StatusCode, serde_json::Value) {
-    let mut builder = axum::http::Request::builder().method(method).uri(uri);
+    let mut builder = axum::http::Request::builder()
+        .method(method)
+        .uri(uri)
+        .header(axum::http::header::HOST, "localhost")
+        .header(axum::http::header::AUTHORIZATION, format!("Bearer {}", "A".repeat(64)));
     let request_body = if let Some(body) = body {
         builder = builder.header(axum::http::header::CONTENT_TYPE, "application/json");
         Body::from(serde_json::to_vec(&body).unwrap())
     } else {
         Body::empty()
     };
-    let response = app
-        .oneshot(builder.body(request_body).unwrap())
-        .await
-        .expect("route should respond");
+    let response = app.operator_request(builder.body(request_body).unwrap()).await.unwrap();
     let status = response.status();
-    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let bytes = to_bytes(Body::new(response.into_body()), usize::MAX).await.unwrap();
     let json = if bytes.is_empty() {
         serde_json::Value::Null
     } else {

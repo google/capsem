@@ -1,4 +1,5 @@
 use super::*;
+use crate::tests::OperatorRequestExt;
 
 #[tokio::test]
 async fn vm_logs_read_retained_owner_generations_after_migration() {
@@ -48,7 +49,7 @@ async fn host_logs_offer_typed_json_and_preserve_plain_text() {
     .unwrap();
     for accept in ["application/json", "text/plain"] {
         let response = build_service_router(state.clone())
-            .oneshot(
+            .operator_request(
                 axum::http::Request::builder()
                     .uri("/host-logs/service?grep=error&tail=1")
                     .header("accept", accept)
@@ -117,7 +118,7 @@ async fn host_logs_cap_large_requested_reads_and_honor_json_opt_out() {
     let (state, _dir) = make_test_state_with_tempdir();
     std::fs::write(state.run_dir.join("service.log"), "line\n".repeat(1_100_000)).unwrap();
     let response = build_service_router(state)
-        .oneshot(
+        .operator_request(
             axum::http::Request::builder()
                 .uri("/host-logs/service?max_bytes=18446744073709551615")
                 .header("accept", "application/json;q=0, text/plain")

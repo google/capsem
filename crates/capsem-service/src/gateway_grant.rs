@@ -62,18 +62,7 @@ pub(super) async fn serve(socket: std::os::unix::net::UnixStream, state: Arc<Ser
             .ok_or_else(|| std::io::Error::other("gateway grant request identity exhausted"))?;
         let request = match request {
             ControlRequest::Auth(request) => {
-                let response = match request {
-                    GatewayAuthRequest::RegisterOperator { token, .. } => match operator_epoch.register(token) {
-                        Ok(()) => GatewayAuthResponse::RegisteredOperator { request_id },
-                        Err(reason) => GatewayAuthResponse::Denied { request_id, reason },
-                    },
-                    // No delegation is issued before its durable authority is
-                    // installed. Unknown access identities always fail closed.
-                    GatewayAuthRequest::AuthenticateAgent { .. } => GatewayAuthResponse::Denied {
-                        request_id,
-                        reason: GatewayAuthDenial::Forbidden,
-                    },
-                };
+                let response = authenticate(&mut operator_epoch, request);
                 let response = encode_gateway_auth_response(response).map_err(std::io::Error::other)?;
                 responses.send(&response, &[]).await?;
                 continue;
@@ -106,6 +95,26 @@ pub(super) async fn serve(socket: std::os::unix::net::UnixStream, state: Arc<Ser
                 responses.send(&response, &[]).await?;
             }
         }
+    }
+}
+
+/// Bounded in-memory authentication; no filesystem registration or I/O.
+fn authenticate(
+    operator_epoch: &mut crate::caller_auth::OperatorEpoch,
+    request: GatewayAuthRequest,
+) -> GatewayAuthResponse {
+    let request_id = request.request_id();
+    match request {
+        GatewayAuthRequest::RegisterOperator { token, .. } => match operator_epoch.register(token) {
+            Ok(()) => GatewayAuthResponse::RegisteredOperator { request_id },
+            Err(reason) => GatewayAuthResponse::Denied { request_id, reason },
+        },
+        // No delegation is issued before its durable authority is
+        // installed. Unknown access identities always fail closed.
+        GatewayAuthRequest::AuthenticateAgent { .. } => GatewayAuthResponse::Denied {
+            request_id,
+            reason: GatewayAuthDenial::Forbidden,
+        },
     }
 }
 
@@ -147,11 +156,9 @@ async fn open(
         GatewayGrantRequest::Adopted { .. } | GatewayGrantRequest::OpenMetrics { .. } => {
             Err(GatewayGrantDenial::InvalidRequest)
         }
-        GatewayGrantRequest::OpenService { .. } => {
-            crate::gateway_channel::prepare(service_router.clone(), Arc::clone(&state.caller_authority))
-                .map(|socket| (GatewayGrantKind::Service, socket))
-                .map_err(|_| GatewayGrantDenial::Unavailable)
-        }
+        GatewayGrantRequest::OpenService { .. } => crate::gateway_channel::prepare(service_router.clone())
+            .map(|socket| (GatewayGrantKind::Service, socket))
+            .map_err(|_| GatewayGrantDenial::Unavailable),
         GatewayGrantRequest::OpenOwnerHandoff { vm_id, .. } => {
             let handoff = crate::owner_handoff::OwnerHandoff::acquire(state, &vm_id)
                 .await

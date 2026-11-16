@@ -1,4 +1,5 @@
 use super::*;
+use crate::tests::OperatorRequestExt;
 use capsem_foundation::unix::contained::ContainedOpenOptions;
 use capsem_service::fs_utils::{sanitize_file_path, FileContentQuery, FileListQuery};
 use std::io::{Read as _, Write as _};
@@ -23,7 +24,7 @@ async fn stopped_workspace_uses_canonical_id_without_bypassing_file_security() {
     };
     let listed = app
         .clone()
-        .oneshot(request(
+        .operator_request(request(
             axum::http::Method::GET,
             format!("/vms/{id}/files/list"),
             Body::empty(),
@@ -40,7 +41,7 @@ async fn stopped_workspace_uses_canonical_id_without_bypassing_file_security() {
     ] {
         let response = app
             .clone()
-            .oneshot(request(
+            .operator_request(request(
                 method,
                 format!("/vms/{id}/files/content?path={path}"),
                 Body::from("new bytes"),
@@ -53,7 +54,7 @@ async fn stopped_workspace_uses_canonical_id_without_bypassing_file_security() {
     }
     assert!(!workspace.join("new.txt").exists());
     let missing = app
-        .oneshot(request(
+        .operator_request(request(
             axum::http::Method::GET,
             "/vms/unknown-id/files/list".into(),
             Body::empty(),
@@ -308,7 +309,7 @@ async fn mounted_file_import_export_routes_log_boundary_events() {
 
     let upload_response = app
         .clone()
-        .oneshot(
+        .operator_request(
             axum::http::Request::builder()
                 .method(axum::http::Method::POST)
                 .uri("/vms/file-route-vm/files/content?path=new.txt")
@@ -327,7 +328,7 @@ async fn mounted_file_import_export_routes_log_boundary_events() {
     );
 
     let response = app
-        .oneshot(
+        .operator_request(
             axum::http::Request::builder()
                 .method(axum::http::Method::GET)
                 .uri("/vms/file-route-vm/files/content?path=new.txt")
@@ -710,7 +711,7 @@ async fn upload_above_axum_default_body_limit() {
     let payload = vec![b'z'; 3 * 1024 * 1024];
 
     let response = app
-        .oneshot(
+        .operator_request(
             axum::http::Request::builder()
                 .method(axum::http::Method::POST)
                 .uri("/vms/large-upload-vm/files/content?path=large.bin")
@@ -738,7 +739,7 @@ async fn upload_above_the_api_body_limit_is_refused() {
     let (state, _state_dir) = make_test_state_with_tempdir();
     let app = build_service_router(state);
     let response = app
-        .oneshot(
+        .operator_request(
             axum::http::Request::builder()
                 .method(axum::http::Method::POST)
                 .uri("/vms/any-vm/files/content?path=huge.bin")

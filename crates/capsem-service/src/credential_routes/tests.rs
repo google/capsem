@@ -1,7 +1,7 @@
 use super::*;
+use crate::tests::OperatorRequestExt;
 use crate::tests::{make_test_state, EnvVarGuard, SETTINGS_ENV_LOCK};
 use axum::body::Body;
-use tower::ServiceExt;
 
 #[tokio::test]
 async fn injection_route_file_and_memory_return_only_references_and_invalid_input_is_redacted() {
@@ -14,7 +14,7 @@ async fn injection_route_file_and_memory_return_only_references_and_invalid_inpu
     for (storage, value) in [("memory", "private-memory-token"), ("file", "private-file-token")] {
         let response = app
             .clone()
-            .oneshot(
+            .operator_request(
                 axum::http::Request::builder()
                     .method("POST")
                     .uri("/credentials/inject")
@@ -45,7 +45,7 @@ async fn injection_route_file_and_memory_return_only_references_and_invalid_inpu
     assert!(!contents.contains("private-memory-token"));
     let bad = r#"{"provider":"private-secret-invalid-provider","value":"private-secret-value"}"#;
     let response = app
-        .oneshot(
+        .operator_request(
             axum::http::Request::builder()
                 .method("POST")
                 .uri("/credentials/inject")

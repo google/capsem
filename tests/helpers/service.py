@@ -25,8 +25,8 @@ from .constants import (
     host_bin_root,
 )
 from .http_transport import Transport
+from .operator_client import OperatorServiceClient
 from .sign import sign_binary
-from .uds_client import UdsHttpClient
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SERVICE_BINARY = BIN_DIR / "capsem-service"
@@ -502,8 +502,8 @@ class ServiceInstance:
         raise RuntimeError(f"capsem-service failed to accept connections within 15s{state}")
 
     def client(self):
-        return UdsHttpClient(
-            self.uds_path,
+        return OperatorServiceClient(
+            self.tmp_dir,
             before_vm_delete=self._preserve_failure_evidence_before_delete,
         )
 

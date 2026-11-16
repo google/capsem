@@ -1,7 +1,7 @@
 //! Service-owned HTTP seats for the confined gateway. A socket handed over
 //! the inherited descriptor broker carries this proof; public UDS peers and
 //! caller-controlled headers cannot construct it.
-use std::{io, os::unix::net::UnixStream, sync::Arc};
+use std::{io, os::unix::net::UnixStream};
 
 use axum::{body::Body, extract::FromRequestParts, http::request::Parts, http::StatusCode};
 use hyper_util::rt::TokioIo;
@@ -19,7 +19,7 @@ impl<S: Send + Sync> FromRequestParts<S> for GatewayChannel {
     }
 }
 
-pub(crate) fn prepare(app: axum::Router, authority: Arc<crate::caller_auth::Authority>) -> io::Result<UnixStream> {
+pub(crate) fn prepare(app: axum::Router) -> io::Result<UnixStream> {
     let (client, server) = UnixStream::pair()?;
     client.set_nonblocking(true)?;
     server.set_nonblocking(true)?;
@@ -27,19 +27,9 @@ pub(crate) fn prepare(app: axum::Router, authority: Arc<crate::caller_auth::Auth
     tokio::spawn(async move {
         let service = hyper::service::service_fn(move |request: hyper::Request<hyper::body::Incoming>| {
             let app = app.clone();
-            let authority = Arc::clone(&authority);
             async move {
                 let mut request = request.map(Body::new);
-                if let Some(value) = request.headers_mut().get_mut(axum::http::header::AUTHORIZATION) {
-                    value.set_sensitive(true);
-                }
-                let actor = match authority.authenticate_gateway(request.headers()) {
-                    Ok(actor) => actor,
-                    Err(status) => return Ok(axum::response::IntoResponse::into_response(status)),
-                };
-                tracing::debug!(actor = %actor.evidence().ledger_id(), "authenticated gateway request");
                 request.extensions_mut().insert(GatewayChannel(()));
-                request.extensions_mut().insert(actor);
                 app.oneshot(request).await
             }
         });

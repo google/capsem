@@ -1,7 +1,7 @@
 use super::*;
+use crate::tests::OperatorRequestExt;
 use axum::body::{to_bytes, Body};
 use axum::http::Request;
-use tower::ServiceExt;
 
 #[tokio::test]
 async fn connection_catalog_query_refuses_invalid_input_without_echoing_it() {
@@ -19,7 +19,7 @@ async fn connection_catalog_query_refuses_invalid_input_without_echoing_it() {
     ] {
         let response = app
             .clone()
-            .oneshot(
+            .operator_request(
                 Request::builder()
                     .uri(format!("/connections?{query}"))
                     .body(Body::empty())
@@ -37,7 +37,7 @@ async fn connection_catalog_query_refuses_invalid_input_without_echoing_it() {
     for query in ["", "limit=1", "limit=32&cursor=12345678-1234-4234-8234-123456789abc"] {
         let response = app
             .clone()
-            .oneshot(
+            .operator_request(
                 Request::builder()
                     .uri(format!("/connections?{query}"))
                     .body(Body::empty())
@@ -60,7 +60,7 @@ async fn connection_catalog_and_nine_routes_use_typed_owner_failures_without_sec
     let app = build_service_router(Arc::clone(&state));
     let response = app
         .clone()
-        .oneshot(Request::builder().uri("/connections").body(Body::empty()).unwrap())
+        .operator_request(Request::builder().uri("/connections").body(Body::empty()).unwrap())
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
@@ -80,7 +80,7 @@ async fn connection_catalog_and_nine_routes_use_typed_owner_failures_without_sec
     for (method, path) in cases {
         let response = app
             .clone()
-            .oneshot(Request::builder().method(method).uri(path).body(Body::empty()).unwrap())
+            .operator_request(Request::builder().method(method).uri(path).body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert!(response.status().is_client_error() || response.status().is_server_error());
@@ -92,7 +92,7 @@ async fn connection_catalog_and_nine_routes_use_typed_owner_failures_without_sec
     for path in ["/connections/google/authorize", "/vms/not-canonical/credential-grants"] {
         let response = app
             .clone()
-            .oneshot(
+            .operator_request(
                 Request::builder()
                     .method("POST")
                     .uri(path)
@@ -129,7 +129,7 @@ async fn retained_credential_approvals_use_canonical_registry_owner_without_a_pr
     let app = build_service_router(Arc::clone(&state));
     let response = app
         .clone()
-        .oneshot(
+        .operator_request(
             Request::builder()
                 .uri(format!("/vms/{id}/credential-grants"))
                 .body(Body::empty())
@@ -146,7 +146,7 @@ async fn retained_credential_approvals_use_canonical_registry_owner_without_a_pr
     assert!(state.instances.lock().unwrap().is_empty());
     let response = app
         .clone()
-        .oneshot(
+        .operator_request(
             Request::builder()
                 .method("DELETE")
                 .uri(format!("/vms/{id}/credential-grants/missing"))
@@ -168,7 +168,7 @@ async fn retained_credential_approvals_use_canonical_registry_owner_without_a_pr
     ] {
         let response = app
             .clone()
-            .oneshot(
+            .operator_request(
                 Request::builder()
                     .uri(format!("/vms/{route_id}/credential-grants"))
                     .body(Body::empty())
@@ -186,7 +186,7 @@ async fn retained_credential_approvals_use_canonical_registry_owner_without_a_pr
         expires_at: None,
     };
     let response = app
-        .oneshot(
+        .operator_request(
             Request::builder()
                 .method("POST")
                 .uri(format!("/vms/{id}/credential-grants"))

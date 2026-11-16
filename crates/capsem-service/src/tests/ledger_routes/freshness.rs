@@ -1,4 +1,5 @@
 use super::*;
+use crate::tests::OperatorRequestExt;
 
 /// The service must not infer "unchanged" from `session.db` metadata: a
 /// commit that lands only in the WAL leaves the main file's size and mtime
@@ -64,7 +65,7 @@ fn main_file_fingerprint(path: &StdPath) -> (u64, std::time::SystemTime) {
 async fn read(app: &axum::Router, route: &str) -> serde_json::Value {
     let response = app
         .clone()
-        .oneshot(
+        .operator_request(
             axum::http::Request::builder()
                 .uri(format!("/vms/wal-vm/{route}"))
                 .body(axum::body::Body::empty())

@@ -5,11 +5,11 @@ use tokio_tungstenite::tungstenite::{client::IntoClientRequest, Message as Clien
 
 mod flow;
 
-type Client = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+type Client = tokio_tungstenite::WebSocketStream<tokio::net::UnixStream>;
 
 struct Fixture {
     state: Arc<ServiceState>,
-    address: std::net::SocketAddr,
+    router: axum::Router,
     uds_path: PathBuf,
     _dir: tempfile::TempDir,
 }
@@ -21,13 +21,10 @@ async fn fixture() -> Fixture {
     std::fs::create_dir_all(session_dir.join("guest/workspace")).unwrap();
     insert_fake_instance_with_session_dir(&state, "box", std::process::id(), session_dir);
     let uds_path = state.instances.lock().unwrap()["box"].uds_path.clone();
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
     let router = build_service_router(Arc::clone(&state));
-    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     Fixture {
         state,
-        address,
+        router,
         uds_path,
         _dir: dir,
     }
@@ -69,16 +66,24 @@ where
 }
 
 async fn connect(
-    address: std::net::SocketAddr,
+    router: axum::Router,
     protocol: Option<&str>,
 ) -> Result<Client, tokio_tungstenite::tungstenite::Error> {
-    let mut request = format!("ws://{address}/vms/box/stream").into_client_request().unwrap();
+    let mut request = "ws://localhost/vms/box/stream".into_client_request().unwrap();
+    request.headers_mut().insert(
+        "authorization",
+        "Bearer AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+            .parse()
+            .unwrap(),
+    );
+    let socket = crate::gateway_channel::prepare(router).unwrap();
+    let socket = tokio::net::UnixStream::from_std(socket).unwrap();
     if let Some(protocol) = protocol {
         request
             .headers_mut()
             .insert("sec-websocket-protocol", protocol.parse().unwrap());
     }
-    tokio_tungstenite::connect_async(request)
+    tokio_tungstenite::client_async(request, socket)
         .await
         .map(|(client, _)| client)
 }
@@ -143,7 +148,9 @@ async fn exec_stream_relays_output_and_ends_with_the_exit_status() {
         .await
         .unwrap();
     });
-    let mut client = connect(fx.address, Some(stream::STREAM_SUBPROTOCOL)).await.unwrap();
+    let mut client = connect(fx.router.clone(), Some(stream::STREAM_SUBPROTOCOL))
+        .await
+        .unwrap();
     client
         .send(ClientMessage::Binary(
             encode_control(&StreamControl::Start {
@@ -201,7 +208,9 @@ async fn terminal_stream_relays_output_input_and_resize() {
         .unwrap();
         let _ = rx.recv().await;
     });
-    let mut client = connect(fx.address, Some(stream::STREAM_SUBPROTOCOL)).await.unwrap();
+    let mut client = connect(fx.router.clone(), Some(stream::STREAM_SUBPROTOCOL))
+        .await
+        .unwrap();
     client
         .send(ClientMessage::Binary(
             encode_control(&StreamControl::Start {
@@ -286,7 +295,9 @@ async fn exec_stream_relays_stdin_eof_separate_stderr_and_disconnect_cancellatio
             ServiceToProcess::CancelExec { id: cancelled } if cancelled == id
         ));
     });
-    let mut client = connect(fx.address, Some(stream::STREAM_SUBPROTOCOL)).await.unwrap();
+    let mut client = connect(fx.router.clone(), Some(stream::STREAM_SUBPROTOCOL))
+        .await
+        .unwrap();
     client
         .send(ClientMessage::Binary(
             encode_control(&StreamControl::Start {
@@ -326,14 +337,16 @@ async fn exec_stream_relays_stdin_eof_separate_stderr_and_disconnect_cancellatio
 async fn upgrade_without_the_stream_subprotocol_is_refused() {
     let fx = fixture().await;
     for protocol in [None, Some("capsem.stream.v0")] {
-        assert!(connect(fx.address, protocol).await.is_err(), "{protocol:?}");
+        assert!(connect(fx.router.clone(), protocol).await.is_err(), "{protocol:?}");
     }
 }
 
 #[tokio::test]
 async fn a_stream_must_start_before_anything_else() {
     let fx = fixture().await;
-    let mut client = connect(fx.address, Some(stream::STREAM_SUBPROTOCOL)).await.unwrap();
+    let mut client = connect(fx.router.clone(), Some(stream::STREAM_SUBPROTOCOL))
+        .await
+        .unwrap();
     client
         .send(ClientMessage::Binary(
             encode_data(StreamChannel::Stdin, b"ls\n").unwrap().into(),
@@ -371,7 +384,9 @@ async fn container_stream_starts_a_staged_workload_once_and_records_its_exit() {
         command: None,
     })
     .unwrap();
-    let mut client = connect(fx.address, Some(stream::STREAM_SUBPROTOCOL)).await.unwrap();
+    let mut client = connect(fx.router.clone(), Some(stream::STREAM_SUBPROTOCOL))
+        .await
+        .unwrap();
     client.send(ClientMessage::Binary(start.clone().into())).await.unwrap();
     assert_eq!(
         status(&next_server_frame(&mut client).await.unwrap()),
@@ -392,7 +407,9 @@ async fn container_stream_starts_a_staged_workload_once_and_records_its_exit() {
     );
     let _ = generation;
 
-    let mut second = connect(fx.address, Some(stream::STREAM_SUBPROTOCOL)).await.unwrap();
+    let mut second = connect(fx.router.clone(), Some(stream::STREAM_SUBPROTOCOL))
+        .await
+        .unwrap();
     second.send(ClientMessage::Binary(start.into())).await.unwrap();
     match status(&next_server_frame(&mut second).await.unwrap()) {
         StreamStatus::Error { message } => assert!(message.contains("not staged"), "{message}"),

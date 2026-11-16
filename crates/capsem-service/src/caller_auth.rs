@@ -86,6 +86,12 @@ impl Drop for OperatorEpoch {
 pub(crate) struct AuthenticatedActor(capsem_api::CallerActor);
 
 impl AuthenticatedActor {
+    pub(crate) fn vm_owner(owner: &crate::owner_connection::OwnerConnection) -> Self {
+        Self(capsem_api::CallerActor::VmOwner {
+            session_id: owner.id().to_owned(),
+            owner_generation: owner.generation().to_string(),
+        })
+    }
     pub(crate) fn evidence(&self) -> &capsem_api::CallerActor {
         &self.0
     }
@@ -99,3 +105,14 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthenticatedActor {
 
 #[cfg(test)]
 mod tests;
+
+/// Unit fixtures supply real credentials, never a production auth bypass.
+#[cfg(test)]
+pub(crate) fn fixture_authority() -> Arc<Authority> {
+    Arc::new(Authority {
+        operator: Mutex::new(Some(Operator {
+            epoch: capsem_crypto::uuid_v4(),
+            token: GatewayAuthSecret::from_bytes([b'A'; 64]),
+        })),
+    })
+}

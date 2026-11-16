@@ -391,7 +391,7 @@ async fn actual_service_router_counts_owner_denials_and_bounds_unknown_operation
                     .body(axum::body::Body::empty())
                     .unwrap();
                 let response = app.clone().oneshot(request).await.unwrap();
-                assert_eq!(response.status(), StatusCode::NOT_FOUND);
+                assert_eq!(response.status(), StatusCode::FORBIDDEN);
                 axum::body::to_bytes(response.into_body(), 1024).await.unwrap();
             }
             let request = axum::http::Request::get("/version?token=private-query-canary")
@@ -436,6 +436,6 @@ async fn public_http_requests_cannot_acquire_a_metric_capability() {
             .body(axum::body::Body::from("private-body-canary"))
             .unwrap();
         let response = app.clone().oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 }

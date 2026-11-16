@@ -5,6 +5,7 @@
 //! bytes it was given. An edit that only rewrote the file left every running
 //! VM enforcing the old policy until someone reloaded it.
 use super::*;
+use crate::tests::OperatorRequestExt;
 
 use crate::mcp_routes::{handle_mcp_default_edit, handle_mcp_tool_edit, McpPermissionEditRequest};
 use crate::plugin_routes::{handle_plugin_update, PluginUpdate};
@@ -46,7 +47,7 @@ async fn managed_host_policy_reload_refuses_invalid_inputs_and_restores_valid_me
             .body(Body::from(json!({"ownership_token":"af".repeat(32)}).to_string()))
             .unwrap()
     };
-    let response = app.clone().oneshot(claim()).await.unwrap();
+    let response = app.clone().operator_request(claim()).await.unwrap();
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     std::fs::write(
         &settings,
@@ -60,7 +61,7 @@ async fn managed_host_policy_reload_refuses_invalid_inputs_and_restores_valid_me
         0
     );
     drop(mutation);
-    let response = app.oneshot(claim()).await.unwrap();
+    let response = app.operator_request(claim()).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let body: serde_json::Value = serde_json::from_slice(&to_bytes(response.into_body(), 8192).await.unwrap()).unwrap();
     assert_eq!(body["state"], "closed");

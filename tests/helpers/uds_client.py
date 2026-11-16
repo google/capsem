@@ -1,4 +1,4 @@
-"""Minimal HTTP-over-UDS client for testing capsem-service directly."""
+"""Shared test request helpers and the explicit raw service UDS client."""
 
 import json
 import uuid
@@ -17,13 +17,12 @@ def _decode_payload(data: bytes):
         return text
 
 
-class UdsHttpClient:
-    """HTTP client that talks to an Axum server over a Unix Domain Socket."""
+class HttpClient:
+    """Request/body helpers independent of the authenticated transport."""
 
-    def __init__(self, socket_path, *, before_vm_delete=None):
-        self.socket_path = str(socket_path)
+    def __init__(self, transport, *, before_vm_delete=None):
         self._before_vm_delete = before_vm_delete
-        self._transport = Transport(socket_path=self.socket_path)
+        self._transport = transport
 
     def _is_uuid(self, value):
         try:
@@ -136,3 +135,11 @@ class UdsHttpClient:
             f"/vms/{vm_id}/files/content?path={quote(path, safe='')}", timeout,
         )
         return data if status == 200 else None
+
+
+class UdsHttpClient(HttpClient):
+    """Explicit raw UDS access for bootstrap or adversarial peer tests."""
+
+    def __init__(self, socket_path, *, before_vm_delete=None):
+        self.socket_path = str(socket_path)
+        super().__init__(Transport(socket_path=self.socket_path), before_vm_delete=before_vm_delete)

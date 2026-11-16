@@ -4,6 +4,7 @@
 //! caller then read back with `cat /root/x` inside the VM was not there.
 use super::files_api::{setup_vm_with_workspace, setup_vm_with_workspace_and_uds, spawn_file_boundary_ipc};
 use super::*;
+use crate::tests::OperatorRequestExt;
 use capsem_service::fs_utils::FileContentQuery;
 
 fn request(method: axum::http::Method, uri: &str, body: &'static str) -> axum::http::Request<Body> {
@@ -28,7 +29,7 @@ async fn an_absolute_vm_path_lands_where_the_vm_sees_it() {
 
     let uploaded = app
         .clone()
-        .oneshot(request(
+        .operator_request(request(
             axum::http::Method::POST,
             "/vms/abs-vm/files/content?path=/root/notes/a.txt",
             "seen by the guest",
@@ -50,7 +51,7 @@ async fn an_absolute_vm_path_lands_where_the_vm_sees_it() {
     );
 
     let downloaded = app
-        .oneshot(request(
+        .operator_request(request(
             axum::http::Method::GET,
             "/vms/abs-vm/files/content?path=notes/a.txt",
             "",
@@ -97,7 +98,7 @@ async fn an_unreachable_absolute_path_is_refused_before_anything_is_written() {
     let app = build_service_router(state);
 
     let response = app
-        .oneshot(request(
+        .operator_request(request(
             axum::http::Method::POST,
             "/vms/etc-vm/files/content?path=/etc/passwd",
             "nope",
@@ -125,7 +126,7 @@ async fn a_container_vm_resolves_paths_the_container_sees() {
 
     let refused = app
         .clone()
-        .oneshot(request(
+        .operator_request(request(
             axum::http::Method::POST,
             "/vms/oci-vm/files/content?path=/root/a.txt",
             "unreachable",
@@ -139,7 +140,7 @@ async fn a_container_vm_resolves_paths_the_container_sees() {
     );
 
     let uploaded = app
-        .oneshot(request(
+        .operator_request(request(
             axum::http::Method::POST,
             "/vms/oci-vm/files/content?path=/workspace/a.txt",
             "seen by the container",

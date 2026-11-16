@@ -75,7 +75,9 @@ async fn exec_stdin_is_forwarded_only_within_the_owner_credit() {
         .await
         .unwrap();
     });
-    let mut client = connect(fx.address, Some(stream::STREAM_SUBPROTOCOL)).await.unwrap();
+    let mut client = connect(fx.router.clone(), Some(stream::STREAM_SUBPROTOCOL))
+        .await
+        .unwrap();
     start_exec(&mut client, "slow-reader").await;
     send_stdin(&mut client, EXEC_STDIN_WINDOW + 3).await;
     let exit = status(&next_server_frame(&mut client).await.unwrap());
@@ -112,7 +114,9 @@ async fn a_client_leaving_while_out_of_credit_cancels_the_exec() {
             "{message:?}"
         );
     });
-    let mut client = connect(fx.address, Some(stream::STREAM_SUBPROTOCOL)).await.unwrap();
+    let mut client = connect(fx.router.clone(), Some(stream::STREAM_SUBPROTOCOL))
+        .await
+        .unwrap();
     start_exec(&mut client, "sleep 600").await;
     send_stdin(&mut client, EXEC_STDIN_WINDOW + 3).await;
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -145,7 +149,9 @@ async fn replaced_generation_output_is_rejected_and_the_old_exec_is_cancelled() 
             "{message:?}"
         );
     });
-    let mut client = connect(fx.address, Some(stream::STREAM_SUBPROTOCOL)).await.unwrap();
+    let mut client = connect(fx.router.clone(), Some(stream::STREAM_SUBPROTOCOL))
+        .await
+        .unwrap();
     start_exec(&mut client, "sleep 600").await;
     let result = status(&next_server_frame(&mut client).await.unwrap());
     assert!(matches!(result, StreamStatus::Error { message } if message.contains("VM owner changed")));

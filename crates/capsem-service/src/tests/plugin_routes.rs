@@ -7,12 +7,13 @@
 
 use super::*;
 
-async fn plugin_list_wire(app: axum::Router) -> Bytes {
-    let request = axum::http::Request::builder()
-        .uri("/plugins/list")
-        .body(Body::empty())
-        .unwrap();
-    let response = app.oneshot(request).await.unwrap();
+// Pointer identity is a service-side cache contract; HTTP necessarily copies
+// the wire bytes. Exercise the actual handler before the transport boundary.
+async fn plugin_list_wire(state: Arc<ServiceState>) -> Bytes {
+    let response = crate::plugin_routes::handle_plugins(State(state))
+        .await
+        .unwrap()
+        .into_response();
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response.headers()[axum::http::header::CONTENT_TYPE], "application/json");
     to_bytes(response.into_body(), usize::MAX).await.unwrap()
@@ -23,9 +24,10 @@ async fn plugin_list_reuses_policy_wire_bytes_and_replaces_them_after_edits() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let (_guard, _, _) = install_empty_settings_env(&dir);
-    let app = build_service_router(make_test_state());
-    let first = plugin_list_wire(app.clone()).await;
-    let second = plugin_list_wire(app.clone()).await;
+    let state = make_test_state();
+    let app = build_service_router(Arc::clone(&state));
+    let first = plugin_list_wire(Arc::clone(&state)).await;
+    let second = plugin_list_wire(Arc::clone(&state)).await;
     assert_eq!(
         first.as_ptr(),
         second.as_ptr(),
@@ -39,7 +41,7 @@ async fn plugin_list_reuses_policy_wire_bytes_and_replaces_them_after_edits() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let updated = plugin_list_wire(app.clone()).await;
+    let updated = plugin_list_wire(Arc::clone(&state)).await;
     assert_ne!(first.as_ptr(), updated.as_ptr());
     let document: serde_json::Value = serde_json::from_slice(&updated).unwrap();
     let plugin = document["plugins"]
@@ -50,7 +52,7 @@ async fn plugin_list_reuses_policy_wire_bytes_and_replaces_them_after_edits() {
         .unwrap();
     assert_eq!(plugin["config"]["mode"], "block");
     assert_eq!(plugin["overridden"], true);
-    assert_eq!(updated.as_ptr(), plugin_list_wire(app).await.as_ptr());
+    assert_eq!(updated.as_ptr(), plugin_list_wire(state).await.as_ptr());
 }
 
 #[tokio::test]

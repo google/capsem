@@ -8,6 +8,7 @@ import time
 import pytest
 from helpers.gateway import TcpHttpClient, _runtime_connection
 from helpers.service import ServiceInstance
+from helpers.uds_client import UdsHttpClient
 
 pytestmark = pytest.mark.integration
 
@@ -32,7 +33,7 @@ def test_service_private_gateway_status_requires_the_brokered_channel():
             status, _, data = gateway.call("GET", "/vms/list")
             assert status == 200, data.decode(errors="replace")
             assert json.loads(data)["sandboxes"] == []
-        direct = service.client()
+        direct = UdsHttpClient(service.uds_path)
         for headers in (
             {},
             {
@@ -43,6 +44,27 @@ def test_service_private_gateway_status_requires_the_brokered_channel():
         ):
             status, _, _ = direct.call("GET", "/internal/gateway/status", headers=headers)
             assert status == 403, "direct peer forged gateway transport provenance"
+        claimed_operator = {
+            "Authorization": f"Bearer {token}",
+            "x-capsem-actor": "operator",
+            "Content-Type": "application/json",
+        }
+        for method, route in [
+            ("GET", "/vms/list"),
+            ("POST", "/credentials/inject"),
+            ("PATCH", "/settings/edit"),
+            ("PATCH", "/plugins/absent/edit"),
+            ("PUT", "/corp/edit"),
+            ("PATCH", "/mcp/default/edit"),
+            ("POST", "/vms/absent/security/asks/absent/resolve"),
+        ]:
+            status, _, _ = direct.call(
+                method,
+                route,
+                body=b'{"actor":{"kind":"operator"}}',
+                headers=claimed_operator,
+            )
+            assert status == 403, f"raw service route accepted ambient authority: {method} {route}"
         status, _, _ = gateway.call("GET", "/vms/list", use_auth=False)
         assert status == 401
     finally:

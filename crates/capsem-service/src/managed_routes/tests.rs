@@ -1,6 +1,6 @@
 use super::super::*;
+use crate::tests::OperatorRequestExt;
 use axum::body::Body;
-use tower::ServiceExt;
 
 const REQUEST: &str = "fc120782-2272-4b3d-a2e6-a26ee2f8ab61";
 
@@ -41,7 +41,7 @@ async fn request_json(
 ) -> (StatusCode, serde_json::Value) {
     let response = app
         .clone()
-        .oneshot(
+        .operator_request(
             axum::http::Request::builder()
                 .method(method)
                 .uri(path)

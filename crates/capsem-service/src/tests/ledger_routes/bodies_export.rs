@@ -15,6 +15,7 @@
 
 use super::bodies::session_with_bodies;
 use super::*;
+use crate::tests::OperatorRequestExt;
 use std::process::Command;
 
 /// `--frozen` and `--project build_system`: the interpreter and `warcio` both
@@ -54,7 +55,7 @@ async fn the_export_route_streams_a_warc_a_standard_reader_can_open() {
     session_with_bodies(&state, "export-vm", &session_dir).await;
 
     let response = app
-        .oneshot(
+        .operator_request(
             axum::http::Request::builder()
                 .method(axum::http::Method::GET)
                 .uri("/vms/export-vm/bodies/export.warc.gz")
