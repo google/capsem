@@ -767,7 +767,7 @@ async fn hook_accepts_primary_net_event_before_completing_response() {
 
     db.shutdown_blocking();
     let conn = rusqlite::Connection::open(&db_path).unwrap();
-    let row: (String, String, u64) = conn
+    let row: (String, String, i64) = conn
         .query_row(
             "SELECT domain, path, bytes_received FROM net_events WHERE process_name = 'curl'",
             [],
@@ -821,7 +821,7 @@ async fn bounded_logger_backpressure_keeps_every_completed_response_event() {
     futures::future::join_all(completions).await;
     db.flush().await;
     let conn = rusqlite::Connection::open(&db_path).unwrap();
-    let count: usize = conn
+    let count: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM net_events WHERE domain = '127.0.0.1'",
             [],
