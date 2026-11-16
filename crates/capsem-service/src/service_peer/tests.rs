@@ -77,3 +77,50 @@ fn direct_bootstrap_and_admin_exceptions_are_exact_read_only_status_probes() {
         assert!(!direct_status_route(&axum::http::Method::GET, path));
     }
 }
+
+#[tokio::test]
+async fn a_verified_agent_identity_never_implies_operator_route_authority() {
+    use crate::tests::OperatorRequestExt;
+    use capsem_core::{
+        agent_access::Reservation,
+        managed_sessions::{Capability, LeaseClock},
+    };
+    let state = make_test_state();
+    let id = capsem_crypto::uuid_v4();
+    let scope = capsem_api::AgentAccessScope::new(vec![capsem_api::AgentOperation::Discover], vec![], vec![]).unwrap();
+    let Reservation::New(admission) = state
+        .caller_authority
+        .agents
+        .reserve(
+            id,
+            &Capability::from_bytes([0x11; 32]),
+            scope,
+            std::time::Duration::from_secs(60),
+            || LeaseClock::now().ok(),
+        )
+        .unwrap()
+    else {
+        panic!("new admission")
+    };
+    admission.commit(|| LeaseClock::now().ok()).unwrap();
+    let app = crate::router_runtime::build_service_router(state);
+    for (method, path) in [
+        ("POST", "/credentials/inject"),
+        ("PATCH", "/settings/edit"),
+        ("PATCH", "/plugins/dummy_pre_eicar/edit"),
+        ("PUT", "/corp/edit"),
+        ("PATCH", "/mcp/default/edit"),
+        ("POST", "/vms/absent/security/asks/absent/resolve"),
+        ("GET", "/internal/gateway/status"),
+    ] {
+        let request = axum::http::Request::builder()
+            .method(method)
+            .uri(path)
+            .header("authorization", format!("Bearer {id}.{}", "11".repeat(32)))
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from("{}"))
+            .unwrap();
+        let response = app.clone().operator_request(request).await.unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::FORBIDDEN, "{method} {path}");
+    }
+}

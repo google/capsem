@@ -8,9 +8,21 @@ use axum::{
 };
 use capsem_proto::gateway_grant::auth::{GatewayAuthDenial, GatewayAuthSecret};
 
-#[derive(Default)]
 pub(crate) struct Authority {
     operator: Mutex<Option<Operator>>,
+    pub(crate) agents: capsem_core::agent_access::Registry,
+}
+impl Default for Authority {
+    fn default() -> Self {
+        Self {
+            operator: Mutex::new(None),
+            agents: capsem_core::agent_access::Registry::new(
+                capsem_proto::AGENT_ACCESS_MAX_ACTIVE,
+                capsem_proto::AGENT_ACCESS_MAX_ISSUED_PER_EPOCH,
+            )
+            .expect("validated delegated runtime limits"),
+        }
+    }
 }
 struct Operator {
     epoch: uuid::Uuid,
@@ -33,11 +45,36 @@ impl Authority {
     }
 
     pub(crate) fn authenticate_gateway(&self, headers: &HeaderMap) -> Result<AuthenticatedActor, StatusCode> {
+        if headers.get_all(axum::http::header::AUTHORIZATION).iter().count() != 1 {
+            return Err(StatusCode::UNAUTHORIZED);
+        }
         let candidate = headers
             .get(axum::http::header::AUTHORIZATION)
             .and_then(|header| header.to_str().ok())
             .and_then(|header| header.strip_prefix("Bearer "))
             .ok_or(StatusCode::UNAUTHORIZED)?;
+        if let Some((id, token)) = candidate.split_once('.') {
+            capsem_api::validate_managed_request_id(id).map_err(|_| StatusCode::UNAUTHORIZED)?;
+            let id = uuid::Uuid::parse_str(id).map_err(|_| StatusCode::UNAUTHORIZED)?;
+            let token =
+                capsem_api::ManagedOwnershipToken::new(token.to_owned()).map_err(|_| StatusCode::UNAUTHORIZED)?;
+            let capability = crate::managed_routes::capability(&token).map_err(|_| StatusCode::UNAUTHORIZED)?;
+            let grant = self
+                .agents
+                .authenticate(id, &capability, || {
+                    capsem_core::managed_sessions::LeaseClock::now().ok()
+                })
+                .map_err(|error| match error {
+                    capsem_core::agent_access::Failure::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+                    _ => StatusCode::UNAUTHORIZED,
+                })?;
+            return Ok(AuthenticatedActor {
+                evidence: capsem_api::CallerActor::DelegatedAgent {
+                    access_id: id.to_string(),
+                },
+                agent: Some(grant),
+            });
+        }
         let operator = self.operator.lock().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
         let valid = operator.as_ref().is_some_and(|operator| {
             capsem_crypto::secrets::constant_time_eq(candidate.as_bytes(), operator.token.as_bytes())
@@ -46,7 +83,10 @@ impl Authority {
         if !valid {
             return Err(StatusCode::UNAUTHORIZED);
         }
-        Ok(AuthenticatedActor(capsem_api::CallerActor::Operator))
+        Ok(AuthenticatedActor {
+            evidence: capsem_api::CallerActor::Operator,
+            agent: None,
+        })
     }
 }
 
@@ -83,17 +123,26 @@ impl Drop for OperatorEpoch {
 /// The evidence DTO alone is not authority. This wrapper has no request-body
 /// deserializer or caller-controlled constructor.
 #[derive(Clone)]
-pub(crate) struct AuthenticatedActor(capsem_api::CallerActor);
+pub(crate) struct AuthenticatedActor {
+    evidence: capsem_api::CallerActor,
+    agent: Option<Arc<capsem_core::agent_access::Grant>>,
+}
 
 impl AuthenticatedActor {
     pub(crate) fn vm_owner(owner: &crate::owner_connection::OwnerConnection) -> Self {
-        Self(capsem_api::CallerActor::VmOwner {
-            session_id: owner.id().to_owned(),
-            owner_generation: owner.generation().to_string(),
-        })
+        Self {
+            evidence: capsem_api::CallerActor::VmOwner {
+                session_id: owner.id().to_owned(),
+                owner_generation: owner.generation().to_string(),
+            },
+            agent: None,
+        }
     }
     pub(crate) fn evidence(&self) -> &capsem_api::CallerActor {
-        &self.0
+        &self.evidence
+    }
+    pub(crate) fn agent_grant(&self) -> Option<&Arc<capsem_core::agent_access::Grant>> {
+        self.agent.as_ref()
     }
 }
 impl<S: Send + Sync> FromRequestParts<S> for AuthenticatedActor {
@@ -114,5 +163,6 @@ pub(crate) fn fixture_authority() -> Arc<Authority> {
             epoch: capsem_crypto::uuid_v4(),
             token: GatewayAuthSecret::from_bytes([b'A'; 64]),
         })),
+        ..Authority::default()
     })
 }

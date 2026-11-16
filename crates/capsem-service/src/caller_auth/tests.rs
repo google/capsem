@@ -46,3 +46,54 @@ fn old_epoch_drop_cannot_revoke_a_newly_registered_operator() {
     drop(new);
     assert!(authority.authenticate_gateway(&headers(&"B".repeat(64))).is_err());
 }
+
+#[test]
+fn delegated_bearer_requires_issued_live_capability_and_preserves_its_scope() {
+    use capsem_core::{
+        agent_access::Reservation,
+        managed_sessions::{Capability, LeaseClock},
+    };
+    let authority = Authority::default();
+    let id = capsem_crypto::uuid_v4();
+    let token = format!("{id}.{}", "11".repeat(32));
+    let secret = Capability::from_bytes([0x11; 32]);
+    assert!(authority.authenticate_gateway(&headers(&token)).is_err());
+    let scope = capsem_api::AgentAccessScope::new(vec![capsem_api::AgentOperation::Discover], vec![], vec![]).unwrap();
+    let Reservation::New(admission) = authority
+        .agents
+        .reserve(id, &secret, scope.clone(), std::time::Duration::from_secs(60), || {
+            LeaseClock::now().ok()
+        })
+        .unwrap()
+    else {
+        panic!("new grant")
+    };
+    assert!(authority.authenticate_gateway(&headers(&token)).is_err());
+    admission.commit(|| LeaseClock::now().ok()).unwrap();
+    let actor = authority.authenticate_gateway(&headers(&token)).unwrap();
+    assert_eq!(
+        actor.evidence(),
+        &capsem_api::CallerActor::DelegatedAgent {
+            access_id: id.to_string()
+        }
+    );
+    assert_eq!(actor.agent_grant().unwrap().scope(), &scope);
+    assert!(authority.authenticate_gateway(&headers(&"11".repeat(32))).is_err());
+    assert!(authority
+        .authenticate_gateway(&headers(&format!("{id}.{}", "22".repeat(32))))
+        .is_err());
+    authority.agents.revoke(id).unwrap();
+    assert!(authority.authenticate_gateway(&headers(&token)).is_err());
+    assert!(!actor.agent_grant().unwrap().is_live(|| LeaseClock::now().ok()));
+}
+
+#[test]
+fn competing_bearer_headers_are_refused_before_identity_is_chosen() {
+    let authority = fixture_authority();
+    let mut competing = headers(&"A".repeat(64));
+    competing.append(
+        axum::http::header::AUTHORIZATION,
+        "Bearer another-identity".parse().unwrap(),
+    );
+    assert!(authority.authenticate_gateway(&competing).is_err());
+}

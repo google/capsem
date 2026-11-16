@@ -190,7 +190,7 @@ fn request_id(value: &str) -> Result<uuid::Uuid, ManagedError> {
     Ok(id)
 }
 
-fn capability(token: &api::ManagedOwnershipToken) -> Result<Capability, ManagedError> {
+pub(crate) fn capability(token: &api::ManagedOwnershipToken) -> Result<Capability, ManagedError> {
     let mut bytes = [0; 32];
     for (index, byte) in bytes.iter_mut().enumerate() {
         *byte =

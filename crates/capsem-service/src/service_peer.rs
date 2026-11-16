@@ -67,6 +67,11 @@ pub(crate) async fn restrict_owner_routes(
             Ok(actor) => actor,
             Err(status) => return status.into_response(),
         };
+        // Delegated routes must opt into an explicit operation/target scope.
+        // No public issuance is enabled before those route policies are installed.
+        if actor.agent_grant().is_some() {
+            return forbidden("delegated service operation requires an authorized scope");
+        }
         tracing::debug!(actor = %actor.evidence().ledger_id(), "authenticated service request");
         request.extensions_mut().insert(actor);
         return next.run(request).await;
