@@ -166,9 +166,12 @@ service/gateway topology drift. `unmeasured` is debt that may only shrink;
 `internal` is a one-entry ratchet, not an easy exemption for new routes.
 
 For every route in `measured`, the `routes` collector records sequential warm
-and cold latency plus a 16-client kept-alive load window for both the service
-UDS and authenticated gateway. The load window emits raw concurrent latency,
-aggregate RPS, and CPU samples. Mutation and external-state routes remain in
+and cold latency plus a 16-client kept-alive load window through the actual
+service-owned, authenticated gateway. The load window emits raw concurrent
+latency, aggregate RPS, and separate gateway/downstream-service CPU samples.
+The historical `service.*` series measured anonymous public-UDS ingress and is
+retired: gateway timings include authentication and forwarding and must never
+be labeled service-only latency. Mutation and external-state routes remain in
 the explicit debt inventory until their owning fixture can replay them safely.
 
 ## Benchmarks that are still pytest

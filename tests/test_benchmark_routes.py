@@ -71,7 +71,11 @@ def test_fixture_diagnostics_do_not_corrupt_collector_json(
         stop=lambda: stopped.append("gateway"),
     )
     monkeypatch.setattr(collector, "ServiceInstance", lambda: service)
-    monkeypatch.setattr(collector, "GatewayInstance", lambda _: gateway)
+    def owned_gateway(owner):
+        assert owner is service
+        return gateway
+
+    monkeypatch.setattr(collector, "ServiceGateway", owned_gateway)
     monkeypatch.setattr(collector, "seed_stopped_workspace", lambda *_: None)
     monkeypatch.setattr(collector, "clone_benchmark_assets", lambda *_: tmp_path / "benchmark-assets")
     original_process = collector.psutil.Process
@@ -96,7 +100,10 @@ def test_fixture_diagnostics_do_not_corrupt_collector_json(
         monkeypatch.setattr(collector.psutil, "Process", original_process)
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
-    assert len(payload["metrics"]) == 14
+    assert len(payload["metrics"]) == 8
+    assert all(key.startswith("gateway.") for key in payload["metrics"])
+    assert "gateway./status.downstream_service_cpu_s" in payload["metrics"]
+    assert "gateway./status.concurrent_downstream_service_cpu_s" in payload["metrics"]
     assert "SERVICE LOG:" in captured.err
     assert "GATEWAY LOG:" in captured.err
     assert stopped == ["gateway", "service"]
