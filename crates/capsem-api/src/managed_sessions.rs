@@ -52,7 +52,7 @@ pub fn validate_managed_request_id(value: &str) -> Result<(), &'static str> {
     Ok(())
 }
 
-fn deserialize_request_id<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+pub(crate) fn deserialize_request_id<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
     let value = String::deserialize(deserializer)?;
     validate_managed_request_id(&value).map_err(serde::de::Error::custom)?;
     Ok(value)
