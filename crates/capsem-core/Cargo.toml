@@ -10,6 +10,8 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+# Reuse the validated public delegated scope rather than translate or reparse it.
+capsem-api = { path = "../capsem-api" }
 capsem-mcp-transport = { path = "../capsem-mcp-transport" }
 capsem-crypto = { path = "../capsem-crypto", default-features = false, features = ["tls", "random", "secrets"] }
 anyhow = { workspace = true }

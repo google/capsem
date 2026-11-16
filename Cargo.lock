@@ -770,6 +770,7 @@ dependencies = [
  "axum",
  "block2",
  "bytes",
+ "capsem-api",
  "capsem-assets",
  "capsem-cache",
  "capsem-config",

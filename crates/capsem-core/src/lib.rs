@@ -1,3 +1,4 @@
+pub mod agent_access;
 pub mod auditfs;
 pub mod container;
 pub mod credential_broker;
