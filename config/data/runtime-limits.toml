@@ -113,5 +113,8 @@ checkpoint_depth = 32
 max_environment_ids = 128
 max_session_bindings = 128
 max_active = 1024
+# Retain verifier tombstones for idempotency and verified refusal attribution
+# until service restart. Exhaustion refuses new issuance; never evict authority.
+max_issued_per_epoch = 16384
 # Operator-issued credentials are leased; there is no indefinite agent bearer.
 max_lease_seconds = 86400
