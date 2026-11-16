@@ -88,6 +88,121 @@ def _assert_event_id(value: object) -> None:
     assert re.fullmatch(r"[0-9a-f]{12}", value), value
 
 
+def _guest_mcp_call(client, vm_id: str, params: dict):
+    messages = [
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "transport-proof", "version": "1"},
+            },
+        },
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": params},
+    ]
+    payload = "\n".join(json.dumps(message) for message in messages) + "\n"
+    command = f"printf '%s' {shlex.quote(payload)} | /run/capsem-mcp-server"
+    result = client.post(
+        f"/vms/{vm_id}/exec",
+        {"target": "vm", "command": command, "timeout_secs": 30},
+        timeout=60,
+    )
+    assert result["exit_code"] == 0, result
+    replies = [
+        json.loads(line)
+        for line in exec_output_text(result).splitlines()
+        if line.strip()
+    ]
+    return next(reply for reply in replies if reply.get("id") == 2)
+
+
+def test_oversized_external_mcp_response_is_refused_and_next_call_succeeds():
+    """Real confined HTTP transport rejects excess without retry or truncation."""
+    service = ServiceInstance(isolated_corp_config=True)
+    mock_proc = None
+    vm_id = None
+    request_log = service.tmp_dir / "upstream.jsonl"
+    try:
+        mock_proc, ready = start_mock_server(request_log=request_log)
+        (service.home_dir / "settings.toml").write_text(
+            f'[[mcp.servers]]\nname = "fixture"\nurl = "{ready["base_url"]}/mcp"\nenabled = true\n',
+            encoding="utf-8",
+        )
+        service.start()
+        client = service.client()
+        vm_id = client.post(
+            "/vms/create",
+            {
+                "name": vm_name("mcp-transport"),
+                "ram_mb": DEFAULT_RAM_MB,
+                "cpus": DEFAULT_CPUS,
+            },
+            timeout=90,
+        )["id"]
+        assert wait_exec_ready(client, vm_id, timeout=EXEC_READY_TIMEOUT)
+        client.post("/mcp/servers/fixture/refresh", timeout=30)
+
+        def call(query: str, **extra):
+            return _guest_mcp_call(
+                client,
+                vm_id,
+                {
+                    "name": "fixture__fixture_lookup",
+                    "arguments": {"query": query, **extra},
+                },
+            )
+
+        before = call("before")
+        assert before["result"]["content"] == [
+            {"type": "text", "text": "capsem-mock-server:mcp:fixture_lookup"}
+        ], before
+        oversized = call("oversized", response_bytes=2 * 1024 * 1024)
+        assert "error" in oversized, oversized
+        assert "transport limit" in oversized["error"]["message"], oversized
+        assert "tool may already have run" in oversized["error"]["message"], oversized
+        after = call("after")
+        assert after["result"]["content"] == before["result"]["content"], after
+
+        with _connect_session_db(service, client, vm_id) as conn:
+            rows = _eventually(
+                lambda: _rows(
+                    conn,
+                    """
+                    SELECT event_id, decision, error_message, policy_action FROM tool_calls
+                    WHERE origin = 'mcp' AND method = 'tools/call'
+                      AND tool_name = 'fixture__fixture_lookup' ORDER BY id
+                """,
+                ),
+                lambda rows: len(rows) == 3,
+            )
+            assert [row["decision"] for row in rows] == ["allowed", "error", "allowed"]
+            assert all(row["policy_action"] == "allow" for row in rows)
+            assert "transport limit" in rows[1]["error_message"]
+            for row in rows:
+                _assert_event_id(row["event_id"])
+        requests = [json.loads(line) for line in request_log.read_text().splitlines()]
+        calls = [
+            json.loads(request["request_body"])
+            for request in requests
+            if request["path"] == "/mcp" and request.get("request_body")
+        ]
+        assert [
+            request["params"]["arguments"]["query"]
+            for request in calls
+            if request.get("method") == "tools/call"
+        ] == ["before", "oversized", "after"]
+    finally:
+        if vm_id is not None:
+            with suppress(Exception):
+                service.client().delete(f"/vms/{vm_id}")
+        service.stop()
+        if mock_proc is not None:
+            stop_process(mock_proc)
+
+
 def test_saved_and_live_mcp_block_prevents_host_and_guest_dispatch():
     """A settings Block must agree with discovery and never reach upstream."""
     service = ServiceInstance(isolated_corp_config=True)
@@ -156,34 +271,7 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             ]
 
         def guest_call():
-            messages = [
-                {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "initialize",
-                    "params": {
-                        "protocolVersion": "2024-11-05",
-                        "capabilities": {},
-                        "clientInfo": {"name": "permission-proof", "version": "1"},
-                    },
-                },
-                {"jsonrpc": "2.0", "method": "notifications/initialized"},
-                call,
-            ]
-            payload = "\n".join(json.dumps(message) for message in messages) + "\n"
-            command = f"printf '%s' {shlex.quote(payload)} | /run/capsem-mcp-server"
-            result = client.post(
-                f"/vms/{vm_id}/exec",
-                {"target": "vm", "command": command, "timeout_secs": 30},
-                timeout=60,
-            )
-            assert result["exit_code"] == 0, result
-            replies = [
-                json.loads(line)
-                for line in exec_output_text(result).splitlines()
-                if line.strip()
-            ]
-            return next(reply for reply in replies if reply.get("id") == 2)
+            return _guest_mcp_call(client, vm_id, call["params"])
 
         def inspect_block():
             tools = client.get("/mcp/servers/local/tools/list")
