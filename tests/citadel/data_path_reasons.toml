@@ -896,3 +896,6 @@ json = { count = 1, reason = "http" }
 
 [sources."sdk/rust/src/operations/generated/resolve_security_ask.rs"]
 json = { count = 2, reason = "http" }
+
+[sources."crates/capsem-config/src/security_rule_profile.rs"]
+json = { count = 1, reason = "config" }
