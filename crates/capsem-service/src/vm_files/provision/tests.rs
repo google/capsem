@@ -100,6 +100,9 @@ async fn persistent_boot_crash_reads_the_log_before_the_reaper_caches_its_tail()
 /// kept for post-mortem the way any failed session is.
 #[tokio::test]
 async fn a_failed_container_create_discards_the_vm_and_keeps_its_ledger() {
+    // Other service tests deliberately inject process-global memory credentials.
+    // This fixture owns only image admission, not credential handoff.
+    let _lock = crate::tests::SETTINGS_ENV_LOCK.lock().await;
     let mut state = crate::tests::make_test_state_owned();
     state.containers = ContainerSetups::with_source(Box::new(RefusingImages));
     let state = Arc::new(state);
