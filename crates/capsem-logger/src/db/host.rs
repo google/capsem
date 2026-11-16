@@ -7,6 +7,40 @@ const HOST_EVENTS_SQL: &str = "SELECT timestamp_unix_ms, kind, session_id, actor
      FROM host_events ORDER BY id";
 
 impl DbHandle {
+    /// A bounded page in durable insertion order. The cursor is exclusive;
+    /// timestamps never participate in ordering or pagination.
+    pub async fn host_event_page(
+        &self,
+        kind: HostEventKind,
+        after_id: i64,
+        limit: usize,
+    ) -> DbResult<Vec<(i64, HostEvent)>> {
+        if after_id < 0 || limit == 0 || limit > crate::ledger_protocol::MAX_LEDGER_QUERY_ROWS {
+            return Err("invalid host event page bounds".into());
+        }
+        let json = self
+            .query(
+                "SELECT timestamp_unix_ms,kind,session_id,actor,hex(detail),trace_id,id
+             FROM host_events WHERE kind=?1 AND id>?2 ORDER BY id LIMIT ?3",
+                &[kind.as_str().into(), after_id.into(), limit.into()],
+            )
+            .await?;
+        let table: serde_json::Value =
+            serde_json::from_str(&json).map_err(|error| format!("host event page result: {error}"))?;
+        let rows = table["rows"]
+            .as_array()
+            .ok_or("host event page returned no rows array")?;
+        rows.iter()
+            .map(|row| {
+                let id = row[6]
+                    .as_i64()
+                    .filter(|id| *id > after_id)
+                    .ok_or("host event page without a valid cursor")?;
+                Ok((id, host_event_from_row(row)?))
+            })
+            .collect()
+    }
+
     /// Every host event in ledger order for the service startup replay.
     pub async fn host_events(&self) -> DbResult<Vec<HostEvent>> {
         let json = self.query(HOST_EVENTS_SQL, &[]).await?;

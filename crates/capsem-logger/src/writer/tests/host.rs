@@ -85,3 +85,34 @@ async fn host_access_denial_preserves_actor_target_and_detail_across_reopen() {
     let reader = crate::reader::DbReader::open(&path).unwrap();
     assert_eq!(reader.host_events().unwrap(), [event]);
 }
+
+#[tokio::test]
+async fn host_event_pages_bound_filter_and_resume_by_insertion_order() {
+    use crate::HostEventKind::{GrantMinted, GrantRevoked};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("host.db");
+    let db = crate::DbHandle::open(&path).unwrap();
+    for (index, kind) in [GrantMinted, GrantRevoked, GrantMinted, GrantMinted]
+        .into_iter()
+        .enumerate()
+    {
+        // Deliberately reverse timestamps: insertion order owns pagination.
+        db.write(host_event(kind, "target", 100 - index as i64)).await.unwrap();
+    }
+    db.flush().await.unwrap();
+    drop(db);
+    let db = crate::DbHandle::open(&path).unwrap();
+    let first = db.host_event_page(GrantMinted, 0, 2).await.unwrap();
+    assert_eq!(first.iter().map(|(id, _)| *id).collect::<Vec<_>>(), [1, 3]);
+    assert_eq!(first[0].1.actor, "cli");
+    assert_eq!(first[0].1.detail, [0x80]);
+    assert_eq!(first[1].1.timestamp_unix_ms, 98);
+    let second = db.host_event_page(GrantMinted, 3, 2).await.unwrap();
+    assert_eq!(second.len(), 1);
+    assert_eq!(second[0].0, 4);
+    assert!(db.host_event_page(GrantMinted, 4, 2).await.unwrap().is_empty());
+    assert_eq!(db.host_event_page(GrantRevoked, 0, 2).await.unwrap()[0].0, 2);
+    assert!(db.host_event_page(GrantMinted, -1, 2).await.is_err());
+    assert!(db.host_event_page(GrantMinted, 0, 0).await.is_err());
+    assert!(db.host_event_page(GrantMinted, 0, usize::MAX).await.is_err());
+}

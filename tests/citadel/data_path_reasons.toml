@@ -440,7 +440,7 @@ json = { count = 1, reason = "db-json" }
 hash = { count = 1, reason = "hash-archive" }
 
 [sources."crates/capsem-logger/src/db/host.rs"]
-json = { count = 3, reason = "db-json" }
+json = { count = 5, reason = "db-json" }
 
 [sources."crates/capsem-logger/src/db/warc_export.rs"]
 json = { count = 2, reason = "db-json" }
