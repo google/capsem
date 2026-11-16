@@ -47,3 +47,9 @@ Use [managed scopes](https://docs.capsem.org/guides/developers/integrate-the-sdk
 to remove temporary VMs automatically. Look up methods and options in the
 [TypeScript SDK reference](https://docs.capsem.org/sdk/typescript/), and handle
 failed commands with [Errors and recovery](https://docs.capsem.org/sdk/errors/).
+
+An operator can issue a finite delegated credential through `POST /agent-access`.
+Use `delegatedBearer(accessId, capability)` as the explicit token when constructing
+`new Hypervisor(gatewayUrl, token)`. The helper validates the existing managed
+capability format and canonical access ID; it does not discover credentials, issue
+a grant, renew a lease, or broaden the service-owned scope.

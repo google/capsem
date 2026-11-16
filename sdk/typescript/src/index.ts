@@ -2,6 +2,7 @@ export * from './models/index.js';
 export {Debug} from './debug.js';
 export {decodeExecOutput} from './execution.js';
 export {Hypervisor} from './hypervisor.js';
+export {delegatedBearer} from './identity.js';
 export {ManagedSession} from './managed.js';
 export {Images} from './images.js';
 export {Credentials} from './credentials.js';
