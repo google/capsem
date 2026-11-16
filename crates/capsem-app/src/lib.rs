@@ -79,18 +79,14 @@ async fn open_url(
     url: String,
     browser: Option<browser::Context>,
     callbacks: tauri::State<'_, browser::Callbacks>,
-    app: tauri::AppHandle,
 ) -> Result<(), String> {
-    use tauri_plugin_opener::OpenerExt;
     if !is_openable_url(&url) {
         // Deliberately does not echo the URL: it is caller-controlled and this
         // string is surfaced back into the webview console.
         return Err("refused: only http, https and mailto URLs can be opened".into());
     }
     browser::open(&callbacks, &url, browser, || {
-        app.opener()
-            .open_url(&url, None::<&str>)
-            .map_err(|_| "could not open browser".to_owned())
+        open::that_detached(&url).map_err(|_| "could not open browser".to_owned())
     })
     .await
 }
@@ -305,7 +301,6 @@ pub fn run(context: tauri::Context<tauri::Wry>) {
         .manage(browser::Callbacks::default())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             info!(args = ?args, "single-instance: second launch");
             let Some(window) = app.get_webview_window("main") else {

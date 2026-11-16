@@ -1,0 +1,11 @@
+{
+  "upstream_package_sha256": "5cd0cb5c412a5071b69bab6a6df1583cbb89460d4a83b6a24769b08d15b6b1e1",
+  "reason": "Replace only the Linux zbus 5 activation backend with maintained zbus 6 while preserving org.SingleInstance.DBus ExecuteCallback, app-id name, object path, argv and cwd. Require successful activation acknowledgement before secondary exit; fail explicitly on bus errors rather than silently launching duplicates. Keep macOS and Windows sources byte-for-byte upstream. Raise Linux dependency MSRV to repository1.91 and pin the standalone test cohort; add real private-bus second-process, exactly-once and restart acceptance. Remove when a stable upstream plugin ships maintained Linux dependencies.",
+  "files": {
+    "Cargo.lock": "fdf118c65d565a9192d2802b956a5926d18a134df1359bbdbc63700029b8fc0f",
+    "Cargo.toml": "ea15a932ee269fd19ce350d9a8f7a3b3ac9b73e9146eec44714b758c8b65afe6",
+    "Cargo.toml.orig": "f1659835fc4463e2a927a9afcbfcbd1fe9d1ee8533cf15853a6e6bc3a410fc40",
+    "src/platform_impl/linux/tests.rs": "9e1487195576495488154db28d6e12fb62868128d6ae5e93320341b768068dbc",
+    "src/platform_impl/linux.rs": "282ed2556384931c2a21e757923004d3c1598e19da284a3c90b91a49593ac0f5"
+  }
+}

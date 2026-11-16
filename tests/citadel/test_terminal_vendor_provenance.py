@@ -56,7 +56,7 @@ def violations(root: Path) -> list[str]:
     return errors
 
 
-@pytest.mark.parametrize("crate", ["vte", "alacritty_terminal", "oci-client"])
+@pytest.mark.parametrize("crate", ["vte", "alacritty_terminal", "oci-client", "tauri-plugin-single-instance"])
 def test_terminal_patch_matches_reviewed_source_and_retains_upstream_provenance(crate: str) -> None:
     assert not violations(VENDOR / crate), PROVENANCE_RATIONALE
 

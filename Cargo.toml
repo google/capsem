@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-exclude = ["third_party/rust/alacritty_terminal", "third_party/rust/vte", "third_party/rust/oci-client"]
+exclude = ["third_party/rust/alacritty_terminal", "third_party/rust/vte", "third_party/rust/oci-client", "third_party/rust/tauri-plugin-single-instance"]
 members = [
     "crates/capsem-cache",
     "crates/capsem-crypto",

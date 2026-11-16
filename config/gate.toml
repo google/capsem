@@ -1721,6 +1721,7 @@ identity_inputs = [
     "third_party/rust/alacritty_terminal/Cargo.toml",
     "third_party/rust/vte/Cargo.toml",
     "third_party/rust/oci-client/Cargo.toml",
+    "third_party/rust/tauri-plugin-single-instance/Cargo.toml",
 ]
 # Named here so the lane's refusal and the recipe that answers it cannot drift
 # apart. `test_every_recipe_the_gate_tells_an_operator_to_run_exists` checks
@@ -1940,6 +1941,7 @@ lockfiles = [
     "third_party/rust/alacritty_terminal/Cargo.lock",
     "third_party/rust/vte/Cargo.lock",
     "third_party/rust/oci-client/Cargo.lock",
+    "third_party/rust/tauri-plugin-single-instance/Cargo.lock",
     "build_system/uv.lock",
     "integrations/inspect-ai/uv.lock",
     "mcp/typescript/pnpm-lock.yaml",

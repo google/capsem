@@ -333,3 +333,6 @@ fn a_disallowed_scheme_hidden_behind_an_allowed_one_is_still_refused() {
     assert!(!is_openable_url("file:///tmp/x?u=https://capsem.org"));
     assert!(!is_openable_url("javascript:void('https://capsem.org')"));
 }
+
+#[cfg(target_os = "linux")]
+mod desktop;

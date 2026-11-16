@@ -1,0 +1,25 @@
+{
+  "name": "tauri-plugin-single-instance",
+  "version": "2.4.4",
+  "registry": "https://crates.io/crates/tauri-plugin-single-instance/2.4.4",
+  "repository": "https://github.com/tauri-apps/plugins-workspace",
+  "commit": "6aa2854f314481a459be1189b02c65a2450789ab",
+  "package_sha256": "5cd0cb5c412a5071b69bab6a6df1583cbb89460d4a83b6a24769b08d15b6b1e1",
+  "files": {
+    ".cargo_vcs_info.json": "94a23eda690112ed3966189fd5b572635610695d1837d782b5a890456134d8fe",
+    "CHANGELOG.md": "7a3724a58da5861d15b86ba74048e09dced3389abba8e109a83434a2930ac528",
+    "Cargo.lock": "40dd38d74a0e6982f388a354439d42fbc7d2764f9639df0c2d68ac1a1102bdcd",
+    "Cargo.toml": "3e7660f0f758d7b98c6818876afecf3cd9116e8d39c703842ecaf8bc1dce8c90",
+    "Cargo.toml.orig": "6e7d615b61b19d7761ca3cc86291dc071c83152b25842c130236a2ca04a548c3",
+    "LICENSE.spdx": "eb8a6c84630461b352badcab1dbe5d0168c56d377358b2b8c86b51003272d5ef",
+    "LICENSE_APACHE-2.0": "0cec06e0e55fbc3dc5cee4fca9b607f66cb8f4e4dbcf3b3c013594dd156732e9",
+    "LICENSE_MIT": "b7f455413bfe5f9d7da501a4468d4c5f866a432c325947e98cc9535e8b26cd6d",
+    "README.md": "9dbcbe9654d48425a5b5b65fe884328ae15ee030b088c60aef1d022a502c8e5c",
+    "SECURITY.md": "400507bc36e47e71f99199e78b4f9eb11aedc32f2bd8a0269247d693359a7078",
+    "src/lib.rs": "2c761f8efaeb94af9d593facb98281513575b1a28fcb14ee0072310987e64e71",
+    "src/platform_impl/linux.rs": "669c49d95924154c6bca9508446509ea92711e34dede26c0cfd835562d48074f",
+    "src/platform_impl/macos.rs": "8bd418854b7a15c193107d20062dcf87d5f6e00f505093548e7152e24f46df86",
+    "src/platform_impl/windows.rs": "13c072e37deca1c69e56e9eaf5884bfc3a0fb9998633e10e12ad1d9d543542d8",
+    "src/semver_compat.rs": "47db3f6de465b7a43faa1e92f90413feb6eb43dc6c227ef5b9b86c342392d600"
+  }
+}
