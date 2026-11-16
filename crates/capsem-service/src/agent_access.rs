@@ -96,12 +96,7 @@ async fn historically_issued(state: &ServiceState, id: &str) -> Result<bool, App
     }
 }
 
-async fn audit(
-    state: &ServiceState,
-    actor: &AuthenticatedActor,
-    kind: HostEventKind,
-    detail: Vec<u8>,
-) -> Result<(), AppError> {
+async fn audit(state: &ServiceState, actor: String, kind: HostEventKind, detail: Vec<u8>) -> Result<(), AppError> {
     let elapsed = std::time::SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(unavailable)?;
@@ -111,7 +106,7 @@ async fn audit(
             timestamp_unix_ms: timestamp,
             kind,
             session_id: None,
-            actor: actor.evidence().ledger_id(),
+            actor,
             detail,
             trace_id: None,
         })
@@ -152,7 +147,7 @@ pub(crate) async fn issue(
                 lease_seconds: request.lease_seconds,
             })
             .map_err(unavailable)?;
-            audit(&state, &actor, HostEventKind::GrantMinted, detail).await?;
+            audit(&state, actor.evidence().ledger_id(), HostEventKind::GrantMinted, detail).await?;
             let grant = admission.commit(|| LeaseClock::now().ok()).map_err(failure)?;
             Ok(Json(summary(&grant)?))
         }
@@ -179,9 +174,17 @@ pub(crate) async fn revoke(
         epoch: state.caller_authority.agents.epoch().to_string(),
     })
     .map_err(unavailable)?;
-    audit(&state, &actor, HostEventKind::GrantRevoked, detail).await?;
+    audit(
+        &state,
+        actor.evidence().ledger_id(),
+        HostEventKind::GrantRevoked,
+        detail,
+    )
+    .await?;
     Ok(Json(capsem_api::VmActionResponse { success: true }))
 }
+
+pub(crate) mod refusals;
 
 #[cfg(test)]
 mod tests;

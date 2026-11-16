@@ -117,7 +117,15 @@ async fn issuance_refuses_changed_capability_scope_and_invalid_body() {
         app.operator_request(delegated).await.unwrap().status(),
         StatusCode::FORBIDDEN
     );
-    assert_eq!(state.host_ledger.host_events().await.unwrap().len(), 1);
+    let events = state.host_ledger.host_events().await.unwrap();
+    assert_eq!(
+        events.iter().map(|event| event.kind).collect::<Vec<_>>(),
+        [
+            capsem_logger::HostEventKind::GrantMinted,
+            capsem_logger::HostEventKind::AccessDenied,
+        ]
+    );
+    assert_eq!(events[1].actor, format!("agent:{id}"));
 }
 
 #[tokio::test]

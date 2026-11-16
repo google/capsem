@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Security: Durably audit service access refusals with verified caller identities, retaining revoked-capability attribution without restoring authority and excluding request secrets, bodies, and query strings.
+
 - Security: Let operators issue and revoke finite, scoped agent credentials. Durably record issuance before activation, preserve lease deadlines on retry, and prevent old access identifiers from reactivating after service restart.
 
 - Security: Require sealed caller proof on every mutating service handler. Record authenticated operator identities in policy edits and ask decisions, and attribute automatic ask expiry/cancellation to the original VM owner generation.

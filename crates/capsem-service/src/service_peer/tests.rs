@@ -1,5 +1,6 @@
 use super::*;
 use crate::tests::{insert_fake_instance_with_session_dir, make_test_state};
+use std::sync::Arc;
 use tower::ServiceExt;
 
 #[test]
@@ -123,4 +124,134 @@ async fn a_verified_agent_identity_never_implies_operator_route_authority() {
         let response = app.clone().operator_request(request).await.unwrap();
         assert_eq!(response.status(), axum::http::StatusCode::FORBIDDEN, "{method} {path}");
     }
+}
+
+#[tokio::test]
+async fn delegated_refusal_records_verified_actor_and_route_without_caller_data() {
+    use crate::tests::OperatorRequestExt;
+    let state = make_test_state();
+    let app = crate::router_runtime::build_service_router(state.clone());
+    let id = capsem_crypto::uuid_v4().to_string();
+    let request = capsem_api::CreateAgentAccessRequest {
+        request_id: id.clone(),
+        ownership_token: capsem_api::ManagedOwnershipToken::new("11".repeat(32)).unwrap(),
+        scope: capsem_api::AgentAccessScope::new(vec![capsem_api::AgentOperation::Discover], vec![], vec![]).unwrap(),
+        lease_seconds: 60,
+    };
+    assert_eq!(
+        crate::tests::route_request(
+            app.clone(),
+            axum::http::Method::POST,
+            "/agent-access",
+            Some(serde_json::to_value(request).unwrap())
+        )
+        .await
+        .0,
+        axum::http::StatusCode::OK
+    );
+    let denied = axum::http::Request::patch("/settings/edit?token=private-query")
+        .header("authorization", format!("Bearer {id}.{}", "11".repeat(32)))
+        .header("x-capsem-actor", "operator")
+        .body(axum::body::Body::from("private-body"))
+        .unwrap();
+    assert_eq!(
+        app.clone().operator_request(denied).await.unwrap().status(),
+        axum::http::StatusCode::FORBIDDEN
+    );
+    let events = state.host_ledger.host_events().await.unwrap();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[1].kind, capsem_logger::HostEventKind::AccessDenied);
+    assert_eq!(events[1].actor, format!("agent:{id}"));
+    let detail: serde_json::Value = rmp_serde::from_slice(&events[1].detail).unwrap();
+    assert_eq!(
+        detail,
+        serde_json::json!({"method":"PATCH", "route":"/settings/edit", "reason":"scope_required"})
+    );
+    for private in ["private-query", "private-body", &"11".repeat(32)] {
+        assert!(!events[1]
+            .detail
+            .windows(private.len())
+            .any(|bytes| bytes == private.as_bytes()));
+    }
+    assert_eq!(
+        crate::tests::route_request(
+            app.clone(),
+            axum::http::Method::DELETE,
+            &format!("/agent-access/{id}"),
+            None
+        )
+        .await
+        .0,
+        axum::http::StatusCode::OK
+    );
+    let denied = axum::http::Request::patch("/settings/edit")
+        .header("authorization", format!("Bearer {id}.{}", "11".repeat(32)))
+        .body(axum::body::Body::empty())
+        .unwrap();
+    assert_eq!(
+        app.operator_request(denied).await.unwrap().status(),
+        axum::http::StatusCode::UNAUTHORIZED
+    );
+    let events = state.host_ledger.host_events().await.unwrap();
+    assert_eq!(events.last().unwrap().kind, capsem_logger::HostEventKind::AccessDenied);
+    assert_eq!(events.last().unwrap().actor, format!("agent:{id}"));
+}
+
+#[tokio::test]
+async fn delegated_refusal_does_not_attribute_an_invalid_capability_to_its_presented_id() {
+    use crate::tests::OperatorRequestExt;
+    let state = make_test_state();
+    let app = crate::router_runtime::build_service_router(state.clone());
+    let id = capsem_crypto::uuid_v4();
+    use capsem_core::{
+        agent_access::Reservation,
+        managed_sessions::{Capability, LeaseClock},
+    };
+    let scope = capsem_api::AgentAccessScope::new(vec![capsem_api::AgentOperation::Discover], vec![], vec![]).unwrap();
+    let Reservation::New(admission) = state
+        .caller_authority
+        .agents
+        .reserve(
+            id,
+            &Capability::from_bytes([0x11; 32]),
+            scope,
+            std::time::Duration::from_secs(60),
+            || LeaseClock::now().ok(),
+        )
+        .unwrap()
+    else {
+        panic!("new admission");
+    };
+    admission.commit(|| LeaseClock::now().ok()).unwrap();
+    let denied = axum::http::Request::patch("/settings/edit")
+        .header("authorization", format!("Bearer {id}.{}", "22".repeat(32)))
+        .header("x-capsem-actor", format!("agent:{id}"))
+        .body(axum::body::Body::empty())
+        .unwrap();
+    assert_eq!(
+        app.operator_request(denied).await.unwrap().status(),
+        axum::http::StatusCode::UNAUTHORIZED
+    );
+    let events = state.host_ledger.host_events().await.unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].actor, "unauthenticated");
+    assert_eq!(events[0].kind, capsem_logger::HostEventKind::AccessDenied);
+}
+
+#[tokio::test]
+async fn delegated_refusal_audit_failure_never_dispatches_the_mutation() {
+    use crate::tests::OperatorRequestExt;
+    let mut state = crate::tests::make_test_state_owned();
+    state.host_ledger = Arc::new(capsem_logger::DbHandle::open_external_reader(state.host_ledger.path()).unwrap());
+    let state = Arc::new(state);
+    let app = crate::router_runtime::build_service_router(state.clone());
+    let denied = axum::http::Request::patch("/settings/edit")
+        .header("authorization", "Bearer invalid-credential")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    assert_eq!(
+        app.operator_request(denied).await.unwrap().status(),
+        axum::http::StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert!(state.host_ledger.host_events().await.unwrap().is_empty());
 }

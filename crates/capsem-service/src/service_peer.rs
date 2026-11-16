@@ -1,5 +1,6 @@
 //! Kernel identity attached to every request accepted on the service UDS.
 
+use crate::agent_access::refusals::Reason;
 use axum::extract::connect_info::Connected;
 use axum::serve::IncomingStream;
 use std::os::fd::AsFd;
@@ -32,7 +33,7 @@ pub(crate) async fn restrict_owner_routes(
     request = axum::extract::Request::from_parts(parts, body);
     let current_uid = capsem_foundation::unix::process::current_uid();
     if peer.is_some_and(|peer| peer.uid != current_uid) {
-        return forbidden("foreign service peer denied");
+        return refuse(&state, request, Reason::ForeignPeer, None).await;
     }
     let is_owner = peer.is_some_and(|peer| {
         state
@@ -45,10 +46,20 @@ pub(crate) async fn restrict_owner_routes(
     if is_owner {
         let owner = match crate::owner_connection::OwnerConnection::from_peer(&state, peer) {
             Ok(owner) => owner,
-            Err(_) => return forbidden("VM owner service identity denied"),
+            Err(_) => return refuse(&state, request, Reason::OwnerIdentityDenied, None).await,
         };
         if !owner_route(owner.id(), request.uri().path()) {
-            return forbidden("VM owner service route denied");
+            return refuse(
+                &state,
+                request,
+                Reason::OwnerRouteDenied,
+                Some(
+                    crate::caller_auth::AuthenticatedActor::vm_owner(&owner)
+                        .evidence()
+                        .clone(),
+                ),
+            )
+            .await;
         }
         request
             .extensions_mut()
@@ -57,19 +68,21 @@ pub(crate) async fn restrict_owner_routes(
     }
     if let Some(channel) = request.extensions().get::<crate::gateway_channel::GatewayChannel>() {
         if channel.is_revoked() {
-            return forbidden("gateway control epoch ended");
+            return refuse(&state, request, Reason::GatewayEpochEnded, None).await;
         }
         if let Some(value) = request.headers_mut().get_mut(axum::http::header::AUTHORIZATION) {
             value.set_sensitive(true);
         }
         let actor = match state.caller_authority.authenticate_gateway(request.headers()) {
             Ok(actor) => actor,
+            Err(axum::http::StatusCode::UNAUTHORIZED) => {
+                return refuse(&state, request, Reason::CredentialDenied, None).await
+            }
             Err(status) => return status.into_response(),
         };
         // Delegated routes must opt into an explicit operation/target scope.
-        // No public issuance is enabled before those route policies are installed.
         if actor.agent_grant().is_some() {
-            return forbidden("delegated service operation requires an authorized scope");
+            return refuse(&state, request, Reason::ScopeRequired, Some(actor.evidence().clone())).await;
         }
         tracing::debug!(actor = %actor.evidence().ledger_id(), "authenticated service request");
         request.extensions_mut().insert(actor);
@@ -78,14 +91,31 @@ pub(crate) async fn restrict_owner_routes(
     if direct_status_route(request.method(), request.uri().path()) {
         return next.run(request).await;
     }
-    forbidden("service API requires authenticated gateway transport")
+    refuse(&state, request, Reason::GatewayTransportRequired, None).await
 }
 
-fn forbidden(message: &'static str) -> axum::response::Response {
-    axum::response::IntoResponse::into_response((
-        axum::http::StatusCode::FORBIDDEN,
-        axum::Json(serde_json::json!({"error": message})),
-    ))
+async fn refuse(
+    state: &crate::ServiceState,
+    request: axum::extract::Request,
+    reason: Reason,
+    evidence: Option<capsem_api::CallerActor>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let evidence = match evidence {
+        Some(evidence) => Some(evidence),
+        None => match state.caller_authority.refusal_actor(request.headers()) {
+            Ok(evidence) => evidence,
+            Err(status) => return status.into_response(),
+        },
+    };
+    if let Err(error) = crate::agent_access::refusals::record(state, evidence, request, reason).await {
+        return error.into_response();
+    }
+    (
+        reason.status(),
+        axum::Json(serde_json::json!({"error": reason.message()})),
+    )
+        .into_response()
 }
 
 fn direct_status_route(method: &axum::http::Method, path: &str) -> bool {

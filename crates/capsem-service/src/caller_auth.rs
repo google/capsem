@@ -47,20 +47,9 @@ impl Authority {
     }
 
     pub(crate) fn authenticate_gateway(&self, headers: &HeaderMap) -> Result<AuthenticatedActor, StatusCode> {
-        if headers.get_all(axum::http::header::AUTHORIZATION).iter().count() != 1 {
-            return Err(StatusCode::UNAUTHORIZED);
-        }
-        let candidate = headers
-            .get(axum::http::header::AUTHORIZATION)
-            .and_then(|header| header.to_str().ok())
-            .and_then(|header| header.strip_prefix("Bearer "))
-            .ok_or(StatusCode::UNAUTHORIZED)?;
-        if let Some((id, token)) = candidate.split_once('.') {
-            capsem_api::validate_managed_request_id(id).map_err(|_| StatusCode::UNAUTHORIZED)?;
-            let id = uuid::Uuid::parse_str(id).map_err(|_| StatusCode::UNAUTHORIZED)?;
-            let token =
-                capsem_api::ManagedOwnershipToken::new(token.to_owned()).map_err(|_| StatusCode::UNAUTHORIZED)?;
-            let capability = capsem_core::managed_sessions::Capability::from_bytes(token.to_bytes());
+        let candidate = refusal::bearer(headers)?;
+        if candidate.contains('.') {
+            let (id, capability) = refusal::delegated(candidate)?;
             let grant = self
                 .agents
                 .authenticate(id, &capability, || {
@@ -164,6 +153,7 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthenticatedActor {
     }
 }
 
+mod refusal;
 pub(crate) mod routing;
 
 #[cfg(test)]
