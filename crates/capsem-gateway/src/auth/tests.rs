@@ -424,18 +424,22 @@ async fn token_endpoint_is_not_available_to_raw_local_clients() {
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
+fn websocket_get(uri: &str) -> http::request::Builder {
+    Request::builder()
+        .uri(uri)
+        .header("connection", "Upgrade")
+        .header("upgrade", "websocket")
+        .header("sec-websocket-version", "13")
+        .header("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")
+}
+
 // --- WebSocket query-param auth ---
 
 #[tokio::test]
 async fn events_accepts_query_param_token() {
     let app = test_app("my-secret");
     let resp = app
-        .oneshot(
-            Request::builder()
-                .uri("/events?token=my-secret")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(websocket_get("/events?token=my-secret").body(Body::empty()).unwrap())
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
@@ -445,12 +449,7 @@ async fn events_accepts_query_param_token() {
 async fn events_rejects_wrong_query_param_token() {
     let app = test_app("correct");
     let resp = app
-        .oneshot(
-            Request::builder()
-                .uri("/events?token=wrong")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(websocket_get("/events?token=wrong").body(Body::empty()).unwrap())
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
@@ -471,8 +470,7 @@ async fn stream_accepts_query_param_token() {
     let app = test_app("my-secret");
     let resp = app
         .oneshot(
-            Request::builder()
-                .uri("/vms/vm1/stream?token=my-secret")
+            websocket_get("/vms/vm1/stream?token=my-secret")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -486,8 +484,7 @@ async fn stream_rejects_wrong_query_param_token() {
     let app = test_app("correct");
     let resp = app
         .oneshot(
-            Request::builder()
-                .uri("/vms/vm1/stream?token=wrong")
+            websocket_get("/vms/vm1/stream?token=wrong")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -501,12 +498,7 @@ async fn non_websocket_path_ignores_query_param_token() {
     let app = test_app("tok");
     // /vms/list with ?token= should still require header auth
     let resp = app
-        .oneshot(
-            Request::builder()
-                .uri("/vms/list?token=tok")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(websocket_get("/vms/list?token=tok").body(Body::empty()).unwrap())
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
@@ -518,8 +510,7 @@ async fn stream_extra_query_params_ignored() {
     // Extra params present but only token is checked
     let resp = app
         .oneshot(
-            Request::builder()
-                .uri("/vms/vm1/stream?evil=payload&token=tok&other=stuff")
+            websocket_get("/vms/vm1/stream?evil=payload&token=tok&other=stuff")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -551,12 +542,7 @@ async fn stream_header_auth_still_works() {
 async fn retired_terminal_path_ignores_query_param_token() {
     let app = test_app("tok");
     let resp = app
-        .oneshot(
-            Request::builder()
-                .uri("/terminal/vm1?token=tok")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(websocket_get("/terminal/vm1?token=tok").body(Body::empty()).unwrap())
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
@@ -732,5 +718,35 @@ fn delegated_header_uses_canonical_managed_identity_and_capability_bytes() {
         format!("{candidate}.extra"),
     ] {
         assert!(super::delegated::parse(&value).is_none());
+    }
+}
+
+#[tokio::test]
+async fn query_tokens_reject_plain_http_duplicates_and_competing_credentials() {
+    for (method, uri, header, upgrade) in [
+        ("GET", "/events?token=tok", None, false),
+        ("POST", "/events?token=tok", None, true),
+        ("GET", "/events?token=tok&token=tok", None, true),
+        ("GET", "/events?token=tok&to%6ben=tok", None, true),
+        ("GET", "/events?token=tok", Some("Bearer tok"), true),
+        ("GET", "/events?token=tok", Some("Bearer wrong"), true),
+        ("GET", "/vms/vm1/stream?token=tok", Some("Basic credential"), true),
+    ] {
+        let mut request = Request::builder().method(method).uri(uri);
+        if upgrade {
+            request = request
+                .header("connection", "Upgrade")
+                .header("upgrade", "websocket")
+                .header("sec-websocket-version", "13")
+                .header("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==");
+        }
+        if let Some(header) = header {
+            request = request.header("authorization", header);
+        }
+        let response = test_app("tok")
+            .oneshot(request.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{method} {uri} {header:?}");
     }
 }

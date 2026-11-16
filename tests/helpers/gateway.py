@@ -317,6 +317,10 @@ class TcpHttpClient:
         host, _, port = base_url.removeprefix("http://").partition(":")
         self._transport = Transport(host=host, port=int(port))
 
+    def close(self):
+        """Close this client's owned connection pool before fixture teardown."""
+        self._transport.close()
+
     def _headers(self, use_auth, extra=None):
         headers = {"Content-Type": "application/json", **(extra or {})}
         if use_auth:

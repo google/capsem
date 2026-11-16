@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Security: Restrict query bearer tokens to operator WebSocket upgrades, reject competing or duplicate credential sources, and remove credential query fields from both request URI representations before dispatch. Delegated access remains header-only.
+
 - Security: Authenticate delegated gateway requests through the service-owned private channel on every request, enforce lease/revocation/restart checks, and route agents through service scope checks instead of operator caches or global events.
 
 - Security: Durably audit service access refusals with verified caller identities, retaining revoked-capability attribution without restoring authority and excluding request secrets, bodies, and query strings.

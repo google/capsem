@@ -13,6 +13,7 @@ use tracing::{info, warn};
 use crate::AppState;
 
 mod delegated;
+mod query;
 
 /// Classify the shape of an authorization header for diagnostic logs. Never
 /// returns token bytes -- only the structural shape -- so it's safe to log
@@ -218,10 +219,9 @@ pub fn request_names_loopback_host<B>(req: &Request<B>) -> bool {
 
 /// `/vms/{id}/stream`, the one WebSocket control route a browser opens.
 fn is_stream_path(path: &str) -> bool {
-    matches!(
-        path.trim_start_matches('/').split('/').collect::<Vec<_>>().as_slice(),
-        ["vms", id, "stream"] if !id.is_empty()
-    )
+    path.strip_prefix("/vms/")
+        .and_then(|path| path.strip_suffix("/stream"))
+        .is_some_and(|id| crate::stream::validate_vm_id(id).is_ok())
 }
 
 /// `/vms/{id}/surface/` and its `launch.js`: the static launcher of a VM's
@@ -257,26 +257,34 @@ pub async fn auth_middleware(
         }
     }
 
+    let query_denied = query::canonicalize(&mut req, &state.token).is_err();
     // Health check and the static surface launcher are unauthenticated.
     let path = req.uri().path();
-    if req.method() == http::Method::GET && (path == "/" || path == "/health" || is_surface_launcher_path(path)) {
+    if !query_denied
+        && req.method() == http::Method::GET
+        && (path == "/" || path == "/health" || is_surface_launcher_path(path))
+    {
         return next.run(req).await;
     }
 
-    let delegated_denied = match delegated::authenticate(&state, req.headers()).await {
-        Ok(true) => {
-            // Streams retain their authenticated service tunnel. Every other
-            // delegated request goes to the service, never operator caches or
-            // the gateway's global event broadcast.
-            return if is_stream_path(req.uri().path()) {
-                next.run(req).await
-            } else {
-                crate::proxy::handle_proxy(State(state), req).await
-            };
+    let delegated_denied = if query_denied {
+        true
+    } else {
+        match delegated::authenticate(&state, req.headers()).await {
+            Ok(true) => {
+                // Streams retain their authenticated service tunnel. Every other
+                // delegated request goes to the service, never operator caches or
+                // the gateway's global event broadcast.
+                return if is_stream_path(req.uri().path()) {
+                    next.run(req).await
+                } else {
+                    crate::proxy::handle_proxy(State(state), req).await
+                };
+            }
+            Ok(false) => false,
+            Err(StatusCode::UNAUTHORIZED) => true,
+            Err(status) => return (status, "delegated authority unavailable").into_response(),
         }
-        Ok(false) => false,
-        Err(StatusCode::UNAUTHORIZED) => true,
-        Err(status) => return (status, "delegated authority unavailable").into_response(),
     };
 
     let header_valid = !delegated_denied
@@ -287,27 +295,7 @@ pub async fn auth_middleware(
             .and_then(|v| v.strip_prefix("Bearer "))
             .is_some_and(|t| token_matches(t, &state.token));
 
-    // For WebSocket paths: allow ?token= query param as fallback
-    // (browser WebSocket API cannot set custom headers).
-    // Only the "token" param is recognized; all others are dropped.
-    let query_valid = !delegated_denied
-        && !header_valid
-        && (path == "/events" || is_stream_path(path))
-        && req
-            .uri()
-            .query()
-            .and_then(|q| q.split('&').find_map(|pair| pair.strip_prefix("token=")))
-            .is_some_and(|t| token_matches(t, &state.token));
-
-    if header_valid || query_valid {
-        if query_valid {
-            // Canonicalize the already-verified browser credential before
-            // the stream tunnel drops its query string. Never substitute an
-            // operator credential for a header-authenticated caller.
-            let value = http::HeaderValue::from_str(&format!("Bearer {}", state.token))
-                .expect("generated operator token is a valid header");
-            req.headers_mut().insert(http::header::AUTHORIZATION, value);
-        }
+    if header_valid {
         if let Some(value) = req.headers_mut().get_mut(http::header::AUTHORIZATION) {
             value.set_sensitive(true);
         }

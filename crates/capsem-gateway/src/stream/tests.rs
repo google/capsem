@@ -117,9 +117,13 @@ async fn invalid_vm_ids_are_refused_before_the_service() {
     let dir = tempfile::tempdir().unwrap();
     let (service, mut forwarded) = fake_service(dir.path()).await;
     let address = gateway(&service).await;
-    let error = tokio_tungstenite::connect_async(request(address, &format!("?token={TOKEN}"), "..%2Fetc"))
-        .await
-        .unwrap_err();
+    // Authenticate independently of the invalid path: query credentials are
+    // deliberately unavailable outside valid stream routes.
+    let mut invalid = request(address, "", "..%2Fetc");
+    invalid
+        .headers_mut()
+        .insert(http::header::AUTHORIZATION, format!("Bearer {TOKEN}").parse().unwrap());
+    let error = tokio_tungstenite::connect_async(invalid).await.unwrap_err();
     assert!(error.to_string().contains("400"), "{error}");
     assert!(forwarded.try_recv().is_err());
 }

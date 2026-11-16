@@ -301,3 +301,16 @@ def test_mock_ws_process_stop_does_not_leak_thread_exception():
         import shutil
 
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+def test_browser_query_token_preserves_stream_subprotocol_and_binary_frames(ws_env):
+    gw, _, _ = ws_env
+
+    async def run():
+        url = f"ws://127.0.0.1:{gw.port}/vms/ws-vm/stream?token={gw.token}&client=browser"
+        async with websockets.connect(url, subprotocols=[STREAM_SUBPROTOCOL]) as ws:
+            assert ws.subprotocol == STREAM_SUBPROTOCOL
+            payload = bytes(range(256))
+            await ws.send(payload)
+            assert await asyncio.wait_for(ws.recv(), timeout=5) == payload
+
+    asyncio.run(run())
