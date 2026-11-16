@@ -42,7 +42,7 @@ impl Reason {
 
 #[derive(Serialize)]
 struct Detail<'a> {
-    method: &'static str,
+    method: Option<&'static str>,
     route: Option<&'a str>,
     reason: Reason,
 }
@@ -66,7 +66,34 @@ pub(crate) async fn record(
         _ => "OTHER",
     };
     let route = request.extensions().get::<MatchedPath>().map(MatchedPath::as_str);
-    let detail = rmp_serde::to_vec_named(&Detail { method, route, reason }).map_err(super::unavailable)?;
+    record_detail(
+        state,
+        actor,
+        Detail {
+            method: Some(method),
+            route,
+            reason,
+        },
+    )
+    .await
+}
+
+/// The inherited authentication record has no HTTP body, route or method.
+pub(crate) async fn record_authentication(state: &ServiceState, actor: Option<CallerActor>) -> Result<(), AppError> {
+    record_detail(
+        state,
+        actor,
+        Detail {
+            method: None,
+            route: None,
+            reason: Reason::CredentialDenied,
+        },
+    )
+    .await
+}
+
+async fn record_detail(state: &ServiceState, actor: Option<CallerActor>, detail: Detail<'_>) -> Result<(), AppError> {
+    let detail = rmp_serde::to_vec_named(&detail).map_err(super::unavailable)?;
     let actor = actor.map_or_else(|| "unauthenticated".to_owned(), |actor| actor.ledger_id());
     super::audit(state, actor, capsem_logger::HostEventKind::AccessDenied, detail).await
 }

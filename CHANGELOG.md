@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Security: Authenticate delegated gateway requests through the service-owned private channel on every request, enforce lease/revocation/restart checks, and route agents through service scope checks instead of operator caches or global events.
+
 - Security: Durably audit service access refusals with verified caller identities, retaining revoked-capability attribution without restoring authority and excluding request secrets, bodies, and query strings.
 
 - Security: Let operators issue and revoke finite, scoped agent credentials. Durably record issuance before activation, preserve lease deadlines on retry, and prevent old access identifiers from reactivating after service restart.

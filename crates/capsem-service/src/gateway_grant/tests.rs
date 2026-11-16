@@ -414,3 +414,74 @@ async fn operator_registration_is_once_and_control_disconnect_retires_pooled_htt
         );
     }
 }
+
+#[tokio::test]
+async fn private_agent_authentication_checks_live_registry_and_keeps_revoked_identity_for_audit() {
+    use capsem_core::{
+        agent_access::Reservation,
+        managed_sessions::{Capability, LeaseClock},
+    };
+    use capsem_proto::gateway_grant::auth::{
+        decode_gateway_auth_response, encode_gateway_auth_request, GatewayAuthSecret,
+    };
+    let state = crate::tests::make_test_state();
+    let id = capsem_crypto::uuid_v4();
+    let scope = capsem_api::AgentAccessScope::new(vec![capsem_api::AgentOperation::Discover], vec![], vec![]).unwrap();
+    let Reservation::New(admission) = state
+        .caller_authority
+        .agents
+        .reserve(
+            id,
+            &Capability::from_bytes([0x11; 32]),
+            scope,
+            std::time::Duration::from_secs(60),
+            || LeaseClock::now().ok(),
+        )
+        .unwrap()
+    else {
+        panic!("new admission");
+    };
+    admission.commit(|| LeaseClock::now().ok()).unwrap();
+    let (client, server) = std::os::unix::net::UnixStream::pair().unwrap();
+    let broker = tokio::spawn(serve(server, state.clone()));
+    let requests = WireSender::new(client.try_clone().unwrap()).unwrap();
+    let responses = WireReceiver::new(client).unwrap();
+    for (request_id, secret, valid) in [(1, 0x22, false), (2, 0x11, true), (3, 0x11, false)] {
+        if request_id == 3 {
+            state.caller_authority.agents.revoke(id).unwrap();
+        }
+        let request = GatewayAuthRequest::AuthenticateAgent {
+            request_id,
+            access_id: *id.as_bytes(),
+            capability: GatewayAuthSecret::from_bytes([secret; 32]),
+        };
+        requests
+            .send(&encode_gateway_auth_request(&request).unwrap(), &[])
+            .await
+            .unwrap();
+        let response = responses.recv().await.unwrap();
+        assert!(response.fds.is_empty());
+        let expected = if valid {
+            GatewayAuthResponse::AuthenticatedAgent {
+                request_id,
+                access_id: *id.as_bytes(),
+            }
+        } else {
+            GatewayAuthResponse::Denied {
+                request_id,
+                reason: GatewayAuthDenial::Forbidden,
+            }
+        };
+        assert_eq!(decode_gateway_auth_response(&response.bytes).unwrap(), expected);
+    }
+    let events = state.host_ledger.host_events().await.unwrap();
+    assert_eq!(events.len(), 2);
+    assert!(events
+        .iter()
+        .all(|event| event.kind == capsem_logger::HostEventKind::AccessDenied));
+    assert_eq!(events[0].actor, "unauthenticated");
+    assert_eq!(events[1].actor, format!("agent:{id}"));
+    drop(requests);
+    drop(responses);
+    assert!(broker.await.unwrap().is_err());
+}

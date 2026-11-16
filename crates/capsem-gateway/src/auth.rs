@@ -12,6 +12,8 @@ use tracing::{info, warn};
 
 use crate::AppState;
 
+mod delegated;
+
 /// Classify the shape of an authorization header for diagnostic logs. Never
 /// returns token bytes -- only the structural shape -- so it's safe to log
 /// at info level without leaking secrets.
@@ -249,23 +251,47 @@ pub async fn auth_middleware(
             .into_response();
     }
 
+    for (name, value) in req.headers_mut().iter_mut() {
+        if name == http::header::AUTHORIZATION {
+            value.set_sensitive(true);
+        }
+    }
+
     // Health check and the static surface launcher are unauthenticated.
     let path = req.uri().path();
     if req.method() == http::Method::GET && (path == "/" || path == "/health" || is_surface_launcher_path(path)) {
         return next.run(req).await;
     }
 
-    let header_valid = req
-        .headers()
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .is_some_and(|t| token_matches(t, &state.token));
+    let delegated_denied = match delegated::authenticate(&state, req.headers()).await {
+        Ok(true) => {
+            // Streams retain their authenticated service tunnel. Every other
+            // delegated request goes to the service, never operator caches or
+            // the gateway's global event broadcast.
+            return if is_stream_path(req.uri().path()) {
+                next.run(req).await
+            } else {
+                crate::proxy::handle_proxy(State(state), req).await
+            };
+        }
+        Ok(false) => false,
+        Err(StatusCode::UNAUTHORIZED) => true,
+        Err(status) => return (status, "delegated authority unavailable").into_response(),
+    };
+
+    let header_valid = !delegated_denied
+        && req
+            .headers()
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .is_some_and(|t| token_matches(t, &state.token));
 
     // For WebSocket paths: allow ?token= query param as fallback
     // (browser WebSocket API cannot set custom headers).
     // Only the "token" param is recognized; all others are dropped.
-    let query_valid = !header_valid
+    let query_valid = !delegated_denied
+        && !header_valid
         && (path == "/events" || is_stream_path(path))
         && req
             .uri()

@@ -207,3 +207,59 @@ fn foreign_metric_peer_child() {
     let mut byte = [0];
     assert_eq!(std::io::Read::read(&mut connection, &mut byte).unwrap(), 0);
 }
+
+#[tokio::test]
+async fn delegated_authentication_uses_correlated_private_records_and_keeps_denials_nonfatal() {
+    use capsem_proto::gateway_grant::auth::{
+        decode_gateway_auth_request, encode_gateway_auth_response, GatewayAuthDenial,
+    };
+    let (client, server) = UnixStream::pair().unwrap();
+    let grants = GatewayGrantClient::start(client).unwrap();
+    let mut access_id = [0x11; 16];
+    access_id[6] = 0x41;
+    access_id[8] = 0x81;
+    let broker = tokio::spawn(async move {
+        let requests = WireReceiver::new(server.try_clone().unwrap()).unwrap();
+        let responses = WireSender::new(server).unwrap();
+        for request_id in 1..=3 {
+            let request = requests.recv().await.unwrap();
+            assert!(request.fds.is_empty());
+            assert_eq!(
+                decode_gateway_auth_request(&request.bytes).unwrap(),
+                GatewayAuthRequest::AuthenticateAgent {
+                    request_id,
+                    access_id,
+                    capability: GatewayAuthSecret::from_bytes([0x22; 32]),
+                }
+            );
+            let response = match request_id {
+                1 => GatewayAuthResponse::Denied {
+                    request_id,
+                    reason: GatewayAuthDenial::Forbidden,
+                },
+                2 => GatewayAuthResponse::AuthenticatedAgent { request_id, access_id },
+                _ => GatewayAuthResponse::Denied {
+                    request_id,
+                    reason: GatewayAuthDenial::Unavailable,
+                },
+            };
+            responses
+                .send(&encode_gateway_auth_response(response).unwrap(), &[])
+                .await
+                .unwrap();
+        }
+    });
+    assert!(!grants
+        .authenticate_agent(access_id, GatewayAuthSecret::from_bytes([0x22; 32]))
+        .await
+        .unwrap());
+    assert!(grants
+        .authenticate_agent(access_id, GatewayAuthSecret::from_bytes([0x22; 32]))
+        .await
+        .unwrap());
+    assert!(grants
+        .authenticate_agent(access_id, GatewayAuthSecret::from_bytes([0x22; 32]))
+        .await
+        .is_err());
+    broker.await.unwrap();
+}

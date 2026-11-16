@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import secrets
 import sqlite3
+import time
 import uuid
 from datetime import UTC, datetime
 
@@ -113,6 +114,8 @@ def test_service_restart_does_not_reissue_historical_agent_access():
         service.start()
         gateway.start()
         client = TcpHttpClient(gateway.base_url, gateway.token)
+        old_agent = TcpHttpClient(gateway.base_url, f"{access_id}.{request['ownership_token']}")
+        assert old_agent.call_json("GET", "/vms/list")[0] == 401
         status, result = client.call_json("POST", "/agent-access", request)
         assert status == 409, result
         status, result = client.call_json("DELETE", f"/agent-access/{access_id}")
@@ -121,6 +124,118 @@ def test_service_restart_does_not_reissue_historical_agent_access():
         status, result = client.call_json("POST", "/agent-access", fresh)
         assert status == 200, result
         assert result["access"]["id"] == fresh["request_id"]
+    finally:
+        gateway.stop()
+        service.stop()
+
+
+def test_delegated_credentials_cannot_mutate_operator_state_on_either_transport():
+    service = ServiceInstance(isolated_corp_config=True)
+    gateway = ServiceGateway(service)
+    access_id = str(uuid.uuid4())
+    capability = secrets.token_hex(32)
+    forbidden = [
+        ("PATCH", "/settings/edit"),
+        ("PUT", "/corp/edit"),
+        ("PATCH", "/plugins/absent/edit"),
+        ("PATCH", "/mcp/default/edit"),
+        ("POST", "/credentials/inject"),
+        ("POST", "/vms/absent/security/asks/absent/resolve"),
+        ("POST", "/mcp/servers/absent/tools/absent/call"),
+        ("POST", "/vms/create"),
+        ("POST", "/run"),
+        ("POST", "/agent-access"),
+        ("DELETE", f"/agent-access/{access_id}"),
+    ]
+    try:
+        service.start()
+        gateway.start()
+        operator = TcpHttpClient(gateway.base_url, gateway.token)
+        status, result = operator.call_json("POST", "/agent-access", {
+            "request_id": access_id, "ownership_token": capability,
+            "scope": {"operations": ["discover"]}, "lease_seconds": 60,
+        })
+        assert status == 200, result
+        agent = TcpHttpClient(gateway.base_url, f"{access_id}.{capability}")
+        direct = UdsHttpClient(service.uds_path)
+        policy_paths = [service.home_dir / name for name in ("settings.toml", "corp.toml")]
+        policy_before = {path: path.read_bytes() if path.exists() else None for path in policy_paths}
+        for method, route in forbidden:
+            body = {"actor": {"kind": "operator"}, "private_payload": capability}
+            status, _, result = agent.call(method, route, body=json.dumps(body).encode(),
+                headers={"Content-Type": "application/json", "x-capsem-actor": "operator"})
+            assert status == 403, (method, route, status, result)
+            status, _, result = direct.call(method, route, body=json.dumps(body).encode(),
+                headers={"Authorization": f"Bearer {access_id}.{capability}",
+                         "Content-Type": "application/json", "x-capsem-actor": "operator"}, translate=False)
+            assert status == 403, (method, route, status, result)
+        assert {path: path.read_bytes() if path.exists() else None for path in policy_paths} == policy_before
+        assert operator.call_json("GET", "/vms/list")[0] == 200
+        assert operator.call_json("DELETE", f"/agent-access/{access_id}")[0] == 200
+        assert agent.call_json("GET", "/vms/list")[0] == 401
+        service_log = service.stop_and_read_log()
+        gateway_log = gateway.stop_and_read_log()
+        assert capability not in service_log
+        assert capability not in gateway_log
+        path = service.home_dir / "sessions" / "host.db"
+        with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as ledger:
+            rows = ledger.execute("SELECT actor,detail FROM host_events WHERE kind='access_denied' ORDER BY id").fetchall()
+            assert ledger.execute("SELECT COUNT(*) FROM policy_mutation_events").fetchone()[0] == 0
+            assert ledger.execute("SELECT COUNT(*) FROM host_events WHERE kind='grant_minted'").fetchone()[0] == 1
+        assert len(rows) == 2 * len(forbidden) + 1
+        assert all(row[0] == f"agent:{access_id}" for row in rows)
+        templates = {
+            "/plugins/absent/edit": "/plugins/{plugin_id}/edit",
+            "/vms/absent/security/asks/absent/resolve": "/vms/{id}/security/asks/{ask_id}/resolve",
+            "/mcp/servers/absent/tools/absent/call": "/mcp/servers/{server_id}/tools/{tool_id}/call",
+            f"/agent-access/{access_id}": "/agent-access/{id}",
+        }
+        for index, (method, route) in enumerate(forbidden):
+            for offset, reason in [(0, "scope_required"), (1, "gateway_transport_required")]:
+                detail = msgpack.unpackb(rows[2 * index + offset][1], raw=False)
+                assert set(detail) == {"method", "route", "reason"}
+                assert detail["method"] == method
+                assert detail["reason"] == reason
+                assert detail["route"] == templates.get(route, route)
+                assert capability.encode() not in rows[2 * index + offset][1]
+        assert msgpack.unpackb(rows[-1][1], raw=False) == {
+            "method": None, "route": None, "reason": "credential_denied",
+        }
+    finally:
+        gateway.stop()
+        service.stop()
+
+
+def test_delegated_expiry_is_enforced_by_the_live_gateway_broker():
+    service = ServiceInstance(isolated_corp_config=True)
+    gateway = ServiceGateway(service)
+    access_id = str(uuid.uuid4())
+    capability = secrets.token_hex(32)
+    try:
+        service.start()
+        gateway.start()
+        operator = TcpHttpClient(gateway.base_url, gateway.token)
+        status, issued = operator.call_json("POST", "/agent-access", {
+            "request_id": access_id, "ownership_token": capability,
+            "scope": {"operations": ["discover"]}, "lease_seconds": 5,
+        })
+        assert status == 200, issued
+        agent = TcpHttpClient(gateway.base_url, f"{access_id}.{capability}")
+        assert agent.call_json("PATCH", "/settings/edit", {})[0] == 403
+        # This is the product's finite lease, not polling for ledger visibility.
+        time.sleep(5.1)
+        assert agent.call_json("PATCH", "/settings/edit", {})[0] == 401
+        assert operator.call_json("GET", "/vms/list")[0] == 200
+        service.stop_and_read_log()
+        gateway.stop_and_read_log()
+        path = service.home_dir / "sessions" / "host.db"
+        with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as ledger:
+            rows = ledger.execute("SELECT actor,detail FROM host_events WHERE kind='access_denied' ORDER BY id").fetchall()
+        assert len(rows) == 2
+        assert all(row[0] == f"agent:{access_id}" for row in rows)
+        assert msgpack.unpackb(rows[-1][1], raw=False) == {
+            "method": None, "route": None, "reason": "credential_denied",
+        }
     finally:
         gateway.stop()
         service.stop()

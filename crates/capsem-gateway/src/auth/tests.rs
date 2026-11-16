@@ -715,3 +715,22 @@ fn only_the_surface_launcher_files_are_exempt() {
         assert!(!is_surface_launcher_path(path), "{path}");
     }
 }
+
+#[test]
+fn delegated_header_uses_canonical_managed_identity_and_capability_bytes() {
+    let id = "fc120782-2272-4b3d-a2e6-a26ee2f8ab61";
+    let candidate = format!("{id}.{}", "11".repeat(32));
+    let (actual_id, capability) = super::delegated::parse(&candidate).unwrap();
+    assert_eq!(uuid::Uuid::from_bytes(actual_id).to_string(), id);
+    assert_eq!(capability.as_bytes(), &[0x11; 32]);
+    assert!(!format!("{capability:?}").contains(&"11".repeat(32)));
+    for value in [
+        "operator-token".into(),
+        "11".repeat(32),
+        format!("{id}.{}", "FF".repeat(32)),
+        format!("{}.{}", id.to_uppercase(), "11".repeat(32)),
+        format!("{candidate}.extra"),
+    ] {
+        assert!(super::delegated::parse(&value).is_none());
+    }
+}

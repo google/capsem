@@ -37,6 +37,7 @@ bytes.workspace = true
 axum = { version = "0.8", features = ["ws"] }
 tower-http = { version = "0.6", features = ["cors"] }
 url = "2"
+uuid = "1"
 
 [build-dependencies]
 capsem-crypto = { path = "../capsem-crypto" }

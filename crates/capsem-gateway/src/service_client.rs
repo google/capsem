@@ -49,6 +49,20 @@ impl ServiceClient {
         self.inner.request(request).await
     }
 
+    pub(crate) async fn authenticate_agent(
+        &self,
+        access_id: [u8; 16],
+        capability: capsem_proto::gateway_grant::auth::GatewayAuthSecret<32>,
+    ) -> std::io::Result<bool> {
+        match &self.source {
+            ConnectionSource::Grant(grants) => grants.authenticate_agent(access_id, capability).await,
+            ConnectionSource::Path(_) => Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "delegated authentication requires coordinator channel",
+            )),
+        }
+    }
+
     pub(crate) async fn connect(&self) -> std::io::Result<UnixStream> {
         self.source.open_service().await
     }

@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use capsem_foundation::unix::router_channel::{DescriptorReceiver, DescriptorSender};
 use capsem_proto::gateway_grant::auth::{
-    decode_gateway_auth_response, encode_gateway_auth_request, GatewayAuthRequest, GatewayAuthResponse,
-    GatewayAuthSecret,
+    decode_gateway_auth_response, encode_gateway_auth_request, GatewayAuthDenial, GatewayAuthRequest,
+    GatewayAuthResponse, GatewayAuthSecret,
 };
 use capsem_proto::gateway_grant::{
     decode_gateway_grant_response, encode_gateway_grant_request, GatewayGrantKind, GatewayGrantRequest,
@@ -23,6 +23,11 @@ type WireSender = DescriptorSender<GATEWAY_GRANT_FRAME_SIZE, GATEWAY_GRANT_MAX_F
 type WireReceiver = DescriptorReceiver<GATEWAY_GRANT_FRAME_SIZE, GATEWAY_GRANT_MAX_FDS>;
 
 enum Command {
+    AuthenticateAgent {
+        access_id: [u8; 16],
+        capability: GatewayAuthSecret<32>,
+        reply: oneshot::Sender<io::Result<bool>>,
+    },
     RegisterOperator {
         token: GatewayAuthSecret<64>,
         reply: oneshot::Sender<io::Result<()>>,
@@ -52,6 +57,30 @@ impl GatewayGrantClient {
             }
         });
         Ok(Self { commands })
+    }
+
+    pub(crate) async fn authenticate_agent(
+        &self,
+        access_id: [u8; 16],
+        capability: GatewayAuthSecret<32>,
+    ) -> io::Result<bool> {
+        let (reply, result) = oneshot::channel();
+        self.commands
+            .try_send(Command::AuthenticateAgent {
+                access_id,
+                capability,
+                reply,
+            })
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => {
+                    io::Error::new(io::ErrorKind::WouldBlock, "gateway authentication queue full")
+                }
+                mpsc::error::TrySendError::Closed(_) => closed(),
+            })?;
+        tokio::time::timeout(WIRE_TIMEOUT, result)
+            .await
+            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "gateway authentication queue timed out"))?
+            .map_err(|_| closed())?
     }
 
     pub(crate) async fn register_operator(&self, token: &str) -> io::Result<()> {
@@ -106,6 +135,44 @@ async fn run(
 ) -> io::Result<()> {
     let mut request_id = 1_u64;
     while let Some(command) = commands.recv().await {
+        if let Command::AuthenticateAgent {
+            access_id,
+            capability,
+            reply,
+        } = command
+        {
+            let request = GatewayAuthRequest::AuthenticateAgent {
+                request_id,
+                access_id,
+                capability,
+            };
+            request_id = request_id
+                .checked_add(1)
+                .ok_or_else(|| io::Error::other("gateway grant request id exhausted"))?;
+            let exchanged = exchange_auth(&sender, &receiver, request).await;
+            let failed = exchanged.is_err();
+            let result = match exchanged {
+                Ok(GatewayAuthResponse::AuthenticatedAgent { .. }) => Ok(true),
+                Ok(GatewayAuthResponse::Denied {
+                    reason: GatewayAuthDenial::Forbidden,
+                    ..
+                }) => Ok(false),
+                Ok(GatewayAuthResponse::Denied {
+                    reason: GatewayAuthDenial::Unavailable,
+                    ..
+                }) => Err(io::Error::other("delegated authority unavailable")),
+                Ok(_) => Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "unexpected delegated authentication response",
+                )),
+                Err(error) => Err(error),
+            };
+            let _ = reply.send(result);
+            if failed {
+                return Err(io::Error::other("gateway authentication exchange failed"));
+            }
+            continue;
+        }
         if let Command::RegisterOperator { token, reply } = command {
             let request = GatewayAuthRequest::RegisterOperator { request_id, token };
             request_id = request_id
@@ -132,7 +199,9 @@ async fn run(
             continue;
         }
         let (request, expected, reply) = match command {
-            Command::RegisterOperator { .. } => return Err(io::Error::other("invalid gateway command dispatch")),
+            Command::RegisterOperator { .. } | Command::AuthenticateAgent { .. } => {
+                return Err(io::Error::other("invalid gateway command dispatch"))
+            }
             Command::Service(reply) => (
                 GatewayGrantRequest::OpenService { request_id },
                 GatewayGrantKind::Service,

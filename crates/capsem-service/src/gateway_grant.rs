@@ -62,7 +62,7 @@ pub(super) async fn serve(socket: std::os::unix::net::UnixStream, state: Arc<Ser
             .ok_or_else(|| std::io::Error::other("gateway grant request identity exhausted"))?;
         let request = match request {
             ControlRequest::Auth(request) => {
-                let response = authenticate(&mut operator_epoch, request);
+                let response = authenticate(&state, &mut operator_epoch, request).await;
                 let response = encode_gateway_auth_response(response).map_err(std::io::Error::other)?;
                 responses.send(&response, &[]).await?;
                 continue;
@@ -98,8 +98,9 @@ pub(super) async fn serve(socket: std::os::unix::net::UnixStream, state: Arc<Ser
     }
 }
 
-/// Bounded in-memory authentication; no filesystem registration or I/O.
-fn authenticate(
+/// Successful authentication uses only the live registry; refusals are audited.
+async fn authenticate(
+    state: &ServiceState,
     operator_epoch: &mut crate::caller_auth::OperatorEpoch,
     request: GatewayAuthRequest,
 ) -> GatewayAuthResponse {
@@ -109,12 +110,40 @@ fn authenticate(
             Ok(()) => GatewayAuthResponse::RegisteredOperator { request_id },
             Err(reason) => GatewayAuthResponse::Denied { request_id, reason },
         },
-        // No delegation is issued before its durable authority is
-        // installed. Unknown access identities always fail closed.
-        GatewayAuthRequest::AuthenticateAgent { .. } => GatewayAuthResponse::Denied {
-            request_id,
-            reason: GatewayAuthDenial::Forbidden,
-        },
+        GatewayAuthRequest::AuthenticateAgent {
+            access_id, capability, ..
+        } => {
+            let id = uuid::Uuid::from_bytes(access_id);
+            let capability = capsem_core::managed_sessions::Capability::from_bytes(*capability.as_bytes());
+            match state.caller_authority.agents.authenticate(id, &capability, || {
+                capsem_core::managed_sessions::LeaseClock::now().ok()
+            }) {
+                Ok(_) => GatewayAuthResponse::AuthenticatedAgent { request_id, access_id },
+                Err(error) => {
+                    let evidence = match state.caller_authority.agents.recognizes(id, &capability) {
+                        Ok(true) => Some(capsem_api::CallerActor::DelegatedAgent {
+                            access_id: id.to_string(),
+                        }),
+                        Ok(false) => None,
+                        Err(_) => {
+                            return GatewayAuthResponse::Denied {
+                                request_id,
+                                reason: GatewayAuthDenial::Unavailable,
+                            }
+                        }
+                    };
+                    let audited = crate::agent_access::refusals::record_authentication(state, evidence)
+                        .await
+                        .is_ok();
+                    let reason = if !audited || error == capsem_core::agent_access::Failure::Unavailable {
+                        GatewayAuthDenial::Unavailable
+                    } else {
+                        GatewayAuthDenial::Forbidden
+                    };
+                    GatewayAuthResponse::Denied { request_id, reason }
+                }
+            }
+        }
     }
 }
 
