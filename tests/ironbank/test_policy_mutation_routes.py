@@ -115,7 +115,7 @@ def test_policy_mutation_routes_edit_settings_and_record_the_ledger(monkeypatch:
         assert tool_rule_id.startswith("profiles.rules.")
         tool_rule = _settings(service)["profiles"]["rules"][tool_rule_id.removeprefix("profiles.rules.")]
         assert tool_rule["action"] == "block"
-        assert tool_rule["match"] == 'mcp.server.name == "local" && mcp.tool_call.name == "probe"'
+        assert tool_rule["match"] == 'mcp.server.name == "local" && mcp.tool_call.name == "local__probe"'
 
         plugin = client.patch(
             "/plugins/dummy_pre_eicar/edit",
