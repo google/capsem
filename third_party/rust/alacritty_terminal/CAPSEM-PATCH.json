@@ -1,8 +1,8 @@
 {
   "upstream_package_sha256": "bda177466b9524d59f1b12f0dd30b68696788e9992a7e959021c4a0ed96fcf59",
-  "reason": "Maintainer-approved complete model checkpoints with explicit budgets and trusted configuration, plus typed semantic effects for the canonical session owner; preserved upstream tests and grid serde; consolidated passwd fallback for pinned compiler Clippy; standalone test cohort uses sibling vte checkpoint patch.",
+  "reason": "Maintainer-approved complete model checkpoints with explicit budgets and trusted configuration, plus typed semantic effects for the canonical session owner; preserved upstream tests and grid serde; consolidated passwd fallback for pinned compiler Clippy; standalone test cohort uses sibling vte checkpoint patch. Record rustix 1.1.6 in the standalone test lock for RUSTSEC-2026-0486.",
   "files": {
-    "Cargo.lock": "0180850121d1c15679b4638033e6013abd9682722a122f69c194aafd65fd2fb1",
+    "Cargo.lock": "f65f016c899d336edc0dc26b3f4fdbe741059b6b2b890b94cb30b925ef1457e3",
     "Cargo.toml": "05b38e8490cad885654fc41d99eb2ecb128ec40436c25ba4c1d2f84bc99dadc4",
     "src/event.rs": "7a56b6001c2c0b5982f82ddb59d0346b5d9c27b40f61fb7a3d7916bd425c832f",
     "src/grid/checkpoint.rs": "5a12ff4020b9a3e0cff3297da096958eeb2597002ccb5c2d515f55bb65092c04",
