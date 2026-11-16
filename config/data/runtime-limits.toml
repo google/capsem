@@ -107,3 +107,11 @@ render_chunk_bytes = 65536
 checkpoint_kib = 65536
 checkpoint_pending_kib = 2048
 checkpoint_depth = 32
+
+[agent_access]
+# Explicit allowlists bound authentication memory and comparison work.
+max_environment_ids = 128
+max_session_bindings = 128
+max_active = 1024
+# Operator-issued credentials are leased; there is no indefinite agent bearer.
+max_lease_seconds = 86400

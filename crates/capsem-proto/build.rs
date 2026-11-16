@@ -6,6 +6,8 @@
 //! refuse each other. Serde attributes, field names, variants and framing
 //! constants remain in the token stream and change the hash.
 
+#[path = "build/agent_access_limits.rs"]
+mod agent_access_limits;
 #[path = "build/approval_limits.rs"]
 mod approval_limits;
 #[path = "build/runtime_limits.rs"]
