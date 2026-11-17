@@ -22,6 +22,7 @@ pub fn openapi() -> OpenApi {
     doc.post::<CreateAgentAccessRequest, CreateAgentAccessResponse>("/agent-access", "createAgentAccess");
     let revoke = doc.operation::<VmActionResponse>("/agent-access/{id}", "revokeAgentAccess");
     doc.add("/agent-access/{id}", HttpMethod::Delete, revoke);
+    doc.get::<environments::EnvironmentCurrentResponse>("/environments/{id}/info", "getEnvironmentInfo");
     doc.get::<ListResponse>("/vms/list", "listVms");
     doc.post::<ProvisionRequest, ProvisionResponse>("/vms/create", "createVm");
     doc.post::<ManagedSessionClaimRequest, ManagedSessionClaimResponse>(

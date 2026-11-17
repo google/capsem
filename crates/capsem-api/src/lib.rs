@@ -4,6 +4,7 @@
 mod agent_access;
 mod approvals;
 pub mod environments;
+pub use environments::EnvironmentCurrentResponse;
 pub mod requests;
 pub use agent_access::*;
 mod browser;
