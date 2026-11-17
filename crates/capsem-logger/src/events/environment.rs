@@ -73,3 +73,32 @@ pub struct EnvironmentRevisionTransition {
 }
 
 pub mod request;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EnvironmentSandboxReferenceKind {
+    Boot,
+    LivePolicy,
+    Desired,
+}
+impl EnvironmentSandboxReferenceKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Boot => "sandbox_boot",
+            Self::LivePolicy => "sandbox_live_policy",
+            Self::Desired => "sandbox_desired",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EnvironmentSandboxReferenceMutation {
+    pub session_id: String,
+    pub generation: String,
+    pub kind: EnvironmentSandboxReferenceKind,
+    pub expected: Option<EnvironmentRevisionParent>,
+    pub revision: Option<EnvironmentRevisionParent>,
+    pub timestamp_unix_ms: i64,
+    pub actor: String,
+}

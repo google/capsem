@@ -26,6 +26,7 @@ mod flush_faults;
 use flush::flush_dirty_tables_to_disk;
 use flush::{flush_dirty_tables_to_disk_recorded, FlushRequest};
 mod environment;
+mod environment_references;
 mod environment_requests;
 mod legacy;
 mod model_rows;
@@ -230,6 +231,7 @@ pub enum WriteOp {
     PrepareEnvironmentRequest(crate::events::environment::request::PreparedEnvironmentRequest),
     EnvironmentRequestDecision(crate::events::environment::request::EnvironmentRequestDecision),
     EnvironmentRequestResult(crate::events::environment::request::EnvironmentRequestResult),
+    EnvironmentSandboxReference(crate::events::environment::EnvironmentSandboxReferenceMutation),
     /// Registry rows of a network database; upserted by key, disk-only.
     Network(NetworkRecord),
     NetworkMembership(NetworkMembership),

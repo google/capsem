@@ -556,7 +556,7 @@ pub const CREATE_SCHEMA: &str = concat!("
             'session_forked', 'session_destroyed', 'session_suspended', 'session_resumed',
             'image_admitted', 'image_denied', 'grant_minted', 'grant_revoked', 'access_denied',
             'settings_changed', 'service_started', 'service_stopped',
-            'environment_revision_prepared', 'environment_revision_committed', 'environment_revision_recovered', 'environment_request_prepared', 'environment_request_decided', 'environment_request_result_bound'
+            'environment_revision_prepared', 'environment_revision_committed', 'environment_revision_recovered', 'environment_request_prepared', 'environment_request_decided', 'environment_request_result_bound', 'environment_reference_changed'
         )),
         session_id TEXT,
         actor TEXT NOT NULL,

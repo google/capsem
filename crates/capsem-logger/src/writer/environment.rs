@@ -142,6 +142,7 @@ pub(super) fn prepare_revision(
         return Ok(());
     }
     super::environment_requests::require_revision_request(conn, record)?;
+    super::environment_references::check_current(conn, &record.environment_id, record.previous_revision_id.as_deref())?;
     let inflight: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM main.environment_revisions WHERE environment_id=?1 AND state='committing' UNION ALL SELECT 1 FROM mem.environment_revisions WHERE environment_id=?1 AND state='committing')", [&record.environment_id], |row| row.get(0))?;
     if inflight {
         return Err(invalid("environment already has a revision commit in flight"));
@@ -286,11 +287,20 @@ pub(super) fn transition_revision(conn: &Connection, record: &EnvironmentRevisio
     ) {
         return Err(invalid("invalid environment revision state transition"));
     }
+    super::environment_references::check_current(conn, &record.environment_id, old.previous_revision_id.as_deref())?;
     execute_cached(
         conn,
         "UPDATE main.environment_revisions SET state=?1 WHERE environment_id=?2 AND revision_id=?3",
         rusqlite::params![record.state.as_str(), record.environment_id, record.revision_id],
     )?;
+    if record.state == EnvironmentRevisionState::Committed {
+        super::environment_references::commit_current(
+            conn,
+            &record.environment_id,
+            &record.revision_id,
+            old.previous_revision_id.as_deref(),
+        )?;
+    }
     audit_identity(
         conn,
         RevisionAudit {
