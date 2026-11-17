@@ -258,6 +258,7 @@ impl Puller {
                 source.reference(),
                 crate::catalogs::catalog_media_type(source.kind()),
                 parent,
+                false,
             ),
         )
         .await
@@ -376,7 +377,7 @@ impl Puller {
     async fn fetch_catalog_inner(&self, reference: &str, parent: &Path) -> Result<(ContentDigest, Catalog)> {
         let reference = image_reference(reference)?;
         let (identity, document) = self
-            .fetch_catalog_artifact(&reference, CATALOG_MEDIA_TYPE, parent)
+            .fetch_catalog_artifact(&reference, CATALOG_MEDIA_TYPE, parent, false)
             .await?;
         Ok((identity, Catalog::parse(&document)?))
     }
@@ -386,15 +387,20 @@ impl Puller {
         reference: &Reference,
         media_type: &str,
         parent: &Path,
+        cache_only: bool,
     ) -> Result<(ContentDigest, Vec<u8>)> {
         if let Some(cache) = &self.cache {
             cache.prepare().await?;
         }
-        let token = self
-            .registry
-            .auth(reference, &self.authentication, RegistryOperation::Pull)
-            .await?;
-        let bytes = self.manifest(reference, token.as_deref()).await?;
+        let bytes = if cache_only {
+            self.cached_manifest(reference).await?
+        } else {
+            let token = self
+                .registry
+                .auth(reference, &self.authentication, RegistryOperation::Pull)
+                .await?;
+            self.manifest(reference, token.as_deref()).await?
+        };
         let identity = ContentDigest::parse(&sha256(&bytes))?;
         let manifest: OciImageManifest =
             serde_json::from_slice(&bytes).context("catalog must be a single OCI artifact manifest")?;
@@ -420,9 +426,21 @@ impl Puller {
             "external catalog URLs are unsupported"
         );
         let directory = staging(parent).await?;
-        self.blob(reference, layer, directory.path(), BlobUse::Private, None)
-            .await?;
+        let usage = if cache_only {
+            BlobUse::CacheOnly
+        } else {
+            BlobUse::Private
+        };
+        self.blob(reference, layer, directory.path(), usage, None).await?;
         let document = tokio::fs::read(directory.path().join(digest_hex(&layer.digest)?)).await?;
+        if !cache_only {
+            if let Some(cache) = &self.cache {
+                cache
+                    .for_repository(reference)
+                    .publish_metadata(identity.as_str(), &bytes)
+                    .await?;
+            }
+        }
         Ok((identity, document))
     }
 

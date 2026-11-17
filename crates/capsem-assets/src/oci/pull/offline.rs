@@ -3,6 +3,42 @@
 use super::*;
 
 impl Puller {
+    /// Read one approved immutable catalog pin locally. This performs no
+    /// registry authentication, discovery refresh or network fallback. The
+    /// caller remains responsible for current policy and known revocations.
+    pub async fn fetch_environment_catalog_cached(
+        &self,
+        source: &crate::catalogs::ValidatedCatalogSource,
+        digest: &ContentDigest,
+        parent: &Path,
+    ) -> Result<crate::catalogs::CatalogArtifact> {
+        ensure!(self.cache.is_some(), "cache-only catalog read requires an image cache");
+        ensure!(
+            source
+                .reference()
+                .digest()
+                .is_none_or(|declared| declared == digest.as_str()),
+            "catalog source digest does not match the requested pin"
+        );
+        let reference = Reference::with_digest(
+            source.reference().registry().into(),
+            source.reference().repository().into(),
+            digest.to_string(),
+        );
+        let (identity, bytes) = tokio::time::timeout(
+            PULL_TIMEOUT,
+            self.fetch_catalog_artifact(
+                &reference,
+                crate::catalogs::catalog_media_type(source.kind()),
+                parent,
+                true,
+            ),
+        )
+        .await
+        .context("cached catalog read exceeded five minutes")??;
+        Ok(crate::catalogs::CatalogArtifact::new(source.kind(), identity, bytes))
+    }
+
     /// Traverse owner-managed disk usage off the async worker. This is a
     /// reconciliation operation, not a cheap polling snapshot or readiness.
     pub async fn cache_usage(&self) -> Result<super::super::CacheUsage> {
