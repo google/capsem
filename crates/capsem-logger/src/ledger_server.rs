@@ -107,13 +107,13 @@ impl LedgerServer {
                 continue;
             }
             if grant.role() != capsem_proto::ledger::LedgerClientRole::Coordinator
-                && contains_ask_resolution(request.operation())
+                && requires_coordinator(request.operation())
             {
                 send_failure(
                     &sender,
                     request_id,
                     LedgerFailureCode::UnauthorizedOperation,
-                    "only the trusted coordinator can attest an approval resolution",
+                    "only the trusted coordinator can mutate environment authority or attest an approval resolution",
                 )
                 .await?;
                 continue;
@@ -317,10 +317,19 @@ impl LedgerServer {
     }
 }
 
-fn contains_ask_resolution(operation: &LedgerCommand) -> bool {
-    let terminal = |event: &crate::WriteOp| {
-        matches!(event,
-        crate::WriteOp::SecurityAskEvent(ask) if ask.status != crate::SecurityAskStatus::Pending)
+fn requires_coordinator(operation: &LedgerCommand) -> bool {
+    let terminal = |event: &crate::WriteOp| match event {
+        crate::WriteOp::PrepareEnvironmentRevision(_)
+        | crate::WriteOp::EnvironmentRevisionTransition(_)
+        | crate::WriteOp::PrepareEnvironmentRequest(_)
+        | crate::WriteOp::EnvironmentRequestDecision(_)
+        | crate::WriteOp::EnvironmentRequestResult(_)
+        | crate::WriteOp::EnvironmentRequestInvalidation(_)
+        | crate::WriteOp::EnvironmentSandboxReference(_)
+        | crate::WriteOp::EnvironmentApplication(_)
+        | crate::WriteOp::PrepareEnvironmentVariablePurge(_) => true,
+        crate::WriteOp::SecurityAskEvent(ask) => ask.status != crate::SecurityAskStatus::Pending,
+        _ => false,
     };
     match operation {
         LedgerCommand::Admit { event } => terminal(event),

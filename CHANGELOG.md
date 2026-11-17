@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Security: Restrict environment revision, request, approval, application, reference and purge mutations to authenticated coordinator ledger channels. Refuse forged operator labels from VM and proxy producers before admitting any part of a batch.
+
 - Added: Ledger-owned variable history purge rewrites compressed snapshots and proposals while preserving unrelated fields and history identities. Removed values disable replay, stale affected pending proposals, and report cleanup pending until captured readers release old archive generations.
 
 - Added: Durable per-sandbox configuration application results with independent boot, live-policy, and desired revisions, atomic reference updates, explicit failures and retries, and retained reconstruction dependencies.

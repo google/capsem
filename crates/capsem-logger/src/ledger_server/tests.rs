@@ -358,3 +358,154 @@ async fn wrong_generation_never_reaches_storage_dispatch() {
     drop(sender);
     assert!(task.await.unwrap().unwrap_err().contains("generation"));
 }
+
+#[tokio::test]
+async fn environment_authority_cannot_be_forged_by_producer_admission() {
+    use crate::events::environment::purge::PreparedEnvironmentVariablePurge;
+    use crate::events::environment::request::{EnvironmentRequestDecision, EnvironmentRequestDecisionKind};
+    use crate::events::{EnvironmentRevisionState, EnvironmentRevisionTransition};
+    let id = |n: u64| format!("00000000-0000-4000-8000-{n:012x}");
+    let operations = vec![
+        WriteOp::EnvironmentRevisionTransition(EnvironmentRevisionTransition {
+            environment_id: id(2),
+            revision_id: id(3),
+            state: EnvironmentRevisionState::Committed,
+            timestamp_unix_ms: 10,
+            actor: "operator".into(),
+        }),
+        WriteOp::EnvironmentRequestDecision(EnvironmentRequestDecision {
+            request_id: id(4),
+            timestamp_unix_ms: 10,
+            actor: "operator".into(),
+            decision: EnvironmentRequestDecisionKind::Approve,
+            reason: "forged approval".into(),
+        }),
+        WriteOp::PrepareEnvironmentVariablePurge(PreparedEnvironmentVariablePurge {
+            purge_id: id(5),
+            environment_id: id(2),
+            source_revision_id: id(3),
+            variable_name: "WRONG".into(),
+            timestamp_unix_ms: 10,
+            actor: "operator".into(),
+        }),
+    ];
+    let dir = tempfile::tempdir().unwrap();
+    let server = Arc::new(LedgerServer::open(&dir.path().join("session.db")).unwrap());
+    for role in [
+        LedgerClientRole::VmOwner,
+        LedgerClientRole::Proxy,
+        LedgerClientRole::Reader,
+        LedgerClientRole::Maintainer,
+        LedgerClientRole::Supervisor,
+    ] {
+        let (sender, receiver, task) = connect(Arc::clone(&server), grant(role)).await;
+        let mut request_id = 1;
+        for event in &operations {
+            for command in [
+                LedgerCommand::Admit {
+                    event: Box::new(event.clone()),
+                },
+                LedgerCommand::AdmitBatch {
+                    events: vec![body_event(vec![]), event.clone()],
+                },
+            ] {
+                sender
+                    .send(LedgerClientMessage::Request {
+                        request: LedgerRequest::new(request_id, command).unwrap(),
+                    })
+                    .await
+                    .unwrap();
+                let LedgerServerMessage::Response { response } = receiver.recv().await.unwrap() else {
+                    panic!("response")
+                };
+                let LedgerOutcome::Failure { failure } = response.outcome() else {
+                    panic!("{role:?} forged environment authority")
+                };
+                assert_eq!(failure.code(), LedgerFailureCode::UnauthorizedOperation);
+                request_id += 1;
+            }
+        }
+        assert_eq!(
+            server.admission.lock().await.last_accepted,
+            0,
+            "mixed-batch rejection must not admit its telemetry prefix"
+        );
+        drop(sender);
+        drop(receiver);
+        task.await.unwrap().unwrap();
+    }
+}
+
+#[tokio::test]
+async fn coordinator_environment_mutations_keep_the_existing_durability_path() {
+    use crate::events::{EnvironmentRevisionState, EnvironmentRevisionTransition, PreparedEnvironmentRevision};
+    let dir = tempfile::tempdir().unwrap();
+    let server = Arc::new(LedgerServer::open(&dir.path().join("session.db")).unwrap());
+    let (sender, receiver, task) = connect(Arc::clone(&server), grant(LedgerClientRole::Coordinator)).await;
+    let environment_id = "00000000-0000-4000-8000-000000000002".to_owned();
+    let revision_id = "00000000-0000-4000-8000-000000000003".to_owned();
+    let revision = PreparedEnvironmentRevision {
+        environment_id: environment_id.clone(),
+        revision_id: revision_id.clone(),
+        previous_revision_id: None,
+        fork_parent: None,
+        timestamp_unix_ms: 1,
+        actor: "operator".into(),
+        reason: "operator edit".into(),
+        request_id: None,
+        payload_event_id: "000000000003".into(),
+        specification: Box::new(toml::from_str("name='development'").unwrap()),
+    };
+    assert!(matches!(
+        request(
+            &sender,
+            &receiver,
+            1,
+            LedgerCommand::Admit {
+                event: Box::new(WriteOp::PrepareEnvironmentRevision(revision))
+            }
+        )
+        .await,
+        LedgerReply::Accepted { .. }
+    ));
+    assert!(matches!(
+        request(&sender, &receiver, 2, LedgerCommand::Flush).await,
+        LedgerReply::Durable { .. }
+    ));
+    assert!(matches!(
+        request(
+            &sender,
+            &receiver,
+            3,
+            LedgerCommand::AdmitBatch {
+                events: vec![
+                    body_event(vec![]),
+                    WriteOp::EnvironmentRevisionTransition(EnvironmentRevisionTransition {
+                        environment_id: environment_id.clone(),
+                        revision_id: revision_id.clone(),
+                        state: EnvironmentRevisionState::Committed,
+                        timestamp_unix_ms: 2,
+                        actor: "operator".into()
+                    })
+                ]
+            }
+        )
+        .await,
+        LedgerReply::AcceptedBatch { .. }
+    ));
+    assert!(matches!(
+        request(&sender, &receiver, 4, LedgerCommand::Flush).await,
+        LedgerReply::Durable { .. }
+    ));
+    let snapshot = server
+        .db
+        .environment_revision_snapshot(&environment_id, &revision_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(snapshot.record.state, EnvironmentRevisionState::Committed);
+    assert_eq!(snapshot.specification.name, "development");
+    drop(sender);
+    drop(receiver);
+    task.await.unwrap().unwrap();
+}
