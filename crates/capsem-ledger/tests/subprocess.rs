@@ -241,3 +241,6 @@ async fn executable_refuses_a_symlinked_session_before_readiness() {
         stderr
     );
 }
+
+#[path = "subprocess/environment.rs"]
+mod environment;

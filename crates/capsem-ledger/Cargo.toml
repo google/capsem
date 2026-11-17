@@ -22,6 +22,10 @@ tracing.workspace = true
 zstd = "0.14.3"
 
 [dev-dependencies]
+capsem-config = { path = "../capsem-config" }
+rmp-serde.workspace = true
+rusqlite.workspace = true
+toml.workspace = true
 tempfile = "3"
 
 [[bench]]

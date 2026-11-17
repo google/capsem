@@ -956,13 +956,17 @@ version = "0.7.2"
 dependencies = [
  "anyhow",
  "capsem-archive",
+ "capsem-config",
  "capsem-foundation",
  "capsem-guard",
  "capsem-logger",
  "capsem-proto",
  "clap",
+ "rmp-serde",
+ "rusqlite",
  "tempfile",
  "tokio",
+ "toml 0.8.2",
  "tracing",
  "zstd",
 ]
