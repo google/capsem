@@ -2,7 +2,12 @@
 //! Comparing bounded typed content never confers caller or revision authority.
 use capsem_config::environment::EnvironmentSpecification;
 
+mod plugins;
 mod policy_inputs;
+pub use plugins::{
+    CompiledEnvironmentPlugins, CompiledPluginConfiguration, CompiledPluginOptions, EnvironmentPluginSource,
+    PluginDirection,
+};
 pub use policy_inputs::EnvironmentPolicyInputs;
 mod catalog_contents;
 mod catalog_rules;
