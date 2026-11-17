@@ -2,14 +2,51 @@ use super::*;
 
 #[test]
 fn environment_plugins_use_typed_options_and_independent_pii_directions() {
-    let source = format!("{BASE}\n[plugins.pii_filter]\nmode='rewrite'\ndetection_level='high'\n[plugins.pii_filter.options.inbound]\nemail=false\nphone=true\n[plugins.pii_filter.options.outbound]\nemail=true\nphone=false\n[plugins.utf8_guard]\nmode='block'\n[plugins.utf8_guard.options]\ninbound=false\noutbound=true\n[plugins.secret_exfiltration]\nmode='ask'\n[plugins.dummy_pre_eicar]\nmode='block'\n[plugins.dummy_post_allow]\nmode='allow'\n");
+    let source = format!(
+        "{BASE}\n{}",
+        r#"
+[plugins.pii_filter.inbound]
+mode='rewrite'
+detection_level='high'
+[plugins.pii_filter.inbound.options]
+email=false
+phone=true
+[plugins.pii_filter.outbound]
+mode='block'
+detection_level='low'
+[plugins.pii_filter.outbound.options]
+email=true
+phone=false
+[plugins.utf8_guard]
+mode='block'
+[plugins.utf8_guard.options]
+inbound=false
+outbound=true
+[plugins.secret_exfiltration]
+mode='ask'
+[plugins.dummy_pre_eicar]
+mode='block'
+[plugins.dummy_post_allow]
+mode='allow'
+"#
+    );
     let doc = EnvironmentDocument::from_toml(&source).unwrap();
     assert!(EnvironmentDocument::from_toml(&doc.to_toml().unwrap()).unwrap() == doc);
     let pii = doc.specification.plugins.pii_filter.as_ref().unwrap();
-    assert!(!pii.options.inbound.email && pii.options.inbound.phone);
-    assert!(pii.options.outbound.email && !pii.options.outbound.phone);
+    assert!(!pii.inbound.options.email && pii.inbound.options.phone);
+    assert!(pii.outbound.options.email && !pii.outbound.options.phone);
+    assert_eq!(pii.inbound.mode, crate::SecurityPluginMode::Rewrite);
+    assert_eq!(pii.outbound.mode, crate::SecurityPluginMode::Block);
+    assert_eq!(pii.inbound.detection_level, crate::DetectionLevel::High);
+    assert_eq!(pii.outbound.detection_level, crate::DetectionLevel::Low);
+    assert!(!toml::to_string(pii).unwrap().contains("enabled"));
     for bad in [
         source.replace("mode='rewrite'", "mode='rewrite'\nenabled=true"),
+        source.replace(
+            "[plugins.pii_filter.inbound.options]",
+            "[plugins.pii_filter.inbound.options]\nenabled=true",
+        ),
+        format!("{BASE}\n[plugins.pii_filter]\nmode='rewrite'"),
         source.replace(
             "inbound=false\noutbound=true",
             "inbound=false\noutbound=true\nemail=true",
@@ -63,6 +100,10 @@ fn environment_plugins_defaults_match_typed_identity_and_mode_contracts() {
         ]
     );
     assert_eq!(PluginConfiguration::<PiiFilterOptions>::default().mode, Disable);
+    let pii = PiiFilterConfiguration::default();
+    assert_eq!(pii.inbound.mode, Disable);
+    assert_eq!(pii.outbound.mode, Disable);
+    pii.validate().unwrap();
     assert_eq!(
         PluginConfiguration::<SecretExfiltrationOptions>::default().mode,
         Disable

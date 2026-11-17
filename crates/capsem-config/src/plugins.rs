@@ -80,17 +80,15 @@ impl<O: PluginOptions> PluginConfiguration<O> {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct PiiDirectionOptions {
-    pub enabled: bool,
+pub struct PiiFilterOptions {
     pub email: bool,
     pub phone: bool,
     pub card: bool,
     pub ssn: bool,
 }
-impl Default for PiiDirectionOptions {
+impl Default for PiiFilterOptions {
     fn default() -> Self {
         Self {
-            enabled: true,
             email: true,
             phone: true,
             card: true,
@@ -102,9 +100,15 @@ impl Default for PiiDirectionOptions {
 /// inspection implemented today; they do not claim universal protocol support.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct PiiFilterOptions {
-    pub inbound: PiiDirectionOptions,
-    pub outbound: PiiDirectionOptions,
+pub struct PiiFilterConfiguration {
+    pub inbound: PluginConfiguration<PiiFilterOptions>,
+    pub outbound: PluginConfiguration<PiiFilterOptions>,
+}
+impl PiiFilterConfiguration {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        self.inbound.validate()?;
+        self.outbound.validate()
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -165,7 +169,7 @@ empty_options!(DummyPostAllowOptions, DummyPostAllow, Disable, &[Disable, Allow]
 #[serde(default, deny_unknown_fields)]
 pub struct EnvironmentPlugins {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub pii_filter: Option<PluginConfiguration<PiiFilterOptions>>,
+    pub pii_filter: Option<PiiFilterConfiguration>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub secret_exfiltration: Option<PluginConfiguration<SecretExfiltrationOptions>>,
     #[serde(skip_serializing_if = "Option::is_none")]
