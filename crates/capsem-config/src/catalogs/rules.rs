@@ -88,8 +88,10 @@ impl RuleCatalogEntry {
                     .map_err(|_| "invalid catalog access rule")?;
                 let mut rule = rule.clone();
                 rule.condition = parameters::render(&rule.condition, &self.parameters, values)?;
-                rule.validate(&self.metadata.id)
-                    .map_err(|_| "invalid catalog access rule condition")?;
+                if self.metadata.compatibility.is_supported() {
+                    rule.validate(&self.metadata.id)
+                        .map_err(|_| "invalid catalog access rule condition")?;
+                }
                 Ok(ResolvedCatalogRule::Access(rule))
             }
             RuleCatalogDefinition::Detection { rule } => {
@@ -97,8 +99,10 @@ impl RuleCatalogEntry {
                     .map_err(|_| "invalid catalog detection rule")?;
                 let mut rule = rule.clone();
                 rule.condition = parameters::render(&rule.condition, &self.parameters, values)?;
-                rule.validate(&self.metadata.id)
-                    .map_err(|_| "invalid catalog detection rule condition")?;
+                if self.metadata.compatibility.is_supported() {
+                    rule.validate(&self.metadata.id)
+                        .map_err(|_| "invalid catalog detection rule condition")?;
+                }
                 Ok(ResolvedCatalogRule::Detection(rule))
             }
         }

@@ -257,3 +257,47 @@ fn rule_catalog_parameters_reject_quoted_placeholders_and_bound_descriptor_count
         assert_eq!(entry.validate_content().is_ok(), valid);
     }
 }
+
+#[test]
+fn rule_catalog_future_contracts_remain_discoverable_without_compiling_unsupported_matches() {
+    let mut entry = rule_entry();
+    entry.parameters.retain(|key, _| key == "host");
+    let Some(RuleCatalogDefinition::Access { rule }) = &mut entry.definition else {
+        panic!()
+    };
+    rule.condition = "http.future_field == {{host}}".into();
+    assert!(
+        entry.validate_content().is_err(),
+        "current contract still refuses unknown fields"
+    );
+    entry.metadata.compatibility.min_runtime_contract = CATALOG_RUNTIME_CONTRACT + 1;
+    entry.validate_content().unwrap();
+    assert!(
+        entry.resolve(&BTreeMap::new()).is_err(),
+        "future expressions never enter current runtime execution"
+    );
+    let document = CatalogDocument {
+        schema_version: ENVIRONMENT_CATALOG_SCHEMA_VERSION,
+        kind: CatalogKind::Rules,
+        entries: vec![entry.clone()],
+    };
+    document.validate().unwrap();
+    let mut detection = entry.clone();
+    detection.definition = Some(RuleCatalogDefinition::Detection {
+        rule: toml::from_str("name='Future'\nlevel='high'\nmatch='http.future_field == {{host}}'").unwrap(),
+    });
+    detection.validate_content().unwrap();
+    assert!(detection.resolve(&BTreeMap::new()).is_err());
+    let Some(RuleCatalogDefinition::Detection { rule }) = &mut detection.definition else {
+        panic!()
+    };
+    rule.condition = "a".repeat(capsem_proto::ENVIRONMENT_MAX_RULE_BYTES + 1);
+    assert!(detection.validate_content().is_err());
+    entry
+        .parameters
+        .insert("unused".into(), CatalogRuleParameter::Boolean { default: true });
+    assert!(
+        entry.validate_content().is_err(),
+        "bounded parameter validation still applies"
+    );
+}
