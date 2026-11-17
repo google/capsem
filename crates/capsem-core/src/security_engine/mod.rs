@@ -1435,23 +1435,7 @@ impl fmt::Display for SecurityActionError {
 
 impl std::error::Error for SecurityActionError {}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SecurityPluginStage {
-    Preprocess,
-    Postprocess,
-    Logging,
-}
-
-impl SecurityPluginStage {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Preprocess => "preprocess",
-            Self::Postprocess => "postprocess",
-            Self::Logging => "logging",
-        }
-    }
-}
+pub use capsem_config::plugins::PluginStage as SecurityPluginStage;
 
 pub struct SecurityPluginResult {
     pub event: SecurityEvent,
@@ -1474,6 +1458,14 @@ impl SecurityPluginResult {
 pub trait SecurityPlugin: Send + Sync {
     fn id(&self) -> &'static str;
     fn stage(&self) -> SecurityPluginStage;
+
+    /// Builtins share their data-only descriptor with discovery and editors.
+    /// Trusted extensions without a builtin identity have no builtin metadata.
+    fn descriptor(&self) -> Option<&'static capsem_config::plugins::PluginDescriptor> {
+        capsem_config::plugins::plugin_descriptors()
+            .iter()
+            .find(|descriptor| descriptor.id.as_str() == self.id())
+    }
 
     fn apply(
         &self,

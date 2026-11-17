@@ -4,11 +4,7 @@
 use capsem_config::{plugins::*, DetectionLevel, SecurityPluginMode};
 use std::collections::BTreeMap;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PluginDirection {
-    Inbound,
-    Outbound,
-}
+pub use capsem_config::plugins::PluginDirection;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EnvironmentPluginSource {
     Builtin,

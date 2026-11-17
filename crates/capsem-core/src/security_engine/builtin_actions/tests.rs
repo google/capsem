@@ -17,11 +17,41 @@ fn every_call_returns_the_same_built_in_plugin_set() {
     compiled_ids.sort_unstable();
     assert_eq!(ids(&first), compiled_ids);
     for (id, plugin) in first.plugins.iter() {
+        let descriptor = plugin.descriptor().expect("builtins reference canonical descriptors");
+        assert_eq!(descriptor.id.as_str(), id);
+        assert_eq!(descriptor.stage.as_str(), plugin.stage().as_str());
         assert!(
             Arc::ptr_eq(plugin, &second.plugins[id]),
             "plugin {id} is shared, not rebuilt"
         );
     }
+}
+
+#[test]
+fn builtin_descriptor_stage_mismatch_is_refused_at_registration() {
+    struct WrongStage(&'static str);
+    impl super::super::SecurityPlugin for WrongStage {
+        fn id(&self) -> &'static str {
+            self.0
+        }
+        fn stage(&self) -> super::super::SecurityPluginStage {
+            super::super::SecurityPluginStage::Logging
+        }
+        fn apply(
+            &self,
+            _: super::super::SecurityEvent,
+            _: &crate::environment::CompiledPluginConfiguration,
+        ) -> Result<super::super::SecurityPluginResult, super::super::SecurityActionError> {
+            unreachable!("registration must refuse before execution")
+        }
+    }
+    let error = SecurityActionRegistry::new()
+        .register_plugin(WrongStage("pii_filter"))
+        .err()
+        .expect("stage drift must fail");
+    assert!(error.to_string().contains("descriptor stage"));
+    let custom = WrongStage("external-test-plugin");
+    assert!(super::super::SecurityPlugin::descriptor(&custom).is_none());
 }
 
 #[test]

@@ -39,6 +39,14 @@ impl SecurityActionRegistry {
 
     pub fn register_plugin(mut self, plugin: impl SecurityPlugin + 'static) -> Result<Self, SecurityActionError> {
         let id = plugin.id();
+        if plugin
+            .descriptor()
+            .is_some_and(|descriptor| descriptor.stage != plugin.stage())
+        {
+            return Err(SecurityActionError::new(format!(
+                "security plugin '{id}' does not match its descriptor stage"
+            )));
+        }
         if self.plugins.contains_key(id) {
             return Err(SecurityActionError::new(format!(
                 "security plugin '{id}' registered twice"
