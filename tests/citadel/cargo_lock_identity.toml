@@ -1,2 +1,2 @@
-sha256 = "2460489f4c448eb3e68084ed381323e43085c3ff3f48620cb9c697679ecd1719"
-reason = "Deliberately add the optional capsem-config -> utoipa schema edge so API schemas share the exact typed environment/plugin contracts. No third-party versions change; prior security fixes remain. Guest/native builder cache invalidation is intentional."
+sha256 = "e22ec21f1b7b6127fe3a07751ebcb6c6ac16365c382bf0346e69124c7c0075f2"
+reason = "Deliberately add the capsem-api -> capsem-config edge with optional schema support enabled, sharing selector-only environment drafts instead of duplicate DTO option bags. No third-party package versions change; prior security fixes remain. Guest/native builder cache invalidation is intentional."

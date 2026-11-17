@@ -658,6 +658,7 @@ name = "capsem-api"
 version = "0.7.2"
 dependencies = [
  "base64 0.22.1",
+ "capsem-config",
  "capsem-crypto",
  "capsem-proto",
  "rmp-serde",

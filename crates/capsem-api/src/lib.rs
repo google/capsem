@@ -3,6 +3,8 @@
 
 mod agent_access;
 mod approvals;
+pub mod environments;
+pub mod requests;
 pub use agent_access::*;
 mod browser;
 pub use browser::*;
