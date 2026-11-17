@@ -17,9 +17,13 @@ pub use catalog_contents::{
 };
 pub use catalog_rules::RuleCatalogInputs;
 mod mcp_permissions;
+mod resolution;
 mod rules;
 pub use catalog_sources::effective_catalog_source;
 pub(crate) use catalog_sources::validate_corporate_catalog_sources;
+pub use resolution::{
+    resolve_environment, EnvironmentPinResolver, EnvironmentResolutionError, EnvironmentResolutionMode,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EnvironmentChangeKind {
