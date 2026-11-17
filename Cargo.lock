@@ -974,6 +974,7 @@ dependencies = [
  "anyhow",
  "capsem-archive",
  "capsem-cache",
+ "capsem-config",
  "capsem-crypto",
  "capsem-foundation",
  "capsem-proto",
@@ -991,6 +992,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "toml 0.8.2",
  "tracing",
  "uuid",
 ]

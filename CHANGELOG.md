@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: Typed environment revision admission through the machine-ledger writer, with atomic snapshot publication, immutable retries, explicit recovery/commit transitions, verified lineage checks, and ordered caller-attributed audit records.
+
 - Added: Lossless archive staging for required environment snapshots. Refuse incomplete payloads, propagate append/sync/index failures through durability barriers, and preserve exact bytes without fingerprint-based substitution.
 
 - Added: An explicit environment format in the machine ledger, with revision, request, application, retention-reference and purge state tables. Refuse incompatible or damaged environment history before schema DDL.

@@ -10,6 +10,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+capsem-config = { path = "../capsem-config" }
 capsem-crypto = { path = "../capsem-crypto", features = ["random"] }
 anyhow = { workspace = true }
 capsem-archive = { path = "../capsem-archive" }
@@ -33,6 +34,7 @@ tempfile = "3"
 workspace = true
 
 [dev-dependencies]
+toml.workspace = true
 rusqlite = { workspace = true, features = ["trace"] }
 # Reading the WARC export back the way an external tool does: member by member.
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }

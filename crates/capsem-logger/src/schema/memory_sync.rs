@@ -55,7 +55,9 @@ fn required_hot_table(table: &str) -> rusqlite::Result<&'static str> {
 }
 
 pub(crate) fn is_disk_only_table(name: &str) -> bool {
-    DISK_ONLY_TABLES.contains(&name) || super::environment::tables().any(|(table, _)| *table == name)
+    DISK_ONLY_TABLES.contains(&name)
+        || (super::environment::tables().any(|(table, _)| *table == name)
+            && !matches!(name, "environment_revisions" | "environment_requests"))
 }
 
 /// Build the writer's memory tables from the disk schema's own declarations.

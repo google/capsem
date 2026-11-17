@@ -47,3 +47,36 @@ pub(crate) fn assert_current(conn: &Connection) -> rusqlite::Result<()> {
     }
     Ok(())
 }
+
+/// SQLite cannot reference main from an attached memory table. Snapshot-backed
+/// records therefore retain their scalar/uniqueness checks in staging while
+/// the single typed writer validates references across staged and durable rows.
+/// The durable declarations and their foreign keys remain unchanged.
+pub(super) fn staging_declaration(declaration: &str) -> Option<String> {
+    let body = declaration.trim().strip_prefix('(')?.strip_suffix(')')?;
+    let mut depth = 0usize;
+    let mut quoted = false;
+    let mut start = 0usize;
+    let mut fields = Vec::new();
+    for (offset, byte) in body.bytes().enumerate() {
+        match byte {
+            b'\'' => quoted = !quoted,
+            b'(' if !quoted => depth = depth.checked_add(1)?,
+            b')' if !quoted => depth = depth.checked_sub(1)?,
+            b',' if !quoted && depth == 0 => {
+                fields.push(&body[start..offset]);
+                start = offset + 1;
+            }
+            _ => {}
+        }
+    }
+    if quoted || depth != 0 {
+        return None;
+    }
+    fields.push(&body[start..]);
+    let fields: Vec<_> = fields
+        .into_iter()
+        .filter(|field| !field.trim_start().starts_with("FOREIGN KEY"))
+        .collect();
+    Some(format!("({})", fields.join(",")))
+}

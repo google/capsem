@@ -172,6 +172,52 @@ impl BodyArchive {
         Some(staged)
     }
 
+    pub(in crate::writer) fn read_required_bytes(
+        &self,
+        conn: &Connection,
+        event_id: &str,
+        source: &str,
+    ) -> rusqlite::Result<Vec<u8>> {
+        let (block, offset, len, truncated, hash): (i64,i64,i64,bool,String) = conn.query_row(
+            "SELECT block_offset,body_offset,body_len,truncated,body_hash FROM main.event_body_blobs WHERE event_id=?1 AND source_table=?2 AND direction='payload'",
+            rusqlite::params![event_id,source], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?)))?;
+        if truncated {
+            return Err(archive_contract_error("required snapshot is truncated"));
+        }
+        let reference = BodyRef {
+            block_offset: block
+                .try_into()
+                .map_err(|_| archive_contract_error("invalid snapshot block"))?,
+            offset: offset
+                .try_into()
+                .map_err(|_| archive_contract_error("invalid snapshot offset"))?,
+            len: len
+                .try_into()
+                .map_err(|_| archive_contract_error("invalid snapshot length"))?,
+        };
+        let state = crate::schema::archive_state(conn)?;
+        let directory = self
+            .directory
+            .as_ref()
+            .ok_or_else(|| archive_contract_error("required snapshot archive is unavailable"))?;
+        let reader = capsem_archive::BodyLogReader::open_generation_with_codecs(
+            directory,
+            state.header,
+            state.committed_end,
+            self.codecs.clone(),
+        )
+        .map_err(|_| archive_contract_error("required snapshot archive cannot be opened"))?;
+        let bytes = reader
+            .read(reference)
+            .map_err(|_| archive_contract_error("required snapshot archive cannot be read"))?;
+        if content_digest(&bytes) != hash {
+            return Err(archive_contract_error(
+                "required snapshot failed stored-content verification",
+            ));
+        }
+        Ok(bytes)
+    }
+
     pub(in crate::writer) fn required_status(&self) -> rusqlite::Result<()> {
         match self.required_failure {
             None => Ok(()),

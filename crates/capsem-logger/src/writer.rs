@@ -28,6 +28,7 @@ use flush::{flush_dirty_tables_to_disk_recorded, FlushRequest};
 mod legacy;
 mod model_rows;
 mod producer;
+mod environment;
 #[cfg(test)]
 pub(crate) use bodies::close_blocks_at_every_flush_for_tests;
 pub(crate) use bodies::{archive_lock_path_for_db, archive_path_for_db};
@@ -221,8 +222,10 @@ pub enum WriteOp {
     SecurityAskEvent(SecurityAskEvent),
     SecurityDecisionEvent(SecurityDecisionEvent),
     PolicyMutationEvent(PolicyMutationEvent),
-    /// What the host did to a session or itself; hash-chained per ledger.
+    /// What the host did to a session or itself.
     HostEvent(HostEvent),
+    PrepareEnvironmentRevision(crate::events::PreparedEnvironmentRevision),
+    EnvironmentRevisionTransition(crate::events::EnvironmentRevisionTransition),
     /// Registry rows of a network database; upserted by key, disk-only.
     Network(NetworkRecord),
     NetworkMembership(NetworkMembership),

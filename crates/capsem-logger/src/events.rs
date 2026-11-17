@@ -4,6 +4,8 @@ use std::time::SystemTime;
 use serde::{Deserialize, Serialize};
 
 mod host;
+mod environment;
+pub use environment::{PreparedEnvironmentRevision, EnvironmentRevisionParent, EnvironmentRevisionState, EnvironmentRevisionTransition};
 mod network;
 mod transport;
 pub use host::{HostEvent, HostEventKind};

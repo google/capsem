@@ -339,11 +339,15 @@ fn max_table_id(conn: &Connection, schema: &str, table: &str) -> rusqlite::Resul
 fn memory_table_sql(table: &str, sql: &str) -> Option<String> {
     let create = format!("CREATE TABLE {table}");
     let create_if_not_exists = format!("CREATE TABLE IF NOT EXISTS {table}");
-    if let Some(rest) = sql.strip_prefix(&create_if_not_exists) {
-        return Some(format!("CREATE TABLE IF NOT EXISTS {MEMORY_SCHEMA}.{table}{rest}"));
-    }
-    sql.strip_prefix(&create)
-        .map(|rest| format!("CREATE TABLE IF NOT EXISTS {MEMORY_SCHEMA}.{table}{rest}"))
+    let rest = sql
+        .strip_prefix(&create_if_not_exists)
+        .or_else(|| sql.strip_prefix(&create))?;
+    let rest = if matches!(table, "environment_revisions" | "environment_requests") {
+        environment::staging_declaration(rest)?
+    } else {
+        rest.to_string()
+    };
+    Some(format!("CREATE TABLE IF NOT EXISTS {MEMORY_SCHEMA}.{table}{rest}"))
 }
 
 mod columns;

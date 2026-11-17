@@ -23,9 +23,10 @@ fn fresh_machine_ledger_has_explicit_environment_format() {
     create_tables(&conn).unwrap();
     for table in ENVIRONMENT_TABLES {
         assert!(!columns_for_schema(&conn, "main", table).is_empty(), "missing {table}");
-        assert!(
+        assert_eq!(
             is_disk_only_table(table),
-            "configuration state must not split uniqueness across memory/disk"
+            !matches!(*table, "environment_revisions" | "environment_requests"),
+            "snapshot-backed metadata stages with its archive; other state is disk-only"
         );
     }
     assert_eq!(
@@ -165,4 +166,30 @@ fn missing_environment_body_index_is_named_and_never_recreated() {
         .to_string()
         .contains("event_body_blobs"));
     assert!(!table_exists(&conn, "main", "event_body_blobs").unwrap());
+}
+
+#[test]
+fn environment_staging_retains_checks_without_cross_database_foreign_keys() {
+    let conn = Connection::open_in_memory().unwrap();
+    create_tables(&conn).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let uri = memory_uri_for_path(&directory.path().join("host.db"));
+    create_memory_tables(&conn, &uri).unwrap();
+    let durable_keys: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_foreign_key_list('environment_revisions','main')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let staged_keys: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_foreign_key_list('environment_revisions','mem')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(durable_keys > 0);
+    assert_eq!(staged_keys, 0);
+    assert!(conn.execute("INSERT INTO mem.environment_revisions(environment_id,revision_id,timestamp_unix_ms,actor,reason,state,payload_event_id) VALUES('env','rev',1,'operator','reason','unknown-state','aaaaaaaaaaaa')", []).is_err());
 }

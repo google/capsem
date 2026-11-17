@@ -198,6 +198,8 @@ fn insert_batch_ops<'a>(
             }
             WriteOp::PolicyMutationEvent(e) => insert_policy_mutation_event(tx, e, WriteTarget::Memory)?,
             WriteOp::HostEvent(e) => insert_host_event(tx, e, WriteTarget::Memory)?,
+            WriteOp::PrepareEnvironmentRevision(record) => environment::prepare_revision(tx, record, bodies)?,
+            WriteOp::EnvironmentRevisionTransition(record) => environment::transition_revision(tx, record)?,
             WriteOp::Network(n) => event_rows::upsert_network(tx, n, WriteTarget::Memory)?,
             WriteOp::NetworkMembership(m) => event_rows::upsert_network_membership(tx, m, WriteTarget::Memory)?,
             WriteOp::NetworkDeparture(departure) => {

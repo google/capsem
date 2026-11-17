@@ -473,7 +473,7 @@ json = { count = 2, reason = "db-json" }
 hash = { count = 1, reason = "hash-identity" }
 
 [sources."crates/capsem-logger/src/writer/bodies/staging.rs"]
-hash = { count = 1, reason = "hash-archive" }
+hash = { count = 2, reason = "hash-archive" }
 
 [sources."crates/capsem-logger/src/writer/model_rows.rs"]
 json = { count = 1, reason = "db-json" }

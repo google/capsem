@@ -116,3 +116,6 @@ async fn host_event_pages_bound_filter_and_resume_by_insertion_order() {
     assert!(db.host_event_page(GrantMinted, 0, 0).await.is_err());
     assert!(db.host_event_page(GrantMinted, 0, usize::MAX).await.is_err());
 }
+
+#[path = "environment.rs"]
+mod environment;
