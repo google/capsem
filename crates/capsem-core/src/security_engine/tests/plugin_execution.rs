@@ -42,7 +42,11 @@ fn logging_plugin_redacts_query_even_without_credential_observations() {
     let result = LogSanitizerPlugin
         .apply(
             event,
-            plugin_config(SecurityPluginMode::Rewrite, DetectionLevel::Informational),
+            &runtime_policy::legacy_configuration(
+                "log_sanitizer",
+                plugin_config(SecurityPluginMode::Rewrite, DetectionLevel::Informational),
+                crate::environment::PluginDirection::Outbound,
+            ),
         )
         .unwrap();
     assert!(result.applied);

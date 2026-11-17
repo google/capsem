@@ -22,7 +22,7 @@ impl SecurityPlugin for ForgingPlugin {
     fn apply(
         &self,
         mut event: SecurityEvent,
-        _: SecurityPluginConfig,
+        _: &CompiledPluginConfiguration,
     ) -> Result<SecurityPluginResult, SecurityActionError> {
         match self.mutation {
             Mutation::Add(action) => event.action_trace.push(action),

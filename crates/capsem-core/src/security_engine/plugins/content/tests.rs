@@ -1,4 +1,7 @@
 use super::*;
+use crate::environment::PluginDirection;
+use crate::security_engine::{runtime_policy::legacy_configuration, SecurityActionRegistry};
+use capsem_config::SecurityPluginConfig;
 
 #[test]
 fn reviewed_detectors_validate_and_mask_without_exposing_matches() {
@@ -77,7 +80,12 @@ fn direction_selection_does_not_filter_unselected_direction() {
         },
         ..Default::default()
     };
-    assert!(!PiiFilterPlugin.apply(event, config).unwrap().applied);
+    let result = SecurityActionRegistry::with_builtin_actions()
+        .with_plugin_policy(std::collections::BTreeMap::from([("pii_filter".into(), config)]))
+        .apply_security_plugins(SecurityPluginStage::Preprocess, event)
+        .unwrap();
+    assert!(result.plugin_executions.is_empty());
+    assert_eq!(result.http.unwrap().body.as_deref(), Some("user@example.com"));
 }
 
 #[test]
@@ -87,6 +95,7 @@ fn provider_credential_slot_is_allowed_but_custom_header_copy_is_exfiltration() 
         mode: SecurityPluginMode::Block,
         ..Default::default()
     };
+    let config = legacy_configuration("secret_exfiltration", config, PluginDirection::Outbound);
     let make = |domain, name: &str| {
         let mut headers = http::HeaderMap::new();
         headers.insert(
@@ -101,19 +110,19 @@ fn provider_credential_slot_is_allowed_but_custom_header_copy_is_exfiltration() 
     };
     assert!(
         !SecretExfiltrationPlugin
-            .apply(make("api.github.com", "authorization"), config)
+            .apply(make("api.github.com", "authorization"), &config)
             .unwrap()
             .applied
     );
     assert!(
         SecretExfiltrationPlugin
-            .apply(make("api.github.com", "x-copy"), config)
+            .apply(make("api.github.com", "x-copy"), &config)
             .unwrap()
             .applied
     );
     assert!(
         SecretExfiltrationPlugin
-            .apply(make("api.github.com.evil.example", "authorization"), config)
+            .apply(make("api.github.com.evil.example", "authorization"), &config)
             .unwrap()
             .applied
     );

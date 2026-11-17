@@ -21,10 +21,15 @@ pub enum EnvironmentPluginSource {
 /// immutable payload here instead of parsing data during event processing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CompiledPluginOptions {
+    /// Registered extensions without builtin-specific options. This is an
+    /// internal invocation value, never a persisted environment option bag.
+    NoOptions,
     PiiFilter(PiiFilterOptions),
     SecretExfiltration,
     Utf8Guard,
-    CredentialBroker { capture_enabled: bool },
+    CredentialBroker {
+        capture_enabled: bool,
+    },
     LogSanitizer,
     DummyPreEicar,
     DummyPostAllow,

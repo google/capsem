@@ -1,5 +1,6 @@
 //! Separate validation plugin: UTF-8 validity is not ASCII-only filtering.
-use crate::net::policy_config::{SecurityPluginConfig, SecurityPluginMode};
+use crate::environment::CompiledPluginConfiguration;
+use crate::net::policy_config::SecurityPluginMode;
 use crate::security_engine::{
     SecurityActionError, SecurityDecisionKind, SecurityEvent, SecurityPlugin, SecurityPluginResult, SecurityPluginStage,
 };
@@ -16,10 +17,9 @@ impl SecurityPlugin for Utf8GuardPlugin {
     fn apply(
         &self,
         mut event: SecurityEvent,
-        config: SecurityPluginConfig,
+        config: &CompiledPluginConfiguration,
     ) -> Result<SecurityPluginResult, SecurityActionError> {
-        let inbound = event.http.as_ref().is_some_and(|http| http.status.is_some());
-        if !config.content.direction.includes(inbound) || event.http_body_utf8_valid != Some(false) {
+        if event.http_body_utf8_valid != Some(false) {
             return Ok(SecurityPluginResult::skipped(event));
         }
         // There is no lossy rewrite mode. A rewrite request fails closed rather

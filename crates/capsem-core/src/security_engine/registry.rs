@@ -4,7 +4,7 @@ use super::*;
 #[derive(Default, Clone)]
 pub struct SecurityActionRegistry {
     pub(super) plugins: Arc<BTreeMap<String, Arc<dyn SecurityPlugin>>>,
-    pub(super) plugin_policy: Arc<BTreeMap<String, SecurityPluginConfig>>,
+    pub(super) policy: runtime_policy::RuntimePluginPolicy,
 }
 
 impl SecurityActionRegistry {
@@ -17,7 +17,12 @@ impl SecurityActionRegistry {
     }
 
     pub fn with_plugin_policy(mut self, plugin_policy: impl Into<Arc<BTreeMap<String, SecurityPluginConfig>>>) -> Self {
-        self.plugin_policy = plugin_policy.into();
+        self.policy = runtime_policy::RuntimePluginPolicy::Settings(plugin_policy.into());
+        self
+    }
+
+    pub fn with_environment_plugins(mut self, plugins: Arc<crate::environment::CompiledEnvironmentPlugins>) -> Self {
+        self.policy = runtime_policy::RuntimePluginPolicy::Environment(plugins);
         self
     }
 
@@ -48,18 +53,13 @@ impl SecurityActionRegistry {
         stage: SecurityPluginStage,
         mut event: SecurityEvent,
     ) -> Result<SecurityEvent, SecurityActionError> {
-        for (plugin_id, config) in self.plugin_policy.iter() {
-            if config.mode != SecurityPluginMode::Disable && !self.plugins.contains_key(plugin_id) {
-                return Err(SecurityActionError::new(format!(
-                    "security plugin '{plugin_id}' is not registered"
-                )));
-            }
-        }
+        let direction = runtime_policy::direction(&event);
+        self.policy.validate_registration(&self.plugins, direction)?;
         for (plugin_id, plugin) in self.plugins.iter() {
             if plugin.stage() != stage {
                 continue;
             }
-            let Some(plugin_config) = self.plugin_policy.get(plugin_id).copied() else {
+            let Some(plugin_config) = self.policy.configuration(plugin_id, direction) else {
                 continue;
             };
             if plugin_config.mode == SecurityPluginMode::Disable {
@@ -67,7 +67,7 @@ impl SecurityActionRegistry {
             }
             let started = std::time::Instant::now();
             let protected_actions = (plugin_id != "credential_broker").then(|| credential_action_counts(&event));
-            let result = match plugin.apply(event, plugin_config) {
+            let result = match plugin.apply(event, &plugin_config) {
                 Ok(result) => result,
                 Err(error) => {
                     record_plugin_metrics(plugin_id, stage, plugin_config.mode, false, "error", started);
@@ -92,7 +92,7 @@ impl SecurityActionRegistry {
             if !result.applied {
                 continue;
             }
-            record_plugin_detection(&mut event, plugin_id, plugin_config);
+            record_plugin_detection(&mut event, plugin_id, &plugin_config);
             if let Some(requested) = plugin_mode_decision(plugin_config.mode) {
                 event.request_decision(requested);
             }
@@ -110,4 +110,70 @@ fn credential_action_counts(event: &SecurityEvent) -> [usize; 2] {
         }
     }
     counts
+}
+
+fn record_plugin_metrics(
+    plugin_id: &str,
+    stage: SecurityPluginStage,
+    mode: SecurityPluginMode,
+    applied: bool,
+    status: &'static str,
+    started: Instant,
+) {
+    let stage = stage.as_str();
+    let mode = mode.as_str();
+    let applied = if applied { "true" } else { "false" };
+    let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+    ::metrics::counter!(
+        SECURITY_PLUGIN_EXECUTION_TOTAL,
+        "plugin_id" => plugin_id.to_string(),
+        "stage" => stage,
+        "mode" => mode,
+        "applied" => applied,
+        "status" => status,
+    )
+    .increment(1);
+    ::metrics::histogram!(
+        SECURITY_PLUGIN_EXECUTION_DURATION_MS,
+        "plugin_id" => plugin_id.to_string(),
+        "stage" => stage,
+        "mode" => mode,
+        "applied" => applied,
+        "status" => status,
+    )
+    .record(elapsed_ms);
+    tracing::trace!(
+        target: "capsem.security_plugin",
+        plugin_id,
+        stage,
+        mode,
+        applied,
+        status,
+        elapsed_ms,
+        "security plugin execution"
+    );
+}
+
+fn record_plugin_detection(event: &mut SecurityEvent, plugin_id: &str, config: &CompiledPluginConfiguration) {
+    let Some(detection_level) = config.active_detection_level() else {
+        return;
+    };
+    event.record_detection(SecurityDetectionEvent {
+        source: SecurityDetectionSource::Plugin,
+        detection_level,
+        rule_id: None,
+        plugin_id: Some(plugin_id.to_string()),
+        action: None,
+        plugin_mode: Some(config.mode),
+        reason: None,
+    });
+}
+
+fn plugin_mode_decision(mode: SecurityPluginMode) -> Option<SecurityDecisionKind> {
+    match mode {
+        SecurityPluginMode::Disable => None,
+        SecurityPluginMode::Allow | SecurityPluginMode::Rewrite => Some(SecurityDecisionKind::Allow),
+        SecurityPluginMode::Ask => Some(SecurityDecisionKind::Ask),
+        SecurityPluginMode::Block => Some(SecurityDecisionKind::Block),
+    }
 }

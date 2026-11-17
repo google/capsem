@@ -1,5 +1,5 @@
 use crate::credential_broker::redact_observed_credentials_in_bytes;
-use crate::net::policy_config::SecurityPluginConfig;
+use crate::environment::CompiledPluginConfiguration;
 use crate::security_engine::{
     SecurityActionError, SecurityEvent, SecurityPlugin, SecurityPluginResult, SecurityPluginStage,
 };
@@ -28,7 +28,7 @@ impl SecurityPlugin for LogSanitizerPlugin {
     fn apply(
         &self,
         mut event: SecurityEvent,
-        _config: SecurityPluginConfig,
+        _config: &CompiledPluginConfiguration,
     ) -> Result<SecurityPluginResult, SecurityActionError> {
         let has_http_request = event.http_request.is_some();
         let has_query = event

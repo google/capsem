@@ -49,6 +49,8 @@ pub use http_materialization::{
 mod observations;
 use observations::{event_with_rule_detections, record_observations, record_rule_detection};
 mod registry;
+mod runtime_policy;
+use crate::environment::{CompiledPluginConfiguration, CompiledPluginOptions};
 pub use registry::SecurityActionRegistry;
 mod rule_decision;
 mod rule_emission;
@@ -1476,74 +1478,8 @@ pub trait SecurityPlugin: Send + Sync {
     fn apply(
         &self,
         event: SecurityEvent,
-        config: SecurityPluginConfig,
+        config: &CompiledPluginConfiguration,
     ) -> Result<SecurityPluginResult, SecurityActionError>;
-}
-
-fn record_plugin_metrics(
-    plugin_id: &str,
-    stage: SecurityPluginStage,
-    mode: SecurityPluginMode,
-    applied: bool,
-    status: &'static str,
-    started: Instant,
-) {
-    let stage = stage.as_str();
-    let mode = mode.as_str();
-    let applied = if applied { "true" } else { "false" };
-    let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
-    ::metrics::counter!(
-        SECURITY_PLUGIN_EXECUTION_TOTAL,
-        "plugin_id" => plugin_id.to_string(),
-        "stage" => stage,
-        "mode" => mode,
-        "applied" => applied,
-        "status" => status,
-    )
-    .increment(1);
-    ::metrics::histogram!(
-        SECURITY_PLUGIN_EXECUTION_DURATION_MS,
-        "plugin_id" => plugin_id.to_string(),
-        "stage" => stage,
-        "mode" => mode,
-        "applied" => applied,
-        "status" => status,
-    )
-    .record(elapsed_ms);
-    tracing::trace!(
-        target: "capsem.security_plugin",
-        plugin_id,
-        stage,
-        mode,
-        applied,
-        status,
-        elapsed_ms,
-        "security plugin execution"
-    );
-}
-
-fn record_plugin_detection(event: &mut SecurityEvent, plugin_id: &str, config: SecurityPluginConfig) {
-    let Some(detection_level) = config.active_detection_level() else {
-        return;
-    };
-    event.record_detection(SecurityDetectionEvent {
-        source: SecurityDetectionSource::Plugin,
-        detection_level,
-        rule_id: None,
-        plugin_id: Some(plugin_id.to_string()),
-        action: None,
-        plugin_mode: Some(config.mode),
-        reason: None,
-    });
-}
-
-fn plugin_mode_decision(mode: SecurityPluginMode) -> Option<SecurityDecisionKind> {
-    match mode {
-        SecurityPluginMode::Disable => None,
-        SecurityPluginMode::Allow | SecurityPluginMode::Rewrite => Some(SecurityDecisionKind::Allow),
-        SecurityPluginMode::Ask => Some(SecurityDecisionKind::Ask),
-        SecurityPluginMode::Block => Some(SecurityDecisionKind::Block),
-    }
 }
 
 pub(super) fn security_event_contains_text(event: &SecurityEvent, needle: &str) -> bool {

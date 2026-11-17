@@ -1,4 +1,4 @@
-use crate::net::policy_config::SecurityPluginConfig;
+use crate::environment::CompiledPluginConfiguration;
 use crate::security_engine::{
     SecurityActionError, SecurityDecisionKind, SecurityEvent, SecurityPlugin, SecurityPluginResult, SecurityPluginStage,
 };
@@ -17,7 +17,7 @@ impl SecurityPlugin for DummyPostAllowPlugin {
     fn apply(
         &self,
         mut event: SecurityEvent,
-        _config: SecurityPluginConfig,
+        _config: &CompiledPluginConfiguration,
     ) -> Result<SecurityPluginResult, SecurityActionError> {
         event.request_decision(SecurityDecisionKind::Allow);
         Ok(SecurityPluginResult::applied(event))

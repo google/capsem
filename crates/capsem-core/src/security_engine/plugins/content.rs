@@ -2,7 +2,8 @@
 //! HTTP transport collects complete bounded bodies before enforcement when enabled.
 use std::sync::LazyLock;
 
-use capsem_config::{ContentFilterConfig, SecurityPluginConfig, SecurityPluginMode};
+use crate::environment::{CompiledPluginConfiguration, CompiledPluginOptions};
+use capsem_config::{ContentFilterConfig, SecurityPluginMode};
 use regex::bytes::Regex;
 use serde::Deserialize;
 
@@ -53,7 +54,7 @@ impl SecurityPlugin for PiiFilterPlugin {
     fn apply(
         &self,
         event: SecurityEvent,
-        config: SecurityPluginConfig,
+        config: &CompiledPluginConfiguration,
     ) -> Result<SecurityPluginResult, SecurityActionError> {
         inspect_event(event, config, false)
     }
@@ -68,7 +69,7 @@ impl SecurityPlugin for SecretExfiltrationPlugin {
     fn apply(
         &self,
         event: SecurityEvent,
-        config: SecurityPluginConfig,
+        config: &CompiledPluginConfiguration,
     ) -> Result<SecurityPluginResult, SecurityActionError> {
         inspect_event(event, config, true)
     }
@@ -76,7 +77,7 @@ impl SecurityPlugin for SecretExfiltrationPlugin {
 
 fn inspect_event(
     mut event: SecurityEvent,
-    config: SecurityPluginConfig,
+    config: &CompiledPluginConfiguration,
     secrets: bool,
 ) -> Result<SecurityPluginResult, SecurityActionError> {
     let Some(http) = event.http.as_ref() else {
@@ -85,21 +86,36 @@ fn inspect_event(
     let inbound = http.status.is_some();
     // Secret exfiltration is an outbound boundary. Inbound keys may be legitimate
     // OAuth exchanges; credential_broker remains their owner.
-    if (secrets && inbound) || !config.content.direction.includes(inbound) {
+    if secrets && inbound {
         return Ok(SecurityPluginResult::skipped(event));
     }
+    let options = match (&config.options, secrets) {
+        (CompiledPluginOptions::PiiFilter(options), false) => ContentFilterConfig {
+            email: options.email,
+            phone: options.phone,
+            card: options.card,
+            ssn: options.ssn,
+            ..Default::default()
+        },
+        (CompiledPluginOptions::SecretExfiltration, true) => ContentFilterConfig::default(),
+        _ => {
+            return Err(SecurityActionError::new(
+                "content plugin received incompatible compiled options",
+            ))
+        }
+    };
     let rewrite = matches!(config.mode, SecurityPluginMode::Rewrite);
     let mut applied = false;
     if let Some(http) = event.http.as_mut() {
         if let Some(body) = http.body.as_mut() {
-            applied |= inspect_string(body, config.content, secrets, rewrite);
+            applied |= inspect_string(body, options, secrets, rewrite);
         }
         if !inbound {
             if let Some(path) = http.path.as_mut() {
-                applied |= inspect_string(path, config.content, secrets, rewrite);
+                applied |= inspect_string(path, options, secrets, rewrite);
             }
             if let Some(query) = http.query.as_mut() {
-                applied |= inspect_string(query, config.content, secrets, rewrite);
+                applied |= inspect_string(query, options, secrets, rewrite);
             }
         }
     }
@@ -123,7 +139,7 @@ fn inspect_event(
             {
                 continue;
             }
-            if let Some(updated) = inspect_bytes(value.as_bytes(), config.content, secrets, rewrite) {
+            if let Some(updated) = inspect_bytes(value.as_bytes(), options, secrets, rewrite) {
                 applied = true;
                 if rewrite {
                     *value = http::HeaderValue::from_bytes(&updated)
@@ -133,7 +149,7 @@ fn inspect_event(
         }
         // Runtime query is separate from the CEL/ledger projection.
         if let Some(query) = request.query.as_mut() {
-            applied |= inspect_string(query, config.content, secrets, rewrite);
+            applied |= inspect_string(query, options, secrets, rewrite);
         }
     }
     if rewrite && applied {

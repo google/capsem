@@ -13,6 +13,9 @@ fn every_call_returns_the_same_built_in_plugin_set() {
     let ids = |registry: &SecurityActionRegistry| registry.plugins.keys().cloned().collect::<Vec<_>>();
     assert_eq!(ids(&first), ids(&second));
     assert_eq!(first.plugins.len(), 7);
+    let mut compiled_ids = capsem_config::plugins::PluginId::ALL.map(|id| id.as_str()).to_vec();
+    compiled_ids.sort_unstable();
+    assert_eq!(ids(&first), compiled_ids);
     for (id, plugin) in first.plugins.iter() {
         assert!(
             Arc::ptr_eq(plugin, &second.plugins[id]),
@@ -54,9 +57,15 @@ fn the_plugin_policy_is_per_registry_not_shared() {
     policy.insert("credential_broker".to_string(), disabled_plugin());
     let configured = SecurityActionRegistry::with_builtin_actions().with_plugin_policy(policy);
     let plain = SecurityActionRegistry::with_builtin_actions();
-    assert_eq!(configured.plugin_policy.len(), 1);
+    let super::super::runtime_policy::RuntimePluginPolicy::Settings(configured_policy) = configured.policy else {
+        panic!("settings policy")
+    };
+    let super::super::runtime_policy::RuntimePluginPolicy::Settings(plain_policy) = plain.policy else {
+        panic!("settings policy")
+    };
+    assert_eq!(configured_policy.len(), 1);
     assert!(
-        plain.plugin_policy.is_empty(),
+        plain_policy.is_empty(),
         "one registry's policy never leaks into the shared set"
     );
 }

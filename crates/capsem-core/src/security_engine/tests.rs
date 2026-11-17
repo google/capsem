@@ -1,5 +1,7 @@
 use super::*;
 mod credential_grants;
+#[path = "tests/environment_plugins.rs"]
+mod environment_plugins;
 use crate::credential_broker::{broker_observed_credential, CredentialObservation, CredentialProvider};
 use crate::net::ai_traffic::provider::ProviderKind;
 use crate::net::policy_config::{
@@ -53,7 +55,7 @@ impl SecurityPlugin for TracePlugin {
     fn apply(
         &self,
         mut event: SecurityEvent,
-        _config: SecurityPluginConfig,
+        _config: &CompiledPluginConfiguration,
     ) -> Result<SecurityPluginResult, SecurityActionError> {
         let trace = event.trace_id.get_or_insert_default();
         if !trace.is_empty() {
@@ -78,7 +80,7 @@ impl SecurityPlugin for MarkDecisionPlugin {
     fn apply(
         &self,
         mut event: SecurityEvent,
-        _config: SecurityPluginConfig,
+        _config: &CompiledPluginConfiguration,
     ) -> Result<SecurityPluginResult, SecurityActionError> {
         event.request_decision(SecurityDecisionKind::Block);
         event.trace_id = Some("mark_decision".into());
@@ -104,7 +106,7 @@ impl SecurityPlugin for DecisionPlugin {
     fn apply(
         &self,
         mut event: SecurityEvent,
-        _config: SecurityPluginConfig,
+        _config: &CompiledPluginConfiguration,
     ) -> Result<SecurityPluginResult, SecurityActionError> {
         event.request_decision(self.requested);
         Ok(SecurityPluginResult::applied(event))

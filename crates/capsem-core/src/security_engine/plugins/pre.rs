@@ -1,5 +1,6 @@
 use crate::credential_broker::{detect_brokered_http_references, detect_http_credential_with_provider};
-use crate::net::policy_config::{PolicyActionId, SecurityPluginConfig, SecurityPluginMode};
+use crate::environment::{CompiledPluginConfiguration, CompiledPluginOptions};
+use crate::net::policy_config::{PolicyActionId, SecurityPluginMode};
 use crate::net::proxy_engine::ProxyCredentials;
 use crate::security_engine::{
     security_event_contains_text, SecurityActionError, SecurityEvent, SecurityPlugin, SecurityPluginResult,
@@ -28,8 +29,13 @@ impl SecurityPlugin for CredentialBrokerPlugin {
     fn apply(
         &self,
         mut event: SecurityEvent,
-        _config: SecurityPluginConfig,
+        config: &CompiledPluginConfiguration,
     ) -> Result<SecurityPluginResult, SecurityActionError> {
+        let CompiledPluginOptions::CredentialBroker { capture_enabled } = config.options else {
+            return Err(SecurityActionError::new(
+                "credential broker received incompatible compiled options",
+            ));
+        };
         let trace_id = event.trace_id();
         if let Some(request) = event.http_request.as_ref() {
             let injections = detect_brokered_http_references(
@@ -64,7 +70,7 @@ impl SecurityPlugin for CredentialBrokerPlugin {
             return Ok(SecurityPluginResult::skipped(event));
         }
 
-        for observation in &event.credential_observations {
+        for observation in event.credential_observations.iter().filter(|_| capture_enabled) {
             let brokered = self
                 .credentials
                 .capture(observation)
@@ -73,7 +79,7 @@ impl SecurityPlugin for CredentialBrokerPlugin {
                 event.credential_ref = Some(brokered.credential_ref);
             }
         }
-        if !event.credential_observations.is_empty() {
+        if capture_enabled && !event.credential_observations.is_empty() {
             event.action_trace.push(PolicyActionId::CredentialBrokerCapture);
         }
         if !event.credential_injections.is_empty() {
@@ -97,7 +103,7 @@ impl SecurityPlugin for DummyPreEicarPlugin {
     fn apply(
         &self,
         mut event: SecurityEvent,
-        config: SecurityPluginConfig,
+        config: &CompiledPluginConfiguration,
     ) -> Result<SecurityPluginResult, SecurityActionError> {
         if !security_event_contains_text(&event, DUMMY_EICAR_TEST_STRING)
             && !security_event_contains_text(&event, "EICAR")
