@@ -323,6 +323,7 @@ pub(crate) const READY_SCHEMA_COLUMNS: &[(&str, &[&str])] = &[
             "requester_session_id",
             "requester_generation",
             "timestamp_unix_ms",
+            "expires_at_unix_ms",
             "actor",
             "reason",
             "state",
@@ -331,6 +332,10 @@ pub(crate) const READY_SCHEMA_COLUMNS: &[(&str, &[&str])] = &[
             "result_environment_id",
             "result_revision_id",
         ],
+    ),
+    (
+        "environment_request_invalidations",
+        &["request_id", "timestamp_unix_ms", "actor", "kind", "reason"],
     ),
     (
         "environment_request_decisions",

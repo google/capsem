@@ -202,6 +202,7 @@ fn insert_batch_ops<'a>(
             WriteOp::EnvironmentRevisionTransition(record) => environment::transition_revision(tx, record)?,
             WriteOp::PrepareEnvironmentRequest(record) => environment_requests::prepare(tx, record, bodies)?,
             WriteOp::EnvironmentRequestDecision(record) => environment_requests::decide(tx, record)?,
+            WriteOp::EnvironmentRequestInvalidation(record) => environment_requests::invalidate(tx, record)?,
             WriteOp::EnvironmentRequestResult(record) => environment_requests::bind_result(tx, record, bodies)?,
             WriteOp::EnvironmentSandboxReference(record) => environment_references::update_sandbox(tx, record)?,
             WriteOp::Network(n) => event_rows::upsert_network(tx, n, WriteTarget::Memory)?,

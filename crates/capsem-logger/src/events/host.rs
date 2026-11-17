@@ -32,12 +32,13 @@ pub enum HostEventKind {
     EnvironmentRevisionRecovered,
     EnvironmentRequestPrepared,
     EnvironmentRequestDecided,
+    EnvironmentRequestInvalidated,
     EnvironmentRequestResultBound,
     EnvironmentReferenceChanged,
 }
 
 impl HostEventKind {
-    pub const ALL: [Self; 23] = [
+    pub const ALL: [Self; 24] = [
         Self::SessionCreated,
         Self::SessionStarted,
         Self::SessionStopped,
@@ -59,6 +60,7 @@ impl HostEventKind {
         Self::EnvironmentRevisionRecovered,
         Self::EnvironmentRequestPrepared,
         Self::EnvironmentRequestDecided,
+        Self::EnvironmentRequestInvalidated,
         Self::EnvironmentRequestResultBound,
         Self::EnvironmentReferenceChanged,
     ];
@@ -85,6 +87,7 @@ impl HostEventKind {
             Self::EnvironmentRevisionCommitted => "environment_revision_committed",
             Self::EnvironmentRevisionRecovered => "environment_revision_recovered",
             Self::EnvironmentRequestPrepared => "environment_request_prepared",
+            Self::EnvironmentRequestInvalidated => "environment_request_invalidated",
             Self::EnvironmentRequestDecided => "environment_request_decided",
             Self::EnvironmentRequestResultBound => "environment_request_result_bound",
             Self::EnvironmentReferenceChanged => "environment_reference_changed",

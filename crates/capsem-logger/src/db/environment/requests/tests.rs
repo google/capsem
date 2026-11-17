@@ -14,6 +14,7 @@ fn proposal(number: u64, generation: u64) -> PreparedEnvironmentRequest {
             generation: id(generation),
         }),
         timestamp_unix_ms: 200 - number as i64,
+        expires_at_unix_ms: 10_000,
         actor: format!("agent:{}", id(10)),
         reason: "request-query-reason-canary".into(),
         payload_event_id: format!("{number:012x}"),
@@ -198,7 +199,7 @@ async fn request_query_bounds_and_broken_schema_never_become_empty_success() {
         .environment_requests(page(0, 1))
         .await
         .unwrap_err()
-        .contains("decision evidence"));
+        .contains("lifecycle evidence"));
     conn.execute_batch("PRAGMA ignore_check_constraints=ON; UPDATE environment_requests SET state='unknown'")
         .unwrap();
     assert!(db.environment_requests(page(0, 1)).await.is_err());

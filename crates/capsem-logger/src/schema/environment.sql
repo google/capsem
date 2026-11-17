@@ -50,9 +50,10 @@ CREATE TABLE IF NOT EXISTS environment_requests (
     requester_session_id TEXT,
     requester_generation TEXT,
     timestamp_unix_ms INTEGER NOT NULL,
+    expires_at_unix_ms INTEGER NOT NULL CHECK (expires_at_unix_ms>timestamp_unix_ms),
     actor TEXT NOT NULL,
     reason TEXT NOT NULL,
-    state TEXT NOT NULL CHECK (state IN ('pending','approved','denied','cancelled')),
+    state TEXT NOT NULL CHECK (state IN ('pending','approved','denied','cancelled','expired','stale')),
     payload_event_id TEXT NOT NULL UNIQUE,
     replayable INTEGER NOT NULL DEFAULT 1 CHECK (replayable IN (0,1)),
     result_environment_id TEXT,
@@ -77,6 +78,16 @@ CREATE INDEX IF NOT EXISTS idx_environment_requests_requester
     ON environment_requests(requester_session_id,requester_generation,id);
 CREATE INDEX IF NOT EXISTS idx_environment_requests_source
     ON environment_requests(source_environment_id,source_revision_id);
+CREATE INDEX IF NOT EXISTS idx_environment_requests_expiry
+    ON environment_requests(expires_at_unix_ms) WHERE state='pending';
+
+CREATE TABLE IF NOT EXISTS environment_request_invalidations (
+    request_id TEXT PRIMARY KEY REFERENCES environment_requests(request_id),
+    timestamp_unix_ms INTEGER NOT NULL,
+    actor TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('expired','stale')),
+    reason TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS environment_request_decisions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

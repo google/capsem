@@ -41,6 +41,8 @@ pub enum EnvironmentRequestState {
     Approved,
     Denied,
     Cancelled,
+    Expired,
+    Stale,
 }
 impl EnvironmentRequestState {
     pub fn as_str(self) -> &'static str {
@@ -49,12 +51,21 @@ impl EnvironmentRequestState {
             Self::Approved => "approved",
             Self::Denied => "denied",
             Self::Cancelled => "cancelled",
+            Self::Expired => "expired",
+            Self::Stale => "stale",
         }
     }
     pub fn parse_str(value: &str) -> Option<Self> {
-        [Self::Pending, Self::Approved, Self::Denied, Self::Cancelled]
-            .into_iter()
-            .find(|state| state.as_str() == value)
+        [
+            Self::Pending,
+            Self::Approved,
+            Self::Denied,
+            Self::Cancelled,
+            Self::Expired,
+            Self::Stale,
+        ]
+        .into_iter()
+        .find(|state| state.as_str() == value)
     }
 }
 
@@ -112,6 +123,7 @@ pub struct PreparedEnvironmentRequest {
     pub base_revision_id: Option<String>,
     pub requester: Option<EnvironmentRequestTarget>,
     pub timestamp_unix_ms: i64,
+    pub expires_at_unix_ms: i64,
     pub actor: String,
     pub reason: String,
     pub payload_event_id: String,
@@ -179,4 +191,44 @@ pub struct EnvironmentRequestResult {
     pub result: EnvironmentRevisionParent,
     pub timestamp_unix_ms: i64,
     pub actor: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EnvironmentRequestInvalidationKind {
+    Expired,
+    Stale,
+}
+impl EnvironmentRequestInvalidationKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Expired => "expired",
+            Self::Stale => "stale",
+        }
+    }
+    pub fn parse_str(value: &str) -> Option<Self> {
+        match value {
+            "expired" => Some(Self::Expired),
+            "stale" => Some(Self::Stale),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EnvironmentRequestInvalidation {
+    pub request_id: String,
+    pub timestamp_unix_ms: i64,
+    pub actor: String,
+    pub kind: EnvironmentRequestInvalidationKind,
+    pub reason: String,
+}
+impl std::fmt::Debug for EnvironmentRequestInvalidation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EnvironmentRequestInvalidation")
+            .field("request_id", &self.request_id)
+            .field("kind", &self.kind)
+            .finish_non_exhaustive()
+    }
 }

@@ -12,6 +12,7 @@ struct ExistingRequest {
     base_revision_id: Option<String>,
     requester: Option<EnvironmentRequestTarget>,
     timestamp_unix_ms: i64,
+    expires_at_unix_ms: i64,
     actor: String,
     reason: String,
     payload_event_id: String,
@@ -23,7 +24,7 @@ struct ExistingRequest {
 }
 
 fn existing(conn: &Connection, id: &str) -> rusqlite::Result<Option<ExistingRequest>> {
-    let fields = "kind,environment_id,base_revision_id,requester_session_id,requester_generation,timestamp_unix_ms,actor,reason,payload_event_id,state,replayable,result_environment_id,result_revision_id,source_environment_id,source_revision_id";
+    let fields = "kind,environment_id,base_revision_id,requester_session_id,requester_generation,timestamp_unix_ms,actor,reason,payload_event_id,state,replayable,result_environment_id,result_revision_id,source_environment_id,source_revision_id,expires_at_unix_ms";
     conn.query_row(&format!("SELECT {fields},1 FROM main.environment_requests WHERE request_id=?1 UNION ALL SELECT {fields},0 FROM mem.environment_requests WHERE request_id=?1"), [id], |row| {
         let requester = match (row.get::<_,Option<String>>(3)?, row.get::<_,Option<String>>(4)?) {
             (Some(session_id),Some(generation)) => Some(EnvironmentRequestTarget { session_id, generation }),
@@ -39,7 +40,7 @@ fn existing(conn: &Connection, id: &str) -> rusqlite::Result<Option<ExistingRequ
         };
         Ok(ExistingRequest { kind: row.get(0)?, environment_id: row.get(1)?, base_revision_id: row.get(2)?, requester,
             timestamp_unix_ms: row.get(5)?, actor: row.get(6)?, reason: row.get(7)?, payload_event_id: row.get(8)?,
-            state: row.get(9)?, replayable: row.get(10)?, result, source, durable: row.get(15)? })
+            state: row.get(9)?, replayable: row.get(10)?, result, source, expires_at_unix_ms: row.get(15)?, durable: row.get(16)? })
     }).optional()
 }
 
@@ -61,6 +62,7 @@ fn validate_metadata(record: &PreparedEnvironmentRequest) -> rusqlite::Result<()
         || !actor(&record.actor)
         || !reason(&record.reason)
         || record.timestamp_unix_ms < 0
+        || record.expires_at_unix_ms <= record.timestamp_unix_ms
         || record.payload_event_id.len() != 12
         || !record
             .payload_event_id
@@ -172,6 +174,7 @@ pub(super) fn prepare(
             || old.base_revision_id != record.base_revision_id
             || old.requester != record.requester
             || old.timestamp_unix_ms != record.timestamp_unix_ms
+            || old.expires_at_unix_ms != record.expires_at_unix_ms
             || old.actor != record.actor
             || old.reason != record.reason
             || old.payload_event_id != record.payload_event_id
@@ -222,11 +225,11 @@ pub(super) fn prepare(
         },
     );
     bodies.required_status()?;
-    execute_cached(conn, "INSERT INTO mem.environment_requests(request_id,kind,environment_id,base_revision_id,requester_session_id,requester_generation,timestamp_unix_ms,actor,reason,state,payload_event_id,replayable,source_environment_id,source_revision_id) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,'pending',?10,1,?11,?12)",
+    execute_cached(conn, "INSERT INTO mem.environment_requests(request_id,kind,environment_id,base_revision_id,requester_session_id,requester_generation,timestamp_unix_ms,actor,reason,state,payload_event_id,replayable,source_environment_id,source_revision_id,expires_at_unix_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,'pending',?10,1,?11,?12,?13)",
         rusqlite::params![record.request_id, record.payload.kind(), record.environment_id, record.base_revision_id,
             record.requester.as_ref().map(|value| &value.session_id), record.requester.as_ref().map(|value| &value.generation),
             record.timestamp_unix_ms, record.actor, record.reason, record.payload_event_id,
-            record.payload.source_revision().map(|source| &source.environment_id), record.payload.source_revision().map(|source| &source.revision_id)])?;
+            record.payload.source_revision().map(|source| &source.environment_id), record.payload.source_revision().map(|source| &source.revision_id), record.expires_at_unix_ms])?;
     audit(
         conn,
         RequestAudit {
@@ -266,6 +269,9 @@ pub(super) fn decide(conn: &Connection, record: &EnvironmentRequestDecision) -> 
             return Ok(());
         }
         return Err(invalid("environment request decision is immutable"));
+    }
+    if record.timestamp_unix_ms < old.timestamp_unix_ms || record.timestamp_unix_ms >= old.expires_at_unix_ms {
+        return Err(invalid("environment request decision is outside its review lifetime"));
     }
     if old.state != "pending" || (record.decision == EnvironmentRequestDecisionKind::Approve && !old.replayable) {
         return Err(invalid("environment request cannot be resolved from its current state"));
@@ -453,3 +459,6 @@ fn audit(
         event_rows::insert_host_event(conn, &event, WriteTarget::Memory)
     }
 }
+
+mod lifecycle;
+pub(super) use lifecycle::invalidate;

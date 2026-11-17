@@ -1,8 +1,9 @@
 //! Restart-safe request views through the DB-owned reader and archive lease.
 use super::*;
 use crate::events::environment::request::{
-    EnvironmentRequestDecision, EnvironmentRequestDecisionKind, EnvironmentRequestKind, EnvironmentRequestPayload,
-    EnvironmentRequestState, EnvironmentRequestTarget,
+    EnvironmentRequestDecision, EnvironmentRequestDecisionKind, EnvironmentRequestInvalidation,
+    EnvironmentRequestInvalidationKind, EnvironmentRequestKind, EnvironmentRequestPayload, EnvironmentRequestState,
+    EnvironmentRequestTarget,
 };
 
 #[cfg(test)]
@@ -62,12 +63,14 @@ pub struct EnvironmentRequestRecord {
     pub source: Option<crate::events::EnvironmentRevisionParent>,
     pub requester: Option<EnvironmentRequestTarget>,
     pub timestamp_unix_ms: i64,
+    pub expires_at_unix_ms: i64,
     pub actor: String,
     pub reason: String,
     pub state: EnvironmentRequestState,
     pub payload_event_id: String,
     pub replayable: bool,
     pub decision: Option<EnvironmentRequestDecision>,
+    pub invalidation: Option<EnvironmentRequestInvalidation>,
     pub result: Option<crate::events::EnvironmentRevisionParent>,
 }
 impl std::fmt::Debug for EnvironmentRequestRecord {
@@ -153,8 +156,8 @@ impl DbHandle {
     }
 }
 
-const COLUMNS: &str = "r.id,r.request_id,r.kind,r.environment_id,r.base_revision_id,r.requester_session_id,r.requester_generation,r.timestamp_unix_ms,r.actor,r.reason,r.state,r.payload_event_id,r.replayable,r.result_environment_id,r.result_revision_id,d.timestamp_unix_ms,d.actor,d.decision,d.reason,r.source_environment_id,r.source_revision_id";
-const TABLES: &str = "environment_requests r LEFT JOIN environment_request_decisions d ON d.request_id=r.request_id";
+const COLUMNS: &str = "r.id,r.request_id,r.kind,r.environment_id,r.base_revision_id,r.requester_session_id,r.requester_generation,r.timestamp_unix_ms,r.actor,r.reason,r.state,r.payload_event_id,r.replayable,r.result_environment_id,r.result_revision_id,d.timestamp_unix_ms,d.actor,d.decision,d.reason,r.source_environment_id,r.source_revision_id,r.expires_at_unix_ms,i.timestamp_unix_ms,i.actor,i.kind,i.reason";
+const TABLES: &str = "environment_requests r LEFT JOIN environment_request_decisions d ON d.request_id=r.request_id LEFT JOIN environment_request_invalidations i ON i.request_id=r.request_id";
 const UUID_BYTES: usize = uuid::fmt::Hyphenated::LENGTH;
 // Longest canonical actor is vm:<session UUID>/<generation UUID>.
 const ACTOR_BYTES: usize = 2 * UUID_BYTES + 4;
@@ -291,14 +294,73 @@ fn from_row(row: &rusqlite::Row<'_>) -> DbResult<EnvironmentRequestRecord> {
         }
         _ => return Err("incomplete environment request decision evidence".into()),
     };
-    if decision
-        .as_ref()
-        .map_or(state != EnvironmentRequestState::Pending, |decision| {
-            decision.decision.state() != state.as_str()
+    let created_at: i64 = row
+        .get(7)
+        .map_err(|error| format!("environment request timestamp: {error}"))?;
+    let expires_at_unix_ms: i64 = row
+        .get(21)
+        .map_err(|error| format!("environment request expiry: {error}"))?;
+    let invalidated_at: Option<i64> = row
+        .get(22)
+        .map_err(|error| format!("environment invalidation timestamp: {error}"))?;
+    let invalidation = match (
+        invalidated_at,
+        optional(23, ACTOR_BYTES)?,
+        optional(24, 32)?,
+        optional(25, capsem_proto::APPROVAL_CONTEXT_BYTES)?,
+    ) {
+        (None, None, None, None) => None,
+        (Some(timestamp_unix_ms), Some(actor), Some(kind), Some(reason)) => Some(EnvironmentRequestInvalidation {
+            request_id: request_id.clone(),
+            timestamp_unix_ms,
+            actor,
+            kind: EnvironmentRequestInvalidationKind::parse_str(&kind)
+                .ok_or("unknown environment request invalidation")?,
+            reason,
+        }),
+        _ => return Err("incomplete environment request invalidation evidence".into()),
+    };
+    let decided = decision.as_ref().map(|value| value.decision);
+    let invalidated = invalidation.as_ref().map(|value| value.kind);
+    let coherent = match state {
+        EnvironmentRequestState::Pending => decided.is_none() && invalidated.is_none() && result.is_none(),
+        EnvironmentRequestState::Approved => {
+            decided == Some(EnvironmentRequestDecisionKind::Approve) && invalidated.is_none()
+        }
+        EnvironmentRequestState::Denied => {
+            decided == Some(EnvironmentRequestDecisionKind::Deny) && invalidated.is_none() && result.is_none()
+        }
+        EnvironmentRequestState::Cancelled => {
+            decided == Some(EnvironmentRequestDecisionKind::Cancel) && invalidated.is_none() && result.is_none()
+        }
+        EnvironmentRequestState::Expired => {
+            decided.is_none()
+                && invalidated == Some(EnvironmentRequestInvalidationKind::Expired)
+                && result.is_none()
+                && invalidation
+                    .as_ref()
+                    .is_some_and(|value| value.timestamp_unix_ms >= expires_at_unix_ms)
+        }
+        EnvironmentRequestState::Stale => {
+            (decided.is_none() || decided == Some(EnvironmentRequestDecisionKind::Approve))
+                && invalidated == Some(EnvironmentRequestInvalidationKind::Stale)
+                && result.is_none()
+        }
+    };
+    if !coherent
+        || created_at < 0
+        || expires_at_unix_ms <= created_at
+        || decision
+            .as_ref()
+            .is_some_and(|value| value.timestamp_unix_ms < created_at || value.timestamp_unix_ms >= expires_at_unix_ms)
+        || invalidation.as_ref().is_some_and(|value| {
+            value.timestamp_unix_ms < created_at
+                || decision
+                    .as_ref()
+                    .is_some_and(|decision| value.timestamp_unix_ms < decision.timestamp_unix_ms)
         })
-        || (result.is_some() && state != EnvironmentRequestState::Approved)
     {
-        return Err("environment request state does not match its decision evidence".into());
+        return Err("environment request state does not match its lifecycle evidence".into());
     }
     let replayable = match row
         .get::<_, i64>(12)
@@ -327,6 +389,8 @@ fn from_row(row: &rusqlite::Row<'_>) -> DbResult<EnvironmentRequestRecord> {
         payload_event_id: text(11, 12)?,
         replayable,
         decision,
+        invalidation,
+        expires_at_unix_ms,
         result,
     })
 }

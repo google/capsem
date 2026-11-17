@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: Durable configuration request review deadlines and explicit expired/stale outcomes that preserve original approval attribution and prevent late resolution or application.
+
 - Fixed: Archive retention preserves environment reconstruction dependencies for current configurations, sandbox revisions, pending requests, and retained fork history. Expired history retains its identity and explicitly reports when its values are unavailable.
 
 - Added: Typed environment revision admission through the machine-ledger writer, with atomic snapshot publication, immutable retries, explicit recovery/commit transitions, verified lineage checks, and ordered caller-attributed audit records.

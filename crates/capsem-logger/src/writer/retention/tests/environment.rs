@@ -126,6 +126,7 @@ async fn sandbox_dimensions_and_pending_promotion_source_protect_archived_revisi
         base_revision_id: Some(id(3)),
         requester: None,
         timestamp_unix_ms: 20,
+        expires_at_unix_ms: 10_000,
         actor: "operator".into(),
         reason: "promote retained fork".into(),
         payload_event_id: "abcdef012345".into(),

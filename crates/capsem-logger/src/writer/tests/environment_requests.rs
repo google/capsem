@@ -11,6 +11,7 @@ fn proposal() -> PreparedEnvironmentRequest {
         base_revision_id: None,
         requester: None,
         timestamp_unix_ms: 10,
+        expires_at_unix_ms: 10_000,
         actor: "operator".into(),
         reason: "request-reason-canary".into(),
         payload_event_id: "abcdef012345".into(),
@@ -569,7 +570,7 @@ async fn pending_environment_requests_are_bounded_across_staged_and_durable_rows
         )
         .unwrap();
     assert!(
-        plan.contains("idx_environment_requests_pending"),
+        plan.contains("idx_environment_requests_pending") || plan.contains("idx_environment_requests_expiry"),
         "pending admission must scan only bounded pending rows, not all request history: {plan}"
     );
     let mut deny = decision(EnvironmentRequestDecisionKind::Deny);
@@ -710,3 +711,6 @@ async fn approved_agent_request_cannot_prepare_an_edit_to_its_parent() {
     parent_edit.request_id = Some(id(1));
     rejected(&writer, WriteOp::PrepareEnvironmentRevision(parent_edit)).await;
 }
+
+#[path = "environment_requests/lifecycle.rs"]
+mod lifecycle;

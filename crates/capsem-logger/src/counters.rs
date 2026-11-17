@@ -237,6 +237,7 @@ impl LedgerTally {
             | WriteOp::PrepareEnvironmentRequest(_)
             | WriteOp::EnvironmentRequestDecision(_)
             | WriteOp::EnvironmentRequestResult(_)
+            | WriteOp::EnvironmentRequestInvalidation(_)
             | WriteOp::EnvironmentSandboxReference(_)
             | WriteOp::Network(_)
             | WriteOp::NetworkMembership(_)

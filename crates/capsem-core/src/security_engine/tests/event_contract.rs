@@ -719,6 +719,7 @@ async fn host_environment_writes_never_enter_runtime_security_admission() {
             base_revision_id: None,
             requester: None,
             timestamp_unix_ms: 1,
+            expires_at_unix_ms: 10_000,
             actor: "operator".into(),
             reason: "create environment".into(),
             payload_event_id: "abcdef012345".into(),

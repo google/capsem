@@ -6,6 +6,7 @@ const ENVIRONMENT_TABLES: &[&str] = &[
     "environment_revision_references",
     "environment_applications",
     "environment_request_decisions",
+    "environment_request_invalidations",
     "environment_requests",
     "environment_revisions",
     "environment_schema",

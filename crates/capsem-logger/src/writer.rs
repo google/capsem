@@ -232,6 +232,7 @@ pub enum WriteOp {
     PrepareEnvironmentRequest(crate::events::environment::request::PreparedEnvironmentRequest),
     EnvironmentRequestDecision(crate::events::environment::request::EnvironmentRequestDecision),
     EnvironmentRequestResult(crate::events::environment::request::EnvironmentRequestResult),
+    EnvironmentRequestInvalidation(crate::events::environment::request::EnvironmentRequestInvalidation),
     EnvironmentSandboxReference(crate::events::environment::EnvironmentSandboxReferenceMutation),
     /// Registry rows of a network database; upserted by key, disk-only.
     Network(NetworkRecord),
