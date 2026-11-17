@@ -37,11 +37,13 @@ def test_contention_benchmark_budget_gates_p99_not_single_tail_outlier() -> None
         "p99_ms": 1.5,
         "max_ms": 59.709,
         "service_cpu_s": 0.28,
+        "gateway_cpu_s": 0.12,
     }
     gates = {
         "p95_ms_max": 15.0,
         "p99_ms_max": 40.0,
         "service_cpu_s_max": 0.34,
+        "gateway_cpu_s_max": 0.34,
     }
 
     _assert_route_contention_benchmark_budget(summary, gates)
@@ -54,11 +56,13 @@ def test_contention_benchmark_budget_rejects_p99_regression() -> None:
         "p99_ms": 42.0,
         "max_ms": 59.709,
         "service_cpu_s": 0.28,
+        "gateway_cpu_s": 0.12,
     }
     gates = {
         "p95_ms_max": 15.0,
         "p99_ms_max": 40.0,
         "service_cpu_s_max": 0.34,
+        "gateway_cpu_s_max": 0.34,
     }
 
     with pytest.raises(AssertionError):
@@ -170,3 +174,10 @@ def test_reference_route_budget_uses_the_configured_ceiling() -> None:
     )
 
     assert budget.cpu_s == pytest.approx(0.23)
+
+
+def test_contention_benchmark_rejects_gateway_cpu_regression() -> None:
+    summary = {"p95_ms": 1.2, "p99_ms": 1.5, "service_cpu_s": 0.1, "gateway_cpu_s": 1.0}
+    gates = {"p95_ms_max": 15.0, "p99_ms_max": 40.0, "service_cpu_s_max": 0.34, "gateway_cpu_s_max": 0.34}
+    with pytest.raises(AssertionError):
+        _assert_route_contention_benchmark_budget(summary, gates)

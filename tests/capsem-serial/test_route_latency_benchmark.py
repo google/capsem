@@ -49,6 +49,7 @@ def _assert_route_contention_benchmark_budget(summary: dict, gates: dict) -> Non
     assert summary["p95_ms"] <= gates["p95_ms_max"]
     assert summary["p99_ms"] <= gates["p99_ms_max"]
     assert summary["service_cpu_s"] <= (gates["service_cpu_s_max"] + CPU_ACCOUNTING_SLACK_S)
+    assert summary["gateway_cpu_s"] <= (gates["gateway_cpu_s_max"] + CPU_ACCOUNTING_SLACK_S)
 
 
 def test_route_read_write_contention_benchmark() -> None:
@@ -59,17 +60,17 @@ def test_route_read_write_contention_benchmark() -> None:
     actions = [row["action"] for row in result.writer_results]
     budget = concurrent_stats_budget()
     data = {
-        "version": "0.1.0",
+        "version": "0.2.0",
         "timestamp": time.time(),
-        "scenario": "service_stats_reads_during_policy_mutation_writes",
+        "scenario": "gateway_stats_reads_during_policy_mutation_writes",
         "reader": {
             "route": "/stats",
-            "transport": "service_uds",
+            "transport": "authenticated_gateway_tcp",
             "summary": summary,
         },
         "writer": {
             "route": "/mcp/default/edit",
-            "transport": "service_uds",
+            "transport": "authenticated_gateway_tcp",
             "writes": len(actions),
             "actions": actions,
             "unique_actions": sorted(set(actions)),
@@ -86,6 +87,7 @@ def test_route_read_write_contention_benchmark() -> None:
             # the release gate and archived benchmark cannot drift apart.
             # Leave one Linux process CPU tick of accounting slack.
             "service_cpu_s_max": budget.cpu_s,
+            "gateway_cpu_s_max": budget.cpu_s,
         },
     }
 

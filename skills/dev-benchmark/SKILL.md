@@ -171,7 +171,10 @@ service-owned, authenticated gateway. The load window emits raw concurrent
 latency, aggregate RPS, and separate gateway/downstream-service CPU samples.
 The historical `service.*` series measured anonymous public-UDS ingress and is
 retired: gateway timings include authentication and forwarding and must never
-be labeled service-only latency. Mutation and external-state routes remain in
+be labeled service-only latency. The route-health gate uses the same ingress;
+its contention archive is format 0.2.0 (`authenticated_gateway_tcp`) and is not
+comparable to historical anonymous-UDS 0.1.0 latency. Both CPU owners remain
+separate and retain their existing ceilings. Mutation and external-state routes remain in
 the explicit debt inventory until their owning fixture can replay them safely.
 
 ## Benchmarks that are still pytest

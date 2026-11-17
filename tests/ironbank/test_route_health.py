@@ -1,8 +1,12 @@
 """Ironbank route health gates for Capsem control surfaces.
 
 These tests are intentionally black-box. They start the real service and gateway
-processes, call the public routes the UI/TUI depend on, and fail when a route
+processes, call the authenticated gateway routes the UI/TUI depend on, and fail when a route
 quietly regresses into CPU-bound work such as hashing VM assets on a poll path.
+
+Anonymous service-only latency is retired. All measured control requests cross
+actual owned gateway authentication/forwarding; downstream service and gateway
+CPU remain separately sampled.
 """
 
 from __future__ import annotations
@@ -31,7 +35,7 @@ from helpers.constants import (
     EXEC_TIMEOUT_SECS,
     HTTP_TIMEOUT,
 )
-from helpers.gateway import GatewayInstance, TcpHttpClient
+from helpers.gateway import TcpHttpClient
 from helpers.http_transport import Transport
 from helpers.process_cpu import process_cpu_seconds
 from helpers.route_health_budget import (
@@ -50,6 +54,7 @@ from helpers.route_health_budget import (
     scaled_hot_route_budget as _scaled_hot_route_budget,
 )
 from helpers.service import ServiceInstance, exec_output_text, vm_name, wait_exec_ready
+from helpers.service_gateway import ServiceGateway
 
 from tests.ironbank.test_stats_detail_contract import (
     SESSION_ID as SEEDED_SESSION_ID,
@@ -155,11 +160,7 @@ class PersistentJsonClient:
         return json.loads(raw.decode("utf-8"))
 
 
-def _fast_service_client(service: ServiceInstance) -> PersistentJsonClient:
-    return PersistentJsonClient(Transport(socket_path=str(service.uds_path)))
-
-
-def _fast_gateway_client(gateway: GatewayInstance) -> PersistentJsonClient:
+def _fast_gateway_client(gateway: ServiceGateway) -> PersistentJsonClient:
     assert gateway.port is not None
     assert gateway.token is not None
     return PersistentJsonClient(
@@ -347,7 +348,7 @@ def route_timing_summary(timing: RouteTiming) -> dict[str, Any]:
 
 def _hot_route_contracts() -> list[RouteContract]:
     return [
-        RouteContract("GET", "/status", None, {"ready", "service"}, dict),
+        RouteContract("GET", "/status", None, {"gateway_version", "service", "vm_count", "assets"}, dict),
         RouteContract("GET", "/vms/list", None, {"sandboxes"}, dict),
         RouteContract("GET", "/stats", None, {"global", "sessions"}, dict),
         RouteContract(
@@ -428,9 +429,9 @@ def _assert_archived_exec_body(client: Any, vm_id: str, event_id: str) -> None:
     assert body["body_hash"] == f"xxh3-128:{xxh3_128(body['content'].encode()):032x}"
 
 
-def _service_route_contracts() -> list[RouteContract]:
+def _control_route_contracts() -> list[RouteContract]:
     return [
-        RouteContract("GET", "/status", None, {"components", "ready", "service", "version"}, dict),
+        RouteContract("GET", "/status", None, {"gateway_version", "service", "vm_count", "assets"}, dict),
         RouteContract("GET", "/version", None, {"version"}, dict),
         RouteContract("GET", "/vms/list", None, {"sandboxes"}, dict),
         RouteContract(
@@ -575,7 +576,7 @@ def test_control_route_contracts_exist_for_ui_tui_blocking_and_vm_surfaces() -> 
     try:
         service.start()
         client = service.client()
-        for contract in _service_route_contracts():
+        for contract in _control_route_contracts():
             _assert_contract(client, contract)
     finally:
         service.stop()
@@ -624,41 +625,20 @@ def test_vm_list_table_record_uses_uuid_id_not_display_name_blackbox() -> None:
 @pytest.mark.serial
 def test_hot_control_routes_have_latency_and_cpu_budgets() -> None:
     service = ServiceInstance()
-    gateway: GatewayInstance | None = None
-    fast_service_client: PersistentJsonClient | None = None
+    gateway: ServiceGateway | None = None
     fast_gateway_client: PersistentJsonClient | None = None
     budget_failures: list[AssertionError] = []
     try:
         service.start()
-        gateway = GatewayInstance(uds_path=service.uds_path)
+        gateway = ServiceGateway(service)
         gateway.start()
-        fast_service_client = _fast_service_client(service)
         fast_gateway_client = _fast_gateway_client(gateway)
         assert service.proc is not None
         assert gateway.proc is not None
         service_proc = psutil.Process(service.proc.pid)
         gateway_proc = psutil.Process(gateway.proc.pid)
 
-        for contract in _hot_route_contracts():
-            timing = _measure_hot_route(
-                f"service {contract.path}",
-                lambda c=contract: _assert_contract(fast_service_client, c),
-                service_proc=service_proc,
-            )
-            _capture_hot_route_budget(budget_failures, timing, path=contract.path)
-
-        hot_gateway_routes = [
-            RouteContract(
-                "GET",
-                "/status",
-                None,
-                {"gateway_version", "service", "vm_count", "assets"},
-                dict,
-            ),
-            RouteContract("GET", "/vms/list", None, {"sandboxes"}, dict),
-            RouteContract("GET", "/stats", None, {"global", "sessions"}, dict),
-            *_hot_route_contracts()[3:],
-        ]
+        hot_gateway_routes = _hot_route_contracts()
         for contract in hot_gateway_routes:
             timing = _measure_hot_route(
                 f"gateway {contract.path}",
@@ -674,8 +654,6 @@ def test_hot_control_routes_have_latency_and_cpu_budgets() -> None:
             )
         _raise_budget_failures(budget_failures)
     finally:
-        if fast_service_client is not None:
-            fast_service_client.close()
         if fast_gateway_client is not None:
             fast_gateway_client.close()
         if gateway is not None:
@@ -686,8 +664,7 @@ def test_hot_control_routes_have_latency_and_cpu_budgets() -> None:
 @pytest.mark.serial
 def test_seeded_session_ledger_routes_have_latency_and_cpu_budgets() -> None:
     service = ServiceInstance()
-    gateway: GatewayInstance | None = None
-    fast_service_client: PersistentJsonClient | None = None
+    gateway: ServiceGateway | None = None
     fast_gateway_client: PersistentJsonClient | None = None
     budget_failures: list[AssertionError] = []
     try:
@@ -701,42 +678,34 @@ def test_seeded_session_ledger_routes_have_latency_and_cpu_budgets() -> None:
         registry_path.write_text(json.dumps(registry))
 
         service.start()
-        gateway = GatewayInstance(uds_path=service.uds_path)
+        gateway = ServiceGateway(service)
         gateway.start()
-        fast_service_client = _fast_service_client(service)
         fast_gateway_client = _fast_gateway_client(gateway)
         assert service.proc is not None
         assert gateway.proc is not None
         service_proc = psutil.Process(service.proc.pid)
         gateway_proc = psutil.Process(gateway.proc.pid)
 
-        for client_label, client, gateway_for_cpu in (
-            ("service", fast_service_client, None),
-            ("gateway", fast_gateway_client, gateway_proc),
-        ):
-            is_gateway = gateway_for_cpu is not None
-            for route_contract in _seeded_session_route_contracts(SEEDED_VM_ID):
-                timing = _measure_hot_route(
-                    f"{client_label} {route_contract.path}",
-                    lambda c=route_contract, route_client=client: _assert_contract(
-                        route_client,
-                        c,
-                    ),
-                    service_proc=service_proc,
-                    gateway_proc=gateway_for_cpu,
-                )
-                summary = route_timing_summary(timing)
-                print("ROUTE_LATENCY_JSON " + json.dumps(summary, sort_keys=True))
-                _capture_hot_route_budget(
-                    budget_failures,
-                    timing,
-                    path=route_contract.path,
-                    gateway=is_gateway,
-                )
+        for route_contract in _seeded_session_route_contracts(SEEDED_VM_ID):
+            timing = _measure_hot_route(
+                f"gateway {route_contract.path}",
+                lambda c=route_contract, route_client=fast_gateway_client: _assert_contract(
+                    route_client,
+                    c,
+                ),
+                service_proc=service_proc,
+                gateway_proc=gateway_proc,
+            )
+            summary = route_timing_summary(timing)
+            print("ROUTE_LATENCY_JSON " + json.dumps(summary, sort_keys=True))
+            _capture_hot_route_budget(
+                budget_failures,
+                timing,
+                path=route_contract.path,
+                gateway=True,
+            )
         _raise_budget_failures(budget_failures)
     finally:
-        if fast_service_client is not None:
-            fast_service_client.close()
         if fast_gateway_client is not None:
             fast_gateway_client.close()
         if gateway is not None:
@@ -750,10 +719,14 @@ def run_concurrent_route_read_write_benchmark(
     mutation_repeats: int = 4,
 ) -> ConcurrentRouteWriteBenchmark:
     service = ServiceInstance()
-    fast_service_client: PersistentJsonClient | None = None
+    gateway = ServiceGateway(service)
+    fast_gateway_client: PersistentJsonClient | None = None
     try:
         service.start()
-        fast_service_client = _fast_service_client(service)
+        gateway.start()
+        fast_gateway_client = _fast_gateway_client(gateway)
+        assert gateway.proc is not None
+        gateway_proc = psutil.Process(gateway.proc.pid)
         writer_client = service.client()
         assert service.proc is not None
         service_proc = psutil.Process(service.proc.pid)
@@ -800,12 +773,13 @@ def run_concurrent_route_read_write_benchmark(
             assert writer_started.wait(timeout=5), "writer route never started"
 
             timing = _measure_route(
-                "service /stats during policy-mutation writes",
+                "gateway /stats during policy-mutation writes",
                 lambda: _assert_contract(
-                    fast_service_client,
+                    fast_gateway_client,
                     RouteContract("GET", "/stats", None, {"global", "sessions"}, dict),
                 ),
                 service_proc=service_proc,
+                gateway_proc=gateway_proc,
                 samples=samples,
             )
 
@@ -814,7 +788,7 @@ def run_concurrent_route_read_write_benchmark(
         assert not writer_errors, writer_errors
         assert writer_done.is_set()
 
-        final_default = fast_service_client.get(
+        final_default = fast_gateway_client.get(
             "/mcp/default/info",
             timeout=20,
         )
@@ -825,8 +799,9 @@ def run_concurrent_route_read_write_benchmark(
             final_default_rule_id=final_default["rule_id"],
         )
     finally:
-        if fast_service_client is not None:
-            fast_service_client.close()
+        if fast_gateway_client is not None:
+            fast_gateway_client.close()
+        gateway.stop()
         service.stop()
 
 
@@ -834,8 +809,8 @@ def run_concurrent_route_read_write_benchmark(
 def test_concurrent_route_reads_while_writes_are_active() -> None:
     """Route reads must stay responsive while public routes write ledgers.
 
-    This is the S05 disk-backed baseline before DB-owned memory tables. The
-    reader path is `/stats`, which reads through the main DB handle. The writer
+    Both clients cross the owned authenticated gateway. The reader path is
+    `/stats`, which reads through the main DB handle. The writer
     path is a public policy mutation route, which edits settings.toml and writes
     `policy_mutation_events` through the same DB boundary. No direct SQLite
     fixture writes are allowed here: the point is to measure the user-visible
@@ -868,17 +843,17 @@ def test_concurrent_route_reads_while_writes_are_active() -> None:
 @pytest.mark.serial
 def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
     service = ServiceInstance()
-    gateway: GatewayInstance | None = None
+    gateway: ServiceGateway | None = None
     source_name = vm_name("ironbank-route-life")
     child_name = vm_name("ironbank-route-child")
     source_id: str | None = None
     child_id: str | None = None
     try:
         service.start()
-        gateway = GatewayInstance(uds_path=service.uds_path)
+        gateway = ServiceGateway(service)
         gateway.start()
         assert gateway.token is not None
-        service_client = service.client()
+        operator_client = service.client()
         gateway_client = TcpHttpClient(gateway.base_url, gateway.token)
         assert service.proc is not None
         assert gateway.proc is not None
@@ -886,8 +861,8 @@ def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
         gateway_proc = psutil.Process(gateway.proc.pid)
 
         create, timing = _measure_once(
-            "service /vms/create persistent",
-            lambda: service_client.post(
+            "gateway /vms/create persistent",
+            lambda: operator_client.post(
                 "/vms/create",
                 {
                     "name": source_name,
@@ -898,85 +873,82 @@ def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
                 timeout=HTTP_TIMEOUT,
             ),
             service_proc=service_proc,
+            gateway_proc=gateway_proc,
         )
         source_id = create["id"]
         assert create["name"] == source_name
         assert source_id != source_name
         _assert_uuid_route_id(source_id)
         _assert_timing_budget(timing, p95_ms=45_000.0, max_ms=45_000.0, cpu_s=10.0)
-        assert wait_exec_ready(service_client, source_id, timeout=EXEC_READY_TIMEOUT)
+        assert wait_exec_ready(operator_client, source_id, timeout=EXEC_READY_TIMEOUT)
 
-        for client_label, client, gateway_for_cpu in (
-            ("service", service_client, None),
-            ("gateway", gateway_client, gateway_proc),
+        for contract in (
+            RouteContract(
+                "GET", f"/vms/{source_id}/status", None, {"id", "name", "status"}, dict
+            ),
+            RouteContract(
+                "GET", f"/vms/{source_id}/info", None, {"id", "name", "status"}, dict
+            ),
+            RouteContract(
+                "GET",
+                f"/vms/{source_id}/stats/detail",
+                None,
+                {
+                    "model_stats",
+                    "model_events",
+                    "tool_events",
+                    "http_events",
+                    "dns_events",
+                    "file_events",
+                    "process_events",
+                    "audit_events",
+                    "credential_events",
+                    "body_blobs",
+                },
+                dict,
+            ),
+            RouteContract("GET", "/vms/list", None, {"sandboxes"}, dict),
         ):
-            for contract in (
-                RouteContract(
-                    "GET", f"/vms/{source_id}/status", None, {"id", "name", "status"}, dict
-                ),
-                RouteContract(
-                    "GET", f"/vms/{source_id}/info", None, {"id", "name", "status"}, dict
-                ),
-                RouteContract(
-                    "GET",
-                    f"/vms/{source_id}/stats/detail",
-                    None,
-                    {
-                        "model_stats",
-                        "model_events",
-                        "tool_events",
-                        "http_events",
-                        "dns_events",
-                        "file_events",
-                        "process_events",
-                        "audit_events",
-                        "credential_events",
-                        "body_blobs",
-                    },
-                    dict,
-                ),
-                RouteContract("GET", "/vms/list", None, {"sandboxes"}, dict),
-            ):
-                timing = _measure_route_windows(
-                    f"{client_label} {contract.path}",
-                    lambda c=contract, route_client=client: _assert_contract(route_client, c),
-                    service_proc=service_proc,
-                    gateway_proc=gateway_for_cpu,
-                    samples=HOT_ROUTE_REFERENCE_SAMPLES,
-                )
-                budget = _scaled_hot_route_budget(
-                    contract.path,
-                    gateway=gateway_for_cpu is not None,
-                    samples=HOT_ROUTE_REFERENCE_SAMPLES,
-                )
-                _assert_timing_budget(
-                    timing,
-                    p95_ms=max(budget.p95_ms, 350.0),
-                    p99_ms=max(budget.p99_ms, 500.0),
-                    max_ms=None,
-                    cpu_s=budget.cpu_s,
-                )
+            timing = _measure_route_windows(
+                f"gateway {contract.path}",
+                lambda c=contract, route_client=gateway_client: _assert_contract(route_client, c),
+                service_proc=service_proc,
+                gateway_proc=gateway_proc,
+                samples=HOT_ROUTE_REFERENCE_SAMPLES,
+            )
+            budget = _scaled_hot_route_budget(
+                contract.path,
+                gateway=True,
+                samples=HOT_ROUTE_REFERENCE_SAMPLES,
+            )
+            _assert_timing_budget(
+                timing,
+                p95_ms=max(budget.p95_ms, 350.0),
+                p99_ms=max(budget.p99_ms, 500.0),
+                max_ms=None,
+                cpu_s=budget.cpu_s,
+            )
 
-        running_status = service_client.get(f"/vms/{source_id}/status", timeout=30)
+        running_status = operator_client.get(f"/vms/{source_id}/status", timeout=30)
         assert running_status["id"] == source_id
         assert running_status["name"] == source_name
         assert running_status["status"] == "Running"
         assert running_status["persistent"] is True
         assert running_status["can_resume"] is False
         assert running_status["available_actions"] == ["stop", "fork", "delete"]
-        running_info = service_client.get(f"/vms/{source_id}/info", timeout=30)
+        running_info = operator_client.get(f"/vms/{source_id}/info", timeout=30)
         assert running_info["name"] == source_name
         assert running_info["status"] == "Running"
         _assert_vm_row(
-            service_client.get("/vms/list", timeout=30),
+            operator_client.get("/vms/list", timeout=30),
             source_id,
             status="Running",
             persistent=True,
         )
 
         exec_payload, timing = _measure_once(
-            "service /vms/{id}/exec",
-            lambda: service_client.post(
+            "gateway /vms/{id}/exec",
+            lambda: operator_client.post(
                 f"/vms/{source_id}/exec",
                 {
                     "command": "printf route-lifecycle-ok",
@@ -985,24 +957,26 @@ def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
                 timeout=EXEC_TIMEOUT_SECS + 5,
             ),
             service_proc=service_proc,
+            gateway_proc=gateway_proc,
         )
         assert exec_payload["exit_code"] == 0
         assert exec_output_text(exec_payload) == "route-lifecycle-ok"
         _assert_timing_budget(timing, p95_ms=10_000.0, max_ms=10_000.0, cpu_s=1.0)
-        detail = service_client.get(f"/vms/{source_id}/stats/detail", timeout=30)
+        detail = operator_client.get(f"/vms/{source_id}/stats/detail", timeout=30)
         exec_rows = [row for row in detail["process_events"] if row["command"] == "printf route-lifecycle-ok"]
         assert len(exec_rows) == 1, exec_rows
         exec_event_id = exec_rows[0]["event_id"]
-        _assert_archived_exec_body(service_client, source_id, exec_event_id)
+        _assert_archived_exec_body(operator_client, source_id, exec_event_id)
 
         fork_payload, timing = _measure_once(
-            "service /vms/{id}/fork",
-            lambda: service_client.post(
+            "gateway /vms/{id}/fork",
+            lambda: operator_client.post(
                 f"/vms/{source_id}/fork",
                 {"name": child_name, "description": "Ironbank route lifecycle child"},
                 timeout=60,
             ),
             service_proc=service_proc,
+            gateway_proc=gateway_proc,
         )
         child_id = fork_payload["id"]
         assert fork_payload["name"] == child_name
@@ -1010,7 +984,7 @@ def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
         _assert_uuid_route_id(child_id)
         assert fork_payload["size_bytes"] > 0
         _assert_timing_budget(timing, p95_ms=20_000.0, max_ms=20_000.0, cpu_s=5.0)
-        child_status = service_client.get(f"/vms/{child_id}/status", timeout=30)
+        child_status = operator_client.get(f"/vms/{child_id}/status", timeout=30)
         assert child_status["id"] == child_id
         assert child_status["status"] == "Stopped"
         assert child_status["persistent"] is True
@@ -1018,61 +992,67 @@ def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
         _assert_archived_exec_body(gateway_client, child_id, exec_event_id)
 
         delete_child, timing = _measure_once(
-            "service /vms/{child}/delete",
-            lambda: service_client.delete(f"/vms/{child_id}/delete", timeout=60),
+            "gateway /vms/{child}/delete",
+            lambda: operator_client.delete(f"/vms/{child_id}/delete", timeout=60),
             service_proc=service_proc,
+            gateway_proc=gateway_proc,
         )
         assert delete_child == {"success": True}
         _assert_timing_budget(timing, p95_ms=5_000.0, max_ms=5_000.0, cpu_s=1.0)
-        _assert_vm_absent(service_client.get("/vms/list", timeout=30), child_id)
+        _assert_vm_absent(operator_client.get("/vms/list", timeout=30), child_id)
 
-        before_pause = service_client.get(f"/vms/{source_id}/info", timeout=30)
+        before_pause = operator_client.get(f"/vms/{source_id}/info", timeout=30)
         pause_payload, timing = _measure_once(
-            "service /vms/{id}/pause disabled",
-            lambda: service_client.call_json("POST", f"/vms/{source_id}/pause", {}, timeout=45),
+            "gateway /vms/{id}/pause disabled",
+            lambda: operator_client.call_json("POST", f"/vms/{source_id}/pause", {}, timeout=45),
             service_proc=service_proc,
+            gateway_proc=gateway_proc,
         )
         assert pause_payload[0] == 501 and "warm suspend is disabled" in pause_payload[1]["error"]
         _assert_timing_budget(timing, p95_ms=20_000.0, max_ms=20_000.0, cpu_s=5.0)
-        after_pause = service_client.get(f"/vms/{source_id}/info", timeout=30)
+        after_pause = operator_client.get(f"/vms/{source_id}/info", timeout=30)
         assert after_pause["status"] == "Running" and after_pause["pid"] == before_pause["pid"]
-        _assert_archived_exec_body(service_client, source_id, exec_event_id)
+        _assert_archived_exec_body(operator_client, source_id, exec_event_id)
 
         stop_payload, timing = _measure_once(
-            "service /vms/{id}/stop",
-            lambda: service_client.post(f"/vms/{source_id}/stop", {}, timeout=30),
+            "gateway /vms/{id}/stop",
+            lambda: operator_client.post(f"/vms/{source_id}/stop", {}, timeout=30),
             service_proc=service_proc,
+            gateway_proc=gateway_proc,
         )
         assert stop_payload == {"success": True, "persistent": True}
         _assert_timing_budget(timing, p95_ms=10_000.0, max_ms=10_000.0, cpu_s=2.0)
-        stopped_status = service_client.get(f"/vms/{source_id}/status", timeout=30)
+        stopped_status = operator_client.get(f"/vms/{source_id}/status", timeout=30)
         assert stopped_status["status"] == "Stopped"
         assert stopped_status["persistent"] is True
         assert stopped_status["can_resume"] is True
 
         resume_payload, timing = _measure_once(
-            "service /vms/{id}/resume from stopped",
-            lambda: service_client.post(f"/vms/{source_id}/resume", {}, timeout=HTTP_TIMEOUT),
+            "gateway /vms/{id}/resume from stopped",
+            lambda: operator_client.post(f"/vms/{source_id}/resume", {}, timeout=HTTP_TIMEOUT),
             service_proc=service_proc,
+            gateway_proc=gateway_proc,
         )
         assert resume_payload["id"] == source_id
         _assert_timing_budget(timing, p95_ms=45_000.0, max_ms=45_000.0, cpu_s=10.0)
-        assert wait_exec_ready(service_client, source_id, timeout=EXEC_READY_TIMEOUT)
+        assert wait_exec_ready(operator_client, source_id, timeout=EXEC_READY_TIMEOUT)
         _assert_archived_exec_body(gateway_client, source_id, exec_event_id)
 
         delete_source, timing = _measure_once(
-            "service /vms/{id}/delete",
-            lambda: service_client.delete(f"/vms/{source_id}/delete", timeout=60),
+            "gateway /vms/{id}/delete",
+            lambda: operator_client.delete(f"/vms/{source_id}/delete", timeout=60),
             service_proc=service_proc,
+            gateway_proc=gateway_proc,
         )
         assert delete_source == {"success": True}
         _assert_timing_budget(timing, p95_ms=5_000.0, max_ms=5_000.0, cpu_s=1.0)
-        _assert_vm_absent(service_client.get("/vms/list", timeout=30), source_id)
+        _assert_vm_absent(operator_client.get("/vms/list", timeout=30), source_id)
 
         purge_payload, timing = _measure_once(
-            "service /purge",
-            lambda: service_client.post("/purge", {"all": True}, timeout=60),
+            "gateway /purge",
+            lambda: operator_client.post("/purge", {"all": True}, timeout=60),
             service_proc=service_proc,
+            gateway_proc=gateway_proc,
         )
         assert {"purged", "persistent_purged", "ephemeral_purged"} <= set(purge_payload)
         _assert_timing_budget(timing, p95_ms=5_000.0, max_ms=5_000.0, cpu_s=1.0)
