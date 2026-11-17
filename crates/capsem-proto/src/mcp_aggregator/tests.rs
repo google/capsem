@@ -1,6 +1,38 @@
 use super::*;
 use tokio::io::AsyncWriteExt;
 
+#[tokio::test]
+async fn mcp_payload_json_expansion_fits_the_binary_control_envelope() {
+    let limit = crate::MCP_PAYLOAD_MAX_BYTES;
+    let dense_floats = serde_json::Value::Array(vec![serde_json::json!(0.0); limit / 4 - 64]);
+    let escaped = serde_json::json!({"content":"\0🧪\\\"".repeat(limit / 16 - 64)});
+    let mut nested = serde_json::json!({"content":"complete"});
+    for _ in 0..64 {
+        nested = serde_json::json!({"nested":nested});
+    }
+    for value in [dense_floats, escaped, nested] {
+        let mut external = crate::mcp_contracts::JsonRpcResponse::ok(Some(serde_json::json!(1)), value);
+        let json = crate::framing::encode_json_record(&external, limit).unwrap();
+        assert!(json.len() <= limit);
+        let response = AggregatorResponse {
+            id: 1,
+            body: AggregatorResult::CallResult {
+                result: external.result.take().unwrap(),
+            },
+        };
+        let mut encoded = Vec::new();
+        write_frame(&mut encoded, &response).await.unwrap();
+        assert!(encoded.len() - 4 <= MAX_FRAME_SIZE as usize);
+        let recovered: AggregatorResponse = read_frame(&mut encoded.as_slice()).await.unwrap().unwrap();
+        let (AggregatorResult::CallResult { result: before }, AggregatorResult::CallResult { result: after }) =
+            (response.body, recovered.body)
+        else {
+            panic!("unchanged call result")
+        };
+        assert!(before == after);
+    }
+}
+
 struct SerializationProbe<'a>(&'a std::sync::atomic::AtomicBool);
 impl Serialize for SerializationProbe<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {

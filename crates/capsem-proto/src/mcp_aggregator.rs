@@ -20,9 +20,11 @@ use crate::mcp_contracts::{McpPromptDef, McpResourceDef, McpServerDef, McpToolDe
 // ── Length-prefixed MessagePack framing ────────────────────────────
 //
 // Wire format: [4 bytes big-endian payload length] [N bytes msgpack]
-// Max frame size: 16 MB.
-
-const MAX_FRAME_SIZE: u32 = 16 * 1024 * 1024;
+// This binary control envelope is larger than the usable external JSON-RPC
+// payload: short JSON floating-point values can expand into nine-byte binary
+// values, and typed discovery records include routing metadata. Preserve the
+// existing 16 MiB allowance for a 1 MiB payload, deriving both from one owner.
+const MAX_FRAME_SIZE: u32 = (crate::MCP_PAYLOAD_MAX_BYTES * 16) as u32;
 
 /// A frame refused before any bytes are written, so the stream stays aligned.
 /// The length is a lower bound: encoding stops at the first excessive write.

@@ -363,8 +363,11 @@ pub const MCP_FRAME_VERSION: u8 = 1;
 pub const MCP_FRAME_HEADER_LEN: u8 = 16;
 /// Notifications reserve `stream_id=0` and set this flag.
 pub const MCP_FRAME_FLAG_NOTIFICATION: u16 = 0x0001;
-/// Maximum MCP frame body size after the four-byte length prefix.
-pub const MCP_FRAME_MAX_SIZE: usize = 1_052_672;
+/// Maximum frame body after the length prefix, including fixed protocol
+/// fields and maximum attribution. The usable JSON-RPC limit is independent
+/// of how much attribution any particular frame carries.
+pub const MCP_FRAME_MAX_SIZE: usize =
+    MCP_PAYLOAD_MAX_BYTES + MCP_FRAME_HEADER_LEN as usize + MCP_FRAME_MAX_PROCESS_NAME_LEN;
 /// The guest's end of an MCP session, in band: a length no frame can have.
 /// A vsock shutdown can reach the host ahead of bytes still in flight on
 /// Apple VZ, so the relay never uses one to say it is done.
@@ -417,6 +420,9 @@ pub fn encode_mcp_frame_header(
     payload_len: usize,
 ) -> Result<McpFrameHeader> {
     validate_mcp_frame_stream_flags(stream_id, flags)?;
+    if payload_len > MCP_PAYLOAD_MAX_BYTES {
+        bail!("MCP payload too large: {payload_len} bytes (max {MCP_PAYLOAD_MAX_BYTES})");
+    }
 
     let process_name_bytes = process_name.as_bytes();
     if process_name_bytes.len() > MCP_FRAME_MAX_PROCESS_NAME_LEN {
@@ -510,6 +516,9 @@ pub fn decode_mcp_frame_body(body: &[u8]) -> Result<McpFrame> {
 
     let process_name_len = u16::from_be_bytes([body[10], body[11]]) as usize;
     let payload_len = u32::from_be_bytes([body[12], body[13], body[14], body[15]]) as usize;
+    if payload_len > MCP_PAYLOAD_MAX_BYTES {
+        bail!("MCP payload too large: {payload_len} bytes (max {MCP_PAYLOAD_MAX_BYTES})");
+    }
     if process_name_len > MCP_FRAME_MAX_PROCESS_NAME_LEN {
         bail!("MCP process name too long: {process_name_len} bytes");
     }

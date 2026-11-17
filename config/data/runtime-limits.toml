@@ -49,6 +49,9 @@ durability_timeout_seconds = 30
 
 [mcp]
 # Bounds for the native guest-tool workers, not the external npm SDK client.
+# Complete external JSON-RPC message bytes. Framing and binary control
+# envelopes have derived allowances; this is not an agent-context budget.
+payload_max_bytes = 1048576
 http_timeout_seconds = 30
 startup_timeout_seconds = 10
 worker_queue_capacity = 64

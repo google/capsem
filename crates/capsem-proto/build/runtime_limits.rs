@@ -176,6 +176,10 @@ pub fn write_runtime_limits() {
     let mcp_worker_queue_capacity = mcp_integer("worker_queue_capacity", 65_536);
     let mcp_builtin_peers_per_session = mcp_integer("builtin_peers_per_session", 16);
     let mcp_request_id_max_bytes = mcp_integer("request_id_max_bytes", 65_536);
+    let mcp_payload_max_bytes = mcp_integer("payload_max_bytes", 8 * 1024 * 1024);
+    if mcp_payload_max_bytes <= 6 * mcp_request_id_max_bytes + 512 {
+        panic!("runtime limits: MCP payload must fit an escaped correlation ID and error envelope");
+    }
     let terminal_limits = config["terminal"]
         .as_table()
         .expect("terminal limits table")
@@ -217,6 +221,8 @@ pub fn write_runtime_limits() {
              pub const MCP_BUILTIN_PEERS_PER_SESSION: usize = {mcp_builtin_peers_per_session};\n\
              /// MCP correlation ID byte bound; excludes tool content.\n\
              pub const MCP_REQUEST_ID_MAX_BYTES: usize = {mcp_request_id_max_bytes};\n\
+             /// Shared usable external MCP JSON-RPC message byte ceiling.\n\
+             pub const MCP_PAYLOAD_MAX_BYTES: usize = {mcp_payload_max_bytes};\n\
              /// Live and retiring traffic grants allowed during connection replacement.\n\
              pub const NETWORK_TRAFFIC_GRANT_CAPACITY: usize = {traffic_grant_capacity};\n\
              /// Minimum descriptor budget for a network-facing process.\n\
