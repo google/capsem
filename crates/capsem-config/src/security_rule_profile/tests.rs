@@ -181,8 +181,7 @@ operation = "permission"
     )
     .expect("stored managed rule parses");
     let rules = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).expect("rules compile");
-    let call =
-        |tool: &str| json!({"mcp": {"method": "tools/call", "server": {"name": "local"}, "tool_call": {"name": tool}}});
+    let call = |tool: &str| json!({"mcp": {"method": "tools/call", "server": {"name": "local"}, "tool_call": {"name": tool}, "response": {"valid": false}}});
 
     let blocked = call("local__fetch_http");
     let evaluation = rules.evaluate(&blocked).expect("call evaluates");
@@ -204,6 +203,33 @@ operation = "permission"
     let rules = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).expect("ask rules compile");
     let evaluation = rules.evaluate(&blocked).expect("ask call evaluates");
     assert_eq!(evaluation.enforcement_rules()[0].action, SecurityRuleAction::Ask);
+
+    // A completed call carries the same server/tool identity. Its returned
+    // response must not ask for permission to invoke that tool a second time.
+    let response = json!({"mcp": {
+        "method": "tools/call", "server": {"name": "local"},
+        "tool_call": {"name": "local__fetch_http"},
+        "response": {"valid": true},
+    }});
+    let evaluation = rules.evaluate(&response).expect("response evaluates");
+    assert_eq!(evaluation.enforcement_rules()[0].rule_id, "profiles.rules.default_mcp");
+    assert_eq!(evaluation.enforcement_rules()[0].action, SecurityRuleAction::Allow);
+
+    // Invocation permission never replaces separately authored response policy.
+    let mut response_rule = profile.profiles.rules["mcp_local_fetch_http_permission"].clone();
+    response_rule.managed = None;
+    response_rule.name = "response_check".into();
+    response_rule.condition = r#"mcp.response.valid == "true""#.into();
+    response_rule.action = SecurityRuleAction::Block;
+    response_rule.priority = Some(SecurityRulePriority::Explicit(USER_PRIORITY_MIN));
+    profile.profiles.rules.insert("response_check".into(), response_rule);
+    let rules = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).unwrap();
+    let evaluation = rules.evaluate(&response).unwrap();
+    assert_eq!(
+        evaluation.enforcement_rules()[0].rule_id,
+        "profiles.rules.response_check"
+    );
+    assert_eq!(evaluation.enforcement_rules()[0].action, SecurityRuleAction::Block);
 }
 
 /// A managed rule the user ranked ahead of their other rules keeps that rank,
@@ -217,7 +243,7 @@ fn a_managed_tool_permission_never_loses_rank_it_was_given() {
     };
     assert_eq!(
         managed.enforced_condition().as_deref(),
-        Some(r#"mcp.server.name == "wiki" && mcp.tool_call.name == "wiki__search""#)
+        Some(r#"mcp.response.valid == "false" && mcp.server.name == "wiki" && mcp.tool_call.name == "wiki__search""#)
     );
     let mut profile = SecurityRuleProfile::default();
     profile.profiles.rules.insert(

@@ -153,7 +153,7 @@ fn a_tool_permission_is_one_managed_rule_updated_in_place() {
     let stored = &loaded.profiles.rules["mcp_local_fetch_http_permission"];
     assert_eq!(
         stored.condition,
-        r#"mcp.server.name == "local" && mcp.tool_call.name == "local__fetch_http""#
+        r#"mcp.response.valid == "false" && mcp.server.name == "local" && mcp.tool_call.name == "local__fetch_http""#
     );
     assert_eq!(
         stored.effective_priority(SecurityRuleSource::User).unwrap(),

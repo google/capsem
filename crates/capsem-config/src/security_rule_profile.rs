@@ -197,11 +197,13 @@ impl SecurityRuleManagedTarget {
     /// The target, not the stored `match` text, is what the user chose, so the
     /// compiler derives the condition from it. A tool call carries the
     /// namespaced name (`server__tool`); settings files written before this
-    /// existed stored the bare tool name and matched nothing.
+    /// existed stored the bare tool name and matched nothing. Invocation
+    /// permission never asks again for the call's returned response; separately
+    /// authored response rules keep their own enforcement.
     pub fn enforced_condition(&self) -> Option<String> {
         match self {
             Self::McpTool { server, tool, .. } => Some(format!(
-                "mcp.server.name == {} && mcp.tool_call.name == {}",
+                "mcp.response.valid == \"false\" && mcp.server.name == {} && mcp.tool_call.name == {}",
                 condition_string(server),
                 condition_string(&capsem_proto::mcp_contracts::namespace_name(server, tool)),
             )),

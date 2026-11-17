@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fix managed MCP tool permissions to check invocations once while preserving independent response rules. Operator approval resumes the original call without a second permission prompt.
+
 - Fix MCP response classification so plain-text errors retain their observed response phase and do not trigger request-only approval rules.
 
 - Security: Bind delegated session admission to both its operation and owner generation, and discard earlier admission when rebinding is refused.
