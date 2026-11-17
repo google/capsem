@@ -3,6 +3,8 @@ use super::*;
 
 #[path = "../../src/codec/implementation.rs"]
 mod native_codecs;
+#[path = "environment/proposals.rs"]
+mod proposals;
 #[path = "environment/reads.rs"]
 mod reads;
 use capsem_config::environment::EnvironmentSpecification;
