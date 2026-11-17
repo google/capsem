@@ -125,6 +125,9 @@ def _session_event_write_violations(root: Path) -> list[str]:
         # snapshot, reusing its schema/archive validators. Not an event writer
         # and not permission for routes or other logger modules to open SQLite.
         "crates/capsem-logger/src/host_admission.rs",
+        # The owning writer keeps a read-only source snapshot while publishing
+        # a redacted archive generation. This does not admit event inserts.
+        "crates/capsem-logger/src/writer/environment_purges/rewrite.rs",
     }
     allowed_event_inserts = {
         "crates/capsem-logger/src/schema.rs",
@@ -197,6 +200,8 @@ def test_session_event_writes_stay_behind_dbwriter() -> None:
 
 def test_exact_logger_admission_owner_does_not_grant_route_or_event_sql(tmp_path: Path) -> None:
     sources = {
+        "crates/capsem-logger/src/writer/environment_purges/rewrite.rs": 'Connection::open_with_flags(path, flags); INSERT INTO model_calls',
+        "crates/capsem-service/src/writer/environment_purges/rewrite.rs": 'Connection::open_with_flags(path, flags);',
         "crates/capsem-logger/src/host_admission.rs": 'Connection::open_with_flags(uri, flags); INSERT INTO model_calls',
         "crates/capsem-logger/src/routes.rs": 'Connection::open(path);',
         "crates/capsem-service/src/host_admission.rs": 'Connection::open_with_flags(uri, flags); INSERT INTO model_calls',
@@ -206,6 +211,9 @@ def test_exact_logger_admission_owner_does_not_grant_route_or_event_sql(tmp_path
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(code)
     errors = _session_event_write_violations(tmp_path)
+    assert not any("capsem-logger/src/writer/environment_purges/rewrite.rs opens" in error for error in errors)
+    assert any("capsem-logger/src/writer/environment_purges/rewrite.rs inserts" in error for error in errors)
+    assert any("capsem-service/src/writer/environment_purges/rewrite.rs opens" in error for error in errors)
     assert not any("capsem-logger/src/host_admission.rs opens" in error for error in errors)
     assert any("capsem-logger/src/host_admission.rs inserts" in error for error in errors)
     assert any("capsem-logger/src/routes.rs opens" in error for error in errors)
