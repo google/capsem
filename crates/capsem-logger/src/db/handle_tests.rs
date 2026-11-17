@@ -24,6 +24,7 @@ mod owning_reader;
 mod query;
 mod retention;
 mod security_payloads;
+mod snapshot_leases;
 mod warc_export;
 
 #[test]

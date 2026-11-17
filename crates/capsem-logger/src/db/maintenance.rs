@@ -32,12 +32,21 @@ struct SnapshotPause {
 }
 
 #[cfg(test)]
-static SNAPSHOT_PAUSES: std::sync::Mutex<Option<std::collections::HashMap<std::path::PathBuf, SnapshotPause>>> =
-    std::sync::Mutex::new(None);
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum SnapshotPausePoint {
+    AfterVacuum,
+    AfterCapture,
+}
 
 #[cfg(test)]
-pub(crate) fn pause_next_snapshot_after_vacuum_for_tests(
+type SnapshotPauses = std::collections::HashMap<(std::path::PathBuf, SnapshotPausePoint), SnapshotPause>;
+#[cfg(test)]
+static SNAPSHOT_PAUSES: std::sync::Mutex<Option<SnapshotPauses>> = std::sync::Mutex::new(None);
+
+#[cfg(test)]
+fn pause_next_snapshot_for_tests(
     db_path: &Path,
+    point: SnapshotPausePoint,
 ) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::SyncSender<()>) {
     let (reached_tx, reached_rx) = std::sync::mpsc::sync_channel(0);
     let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel(0);
@@ -46,7 +55,7 @@ pub(crate) fn pause_next_snapshot_after_vacuum_for_tests(
         .unwrap()
         .get_or_insert_with(std::collections::HashMap::new)
         .insert(
-            db_path.to_path_buf(),
+            (db_path.to_path_buf(), point),
             SnapshotPause {
                 reached: reached_tx,
                 resume: resume_rx,
@@ -54,22 +63,42 @@ pub(crate) fn pause_next_snapshot_after_vacuum_for_tests(
         );
     (reached_rx, resume_tx)
 }
-
 #[cfg(test)]
-fn pause_snapshot_after_vacuum_for_tests(db_path: &Path) {
+pub(crate) fn pause_next_snapshot_after_vacuum_for_tests(
+    db_path: &Path,
+) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::SyncSender<()>) {
+    pause_next_snapshot_for_tests(db_path, SnapshotPausePoint::AfterVacuum)
+}
+#[cfg(test)]
+pub(crate) fn pause_next_snapshot_after_capture_for_tests(
+    db_path: &Path,
+) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::SyncSender<()>) {
+    pause_next_snapshot_for_tests(db_path, SnapshotPausePoint::AfterCapture)
+}
+#[cfg(test)]
+fn pause_snapshot_for_tests(db_path: &Path, point: SnapshotPausePoint) {
     let pause = SNAPSHOT_PAUSES
         .lock()
         .unwrap()
         .as_mut()
-        .and_then(|pauses| pauses.remove(db_path));
+        .and_then(|pauses| pauses.remove(&(db_path.to_path_buf(), point)));
     if let Some(pause) = pause {
         pause.reached.send(()).unwrap();
         pause.resume.recv().unwrap();
     }
 }
-
+#[cfg(test)]
+fn pause_snapshot_after_vacuum_for_tests(db_path: &Path) {
+    pause_snapshot_for_tests(db_path, SnapshotPausePoint::AfterVacuum);
+}
+#[cfg(test)]
+fn pause_snapshot_after_capture_for_tests(db_path: &Path) {
+    pause_snapshot_for_tests(db_path, SnapshotPausePoint::AfterCapture);
+}
 #[cfg(not(test))]
 fn pause_snapshot_after_vacuum_for_tests(_db_path: &Path) {}
+#[cfg(not(test))]
+fn pause_snapshot_after_capture_for_tests(_db_path: &Path) {}
 
 /// Clone a coherent session ledger into an unpublished destination directory.
 ///
@@ -113,10 +142,13 @@ pub fn snapshot_session_ledger(src_dir: &Path, dst_dir: &Path) -> anyhow::Result
     let mut source = source_directory
         .open_file(OsStr::new(&generation_name), ContainedOpenOptions::read_only())
         .with_context(|| format!("open source archive generation {generation_name}"))?;
-    BodyLogReader::from_descriptor(source.try_clone()?, state.header, state.committed_end)
+    // The clone shares the source description's kernel lease. Keep its owner
+    // alive throughout the raw copy, after releasing the publication lock.
+    let _source_reader = BodyLogReader::from_descriptor(source.try_clone()?, state.header, state.committed_end)
         .context("validate source archive generation identity")?;
     validate_generation_blocks(&mut source, &blocks, deadline)?;
     drop(archive_lock);
+    pause_snapshot_after_capture_for_tests(&src_db);
 
     ensure_private_dir(&dst_archive)
         .with_context(|| format!("create destination archive directory {}", dst_archive.display()))?;
