@@ -116,3 +116,42 @@ impl std::fmt::Debug for EnvironmentVariablePurgeRecord {
             .finish_non_exhaustive()
     }
 }
+
+impl EnvironmentVariablePurgeRecord {
+    pub(crate) fn validate(&self) -> Result<(), &'static str> {
+        if self.cursor <= 0
+            || self.intent.validate().is_err()
+            || self.revision_count <= 0
+            || self.request_count < 0
+            || self.old_generation_id.is_some() != self.new_generation_id.is_some()
+            || self
+                .old_generation_id
+                .zip(self.new_generation_id)
+                .is_some_and(|(old, new)| old == new)
+            || self
+                .failure_reason
+                .as_ref()
+                .is_some_and(|reason| reason.trim().is_empty() || reason.contains('\0'))
+            || (self.state == EnvironmentVariablePurgeState::Prepared && self.old_generation_id.is_some())
+            || (matches!(
+                self.state,
+                EnvironmentVariablePurgeState::Rewriting
+                    | EnvironmentVariablePurgeState::ReclaimPending
+                    | EnvironmentVariablePurgeState::Committed
+            ) && self.old_generation_id.is_none())
+        {
+            return Err("invalid environment purge metadata");
+        }
+        if self.old_generation_id == Some([0; 16])
+            || self.new_generation_id == Some([0; 16])
+            || self
+                .failure_reason
+                .as_ref()
+                .is_some_and(|reason| reason.len() > capsem_proto::APPROVAL_CONTEXT_BYTES)
+            || (self.state == EnvironmentVariablePurgeState::Failed && self.failure_reason.is_none())
+        {
+            return Err("invalid environment purge metadata");
+        }
+        Ok(())
+    }
+}

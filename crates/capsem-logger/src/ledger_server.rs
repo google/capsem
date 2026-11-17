@@ -205,6 +205,21 @@ impl LedgerServer {
                 Ok(outcome) => send_success(sender, request_id, LedgerReply::Retained { outcome }).await,
                 Err(error) => Err(storage(error)),
             },
+            LedgerCommand::PurgeVariableHistory { execution } => {
+                match self.db.purge_variable_history(execution).await {
+                    Ok(record) => {
+                        send_success(
+                            sender,
+                            request_id,
+                            LedgerReply::VariableHistoryPurged {
+                                record: Box::new(record),
+                            },
+                        )
+                        .await
+                    }
+                    Err(error) => Err(storage(error)),
+                }
+            }
             LedgerCommand::ExportWarc => self.send_warc(sender, request_id).await,
             LedgerCommand::Snapshot { snapshot_id } => {
                 let destination = self.session_dir.join(snapshot_directory_name(snapshot_id));

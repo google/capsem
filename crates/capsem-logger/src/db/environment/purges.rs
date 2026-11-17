@@ -37,6 +37,18 @@ impl EnvironmentVariablePurgeQuery {
     }
 }
 impl DbHandle {
+    pub async fn purge_variable_history(
+        &self,
+        execution: EnvironmentVariablePurgeExecution,
+    ) -> DbResult<EnvironmentVariablePurgeRecord> {
+        let writer = self
+            .inner
+            .writer
+            .as_ref()
+            .ok_or("variable history purge requires the owning DB handle")?;
+        writer.purge_variable_history(execution).await
+    }
+
     pub async fn environment_variable_purges(
         &self,
         query: EnvironmentVariablePurgeQuery,
@@ -140,28 +152,6 @@ fn decode(row: &rusqlite::Row<'_>) -> DbResult<EnvironmentVariablePurgeRecord> {
         revision_count: integer(11)?,
         request_count: integer(12)?,
     };
-    if record.cursor <= 0
-        || record.intent.validate().is_err()
-        || record.revision_count <= 0
-        || record.request_count < 0
-        || record.old_generation_id.is_some() != record.new_generation_id.is_some()
-        || record
-            .old_generation_id
-            .zip(record.new_generation_id)
-            .is_some_and(|(old, new)| old == new)
-        || record
-            .failure_reason
-            .as_ref()
-            .is_some_and(|reason| reason.trim().is_empty() || reason.contains('\0'))
-        || (record.state == EnvironmentVariablePurgeState::Prepared && record.old_generation_id.is_some())
-        || (matches!(
-            record.state,
-            EnvironmentVariablePurgeState::Rewriting
-                | EnvironmentVariablePurgeState::ReclaimPending
-                | EnvironmentVariablePurgeState::Committed
-        ) && record.old_generation_id.is_none())
-    {
-        return Err("invalid environment purge metadata".into());
-    }
+    record.validate().map_err(str::to_owned)?;
     Ok(record)
 }

@@ -235,3 +235,5 @@ async fn history_offset_beyond_sqlite_integer_range_is_an_empty_page() {
     assert!(sets[0].rows.is_empty());
     fixture.stop().await;
 }
+
+mod purge;

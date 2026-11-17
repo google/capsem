@@ -9,6 +9,7 @@ use capsem_foundation::ipc_channel;
 use capsem_proto::ledger::{LedgerChannelGrant, LedgerHello, LedgerOutcome, LedgerRequest};
 use tokio::sync::oneshot;
 
+use crate::events::environment::purge::{EnvironmentVariablePurgeExecution, EnvironmentVariablePurgeRecord};
 use crate::ledger_protocol::{LedgerClientMessage, LedgerCommand, LedgerReply, LedgerServerMessage};
 use crate::{RetainOutcome, WriteOp};
 
@@ -45,6 +46,10 @@ impl AdmitReply {
 }
 
 enum RemoteMessage {
+    Purge {
+        execution: EnvironmentVariablePurgeExecution,
+        reply: oneshot::Sender<Result<EnvironmentVariablePurgeRecord, String>>,
+    },
     Admit {
         event: Box<WriteOp>,
         reply: Option<AdmitReply>,
@@ -59,6 +64,7 @@ enum RemoteMessage {
 }
 
 enum PendingReply {
+    Purge(oneshot::Sender<Result<EnvironmentVariablePurgeRecord, String>>),
     Admit(Option<AdmitReply>),
     Flush(oneshot::Sender<Result<(), String>>),
     Retain(oneshot::Sender<Result<RetainOutcome, String>>),
@@ -162,6 +168,17 @@ impl RemoteWriter {
             .map_err(|_| "ledger client stopped with retention pending".to_string())?
     }
 
+    pub(super) async fn purge(
+        &self,
+        execution: EnvironmentVariablePurgeExecution,
+    ) -> Result<EnvironmentVariablePurgeRecord, String> {
+        let (reply, result) = oneshot::channel();
+        self.send_async(RemoteMessage::Purge { execution, reply }).await?;
+        result
+            .await
+            .map_err(|_| "ledger client stopped with variable purge pending".to_owned())?
+    }
+
     pub(super) fn shutdown(&self) {
         let _ = self.tx.lock().unwrap().take();
         if let Some(join) = self.join.lock().unwrap().take() {
@@ -242,6 +259,12 @@ fn run(
         let first = match deferred.take().map_or_else(|| messages.recv(), Ok) {
             Ok(message) => message,
             Err(_) => {
+                // Maintenance channels admit no producer writes. Their own
+                // commands already include a durability barrier, and Flush
+                // is deliberately outside their authenticated capability.
+                if !grant.role().permits(capsem_proto::ledger::LedgerCapability::Flush) {
+                    return;
+                }
                 let result = runtime.block_on(async {
                     tokio::time::timeout(
                         DURABILITY_TIMEOUT,
@@ -306,7 +329,9 @@ fn send_commands(
     let mut pending = vec![(command, replies)];
     while let Some((command, mut replies)) = pending.pop() {
         let timeout = match command {
-            LedgerCommand::Flush | LedgerCommand::Retain { .. } => DURABILITY_TIMEOUT,
+            LedgerCommand::Flush | LedgerCommand::Retain { .. } | LedgerCommand::PurgeVariableHistory { .. } => {
+                DURABILITY_TIMEOUT
+            }
             _ => OPERATION_TIMEOUT,
         };
         let message = LedgerClientMessage::Request {
@@ -352,6 +377,7 @@ fn send_commands(
                     (Some(PendingReply::Admit(_)), LedgerReply::AcceptedBatch { accepted, .. }) => {
                         usize::from(*accepted) == replies.len()
                     }
+                    (Some(PendingReply::Purge(_)), LedgerReply::VariableHistoryPurged { .. }) => true,
                     (Some(PendingReply::Flush(_)), LedgerReply::Durable { .. }) => true,
                     (Some(PendingReply::Retain(_)), LedgerReply::Retained { .. }) => true,
                     _ => false,
@@ -389,6 +415,12 @@ fn prepare(messages: Vec<RemoteMessage>) -> (LedgerCommand, Vec<PendingReply>) {
             RemoteMessage::Admit { event, reply } => {
                 events.push(*event);
                 replies.push(PendingReply::Admit(reply));
+            }
+            RemoteMessage::Purge { execution, reply } => {
+                return (
+                    LedgerCommand::PurgeVariableHistory { execution },
+                    vec![PendingReply::Purge(reply)],
+                )
             }
             RemoteMessage::Flush { reply } => return (LedgerCommand::Flush, vec![PendingReply::Flush(reply)]),
             RemoteMessage::Retain { cutoff, reply } => {
@@ -469,6 +501,13 @@ fn finish(reply: PendingReply, result: Result<LedgerReply, String>) {
             if let Some(reply) = reply {
                 reply.send(result);
             }
+        }
+        PendingReply::Purge(reply) => {
+            let result = result.and_then(|reply| match reply {
+                LedgerReply::VariableHistoryPurged { record } => Ok(*record),
+                reply => Err(format!("ledger returned {reply:?} for variable purge")),
+            });
+            let _ = reply.send(result);
         }
         PendingReply::Flush(reply) => {
             let result = result.and_then(|reply| match reply {

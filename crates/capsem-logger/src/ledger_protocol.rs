@@ -8,6 +8,7 @@ use capsem_proto::ledger::{
 use capsem_proto::ledger_counters::LedgerCounters;
 use serde::{Deserialize, Serialize};
 
+use crate::events::environment::purge::{EnvironmentVariablePurgeExecution, EnvironmentVariablePurgeRecord};
 use crate::{BodyDirection, RetainOutcome, WriteOp};
 
 /// Every large result streams in independently bounded pieces.
@@ -61,6 +62,9 @@ pub enum LedgerCommand {
     Retain {
         cutoff: String,
     },
+    PurgeVariableHistory {
+        execution: EnvironmentVariablePurgeExecution,
+    },
     /// Stream a WARC as bounded `WarcChunk` replies followed by `WarcComplete`.
     ExportWarc,
     /// Create a coherent ledger copy in a worker-owned staging directory.
@@ -76,7 +80,7 @@ impl LedgerOperation for LedgerCommand {
             Self::Admit { .. } | Self::AdmitBatch { .. } => LedgerCapability::Admit,
             Self::Flush => LedgerCapability::Flush,
             Self::Query { .. } | Self::ReadBodies { .. } | Self::Counters => LedgerCapability::Read,
-            Self::Retain { .. } => LedgerCapability::Retain,
+            Self::Retain { .. } | Self::PurgeVariableHistory { .. } => LedgerCapability::Retain,
             Self::ExportWarc => LedgerCapability::Export,
             Self::Snapshot { .. } => LedgerCapability::Snapshot,
             Self::Shutdown => LedgerCapability::Shutdown,
@@ -90,6 +94,9 @@ impl LedgerOperation for LedgerCommand {
                     return Err(LedgerProtocolError::InvalidOperation);
                 }
             }
+            Self::PurgeVariableHistory { execution } => execution
+                .validate()
+                .map_err(|_| LedgerProtocolError::InvalidOperation)?,
             Self::Query { query } => query.validate()?,
             Self::ReadBodies { event_id } if !valid_event_id(event_id) => {
                 return Err(LedgerProtocolError::InvalidOperation)
@@ -296,6 +303,9 @@ pub enum LedgerReply {
     Retained {
         outcome: RetainOutcome,
     },
+    VariableHistoryPurged {
+        record: Box<EnvironmentVariablePurgeRecord>,
+    },
     WarcChunk {
         offset: u64,
         #[serde(with = "serde_bytes")]
@@ -323,6 +333,7 @@ impl LedgerReply {
                     && first_admission_id.checked_add(u64::from(*accepted) - 1) == Some(*through_admission_id)
             }
             Self::Durable { .. } | Self::Counters { .. } | Self::BodiesComplete | Self::Retained { .. } => true,
+            Self::VariableHistoryPurged { record } => record.validate().is_ok(),
             Self::Query { sets } => {
                 sets.len() <= MAX_LEDGER_RESULT_SETS && sets.iter().all(|rows| rows.validate().is_ok())
             }

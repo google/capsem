@@ -12,6 +12,7 @@ use capsem_proto::ledger::{LedgerChannelGrant, LedgerClientRole, LedgerHello, Le
 use capsem_proto::ledger_counters::LedgerCounters;
 use tokio::sync::{mpsc, oneshot};
 
+use crate::events::environment::purge::{EnvironmentVariablePurgeExecution, EnvironmentVariablePurgeRecord};
 use crate::ledger_protocol::{
     LedgerBodyMetadata, LedgerClientMessage, LedgerCommand, LedgerExportSummary, LedgerQuery, LedgerReply, LedgerRows,
     LedgerServerMessage,
@@ -51,6 +52,10 @@ enum Command {
     Retain {
         cutoff: String,
         reply: oneshot::Sender<Result<RetainOutcome, String>>,
+    },
+    Purge {
+        execution: EnvironmentVariablePurgeExecution,
+        reply: oneshot::Sender<Result<EnvironmentVariablePurgeRecord, String>>,
     },
     ExportWarc {
         reply: oneshot::Sender<Result<LedgerWarcExport, String>>,
@@ -137,6 +142,16 @@ impl LedgerClient {
         })
         .await?;
         receive_result(result, "retention").await
+    }
+
+    pub async fn purge_variable_history(
+        &self,
+        execution: EnvironmentVariablePurgeExecution,
+    ) -> Result<EnvironmentVariablePurgeRecord, String> {
+        execution.validate().map_err(str::to_owned)?;
+        let (reply, result) = oneshot::channel();
+        self.send(Command::Purge { execution, reply }).await?;
+        receive_result(result, "variable history purge").await
     }
 
     pub async fn export_warc(&self) -> Result<LedgerWarcExport, String> {
@@ -273,6 +288,20 @@ async fn dispatch(
                 });
             finish(reply, result)
         }
+        Command::Purge { execution, reply } => {
+            let result = one_reply(
+                sender,
+                receiver,
+                request_id,
+                LedgerCommand::PurgeVariableHistory { execution },
+            )
+            .await
+            .and_then(|response| match response {
+                LedgerReply::VariableHistoryPurged { record } => Ok(*record),
+                response => Err(unexpected("variable history purge", response)),
+            });
+            finish(reply, result)
+        }
         Command::ExportWarc { reply } => export_warc(sender, receiver, request_id, reply).await,
         Command::Snapshot { snapshot_id, reply } => {
             let result = one_reply_with_timeout(
@@ -317,7 +346,7 @@ async fn one_reply(
     command: LedgerCommand,
 ) -> Result<LedgerReply, String> {
     let timeout = match command {
-        LedgerCommand::Flush | LedgerCommand::Retain { .. } => {
+        LedgerCommand::Flush | LedgerCommand::Retain { .. } | LedgerCommand::PurgeVariableHistory { .. } => {
             Duration::from_secs(capsem_proto::LEDGER_DURABILITY_TIMEOUT_SECONDS)
         }
         _ => OPERATION_TIMEOUT,
@@ -536,6 +565,9 @@ fn fail_pending(commands: &mut mpsc::Receiver<Command>, reason: &str) {
                 let _ = reply.send(Err(reason.to_string()));
             }
             Command::Retain { reply, .. } => {
+                let _ = reply.send(Err(reason.to_string()));
+            }
+            Command::Purge { reply, .. } => {
                 let _ = reply.send(Err(reason.to_string()));
             }
             Command::ExportWarc { reply } => {

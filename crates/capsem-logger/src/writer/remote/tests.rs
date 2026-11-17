@@ -363,3 +363,5 @@ async fn durable_flush_can_outlast_admission_without_closing_the_channel() {
 async fn durable_retention_can_outlast_admission_without_closing_the_channel() {
     delayed_durability_keeps_admission_usable(true).await;
 }
+
+mod purge;

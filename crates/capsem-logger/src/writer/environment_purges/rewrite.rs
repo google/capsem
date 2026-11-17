@@ -18,8 +18,8 @@ impl crate::writer::DbWriter {
         execution: EnvironmentVariablePurgeExecution,
     ) -> Result<EnvironmentVariablePurgeRecord, String> {
         execution.validate().map_err(str::to_owned)?;
-        if self.remote.is_some() {
-            return Err("variable history purge requires the ledger maintainer channel".into());
+        if let Some(remote) = &self.remote {
+            return remote.purge(execution).await;
         }
         let tx = self.clone_sender().ok_or("db writer is shut down")?;
         let (reply, rx) = tokio::sync::oneshot::channel();

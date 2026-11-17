@@ -173,3 +173,48 @@ fn streamed_replies_enforce_chunk_and_row_bounds() {
     .validate()
     .is_err());
 }
+
+#[test]
+fn variable_history_purge_requires_maintainer_authority_and_bounded_identity() {
+    use crate::events::environment::purge::EnvironmentVariablePurgeExecution;
+    let execution = EnvironmentVariablePurgeExecution {
+        purge_id: "00000000-0000-4000-8000-000000000005".into(),
+        timestamp_unix_ms: 10,
+    };
+    let command = LedgerCommand::PurgeVariableHistory {
+        execution: execution.clone(),
+    };
+    for role in [
+        LedgerClientRole::VmOwner,
+        LedgerClientRole::Proxy,
+        LedgerClientRole::Coordinator,
+        LedgerClientRole::Reader,
+        LedgerClientRole::Supervisor,
+    ] {
+        assert!(LedgerRequest::new(1, command.clone())
+            .unwrap()
+            .authorize(&grant(role))
+            .is_err());
+    }
+    LedgerRequest::new(1, command)
+        .unwrap()
+        .authorize(&grant(LedgerClientRole::Maintainer))
+        .unwrap();
+    for malformed in [
+        EnvironmentVariablePurgeExecution {
+            purge_id: "bad".into(),
+            ..execution.clone()
+        },
+        EnvironmentVariablePurgeExecution {
+            timestamp_unix_ms: -1,
+            ..execution
+        },
+    ] {
+        assert!(
+            LedgerRequest::new(1, LedgerCommand::PurgeVariableHistory { execution: malformed })
+                .unwrap()
+                .authorize(&grant(LedgerClientRole::Maintainer))
+                .is_err()
+        );
+    }
+}
