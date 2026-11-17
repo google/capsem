@@ -24,6 +24,7 @@ impl WriteOp {
             WriteOp::PrepareEnvironmentRequest(_) => "environment_request_prepare",
             WriteOp::EnvironmentRequestDecision(_) => "environment_request_decision",
             WriteOp::EnvironmentRequestResult(_) => "environment_request_result",
+            WriteOp::EnvironmentApplication(_) => "environment_application",
             WriteOp::EnvironmentRequestInvalidation(_) => "environment_request_invalidation",
             WriteOp::EnvironmentSandboxReference(_) => "environment_sandbox_reference",
             WriteOp::Network(_) => "network",
@@ -59,6 +60,7 @@ impl WriteOp {
             | WriteOp::EnvironmentRequestDecision(_)
             | WriteOp::EnvironmentRequestResult(_)
             | WriteOp::EnvironmentRequestInvalidation(_)
+            | WriteOp::EnvironmentApplication(_)
             | WriteOp::EnvironmentSandboxReference(_)
             | WriteOp::Network(_)
             | WriteOp::NetworkMembership(_)
@@ -89,6 +91,7 @@ impl WriteOp {
             | WriteOp::EnvironmentRequestDecision(_)
             | WriteOp::EnvironmentRequestResult(_)
             | WriteOp::EnvironmentRequestInvalidation(_)
+            | WriteOp::EnvironmentApplication(_)
             | WriteOp::EnvironmentSandboxReference(_)
             | WriteOp::Network(_)
             | WriteOp::NetworkMembership(_)
@@ -155,6 +158,7 @@ pub(super) fn affected_memory_tables(op: &WriteOp, tables: &mut BTreeSet<&'stati
         | WriteOp::EnvironmentRequestDecision(_)
         | WriteOp::EnvironmentRequestResult(_)
         | WriteOp::EnvironmentRequestInvalidation(_)
+        | WriteOp::EnvironmentApplication(_)
         | WriteOp::EnvironmentSandboxReference(_) => {
             tables.insert("host_events");
         }

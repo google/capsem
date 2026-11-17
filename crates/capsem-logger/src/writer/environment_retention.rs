@@ -47,6 +47,11 @@ pub(super) fn prepare(conn: &Connection, cutoff: &str) -> rusqlite::Result<bool>
                      WHERE b.source_table='environment_requests' AND b.event_id=q.payload_event_id
                      AND b.created_at>=?1)
              UNION
+             SELECT 'request',q.environment_id,q.request_id
+             FROM environment_applications a JOIN environment_requests q ON q.request_id=a.request_id
+             WHERE a.state IN ('pending','applying')
+                 OR a.timestamp_unix_ms>=CAST(strftime('%s',?1) AS INTEGER)*1000
+             UNION
              SELECT 'revision',r.environment_id,r.previous_revision_id
              FROM closure c JOIN environment_revisions r ON c.kind='revision'
                  AND c.environment_id=r.environment_id AND c.node_id=r.revision_id
@@ -76,6 +81,15 @@ pub(super) fn prepare(conn: &Connection, cutoff: &str) -> rusqlite::Result<bool>
              UNION
              SELECT 'revision',r.environment_id,r.revision_id
              FROM closure c JOIN environment_revisions r ON c.kind='request' AND c.node_id=r.request_id
+             UNION
+             SELECT 'revision',a.boot_environment_id,a.boot_revision_id
+             FROM closure c JOIN environment_applications a ON c.kind='request' AND c.node_id=a.request_id
+             UNION
+             SELECT 'revision',a.live_policy_environment_id,a.live_policy_revision_id
+             FROM closure c JOIN environment_applications a ON c.kind='request' AND c.node_id=a.request_id
+             UNION
+             SELECT 'revision',a.desired_environment_id,a.desired_revision_id
+             FROM closure c JOIN environment_applications a ON c.kind='request' AND c.node_id=a.request_id
          ) INSERT INTO retained_environment_nodes SELECT * FROM closure",
         [cutoff],
     )?;

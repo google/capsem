@@ -126,6 +126,10 @@ pub(crate) struct ReaderIntrospection {
 }
 
 enum ReadRequest {
+    EnvironmentApplications {
+        query: EnvironmentApplicationQuery,
+        reply: tokio::sync::oneshot::Sender<DbResult<Observed<Vec<EnvironmentApplicationRecord>>>>,
+    },
     EnvironmentReferences {
         query: EnvironmentReferenceQuery,
         reply: tokio::sync::oneshot::Sender<DbResult<Observed<Vec<EnvironmentReferenceRecord>>>>,
@@ -856,6 +860,9 @@ impl SessionDb {
 mod bodies;
 mod environment;
 mod host;
+pub use crate::events::environment::application::EnvironmentApplicationRecord;
+pub use environment::applications::EnvironmentApplicationQuery;
+pub(crate) use environment::applications::{decode_application_row, APPLICATION_COLUMNS};
 pub use environment::references::{EnvironmentReferenceQuery, EnvironmentReferenceRecord};
 pub use environment::requests::{EnvironmentRequestQuery, EnvironmentRequestRecord, EnvironmentRequestSnapshot};
 pub use environment::{EnvironmentRevisionQuery, EnvironmentRevisionRecord, EnvironmentRevisionSnapshot};

@@ -72,6 +72,7 @@ pub struct EnvironmentRevisionTransition {
     pub actor: String,
 }
 
+pub mod application;
 pub mod request;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

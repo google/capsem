@@ -462,3 +462,38 @@ fn audit(
 
 mod lifecycle;
 pub(super) use lifecycle::invalidate;
+
+/// Correlate application facts with durable selected targets and result. The
+/// service still verifies current caller, policy and runtime acknowledgements.
+pub(super) fn require_application_target(
+    conn: &Connection,
+    request_id: &str,
+    target: &EnvironmentRequestTarget,
+    desired: &EnvironmentRevisionParent,
+    bodies: &BodyArchive,
+) -> rusqlite::Result<()> {
+    require_approved(conn, request_id)?;
+    let old = existing(conn, request_id)?.ok_or_else(|| invalid("environment request is missing"))?;
+    if old.result.as_ref() != Some(desired) {
+        return Err(invalid(
+            "application desired revision is not the approved request result",
+        ));
+    }
+    let bytes = bodies.read_required_bytes(conn, &old.payload_event_id, ENVIRONMENT_REQUEST_SOURCE)?;
+    let payload: EnvironmentRequestPayload =
+        rmp_serde::from_slice(&bytes).map_err(|_| invalid("invalid archived environment request payload"))?;
+    if payload.kind() != old.kind || payload.source_revision() != old.source.as_ref() {
+        return Err(invalid(
+            "environment request metadata does not match its archived intent",
+        ));
+    }
+    match payload {
+        EnvironmentRequestPayload::Apply { targets, .. } if targets.contains(target) => Ok(()),
+        EnvironmentRequestPayload::Change { .. } | EnvironmentRequestPayload::ImageUpdate { .. }
+            if old.requester.as_ref() == Some(target) =>
+        {
+            Ok(())
+        }
+        _ => Err(invalid("application target is not selected by its approved request")),
+    }
+}

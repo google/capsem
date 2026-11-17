@@ -35,10 +35,11 @@ pub enum HostEventKind {
     EnvironmentRequestInvalidated,
     EnvironmentRequestResultBound,
     EnvironmentReferenceChanged,
+    EnvironmentApplicationChanged,
 }
 
 impl HostEventKind {
-    pub const ALL: [Self; 24] = [
+    pub const ALL: [Self; 25] = [
         Self::SessionCreated,
         Self::SessionStarted,
         Self::SessionStopped,
@@ -63,6 +64,7 @@ impl HostEventKind {
         Self::EnvironmentRequestInvalidated,
         Self::EnvironmentRequestResultBound,
         Self::EnvironmentReferenceChanged,
+        Self::EnvironmentApplicationChanged,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -90,6 +92,7 @@ impl HostEventKind {
             Self::EnvironmentRequestInvalidated => "environment_request_invalidated",
             Self::EnvironmentRequestDecided => "environment_request_decided",
             Self::EnvironmentRequestResultBound => "environment_request_result_bound",
+            Self::EnvironmentApplicationChanged => "environment_application_changed",
             Self::EnvironmentReferenceChanged => "environment_reference_changed",
         }
     }

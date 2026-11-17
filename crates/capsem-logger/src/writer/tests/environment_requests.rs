@@ -714,3 +714,6 @@ async fn approved_agent_request_cannot_prepare_an_edit_to_its_parent() {
 
 #[path = "environment_requests/lifecycle.rs"]
 mod lifecycle;
+
+#[path = "environment_requests/applications.rs"]
+mod applications;

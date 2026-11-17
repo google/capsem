@@ -103,6 +103,8 @@ CREATE TABLE IF NOT EXISTS environment_applications (
     request_id TEXT NOT NULL REFERENCES environment_requests(request_id),
     session_id TEXT NOT NULL,
     generation TEXT NOT NULL,
+    version INTEGER NOT NULL CHECK (version>0),
+    actor TEXT NOT NULL,
     timestamp_unix_ms INTEGER NOT NULL,
     state TEXT NOT NULL CHECK (state IN ('pending','applying','applied','failed')),
     boot_environment_id TEXT NOT NULL,
