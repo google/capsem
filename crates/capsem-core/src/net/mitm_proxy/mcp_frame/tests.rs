@@ -382,7 +382,13 @@ async fn oversized_mcp_response_returns_error_and_preserves_next_reply() {
     capsem_proto::encode_mcp_frame(first.stream_id, 0, &first.process_name, &first.payload).unwrap();
     let decoded: JsonRpcResponse = serde_json::from_slice(&first.payload).unwrap();
     assert_eq!(decoded.id, Some(json!(1)));
-    assert!(decoded.error.is_some());
+    assert!(
+        decoded.result.is_none(),
+        "oversized output must not be a truncated success"
+    );
+    let error = decoded.error.unwrap();
+    assert!(error.message.contains("exceeds"));
+    assert!(error.message.contains("tool may already have run"), "{}", error.message);
 
     let small = ok_response(json!({"content": "ok"}));
     send_response(&tx, 10, "codex", &small).await.unwrap();
