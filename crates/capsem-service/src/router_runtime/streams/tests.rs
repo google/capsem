@@ -69,6 +69,14 @@ async fn connect(
     router: axum::Router,
     protocol: Option<&str>,
 ) -> Result<Client, tokio_tungstenite::tungstenite::Error> {
+    connect_with_control(router, protocol, crate::tests::fixture_gateway_grant()).await
+}
+
+async fn connect_with_control(
+    router: axum::Router,
+    protocol: Option<&str>,
+    control: crate::instance::WorkerGrant,
+) -> Result<Client, tokio_tungstenite::tungstenite::Error> {
     let mut request = "ws://localhost/vms/box/stream".into_client_request().unwrap();
     request.headers_mut().insert(
         "authorization",
@@ -76,7 +84,7 @@ async fn connect(
             .parse()
             .unwrap(),
     );
-    let socket = crate::gateway_channel::prepare(router, crate::tests::fixture_gateway_grant()).unwrap();
+    let socket = crate::gateway_channel::prepare(router, control).unwrap();
     let socket = tokio::net::UnixStream::from_std(socket).unwrap();
     if let Some(protocol) = protocol {
         request
@@ -415,4 +423,37 @@ async fn container_stream_starts_a_staged_workload_once_and_records_its_exit() {
         StreamStatus::Error { message } => assert!(message.contains("not staged"), "{message}"),
         other => panic!("a finished workload must not start again: {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn upgraded_stream_ends_when_its_private_gateway_control_ends() {
+    let fx = fixture().await;
+    let listener = tokio::net::UnixListener::bind(&fx.uds_path).unwrap();
+    let control = crate::instance::WorkerAuthority::default();
+    let mut client = connect_with_control(fx.router, Some(stream::STREAM_SUBPROTOCOL), control.grant())
+        .await
+        .unwrap();
+    // A pong proves the detached upgrade task is reading its socket before
+    // revocation; merely finishing HTTP upgrade could race its startup.
+    client.send(ClientMessage::Ping(vec![1].into())).await.unwrap();
+    let pong = tokio::time::timeout(std::time::Duration::from_secs(2), client.next())
+        .await
+        .unwrap();
+    assert!(matches!(pong, Some(Ok(ClientMessage::Pong(_)))));
+    control.revoke();
+    let closed = tokio::time::timeout(std::time::Duration::from_millis(500), client.next())
+        .await
+        .expect("detached stream retained ended gateway authority");
+    assert!(matches!(
+        closed,
+        None | Some(Err(_)) | Some(Ok(ClientMessage::Close(_)))
+    ));
+    std::future::poll_fn(|cx| {
+        assert!(
+            listener.poll_accept(cx).is_pending(),
+            "no VM owner is contacted before start"
+        );
+        std::task::Poll::Ready(())
+    })
+    .await;
 }

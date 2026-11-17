@@ -16,6 +16,10 @@ impl GatewayChannel {
     pub(crate) fn is_revoked(&self) -> bool {
         self.0.is_revoked()
     }
+
+    pub(crate) async fn revoked(&self) {
+        self.0.revoked().await;
+    }
 }
 
 impl<S: Send + Sync> FromRequestParts<S> for GatewayChannel {

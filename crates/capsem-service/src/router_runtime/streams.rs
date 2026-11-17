@@ -27,6 +27,7 @@ type OwnerChannel = (
 );
 
 pub(crate) async fn handle_stream(
+    channel: crate::gateway_channel::GatewayChannel,
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
     upgrade: WebSocketUpgrade,
@@ -46,7 +47,15 @@ pub(crate) async fn handle_stream(
         .map_err(|e| AppError::new(StatusCode::BAD_GATEWAY, e))?;
     Ok(upgrade
         .max_message_size(stream::MAX_STREAM_FRAME_BYTES)
-        .on_upgrade(move |socket| session(state, id, owner, socket)))
+        .on_upgrade(move |socket| async move {
+            // Axum detaches this future after upgrade. The HTTP connection
+            // no longer owns cancellation of the upgraded socket.
+            tokio::select! {
+                biased;
+                () = channel.revoked() => {},
+                () = session(state, id, owner, socket) => {},
+            }
+        }))
 }
 
 async fn session(
