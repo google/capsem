@@ -22,6 +22,16 @@ fn environment_limits_are_generated_from_the_canonical_authority() {
         ("VARIABLE_TOTAL_BYTES", 262144),
         ("REPOSITORIES", 64),
         ("SPEC_BYTES", 1048576),
+        ("CATALOG_SELECTIONS", 128),
+        ("CATALOG_REFERENCE_BYTES", 1024),
+        ("RULES", 256),
+        ("RULE_BYTES", 65536),
+        ("MCP_SERVERS", 128),
+        ("MCP_ARGUMENTS", 128),
+        ("MCP_TOOL_OVERRIDES", 1024),
+        ("PACKAGE_REGISTRIES", 64),
+        ("CONFIGURATION_ENTRIES", 256),
+        ("CONFIGURATION_TEXT_BYTES", 16384),
     ] {
         assert!(
             rendered.contains(&format!("pub const ENVIRONMENT_MAX_{name}: usize = {value};")),
@@ -43,6 +53,16 @@ fn invalid_environment_limits_fail_before_publication() {
         "max_variable_total_bytes",
         "max_repositories",
         "max_spec_bytes",
+        "max_catalog_selections",
+        "max_catalog_reference_bytes",
+        "max_rules",
+        "max_rule_bytes",
+        "max_mcp_servers",
+        "max_mcp_arguments",
+        "max_mcp_tool_overrides",
+        "max_package_registries",
+        "max_configuration_entries",
+        "max_configuration_text_bytes",
     ] {
         for value in [
             toml::Value::Integer(0),
@@ -62,6 +82,32 @@ fn invalid_environment_limits_fail_before_publication() {
         assert!(
             std::panic::catch_unwind(|| generated::render(&missing)).is_err(),
             "accepted missing {field}"
+        );
+    }
+    for field in [
+        "max_catalog_reference_bytes",
+        "max_rule_bytes",
+        "max_configuration_text_bytes",
+    ] {
+        let mut invalid = config.clone();
+        invalid["environment"]["max_spec_bytes"] = toml::Value::Integer(512);
+        // Keep existing aggregate budgets within the small document so the
+        // new field itself is what rejects the impossible configuration.
+        for other in [
+            "max_description_bytes",
+            "max_startup_script_bytes",
+            "max_variable_value_bytes",
+            "max_variable_total_bytes",
+            "max_catalog_reference_bytes",
+            "max_rule_bytes",
+            "max_configuration_text_bytes",
+        ] {
+            invalid["environment"][other] = toml::Value::Integer(256);
+        }
+        invalid["environment"][field] = toml::Value::Integer(1024);
+        assert!(
+            std::panic::catch_unwind(|| generated::render(&invalid)).is_err(),
+            "{field} exceeds its document budget"
         );
     }
     let mut invalid = config;

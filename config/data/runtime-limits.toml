@@ -135,3 +135,14 @@ max_variable_value_bytes = 16384
 max_variable_total_bytes = 262144
 max_repositories = 64
 max_spec_bytes = 1048576
+# Approved environment configuration only; MCP discovery/results remain transparent.
+max_catalog_selections = 128
+max_catalog_reference_bytes = 1024
+max_rules = 256
+max_rule_bytes = 65536
+max_mcp_servers = 128
+max_mcp_arguments = 128
+max_mcp_tool_overrides = 1024
+max_package_registries = 64
+max_configuration_entries = 256
+max_configuration_text_bytes = 16384

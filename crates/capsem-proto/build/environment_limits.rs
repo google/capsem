@@ -11,6 +11,16 @@ pub fn render(config: &toml::Value) -> String {
         ("max_variable_total_bytes", 262144),
         ("max_repositories", 64),
         ("max_spec_bytes", 1048576),
+        ("max_catalog_selections", 128),
+        ("max_catalog_reference_bytes", 1024),
+        ("max_rules", 256),
+        ("max_rule_bytes", 65536),
+        ("max_mcp_servers", 128),
+        ("max_mcp_arguments", 128),
+        ("max_mcp_tool_overrides", 1024),
+        ("max_package_registries", 64),
+        ("max_configuration_entries", 256),
+        ("max_configuration_text_bytes", 16384),
     ];
     let section = config
         .get("environment")
@@ -42,6 +52,9 @@ pub fn render(config: &toml::Value) -> String {
         "max_description_bytes",
         "max_startup_script_bytes",
         "max_variable_total_bytes",
+        "max_catalog_reference_bytes",
+        "max_rule_bytes",
+        "max_configuration_text_bytes",
     ] {
         assert!(
             section[field].as_integer().unwrap() <= spec_bytes,
