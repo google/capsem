@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -87,25 +88,25 @@ def _pack() -> tuple[Path, Path]:
 
 
 @contextmanager
-def packed_npm_mcp(run_dir: Path) -> Iterator[McpSession]:
-    """Launch the packed npm MCP against one service-owned gateway."""
-    port_path = run_dir / "gateway.port"
-    token_path = run_dir / "gateway.token"
-    assert port_path.exists() and token_path.exists(), (
-        "service gateway credentials missing"
-    )
+def packed_npm_mcp(*, gateway_url: str, access_id: str, capability: str) -> Iterator[McpSession]:
+    """Launch only with explicit operator-issued delegated authority."""
     fixture, cli = _pack()
     proc = subprocess.Popen(
         [
             "node",
             str(cli),
             "--gateway-url",
-            f"http://127.0.0.1:{port_path.read_text().strip()}",
-            "--token-file",
-            str(token_path),
+            gateway_url,
+            "--access-id",
+            access_id,
             "--timeout-ms",
             "120000",
         ],
+        env={
+            **{key: value for key, value in os.environ.items()
+               if key not in {"CAPSEM_GATEWAY_TOKEN", "CAPSEM_GATEWAY_TOKEN_FILE"}},
+            "CAPSEM_AGENT_CAPABILITY": capability,
+        },
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=sys.stderr,
@@ -113,17 +114,17 @@ def packed_npm_mcp(run_dir: Path) -> Iterator[McpSession]:
         bufsize=1,
     )
     session = McpSession(proc)
-    initialized = session.request(
-        "initialize",
-        {
-            "protocolVersion": "2024-11-05",
-            "capabilities": {},
-            "clientInfo": {"name": "capsem-packed-acceptance", "version": "1.0"},
-        },
-    )
-    assert initialized["result"]["serverInfo"]["name"] == "capsem-mcp"
-    session.notify("notifications/initialized")
     try:
+        initialized = session.request(
+            "initialize",
+            {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "capsem-packed-acceptance", "version": "1.0"},
+            },
+        )
+        assert initialized["result"]["serverInfo"]["name"] == "capsem-mcp"
+        session.notify("notifications/initialized")
         yield session
     finally:
         kill_mcp_proc(proc)

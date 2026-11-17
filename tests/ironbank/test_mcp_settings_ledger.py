@@ -18,6 +18,8 @@ from helpers.constants import (
     DEFAULT_RAM_MB,
     EXEC_READY_TIMEOUT,
 )
+from helpers.delegated_access import delegated_vm_access
+from helpers.gateway import TcpHttpClient
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
 from helpers.npm_mcp import packed_npm_mcp, structured
 from helpers.service import (
@@ -27,7 +29,9 @@ from helpers.service import (
     vm_session_db_path,
     wait_exec_ready,
 )
+from helpers.service_gateway import ServiceGateway
 from helpers.session_ledger import open_session_ledger
+from ironbank.approval_fixture import resolve_original_operation
 
 pytestmark = pytest.mark.integration
 
@@ -88,7 +92,7 @@ def _assert_event_id(value: object) -> None:
     assert re.fullmatch(r"[0-9a-f]{12}", value), value
 
 
-def _guest_mcp_call(client, vm_id: str, params: dict):
+def _guest_mcp_command(method: str, params: dict) -> str:
     messages = [
         {
             "jsonrpc": "2.0",
@@ -101,22 +105,31 @@ def _guest_mcp_call(client, vm_id: str, params: dict):
             },
         },
         {"jsonrpc": "2.0", "method": "notifications/initialized"},
-        {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": params},
+        {"jsonrpc": "2.0", "id": 2, "method": method, "params": params},
     ]
     payload = "\n".join(json.dumps(message) for message in messages) + "\n"
-    command = f"printf '%s' {shlex.quote(payload)} | /run/capsem-mcp-server"
-    result = client.post(
-        f"/vms/{vm_id}/exec",
-        {"target": "vm", "command": command, "timeout_secs": 30},
-        timeout=60,
-    )
+    return f"printf '%s' {shlex.quote(payload)} | /run/capsem-mcp-server"
+
+
+def _mcp_exec_reply(result):
     assert result["exit_code"] == 0, result
-    replies = [
-        json.loads(line)
-        for line in exec_output_text(result).splitlines()
-        if line.strip()
-    ]
+    replies = [json.loads(line) for line in exec_output_text(result).splitlines() if line.strip()]
     return next(reply for reply in replies if reply.get("id") == 2)
+
+
+def _guest_mcp_call(client, vm_id: str, params: dict):
+    return _mcp_exec_reply(client.post(
+        f"/vms/{vm_id}/exec",
+        {"target": "vm", "command": _guest_mcp_command("tools/call", params), "timeout_secs": 30},
+        timeout=60,
+    ))
+
+
+def _host_vm_mcp(mcp, vm_id: str, method: str, params: dict):
+    result = structured(mcp.call_tool("capsem_exec", {
+        "vm_id": vm_id, "command": _guest_mcp_command(method, params), "timeout_secs": 30,
+    }))
+    return _mcp_exec_reply(result)
 
 
 def test_oversized_external_mcp_response_is_refused_and_next_call_succeeds():
@@ -283,30 +296,17 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             assert tool["permission_action"] == "block"
             assert tool["permission_source"] == "settings"
 
-        with packed_npm_mcp(service.tmp_dir) as mcp:
+        with delegated_vm_access(service, client, vm_id) as access, packed_npm_mcp(
+            gateway_url=access.gateway_url, access_id=access.access_id, capability=access.capability,
+        ) as mcp:
 
             def host_call(*, blocked=False):
-                response = mcp.request(
-                    "tools/call",
-                    {
-                        "name": "capsem_mcp_call",
-                        "arguments": {
-                            "server_id": "local",
-                            "tool_id": "local__http_headers",
-                            "arguments": arguments,
-                        },
-                    },
-                )
-                assert "error" not in response, response
-                result = response["result"]
+                result = _host_vm_mcp(mcp, vm_id, "tools/call", call["params"])
                 if blocked:
-                    assert result["isError"] is True, result
-                    assert result["structuredContent"] == {
-                        "error": {"kind": "http", "status": 502}
-                    }
+                    assert "error" in result, result
                     return None
-                assert result.get("isError") is not True, result
-                return structured(result)["result"]
+                assert "error" not in result, result
+                return result
 
             inspect_block()
             host_call(blocked=True)
@@ -326,6 +326,49 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             assert "error" in guest_call()
             assert len(upstream_calls()) == 1
 
+            asked = client.patch(route, {"action": "ask"})
+            assert asked["mutation"]["status"] == "applied", asked
+            gateway = ServiceGateway(service)
+            gateway.start()
+            operator_api = TcpHttpClient(gateway.base_url, gateway.token)
+            agent_api = TcpHttpClient(gateway.base_url, access.bearer)
+            settings_before = (service.home_dir / "settings.toml").read_bytes()
+
+            def before_approval():
+                assert len(upstream_calls()) == 1, "pending MCP call reached upstream"
+                listing = operator_api.get(f"/vms/{vm_id}/security/asks")
+                pending = [row for row in listing["requests"] if row["status"] == "pending"]
+                assert len(pending) == 1
+                forbidden = [
+                    ("POST", f"/vms/{vm_id}/security/asks/{pending[0]['ask_id']}/resolve",
+                     {"generation": listing["generation"], "decision": "approve"}),
+                    ("POST", "/credentials/inject", {"provider": "openai", "value": "delegated-inject-must-never-store", "storage": "memory"}),
+                    ("PATCH", "/settings/edit", {}),
+                ]
+                for method, path, body in forbidden:
+                    status, _ = agent_api.call_json(method, path, body)
+                    assert status == 403, (method, path, status)
+                assert (service.home_dir / "settings.toml").read_bytes() == settings_before
+                assert len(upstream_calls()) == 1
+
+            try:
+                approved, receipt = resolve_original_operation(
+                    lambda: host_call(), operator_api, vm_id, "approve", before_approval, access.capability,
+                )
+                assert "Status: 200 OK" in approved["result"]["content"][0]["text"]
+                assert len(upstream_calls()) == 2, "one approval must dispatch exactly once"
+                assert client.delete(f"/agent-access/{access.access_id}") == {"success": True}
+                revoked = mcp.request("tools/call", {"name": "capsem_exec", "arguments": {
+                    "vm_id": vm_id, "command": "printf revoked-must-not-run", "timeout_secs": 5,
+                }})
+                assert revoked["result"]["isError"] is True
+                assert revoked["result"]["structuredContent"] == {"error": {"kind": "http", "status": 401}}
+                assert len(upstream_calls()) == 2
+            finally:
+                agent_api.close()
+                operator_api.close()
+                gateway.stop()
+
         with _connect_session_db(service, client, vm_id) as conn:
             rows = _eventually(
                 lambda: _rows(
@@ -337,7 +380,7 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
                 ORDER BY id
             """,
                 ),
-                lambda rows: len(rows) == 5,
+                lambda rows: len(rows) == 6,
             )
             assert [row["decision"] for row in rows] == [
                 "denied",
@@ -345,7 +388,17 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
                 "allowed",
                 "denied",
                 "denied",
+                "allowed",
             ]
+            assert rows[-1]["event_id"] == receipt["event_id"]
+            asks = _eventually(
+                lambda: _rows(conn, "SELECT status,resolver,reason,event_id FROM security_ask_events WHERE ask_id=? ORDER BY id", (receipt["ask_id"],)),
+                lambda records: len(records) == 2,
+            )
+            assert [row["status"] for row in asks] == ["pending", "approved"]
+            assert asks[-1]["resolver"] == "operator"
+            assert asks[-1]["reason"] == "human_decision"
+            assert all(row["event_id"] == receipt["event_id"] for row in asks)
             for row in rows:
                 _assert_event_id(row["event_id"])
                 if row["decision"] == "denied":
@@ -360,6 +413,9 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
                         and rule["rule_action"] == "block"
                         for rule in rules
                     )
+        logs = service.stop_and_read_log() + gateway.stop_and_read_log()
+        assert access.capability not in logs
+        assert "delegated-inject-must-never-store" not in logs
     finally:
         if vm_id is not None:
             with suppress(Exception):
@@ -420,19 +476,22 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             "instances": 1,
         }
 
-        with packed_npm_mcp(service.tmp_dir) as mcp:
+        with delegated_vm_access(service, client, vm_id) as access, packed_npm_mcp(
+            gateway_url=access.gateway_url, access_id=access.access_id, capability=access.capability,
+        ) as mcp:
             listed = mcp.request("tools/list")
             tool_names = {tool["name"] for tool in listed["result"]["tools"]}
             assert {
                 "capsem_status",
                 "capsem_mcp_servers",
                 "capsem_mcp_tools",
-                "capsem_mcp_call",
+                "capsem_exec",
             } <= tool_names
             assert {
                 "capsem_version",
                 "capsem_suspend",
                 "capsem_service_logs",
+                "capsem_mcp_call",
             }.isdisjoint(tool_names)
             assert all(
                 tool["description"] and tool["inputSchema"]["type"] == "object"
@@ -478,23 +537,18 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             }
             assert route_http_tool["pin_changed"] is False
 
-            mcp_servers = structured(mcp.call_tool("capsem_mcp_servers", {}))
-            assert isinstance(mcp_servers, dict)
-            assert any(server["name"] == "local" for server in mcp_servers["servers"])
-
-            mcp_tools = structured(
-                mcp.call_tool(
-                    "capsem_mcp_tools",
-                    {"server_id": "local"},
-                )
-            )
-            assert isinstance(mcp_tools, dict)
-            mcp_http_tool = next(
-                tool
-                for tool in mcp_tools["tools"]
-                if tool["namespaced_name"] == "local__http_headers"
-            )
-            assert mcp_http_tool == route_http_tool
+            # These legacy tools address global configuration, outside this
+            # credential's VM scope. They must not inherit operator authority.
+            for name, arguments in [
+                ("capsem_mcp_servers", {}), ("capsem_mcp_tools", {"server_id": "local"}),
+            ]:
+                response = mcp.request("tools/call", {"name": name, "arguments": arguments})
+                assert response["result"]["isError"] is True
+                assert response["result"]["structuredContent"] == {"error": {"kind": "http", "status": 403}}
+            inventory = _host_vm_mcp(mcp, vm_id, "tools/list", {})
+            assert "error" not in inventory, inventory
+            guest_http_tool = next(tool for tool in inventory["result"]["tools"] if tool["name"] == "local__http_headers")
+            assert isinstance(guest_http_tool["inputSchema"], dict)
 
             with _connect_session_db(service, client, vm_id) as conn:
                 assert "mcp_calls" not in {
@@ -507,18 +561,10 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
                     "SELECT COUNT(*) FROM tool_calls WHERE origin = 'mcp'"
                 ).fetchone()[0]
 
-            call_result = structured(
-                mcp.call_tool(
-                    "capsem_mcp_call",
-                    {
-                        "server_id": "local",
-                        "tool_id": "local__http_headers",
-                        "arguments": {"url": url, "method": "GET"},
-                    },
-                )
-            )
-            assert isinstance(call_result, dict)
-            call_envelope = call_result["result"]
+            call_envelope = _host_vm_mcp(mcp, vm_id, "tools/call", {
+                "name": "local__http_headers", "arguments": {"url": url, "method": "GET"},
+            })
+            assert isinstance(call_envelope, dict)
             assert call_envelope["jsonrpc"] == "2.0"
             assert "error" not in call_envelope
             assert call_envelope["result"]["content"][0]["type"] == "text"
