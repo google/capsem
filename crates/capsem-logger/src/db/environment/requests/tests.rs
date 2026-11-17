@@ -150,7 +150,7 @@ async fn exact_request_snapshot_and_decision_survive_reopen_and_external_commit(
 #[tokio::test]
 async fn request_snapshot_refuses_missing_truncated_and_purged_required_payloads() {
     for (damage, message) in [
-        ("UPDATE environment_requests SET replayable=0", "purged"),
+        ("UPDATE environment_requests SET replayable=0", "non-replayable"),
         (
             "UPDATE event_body_blobs SET truncated=1 WHERE source_table='environment_requests'",
             "truncated",

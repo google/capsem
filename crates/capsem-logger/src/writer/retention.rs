@@ -88,7 +88,9 @@ struct RetentionPlan {
 
 const KEPT_BLOCK: &str = "sealed_at >= ?1 OR EXISTS (
     SELECT 1 FROM event_body_blobs AS kept
-    WHERE kept.block_offset = body_blocks.block_offset AND kept.created_at >= ?1)";
+    WHERE kept.block_offset = body_blocks.block_offset AND (kept.created_at >= ?1 OR EXISTS (
+        SELECT 1 FROM retained_environment_payloads p
+        WHERE p.source_table=kept.source_table AND p.event_id=kept.event_id)))";
 
 pub(super) fn retain_bodies(
     conn: &Connection,
@@ -98,6 +100,7 @@ pub(super) fn retain_bodies(
     if bodies.has_work() {
         return Err("session body retention needs a flushed archive; blocks are still waiting for index rows".into());
     }
+    let _workset = super::environment_retention::Workset(conn);
     close_open_block(conn, bodies)?;
     let directory = bodies
         .generation_directory()
@@ -110,11 +113,15 @@ pub(super) fn retain_bodies(
         .to_path_buf();
     let state = crate::schema::archive_state(conn).map_err(|error| format!("read archive_state: {error}"))?;
     let mut source = open_source(&directory, state.header, state.committed_end)?;
+    let configuration_expiration = super::environment_retention::prepare(conn, cutoff).map_err(sql_string)?;
     let plan = retention_plan(conn, cutoff)?;
     let dense_end = (FILE_HEADER_BYTES as u64)
         .checked_add(plan.kept_bytes)
         .ok_or("retained archive extent overflows u64")?;
-    if dense_end == state.committed_end && source.metadata().map_err(io_string)?.len() == dense_end {
+    if !configuration_expiration
+        && dense_end == state.committed_end
+        && source.metadata().map_err(io_string)?.len() == dense_end
+    {
         return Ok(RetainOutcome::default());
     }
 
@@ -369,6 +376,7 @@ fn publish_inside_transaction(
     path: &std::path::Path,
 ) -> rusqlite::Result<(u64, u64)> {
     tx.execute_batch("PRAGMA defer_foreign_keys = ON")?;
+    let expired = super::environment_retention::expire(tx)?;
     let rows = tx.execute(
         &format!(
             "DELETE FROM event_body_blobs
@@ -415,7 +423,7 @@ fn publish_inside_transaction(
             "injected retention publication failure".into(),
         ));
     }
-    Ok((blocks as u64, rows as u64))
+    Ok((blocks as u64, (rows + expired) as u64))
 }
 
 fn remap_survivors(tx: &Transaction<'_>) -> rusqlite::Result<(u64, u64)> {

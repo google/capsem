@@ -80,7 +80,9 @@ pub(in crate::db) fn capture(
             return Ok(None);
         };
         if !record.replayable {
-            return Err("environment revision is non-replayable after variable history was purged".into());
+            return Err(
+                "environment revision is non-replayable because required historical values are unavailable".into(),
+            );
         }
         let index =
             bodies::required_configuration_index(connection, &record.payload_event_id, "environment_revisions")?;

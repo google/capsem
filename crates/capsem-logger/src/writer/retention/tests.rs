@@ -34,6 +34,7 @@ fn ledger_with_two_blocks(path: &std::path::Path) -> Connection {
     }
     conn.execute("UPDATE archive_state SET committed_end = ?1", [SECOND + 40])
         .unwrap();
+    crate::writer::environment_retention::prepare(&conn, "2026-03-01T00:00:00Z").unwrap();
     conn
 }
 
@@ -148,3 +149,5 @@ fn uncertain_commit_is_typed_for_either_authoritative_generation() {
         assert_eq!(offsets(&conn) == vec![(FIRST, FIRST)], published);
     }
 }
+
+mod environment;

@@ -197,7 +197,7 @@ async fn environment_snapshots_reconstruct_exact_archived_specification_and_stat
 #[tokio::test]
 async fn environment_snapshots_refuse_purged_truncated_and_missing_payloads() {
     for (damage, expected) in [
-        ("UPDATE environment_revisions SET replayable=0", "purged"),
+        ("UPDATE environment_revisions SET replayable=0", "non-replayable"),
         (
             "UPDATE event_body_blobs SET truncated=1 WHERE source_table='environment_revisions'",
             "truncated",
@@ -248,5 +248,5 @@ async fn environment_snapshot_keeps_replayability_and_bytes_in_one_read_snapshot
         .environment_revision_snapshot(&id(1), &id(11))
         .await
         .unwrap_err()
-        .contains("purged"));
+        .contains("non-replayable"));
 }

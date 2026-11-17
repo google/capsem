@@ -353,7 +353,9 @@ pub(in crate::db) fn capture(
                 return Ok(None);
             };
             if !record.replayable {
-                return Err("environment request is non-replayable after variable history was purged".into());
+                return Err(
+                    "environment request is non-replayable because required historical values are unavailable".into(),
+                );
             }
             let index = crate::db::bodies::required_configuration_index(
                 connection,

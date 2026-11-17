@@ -27,6 +27,7 @@ use flush::flush_dirty_tables_to_disk;
 use flush::{flush_dirty_tables_to_disk_recorded, FlushRequest};
 mod environment;
 mod environment_references;
+mod environment_retention;
 mod environment_requests;
 mod legacy;
 mod model_rows;
