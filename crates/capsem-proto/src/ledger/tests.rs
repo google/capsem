@@ -235,7 +235,7 @@ fn peers_without_typed_environment_reads_are_rejected_before_admission() {
 #[test]
 fn peers_without_current_environment_capability_sections_are_rejected_before_admission() {
     let expected = grant(LedgerClientRole::Reader);
-    for version in [8, 9, 10] {
+    for version in [8, 9, 10, 11] {
         let mut hello = LedgerHello::for_grant(&expected);
         hello.protocol_version = version;
         assert_eq!(

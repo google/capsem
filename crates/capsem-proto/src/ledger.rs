@@ -11,10 +11,10 @@ use thiserror::Error;
 
 /// Version of the ledger handshake, request envelopes and logger-owned
 /// operation/reply enums. Bump it when any of those wire shapes changes.
-/// Version 11 adds remote/sandbox MCP definitions, scoped permission maps and
-/// separate binding references to canonical snapshots and editable requests.
+/// Version 12 adds plugin-specific options and required builtin mode constraints
+/// to canonical environment snapshots and editable request payloads.
 /// Logger-owned operation semantics are not covered by the declaration hash.
-pub const LEDGER_PROTOCOL_VERSION: u16 = 11;
+pub const LEDGER_PROTOCOL_VERSION: u16 = 12;
 /// Hash of ledger wire declarations, separate from the guest protocol hash.
 pub const LEDGER_SCHEMA_HASH: u64 = include!(concat!(env!("OUT_DIR"), "/ledger_schema_hash.txt"));
 /// Largest diagnostic admitted into a response.
