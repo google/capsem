@@ -180,7 +180,7 @@ async fn unsupported_worker_bodies_are_refused_before_sending() {
     }));
     for body in [
         streaming,
-        reqwest::Body::from(vec![0; capsem_proto::MCP_PAYLOAD_MAX_BYTES + 1]),
+        reqwest::Body::from(vec![0; capsem_proto::MCP_JSON_RPC_MAX_BYTES + 1]),
     ] {
         let error = client
             .execute(builder.post("http://server.invalid/mcp").body(body).build().unwrap())
@@ -195,17 +195,17 @@ async fn unsupported_worker_bodies_are_refused_before_sending() {
 }
 
 #[tokio::test]
-async fn exact_payload_ceiling_crosses_the_capability_without_losing_bytes() {
+async fn exact_physical_envelope_crosses_the_capability_without_losing_bytes() {
     let (client, server) = pair(|request| async move {
         let body = request.into_body().collect().await.unwrap().to_bytes();
-        assert_eq!(body.len(), capsem_proto::MCP_PAYLOAD_MAX_BYTES);
+        assert_eq!(body.len(), capsem_proto::MCP_JSON_RPC_MAX_BYTES);
         assert!(body.iter().all(|byte| *byte == b'x'));
         http::Response::new(full("accepted"))
     })
     .await;
     let request = reqwest::Client::new()
         .post("https://configured.example/mcp")
-        .body(vec![b'x'; capsem_proto::MCP_PAYLOAD_MAX_BYTES])
+        .body(vec![b'x'; capsem_proto::MCP_JSON_RPC_MAX_BYTES])
         .build()
         .unwrap();
     assert_eq!(client.execute(request).await.unwrap().text().await.unwrap(), "accepted");
