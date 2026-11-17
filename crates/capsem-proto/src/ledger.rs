@@ -11,10 +11,10 @@ use thiserror::Error;
 
 /// Version of the ledger handshake, request envelopes and logger-owned
 /// operation/reply enums. Bump it when any of those wire shapes changes.
-/// Version 9 adds pinned catalog selections to canonical environment snapshots
-/// and selector-only catalog intent to editable request payloads.
+/// Version 10 adds separate typed access/detection rule sections and catalog
+/// parameters to canonical environment snapshots and editable request payloads.
 /// Logger-owned operation semantics are not covered by the declaration hash.
-pub const LEDGER_PROTOCOL_VERSION: u16 = 9;
+pub const LEDGER_PROTOCOL_VERSION: u16 = 10;
 /// Hash of ledger wire declarations, separate from the guest protocol hash.
 pub const LEDGER_SCHEMA_HASH: u64 = include!(concat!(env!("OUT_DIR"), "/ledger_schema_hash.txt"));
 /// Largest diagnostic admitted into a response.
