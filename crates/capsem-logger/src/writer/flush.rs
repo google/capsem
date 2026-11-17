@@ -11,6 +11,7 @@ pub(in crate::writer) fn flush_dirty_tables_to_disk(
     counters: &LedgerCounters,
     wait_for_body_sync: bool,
 ) -> rusqlite::Result<FlushTimings> {
+    bodies.required_status()?;
     if dirty_tables.is_empty() && !bodies.has_work() {
         return Ok(FlushTimings::default());
     }
@@ -20,6 +21,7 @@ pub(in crate::writer) fn flush_dirty_tables_to_disk(
     let started = Instant::now();
     bodies.flush_segment();
     bodies.prepare_index_rows(wait_for_body_sync);
+    bodies.required_status()?;
     let archive_ms = started.elapsed().as_secs_f64() * 1000.0;
     let tables: Vec<&'static str> = dirty_tables.iter().copied().collect();
     let started = Instant::now();

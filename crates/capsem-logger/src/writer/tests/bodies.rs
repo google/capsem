@@ -6,6 +6,7 @@
 
 use capsem_archive::ArchiveError;
 mod index_batches;
+mod required;
 
 use super::*;
 use crate::writer::bodies::takes_the_archive_out_of_service;

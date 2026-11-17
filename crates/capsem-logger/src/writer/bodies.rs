@@ -43,6 +43,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use tracing::warn;
 
 mod index;
+pub(super) mod staging;
 mod sync_worker;
 use sync_worker::ArchiveSyncWorker;
 
@@ -93,6 +94,7 @@ struct BodyIndexRow {
     /// its own rows wherever they ended up -- including behind a segment
     /// that was flushed while the transaction was still open.
     seq: u64,
+    required: bool,
     event_id: String,
     event_type: &'static str,
     source_table: &'static str,
@@ -143,6 +145,7 @@ pub(super) struct BodyArchive {
     /// is computed once. Cleared when the block closes: a span is reusable
     /// while it is in the block being written.
     block_spans: HashMap<String, BodyRef>,
+    required_failure: Option<&'static str>,
     /// Sequence number the next staged row takes.
     next_seq: u64,
     /// Segments written through the page cache and waiting to start a device
@@ -494,6 +497,7 @@ impl BodyArchive {
             staged: Vec::new(),
             reused: Vec::new(),
             block_spans: HashMap::new(),
+            required_failure: None,
             next_seq: 0,
             appended: Vec::new(),
             synced: Vec::new(),
@@ -509,129 +513,6 @@ impl BodyArchive {
 
     pub(super) fn codecs(&self) -> ArchiveCodecs {
         self.codecs.clone()
-    }
-
-    /// Stage one body: its bytes into the open block, its index row beside
-    /// them. Empty and absent bodies produce neither.
-    pub(super) fn stage(&mut self, conn: &Connection, blob: EventBodyBlob<'_>) {
-        if self.writer.is_none() {
-            return;
-        }
-        let Some(bytes) = blob.body.filter(|body| !body.is_empty()) else {
-            return;
-        };
-        let stored_len = bytes.len().min(MAX_BODY_BLOB_BYTES);
-        // What the producer sent may already be an excerpt -- guest exec
-        // output is capped at the vsock boundary -- and then the row must
-        // report the size it was cut from, not the size that arrived. A
-        // producer that reports less than it sent is not believed: the floor
-        // is what actually arrived, so under-reporting cannot also erase the
-        // truncation this writer did on top of it.
-        let original_bytes = blob.original_bytes.unwrap_or(0).max(bytes.len() as u64);
-        let stored = &bytes[..stored_len];
-        // Over the stored bytes, not the buffer they were cut from: a hash of
-        // something the archive does not hold cannot be checked against
-        // anything, and a reader that verifies what it read is how a corrupted
-        // index row stops being a body. It is also what finds a repeat.
-        let body_hash = content_digest(stored);
-        let Some((reference, committed)) = self.stage_bytes(conn, stored, &body_hash) else {
-            return;
-        };
-        let seq = self.next_seq;
-        self.next_seq += 1;
-        // A row naming bytes already committed and synced waits for no
-        // segment: it joins the next transaction as it is.
-        let pending = if committed { &mut self.reused } else { &mut self.staged };
-        pending.push(BodyIndexRow {
-            seq,
-            event_id: blob.event_id.to_string(),
-            event_type: blob.event_type,
-            source_table: blob.source_table,
-            direction: blob.direction,
-            content_type: blob.content_type.map(str::to_string),
-            original_bytes: original_bytes as i64,
-            stored_bytes: stored_len as i64,
-            // Per row, even when the span is shared: two producers can cut the
-            // same stored bytes from bodies of different sizes.
-            truncated: original_bytes > stored_len as u64,
-            body_hash,
-            block_offset: reference.block_offset as i64,
-            body_offset: i64::from(reference.offset),
-            trace_id: blob.trace_id.map(str::to_string),
-            turn_id: blob.turn_id.map(str::to_string),
-            created_at: format_timestamp((self.now)()),
-        });
-    }
-
-    /// Stage bytes into the open block -- or, when the open block already
-    /// holds these exact bytes, hand back their span and add nothing.
-    ///
-    /// Keyed by the full XXH3-128 fingerprint of the stored bytes: a length or
-    /// a prefix match would index one body against another's bytes, and the
-    /// reader's hash check would then refuse it forever.
-    ///
-    /// A block open longer than `MAX_BLOCK_AGE` is closed first, so this body
-    /// starts a new one. `BlockFull` is the archive's close-and-retry
-    /// contract, not a failure: the open block is within 16 MiB of its ceiling
-    /// and this body does not fit beside what is already there. Closing
-    /// empties it, and a body capped at `MAX_BODY_BLOB_BYTES` (10 MiB) always
-    /// fits an empty one, so the retry is the last step and not a loop.
-    ///
-    /// Every other error skips the body and logs. A poisoned writer takes the
-    /// archive out of service here, because the rows staged beside it would
-    /// name bytes no file received. In no case may a body take down the
-    /// writer thread that owns the whole session ledger.
-    fn stage_bytes(&mut self, conn: &Connection, bytes: &[u8], body_hash: &str) -> Option<(BodyRef, bool)> {
-        if self.block_is_stale() {
-            self.close_block();
-        }
-        if let Some(reference) = self.block_spans.get(body_hash) {
-            ::metrics::counter!(DB_ARCHIVE_BODIES_DEDUPLICATED_TOTAL, "scope" => "block").increment(1);
-            return Some((*reference, false));
-        }
-        if let Some(reference) = committed_span(conn, bytes.len(), body_hash) {
-            ::metrics::counter!(DB_ARCHIVE_BODIES_DEDUPLICATED_TOTAL, "scope" => "archive").increment(1);
-            return Some((reference, true));
-        }
-        match self.stage_into_open_block(bytes, body_hash)? {
-            Ok(reference) => return Some((reference, false)),
-            Err(ArchiveError::BlockFull) => {}
-            Err(error) => {
-                self.refuse_body(&error, bytes.len(), "stage");
-                return None;
-            }
-        }
-        self.close_block();
-        match self.stage_into_open_block(bytes, body_hash) {
-            Some(Ok(reference)) => Some((reference, false)),
-            Some(Err(error)) => {
-                self.refuse_body(&error, bytes.len(), "stage_after_close");
-                None
-            }
-            None => {
-                // `close_block` failed its write and retired the writer. The
-                // count it took covered the rows it was holding; this body has
-                // no row yet, so it was not among them. Without this line it is
-                // the one body the counter never sees.
-                warn!(body_bytes = bytes.len(), "body not archived after close");
-                self.drop_bodies(1, "stage_after_close");
-                None
-            }
-        }
-    }
-
-    /// One attempt at staging: `None` when there is no writer.
-    fn stage_into_open_block(&mut self, bytes: &[u8], body_hash: &str) -> Option<Result<BodyRef, ArchiveError>> {
-        let writer = self.writer.as_mut()?;
-        let opening = writer.open_block_raw_len().is_none();
-        let staged = writer.stage(bytes);
-        if let Ok(reference) = &staged {
-            if opening {
-                self.block_opened_at = Some((self.now)());
-            }
-            self.block_spans.insert(body_hash.to_string(), *reference);
-        }
-        Some(staged)
     }
 
     fn refuse_body(&mut self, error: &ArchiveError, body_bytes: usize, reason: &'static str) {
@@ -671,6 +552,7 @@ impl BodyArchive {
     /// written goes with it. Every caller has already counted the rows that
     /// named those bytes.
     fn retire_writer(&mut self) {
+        self.note_required_loss("archive_unavailable");
         self.sync_worker = None;
         if let Some(writer) = self.writer.take() {
             writer.abandon();
@@ -814,6 +696,9 @@ impl BodyArchive {
                     "session body archive write failed; no further bodies will be stored"
                 );
                 let rows = std::mem::take(&mut self.staged);
+                if rows.iter().any(|row| row.required) && self.required_failure.is_none() {
+                    self.required_failure = Some("append");
+                }
                 self.drop_bodies(rows.len(), "append");
                 self.retire_writer();
             }
@@ -930,6 +815,7 @@ impl BodyArchive {
     /// and the rows of bytes not yet written are equally unreachable once the
     /// archive stops vouching for its own file.
     pub(super) fn abandon_uncommitted(&mut self, reason: &'static str) {
+        self.note_required_loss(reason);
         let dropped: usize = self.appended.iter().map(|segment| segment.rows.len()).sum::<usize>()
             + self.synced.iter().map(|segment| segment.rows.len()).sum::<usize>()
             + self
@@ -977,6 +863,14 @@ impl BodyArchive {
     }
 
     /// Make the next segment write fail, as a full disk would.
+    #[cfg(test)]
+    pub(super) fn fail_next_sync_for_tests(&mut self) {
+        let sync = self.writer.as_ref().unwrap().sync_handle().unwrap();
+        let worker = ArchiveSyncWorker::start(sync).unwrap();
+        worker.fail_next_for_tests();
+        self.sync_worker = Some(worker);
+    }
+
     #[cfg(test)]
     pub(super) fn fail_next_append_for_tests(&mut self) {
         self.fail_next_append = true;

@@ -9,6 +9,7 @@ pub(crate) fn tables() -> impl Iterator<Item = &'static (&'static str, &'static 
 }
 
 pub(crate) fn assert_current(conn: &Connection) -> rusqlite::Result<()> {
+    super::integrity::validate_body_payload_contract(conn)?;
     if !table_exists(conn, "main", "environment_schema")? {
         return Err(contract_error(
             "machine ledger predates environment format; environment_schema is missing",

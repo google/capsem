@@ -126,8 +126,8 @@ pub const CREATE_SCHEMA: &str = concat!("
     CREATE TABLE IF NOT EXISTS event_body_blobs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         event_id TEXT NOT NULL CHECK (length(CAST(event_id AS BLOB)) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
-        event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.decision', 'security.ask')),
-        source_table TEXT NOT NULL CHECK (source_table IN ('net_events', 'model_calls', 'tool_calls', 'tool_responses', 'exec_events', 'security_rule_events', 'security_decision_events', 'security_ask_events')),
+        event_type TEXT NOT NULL CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.decision', 'security.ask', 'environment.revision', 'environment.request')),
+        source_table TEXT NOT NULL CHECK (source_table IN ('net_events', 'model_calls', 'tool_calls', 'tool_responses', 'exec_events', 'security_rule_events', 'security_decision_events', 'security_ask_events', 'environment_revisions', 'environment_requests')),
         direction TEXT NOT NULL CHECK (direction IN ('request', 'response', 'payload', 'stdout', 'stderr')),
         content_type TEXT,
         original_bytes INTEGER NOT NULL CHECK (original_bytes >= 0),

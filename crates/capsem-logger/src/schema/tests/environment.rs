@@ -127,3 +127,42 @@ fn unknown_environment_versions_and_missing_commit_indexes_fail_closed() {
     assert!(create_tables(&conn).is_err());
     assert!(validate_ready_schema(&conn).is_err());
 }
+
+#[test]
+fn narrow_environment_payload_checks_are_refused_before_ddl() {
+    let conn = Connection::open_in_memory().unwrap();
+    create_tables(&conn).unwrap();
+    let current: String = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE name='event_body_blobs'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let old = current
+        .replace(", 'environment.revision', 'environment.request'", "")
+        .replace(", 'environment_revisions', 'environment_requests'", "");
+    assert_ne!(old, current);
+    conn.execute_batch("DROP TABLE event_body_blobs").unwrap();
+    conn.execute_batch(&old).unwrap();
+    let version: i64 = conn.query_row("PRAGMA schema_version", [], |row| row.get(0)).unwrap();
+    assert!(create_tables(&conn).is_err());
+    assert!(validate_ready_schema(&conn).is_err());
+    assert_eq!(
+        conn.query_row("PRAGMA schema_version", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        version
+    );
+}
+
+#[test]
+fn missing_environment_body_index_is_named_and_never_recreated() {
+    let conn = Connection::open_in_memory().unwrap();
+    create_tables(&conn).unwrap();
+    conn.execute_batch("DROP TABLE event_body_blobs").unwrap();
+    assert!(create_tables(&conn)
+        .unwrap_err()
+        .to_string()
+        .contains("event_body_blobs"));
+    assert!(!table_exists(&conn, "main", "event_body_blobs").unwrap());
+}

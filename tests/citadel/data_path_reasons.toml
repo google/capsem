@@ -472,7 +472,7 @@ json = { count = 2, reason = "db-json" }
 [sources."crates/capsem-logger/src/schema.rs"]
 hash = { count = 1, reason = "hash-identity" }
 
-[sources."crates/capsem-logger/src/writer/bodies.rs"]
+[sources."crates/capsem-logger/src/writer/bodies/staging.rs"]
 hash = { count = 1, reason = "hash-archive" }
 
 [sources."crates/capsem-logger/src/writer/model_rows.rs"]

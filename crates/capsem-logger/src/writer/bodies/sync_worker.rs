@@ -8,18 +8,30 @@ pub(super) struct ArchiveSyncWorker {
     requests: Option<mpsc::SyncSender<()>>,
     completions: mpsc::Receiver<Result<(), String>>,
     join: Option<std::thread::JoinHandle<()>>,
+    #[cfg(test)]
+    fail_next: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl ArchiveSyncWorker {
     pub(super) fn start(sync: BodyLogSync) -> std::io::Result<Self> {
         let (requests, work) = mpsc::sync_channel(1);
         let (completed, completions) = mpsc::sync_channel(1);
+        #[cfg(test)]
+        let fail_next = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        #[cfg(test)]
+        let failure = fail_next.clone();
         let join = std::thread::Builder::new()
             .name("capsem-archive-sync".into())
             .stack_size(128 * 1024)
             .spawn(move || {
                 while work.recv().is_ok() {
                     let result = sync.sync().map_err(|error| error.to_string());
+                    #[cfg(test)]
+                    let result = if failure.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                        Err("injected archive sync completion failure".into())
+                    } else {
+                        result
+                    };
                     if completed.send(result).is_err() {
                         break;
                     }
@@ -29,7 +41,14 @@ impl ArchiveSyncWorker {
             requests: Some(requests),
             completions,
             join: Some(join),
+            #[cfg(test)]
+            fail_next,
         })
+    }
+
+    #[cfg(test)]
+    pub(super) fn fail_next_for_tests(&self) {
+        self.fail_next.store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     pub(super) fn request(&self) -> Result<(), String> {
