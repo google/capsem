@@ -1,4 +1,5 @@
 use super::*;
+mod compilation;
 use capsem_config::catalogs::{CatalogKind, CatalogSourceDescriptor, CatalogSourceOrigin, SelectedCatalogSource};
 
 fn source(kind: CatalogKind) -> ValidatedCatalogSource {

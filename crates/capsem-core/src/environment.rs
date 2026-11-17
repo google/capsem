@@ -5,10 +5,12 @@ use capsem_config::environment::EnvironmentSpecification;
 mod policy_inputs;
 pub use policy_inputs::EnvironmentPolicyInputs;
 mod catalog_contents;
+mod catalog_rules;
 mod catalog_sources;
 pub use catalog_contents::{
     CatalogContentEntry, CatalogContentError, CatalogContents, RuleCatalogContents, SkillCatalogContents,
 };
+pub use catalog_rules::RuleCatalogInputs;
 mod mcp_permissions;
 mod rules;
 pub use catalog_sources::effective_catalog_source;
