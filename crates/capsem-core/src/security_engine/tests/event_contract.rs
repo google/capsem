@@ -94,7 +94,7 @@ fn transport_write_preserves_phase_and_primary_event_identity() {
         )
         .unwrap();
         let mut op = WriteOp::TransportEvent(record);
-        assert_eq!(RuntimeSecurityEventType::for_write_op(&op), expected);
+        assert_eq!(RuntimeSecurityEventType::for_write_op(&op), Some(expected));
         assert_eq!(op.ensure_event_id().as_deref(), Some("abcdef123456"));
         assert_eq!(op.event_id(), Some("abcdef123456"));
     }
@@ -548,7 +548,7 @@ fn runtime_security_event_from_logger_write_maps_all_write_ops() {
     ];
 
     for (write, expected_type) in cases {
-        let event = RuntimeSecurityEvent::from_logger_write(write);
+        let event = RuntimeSecurityEvent::from_logger_write(write).unwrap();
         assert_eq!(event.event_type, expected_type);
         assert_eq!(event.event_family, expected_type.family());
         if expected_type != RuntimeSecurityEventType::ProcessExecComplete {
@@ -679,4 +679,28 @@ fn request_only_mcp_ask_does_not_reappear_for_plain_error_responses() {
             "observed response must not ask for invocation permission again: {preview:?}"
         );
     }
+}
+
+#[tokio::test]
+async fn environment_history_is_not_a_runtime_security_event() {
+    use capsem_logger::events::{EnvironmentRevisionState, EnvironmentRevisionTransition};
+    let operation = || {
+        WriteOp::EnvironmentRevisionTransition(EnvironmentRevisionTransition {
+            environment_id: uuid::Uuid::from_u128(1).to_string(),
+            revision_id: uuid::Uuid::from_u128(2).to_string(),
+            state: EnvironmentRevisionState::Committed,
+            timestamp_unix_ms: 1,
+            actor: "operator".into(),
+        })
+    };
+    assert_eq!(RuntimeSecurityEventType::for_write_op(&operation()), None);
+    assert!(RuntimeSecurityEvent::from_logger_write(operation()).is_none());
+    let called = std::cell::Cell::new(false);
+    let result = crate::security_engine::emission::emit_security_write_with(operation(), |_| {
+        called.set(true);
+        std::future::ready(Ok(()))
+    })
+    .await;
+    assert!(result.is_err(), "host history must use its own ledger admission");
+    assert!(!called.get(), "runtime admission must not publish host-only evidence");
 }

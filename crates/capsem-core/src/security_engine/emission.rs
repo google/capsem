@@ -17,22 +17,23 @@ pub struct RuntimeSecurityEvent {
 }
 
 impl RuntimeSecurityEvent {
-    pub fn from_logger_write(mut logger_write: WriteOp) -> Self {
+    /// Host-only configuration records must use their dedicated ledger admission.
+    pub fn from_logger_write(mut logger_write: WriteOp) -> Option<Self> {
+        let event_type = RuntimeSecurityEventType::for_write_op(&logger_write)?;
         let event_id = logger_write
             .ensure_event_id()
             .and_then(|value| SecurityEventId::parse(value).ok());
-        let event_type = RuntimeSecurityEventType::for_write_op(&logger_write);
         let event_family = event_type.family();
         let credential_ref = logger_write_credential_ref(&logger_write);
         let trace_id = logger_write_trace_id(&logger_write);
-        Self {
+        Some(Self {
             event_id,
             event_type,
             event_family,
             credential_ref,
             trace_id,
             logger_write,
-        }
+        })
     }
 
     pub fn into_logger_write(self) -> WriteOp {
@@ -71,7 +72,8 @@ pub(crate) async fn emit_security_write_with<F: std::future::Future<Output = Res
     op: WriteOp,
     write: impl FnOnce(WriteOp) -> F,
 ) -> Result<Option<SecurityEventId>, String> {
-    let event = RuntimeSecurityEvent::from_logger_write(op);
+    let event = RuntimeSecurityEvent::from_logger_write(op)
+        .ok_or_else(|| "host-only evidence requires dedicated ledger admission".to_owned())?;
     let event_type = event.event_type.as_str();
     let event_family = event.event_family.as_str();
     let span = tracing::debug_span!(
@@ -90,7 +92,7 @@ pub(crate) async fn emit_security_write_with<F: std::future::Future<Output = Res
 }
 
 pub fn emit_security_write_blocking(db: &DbWriter, op: WriteOp) -> Option<SecurityEventId> {
-    let event = RuntimeSecurityEvent::from_logger_write(op);
+    let event = RuntimeSecurityEvent::from_logger_write(op)?;
     let event_type = event.event_type.as_str();
     let event_family = event.event_family.as_str();
     let span = tracing::debug_span!(

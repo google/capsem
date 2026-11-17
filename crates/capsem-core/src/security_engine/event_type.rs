@@ -184,8 +184,8 @@ impl RuntimeSecurityEventType {
         }
     }
 
-    pub(super) fn for_write_op(op: &WriteOp) -> Self {
-        match op {
+    pub(super) fn for_write_op(op: &WriteOp) -> Option<Self> {
+        Some(match op {
             WriteOp::TransportEvent(event) => event.kind().into(),
             WriteOp::NetEvent(_) => Self::HttpRequest,
             WriteOp::ModelCall(_) => Self::ModelCall,
@@ -203,13 +203,17 @@ impl RuntimeSecurityEventType {
             WriteOp::SecurityRuleEvent(_) => Self::SecurityRule,
             WriteOp::SecurityAskEvent(_) => Self::SecurityAsk,
             WriteOp::SecurityDecisionEvent(_) => Self::SecurityRule,
-            WriteOp::PolicyMutationEvent(_) | WriteOp::HostEvent(_) => Self::SecurityRule,
+            // Host configuration evidence has no sandbox runtime event family.
+            WriteOp::PolicyMutationEvent(_)
+            | WriteOp::HostEvent(_)
+            | WriteOp::PrepareEnvironmentRevision(_)
+            | WriteOp::EnvironmentRevisionTransition(_) => return None,
             // Registry rows of a network database: the state a lifecycle
             // event describes, so they audit under the same type.
             WriteOp::Network(_) | WriteOp::NetworkMembership(_) | WriteOp::NetworkDeparture(_) => {
                 Self::NetworkLifecycle
             }
-        }
+        })
     }
 }
 
