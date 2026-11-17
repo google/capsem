@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fixed: MCP HTTP capabilities enforce the shared usable payload ceiling before forwarding, independently of framing overhead.
+
 - Fixed: Guest MCP input is bounded while reading, rejects invalid correlation IDs before forwarding, and recovers at the next line without truncating valid requests.
 
 - Fixed: Guest framed and HTTP MCP replies use bounded JSON encoding with full attribution overhead reserved; invalid correlation IDs are rejected before dispatch.

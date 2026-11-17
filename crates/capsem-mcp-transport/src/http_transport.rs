@@ -66,7 +66,7 @@ impl BrokerHttpClient {
             let bytes = body.as_bytes().ok_or_else(|| {
                 io::Error::new(io::ErrorKind::InvalidInput, "MCP worker request body must be buffered")
             })?;
-            if bytes.len() > capsem_proto::MCP_FRAME_MAX_SIZE {
+            if bytes.len() > capsem_proto::MCP_PAYLOAD_MAX_BYTES {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     "MCP worker request body is too large",
