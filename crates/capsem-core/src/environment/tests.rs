@@ -1,5 +1,6 @@
 use super::*;
 use capsem_config::environment::*;
+mod rules;
 
 type Change = fn(&mut EnvironmentSpecification);
 
