@@ -343,6 +343,29 @@ async fn broker_bounds_request_bodies_even_when_the_worker_skips_client_validati
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(upstream.requests.lock().unwrap().len(), 1);
+    let empty = serde_json::json!({"jsonrpc":"2.0","method":"tools/call","params":{"text":""}});
+    let overhead = serde_json::to_vec(&empty).unwrap().len();
+    let body = serde_json::to_vec(&serde_json::json!({
+        "jsonrpc":"2.0", "method":"tools/call", "id":"\0".repeat(capsem_proto::MCP_REQUEST_ID_MAX_BYTES),
+        "params":{"text":"x".repeat(capsem_proto::MCP_PAYLOAD_MAX_BYTES - overhead)}
+    }))
+    .unwrap();
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri(&upstream.url)
+        .header(MCP_SERVER_HEADER, "assigned")
+        .body(http_body_util::Full::new(bytes::Bytes::from(body)))
+        .unwrap();
+    let response = tokio::time::timeout(Duration::from_secs(2), sender.send_request(request))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "maximum correlation must not shrink usable content"
+    );
+    assert_eq!(upstream.requests.lock().unwrap().len(), 2);
     authority.revoke();
     task.await.unwrap();
     driver.abort();

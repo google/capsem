@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fixed: The MCP upstream broker admits maximum-ID requests without shrinking usable content and rejects attempts to spend unused ID space on oversized content.
+
 - Fixed: MCP HTTP capability bodies retain the independently bounded correlation allowance while enforcing the physical envelope limit before forwarding.
 
 - Fixed: Aggregator HTTP and SSE preserve the usable MCP content ceiling with maximum correlation IDs, and upstream requests serialize into bounded final storage.
