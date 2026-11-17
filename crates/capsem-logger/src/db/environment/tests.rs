@@ -1,5 +1,7 @@
 use super::*;
 use crate::events::{EnvironmentRevisionTransition, PreparedEnvironmentRevision};
+#[path = "tests/recovery.rs"]
+mod recovery;
 
 fn id(value: u64) -> String {
     format!("00000000-0000-4000-8000-{value:012x}")

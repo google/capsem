@@ -24,6 +24,40 @@ fn record() -> EnvironmentRevisionRecord {
 }
 
 #[test]
+fn request_result_revision_replies_require_the_exact_request_and_single_result() {
+    let query = LedgerEnvironmentQuery::Revisions {
+        query: EnvironmentRevisionQuery::ForRequest { request_id: id(40) },
+    };
+    query.validate().unwrap();
+    let mut result = record();
+    result.request_id = Some(id(40));
+    for records in [vec![], vec![result.clone()]] {
+        let reply = LedgerEnvironmentReply::Revisions { records };
+        reply.validate().unwrap();
+        assert!(reply.matches_query(&query));
+    }
+    assert!(!LedgerEnvironmentReply::Revisions {
+        records: vec![result.clone(), result.clone()]
+    }
+    .matches_query(&query));
+    for request_id in [None, Some(id(41))] {
+        result.request_id = request_id;
+        let reply = LedgerEnvironmentReply::Revisions {
+            records: vec![result.clone()],
+        };
+        reply.validate().unwrap();
+        assert!(!reply.matches_query(&query));
+    }
+    assert!(LedgerEnvironmentQuery::Revisions {
+        query: EnvironmentRevisionQuery::ForRequest {
+            request_id: "not-an-identity".into()
+        },
+    }
+    .validate()
+    .is_err());
+}
+
+#[test]
 fn environment_reads_require_read_authority_and_validate_every_query_family() {
     let query = LedgerEnvironmentQuery::Revisions {
         query: EnvironmentRevisionQuery::Get {

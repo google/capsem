@@ -20,6 +20,9 @@ pub enum EnvironmentRevisionQuery {
         environment_id: String,
         revision_id: String,
     },
+    /// Zero or one result, including an interrupted publication. The existing
+    /// unique request index makes recovery independent of history size.
+    ForRequest { request_id: String },
     Page {
         environment_id: Option<String>,
         state: Option<EnvironmentRevisionState>,
@@ -39,6 +42,7 @@ impl EnvironmentRevisionQuery {
                 environment_id,
                 revision_id,
             } => valid_id(environment_id) && valid_id(revision_id),
+            Self::ForRequest { request_id } => valid_id(request_id),
             Self::Page {
                 environment_id,
                 after_id,
@@ -89,7 +93,7 @@ impl std::fmt::Debug for EnvironmentRevisionRecord {
 }
 
 impl DbHandle {
-    /// Durable metadata in exclusive cursor order; Get returns zero or one row.
+    /// Durable metadata in exclusive cursor order; exact lookups return at most one row.
     /// Snapshot bytes remain in the archive, never in this metadata projection.
     pub async fn environment_revisions(
         &self,
@@ -150,6 +154,13 @@ fn query_rows(
                 "SELECT {COLUMNS} FROM environment_revisions WHERE environment_id=?1 AND revision_id=?2"
             ))?;
             let rows = statement.query_map(rusqlite::params![environment_id, revision_id], from_row)?;
+            rows.collect()
+        }
+        EnvironmentRevisionQuery::ForRequest { request_id } => {
+            let mut statement = connection.prepare_cached(&format!(
+                "SELECT {COLUMNS} FROM environment_revisions WHERE request_id=?1"
+            ))?;
+            let rows = statement.query_map([request_id], from_row)?;
             rows.collect()
         }
         EnvironmentRevisionQuery::Page {
