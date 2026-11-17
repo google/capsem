@@ -7,7 +7,7 @@ use crate::types::{default_true, PolicySubject};
 use crate::validation::{validate_identifier, validate_non_empty, validate_policy_target};
 
 mod environment;
-pub use environment::CompiledEnvironmentDetectionRule;
+pub use environment::{compile_environment_mcp_permissions, CompiledEnvironmentDetectionRule};
 mod sigma;
 use sigma::SigmaRule;
 

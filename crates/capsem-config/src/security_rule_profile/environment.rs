@@ -1,6 +1,8 @@
 //! Leaf compilation reuses the existing matcher. Core owns policy composition.
 use super::*;
 use crate::environment::{EnvironmentAccessRule, EnvironmentDetectionRule};
+mod mcp_permissions;
+pub use mcp_permissions::compile_environment_mcp_permissions;
 
 impl CompiledSecurityRule {
     /// Own the bounded source and compiled AST once. Runtime evaluation neither

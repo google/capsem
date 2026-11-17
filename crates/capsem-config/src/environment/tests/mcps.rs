@@ -1,4 +1,5 @@
 use super::*;
+mod permissions;
 
 const MCPS: &str = r#"
 [mcps.servers.remote]

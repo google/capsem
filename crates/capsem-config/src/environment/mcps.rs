@@ -73,6 +73,17 @@ impl Default for EnvironmentMcpPermissions {
         }
     }
 }
+impl EnvironmentMcpPermissions {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.tools.len() > capsem_proto::ENVIRONMENT_MAX_MCP_TOOL_OVERRIDES {
+            return Err("too many environment MCP tool overrides");
+        }
+        if self.tools.keys().any(|name| name.is_empty() || !text(name)) {
+            return Err("invalid environment MCP tool override name");
+        }
+        Ok(())
+    }
+}
 fn enabled() -> bool {
     true
 }
@@ -190,12 +201,10 @@ pub(super) fn validate<'a, C>(
         return Err("too many environment MCP permission entries".into());
     }
     for (id, permissions) in &mcps.permissions {
-        if !ids.contains(id.as_str()) || permissions.tools.len() > capsem_proto::ENVIRONMENT_MAX_MCP_TOOL_OVERRIDES {
+        if !ids.contains(id.as_str()) {
             return Err("environment MCP permissions require a configured server within its override limit".into());
         }
-        if permissions.tools.keys().any(|name| name.is_empty() || !text(name)) {
-            return Err("invalid environment MCP tool override name".into());
-        }
+        permissions.validate()?;
     }
     Ok(())
 }
