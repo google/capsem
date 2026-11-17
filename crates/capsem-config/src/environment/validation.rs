@@ -48,7 +48,7 @@ impl EnvironmentDocument {
     }
 }
 
-impl<I, R> EnvironmentSpecification<I, R> {
+impl<I, R, C> EnvironmentSpecification<I, R, C> {
     fn validate_common(&self) -> Result<(), String> {
         let name = self.name.as_bytes();
         require(
@@ -193,6 +193,7 @@ impl EnvironmentSpecification {
     /// Validate host-resolved revision content. A selector alone is not a pin.
     pub fn validate(&self) -> Result<(), String> {
         self.validate_common()?;
+        self.skills.validate()?;
         if let Some(image) = &self.image {
             validate_image_reference(&image.reference)?;
             require(
@@ -231,6 +232,7 @@ impl EnvironmentDraft {
     /// encoded proposal. Errors and Debug never expose variable/script values.
     pub fn validate(&self) -> Result<(), String> {
         self.validate_common()?;
+        self.skills.validate()?;
         if let Some(image) = &self.image {
             validate_image_reference(&image.reference)?;
         }

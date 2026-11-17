@@ -271,6 +271,11 @@ fn environment_editor_metadata_reuses_compiled_runtime_limits() {
     assert_eq!(limits.max_secret_bindings, ENVIRONMENT_MAX_VARIABLES);
     assert_eq!(limits.max_repositories, ENVIRONMENT_MAX_REPOSITORIES);
     assert_eq!(limits.max_spec_bytes, ENVIRONMENT_MAX_SPEC_BYTES);
+    assert_eq!(limits.max_catalog_selections, ENVIRONMENT_MAX_CATALOG_SELECTIONS);
+    assert_eq!(
+        limits.max_catalog_reference_bytes,
+        ENVIRONMENT_MAX_CATALOG_REFERENCE_BYTES
+    );
 }
 
 const DRAFT: &str = r#"name='development'
@@ -324,3 +329,5 @@ fn environment_draft_refuses_caller_resolution_identity_and_invalid_fields() {
         assert!(draft.validate().is_err());
     }
 }
+
+mod catalog;

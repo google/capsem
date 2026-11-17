@@ -3,9 +3,11 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+mod catalog;
 #[cfg(test)]
 mod tests;
 mod validation;
+pub use catalog::{EnvironmentCatalogPin, EnvironmentCatalogSelection, EnvironmentCatalogSelections};
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -21,8 +23,11 @@ pub struct EnvironmentIdentity {
 
 /// Editable content contains no service-assigned revision/history metadata.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, bound(deserialize = "I: Deserialize<'de>, R: Deserialize<'de>"))]
-pub struct EnvironmentSpecification<I = EnvironmentImage, R = EnvironmentRepository> {
+#[serde(
+    deny_unknown_fields,
+    bound(deserialize = "I: Deserialize<'de>, R: Deserialize<'de>, C: Deserialize<'de>")
+)]
+pub struct EnvironmentSpecification<I = EnvironmentImage, R = EnvironmentRepository, C = EnvironmentCatalogPin> {
     pub name: String,
     #[serde(default)]
     pub description: String,
@@ -38,10 +43,13 @@ pub struct EnvironmentSpecification<I = EnvironmentImage, R = EnvironmentReposit
     pub repositories: Vec<R>,
     #[serde(default)]
     pub packages: EnvironmentPackages,
+    #[serde(default)]
+    pub skills: EnvironmentCatalogSelections<C>,
 }
 
 /// Agent/operator intent has selectors, never self-attested resolution metadata.
-pub type EnvironmentDraft = EnvironmentSpecification<EnvironmentImageSelection, EnvironmentRepositorySelection>;
+pub type EnvironmentDraft =
+    EnvironmentSpecification<EnvironmentImageSelection, EnvironmentRepositorySelection, EnvironmentCatalogSelection>;
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -174,12 +182,13 @@ impl EnvironmentDocument {
 
 // These representations may contain ordinary variables accidentally holding
 // credentials. Debug output reports shape only, never variable/script values.
-impl<I, R> std::fmt::Debug for EnvironmentSpecification<I, R> {
+impl<I, R, C> std::fmt::Debug for EnvironmentSpecification<I, R, C> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EnvironmentSpecification")
             .field("variable_count", &self.variables.len())
             .field("binding_count", &self.secrets.len())
             .field("repository_count", &self.repositories.len())
+            .field("skill_count", &self.skills.selected.len())
             .field("has_image", &self.image.is_some())
             .field("has_startup", &self.startup.is_some())
             .finish_non_exhaustive()
@@ -207,6 +216,8 @@ pub struct EnvironmentLimits {
     pub max_secret_bindings: usize,
     pub max_repositories: usize,
     pub max_spec_bytes: usize,
+    pub max_catalog_selections: usize,
+    pub max_catalog_reference_bytes: usize,
 }
 
 impl EnvironmentLimits {
@@ -221,5 +232,7 @@ impl EnvironmentLimits {
         max_secret_bindings: capsem_proto::ENVIRONMENT_MAX_VARIABLES,
         max_repositories: capsem_proto::ENVIRONMENT_MAX_REPOSITORIES,
         max_spec_bytes: capsem_proto::ENVIRONMENT_MAX_SPEC_BYTES,
+        max_catalog_selections: capsem_proto::ENVIRONMENT_MAX_CATALOG_SELECTIONS,
+        max_catalog_reference_bytes: capsem_proto::ENVIRONMENT_MAX_CATALOG_REFERENCE_BYTES,
     };
 }
