@@ -9,6 +9,72 @@ fn selected(reference: &str) -> CatalogSourceDescriptor {
 }
 
 #[test]
+fn manifest_catalog_source_projection_is_independent_of_runtime_and_release_shape() {
+    let source = serde_json::json!({"skills":{"reference":"ghcr.io/google/capsem/skills:stable","schema_version":1}});
+    for mut manifest in [
+        serde_json::json!({"version":"0.7.3","channel":"stable","packages":[]}),
+        serde_json::json!({"format":2,"refresh_policy":"24h","assets":{},"binaries":{}}),
+    ] {
+        assert_eq!(
+            sources_from_manifest(&manifest.to_string()).unwrap(),
+            capsem_proto::catalogs::CatalogSources::default()
+        );
+        manifest["catalogs"] = source.clone();
+        let sources = sources_from_manifest(&manifest.to_string()).unwrap();
+        assert_eq!(sources.skills, Some(selected("ghcr.io/google/capsem/skills:stable")));
+        assert!(sources.rules.is_none());
+        assert!(sources.mcp.is_none());
+        let validated = select_source(&sources, &Default::default(), CatalogKind::Skills)
+            .unwrap()
+            .unwrap();
+        assert_eq!(validated.origin(), CatalogSourceOrigin::Manifest);
+    }
+    assert!(sources_from_manifest("{\"catalogs\":null}").unwrap().skills.is_none());
+    for malformed in [
+        "{",
+        "[]",
+        r#"{"catalogs":{"unknown":{}}}"#,
+        r#"{"catalogs":{"skills":{"reference":"private-canary","schema_version":1,"extra":true}}}"#,
+    ] {
+        let error = sources_from_manifest(malformed).unwrap_err().to_string();
+        assert!(!error.contains("canary"));
+    }
+}
+
+#[test]
+fn effective_catalog_source_validation_never_falls_back_from_corporate_choice() {
+    use capsem_proto::catalogs::CatalogSources;
+    let manifest = CatalogSources {
+        skills: Some(selected("ghcr.io/google/capsem/skills:stable")),
+        ..Default::default()
+    };
+    let corporate = CatalogSources {
+        skills: Some(selected("private-canary")),
+        ..Default::default()
+    };
+    let error = select_source(&manifest, &corporate, CatalogKind::Skills)
+        .unwrap_err()
+        .to_string();
+    assert!(!error.contains("canary"));
+    assert!(select_source(&manifest, &corporate, CatalogKind::Mcp)
+        .unwrap()
+        .is_none());
+    let manifest = CatalogSources {
+        skills: Some(selected("private-canary")),
+        ..Default::default()
+    };
+    let corporate = CatalogSources {
+        skills: Some(selected("registry.example/corporate/skills:approved")),
+        ..Default::default()
+    };
+    let source = select_source(&manifest, &corporate, CatalogKind::Skills)
+        .unwrap()
+        .unwrap();
+    assert_eq!(source.origin(), CatalogSourceOrigin::Corporate);
+    assert_eq!(source.reference().tag(), Some("approved"));
+}
+
+#[test]
 fn catalog_source_normalization_preserves_origin_tag_and_digest_identity() {
     let descriptor = selected("ghcr.io/google/capsem/skills:stable");
     let source = ValidatedCatalogSource::new(

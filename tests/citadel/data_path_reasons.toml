@@ -160,6 +160,9 @@ hash = { count = 1, reason = "hash-asset" }
 [sources."crates/capsem-assets/src/manifest_compat.rs"]
 json = { count = 1, reason = "release" }
 
+[sources."crates/capsem-assets/src/catalogs.rs"]
+json = { count = 1, reason = "release" }
+
 [sources."crates/capsem-assets/src/oci/cache/removal/journal.rs"]
 json = { count = 4, reason = "durable" }
 hash = { count = 2, reason = "hash-removal-journal" }

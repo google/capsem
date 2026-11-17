@@ -1,8 +1,37 @@
 //! Verified environment catalogs reuse the existing OCI source/cache owner.
 use crate::oci::ImageReference;
 use anyhow::{anyhow, Result};
-use capsem_proto::catalogs::{CatalogKind, CatalogSourceOrigin, SelectedCatalogSource};
+use capsem_proto::catalogs::{CatalogKind, CatalogSourceOrigin, CatalogSources, SelectedCatalogSource};
 use oci_client::Reference;
+use serde::Deserialize;
+
+/// Read metadata from the selected public or legacy manifest without requiring
+/// a VM runtime. JSON is the external release-manifest format; unrelated release
+/// fields are skipped rather than copied into another release document.
+pub fn sources_from_manifest(content: &str) -> Result<CatalogSources> {
+    anyhow::ensure!(content.trim_start().starts_with('{'), "manifest must be a JSON object");
+    #[derive(Deserialize)]
+    struct Metadata {
+        #[serde(default)]
+        catalogs: Option<CatalogSources>,
+    }
+    let metadata: Metadata =
+        serde_json::from_str(content).map_err(|_| anyhow!("invalid manifest catalog source metadata"))?;
+    Ok(metadata.catalogs.unwrap_or_default())
+}
+
+/// Validate only the effective source. An invalid corporate selection remains
+/// an error; it must never trigger validation or use of the manifest fallback.
+pub fn select_source(
+    manifest: &CatalogSources,
+    corporate: &CatalogSources,
+    kind: CatalogKind,
+) -> Result<Option<ValidatedCatalogSource>> {
+    manifest
+        .effective_source(corporate, kind)
+        .map(|selected| ValidatedCatalogSource::new(kind, selected))
+        .transpose()
+}
 
 /// Format-validated source, not an assertion of catalog authenticity. Preserve
 /// the requested tag for resolution and the normalized identity for admission.
