@@ -11,7 +11,7 @@ pub use parameters::CatalogRuleParameter;
 #[serde(deny_unknown_fields)]
 pub struct RuleCatalogEntry {
     pub metadata: CatalogEntryMetadata,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "super::collections::rule_parameters")]
     pub parameters: BTreeMap<String, CatalogRuleParameter>,
     /// A withdrawn identity may be published as a content-free tombstone.
     #[serde(default, skip_serializing_if = "Option::is_none")]

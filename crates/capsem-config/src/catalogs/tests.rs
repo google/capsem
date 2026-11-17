@@ -1,6 +1,7 @@
 use super::*;
 mod content;
 mod rules;
+mod skills;
 
 #[test]
 fn corporate_catalog_source_configuration_roundtrips_typed_optional_descriptors() {

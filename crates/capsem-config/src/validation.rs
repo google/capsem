@@ -33,6 +33,17 @@ pub fn validate_identifier_shape(value: &str) -> Result<(), IdentifierError> {
     }
 }
 
+/// External OCI/file-manifest digest syntax only; callers verify integrity at
+/// the owning I/O boundary rather than treating a declaration as proof.
+pub(crate) fn is_sha256_digest_shape(value: &str) -> bool {
+    value.strip_prefix("sha256:").is_some_and(|hex| {
+        hex.len() == 64
+            && hex
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    })
+}
+
 #[doc(hidden)]
 pub fn validate_identifier(kind: &str, value: &str) -> Result<(), String> {
     match validate_identifier_shape(value) {

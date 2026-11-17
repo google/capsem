@@ -69,12 +69,7 @@ impl EnvironmentCatalogSelections<EnvironmentCatalogPin> {
                 || reference.len() > capsem_proto::ENVIRONMENT_MAX_CATALOG_REFERENCE_BYTES
                 || reference.contains("://")
                 || reference.chars().any(|ch| ch.is_control() || ch.is_whitespace())
-                || !entry.resolved_digest.strip_prefix("sha256:").is_some_and(|hex| {
-                    hex.len() == 64
-                        && hex
-                            .bytes()
-                            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-                })
+                || !crate::validation::is_sha256_digest_shape(&entry.resolved_digest)
             {
                 return Err("invalid environment catalog pin".into());
             }

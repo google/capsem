@@ -181,12 +181,7 @@ impl EnvironmentSpecification {
         if let Some(image) = &self.image {
             validate_image_reference(&image.reference)?;
             require(
-                image.resolved_digest.strip_prefix("sha256:").is_some_and(|hex| {
-                    hex.len() == 64
-                        && hex
-                            .bytes()
-                            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-                }),
+                crate::validation::is_sha256_digest_shape(&image.resolved_digest),
                 "environment image requires an exact SHA-256 digest",
             )?;
         }
