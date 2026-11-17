@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fix performance chart transport labels to distinguish authenticated gateway measurements from historical service UDS data; do not infer a transport for unspecified records.
+
 - Security: Retain private gateway authority for the full upgraded stream lifetime and close detached WebSocket tasks when their gateway control ends.
 
 - Added: Delegated agents with explicit Execute scope can run commands only in their admitted session generation. Recheck live authority after readiness and IPC handshakes, cancel expired or revoked requests, and audit scope refusals.

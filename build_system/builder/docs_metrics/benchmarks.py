@@ -209,14 +209,18 @@ def normalize(snapshot: dict) -> dict:
                 )
     route = next((d for n, d in records.items() if n.startswith("route-latency/")), {})
     summary = route.get("reader", {}).get("summary", {})
-    if all(k in summary for k in ["p50_ms", "p95_ms", "p99_ms"]):
+    transport_label = {
+        "service_uds": "Service UDS",
+        "authenticated_gateway_tcp": "Authenticated gateway TCP",
+    }.get(route.get("reader", {}).get("transport"))
+    if transport_label and all(k in summary for k in ["p50_ms", "p95_ms", "p99_ms"]):
         chart(
             "logging",
             "stats-reads",
-            "Stats reads during profile mutation",
+            "Stats reads during policy mutation",
             "ms",
             ["p50", "p95", "p99"],
-            [series("Service UDS", [summary[k] for k in ["p50_ms", "p95_ms", "p99_ms"]])],
+            [series(transport_label, [summary[k] for k in ["p50_ms", "p95_ms", "p99_ms"]])],
             f"{summary.get('samples', 0)} samples. Read/API latency; not an ingestion or flush benchmark.",
         )
     return {

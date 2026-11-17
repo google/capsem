@@ -71,3 +71,30 @@ def test_record_level_fitness_cannot_be_hidden_by_artifact_provenance(flag, valu
     next(iter(data["records"].values()))[flag] = value
     with pytest.raises(ValueError, match="eligible"):
         normalize(data)
+
+
+@pytest.mark.parametrize(
+    "transport,label",
+    [("service_uds", "Service UDS"), ("authenticated_gateway_tcp", "Authenticated gateway TCP")],
+)
+def test_route_chart_uses_recorded_ingress(transport, label):
+    data = snapshot()
+    data["records"]["route-latency/data.json"] = {
+        "reader": {"transport": transport, "summary": {
+            "p50_ms": 1.0, "p95_ms": 2.0, "p99_ms": 3.0, "samples": 160,
+        }},
+    }
+    chart = next(c for c in normalize(data)["sections"]["logging"]["charts"] if c["id"] == "stats-reads")
+    assert chart["series"][0]["name"] == label
+    assert chart["series"][0]["values"] == [1.0, 2.0, 3.0]
+
+
+@pytest.mark.parametrize("transport", [None, "unknown_path"])
+def test_route_chart_never_guesses_unspecified_ingress(transport):
+    data = snapshot()
+    data["records"]["route-latency/data.json"] = {
+        "reader": {"transport": transport, "summary": {
+            "p50_ms": 1.0, "p95_ms": 2.0, "p99_ms": 3.0,
+        }},
+    }
+    assert not normalize(data)["sections"]["logging"]["charts"]
