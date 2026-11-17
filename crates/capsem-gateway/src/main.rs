@@ -337,6 +337,7 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/vms/{id}/credential-grants/{grant_id}", delete(proxy::handle_proxy))
         .route("/agent-access", post(proxy::handle_proxy))
         .route("/agent-access/{id}", delete(proxy::handle_proxy))
+        .route("/environments/{id}/info", get(proxy::handle_proxy))
         .route("/vms/create", post(proxy::handle_proxy))
         .route("/vms/managed/{request_id}/claim", post(proxy::handle_proxy))
         .route("/vms/managed/{request_id}/close", post(proxy::handle_proxy))

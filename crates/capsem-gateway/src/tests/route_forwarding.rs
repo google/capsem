@@ -258,6 +258,7 @@ async fn gateway_security_routes_are_explicitly_forwarded() {
         ("GET", "/assets/status"),
         ("POST", "/assets/ensure"),
         ("GET", "/plugins/list"),
+        ("GET", "/environments/00000000-0000-4000-8000-000000000001/info"),
         ("POST", "/credentials/inject"),
         ("GET", "/plugins/dummy_pre_eicar/info"),
         ("PATCH", "/plugins/dummy_pre_eicar/edit"),
