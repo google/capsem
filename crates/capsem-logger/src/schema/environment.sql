@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS environment_schema (
     id INTEGER PRIMARY KEY CHECK (id=1),
     version INTEGER NOT NULL CHECK (version>0)
 );
-INSERT OR IGNORE INTO environment_schema(id,version) VALUES(1,1);
+INSERT OR IGNORE INTO environment_schema(id,version) VALUES(1,2);
 
 CREATE TABLE IF NOT EXISTS environment_revisions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

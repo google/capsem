@@ -35,8 +35,27 @@ fn fresh_machine_ledger_has_explicit_environment_format() {
         conn.query_row("SELECT version FROM environment_schema WHERE id=1", [], |row| row
             .get::<_, i64>(0))
             .unwrap(),
-        1
+        2
     );
+}
+
+#[test]
+fn draft_only_environment_format_is_refused_before_ddl_without_modifying_history() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("host.db");
+    let conn = Connection::open(&path).unwrap();
+    create_tables(&conn).unwrap();
+    conn.execute("UPDATE environment_schema SET version=1", []).unwrap();
+    conn.close().unwrap();
+    let before = std::fs::read(&path).unwrap();
+    let conn = Connection::open(&path).unwrap();
+    assert!(
+        validate_existing_host_schema(&conn).is_err(),
+        "draft-only proposals lack reviewed resolution pins"
+    );
+    assert!(create_tables(&conn).is_err());
+    conn.close().unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), before);
 }
 
 #[test]
@@ -122,9 +141,9 @@ fn environment_schema_serializes_commits_and_preserves_reference_relationships()
 fn unknown_environment_versions_and_missing_commit_indexes_fail_closed() {
     let conn = Connection::open_in_memory().unwrap();
     create_tables(&conn).unwrap();
-    conn.execute("UPDATE environment_schema SET version=2", []).unwrap();
+    conn.execute("UPDATE environment_schema SET version=3", []).unwrap();
     assert!(create_tables(&conn).is_err());
-    conn.execute("UPDATE environment_schema SET version=1", []).unwrap();
+    conn.execute("UPDATE environment_schema SET version=2", []).unwrap();
     conn.execute_batch("DROP INDEX idx_environment_revisions_inflight")
         .unwrap();
     assert!(create_tables(&conn).is_err());

@@ -1,5 +1,7 @@
 use super::*;
 use crate::events::environment::request::*;
+#[path = "environment_requests/resolution.rs"]
+mod resolution;
 
 fn id(value: u64) -> String {
     format!("00000000-0000-4000-8000-{value:012x}")
@@ -319,18 +321,20 @@ async fn request_metadata_and_final_encoded_payload_are_bounded() {
     let EnvironmentRequestPayload::Change { specification } = request.payload.as_mut() else {
         unreachable!()
     };
-    specification.image = Some(capsem_config::environment::EnvironmentImageSelection {
+    specification.image = Some(capsem_config::environment::EnvironmentImage {
         reference: "development".into(),
+        resolved_digest: format!("sha256:{}", "a".repeat(64)),
         update_policy: Default::default(),
     });
     specification
         .repositories
-        .push(capsem_config::environment::EnvironmentRepositorySelection {
+        .push(capsem_config::environment::EnvironmentRepository {
             url: format!(
                 "https://example.org/{}",
                 "x".repeat(capsem_proto::ENVIRONMENT_MAX_SPEC_BYTES)
             ),
             reference: "main".into(),
+            resolved_commit: "b".repeat(40),
             destination: "project".into(),
         });
     specification.validate().unwrap(); // The final encoder owns the aggregate byte ceiling.
@@ -402,7 +406,11 @@ async fn image_promotion_and_apply_proposals_archive_their_exact_intent() {
     let payloads = [
         EnvironmentRequestPayload::ImageUpdate {
             specification: Box::new(
-                toml::from_str("name='development'\n[image]\nreference='development:stable'").unwrap(),
+                toml::from_str(&format!(
+                    "name='development'\n[image]\nreference='development:stable'\nresolved_digest='sha256:{}'",
+                    "a".repeat(64)
+                ))
+                .unwrap(),
             ),
         },
         EnvironmentRequestPayload::Promotion {

@@ -1,6 +1,6 @@
 use super::*;
 use crate::db::EnvironmentHistoryPayload;
-use capsem_config::environment::{EnvironmentDraft, EnvironmentSpecification};
+use capsem_config::environment::EnvironmentSpecification;
 
 const CAPABILITIES: &str = r#"
 [image]
@@ -75,13 +75,7 @@ async fn full_environment_capabilities_survive_archive_queries_and_variable_purg
     let source=format!("name='development'\ndescription='full capability fixture'\n[variables]\nWRONG='{SELECTED}'\nKEEP='unrelated value'\n{CAPABILITIES}");
     let full: EnvironmentSpecification = toml::from_str(&source).unwrap();
     full.validate().unwrap();
-    let draft_source = source
-        .lines()
-        .filter(|line| !line.starts_with("resolved_") && !line.starts_with("catalog_reference="))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let draft: EnvironmentDraft = toml::from_str(&draft_source).unwrap();
-    draft.validate().unwrap();
+    let proposed = full.clone();
     let writer = DbWriter::open(&path, 8).unwrap();
     let mut first = revision(2, 3, None, Some(SELECTED));
     first.specification = Box::new(full.clone());
@@ -92,7 +86,7 @@ async fn full_environment_capabilities_survive_archive_queries_and_variable_purg
     current.specification = Box::new(clean.clone());
     committed(&writer, current).await;
     let payload = EnvironmentRequestPayload::Change {
-        specification: Box::new(draft.clone()),
+        specification: Box::new(proposed.clone()),
     };
     durable(
         &writer,
@@ -154,12 +148,12 @@ async fn full_environment_capabilities_survive_archive_queries_and_variable_purg
     else {
         panic!("partial request")
     };
-    let mut clean_draft = draft;
-    clean_draft.variables.remove("WRONG");
+    let mut clean_proposed = proposed;
+    clean_proposed.variables.remove("WRONG");
     assert_eq!(
         *value,
         EnvironmentRequestPayload::Change {
-            specification: Box::new(clean_draft)
+            specification: Box::new(clean_proposed)
         }
     );
     assert_eq!(purged_variables.len(), 1);

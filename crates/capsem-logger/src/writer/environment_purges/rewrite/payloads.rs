@@ -186,7 +186,9 @@ fn matches_value(source: &str, bytes: &[u8], key: &str, selected: &str) -> Resul
         match payload {
             EnvironmentRequestPayload::Change { specification }
             | EnvironmentRequestPayload::ImageUpdate { specification } => {
-                specification.validate().map_err(|_| "invalid purge scope draft")?;
+                specification
+                    .validate()
+                    .map_err(|_| "invalid purge scope specification")?;
                 Ok(specification.variables.get(key).is_some_and(|value| value == selected))
             }
             _ => Ok(false),

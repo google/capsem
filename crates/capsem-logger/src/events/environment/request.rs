@@ -1,6 +1,6 @@
 //! Immutable request intent and resolution evidence, never caller credentials.
 use super::EnvironmentRevisionParent;
-use capsem_config::environment::EnvironmentDraft;
+use capsem_config::environment::EnvironmentSpecification;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -73,10 +73,10 @@ impl EnvironmentRequestState {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum EnvironmentRequestPayload {
     Change {
-        specification: Box<EnvironmentDraft>,
+        specification: Box<EnvironmentSpecification>,
     },
     ImageUpdate {
-        specification: Box<EnvironmentDraft>,
+        specification: Box<EnvironmentSpecification>,
     },
     Promotion {
         source: EnvironmentRevisionParent,

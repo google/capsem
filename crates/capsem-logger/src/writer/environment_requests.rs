@@ -312,7 +312,7 @@ pub(super) fn require_approved(conn: &Connection, id: &str) -> rusqlite::Result<
 }
 
 /// Storage correlation only: the service still verifies caller authority and
-/// resolves the exact archived draft before publishing any current document.
+/// revalidates the exact archived resolved content before publishing a document.
 pub(super) fn require_revision_request(
     conn: &Connection,
     record: &crate::events::PreparedEnvironmentRevision,

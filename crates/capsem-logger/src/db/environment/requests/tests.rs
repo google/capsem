@@ -382,7 +382,11 @@ async fn source_roots_match_archived_intent_and_remain_distinct_from_target_base
     let payloads = [
         EnvironmentRequestPayload::ImageUpdate {
             specification: Box::new(
-                toml::from_str("name='development'\n[image]\nreference='development:stable'").unwrap(),
+                toml::from_str(&format!(
+                    "name='development'\n[image]\nreference='development:stable'\nresolved_digest='sha256:{}'",
+                    "a".repeat(64)
+                ))
+                .unwrap(),
             ),
         },
         EnvironmentRequestPayload::Promotion {
