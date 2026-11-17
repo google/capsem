@@ -19,8 +19,8 @@ pub(crate) async fn handle_exec(
     let result = if let Some(grant) = actor.agent_grant() {
         tokio::select! {
             biased;
-            () = grant.revoked() => Err(crate::caller_auth::execution::denied()),
-            () = tokio::time::sleep_until(grant.deadline().into()) => Err(crate::caller_auth::execution::denied()),
+            () = grant.revoked() => Err(crate::caller_auth::session::denied()),
+            () = tokio::time::sleep_until(grant.deadline().into()) => Err(crate::caller_auth::session::denied()),
             result = execution => result,
         }
     } else {
@@ -44,15 +44,19 @@ async fn execute(
 ) -> Result<Json<ExecResponse>, AppError> {
     let timeout_secs =
         capsem_api::exec_timeout_secs(payload.timeout_secs).map_err(|e| AppError::new(StatusCode::BAD_REQUEST, e))?;
-    let owner = actor.execution_owner(state, id)?;
+    let owner = actor.session_owner(state, id, capsem_api::AgentOperation::Execute)?;
     let target = capsem_api::exec_target(payload.target, crate::container_setup::runs_container(state, id).await)
         .map_err(|e| AppError::new(StatusCode::BAD_REQUEST, e))?;
 
     super::readiness::wait_for_owner_ready(state, &owner, 30)
         .await
         .map_err(|error| {
-            if actor.agent_grant().is_some() && actor.check_execution(state, &owner).is_err() {
-                crate::caller_auth::execution::denied()
+            if actor.agent_grant().is_some()
+                && actor
+                    .check_session(state, &owner, capsem_api::AgentOperation::Execute)
+                    .is_err()
+            {
+                crate::caller_auth::session::denied()
             } else {
                 AppError::new(StatusCode::INTERNAL_SERVER_ERROR, error)
             }
@@ -69,7 +73,7 @@ async fn execute(
         Some(timeout_secs),
         || {
             actor
-                .check_execution(state, &owner)
+                .check_session(state, &owner, capsem_api::AgentOperation::Execute)
                 .map_err(|_| ipc_command::IpcCommandError::AccessDenied)
         },
     )

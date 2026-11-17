@@ -35,7 +35,7 @@ impl From<IpcCommandError> for String {
 impl IpcCommandError {
     pub(crate) fn into_exec_app_error(self, prefix_failed: bool) -> AppError {
         match self {
-            Self::AccessDenied => crate::caller_auth::execution::denied(),
+            Self::AccessDenied => crate::caller_auth::session::denied(),
             Self::Timeout { timeout_secs } => AppError::exec_timeout(format!("exec failed: {self}"), timeout_secs),
             Self::Failed(msg) if prefix_failed => {
                 AppError::new(StatusCode::INTERNAL_SERVER_ERROR, format!("exec failed: {msg}"))

@@ -93,7 +93,7 @@ pub(crate) async fn restrict_owner_routes(
                     .path()
                     .strip_prefix("/vms/")
                     .and_then(|path| path.strip_suffix("/exec"))
-                    .is_some_and(|id| actor.bind_execution(&state, id));
+                    .is_some_and(|id| actor.bind_session(&state, id, capsem_api::AgentOperation::Execute));
             if !admitted {
                 return refuse(&state, request, Reason::ScopeRequired, Some(actor.evidence().clone())).await;
             }

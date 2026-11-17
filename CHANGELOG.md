@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Security: Bind delegated session admission to both its operation and owner generation, and discard earlier admission when rebinding is refused.
+
 - Fix stream benchmarks to use the product Rust SDK and authenticated owned gateway. Verify complete exec transfers and report terminal projection measurements separately from retired raw PTY metrics.
 
 - Fix performance chart transport labels to distinguish authenticated gateway measurements from historical service UDS data; do not infer a transport for unspecified records.

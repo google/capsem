@@ -104,7 +104,7 @@ fn owned_session() -> (Arc<ServiceState>, tempfile::TempDir, String, uuid::Uuid,
 fn admitted_actor(state: &ServiceState, session: &str, access: uuid::Uuid) -> crate::caller_auth::AuthenticatedActor {
     let headers = request(session, access).into_parts().0.headers;
     let mut actor = state.caller_authority.authenticate_gateway(&headers).unwrap();
-    assert!(actor.bind_execution(state, session));
+    assert!(actor.bind_session(state, session, AgentOperation::Execute));
     actor
 }
 
@@ -240,7 +240,7 @@ async fn delegated_authority_is_rechecked_after_hello_before_sending_any_command
         };
         let (access, grant) = issue(&state, &session, generation, AgentOperation::Execute, lease);
         let actor = admitted_actor(&state, &session, access);
-        let owner = actor.execution_owner(&state, &session).unwrap();
+        let owner = actor.session_owner(&state, &session, AgentOperation::Execute).unwrap();
         let server_state = Arc::clone(&state);
         let server = tokio::spawn(async move {
             let (socket, _) = tokio::time::timeout(std::time::Duration::from_secs(5), listener.accept())
@@ -282,7 +282,7 @@ async fn delegated_authority_is_rechecked_after_hello_before_sending_any_command
         });
         let error = ipc_command::send_owner_command_guarded(&state, &owner, ServiceToProcess::Ping, Some(1), || {
             actor
-                .check_execution(&state, &owner)
+                .check_session(&state, &owner, AgentOperation::Execute)
                 .map_err(|_| ipc_command::IpcCommandError::AccessDenied)
         })
         .await

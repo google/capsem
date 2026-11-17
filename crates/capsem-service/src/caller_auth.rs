@@ -64,7 +64,7 @@ impl Authority {
                     access_id: id.to_string(),
                 },
                 agent: Some(grant),
-                execution: None,
+                session: None,
             });
         }
         let operator = self.operator.lock().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
@@ -78,7 +78,7 @@ impl Authority {
         Ok(AuthenticatedActor {
             evidence: capsem_api::CallerActor::Operator,
             agent: None,
-            execution: None,
+            session: None,
         })
     }
 }
@@ -119,7 +119,7 @@ impl Drop for OperatorEpoch {
 pub(crate) struct AuthenticatedActor {
     evidence: capsem_api::CallerActor,
     agent: Option<Arc<capsem_core::agent_access::Grant>>,
-    execution: Option<Arc<crate::owner_connection::OwnerConnection>>,
+    session: Option<session::SessionAdmission>,
 }
 
 impl AuthenticatedActor {
@@ -130,7 +130,7 @@ impl AuthenticatedActor {
                 owner_generation: owner.generation().to_string(),
             },
             agent: None,
-            execution: None,
+            session: None,
         }
     }
     pub(crate) fn evidence(&self) -> &capsem_api::CallerActor {
@@ -157,9 +157,9 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthenticatedActor {
     }
 }
 
-pub(crate) mod execution;
 mod refusal;
 pub(crate) mod routing;
+pub(crate) mod session;
 
 #[cfg(test)]
 mod tests;
