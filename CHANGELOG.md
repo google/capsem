@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fixed: Approved environment commits record their exact request result, and startup repairs interrupted receipts without reapplying configuration.
+
 - Security: Reject result revisions whose content or pins differ from the exact approved environment proposal or promotion source.
 
 - Fixed: Durable environment proposals retain resolved image, repository and catalog pins through review and history; changed retries cannot replace the reviewed content.

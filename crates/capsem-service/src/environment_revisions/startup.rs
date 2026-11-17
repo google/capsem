@@ -5,6 +5,7 @@ use super::*;
 pub struct RecoverySummary {
     pub committed: u64,
     pub recovered_unapplied: u64,
+    pub receipts_bound: u64,
     pub failed: u64,
 }
 
@@ -64,6 +65,7 @@ impl EnvironmentRevisions {
                 }
             }
         }
+        self.recover_request_receipts(at, limit, &mut summary).await?;
         Ok(summary)
     }
 }

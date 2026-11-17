@@ -15,6 +15,7 @@ use std::{
     sync::{Arc, Mutex, Weak},
 };
 use tokio::sync::oneshot;
+mod receipts;
 mod startup;
 pub use startup::RecoverySummary;
 
@@ -163,7 +164,7 @@ impl EnvironmentRevisions {
         // This also checks exact immutable retries against the archived bytes.
         self.write(WriteOp::PrepareEnvironmentRevision(revision)).await?;
         if state == Some(EnvironmentRevisionState::Committed) {
-            return self.required_record(&id, &revision_id).await;
+            return self.completed_record(&id, &revision_id, at).await;
         }
         if state == Some(EnvironmentRevisionState::RecoveredUnapplied) {
             self.transition(&id, &revision_id, EnvironmentRevisionState::Committing, at, &actor)
@@ -174,7 +175,7 @@ impl EnvironmentRevisions {
         self.files.publish_serialized(id.clone(), content).await?;
         self.transition(&id, &revision_id, EnvironmentRevisionState::Committed, at, &actor)
             .await?;
-        self.required_record(&id, &revision_id).await
+        self.completed_record(&id, &revision_id, at).await
     }
     async fn reconcile_locked(&self, id: &str, at: i64) -> Result<Option<RevisionRecovery>, EnvironmentFileError> {
         let pending = self

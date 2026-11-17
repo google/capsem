@@ -332,6 +332,7 @@ async fn start_and_serve(args: Args, run_dir: PathBuf, on_ready: impl FnOnce(Arc
     info!(
         committed = recovery.committed,
         recovered_unapplied = recovery.recovered_unapplied,
+        receipts_bound = recovery.receipts_bound,
         failed = recovery.failed,
         "environment startup reconciliation finished"
     );

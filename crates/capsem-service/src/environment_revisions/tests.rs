@@ -7,6 +7,8 @@ use capsem_logger::{
     DbHandle, WriteOp,
 };
 use std::sync::Arc;
+#[path = "tests/receipts.rs"]
+mod receipts;
 
 fn id(n: u64) -> String {
     format!("00000000-0000-4000-8000-{n:012x}")
@@ -59,6 +61,7 @@ async fn environment_startup_recovery_pages_pending_rows_and_isolates_missing_fi
         RecoverySummary {
             committed: 1,
             recovered_unapplied: 1,
+            receipts_bound: 0,
             failed: 1
         }
     );
