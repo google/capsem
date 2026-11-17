@@ -2,6 +2,7 @@ pub mod agent_access;
 pub mod auditfs;
 pub mod container;
 pub mod credential_broker;
+pub mod environment;
 pub mod fs_monitor;
 pub mod host_state;
 pub mod hypervisor;

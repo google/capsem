@@ -1,0 +1,88 @@
+//! Environment resolution and application semantics live below service jobs.
+//! Comparing bounded typed content never confers caller or revision authority.
+use capsem_config::environment::EnvironmentSpecification;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EnvironmentChangeKind {
+    Name,
+    Description,
+    Image,
+    Startup,
+    Variables,
+    SecretAccess,
+    Repositories,
+    PackageAccess,
+    AccessRules,
+    DetectionRules,
+    Plugins,
+    McpDefinitions,
+    McpPermissions,
+    Skills,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EnvironmentChangeTiming {
+    Metadata,
+    Live,
+    NextStart,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EnvironmentChange {
+    pub kind: EnvironmentChangeKind,
+    pub timing: EnvironmentChangeTiming,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EnvironmentChangeImpact {
+    changes: Vec<EnvironmentChange>,
+}
+impl EnvironmentChangeImpact {
+    /// Classify validated resolved content, independently of revision identity.
+    /// Corporate changes are a separate authority input to policy compilation.
+    /// This is a change-review result, never a runtime application receipt.
+    pub fn classify(before: &EnvironmentSpecification, after: &EnvironmentSpecification) -> Self {
+        use EnvironmentChangeKind::*;
+        use EnvironmentChangeTiming::*;
+        let fields = [
+            (Name, Metadata, before.name != after.name),
+            (Description, Metadata, before.description != after.description),
+            (Image, NextStart, before.image != after.image),
+            (Startup, NextStart, before.startup != after.startup),
+            (Variables, NextStart, before.variables != after.variables),
+            (SecretAccess, Live, before.secrets != after.secrets),
+            (Repositories, NextStart, before.repositories != after.repositories),
+            (PackageAccess, Live, before.packages != after.packages),
+            (AccessRules, Live, before.access != after.access),
+            (DetectionRules, NextStart, before.detection != after.detection),
+            (Plugins, NextStart, before.plugins != after.plugins),
+            (
+                McpDefinitions,
+                NextStart,
+                before.mcps.catalog != after.mcps.catalog || before.mcps.servers != after.mcps.servers,
+            ),
+            (McpPermissions, Live, before.mcps.permissions != after.mcps.permissions),
+            (Skills, NextStart, before.skills != after.skills),
+        ];
+        Self {
+            changes: fields
+                .into_iter()
+                .filter_map(|(kind, timing, changed)| changed.then_some(EnvironmentChange { kind, timing }))
+                .collect(),
+        }
+    }
+    pub fn changes(&self) -> &[EnvironmentChange] {
+        &self.changes
+    }
+    pub fn has_deferred_changes(&self) -> bool {
+        self.changes
+            .iter()
+            .any(|change| change.timing == EnvironmentChangeTiming::NextStart)
+    }
+    pub fn affects_live_policy(&self) -> bool {
+        self.changes
+            .iter()
+            .any(|change| change.timing == EnvironmentChangeTiming::Live)
+    }
+}
+
+#[cfg(test)]
+mod tests;
