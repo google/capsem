@@ -4,11 +4,12 @@ use crate::events::{EnvironmentRevisionParent, EnvironmentRevisionState};
 use serde::{Deserialize, Serialize};
 
 pub(super) mod applications;
+pub(super) mod history;
 pub(super) mod purges;
 pub(super) mod references;
 pub(super) mod requests;
 pub(super) mod snapshot;
-pub use snapshot::EnvironmentRevisionSnapshot;
+pub use snapshot::{EnvironmentRevisionHistory, EnvironmentRevisionSnapshot};
 #[cfg(test)]
 mod tests;
 

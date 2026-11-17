@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: Typed revision history distinguishes complete, purged-partial and unavailable values, preserving unrelated fields and explicit purge markers while full replay remains disabled.
+
 - Fixed: Mark pending or approved configuration requests stale when a history purge removes their source or base revision values, including promotion and apply requests. Preserve original intent, review attribution and terminal outcomes.
 
 - Fixed: Keep variable-history purge cleanup pending across worker restarts while captured readers still hold the old archive generation. Startup no longer deletes that generation ahead of the lease-aware purge collector.
