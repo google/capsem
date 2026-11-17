@@ -1,3 +1,4 @@
+import {accessId, authorization} from './delegated-fixture.js';
 import {execFileSync, spawnSync} from 'node:child_process';
 import {copyFileSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync} from 'node:fs';
 import {sha256} from '../../../sdk/typescript/tools/crypto.mjs';
@@ -141,8 +142,8 @@ describe('packed-package', () => {
     expect(Number(runtimeVersion.slice(1).split('.')[0])).toBeGreaterThanOrEqual(20);
     const transport = new StdioClientTransport({
       command: consumerNode,
-      args: [cli, '--gateway-url', gatewayUrl, '--timeout-ms', '5000'],
-      env: {HOME: dirname(cli), PATH: process.env.PATH ?? '', CAPSEM_GATEWAY_TOKEN: token},
+      args: [cli, '--gateway-url', gatewayUrl, '--access-id', accessId, '--timeout-ms', '5000'],
+      env: {HOME: dirname(cli), PATH: process.env.PATH ?? '', CAPSEM_AGENT_CAPABILITY: token},
       stderr: 'pipe',
     });
     const stderr: string[] = [];
@@ -214,7 +215,7 @@ describe('packed-package', () => {
     await new Promise<void>(resolve => gateway.listen(0, '127.0.0.1', resolve));
     const gatewayUrl = `http://127.0.0.1:${(gateway.address() as AddressInfo).port}`;
     const [first, second] = await Promise.all([
-      connect(cli, gatewayUrl, 'token-a'), connect(cli, gatewayUrl, 'token-b'),
+      connect(cli, gatewayUrl, 'aa'.repeat(32)), connect(cli, gatewayUrl, 'bb'.repeat(32)),
     ]);
     for (const connection of [first, second]) {
       expect(connection.client.getServerVersion()).toEqual({name: 'capsem-mcp', version: manifest.version});
@@ -228,7 +229,7 @@ describe('packed-package', () => {
     ]);
     expect(one.structuredContent).toEqual({networks: []});
     expect(two.structuredContent).toEqual({networks: []});
-    expect(new Set(authorizations.slice(0, 2))).toEqual(new Set(['Bearer token-a', 'Bearer token-b']));
+    expect(new Set(authorizations.slice(0, 2))).toEqual(new Set([authorization('aa'.repeat(32)), authorization('bb'.repeat(32))]));
 
     expect(tools.tools.map(tool => tool.name)).toEqual(expect.arrayContaining(['capsem_image_list', 'capsem_image_pull']));
     const catalog = await first.client.callTool({name: 'capsem_image_list', arguments: {refresh: true}});
@@ -241,7 +242,7 @@ describe('packed-package', () => {
       {method: 'GET', path: '/images?refresh=true', body: ''},
       {method: 'POST', path: '/images/pull', body: '{"image":"code"}'},
     ]);
-    expect(authorizations.slice(2, 4)).toEqual(['Bearer token-a', 'Bearer token-a']);
+    expect(authorizations.slice(2, 4)).toEqual([authorization('aa'.repeat(32)), authorization('aa'.repeat(32))]);
 
     const denied = await first.client.callTool({name: 'capsem_host_logs', arguments: {source: 'mcp'}});
     expect(denied.isError).toBe(true);

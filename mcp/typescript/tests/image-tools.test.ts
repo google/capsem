@@ -5,6 +5,7 @@ import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {InMemoryTransport} from '@modelcontextprotocol/sdk/inMemory.js';
 import {expect, it} from 'vitest';
 import {createServer} from '../src/server.js';
+import {accessId, authorization, capability} from './delegated-fixture.js';
 
 const pin = `registry.example/code@sha256:${'a'.repeat(64)}`;
 const catalog = {images: [
@@ -15,7 +16,7 @@ const pulled = {image: 'code', resolved: pin, digest: `sha256:${'b'.repeat(64)}`
 
 interface RequestRecord {method: string | undefined; url: string | undefined; body: string; authorization: string | undefined}
 interface FixtureReply {status?: number; body?: object | string; hold?: {started: () => void; closed: () => void}}
-async function withGateway(run: (client: Client, requests: RequestRecord[]) => Promise<void>, reply: FixtureReply = {}, token = 'client-token'): Promise<void> {
+async function withGateway(run: (client: Client, requests: RequestRecord[]) => Promise<void>, reply: FixtureReply = {}, token = capability): Promise<void> {
   const requests: RequestRecord[] = [];
   const gateway = httpServer((request, response) => {
     void buffer(request).then(body => {
@@ -34,7 +35,7 @@ async function withGateway(run: (client: Client, requests: RequestRecord[]) => P
   await once(gateway, 'listening');
   const address = gateway.address();
   if (!address || typeof address === 'string') throw new Error('missing HTTP address');
-  const server = createServer({gatewayUrl: `http://127.0.0.1:${address.port}`, token, timeoutMs: 5000});
+  const server = createServer({gatewayUrl: `http://127.0.0.1:${address.port}`, accessId, capability: token, timeoutMs: 5000});
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({name: 'image-tools-test', version: '1'});
   try {
@@ -60,8 +61,8 @@ it('offers image catalog and prefetch over authenticated MCP and gateway HTTP', 
     expect(result.isError).not.toBe(true);
     expect(result.structuredContent).toEqual(pulled);
     expect(requests).toEqual([
-      {method: 'GET', url: '/images?refresh=true', body: '', authorization: 'Bearer client-token'},
-      {method: 'POST', url: '/images/pull', body: '{"image":"code"}', authorization: 'Bearer client-token'},
+      {method: 'GET', url: '/images?refresh=true', body: '', authorization: authorization()},
+      {method: 'POST', url: '/images/pull', body: '{"image":"code"}', authorization: authorization()},
     ]);
     expect(JSON.stringify(tools.find(tool => tool.name === 'capsem_image_pull')?.inputSchema)).not.toMatch(/password|token|registry|ca_pem/);
   });
@@ -107,10 +108,10 @@ it('keeps gateway bearer ownership separate for each MCP server', async () => {
     await withGateway(async (second, secondRequests) => {
       expect((await first.callTool({name: 'capsem_image_list', arguments: {}})).isError).not.toBe(true);
       expect((await second.callTool({name: 'capsem_image_list', arguments: {}})).isError).not.toBe(true);
-      expect(firstRequests[0]?.authorization).toBe('Bearer first-token');
-      expect(secondRequests[0]?.authorization).toBe('Bearer second-token');
-    }, {}, 'second-token');
-  }, {}, 'first-token');
+      expect(firstRequests[0]?.authorization).toBe(authorization('11'.repeat(32)));
+      expect(secondRequests[0]?.authorization).toBe(authorization('22'.repeat(32)));
+    }, {}, '22'.repeat(32));
+  }, {}, '11'.repeat(32));
 });
 
 it('closes the local prefetch HTTP request when its MCP caller cancels', async () => {

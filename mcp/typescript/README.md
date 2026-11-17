@@ -12,15 +12,19 @@ Node.js is an explicit prerequisite; native Capsem installation does not install
 Node or download this package.
 
 ```sh
-CAPSEM_GATEWAY_TOKEN="$(cat ~/.capsem/run/gateway.token)" \
-  capsem-mcp --gateway-url http://127.0.0.1:19222 --timeout-ms 30000
+CAPSEM_AGENT_CAPABILITY="$capability" \
+  capsem-mcp --gateway-url http://127.0.0.1:19222 --access-id "$access_id" --timeout-ms 30000
 ```
 
-The bearer token is read from `CAPSEM_GATEWAY_TOKEN`, or from the file named by
-`--token-file <path>`. It is never accepted as a command-line argument, where
-any local process could read it from the process list; `--token` is refused.
+An operator issues finite scoped access with `POST /agent-access`. Supply its
+access ID and the managed capability provided at issuance. Only
+`CAPSEM_AGENT_CAPABILITY` carries the secret; the URL and nonsecret access ID
+are explicit arguments. Token files, `CAPSEM_GATEWAY_TOKEN`, operator runtime
+files, and credential arguments are not supported. Expiry, revocation, or
+service restart requires fresh operator-issued access; there is no operator
+fallback.
 
-An MCP client configuration passes the token through its environment block,
+An MCP client configuration passes the capability through its environment block,
 using the client's secret expansion support:
 
 ```json
@@ -28,8 +32,8 @@ using the client's secret expansion support:
   "mcpServers": {
     "capsem": {
       "command": "capsem-mcp",
-      "args": ["--gateway-url", "http://127.0.0.1:19222", "--timeout-ms", "30000"],
-      "env": {"CAPSEM_GATEWAY_TOKEN": "${CAPSEM_GATEWAY_TOKEN}"}
+      "args": ["--gateway-url", "http://127.0.0.1:19222", "--access-id", "<operator-issued-access-id>", "--timeout-ms", "30000"],
+      "env": {"CAPSEM_AGENT_CAPABILITY": "${CAPSEM_AGENT_CAPABILITY}"}
     }
   }
 }
@@ -82,7 +86,7 @@ mutations are never retried automatically.
 the legacy `suspend`, `version`, or duplicate service-log tools.
 
 For development, build the SDK and this package, then run `pnpm prewarm:packed`
-before `pnpm exec vitest run tests/packed-package.test.ts`. Prewarming installs
+before `pnpm run test:mcp`. Prewarming installs
 the actual local tarballs in a temporary runtime-only consumer to cache their
 dependencies. The acceptance test installs offline with scripts disabled,
 checks archive/source/installed payloads and drives the packed executable over

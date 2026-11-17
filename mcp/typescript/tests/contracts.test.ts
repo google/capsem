@@ -6,6 +6,7 @@ import {InMemoryTransport} from '@modelcontextprotocol/sdk/inMemory.js';
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
 import {failure} from '../src/results.js';
 import {createServer} from '../src/server.js';
+import {delegated} from './delegated-fixture.js';
 
 describe('contracts', () => {
   let client: Client;
@@ -37,7 +38,7 @@ describe('contracts', () => {
     });
     await new Promise<void>(resolve => gateway.listen(0, '127.0.0.1', resolve));
     const port = (gateway.address() as AddressInfo).port;
-    const server = createServer({gatewayUrl: `http://127.0.0.1:${port}`, token: 'secret', timeoutMs: 5_000});
+    const server = createServer({gatewayUrl: `http://127.0.0.1:${port}`, ...delegated, timeoutMs: 5_000});
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     client = new Client({name: 'contracts-test', version: '1'});
     await server.connect(serverTransport);

@@ -19,26 +19,29 @@ npm install --global @capsem/mcp
 ```
 
 The native installer does not install Node.js or download npm packages. Pass an
-explicit gateway URL, bearer token, and transport timeout when registering the
-server. The token is read from `CAPSEM_GATEWAY_TOKEN` or `--token-file`;
-`--token` is refused because argv is visible to every local process. For
-example:
+explicit gateway URL, operator-issued access ID, and transport timeout when
+registering the server. The operator creates scoped access through
+`POST /agent-access`; supply the managed capability from issuance only through
+`CAPSEM_AGENT_CAPABILITY`. Token files, operator environment fallback, and
+credential arguments are unsupported. For example:
 
 ```json
 {
   "mcpServers": {
     "capsem": {
       "command": "capsem-mcp",
-      "args": ["--gateway-url", "http://127.0.0.1:19222", "--timeout-ms", "30000"],
-      "env": {"CAPSEM_GATEWAY_TOKEN": "${CAPSEM_GATEWAY_TOKEN}"}
+      "args": ["--gateway-url", "http://127.0.0.1:19222", "--access-id", "<operator-issued-access-id>", "--timeout-ms", "30000"],
+      "env": {"CAPSEM_AGENT_CAPABILITY": "${CAPSEM_AGENT_CAPABILITY}"}
     }
   }
 }
 ```
 
 Use your MCP client's secret or environment-variable support rather than
-committing the gateway token. The token belongs to the host MCP process. Do not
-copy it into a VM, container, tool argument, or webpage.
+committing the capability. It belongs to the host MCP process. Do not copy it
+into a VM, container, tool argument, or webpage. Revocation, expiry, or service
+restart requires fresh operator-issued access; the server never falls back to
+operator authority.
 
 stdout carries MCP protocol messages only. Sanitized diagnostics use stderr.
 Successful tools return structured content. Failures set `isError` and return a

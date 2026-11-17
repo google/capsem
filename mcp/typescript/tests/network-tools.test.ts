@@ -4,6 +4,7 @@ import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {InMemoryTransport} from '@modelcontextprotocol/sdk/inMemory.js';
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
 import {createServer} from '../src/server.js';
+import {authorization, delegated} from './delegated-fixture.js';
 
 interface RequestRecord {method: string; url: string; authorization?: string; body: Buffer}
 const network = {created_unix_ms: 1, id: 'net-1', members: [], name: 'team', subnet: '10.88.0.0/24'};
@@ -39,7 +40,7 @@ describe('network-tools', () => {
     });
     await new Promise<void>(resolve => gateway.listen(0, '127.0.0.1', resolve));
     const port = (gateway.address() as AddressInfo).port;
-    const server = createServer({gatewayUrl: `http://127.0.0.1:${port}`, token: 'secret', timeoutMs: 5_000});
+    const server = createServer({gatewayUrl: `http://127.0.0.1:${port}`, ...delegated, timeoutMs: 5_000});
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     client = new Client({name: 'network-tools-test', version: '1'});
     await server.connect(serverTransport);
@@ -67,7 +68,7 @@ describe('network-tools', () => {
       {name: 'capsem_network_delete', arguments: {network_id: 'net-1'}},
     ];
     for (const call of calls) expect((await client.callTool(call)).isError, call.name).not.toBe(true);
-    expect(requests.every(request => request.authorization === 'Bearer secret')).toBe(true);
+    expect(requests.every(request => request.authorization === authorization())).toBe(true);
     expect(requests.map(request => request.method)).toEqual([
       'POST', 'GET', 'GET', 'GET', 'PUT', 'GET', 'DELETE', 'GET', 'GET', 'GET', 'DELETE',
     ]);

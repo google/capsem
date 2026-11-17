@@ -16,19 +16,22 @@ components.
 
 ## Using the npm MCP tools for fast debugging
 
-Install and register the package with an explicit gateway URL, bearer token, and
-transport timeout:
+Install and register the package with an explicit gateway URL, operator-issued
+delegated access ID, managed capability, and transport timeout:
 
 ```sh
 npm install --global @capsem/mcp
-CAPSEM_GATEWAY_TOKEN="$(cat ~/.capsem/run/gateway.token)" \
-  capsem-mcp --gateway-url http://127.0.0.1:19222 --timeout-ms 30000
+CAPSEM_AGENT_CAPABILITY="$capability" \
+  capsem-mcp --gateway-url http://127.0.0.1:19222 --access-id "$access_id" --timeout-ms 30000
 ```
 
-The token comes from `CAPSEM_GATEWAY_TOKEN` or `--token-file`; `--token` is
-refused because argv is world-readable. The bearer token belongs only to
-the host MCP process; never copy it into a VM, container, guest tool argument,
-or workload. stdout is protocol-only and sanitized diagnostics use stderr.
+The operator issues scoped access through `POST /agent-access`; the response
+contains the access ID, while the operator retains the managed capability it
+provided. The MCP process accepts that capability only through
+`CAPSEM_AGENT_CAPABILITY`, never token files, operator runtime discovery,
+`CAPSEM_GATEWAY_TOKEN`, or argv secrets. It constructs the delegated bearer
+at the SDK boundary. Never copy the capability into a VM, container, guest tool
+argument, or workload. stdout is protocol-only and sanitized diagnostics use stderr.
 
 The current registry is defined in `mcp/typescript/src/host-tools.ts`,
 `network-tools.ts`, and `mcp-tools.ts`. Parameters follow the TypeScript

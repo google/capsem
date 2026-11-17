@@ -1,44 +1,32 @@
-import {readFileSync} from 'node:fs';
+import {delegatedBearer} from '@capsem/sdk';
 
-export interface Config {gatewayUrl: string; token: string; timeoutMs: number}
+export interface Config {gatewayUrl: string; accessId: string; capability: string; timeoutMs: number}
 
-/** The environment variable carrying the gateway bearer token. */
-export const TOKEN_ENV = 'CAPSEM_GATEWAY_TOKEN';
-const OPTIONS = ['--gateway-url', '--token-file', '--timeout-ms'];
+/** The existing managed capability is secret; its access ID is not. */
+export const CAPABILITY_ENV = 'CAPSEM_AGENT_CAPABILITY';
+const OPTIONS = ['--gateway-url', '--access-id', '--timeout-ms'];
 
-/**
- * Settings from argv, the token from `--token-file` or `CAPSEM_GATEWAY_TOKEN`.
- * The token never travels on argv, where `ps` and `/proc/<pid>/cmdline` expose
- * it for the server's lifetime. Errors are TypeErrors that name options, never
- * their values, so the CLI may print them.
- */
+/** Explicit delegated settings only. Never read operator files or environment. */
 export function parseConfig(argv: string[], env: NodeJS.ProcessEnv = process.env): Config {
   const values = new Map<string, string>();
   for (let index = 0; index < argv.length; index += 2) {
     const name = argv[index], value = argv[index + 1];
-    if (name === '--token' || name?.startsWith('--token=')) {
-      throw new TypeError(`--token would expose the gateway token in the process list; set ${TOKEN_ENV} or pass --token-file`);
+    if (name?.startsWith('--token') || name?.startsWith('--capability')) {
+      throw new TypeError(`delegated capabilities must use ${CAPABILITY_ENV}; token files and argv secrets are unsupported`);
     }
-    if (!name?.startsWith('--') || value === undefined) throw new TypeError('gateway URL and token are required');
-    if (!OPTIONS.includes(name)) throw new TypeError(`unknown option: ${name}`);
+    if (!name?.startsWith('--') || value === undefined) throw new TypeError('explicit gateway URL and delegated access ID are required');
+    if (!OPTIONS.includes(name)) throw new TypeError('unknown host MCP option');
+    if (values.has(name)) throw new TypeError('duplicate host MCP option');
     values.set(name, value);
   }
   const gatewayUrl = values.get('--gateway-url');
-  const tokenFile = values.get('--token-file');
-  const token = tokenFile === undefined ? env[TOKEN_ENV] : readToken(tokenFile);
-  if (!gatewayUrl || !token) throw new TypeError(`gateway URL and token are required (--gateway-url; ${TOKEN_ENV} or --token-file)`);
+  const accessId = values.get('--access-id');
+  const capability = env[CAPABILITY_ENV];
+  if (!gatewayUrl || !accessId || !capability) {
+    throw new TypeError(`explicit gateway URL, delegated access ID and ${CAPABILITY_ENV} capability are required`);
+  }
+  delegatedBearer(accessId, capability);
   const timeoutMs = Number(values.get('--timeout-ms') ?? 30_000);
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) throw new TypeError('timeout must be a positive integer');
-  return {gatewayUrl, token, timeoutMs};
-}
-
-function readToken(path: string): string {
-  let token: string;
-  try {
-    token = readFileSync(path, 'utf8').trim();
-  } catch {
-    throw new TypeError('cannot read the token file named by --token-file');
-  }
-  if (!token) throw new TypeError('the token file named by --token-file is empty');
-  return token;
+  return {gatewayUrl, accessId, capability, timeoutMs};
 }

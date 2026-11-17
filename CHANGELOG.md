@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Security: Require explicit operator-issued delegated access for host MCP startup and programmatic servers; remove operator token-file/environment discovery and keep capabilities out of argv.
+
 - Added: TypeScript SDK `delegatedBearer` constructs explicitly scoped gateway credentials using the existing managed identity and capability formats, without local operator discovery.
 
 - Security: Restrict query bearer tokens to operator WebSocket upgrades, reject competing or duplicate credential sources, and remove credential query fields from both request URI representations before dispatch. Delegated access remains header-only.

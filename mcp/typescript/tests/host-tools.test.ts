@@ -4,6 +4,7 @@ import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {InMemoryTransport} from '@modelcontextprotocol/sdk/inMemory.js';
 import {afterEach, beforeEach, describe, expect, it} from 'vitest';
 import {createServer} from '../src/server.js';
+import {authorization, capability, delegated} from './delegated-fixture.js';
 import {hypervisorInfo, provision, routeFixtures, sandbox} from './host-fixtures.js';
 
 interface RequestRecord {method: string; url: string; authorization?: string; body: Buffer}
@@ -40,7 +41,7 @@ describe('host-tools', () => {
         ...(request.headers.authorization === undefined ? {} : {authorization: request.headers.authorization}),
       };
       requests.push(record);
-      if (record.authorization !== 'Bearer gateway-secret') return json(response, {error: 'denied'}, 401);
+      if (record.authorization !== authorization()) return json(response, {error: 'denied'}, 401);
       const path = new URL(record.url, 'http://gateway.test').pathname;
       if (path === '/status') return json(response, hypervisorInfo);
       if (path === '/vms/list') return json(response, {sandboxes: [sandbox]});
@@ -64,7 +65,7 @@ describe('host-tools', () => {
         return json(response, {success: true, size: record.body.byteLength, vm_path: '/root/b.bin', container_path: '/workspace/b.bin'});
       }
       if (path === '/host-logs/service') return json(response, {source: 'service', text: 'ready'});
-      if (path === '/host-logs/mcp') return json(response, {error: 'must-not-leak gateway-secret'}, 403);
+      if (path === '/host-logs/mcp') return json(response, {error: `must-not-leak ${capability}`}, 403);
       const fixture = routeFixtures[`${record.method} ${path}`];
       if (fixture) return json(response, fixture);
       return json(response, {error: `unexpected ${record.method} ${record.url}`}, 404);
@@ -74,7 +75,7 @@ describe('host-tools', () => {
     gatewayUrl = `http://127.0.0.1:${address.port}`;
     closeGateway = () => new Promise((resolve, reject) => gateway.close(error => error ? reject(error) : resolve()));
 
-    const server = createServer({gatewayUrl, token: 'gateway-secret', timeoutMs: 5_000});
+    const server = createServer({gatewayUrl, ...delegated, timeoutMs: 5_000});
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     client = new Client({name: 'host-tools-test', version: '1'});
     await server.connect(serverTransport);
@@ -115,7 +116,7 @@ describe('host-tools', () => {
       stderr: {encoding: 'utf8', data: ''},
       stdout: {encoding: 'utf8', data: 'ok'},
     });
-    expect(requests.every(request => request.authorization === 'Bearer gateway-secret')).toBe(true);
+    expect(requests.every(request => request.authorization === authorization())).toBe(true);
     expect(requests.at(-1)?.method).toBe('POST');
     expect(JSON.parse(requests.at(-1)?.body.toString() ?? '')).toEqual({command: 'printf ok', timeout_secs: 7});
   });
@@ -243,7 +244,7 @@ describe('host-tools', () => {
     const denied = await client.callTool({name: 'capsem_host_logs', arguments: {source: 'mcp'}});
     expect(denied.isError).toBe(true);
     expect(JSON.stringify(denied)).toContain('HTTP 403');
-    expect(JSON.stringify(denied)).not.toContain('gateway-secret');
+    expect(JSON.stringify(denied)).not.toContain(capability);
     expect(requests.at(-2)?.url).toBe('/host-logs/service');
   });
 

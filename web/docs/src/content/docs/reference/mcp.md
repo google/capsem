@@ -31,14 +31,18 @@ npm install --global @capsem/mcp
 | Input | Contract |
 | --- | --- |
 | `--gateway-url URL` | Explicit HTTP(S) gateway endpoint. |
-| `CAPSEM_GATEWAY_TOKEN` | Host process bearer credential. |
-| `--token-file PATH` | Alternative file containing the bearer token. |
+| `--access-id ID` | Explicit canonical UUIDv4 from operator-issued delegated access. |
+| `CAPSEM_AGENT_CAPABILITY` | Managed capability from issuance: exactly 64 lowercase hex characters. |
 | `--timeout-ms N` | SDK HTTP request deadline; default 30000. |
 | stdout / stderr | MCP protocol only / startup diagnostics. |
 
-The server does not start Capsem or discover a local gateway. Tokens are not
-accepted as command-line values. Keep the gateway credential in the host
-client's secret configuration, never in a VM environment or tool argument.
+An operator issues scoped access through `POST /agent-access` and can revoke
+it with `DELETE /agent-access/{id}`. The server constructs the delegated bearer
+from the explicit access ID and managed capability. It does not start Capsem,
+discover a local gateway, read operator token files, or use
+`CAPSEM_GATEWAY_TOKEN`. Credentials are not accepted as command-line values.
+Keep the capability in the host client's secret configuration, never in a VM
+environment or tool argument. Expiry and service restart revoke live access.
 
 ## Host tools
 
