@@ -19,6 +19,16 @@ pub const BUILTIN_SERVER_NAME: &str = "local";
 /// Namespace separator for MCP tool/prompt/resource names.
 pub const NS_SEP: &str = "__";
 
+/// Admit external MCP correlation metadata before dispatch. The string bound
+/// reserves room for an escaped error response; it never sizes tool content.
+pub fn is_valid_mcp_request_id(id: &serde_json::Value) -> bool {
+    match id {
+        serde_json::Value::String(value) => value.len() <= crate::MCP_REQUEST_ID_MAX_BYTES,
+        serde_json::Value::Number(value) => value.is_i64() || value.is_u64(),
+        _ => false,
+    }
+}
+
 /// A host-side MCP server definition (from user config or auto-detected).
 ///
 /// Transport is determined by which fields are set:

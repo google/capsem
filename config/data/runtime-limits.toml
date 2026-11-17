@@ -53,6 +53,9 @@ http_timeout_seconds = 30
 startup_timeout_seconds = 10
 worker_queue_capacity = 64
 builtin_peers_per_session = 1
+# Correlation metadata only: leave room for a bounded error reply even when
+# every ID byte needs six-byte JSON escaping. Tool content has no context budget.
+request_id_max_bytes = 4096
 
 [approval]
 # Human decisions hold the original continuation, never a replayable request.

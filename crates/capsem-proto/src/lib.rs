@@ -389,6 +389,33 @@ impl McpFrame {
 /// Encode a framed MCP payload as:
 /// `[u32 total_len_be][fixed header][process_name bytes][payload bytes]`.
 pub fn encode_mcp_frame(stream_id: u32, flags: u16, process_name: &str, payload: &[u8]) -> Result<Vec<u8>> {
+    let header = encode_mcp_frame_header(stream_id, flags, process_name, payload.len())?;
+    let mut out = Vec::with_capacity(header.as_bytes().len() + payload.len());
+    out.extend_from_slice(header.as_bytes());
+    out.extend_from_slice(payload);
+    Ok(out)
+}
+
+/// Fixed storage for the prefix, protocol fields and bounded attribution only.
+/// Writers can borrow their already encoded payload instead of copying it.
+#[derive(Debug)]
+pub struct McpFrameHeader {
+    bytes: [u8; 4 + MCP_FRAME_HEADER_LEN as usize + MCP_FRAME_MAX_PROCESS_NAME_LEN],
+    len: usize,
+}
+impl McpFrameHeader {
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes[..self.len]
+    }
+}
+
+/// Validate the complete envelope before any transport write or payload allocation.
+pub fn encode_mcp_frame_header(
+    stream_id: u32,
+    flags: u16,
+    process_name: &str,
+    payload_len: usize,
+) -> Result<McpFrameHeader> {
     validate_mcp_frame_stream_flags(stream_id, flags)?;
 
     let process_name_bytes = process_name.as_bytes();
@@ -396,7 +423,10 @@ pub fn encode_mcp_frame(stream_id: u32, flags: u16, process_name: &str, payload:
         bail!("MCP process name too long: {} bytes", process_name_bytes.len());
     }
 
-    let total_len = MCP_FRAME_HEADER_LEN as usize + process_name_bytes.len() + payload.len();
+    let total_len = (MCP_FRAME_HEADER_LEN as usize)
+        .checked_add(process_name_bytes.len())
+        .and_then(|prefix| prefix.checked_add(payload_len))
+        .context("MCP frame length overflow")?;
     if total_len > MCP_FRAME_MAX_SIZE {
         bail!("MCP frame too large: {total_len} bytes");
     }
@@ -405,20 +435,22 @@ pub fn encode_mcp_frame(stream_id: u32, flags: u16, process_name: &str, payload:
         .len()
         .try_into()
         .context("MCP process name length overflow")?;
-    let payload_len: u32 = payload.len().try_into().context("MCP payload length overflow")?;
+    let payload_len: u32 = payload_len.try_into().context("MCP payload length overflow")?;
     let total_len_u32: u32 = total_len.try_into().context("MCP frame length overflow")?;
 
-    let mut out = Vec::with_capacity(total_len + 4);
-    out.extend_from_slice(&total_len_u32.to_be_bytes());
-    out.extend_from_slice(&MCP_FRAME_MAGIC.to_be_bytes());
-    out.push(MCP_FRAME_VERSION);
-    out.push(MCP_FRAME_HEADER_LEN);
-    out.extend_from_slice(&stream_id.to_be_bytes());
-    out.extend_from_slice(&flags.to_be_bytes());
-    out.extend_from_slice(&process_name_len.to_be_bytes());
-    out.extend_from_slice(&payload_len.to_be_bytes());
-    out.extend_from_slice(process_name_bytes);
-    out.extend_from_slice(payload);
+    let mut out = McpFrameHeader {
+        bytes: [0; 4 + MCP_FRAME_HEADER_LEN as usize + MCP_FRAME_MAX_PROCESS_NAME_LEN],
+        len: 4 + MCP_FRAME_HEADER_LEN as usize + process_name_bytes.len(),
+    };
+    out.bytes[..4].copy_from_slice(&total_len_u32.to_be_bytes());
+    out.bytes[4..6].copy_from_slice(&MCP_FRAME_MAGIC.to_be_bytes());
+    out.bytes[6] = MCP_FRAME_VERSION;
+    out.bytes[7] = MCP_FRAME_HEADER_LEN;
+    out.bytes[8..12].copy_from_slice(&stream_id.to_be_bytes());
+    out.bytes[12..14].copy_from_slice(&flags.to_be_bytes());
+    out.bytes[14..16].copy_from_slice(&process_name_len.to_be_bytes());
+    out.bytes[16..20].copy_from_slice(&payload_len.to_be_bytes());
+    out.bytes[4 + MCP_FRAME_HEADER_LEN as usize..out.len].copy_from_slice(process_name_bytes);
     Ok(out)
 }
 

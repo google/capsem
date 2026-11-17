@@ -557,7 +557,7 @@ json = { count = 8, reason = "mcp" }
 json = { count = 4, reason = "mcp" }
 
 [sources."crates/capsem-proto/src/mcp_contracts.rs"]
-json = { count = 14, reason = "mcp" }
+json = { count = 17, reason = "mcp" }
 
 [sources."crates/capsem-service/src/api.rs"]
 json = { count = 3, reason = "http" }
