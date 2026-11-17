@@ -175,7 +175,7 @@ impl StreamableHttpClient for CapsemMcpHttpClient {
             last_event_id,
             auth_header,
             custom_headers,
-            capsem_proto::MCP_PAYLOAD_MAX_BYTES,
+            capsem_proto::MCP_JSON_RPC_MAX_BYTES,
         )
         .await
     }
@@ -224,7 +224,7 @@ impl StreamableHttpClient for CapsemMcpHttpClient {
         }
         Ok(http_response::sse(
             response.bytes_stream(),
-            max_sse_event_size.min(capsem_proto::MCP_PAYLOAD_MAX_BYTES),
+            max_sse_event_size.min(capsem_proto::MCP_JSON_RPC_MAX_BYTES),
         ))
     }
 
@@ -268,7 +268,7 @@ impl StreamableHttpClient for CapsemMcpHttpClient {
             session_id,
             auth_header,
             custom_headers,
-            capsem_proto::MCP_PAYLOAD_MAX_BYTES,
+            capsem_proto::MCP_JSON_RPC_MAX_BYTES,
         )
         .await
     }
@@ -294,8 +294,17 @@ impl StreamableHttpClient for CapsemMcpHttpClient {
         if let Some(session_id) = session_id {
             request = request.header(MCP_HEADER_SESSION_ID, session_id.as_ref());
         }
+        // External JSON-RPC is encoded once into bounded final storage. The
+        // request builder takes ownership instead of allocating via `.json()`.
+        let bytes = capsem_proto::framing::encode_json_record(&message, capsem_proto::MCP_JSON_RPC_MAX_BYTES)
+            .map_err(StreamableHttpError::Client)?;
+        capsem_proto::mcp_contracts::json_rpc_wire::validate_size(&bytes).map_err(StreamableHttpError::Client)?;
         let response = self
-            .send(request.json(&message))
+            .send(
+                request
+                    .header(reqwest::header::CONTENT_TYPE, JSON_MIME_TYPE)
+                    .body(bytes),
+            )
             .await
             .map_err(StreamableHttpError::Client)?;
         if response.status() == reqwest::StatusCode::UNAUTHORIZED {
@@ -341,7 +350,7 @@ impl StreamableHttpClient for CapsemMcpHttpClient {
             .map(|value| value.to_string());
 
         if !status.is_success() {
-            let bytes = http_response::body(response, capsem_proto::MCP_PAYLOAD_MAX_BYTES)
+            let bytes = http_response::json_body(response)
                 .await
                 .map_err(StreamableHttpError::Client)?;
             let body = String::from_utf8_lossy(&bytes);
@@ -364,13 +373,13 @@ impl StreamableHttpClient for CapsemMcpHttpClient {
                 Ok(StreamableHttpPostResponse::Sse(
                     http_response::sse(
                         response.bytes_stream(),
-                        max_sse_event_size.min(capsem_proto::MCP_PAYLOAD_MAX_BYTES),
+                        max_sse_event_size.min(capsem_proto::MCP_JSON_RPC_MAX_BYTES),
                     ),
                     session_id,
                 ))
             }
             Some(ct) if ct.as_bytes().starts_with(JSON_MIME_TYPE.as_bytes()) => {
-                let bytes = http_response::body(response, capsem_proto::MCP_PAYLOAD_MAX_BYTES)
+                let bytes = http_response::json_body(response)
                     .await
                     .map_err(StreamableHttpError::Client)?;
                 match serde_json::from_slice::<ServerJsonRpcMessage>(&bytes) {

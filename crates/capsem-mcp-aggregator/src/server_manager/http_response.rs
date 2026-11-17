@@ -40,6 +40,13 @@ pub(super) async fn body(response: reqwest::Response, limit: usize) -> io::Resul
     Ok(body)
 }
 
+pub(super) async fn json_body(response: reqwest::Response) -> io::Result<Vec<u8>> {
+    let bytes = body(response, capsem_proto::MCP_JSON_RPC_MAX_BYTES).await?;
+    capsem_proto::mcp_contracts::json_rpc_wire::validate_size(&bytes)
+        .map_err(|_| too_large(capsem_proto::MCP_PAYLOAD_MAX_BYTES))?;
+    Ok(bytes)
+}
+
 /// Count normalized data bytes before handing chunks to sse-stream. Prefixes,
 /// optional spaces and CRLF do not consume the usable JSON-RPC payload budget.
 /// A separate derived wire allowance bounds parser storage for framing and
@@ -136,7 +143,17 @@ where
             Ok::<_, io::Error>(Some((chunk, (stream, size))))
         },
     );
-    SseStream::from_bytes_stream(admitted).boxed()
+    SseStream::from_bytes_stream(admitted)
+        .map(|item| {
+            item.and_then(|event| {
+                if let Some(data) = &event.data {
+                    capsem_proto::mcp_contracts::json_rpc_wire::validate_size(data.as_bytes())
+                        .map_err(|_| SseError::Body(Box::new(too_large(capsem_proto::MCP_PAYLOAD_MAX_BYTES))))?;
+                }
+                Ok(event)
+            })
+        })
+        .boxed()
 }
 
 #[cfg(test)]

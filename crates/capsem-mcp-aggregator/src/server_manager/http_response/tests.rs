@@ -1,4 +1,46 @@
 use super::*;
+
+#[tokio::test]
+async fn correlation_envelope_is_shared_by_json_and_sse_without_content_credit() {
+    use capsem_proto::mcp_contracts::{json_rpc_wire::encode_response, JsonRpcResponse};
+    let limit = capsem_proto::MCP_PAYLOAD_MAX_BYTES;
+    let empty = JsonRpcResponse::ok(Some(serde_json::json!(1)), serde_json::json!(""));
+    let overhead = serde_json::to_vec(&empty).unwrap().len() - b",\"id\":1".len();
+    let mut message = JsonRpcResponse::ok(
+        Some(serde_json::json!("\0".repeat(capsem_proto::MCP_REQUEST_ID_MAX_BYTES))),
+        serde_json::json!("x".repeat(limit - overhead)),
+    );
+    let accepted = encode_response(&message).unwrap();
+    let response = http::Response::new(reqwest::Body::from(accepted.clone()));
+    assert_eq!(json_body(response.into()).await.unwrap(), accepted);
+    let mut input = b"data: ".to_vec();
+    input.extend_from_slice(&accepted);
+    input.extend_from_slice(b"\n\n");
+    let mut received = sse(
+        stream::iter([Ok::<_, io::Error>(Bytes::from(input))]),
+        capsem_proto::MCP_JSON_RPC_MAX_BYTES,
+    );
+    assert_eq!(
+        received.next().await.unwrap().unwrap().data.as_deref(),
+        Some(std::str::from_utf8(&accepted).unwrap())
+    );
+    message.id = Some(serde_json::json!(1));
+    message.result = Some(serde_json::json!("x".repeat(limit - overhead + 1)));
+    let oversized = serde_json::to_vec(&message).unwrap();
+    let response = http::Response::new(reqwest::Body::from(oversized.clone()));
+    assert!(json_body(response.into()).await.is_err());
+    let mut input = b"data: ".to_vec();
+    input.extend_from_slice(&oversized);
+    input.extend_from_slice(b"\n\n");
+    let mut received = sse(
+        stream::iter([Ok::<_, io::Error>(Bytes::from(input))]),
+        capsem_proto::MCP_JSON_RPC_MAX_BYTES,
+    );
+    assert!(
+        received.next().await.unwrap().is_err(),
+        "unused ID allowance cannot become content credit"
+    );
+}
 use futures::stream;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
