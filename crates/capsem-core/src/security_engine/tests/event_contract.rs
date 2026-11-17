@@ -704,3 +704,59 @@ async fn environment_history_is_not_a_runtime_security_event() {
     assert!(result.is_err(), "host history must use its own ledger admission");
     assert!(!called.get(), "runtime admission must not publish host-only evidence");
 }
+
+#[tokio::test]
+async fn environment_request_records_never_enter_runtime_security_admission() {
+    use capsem_logger::events::environment::request::{
+        EnvironmentRequestDecision, EnvironmentRequestDecisionKind, EnvironmentRequestPayload,
+        EnvironmentRequestResult, PreparedEnvironmentRequest,
+    };
+    let id = |value: u64| format!("00000000-0000-4000-8000-{value:012x}");
+    let records = [
+        WriteOp::PrepareEnvironmentRequest(PreparedEnvironmentRequest {
+            request_id: id(1),
+            environment_id: id(2),
+            base_revision_id: None,
+            requester: None,
+            timestamp_unix_ms: 1,
+            actor: "operator".into(),
+            reason: "create environment".into(),
+            payload_event_id: "abcdef012345".into(),
+            payload: Box::new(EnvironmentRequestPayload::Change {
+                specification: Box::new(toml::from_str("name='development'").unwrap()),
+            }),
+        }),
+        WriteOp::EnvironmentRequestDecision(EnvironmentRequestDecision {
+            request_id: id(1),
+            timestamp_unix_ms: 2,
+            actor: "operator".into(),
+            decision: EnvironmentRequestDecisionKind::Approve,
+            reason: "approved".into(),
+        }),
+        WriteOp::EnvironmentRequestResult(EnvironmentRequestResult {
+            request_id: id(1),
+            result: capsem_logger::events::EnvironmentRevisionParent {
+                environment_id: id(2),
+                revision_id: id(3),
+            },
+            timestamp_unix_ms: 3,
+            actor: "operator".into(),
+        }),
+    ];
+    for record in records {
+        let kind = record.kind();
+        assert_eq!(RuntimeSecurityEventType::for_write_op(&record), None, "{kind}");
+        assert!(
+            RuntimeSecurityEvent::from_logger_write(record.clone()).is_none(),
+            "{kind}"
+        );
+        let called = std::cell::Cell::new(false);
+        let result = crate::security_engine::emission::emit_security_write_with(record, |_| {
+            called.set(true);
+            std::future::ready(Ok(()))
+        })
+        .await;
+        assert!(result.is_err(), "{kind}");
+        assert!(!called.get(), "host-only {kind} entered the runtime writer callback");
+    }
+}

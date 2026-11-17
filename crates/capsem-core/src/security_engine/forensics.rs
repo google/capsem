@@ -234,7 +234,10 @@ pub(super) fn logger_write_credential_ref(op: &WriteOp) -> Option<String> {
         WriteOp::PolicyMutationEvent(_)
         | WriteOp::HostEvent(_)
         | WriteOp::PrepareEnvironmentRevision(_)
-        | WriteOp::EnvironmentRevisionTransition(_) => None,
+        | WriteOp::EnvironmentRevisionTransition(_)
+        | WriteOp::PrepareEnvironmentRequest(_)
+        | WriteOp::EnvironmentRequestDecision(_)
+        | WriteOp::EnvironmentRequestResult(_) => None,
         // Registry rows carry state, not a credential.
         WriteOp::Network(_) | WriteOp::NetworkMembership(_) | WriteOp::NetworkDeparture(_) => None,
     }
@@ -257,7 +260,11 @@ pub(super) fn logger_write_trace_id(op: &WriteOp) -> Option<String> {
         WriteOp::SecurityDecisionEvent(event) => event.trace_id.clone(),
         WriteOp::PolicyMutationEvent(event) => event.trace_id.clone(),
         WriteOp::HostEvent(event) => event.trace_id.clone(),
-        WriteOp::PrepareEnvironmentRevision(_) | WriteOp::EnvironmentRevisionTransition(_) => None,
+        WriteOp::PrepareEnvironmentRevision(_)
+        | WriteOp::EnvironmentRevisionTransition(_)
+        | WriteOp::PrepareEnvironmentRequest(_)
+        | WriteOp::EnvironmentRequestDecision(_)
+        | WriteOp::EnvironmentRequestResult(_) => None,
         WriteOp::Network(_) | WriteOp::NetworkMembership(_) | WriteOp::NetworkDeparture(_) => None,
     }
 }
