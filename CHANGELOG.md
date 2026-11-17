@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fixed: Mark pending or approved configuration requests stale when a history purge removes their source or base revision values, including promotion and apply requests. Preserve original intent, review attribution and terminal outcomes.
+
 - Fixed: Keep variable-history purge cleanup pending across worker restarts while captured readers still hold the old archive generation. Startup no longer deletes that generation ahead of the lease-aware purge collector.
 
 - Security: Restrict environment revision, request, approval, application, reference and purge mutations to authenticated coordinator ledger channels. Refuse forged operator labels from VM and proxy producers before admitting any part of a batch.

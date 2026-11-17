@@ -82,12 +82,24 @@ pub(super) fn publish_markers(
 ) -> rusqlite::Result<()> {
     tx.execute("UPDATE main.environment_revisions SET replayable=0 WHERE revision_id IN (SELECT revision_id FROM main.environment_revision_purges WHERE purge_id=?1)",[&execution.purge_id])?;
     tx.execute("UPDATE main.environment_requests SET replayable=0 WHERE request_id IN (SELECT request_id FROM main.environment_request_purges WHERE purge_id=?1)",[&execution.purge_id])?;
+    let mut after_id = 0_i64;
     loop {
-        let id:Option<String>=tx.query_row("SELECT q.request_id FROM main.environment_requests q JOIN main.environment_request_purges m ON m.request_id=q.request_id
-            WHERE m.purge_id=?1 AND (q.state='pending' OR (q.state='approved' AND q.result_revision_id IS NULL)) LIMIT 1",[&execution.purge_id],|row|row.get(0)).optional()?;
-        let Some(id) = id else {
+        // History is unbounded. Advance by the immutable SQLite row identity,
+        // so invalidating one request never rescans the historical prefix.
+        let next: Option<(i64, String)> = tx.query_row(
+            "SELECT q.id,q.request_id FROM main.environment_requests q
+             WHERE q.id>?2 AND (q.state='pending' OR (q.state='approved' AND q.result_revision_id IS NULL)) AND (
+                 EXISTS(SELECT 1 FROM main.environment_request_purges m WHERE m.purge_id=?1 AND m.request_id=q.request_id)
+                 OR EXISTS(SELECT 1 FROM main.environment_revision_purges m WHERE m.purge_id=?1
+                     AND (m.revision_id=q.source_revision_id OR m.revision_id=q.base_revision_id)))
+             ORDER BY q.id LIMIT 1",
+            rusqlite::params![execution.purge_id,after_id],
+            |row| Ok((row.get(0)?,row.get(1)?)),
+        ).optional()?;
+        let Some((cursor, id)) = next else {
             break;
         };
+        after_id = cursor;
         crate::writer::environment_requests::invalidate(
             tx,
             &crate::events::environment::request::EnvironmentRequestInvalidation {

@@ -465,3 +465,159 @@ async fn variable_purge_rewrite_keeps_pending_reader_generation_across_writer_re
         .join(old.header.generation_id.file_name())
         .exists());
 }
+
+#[tokio::test]
+async fn variable_purge_rewrite_stales_source_and_base_dependencies_without_redacting_their_intents() {
+    use crate::events::environment::request::{
+        EnvironmentRequestDecision, EnvironmentRequestDecisionKind, EnvironmentRequestState, EnvironmentRequestTarget,
+    };
+    use crate::events::EnvironmentRevisionParent;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("host.db");
+    let writer = owner(&path, true).await;
+    let parent = EnvironmentRevisionParent {
+        environment_id: id(2),
+        revision_id: id(6),
+    };
+    let mut fork = revision(9, 12, None, Some(SELECTED));
+    fork.fork_parent = Some(parent.clone());
+    committed(&writer, fork).await;
+    let mut clean = revision(9, 13, Some(12), None);
+    clean.fork_parent = Some(parent);
+    committed(&writer, clean).await;
+    let source = EnvironmentRevisionParent {
+        environment_id: id(9),
+        revision_id: id(12),
+    };
+    for number in [40, 41, 42, 43, 44] {
+        let (environment, base, payload) = match number {
+            40 | 43 => (2, 6, EnvironmentRequestPayload::Promotion { source: source.clone() }),
+            41 => (
+                9,
+                13,
+                EnvironmentRequestPayload::Apply {
+                    revision: source.clone(),
+                    targets: vec![EnvironmentRequestTarget {
+                        session_id: id(30),
+                        generation: id(31),
+                    }],
+                },
+            ),
+            42 => (
+                9,
+                12,
+                EnvironmentRequestPayload::Change {
+                    specification: Box::new(
+                        toml::from_str("name='development'\n[variables]\nKEEP='unmodified proposal'").unwrap(),
+                    ),
+                },
+            ),
+            _ => (
+                2,
+                6,
+                EnvironmentRequestPayload::Apply {
+                    revision: EnvironmentRevisionParent {
+                        environment_id: id(2),
+                        revision_id: id(4),
+                    },
+                    targets: vec![EnvironmentRequestTarget {
+                        session_id: id(30),
+                        generation: id(31),
+                    }],
+                },
+            ),
+        };
+        durable(
+            &writer,
+            WriteOp::PrepareEnvironmentRequest(PreparedEnvironmentRequest {
+                request_id: id(number),
+                environment_id: id(environment),
+                base_revision_id: Some(id(base)),
+                requester: None,
+                timestamp_unix_ms: 40,
+                expires_at_unix_ms: 10000,
+                actor: "operator".into(),
+                reason: "dependent proposal".into(),
+                payload_event_id: format!("{number:012x}"),
+                payload: Box::new(payload),
+            }),
+        )
+        .await;
+        if number == 41 || number == 43 {
+            durable(
+                &writer,
+                WriteOp::EnvironmentRequestDecision(EnvironmentRequestDecision {
+                    request_id: id(number),
+                    timestamp_unix_ms: 45,
+                    actor: "operator".into(),
+                    decision: if number == 41 {
+                        EnvironmentRequestDecisionKind::Approve
+                    } else {
+                        EnvironmentRequestDecisionKind::Deny
+                    },
+                    reason: "original review".into(),
+                }),
+            )
+            .await;
+        }
+    }
+    let reader = crate::DbHandle::open_external_reader(&path).unwrap();
+    let mut before = Vec::new();
+    for number in [40, 41, 42, 43, 44] {
+        before.push(
+            reader
+                .read_body(
+                    &format!("{number:012x}"),
+                    "environment_requests",
+                    crate::BodyDirection::Payload,
+                )
+                .await
+                .unwrap()
+                .unwrap()
+                .bytes,
+        );
+    }
+    let mut purge = intent();
+    purge.environment_id = id(9);
+    purge.source_revision_id = id(12);
+    durable(&writer, WriteOp::PrepareEnvironmentVariablePurge(purge)).await;
+    crate::writer::fail_retention_for_path_for_tests(&path, crate::writer::RetentionFault::IndexTransaction);
+    assert!(writer.purge_variable_history(execution(51)).await.is_err());
+    let approved = reader.environment_request_snapshot(&id(41)).await.unwrap().unwrap();
+    assert_eq!(approved.record.state, EnvironmentRequestState::Approved);
+    assert!(approved.record.invalidation.is_none());
+    let result = writer.purge_variable_history(execution(52)).await.unwrap();
+    assert_eq!(
+        result.request_count, 0,
+        "reference-only intent payloads contain no selected values"
+    );
+    for (index, number) in [40, 41, 42, 43, 44].into_iter().enumerate() {
+        let snapshot = reader.environment_request_snapshot(&id(number)).await.unwrap().unwrap();
+        assert_eq!(
+            snapshot.record.state,
+            match number {
+                43 => EnvironmentRequestState::Denied,
+                44 => EnvironmentRequestState::Pending,
+                _ => EnvironmentRequestState::Stale,
+            }
+        );
+        assert_eq!(snapshot.record.invalidation.is_some(), number < 43);
+        if let Some(decision) = snapshot.record.decision {
+            assert_eq!(decision.reason, "original review");
+        }
+        let after = reader
+            .read_body(
+                &format!("{number:012x}"),
+                "environment_requests",
+                crate::BodyDirection::Payload,
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .bytes;
+        assert_eq!(
+            after, before[index],
+            "source/base invalidation must retain exact original intent"
+        );
+    }
+}
