@@ -10,33 +10,56 @@
 use super::*;
 
 pub(crate) async fn handle_exec(
-    _actor: crate::caller_auth::AuthenticatedActor,
+    actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
     Json(payload): Json<ExecRequest>,
 ) -> Result<Json<ExecResponse>, AppError> {
+    let execution = execute(&actor, &state, &id, payload);
+    let result = if let Some(grant) = actor.agent_grant() {
+        tokio::select! {
+            biased;
+            () = grant.revoked() => Err(crate::caller_auth::execution::denied()),
+            () = tokio::time::sleep_until(grant.deadline().into()) => Err(crate::caller_auth::execution::denied()),
+            result = execution => result,
+        }
+    } else {
+        execution.await
+    };
+    if actor.agent_grant().is_some()
+        && result
+            .as_ref()
+            .is_err_and(|error| error.status == StatusCode::FORBIDDEN)
+    {
+        crate::agent_access::refusals::record_execution(&state, actor.evidence().clone()).await?;
+    }
+    result
+}
+
+async fn execute(
+    actor: &crate::caller_auth::AuthenticatedActor,
+    state: &Arc<ServiceState>,
+    id: &str,
+    payload: ExecRequest,
+) -> Result<Json<ExecResponse>, AppError> {
     let timeout_secs =
         capsem_api::exec_timeout_secs(payload.timeout_secs).map_err(|e| AppError::new(StatusCode::BAD_REQUEST, e))?;
-    // Capture before preparation yields: a reused id/path cannot retarget exec.
-    let owner = {
-        let instances = state.instances.lock().unwrap();
-        let instance = instances.get(&id).ok_or_else(|| AppError::vm_not_found(&id))?;
-        let owner = owner_connection::OwnerConnection::capture(instance);
-        drop(instances);
-        owner.map_err(|error| AppError::new(StatusCode::SERVICE_UNAVAILABLE, error))?
-    };
-    let target = capsem_api::exec_target(
-        payload.target,
-        crate::container_setup::runs_container(&state, &id).await,
-    )
-    .map_err(|e| AppError::new(StatusCode::BAD_REQUEST, e))?;
+    let owner = actor.execution_owner(state, id)?;
+    let target = capsem_api::exec_target(payload.target, crate::container_setup::runs_container(state, id).await)
+        .map_err(|e| AppError::new(StatusCode::BAD_REQUEST, e))?;
 
-    super::readiness::wait_for_owner_ready(&state, &owner, 30)
+    super::readiness::wait_for_owner_ready(state, &owner, 30)
         .await
-        .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+        .map_err(|error| {
+            if actor.agent_grant().is_some() && actor.check_execution(state, &owner).is_err() {
+                crate::caller_auth::execution::denied()
+            } else {
+                AppError::new(StatusCode::INTERNAL_SERVER_ERROR, error)
+            }
+        })?;
 
-    let res = send_owner_command(
-        &state,
+    let res = ipc_command::send_owner_command_guarded(
+        state,
         &owner,
         ServiceToProcess::Exec {
             id: state.next_job_id(),
@@ -44,6 +67,11 @@ pub(crate) async fn handle_exec(
             target: proto_exec_target(target),
         },
         Some(timeout_secs),
+        || {
+            actor
+                .check_execution(state, &owner)
+                .map_err(|_| ipc_command::IpcCommandError::AccessDenied)
+        },
     )
     .await
     .map_err(|e| e.into_exec_app_error(false))?;

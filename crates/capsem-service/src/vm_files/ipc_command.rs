@@ -5,6 +5,7 @@ mod budget;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum IpcCommandError {
+    AccessDenied,
     Timeout { timeout_secs: u64 },
     Failed(String),
 }
@@ -12,6 +13,7 @@ pub(crate) enum IpcCommandError {
 impl std::fmt::Display for IpcCommandError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::AccessDenied => f.write_str("execution authority ended"),
             Self::Timeout { timeout_secs } => write!(f, "IPC command timed out after {timeout_secs}s"),
             Self::Failed(msg) => f.write_str(msg),
         }
@@ -33,6 +35,7 @@ impl From<IpcCommandError> for String {
 impl IpcCommandError {
     pub(crate) fn into_exec_app_error(self, prefix_failed: bool) -> AppError {
         match self {
+            Self::AccessDenied => crate::caller_auth::execution::denied(),
             Self::Timeout { timeout_secs } => AppError::exec_timeout(format!("exec failed: {self}"), timeout_secs),
             Self::Failed(msg) if prefix_failed => {
                 AppError::new(StatusCode::INTERNAL_SERVER_ERROR, format!("exec failed: {msg}"))
@@ -63,7 +66,22 @@ pub(crate) async fn send_owner_command(
     cmd: ServiceToProcess,
     timeout_secs: Option<u64>,
 ) -> Result<ProcessToService, IpcCommandError> {
-    let (tx, rx) = owner.open(state, "capsem-service", false).await?;
+    send_owner_command_guarded(state, owner, cmd, timeout_secs, || Ok(())).await
+}
+
+/// Check live delegated admission on both sides of the asynchronous handshake.
+/// The command is accepted for dispatch only after the final check.
+pub(crate) async fn send_owner_command_guarded(
+    state: &ServiceState,
+    owner: &owner_connection::OwnerConnection,
+    cmd: ServiceToProcess,
+    timeout_secs: Option<u64>,
+    authorize: impl Fn() -> Result<(), IpcCommandError>,
+) -> Result<ProcessToService, IpcCommandError> {
+    authorize()?;
+    let connection = owner.open(state, "capsem-service", false).await;
+    authorize()?;
+    let (tx, rx) = connection?;
 
     tx.send(cmd.clone())
         .await

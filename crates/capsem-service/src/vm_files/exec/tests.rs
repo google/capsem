@@ -42,3 +42,5 @@ async fn replacement_during_exec_preparation_never_receives_the_command() {
     .await
     .expect("exec must reject replacement promptly");
 }
+
+mod delegated;

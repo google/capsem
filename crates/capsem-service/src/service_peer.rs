@@ -73,7 +73,7 @@ pub(crate) async fn restrict_owner_routes(
         if let Some(value) = request.headers_mut().get_mut(axum::http::header::AUTHORIZATION) {
             value.set_sensitive(true);
         }
-        let actor = match state.caller_authority.authenticate_gateway(request.headers()) {
+        let mut actor = match state.caller_authority.authenticate_gateway(request.headers()) {
             Ok(actor) => actor,
             Err(axum::http::StatusCode::UNAUTHORIZED) => {
                 return refuse(&state, request, Reason::CredentialDenied, None).await
@@ -82,7 +82,21 @@ pub(crate) async fn restrict_owner_routes(
         };
         // Delegated routes must opt into an explicit operation/target scope.
         if actor.agent_grant().is_some() {
-            return refuse(&state, request, Reason::ScopeRequired, Some(actor.evidence().clone())).await;
+            let exec = request.method() == axum::http::Method::POST
+                && request
+                    .extensions()
+                    .get::<axum::extract::MatchedPath>()
+                    .is_some_and(|path| path.as_str() == "/vms/{id}/exec");
+            let admitted = exec
+                && request
+                    .uri()
+                    .path()
+                    .strip_prefix("/vms/")
+                    .and_then(|path| path.strip_suffix("/exec"))
+                    .is_some_and(|id| actor.bind_execution(&state, id));
+            if !admitted {
+                return refuse(&state, request, Reason::ScopeRequired, Some(actor.evidence().clone())).await;
+            }
         }
         tracing::debug!(actor = %actor.evidence().ledger_id(), "authenticated service request");
         request.extensions_mut().insert(actor);

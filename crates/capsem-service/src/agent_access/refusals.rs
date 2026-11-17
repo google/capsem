@@ -97,3 +97,16 @@ async fn record_detail(state: &ServiceState, actor: Option<CallerActor>, detail:
     let actor = actor.map_or_else(|| "unauthenticated".to_owned(), |actor| actor.ledger_id());
     super::audit(state, actor, capsem_logger::HostEventKind::AccessDenied, detail).await
 }
+
+pub(crate) async fn record_execution(state: &ServiceState, actor: CallerActor) -> Result<(), AppError> {
+    record_detail(
+        state,
+        Some(actor),
+        Detail {
+            method: Some("POST"),
+            route: Some("/vms/{id}/exec"),
+            reason: Reason::ScopeRequired,
+        },
+    )
+    .await
+}

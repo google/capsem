@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: Delegated agents with explicit Execute scope can run commands only in their admitted session generation. Recheck live authority after readiness and IPC handshakes, cancel expired or revoked requests, and audit scope refusals.
+
 - Removed: Unscoped host MCP `capsem_mcp_call`; guest tool invocation requires the VM-owned endpoint and its policy and ledger identity.
 
 - Security: Pin exec preparation, readiness credential handoff, and command dispatch to the original VM owner generation, refusing session replacement during asynchronous waits.

@@ -192,6 +192,7 @@ fn read_summary(result: &Result<ProcessToService, crate::vm_files::ipc_command::
         Ok(_) => "unexpected_reply".into(),
         Err(IpcCommandError::Timeout { .. }) => "ipc_timeout".into(),
         Err(IpcCommandError::Failed(_)) => "ipc_failure".into(),
+        Err(IpcCommandError::AccessDenied) => "access_denied".into(),
     }
 }
 
