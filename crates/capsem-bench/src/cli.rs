@@ -26,6 +26,9 @@ pub(crate) enum Command {
     DnsLoad(crate::dns_load::Args),
     /// Print the config-owned capacities used to shape load curves.
     RuntimeLimits,
+    /// Measure product v3 streams with explicit SDK gateway authority.
+    #[cfg(feature = "host")]
+    StreamProbe(crate::stream_probe::Args),
     /// Run deterministic protocol scenarios against capsem-mock-server.
     Protocol(ProtocolArgs),
     /// Run host-direct and guest-through-Capsem protocol lanes, then report delta.

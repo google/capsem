@@ -201,3 +201,16 @@ changing guest categories, storage/rootfs attribution, or protocol deltas.
 - `just bench criterion` after touching MITM, SSE, JSON-RPC, DNS, the
   interpreters, or the logger's write path
 - the lifecycle and fork suites after boot, teardown, image or VirtioFS changes
+
+
+### Product stream measurements
+
+The stream collector delegates framing and authentication to the host-only
+`capsem-bench-rs stream-probe`, using the product Rust SDK over the owned gateway.
+Its explicit bearer is passed only in `CAPSEM_BENCH_GATEWAY_BEARER`.
+`terminal.edit_projection_ms` measures an editable-line update reaching the
+terminal display projection; `terminal.output_completion_seconds` waits for a
+unique command-output marker, and `terminal.projection_bytes` counts projected
+payload bytes. These replace incomparable v1 `terminal.keystroke_echo_ms` and
+`terminal.output_mbps` measurements, which assumed raw PTY output. Exec retains
+its verified 100 MiB raw stdout transfer and exact successful, untruncated exit.

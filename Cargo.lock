@@ -727,6 +727,7 @@ dependencies = [
  "anyhow",
  "capsem-foundation",
  "capsem-proto",
+ "capsem-sdk",
  "clap",
  "futures",
  "reqwest 0.12.28",

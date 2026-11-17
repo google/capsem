@@ -25,6 +25,8 @@ mod schema;
 mod stats;
 #[cfg(feature = "host")]
 mod store;
+#[cfg(feature = "host")]
+mod stream_probe;
 mod throughput;
 mod udp;
 
@@ -72,6 +74,8 @@ async fn execute(cli: Cli) -> Result<()> {
         Command::Ping(args) => println!("{}", serde_json::to_string(&ping::run(args).await?)?),
         Command::HttpLoad(args) => println!("{}", serde_json::to_string(&http_load::run(args).await?)?),
         Command::DnsLoad(args) => println!("{}", serde_json::to_string(&dns_load::run(args).await?)?),
+        #[cfg(feature = "host")]
+        Command::StreamProbe(args) => println!("{}", serde_json::to_string(&Box::pin(stream_probe::run(args)).await?)?),
         Command::RuntimeLimits => println!("{}", serde_json::to_string(&runtime_limits::report())?),
         Command::Protocol(args) => {
             let collector_out = args.collector_out.clone();

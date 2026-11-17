@@ -195,7 +195,7 @@ json = { count = 1, reason = "benchmark" }
 json = { count = 1, reason = "benchmark" }
 
 [sources."crates/capsem-bench/src/main.rs"]
-json = { count = 10, reason = "benchmark" }
+json = { count = 11, reason = "benchmark" }
 
 [sources."crates/capsem-bench/src/ping.rs"]
 json = { count = 8, reason = "benchmark" }

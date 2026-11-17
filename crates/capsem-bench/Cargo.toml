@@ -11,7 +11,7 @@ authors.workspace = true
 
 [features]
 default = ["host"]
-host = ["dep:capsem-foundation", "capsem-foundation/runtime", "dep:rusqlite"]
+host = ["dep:capsem-foundation", "capsem-foundation/runtime", "dep:rusqlite", "dep:capsem-sdk"]
 guest = []
 
 [[bin]]
@@ -22,6 +22,7 @@ path = "src/main.rs"
 anyhow.workspace = true
 capsem-foundation = { path = "../capsem-foundation", default-features = false, optional = true }
 capsem-proto = { path = "../capsem-proto" }
+capsem-sdk = { path = "../../sdk/rust", optional = true }
 clap.workspace = true
 futures.workspace = true
 reqwest.workspace = true
