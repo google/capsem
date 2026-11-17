@@ -53,6 +53,7 @@ mod policy_mutation;
 use policy_mutation::{apply_policy_mutation, MutationRoute, PolicyMutation};
 mod connection_routes;
 mod credential_routes;
+mod environment_routes;
 mod ledger_worker;
 mod mcp_routes;
 mod plugin_routes;

@@ -15,6 +15,7 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
             )),
         )
         .route("/agent-access/{id}", delete(agent_access::revoke))
+        .route("/environments/{id}/info", get(environment_routes::info))
         .route("/status", get(handle_service_status))
         .route("/restart", post(restart::handle_restart))
         .route("/update/status", get(handle_update_status))

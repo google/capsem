@@ -97,7 +97,18 @@ pub(crate) async fn restrict_owner_routes(
                     .strip_prefix("/vms/")
                     .and_then(|path| path.strip_suffix("/exec"))
                     .is_some_and(|id| actor.bind_session(&state, id, capsem_api::AgentOperation::Execute));
-            if !admitted {
+            let environment_inspect = request.method() == axum::http::Method::GET
+                && request
+                    .extensions()
+                    .get::<axum::extract::MatchedPath>()
+                    .is_some_and(|path| path.as_str() == "/environments/{id}/info")
+                && request
+                    .uri()
+                    .path()
+                    .strip_prefix("/environments/")
+                    .and_then(|path| path.strip_suffix("/info"))
+                    .is_some_and(|id| crate::environment_routes::permits_inspect(&actor, id));
+            if !admitted && !environment_inspect {
                 return refuse(&state, request, Reason::ScopeRequired, Some(actor.evidence().clone())).await;
             }
         }
