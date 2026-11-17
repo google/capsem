@@ -45,6 +45,8 @@ CREATE TABLE IF NOT EXISTS environment_requests (
     kind TEXT NOT NULL CHECK (kind IN ('change','image_update','promotion','apply')),
     environment_id TEXT NOT NULL,
     base_revision_id TEXT,
+    source_environment_id TEXT,
+    source_revision_id TEXT,
     requester_session_id TEXT,
     requester_generation TEXT,
     timestamp_unix_ms INTEGER NOT NULL,
@@ -57,9 +59,13 @@ CREATE TABLE IF NOT EXISTS environment_requests (
     result_revision_id TEXT,
     CHECK ((requester_session_id IS NULL) = (requester_generation IS NULL)),
     CHECK ((result_environment_id IS NULL) = (result_revision_id IS NULL)),
+    CHECK ((source_environment_id IS NULL) = (source_revision_id IS NULL)),
+    CHECK ((kind IN ('promotion','apply')) = (source_revision_id IS NOT NULL)),
     FOREIGN KEY(environment_id,base_revision_id)
         REFERENCES environment_revisions(environment_id,revision_id),
     FOREIGN KEY(result_environment_id,result_revision_id)
+        REFERENCES environment_revisions(environment_id,revision_id),
+    FOREIGN KEY(source_environment_id,source_revision_id)
         REFERENCES environment_revisions(environment_id,revision_id)
 );
 CREATE INDEX IF NOT EXISTS idx_environment_requests_environment
@@ -69,6 +75,8 @@ CREATE INDEX IF NOT EXISTS idx_environment_requests_pending
     ON environment_requests(requester_session_id,id) WHERE state='pending';
 CREATE INDEX IF NOT EXISTS idx_environment_requests_requester
     ON environment_requests(requester_session_id,requester_generation,id);
+CREATE INDEX IF NOT EXISTS idx_environment_requests_source
+    ON environment_requests(source_environment_id,source_revision_id);
 
 CREATE TABLE IF NOT EXISTS environment_request_decisions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

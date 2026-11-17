@@ -315,3 +315,137 @@ async fn request_capture_keeps_payload_and_decision_in_one_snapshot() {
     assert_eq!(current.record.state, EnvironmentRequestState::Denied);
     assert_eq!(current.payload, earlier.payload);
 }
+
+#[tokio::test]
+async fn source_roots_match_archived_intent_and_remain_distinct_from_target_base() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("host.db");
+    let db = owner(&path).await;
+    durable(
+        &db,
+        WriteOp::PrepareEnvironmentRevision(crate::events::PreparedEnvironmentRevision {
+            environment_id: id(6),
+            revision_id: id(7),
+            previous_revision_id: None,
+            fork_parent: Some(crate::events::EnvironmentRevisionParent {
+                environment_id: id(2),
+                revision_id: id(3),
+            }),
+            timestamp_unix_ms: 20,
+            actor: "operator".into(),
+            reason: "retained fork".into(),
+            request_id: None,
+            payload_event_id: "abcdef012346".into(),
+            specification: Box::new(toml::from_str("name='development'").unwrap()),
+        }),
+    )
+    .await;
+    durable(
+        &db,
+        WriteOp::EnvironmentRevisionTransition(crate::events::EnvironmentRevisionTransition {
+            environment_id: id(6),
+            revision_id: id(7),
+            state: crate::events::EnvironmentRevisionState::Committed,
+            timestamp_unix_ms: 21,
+            actor: "operator".into(),
+        }),
+    )
+    .await;
+    durable(
+        &db,
+        WriteOp::PrepareEnvironmentRevision(crate::events::PreparedEnvironmentRevision {
+            environment_id: id(2),
+            revision_id: id(8),
+            previous_revision_id: Some(id(3)),
+            fork_parent: None,
+            timestamp_unix_ms: 22,
+            actor: "operator".into(),
+            reason: "new parent revision".into(),
+            request_id: None,
+            payload_event_id: "abcdef012347".into(),
+            specification: Box::new(toml::from_str("name='development'").unwrap()),
+        }),
+    )
+    .await;
+    durable(
+        &db,
+        WriteOp::EnvironmentRevisionTransition(crate::events::EnvironmentRevisionTransition {
+            environment_id: id(2),
+            revision_id: id(8),
+            state: crate::events::EnvironmentRevisionState::Committed,
+            timestamp_unix_ms: 23,
+            actor: "operator".into(),
+        }),
+    )
+    .await;
+    let payloads = [
+        EnvironmentRequestPayload::ImageUpdate {
+            specification: Box::new(
+                toml::from_str("name='development'\n[image]\nreference='development:stable'").unwrap(),
+            ),
+        },
+        EnvironmentRequestPayload::Promotion {
+            source: crate::events::EnvironmentRevisionParent {
+                environment_id: id(6),
+                revision_id: id(7),
+            },
+        },
+        EnvironmentRequestPayload::Apply {
+            revision: crate::events::EnvironmentRevisionParent {
+                environment_id: id(2),
+                revision_id: id(3),
+            },
+            targets: vec![EnvironmentRequestTarget {
+                session_id: id(4),
+                generation: id(5),
+            }],
+        },
+    ];
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    for (index, payload) in payloads.into_iter().enumerate() {
+        let mut request = proposal(100 + index as u64, 5);
+        request.actor = "operator".into();
+        request.requester = None;
+        request.base_revision_id = Some(id(8));
+        *request.payload = payload;
+        durable(&db, WriteOp::PrepareEnvironmentRequest(request.clone())).await;
+        let snapshot = db
+            .environment_request_snapshot(&request.request_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(snapshot.record.base_revision_id, Some(id(8)));
+        assert_eq!(snapshot.record.source, request.payload.source_revision().cloned());
+        assert_eq!(*snapshot.payload, *request.payload);
+        let rows = db
+            .environment_requests(EnvironmentRequestQuery::Get {
+                request_id: request.request_id.clone(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(rows, [snapshot.record]);
+        if matches!(request.payload.as_ref(), EnvironmentRequestPayload::ImageUpdate { .. }) {
+            assert!(
+                conn.execute(
+                    "UPDATE environment_requests SET source_environment_id=?1 WHERE request_id=?2",
+                    rusqlite::params![id(2), request.request_id]
+                )
+                .is_err(),
+                "half source pairs are forbidden"
+            );
+            assert!(conn.execute("UPDATE environment_requests SET source_environment_id=?1,source_revision_id=?2 WHERE request_id=?3",rusqlite::params![id(2),id(3),request.request_id]).is_err(),"image drafts have no revision source");
+        }
+        if matches!(request.payload.as_ref(), EnvironmentRequestPayload::Promotion { .. }) {
+            conn.execute(
+                "UPDATE environment_requests SET source_environment_id=?1,source_revision_id=?2 WHERE request_id=?3",
+                rusqlite::params![id(2), id(3), request.request_id],
+            )
+            .unwrap();
+            assert!(db
+                .environment_request_snapshot(&request.request_id)
+                .await
+                .unwrap_err()
+                .contains("source metadata"));
+        }
+    }
+}

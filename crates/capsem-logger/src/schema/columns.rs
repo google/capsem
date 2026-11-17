@@ -318,6 +318,8 @@ pub(crate) const READY_SCHEMA_COLUMNS: &[(&str, &[&str])] = &[
             "kind",
             "environment_id",
             "base_revision_id",
+            "source_environment_id",
+            "source_revision_id",
             "requester_session_id",
             "requester_generation",
             "timestamp_unix_ms",

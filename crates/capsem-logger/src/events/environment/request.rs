@@ -77,6 +77,15 @@ pub enum EnvironmentRequestPayload {
 }
 
 impl EnvironmentRequestPayload {
+    /// Indexed reconstruction root, derived from the immutable payload.
+    pub fn source_revision(&self) -> Option<&EnvironmentRevisionParent> {
+        match self {
+            Self::Promotion { source } => Some(source),
+            Self::Apply { revision, .. } => Some(revision),
+            Self::Change { .. } | Self::ImageUpdate { .. } => None,
+        }
+    }
+
     pub fn kind(&self) -> &'static str {
         match self {
             Self::Change { .. } => EnvironmentRequestKind::Change.as_str(),

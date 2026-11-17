@@ -59,6 +59,7 @@ pub struct EnvironmentRequestRecord {
     pub kind: EnvironmentRequestKind,
     pub environment_id: String,
     pub base_revision_id: Option<String>,
+    pub source: Option<crate::events::EnvironmentRevisionParent>,
     pub requester: Option<EnvironmentRequestTarget>,
     pub timestamp_unix_ms: i64,
     pub actor: String,
@@ -129,6 +130,9 @@ impl DbHandle {
                 .ok_or("required environment request payload is missing")?;
             let payload: EnvironmentRequestPayload =
                 rmp_serde::from_slice(&body.bytes).map_err(|_| "invalid archived environment request encoding")?;
+            if payload.source_revision() != record.source.as_ref() {
+                return Err("environment request source metadata does not match its archived intent".into());
+            }
             if payload.kind() != record.kind.as_str() {
                 return Err("environment request kind does not match its archived intent".into());
             }
@@ -149,7 +153,7 @@ impl DbHandle {
     }
 }
 
-const COLUMNS: &str = "r.id,r.request_id,r.kind,r.environment_id,r.base_revision_id,r.requester_session_id,r.requester_generation,r.timestamp_unix_ms,r.actor,r.reason,r.state,r.payload_event_id,r.replayable,r.result_environment_id,r.result_revision_id,d.timestamp_unix_ms,d.actor,d.decision,d.reason";
+const COLUMNS: &str = "r.id,r.request_id,r.kind,r.environment_id,r.base_revision_id,r.requester_session_id,r.requester_generation,r.timestamp_unix_ms,r.actor,r.reason,r.state,r.payload_event_id,r.replayable,r.result_environment_id,r.result_revision_id,d.timestamp_unix_ms,d.actor,d.decision,d.reason,r.source_environment_id,r.source_revision_id";
 const TABLES: &str = "environment_requests r LEFT JOIN environment_request_decisions d ON d.request_id=r.request_id";
 const UUID_BYTES: usize = uuid::fmt::Hyphenated::LENGTH;
 // Longest canonical actor is vm:<session UUID>/<generation UUID>.
@@ -247,6 +251,17 @@ fn from_row(row: &rusqlite::Row<'_>) -> DbResult<EnvironmentRequestRecord> {
         (None, None) => None,
         _ => return Err("incomplete environment request result identity".into()),
     };
+    let source = match (optional(19, UUID_BYTES)?, optional(20, UUID_BYTES)?) {
+        (Some(environment_id), Some(revision_id)) => Some(crate::events::EnvironmentRevisionParent {
+            environment_id,
+            revision_id,
+        }),
+        (None, None) => None,
+        _ => return Err("incomplete environment request source identity".into()),
+    };
+    if matches!(kind, EnvironmentRequestKind::Promotion | EnvironmentRequestKind::Apply) != source.is_some() {
+        return Err("environment request kind does not match its source metadata".into());
+    }
     let at: Option<i64> = row
         .get(15)
         .map_err(|error| format!("environment decision timestamp: {error}"))?;
@@ -301,6 +316,7 @@ fn from_row(row: &rusqlite::Row<'_>) -> DbResult<EnvironmentRequestRecord> {
         kind,
         environment_id: text(3, UUID_BYTES)?,
         base_revision_id: optional(4, UUID_BYTES)?,
+        source,
         requester,
         timestamp_unix_ms: row
             .get(7)

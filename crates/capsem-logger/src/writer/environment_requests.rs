@@ -18,11 +18,12 @@ struct ExistingRequest {
     state: String,
     replayable: bool,
     result: Option<EnvironmentRevisionParent>,
+    source: Option<EnvironmentRevisionParent>,
     durable: bool,
 }
 
 fn existing(conn: &Connection, id: &str) -> rusqlite::Result<Option<ExistingRequest>> {
-    let fields = "kind,environment_id,base_revision_id,requester_session_id,requester_generation,timestamp_unix_ms,actor,reason,payload_event_id,state,replayable,result_environment_id,result_revision_id";
+    let fields = "kind,environment_id,base_revision_id,requester_session_id,requester_generation,timestamp_unix_ms,actor,reason,payload_event_id,state,replayable,result_environment_id,result_revision_id,source_environment_id,source_revision_id";
     conn.query_row(&format!("SELECT {fields},1 FROM main.environment_requests WHERE request_id=?1 UNION ALL SELECT {fields},0 FROM mem.environment_requests WHERE request_id=?1"), [id], |row| {
         let requester = match (row.get::<_,Option<String>>(3)?, row.get::<_,Option<String>>(4)?) {
             (Some(session_id),Some(generation)) => Some(EnvironmentRequestTarget { session_id, generation }),
@@ -32,9 +33,13 @@ fn existing(conn: &Connection, id: &str) -> rusqlite::Result<Option<ExistingRequ
             (Some(environment_id),Some(revision_id)) => Some(EnvironmentRevisionParent { environment_id, revision_id }),
             (None,None) => None, _ => return Err(invalid("incomplete environment request result identity")),
         };
+        let source = match (row.get::<_,Option<String>>(13)?, row.get::<_,Option<String>>(14)?) {
+            (Some(environment_id),Some(revision_id)) => Some(EnvironmentRevisionParent {environment_id,revision_id}),
+            (None,None) => None, _ => return Err(invalid("incomplete environment request source identity")),
+        };
         Ok(ExistingRequest { kind: row.get(0)?, environment_id: row.get(1)?, base_revision_id: row.get(2)?, requester,
             timestamp_unix_ms: row.get(5)?, actor: row.get(6)?, reason: row.get(7)?, payload_event_id: row.get(8)?,
-            state: row.get(9)?, replayable: row.get(10)?, result, durable: row.get(13)? })
+            state: row.get(9)?, replayable: row.get(10)?, result, source, durable: row.get(15)? })
     }).optional()
 }
 
@@ -170,6 +175,7 @@ pub(super) fn prepare(
             || old.actor != record.actor
             || old.reason != record.reason
             || old.payload_event_id != record.payload_event_id
+            || old.source.as_ref() != record.payload.source_revision()
             || !old.replayable
         {
             return Err(invalid("environment request conflicts with its immutable proposal"));
@@ -216,10 +222,11 @@ pub(super) fn prepare(
         },
     );
     bodies.required_status()?;
-    execute_cached(conn, "INSERT INTO mem.environment_requests(request_id,kind,environment_id,base_revision_id,requester_session_id,requester_generation,timestamp_unix_ms,actor,reason,state,payload_event_id,replayable) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,'pending',?10,1)",
+    execute_cached(conn, "INSERT INTO mem.environment_requests(request_id,kind,environment_id,base_revision_id,requester_session_id,requester_generation,timestamp_unix_ms,actor,reason,state,payload_event_id,replayable,source_environment_id,source_revision_id) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,'pending',?10,1,?11,?12)",
         rusqlite::params![record.request_id, record.payload.kind(), record.environment_id, record.base_revision_id,
             record.requester.as_ref().map(|value| &value.session_id), record.requester.as_ref().map(|value| &value.generation),
-            record.timestamp_unix_ms, record.actor, record.reason, record.payload_event_id])?;
+            record.timestamp_unix_ms, record.actor, record.reason, record.payload_event_id,
+            record.payload.source_revision().map(|source| &source.environment_id), record.payload.source_revision().map(|source| &source.revision_id)])?;
     audit(
         conn,
         RequestAudit {
@@ -359,6 +366,11 @@ pub(super) fn bind_result(
     let bytes = bodies.read_required_bytes(conn, &old.payload_event_id, ENVIRONMENT_REQUEST_SOURCE)?;
     let payload: EnvironmentRequestPayload =
         rmp_serde::from_slice(&bytes).map_err(|_| invalid("invalid archived environment request payload"))?;
+    if payload.source_revision() != old.source.as_ref() {
+        return Err(invalid(
+            "environment request source metadata does not match its archived intent",
+        ));
+    }
     let (parent, request_id) = committed_reference(conn, &record.result, true)?;
     match payload {
         EnvironmentRequestPayload::Apply { revision, .. } if revision == record.result => {}

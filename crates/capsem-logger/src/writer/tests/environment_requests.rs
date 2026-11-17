@@ -424,7 +424,7 @@ async fn image_promotion_and_apply_proposals_archive_their_exact_intent() {
         request.request_id = id(100 + index as u64);
         request.payload_event_id = format!("{:012x}", 100 + index);
         request.base_revision_id = Some(id(3));
-        request.payload = Box::new(payload);
+        *request.payload = payload;
         durable(&writer, WriteOp::PrepareEnvironmentRequest(request.clone())).await;
         let bytes = reader
             .read_body(
@@ -439,6 +439,28 @@ async fn image_promotion_and_apply_proposals_archive_their_exact_intent() {
         assert_eq!(
             rmp_serde::from_slice::<EnvironmentRequestPayload>(&bytes).unwrap(),
             *request.payload
+        );
+        let expected = match request.payload.as_ref() {
+            EnvironmentRequestPayload::Promotion { source } => {
+                (Some(source.environment_id.clone()), Some(source.revision_id.clone()))
+            }
+            EnvironmentRequestPayload::Apply { revision, .. } => (
+                Some(revision.environment_id.clone()),
+                Some(revision.revision_id.clone()),
+            ),
+            _ => (None, None),
+        };
+        let stored: (Option<String>, Option<String>) = Connection::open(&path)
+            .unwrap()
+            .query_row(
+                "SELECT source_environment_id,source_revision_id FROM environment_requests WHERE request_id=?1",
+                [&request.request_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            stored, expected,
+            "retention roots must be indexed with the proposal rather than decoded later"
         );
         let mut approve = decision(EnvironmentRequestDecisionKind::Approve);
         approve.request_id = request.request_id.clone();
@@ -627,7 +649,7 @@ async fn promotion_lineage_and_apply_target_budgets_fail_before_archiving() {
     for payload in payloads {
         let mut request = proposal();
         request.base_revision_id = Some(id(3));
-        request.payload = Box::new(payload);
+        *request.payload = payload;
         rejected(&writer, WriteOp::PrepareEnvironmentRequest(request)).await;
     }
     assert_eq!(
