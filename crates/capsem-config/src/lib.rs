@@ -4,6 +4,7 @@
 //! dependencies on VM runtime, policy execution, telemetry storage, or MCP
 //! transports.
 
+pub mod catalogs;
 mod condition;
 mod content_filter;
 pub mod environment;
