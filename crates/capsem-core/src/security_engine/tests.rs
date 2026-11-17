@@ -55,8 +55,11 @@ impl SecurityPlugin for TracePlugin {
         mut event: SecurityEvent,
         _config: SecurityPluginConfig,
     ) -> Result<SecurityPluginResult, SecurityActionError> {
-        event.action_trace.push(PolicyActionId::CredentialBrokerSubstitute);
-        event.credential_ref = Some(format!("credential:blake3:{:0<64}", self.id.replace('_', "")));
+        let trace = event.trace_id.get_or_insert_default();
+        if !trace.is_empty() {
+            trace.push('|');
+        }
+        trace.push_str(self.id);
         Ok(SecurityPluginResult::applied(event))
     }
 }
@@ -78,7 +81,7 @@ impl SecurityPlugin for MarkDecisionPlugin {
         _config: SecurityPluginConfig,
     ) -> Result<SecurityPluginResult, SecurityActionError> {
         event.request_decision(SecurityDecisionKind::Block);
-        event.action_trace.push(PolicyActionId::CredentialBrokerCapture);
+        event.trace_id = Some("mark_decision".into());
         Ok(SecurityPluginResult::applied(event))
     }
 }
@@ -160,6 +163,8 @@ mod observations;
 mod plugin_boundaries;
 #[path = "tests/plugin_execution.rs"]
 mod plugin_execution;
+#[path = "tests/plugin_privileges.rs"]
+mod plugin_privileges;
 
 fn net_write(credential_ref: Option<&str>) -> WriteOp {
     WriteOp::NetEvent(NetEvent {

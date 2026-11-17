@@ -129,12 +129,8 @@ fn security_event_engine_runs_enabled_plugins_by_stage() {
     let returned = engine.apply_matching_rules_and_emit(&rules, event).unwrap();
 
     assert_eq!(
-        returned.action_trace,
-        [
-            PolicyActionId::CredentialBrokerSubstitute,
-            PolicyActionId::CredentialBrokerSubstitute,
-            PolicyActionId::CredentialBrokerSubstitute
-        ],
+        returned.trace_id.as_deref(),
+        Some("trace_pre|trace_post|trace_logging"),
         "enabled plugins should run once on their declared stage"
     );
     assert_eq!(
@@ -286,11 +282,8 @@ fn security_event_engine_applies_postprocess_after_preprocess_mutation() {
     let returned = engine.apply_matching_rules_and_emit(&rules, event).unwrap();
 
     assert_eq!(
-        returned.action_trace,
-        [
-            PolicyActionId::CredentialBrokerCapture,
-            PolicyActionId::CredentialBrokerSubstitute
-        ],
+        returned.trace_id.as_deref(),
+        Some("mark_decision|trace"),
         "postprocess plugins must see the event after preprocess mutation"
     );
     assert_eq!(returned.decision.effective, SecurityDecisionKind::Block);
@@ -319,8 +312,8 @@ fn security_plugin_policy_supports_rewrite_and_disable_modes() {
         .apply_matching_rules_and_emit(&rules, event.clone())
         .unwrap();
     assert_eq!(
-        rewrite_returned.action_trace,
-        [PolicyActionId::CredentialBrokerSubstitute],
+        rewrite_returned.trace_id.as_deref(),
+        Some("trace"),
         "rewrite mode must still run the plugin"
     );
     assert_eq!(
@@ -343,7 +336,7 @@ fn security_plugin_policy_supports_rewrite_and_disable_modes() {
         .apply_matching_rules_and_emit(&rules, event)
         .unwrap();
     assert!(
-        disabled_returned.action_trace.is_empty(),
+        disabled_returned.trace_id.is_none() && disabled_returned.plugin_executions.is_empty(),
         "disabled plugins must not execute"
     );
 }
@@ -479,11 +472,12 @@ match = 'file.import.content.contains("EICAR")'
         "rule and plugin detections must be carried on one security event"
     );
     assert_eq!(
-        returned.action_trace,
-        [
-            PolicyActionId::CredentialBrokerCapture,
-            PolicyActionId::CredentialBrokerSubstitute
-        ],
+        returned
+            .plugin_executions
+            .iter()
+            .map(|execution| (execution.plugin_id.as_str(), execution.applied))
+            .collect::<Vec<_>>(),
+        [("dummy_pre_eicar", true), ("dummy_post_allow", true)],
         "dummy pre and post plugins should both execute through the real registry"
     );
     assert_eq!(

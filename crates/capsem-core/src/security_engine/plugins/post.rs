@@ -1,4 +1,4 @@
-use crate::net::policy_config::{PolicyActionId, SecurityPluginConfig};
+use crate::net::policy_config::SecurityPluginConfig;
 use crate::security_engine::{
     SecurityActionError, SecurityDecisionKind, SecurityEvent, SecurityPlugin, SecurityPluginResult, SecurityPluginStage,
 };
@@ -20,7 +20,6 @@ impl SecurityPlugin for DummyPostAllowPlugin {
         _config: SecurityPluginConfig,
     ) -> Result<SecurityPluginResult, SecurityActionError> {
         event.request_decision(SecurityDecisionKind::Allow);
-        event.action_trace.push(PolicyActionId::CredentialBrokerSubstitute);
         Ok(SecurityPluginResult::applied(event))
     }
 }

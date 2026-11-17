@@ -107,7 +107,6 @@ impl SecurityPlugin for DummyPreEicarPlugin {
         if matches!(config.mode, SecurityPluginMode::Rewrite) {
             rewrite_file_eicar_content(&mut event);
         }
-        event.action_trace.push(PolicyActionId::CredentialBrokerCapture);
         Ok(SecurityPluginResult::applied(event))
     }
 }
