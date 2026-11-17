@@ -547,6 +547,9 @@ json = { count = 5, reason = "forensic" }
 [sources."crates/capsem-proto/src/ipc.rs"]
 json = { count = 2, reason = "mcp" }
 
+[sources."crates/capsem-proto/src/framing.rs"]
+json = { count = 1, reason = "mcp" }
+
 [sources."crates/capsem-proto/src/mcp_aggregator.rs"]
 json = { count = 8, reason = "mcp" }
 

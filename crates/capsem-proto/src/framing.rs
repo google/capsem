@@ -1,4 +1,4 @@
-//! One bounded named-MessagePack encoder for records and length-prefixed streams.
+//! Bounded final storage for internal MessagePack and external JSON records.
 use std::io::{self, Write};
 
 use serde::Serialize;
@@ -32,12 +32,13 @@ struct TooLarge(usize);
 
 impl std::fmt::Display for TooLarge {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "MessagePack frame too large: {}", self.0)
+        write!(f, "encoded frame too large: {}", self.0)
     }
 }
 impl std::error::Error for TooLarge {}
 
-pub(crate) fn is_frame_too_large(error: &io::Error) -> bool {
+/// Distinguish a transport byte refusal from an ordinary serialization failure.
+pub fn is_frame_too_large(error: &io::Error) -> bool {
     error.get_ref().is_some_and(|error| error.is::<TooLarge>())
 }
 
@@ -91,6 +92,30 @@ pub fn encode_frame<T: Serialize>(message: &T, limit: u32) -> io::Result<Vec<u8>
 pub fn encode_record<T: Serialize>(message: &T, limit: usize) -> io::Result<Vec<u8>> {
     let mut bytes = Vec::new();
     append_record(&mut bytes, message, limit)?;
+    Ok(bytes)
+}
+
+/// Encode an external JSON protocol record directly into bounded final storage.
+/// MCP JSON-RPC requires JSON on its external wire; internal records continue
+/// using MessagePack. No sizing serialization or intermediate payload is made.
+pub fn encode_json_record<T: Serialize>(message: &T, limit: usize) -> io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    let mut writer = LimitedWriter::new(
+        FinalBuffer {
+            bytes: &mut bytes,
+            maximum: limit,
+        },
+        limit,
+    );
+    let encoded = serde_json::to_writer(&mut writer, message);
+    let exceeded = writer.exceeded();
+    encoded.map_err(|error| {
+        if exceeded {
+            io::Error::new(io::ErrorKind::InvalidData, TooLarge(limit))
+        } else {
+            io::Error::new(io::ErrorKind::InvalidData, format!("encode JSON record: {error}"))
+        }
+    })?;
     Ok(bytes)
 }
 

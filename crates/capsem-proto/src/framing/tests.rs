@@ -1,6 +1,59 @@
 use super::*;
 use std::cell::Cell;
 
+struct CountedText<'a> {
+    calls: &'a Cell<usize>,
+    text: &'a str,
+}
+impl Serialize for CountedText<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.calls.set(self.calls.get() + 1);
+        serializer.serialize_str(self.text)
+    }
+}
+
+#[test]
+fn external_json_serializes_once_with_exact_utf8_and_escape_byte_bounds() {
+    let calls = Cell::new(0);
+    let message = CountedText {
+        calls: &calls,
+        text: "complete 🧪 \"quoted\"\n\\tail",
+    };
+    let expected = serde_json::to_vec(&message).unwrap();
+    calls.set(0);
+    let record = encode_json_record(&message, expected.len()).unwrap();
+    assert_eq!(calls.get(), 1);
+    assert_eq!(record, expected);
+    assert!(record.capacity() <= expected.len());
+    calls.set(0);
+    let error = encode_json_record(&message, expected.len() - 1).unwrap_err();
+    assert_eq!(calls.get(), 1);
+    assert!(is_frame_too_large(&error));
+    assert_eq!(encode_json_record(&1_u8, 1).unwrap(), b"1");
+    assert!(is_frame_too_large(&encode_json_record(&1_u8, 0).unwrap_err()));
+}
+
+#[test]
+fn external_json_stops_before_visiting_fields_after_an_oversized_value() {
+    #[derive(Serialize)]
+    struct Message<'a> {
+        content: &'a str,
+        later: CountedText<'a>,
+    }
+    let calls = Cell::new(0);
+    let content = "x".repeat(4096);
+    let message = Message {
+        content: &content,
+        later: CountedText {
+            calls: &calls,
+            text: "unvisited",
+        },
+    };
+    let error = encode_json_record(&message, 128).unwrap_err();
+    assert!(is_frame_too_large(&error));
+    assert_eq!(calls.get(), 0);
+}
+
 struct Counted<'a> {
     calls: &'a Cell<usize>,
     bytes: &'a [u8],
@@ -130,4 +183,8 @@ fn encoding_failure_is_not_misclassified_as_size_refusal() {
     assert!(!is_frame_too_large(&failed));
     let large = encode_frame(&[0_u8; 32], 1).unwrap_err();
     assert!(is_frame_too_large(&large));
+    let failed_json = encode_json_record(&Refused, 1024).unwrap_err();
+    assert!(!is_frame_too_large(&failed_json));
+    let large_json = encode_json_record(&[0_u8; 32], 1).unwrap_err();
+    assert!(is_frame_too_large(&large_json));
 }
