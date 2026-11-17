@@ -656,3 +656,27 @@ fn security_event_id_is_twelve_lower_hex() {
     assert!(SecurityEventId::parse("evt_abc123").is_err());
     assert!(SecurityEventId::parse("abcdef12345").is_err());
 }
+
+#[test]
+fn request_only_mcp_ask_does_not_reappear_for_plain_error_responses() {
+    let condition = r#"mcp.method == "tools/call" && mcp.response.valid == "false""#;
+    let request = || McpSecurityEvent {
+        method: Some("tools/call".into()),
+        ..Default::default()
+    };
+    let event = SecurityEvent::new(RuntimeSecurityEventType::McpToolCall).with_mcp(request());
+    assert!(crate::net::policy_config::evaluate_security_event_match(condition, &event).unwrap());
+    for preview in [
+        r#"{"content":[{"type":"text","text":"ok"}]}"#,
+        "null",
+        "upstream failed",
+        "",
+    ] {
+        let event = SecurityEvent::new(RuntimeSecurityEventType::McpToolCall)
+            .with_mcp(request().with_response_preview(Some(preview)));
+        assert!(
+            !crate::net::policy_config::evaluate_security_event_match(condition, &event).unwrap(),
+            "observed response must not ask for invocation permission again: {preview:?}"
+        );
+    }
+}

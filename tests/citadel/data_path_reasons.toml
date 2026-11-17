@@ -339,7 +339,10 @@ hash = { count = 1, reason = "hash-policy" }
 json = { count = 14, reason = "forensic" }
 
 [sources."crates/capsem-core/src/security_engine/mod.rs"]
-json = { count = 11, reason = "forensic-mcp" }
+json = { count = 5, reason = "forensic-mcp" }
+
+[sources."crates/capsem-core/src/security_engine/mcp_event.rs"]
+json = { count = 6, reason = "forensic-mcp" }
 
 [sources."crates/capsem-core/src/service_uds.rs"]
 json = { count = 10, reason = "http" }

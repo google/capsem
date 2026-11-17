@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fix MCP response classification so plain-text errors retain their observed response phase and do not trigger request-only approval rules.
+
 - Security: Bind delegated session admission to both its operation and owner generation, and discard earlier admission when rebinding is refused.
 
 - Fix stream benchmarks to use the product Rust SDK and authenticated owned gateway. Verify complete exec transfers and report terminal projection measurements separately from retired raw PTY metrics.
