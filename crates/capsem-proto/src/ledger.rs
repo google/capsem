@@ -11,10 +11,10 @@ use thiserror::Error;
 
 /// Version of the ledger handshake, request envelopes and logger-owned
 /// operation/reply enums. Bump it when any of those wire shapes changes.
-/// Version 13 gives PII independent inbound/outbound mode configurations,
-/// removing conflicting enabled flags from nested environment payloads.
+/// Version 14 freezes resolved image, repository and catalog identities in
+/// durable environment request payloads instead of retaining mutable selectors.
 /// Logger-owned operation semantics are not covered by the declaration hash.
-pub const LEDGER_PROTOCOL_VERSION: u16 = 13;
+pub const LEDGER_PROTOCOL_VERSION: u16 = 14;
 /// Hash of ledger wire declarations, separate from the guest protocol hash.
 pub const LEDGER_SCHEMA_HASH: u64 = include!(concat!(env!("OUT_DIR"), "/ledger_schema_hash.txt"));
 /// Largest diagnostic admitted into a response.
