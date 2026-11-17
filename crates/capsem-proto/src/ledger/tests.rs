@@ -208,3 +208,26 @@ fn decoded_response_transfers_uncloneable_payload_without_copying_its_allocation
     assert_eq!(reply.0.len(), 1024);
     assert_eq!(reply.0[0], 0xa5);
 }
+
+#[test]
+fn peers_without_typed_environment_reads_are_rejected_before_admission() {
+    let expected = grant(LedgerClientRole::Reader);
+    let mut hello = LedgerHello::for_grant(&expected);
+    hello.protocol_version = 7;
+    assert_eq!(
+        expected.validate_hello(&hello),
+        Err(LedgerHandshakeError::ProtocolVersion {
+            expected: LEDGER_PROTOCOL_VERSION,
+            actual: 7
+        })
+    );
+    let mut welcome = LedgerWelcome::for_grant(&expected);
+    welcome.protocol_version = 7;
+    assert_eq!(
+        expected.validate_welcome(&welcome),
+        Err(LedgerHandshakeError::ProtocolVersion {
+            expected: LEDGER_PROTOCOL_VERSION,
+            actual: 7
+        })
+    );
+}
