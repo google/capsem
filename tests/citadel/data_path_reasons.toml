@@ -937,3 +937,8 @@ hash = { count = 1, reason = "hash-archive" }
 [sources."crates/capsem-core/src/environment/catalog_contents.rs"]
 json = { count = 1, reason = "environment-catalog" }
 hash = { count = 1, reason = "hash-skill-content" }
+
+[sources."crates/capsem-mcp-aggregator/src/server_manager/http_pending.rs"]
+# Three borrowed external fields distinguish responses from server requests;
+# one typed decode correlates IDs without allocating a second payload tree.
+json = { count = 4, reason = "mcp" }

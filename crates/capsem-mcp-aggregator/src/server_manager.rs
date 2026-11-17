@@ -15,6 +15,8 @@ use anyhow::{bail, Context, Result};
 use capsem_mcp_transport::http_transport::BrokerHttpClient;
 use capsem_mcp_transport::native_worker::McpSpawnClient;
 use capsem_proto::mcp_worker::MCP_SERVER_HEADER;
+mod http_get;
+mod http_pending;
 mod http_response;
 
 use futures::stream::BoxStream;
@@ -87,11 +89,16 @@ const JSON_MIME_TYPE: &str = "application/json";
 struct CapsemMcpHttpClient {
     client: reqwest::Client,
     broker: Option<(BrokerHttpClient, String)>,
+    pending: http_pending::PendingResponses,
 }
 
 impl CapsemMcpHttpClient {
     fn new(client: reqwest::Client) -> Self {
-        Self { client, broker: None }
+        Self {
+            client,
+            broker: None,
+            pending: http_pending::PendingResponses::default(),
+        }
     }
 
     async fn send(&self, builder: reqwest::RequestBuilder) -> std::io::Result<reqwest::Response> {
@@ -189,43 +196,15 @@ impl StreamableHttpClient for CapsemMcpHttpClient {
         custom_headers: HashMap<HeaderName, HeaderValue>,
         max_sse_event_size: usize,
     ) -> Result<BoxStream<'static, Result<Sse, SseError>>, StreamableHttpError<Self::Error>> {
-        let mut request_builder = self
-            .client
-            .get(uri.as_ref())
-            .header(ACCEPT, [EVENT_STREAM_MIME_TYPE, JSON_MIME_TYPE].join(", "));
-        if let Some(session_id) = session_id {
-            request_builder = request_builder.header(MCP_HEADER_SESSION_ID, session_id.as_ref());
-        }
-        if let Some(last_event_id) = last_event_id {
-            request_builder = request_builder.header(MCP_HEADER_LAST_EVENT_ID, last_event_id);
-        }
-        if let Some(auth_header) = auth_header {
-            request_builder = request_builder.bearer_auth(auth_header);
-        }
-        request_builder = apply_mcp_custom_headers(request_builder, custom_headers)?;
-        let response = self.send(request_builder).await.map_err(StreamableHttpError::Client)?;
-        if response.status() == reqwest::StatusCode::METHOD_NOT_ALLOWED {
-            return Err(StreamableHttpError::ServerDoesNotSupportSse);
-        }
-        let response = response
-            .error_for_status()
-            .map_err(|e| StreamableHttpError::Client(std::io::Error::other(e)))?;
-        match response.headers().get(reqwest::header::CONTENT_TYPE) {
-            Some(content_type) => {
-                if !content_type.as_bytes().starts_with(EVENT_STREAM_MIME_TYPE.as_bytes())
-                    && !content_type.as_bytes().starts_with(JSON_MIME_TYPE.as_bytes())
-                {
-                    return Err(StreamableHttpError::UnexpectedContentType(Some(
-                        String::from_utf8_lossy(content_type.as_bytes()).to_string(),
-                    )));
-                }
-            }
-            None => return Err(StreamableHttpError::UnexpectedContentType(None)),
-        }
-        Ok(http_response::sse(
-            response.bytes_stream(),
-            max_sse_event_size.min(capsem_proto::MCP_JSON_RPC_MAX_BYTES),
-        ))
+        self.open_get(http_get::GetOptions {
+            uri,
+            session_id,
+            last_event_id,
+            auth_header,
+            custom_headers,
+            limit: max_sse_event_size.min(capsem_proto::MCP_JSON_RPC_MAX_BYTES),
+        })
+        .await
     }
 
     async fn delete_session(
@@ -303,6 +282,7 @@ impl StreamableHttpClient for CapsemMcpHttpClient {
             JsonRpcMessage::Request(request) => Some(request.id.clone()),
             _ => None,
         };
+        let mut pending = self.pending.track(&message);
         let response = self
             .send(
                 request
@@ -338,6 +318,7 @@ impl StreamableHttpClient for CapsemMcpHttpClient {
 
         let status = response.status();
         if matches!(status, reqwest::StatusCode::ACCEPTED | reqwest::StatusCode::NO_CONTENT) {
+            pending.retain();
             return Ok(StreamableHttpPostResponse::Accepted);
         }
         if status == reqwest::StatusCode::NOT_FOUND && session_was_attached {

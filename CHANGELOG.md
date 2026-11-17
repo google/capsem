@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fixed: Asynchronous MCP replies delivered over GET now report oversized responses explicitly and reopen only the receive channel, preserving later calls without replaying operations.
+
 - Security: Time-box the unpatched Picomatch advisory in upstream static-site and JavaScript build/test tooling through December 17, 2026; shipped Node runtime dependency graphs do not contain it.
 
 - Fixed: Oversized HTTP and SSE MCP replies return correlated Capsem transport errors without closing the tool peer or replaying the operation. Refused POST streams drop immediately; later calls remain usable.

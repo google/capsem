@@ -6,7 +6,7 @@ use capsem_proto::mcp_aggregator::{
 };
 use capsem_proto::mcp_contracts::{McpAuthConfig, McpAuthKind, McpServerDef};
 use capsem_proto::mcp_worker::{McpHttpRole, McpWorkerBootstrap, MCP_SERVER_HEADER};
-use http_body_util::{BodyExt, Full};
+use http_body_util::{combinators::BoxBody, BodyExt, Full, StreamBody};
 use hyper::body::{Bytes, Incoming};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use std::collections::HashMap;
@@ -36,11 +36,33 @@ fn definition() -> McpServerDef {
     }
 }
 
-async fn reply(request: http::Request<Incoming>) -> http::Response<Full<Bytes>> {
+#[derive(Clone)]
+struct AsyncReplies {
+    sender: tokio::sync::mpsc::Sender<Bytes>,
+    receiver: Arc<tokio::sync::Mutex<tokio::sync::mpsc::Receiver<Bytes>>>,
+}
+
+async fn reply(
+    request: http::Request<Incoming>,
+    asynchronous: Option<AsyncReplies>,
+    calls: Arc<std::sync::atomic::AtomicUsize>,
+) -> http::Response<BoxBody<Bytes, Infallible>> {
+    if request.method() == http::Method::GET {
+        if let Some(replies) = asynchronous {
+            let stream = futures::stream::unfold(replies.receiver, |receiver| async move {
+                let bytes = receiver.lock().await.recv().await?;
+                Some((Ok::<_, Infallible>(hyper::body::Frame::data(bytes)), receiver))
+            });
+            return http::Response::builder()
+                .header(http::header::CONTENT_TYPE, "text/event-stream")
+                .body(BodyExt::boxed(StreamBody::new(stream)))
+                .unwrap();
+        }
+    }
     if request.method() != http::Method::POST {
         return http::Response::builder()
             .status(405)
-            .body(Full::new(Bytes::new()))
+            .body(Full::new(Bytes::new()).boxed())
             .unwrap();
     }
     let message: serde_json::Value =
@@ -48,12 +70,12 @@ async fn reply(request: http::Request<Incoming>) -> http::Response<Full<Bytes>> 
     let Some(id) = message.get("id") else {
         return http::Response::builder()
             .status(202)
-            .body(Full::new(Bytes::new()))
+            .body(Full::new(Bytes::new()).boxed())
             .unwrap();
     };
     let result = match message["method"].as_str().unwrap() {
         "initialize" => serde_json::json!({
-            "protocolVersion": message["params"]["protocolVersion"],
+            "protocolVersion": if asynchronous.is_some() { serde_json::json!("2025-06-18") } else { message["params"]["protocolVersion"].clone() },
             "capabilities": { "tools": {}, "resources": {}, "prompts": {} },
             "serverInfo": { "name": "fixture", "version": "1" }
         }),
@@ -64,6 +86,7 @@ async fn reply(request: http::Request<Incoming>) -> http::Response<Full<Bytes>> 
             "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}}}
         }]}),
         "tools/call" => {
+            calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let args = &message["params"]["arguments"];
             let text = if args["boundary"] == true {
                 let empty =
@@ -71,7 +94,14 @@ async fn reply(request: http::Request<Incoming>) -> http::Response<Full<Bytes>> 
                 let overhead = serde_json::to_vec(&empty).unwrap().len()
                     - serde_json::to_vec(id).unwrap().len()
                     - b",\"id\":".len();
-                "r".repeat(capsem_proto::MCP_PAYLOAD_MAX_BYTES - overhead + usize::from(args["oversized"] == true))
+                "r".repeat(
+                    capsem_proto::MCP_PAYLOAD_MAX_BYTES - overhead
+                        + (if args["physical"] == true {
+                            capsem_proto::MCP_JSON_RPC_MAX_BYTES - capsem_proto::MCP_PAYLOAD_MAX_BYTES + 1
+                        } else {
+                            usize::from(args["oversized"] == true)
+                        }),
+                )
             } else {
                 args["text"].as_str().unwrap().to_owned()
             };
@@ -80,6 +110,22 @@ async fn reply(request: http::Request<Incoming>) -> http::Response<Full<Bytes>> 
         method => panic!("unexpected upstream method {method}"),
     };
     let bytes = serde_json::to_vec(&serde_json::json!({"jsonrpc": "2.0", "id": id, "result": result})).unwrap();
+    if let Some(replies) = &asynchronous {
+        if message["method"] == "tools/call" {
+            replies
+                .sender
+                .send(Bytes::from(format!(
+                    "data: {}\r\n\r\n",
+                    String::from_utf8(bytes).unwrap()
+                )))
+                .await
+                .unwrap();
+            return http::Response::builder()
+                .status(202)
+                .body(Full::new(Bytes::new()).boxed())
+                .unwrap();
+        }
+    }
     let (content_type, bytes) = if message["params"]["arguments"]["sse"] == true {
         (
             "text/event-stream",
@@ -88,19 +134,32 @@ async fn reply(request: http::Request<Incoming>) -> http::Response<Full<Bytes>> 
     } else {
         ("application/json", bytes)
     };
-    http::Response::builder()
+    let mut response = http::Response::builder();
+    if asynchronous.is_some() {
+        response = response.header("Mcp-Session-Id", "fixture-session");
+    }
+    response
         .status(if message["params"]["arguments"]["http_error"] == true {
             http::StatusCode::INTERNAL_SERVER_ERROR
         } else {
             http::StatusCode::OK
         })
         .header(http::header::CONTENT_TYPE, content_type)
-        .body(Full::new(Bytes::from(bytes)))
+        .body(Full::new(Bytes::from(bytes)).boxed())
         .unwrap()
 }
 
 #[tokio::test]
 async fn binary_confines_before_ready_and_keeps_its_capabilities_after_refresh() {
+    native_calls(false).await;
+}
+
+#[tokio::test]
+async fn binary_preserves_boundary_and_refusal_recovery_for_accepted_get_replies() {
+    native_calls(true).await;
+}
+
+async fn native_calls(asynchronous: bool) {
     let directory = tempfile::tempdir().unwrap();
     let (control, child_control) = UnixStream::pair().unwrap();
     let (coordinator_http, worker_http) = UnixStream::pair().unwrap();
@@ -109,13 +168,22 @@ async fn binary_confines_before_ready_and_keeps_its_capabilities_after_refresh()
     let coordinator_http = tokio::net::UnixStream::from_std(coordinator_http).unwrap();
     let requests = Arc::new(Mutex::new(Vec::new()));
     let captured = requests.clone();
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted_calls = calls.clone();
+    let (sender, receiver) = tokio::sync::mpsc::channel(1);
+    let replies = asynchronous.then(|| AsyncReplies {
+        sender,
+        receiver: Arc::new(tokio::sync::Mutex::new(receiver)),
+    });
     let broker = tokio::spawn(async move {
         let service = hyper::service::service_fn(move |request: http::Request<Incoming>| {
             captured
                 .lock()
                 .unwrap()
                 .push((request.uri().clone(), request.headers().clone()));
-            async move { Ok::<_, Infallible>(reply(request).await) }
+            let replies = replies.clone();
+            let calls = counted_calls.clone();
+            async move { Ok::<_, Infallible>(reply(request, replies, calls).await) }
         });
         let _ = hyper::server::conn::http2::Builder::new(TokioExecutor::new())
             .serve_connection(TokioIo::new(coordinator_http), service)
@@ -206,6 +274,22 @@ async fn binary_confines_before_ready_and_keeps_its_capabilities_after_refresh()
             },
         ),
         (
+            18,
+            AggregatorMethod::CallTool {
+                name: "assigned__echo".into(),
+                arguments: serde_json::json!({"boundary":true, "physical":true}),
+                timeout_ms: Some(2000),
+            },
+        ),
+        (
+            19,
+            AggregatorMethod::CallTool {
+                name: "assigned__echo".into(),
+                arguments: serde_json::json!({"text":"after refusal"}),
+                timeout_ms: Some(2000),
+            },
+        ),
+        (
             4,
             AggregatorMethod::Refresh {
                 servers: vec![unapproved],
@@ -243,10 +327,10 @@ async fn binary_confines_before_ready_and_keeps_its_capabilities_after_refresh()
                 capsem_proto::encode_mcp_frame(9, 0, &"x".repeat(capsem_proto::MCP_FRAME_MAX_PROCESS_NAME_LEN), &bytes)
                     .unwrap();
             }
-            (11 | 14 | 16, AggregatorResult::Error { error }) => {
+            (11 | 14 | 16 | 18, AggregatorResult::Error { error }) => {
                 assert!(error.contains("tool may already have run"), "{error}");
             }
-            (12 | 15 | 17, AggregatorResult::CallResult { result }) => {
+            (12 | 15 | 17 | 19, AggregatorResult::CallResult { result }) => {
                 assert_eq!(result["content"][0]["text"], "after refusal")
             }
             (5, AggregatorResult::Servers { servers }) => assert!(!servers[0].connected),
@@ -259,6 +343,11 @@ async fn binary_confines_before_ready_and_keeps_its_capabilities_after_refresh()
         .unwrap()
         .success());
     assert!(!unexpected_file.exists(), "unapproved stdio executed");
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::Relaxed),
+        11,
+        "a refused operation must never be replayed"
+    );
     let requests = requests.lock().unwrap();
     assert!(
         requests.len() >= 5,
