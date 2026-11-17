@@ -783,6 +783,16 @@ async fn host_environment_writes_never_enter_runtime_security_admission() {
                 failure_reason: None,
             },
         ),
+        WriteOp::PrepareEnvironmentVariablePurge(
+            capsem_logger::events::environment::purge::PreparedEnvironmentVariablePurge {
+                purge_id: id(1),
+                environment_id: id(2),
+                source_revision_id: id(3),
+                variable_name: "WRONG".into(),
+                timestamp_unix_ms: 4,
+                actor: "operator".into(),
+            },
+        ),
         WriteOp::EnvironmentSandboxReference(
             capsem_logger::events::environment::EnvironmentSandboxReferenceMutation {
                 session_id: id(4),
