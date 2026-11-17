@@ -9,6 +9,11 @@
 # all of this.
 
 [[IgnoredVulns]]
+id = "GHSA-fc5q-39xc-vjpf"
+ignoreUntil = 2026-12-17T00:00:00Z
+reason = "picomatch 2.3.2 and 4.0.5/4.0.7 occur only in upstream build/test tooling: Astro -> unstorage -> anymatch, Astro internal helpers, Vite -> tinyglobby/fdir, and Vitest. The web/app, web/docs, web/marketing and release-site builds emit static assets; their Node build dependencies are not shipped as runtime bundles. The locked mcp/typescript and sdk/typescript production dependency graphs contain no picomatch; their affected uses are dev tooling. Rechecked npm and GHSA-fc5q-39xc-vjpf on 2026-11-17: latest/dist-tag is 4.0.7 and the advisory lists no patched version. RELEASE.md section 8.2 permits this upstream build-time-only exception through 2026-12-17; recheck by then."
+
+[[IgnoredVulns]]
 id = "GHSA-gcqx-w48m-w2h4"
 ignoreUntil = 2026-12-16T00:00:00Z
 reason = "deepmerge 4.3.1 is used only for build-configuration merging by @astrojs/svelte 9.1.2 -> @sveltejs/vite-plugin-svelte 7.3.1 in web/app and web/marketing. The Vite plugin runs on the build host; it is not part of emitted static browser assets, native binaries or the VM runtime. Rechecked 2026-11-16 against npm: 4.3.1 remains the latest published version and the advisory lists no patched release. RELEASE.md section 8.2 permits this build-time-only upstream exception for at most 30 days. Recheck by 2026-12-16."

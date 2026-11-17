@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Security: Time-box the unpatched Picomatch advisory in upstream static-site and JavaScript build/test tooling through December 17, 2026; shipped Node runtime dependency graphs do not contain it.
+
 - Fixed: Oversized HTTP and SSE MCP replies return correlated Capsem transport errors without closing the tool peer or replaying the operation. Refused POST streams drop immediately; later calls remain usable.
 
 - Fixed: Guest MCP refusal errors omit unreadable request identities, preserving the current MCP error contract.
