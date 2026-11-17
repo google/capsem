@@ -135,12 +135,10 @@ with the corp config laid over it.
 | `capsem_mcp_default` | — | Read the default MCP tool permission. |
 | `capsem_mcp_tools` | `server_id` | List one server's discovered tools with their effective permissions. |
 | `capsem_mcp_refresh` | `server_id` | Rediscover one server's tools in every running VM. |
-| `capsem_mcp_call` | `server_id`, `tool_id`, `arguments?` | Invoke one tool with native JSON arguments. |
 
-`capsem_mcp_call` needs a running VM: the call travels through that VM's
-process, policy engine, aggregator, and logger. Listing tools does not create phantom call rows.
-Allowed and denied calls retain trusted VM, trace, server, tool, decision, byte,
-and security-rule correlation in the existing ledgers.
+The host MCP server no longer exposes unscoped guest MCP invocation. Guest tool
+calls must originate through the VM-owned endpoint, which binds policy and
+ledger attribution to that VM.
 
 A guest agent also discovers `capsem__expose_port` from its VM-owned endpoint.
 It must select the `container` or `vm` namespace explicitly and may request host

@@ -30,7 +30,6 @@ describe('contracts', () => {
         '/mcp/default/info': {action: 'allow', source: 'settings'},
         '/mcp/servers/local/tools/list': [],
         '/mcp/servers/local/refresh': {instances: 1, server_id: 'local', success: true},
-        '/mcp/servers/local/tools/read_file/call': {content: 'ok'},
       };
       if (!(path in fixtures)) return response.writeHead(404).end();
       response.setHeader('content-type', 'application/json');
@@ -52,10 +51,20 @@ describe('contracts', () => {
 
   afterEach(async () => closeAll());
 
+  it('refuses the retired unscoped tool without issuing a gateway request', async () => {
+    expect((await client.listTools()).tools.some(tool => tool.name === 'capsem_mcp_call')).toBe(false);
+    const result = await client.callTool({
+      name: 'capsem_mcp_call',
+      arguments: {server_id: 'local', tool_id: 'read_file', arguments: {path: '/tmp/x'}},
+    });
+    expect(result.isError).toBe(true);
+    expect(requests).toEqual([]);
+  });
+
   it('uses canonical names and SDK-aligned parameter names', async () => {
     const tools = (await client.listTools()).tools;
     const names = new Set(tools.map(tool => tool.name));
-    for (const name of ['capsem_status', 'capsem_pause', 'capsem_host_logs', 'capsem_mcp_call']) {
+    for (const name of ['capsem_status', 'capsem_pause', 'capsem_host_logs']) {
       expect(names.has(name), name).toBe(true);
     }
     for (const name of ['capsem_version', 'capsem_suspend', 'capsem_service_logs', 'capsem_container_wait']) {
@@ -71,7 +80,7 @@ describe('contracts', () => {
     ]);
     const mcpTools = tools.filter(tool => tool.name.startsWith('capsem_mcp_'));
     expect(mcpTools.map(tool => tool.name).sort()).toEqual([
-      'capsem_mcp_call', 'capsem_mcp_default', 'capsem_mcp_info', 'capsem_mcp_refresh',
+      'capsem_mcp_default', 'capsem_mcp_info', 'capsem_mcp_refresh',
       'capsem_mcp_servers', 'capsem_mcp_tools',
     ]);
     const exec = tools.find(tool => tool.name === 'capsem_exec');
@@ -79,14 +88,13 @@ describe('contracts', () => {
     expect(tools.every(tool => Boolean(tool.description))).toBe(true);
   });
 
-  it('exposes MCP discovery and invocation only through typed SDK calls', async () => {
+  it('exposes MCP discovery through typed SDK calls', async () => {
     const calls = [
       {name: 'capsem_mcp_info', arguments: {}},
       {name: 'capsem_mcp_servers', arguments: {}},
       {name: 'capsem_mcp_default', arguments: {}},
       {name: 'capsem_mcp_tools', arguments: {server_id: 'local'}},
       {name: 'capsem_mcp_refresh', arguments: {server_id: 'local'}},
-      {name: 'capsem_mcp_call', arguments: {server_id: 'local', tool_id: 'read_file', arguments: {path: '/tmp/x'}}},
     ];
     for (const call of calls) expect((await client.callTool(call)).isError, call.name).not.toBe(true);
     // Each server-scoped tool resolves its server by name from the list first.
@@ -94,9 +102,7 @@ describe('contracts', () => {
       ['GET', '/mcp/info'], ['GET', '/mcp/servers/list'], ['GET', '/mcp/default/info'],
       ['GET', '/mcp/servers/list'], ['GET', '/mcp/servers/local/tools/list'],
       ['GET', '/mcp/servers/list'], ['POST', '/mcp/servers/local/refresh'],
-      ['GET', '/mcp/servers/list'], ['POST', '/mcp/servers/local/tools/read_file/call'],
     ]);
-    expect(JSON.parse(requests.at(-1)?.body.toString() ?? '')).toEqual({path: '/tmp/x'});
   });
 });
 

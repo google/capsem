@@ -1,4 +1,4 @@
-import type {Hypervisor, Value} from '@capsem/sdk';
+import type {Hypervisor} from '@capsem/sdk';
 import type {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js';
 import {z} from 'zod';
 import {toolCall} from './results.js';
@@ -29,13 +29,5 @@ export function registerMcpTools(server: McpServer, hypervisor: Hypervisor): voi
   }, ({server_id}, extra) => toolCall(async () => {
     const options = {signal: extra.signal};
     return (await hypervisor.mcp.get(server_id, options)).refresh(options);
-  }));
-  server.registerTool('capsem_mcp_call', {
-    description: 'Call one discovered MCP tool through gateway policy enforcement.',
-    inputSchema: {server_id: serverId, tool_id: z.string().min(1), arguments: z.json().default({})},
-  }, ({server_id, tool_id, arguments: arguments_}, extra) => toolCall(async () => {
-    const options = {signal: extra.signal};
-    const server = await hypervisor.mcp.get(server_id, options);
-    return {result: await server.tools.call(tool_id, arguments_ as Value, options)};
   }));
 }
