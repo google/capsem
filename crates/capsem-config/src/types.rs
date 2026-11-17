@@ -434,6 +434,10 @@ pub struct SettingsFile {
     /// Which OCI images may be fetched and which may run (`[images]`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub images: Option<ImagePolicyConfig>,
+    /// Corporate source replacements for environment catalogs. Core enforces
+    /// section ownership and assets validates the selected OCI reference.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalogs: Option<crate::catalogs::CatalogSources>,
     /// Finite service-owned lifetimes for SDK-managed ephemeral sessions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub managed_sessions: Option<crate::ManagedSessionPolicy>,
@@ -479,6 +483,13 @@ pub enum CatalogSetting {
 
 impl SettingsFile {
     pub fn validate_metadata_contract(&self) -> Result<(), String> {
+        if let Some(catalogs) = &self.catalogs {
+            for kind in crate::catalogs::CatalogKind::ALL {
+                if let Some(source) = catalogs.source(kind) {
+                    source.validate().map_err(str::to_owned)?;
+                }
+            }
+        }
         for (id, entry) in &self.settings {
             validate_stored_setting_contract(id, &entry.value)?;
         }
