@@ -11,6 +11,7 @@
 
 pub mod approval;
 pub mod browser;
+pub mod catalogs;
 pub mod credential_injection;
 pub mod credential_reference;
 pub mod dns_session;
