@@ -457,12 +457,15 @@ pub(super) fn insert_host_event(conn: &Connection, event: &HostEvent, target: Wr
     Ok(())
 }
 
-/// Reserve insertion order through the common sequence, then publish this audit
-/// in the caller's main transaction beside the durable state transition.
+/// Reserve the common insertion order and publish the whole pending prefix.
+/// Publishing only the new audit would let cursor readers advance past older
+/// buffered events before those events become visible. Reuse the regular
+/// memory-to-disk flush inside the control transaction; rollback restores both.
 pub(super) fn insert_durable_host_event(conn: &Connection, event: &HostEvent) -> rusqlite::Result<()> {
     insert_host_event(conn, event, WriteTarget::Memory)?;
-    let id = conn.last_insert_rowid();
-    execute_cached(conn, "INSERT INTO main.host_events(id,timestamp_unix_ms,kind,session_id,actor,detail,trace_id) SELECT id,timestamp_unix_ms,kind,session_id,actor,detail,trace_id FROM mem.host_events WHERE id=?1", [id])?;
-    execute_cached(conn, "DELETE FROM mem.host_events WHERE id=?1", [id])?;
+    // The memory schema contains only unpublished rows. A local zero watermark
+    // moves that entire prefix without changing the writer's regular watermark;
+    // subsequent flushes see only later memory rows and advance it normally.
+    crate::schema::flush_memory_tables_to_disk(conn, ["host_events"], &Default::default())?;
     Ok(())
 }
