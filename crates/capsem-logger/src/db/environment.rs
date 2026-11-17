@@ -3,6 +3,7 @@ use super::*;
 use crate::events::{EnvironmentRevisionParent, EnvironmentRevisionState};
 use serde::{Deserialize, Serialize};
 
+pub(super) mod references;
 pub(super) mod requests;
 pub(super) mod snapshot;
 pub use snapshot::EnvironmentRevisionSnapshot;
