@@ -15,6 +15,9 @@ use nix::fcntl::{Flock, FlockArg};
 
 use super::errno;
 
+mod descriptor;
+pub use descriptor::{try_lock_descriptor, DescriptorLock, DescriptorLockAttempt};
+
 /// Compatibility class for an advisory lock.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LockMode {
