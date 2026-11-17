@@ -17,11 +17,19 @@ pub const fn catalog_media_type(kind: CatalogKind) -> &'static str {
 /// OCI-verified transport bytes. This proves descriptor integrity only;
 /// schema, publisher authenticity, revocation and policy admission are still
 /// required before these bytes become an approved environment selection.
-#[derive(Debug)]
 pub struct CatalogArtifact {
     kind: CatalogKind,
     digest: crate::oci::Digest,
     bytes: Vec<u8>,
+}
+impl std::fmt::Debug for CatalogArtifact {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CatalogArtifact")
+            .field("kind", &self.kind)
+            .field("digest", &self.digest)
+            .field("byte_count", &self.bytes.len())
+            .finish_non_exhaustive()
+    }
 }
 impl CatalogArtifact {
     pub(crate) fn new(kind: CatalogKind, digest: crate::oci::Digest, bytes: Vec<u8>) -> Self {

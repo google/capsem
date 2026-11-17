@@ -9,6 +9,21 @@ fn selected(reference: &str) -> CatalogSourceDescriptor {
 }
 
 #[test]
+fn catalog_artifact_debug_is_bounded_metadata_without_content_bytes() {
+    let bytes = b"catalog-content-canary".repeat(4096);
+    let digest = crate::oci::Digest::parse(&format!("sha256:{}", "a".repeat(64))).unwrap();
+    let artifact = CatalogArtifact::new(CatalogKind::Rules, digest.clone(), bytes.clone());
+    let debug = format!("{artifact:?}");
+    assert!(debug.len() < 256, "diagnostics must not copy the catalog byte vector");
+    assert!(!debug.contains("bytes: ["));
+    assert!(!debug.contains("catalog-content-canary"));
+    assert!(debug.contains("Rules"));
+    assert!(debug.contains(&digest.to_string()));
+    assert!(debug.contains(&bytes.len().to_string()));
+    assert_eq!(artifact.into_bytes(), bytes);
+}
+
+#[test]
 fn manifest_catalog_source_projection_is_independent_of_runtime_and_release_shape() {
     let source = serde_json::json!({"skills":{"reference":"ghcr.io/google/capsem/skills:stable","schema_version":1}});
     for mut manifest in [
