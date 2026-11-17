@@ -355,11 +355,15 @@ fn write_frame(
 }
 
 fn emit_input_error(stdout: &Arc<Mutex<io::Stdout>>, message: &str) {
-    let response = serde_json::json!({ "jsonrpc": "2.0", "id": null, "error": { "code": -32600, "message": message } });
     let mut out = stdout.lock().expect("stdout mutex poisoned");
-    let _ = serde_json::to_writer(&mut *out, &response);
-    let _ = writeln!(out);
+    let _ = write_input_error(&mut *out, message);
     let _ = out.flush();
+}
+
+fn write_input_error<W: Write>(out: &mut W, message: &str) -> io::Result<()> {
+    let response = serde_json::json!({ "jsonrpc": "2.0", "error": { "code": -32600, "message": message } });
+    serde_json::to_writer(&mut *out, &response)?;
+    writeln!(out)
 }
 
 fn emit_disconnect_errors(pending: &PendingRequests, stdout: &Arc<Mutex<io::Stdout>>, reason: &str) {

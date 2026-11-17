@@ -4,6 +4,17 @@ use std::os::unix::io::{FromRawFd, IntoRawFd};
 use std::os::unix::net::UnixStream;
 
 #[test]
+fn local_input_refusal_omits_unavailable_correlation_identity() {
+    let mut bytes = Vec::new();
+    write_input_error(&mut bytes, "Request was not forwarded").unwrap();
+    let message: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(message.get("id").is_none());
+    assert!(message.get("result").is_none());
+    assert_eq!(message["error"]["code"], -32600);
+    assert_eq!(message["error"]["message"], "Request was not forwarded");
+}
+
+#[test]
 fn input_content_bound_is_independent_of_identity_and_recovers_after_refusal() {
     let empty = r#"{"jsonrpc":"2.0","method":"tools/call","params":{"text":""}}"#;
     let overhead = empty.len();
