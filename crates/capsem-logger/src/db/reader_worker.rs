@@ -86,9 +86,9 @@ pub(super) fn reader_loop(
                 });
                 let _ = reply.send(result);
             }
-            ReadRequest::EnvironmentRequestSnapshot { query, reply } => {
+            ReadRequest::EnvironmentRequestSnapshot { query, mode, reply } => {
                 let result = observe_change(&reader).and_then(|observed| {
-                    environment::requests::capture(&reader, &path, &query, &codecs).map(|value| Observed {
+                    environment::requests::capture(&reader, &path, &query, mode, &codecs).map(|value| Observed {
                         changed: commit(&reader, observed),
                         value,
                     })

@@ -1,4 +1,5 @@
 //! Restart-safe request views through the DB-owned reader and archive lease.
+use super::history::{self, EnvironmentHistoryPayload, EnvironmentVariablePurgeMarker, SnapshotMode};
 use super::*;
 use crate::events::environment::request::{
     EnvironmentRequestDecision, EnvironmentRequestDecisionKind, EnvironmentRequestInvalidation,
@@ -92,6 +93,13 @@ pub struct EnvironmentRequestSnapshot {
     pub payload: Box<EnvironmentRequestPayload>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EnvironmentRequestHistory {
+    pub record: EnvironmentRequestRecord,
+    pub payload: EnvironmentHistoryPayload<EnvironmentRequestPayload>,
+}
+
 impl DbHandle {
     pub async fn environment_requests(
         &self,
@@ -107,12 +115,33 @@ impl DbHandle {
             .map(|observed| self.take_observed(observed))
     }
     pub async fn environment_request_snapshot(&self, request_id: &str) -> DbResult<Option<EnvironmentRequestSnapshot>> {
+        let Some(history) = self.request_history(request_id, SnapshotMode::Replay).await? else {
+            return Ok(None);
+        };
+        let EnvironmentHistoryPayload::Complete { value } = history.payload else {
+            return Err("environment request is non-replayable".into());
+        };
+        Ok(Some(EnvironmentRequestSnapshot {
+            record: history.record,
+            payload: value,
+        }))
+    }
+
+    pub async fn environment_request_history(&self, request_id: &str) -> DbResult<Option<EnvironmentRequestHistory>> {
+        self.request_history(request_id, SnapshotMode::History).await
+    }
+
+    async fn request_history(
+        &self,
+        request_id: &str,
+        mode: SnapshotMode,
+    ) -> DbResult<Option<EnvironmentRequestHistory>> {
         let query = EnvironmentRequestQuery::Get {
             request_id: request_id.into(),
         };
         query.validate()?;
         let (reply, receiver) = tokio::sync::oneshot::channel();
-        self.send_reader(ReadRequest::EnvironmentRequestSnapshot { query, reply })
+        self.send_reader(ReadRequest::EnvironmentRequestSnapshot { query, mode, reply })
             .map_err(|_| "environment request snapshot reader closed")?;
         let Some(captured) = self.take_observed(
             receiver
@@ -123,33 +152,50 @@ impl DbHandle {
         };
         let handle = self.clone();
         tokio::task::spawn_blocking(move || {
-            let CapturedRequest { reader, record, index } = captured;
-            let body = handle
-                .read_archived_blocking(crate::db::bodies::CapturedBodies {
-                    reader,
-                    rows: vec![index],
-                })?
-                .pop()
-                .ok_or("required environment request payload is missing")?;
-            let payload: EnvironmentRequestPayload =
-                rmp_serde::from_slice(&body.bytes).map_err(|_| "invalid archived environment request encoding")?;
-            if payload.source_revision() != record.source.as_ref() {
-                return Err("environment request source metadata does not match its archived intent".into());
-            }
-            if payload.kind() != record.kind.as_str() {
-                return Err("environment request kind does not match its archived intent".into());
-            }
-            if let EnvironmentRequestPayload::Change { specification }
-            | EnvironmentRequestPayload::ImageUpdate { specification } = &payload
-            {
-                specification
-                    .validate()
-                    .map_err(|_| "invalid archived environment request specification")?;
-            }
-            Ok(Some(EnvironmentRequestSnapshot {
+            let CapturedRequest {
+                reader,
                 record,
-                payload: Box::new(payload),
-            }))
+                index,
+                purges,
+            } = captured;
+            let value = if let Some(index) = index {
+                let body = handle
+                    .read_archived_blocking(crate::db::bodies::CapturedBodies {
+                        reader,
+                        rows: vec![index],
+                    })?
+                    .pop()
+                    .ok_or("required environment request payload is missing")?;
+                let payload: EnvironmentRequestPayload =
+                    rmp_serde::from_slice(&body.bytes).map_err(|_| "invalid archived environment request encoding")?;
+                if payload.source_revision() != record.source.as_ref() {
+                    return Err("environment request source metadata does not match its archived intent".into());
+                }
+                if payload.kind() != record.kind.as_str() {
+                    return Err("environment request kind does not match its archived intent".into());
+                }
+                match &payload {
+                    EnvironmentRequestPayload::Change { specification }
+                    | EnvironmentRequestPayload::ImageUpdate { specification } => {
+                        specification
+                            .validate()
+                            .map_err(|_| "invalid archived environment request specification")?;
+                        if purges
+                            .iter()
+                            .any(|marker| specification.variables.contains_key(&marker.variable_name))
+                        {
+                            return Err("archived proposal values contradict published purge markers".into());
+                        }
+                    }
+                    _ if !purges.is_empty() => return Err("reference-only proposal has variable purge markers".into()),
+                    _ => (),
+                }
+                Some(Box::new(payload))
+            } else {
+                None
+            };
+            let payload = history::payload(record.replayable, value, purges)?;
+            Ok(Some(EnvironmentRequestHistory { record, payload }))
         })
         .await
         .map_err(|_| "environment request reconstruction worker failed")?
@@ -398,13 +444,15 @@ fn from_row(row: &rusqlite::Row<'_>) -> DbResult<EnvironmentRequestRecord> {
 pub(in crate::db) struct CapturedRequest {
     reader: capsem_archive::BodyLogReader,
     record: EnvironmentRequestRecord,
-    index: crate::db::bodies::IndexRow,
+    index: Option<crate::db::bodies::IndexRow>,
+    purges: Vec<EnvironmentVariablePurgeMarker>,
 }
 
 pub(in crate::db) fn capture(
     reader: &DbReader,
     path: &std::path::Path,
     query: &EnvironmentRequestQuery,
+    mode: SnapshotMode,
     codecs: &capsem_archive::ArchiveCodecs,
 ) -> DbResult<Option<CapturedRequest>> {
     if !matches!(query, EnvironmentRequestQuery::Get { .. }) {
@@ -416,17 +464,21 @@ pub(in crate::db) fn capture(
             let Some(record) = query_rows(connection, query)?.pop() else {
                 return Ok(None);
             };
-            if !record.replayable {
-                return Err(
-                    "environment request is non-replayable because required historical values are unavailable".into(),
-                );
-            }
-            let index = crate::db::bodies::required_configuration_index(
+            let purges = history::request_purges(connection, &record.request_id)?;
+            let index = history::index(
                 connection,
                 &record.payload_event_id,
                 "environment_requests",
+                record.replayable,
+                mode,
+                &purges,
             )?;
-            Ok(Some((record, index)))
+            Ok(Some((record, index, purges)))
         })?;
-    Ok(selection.map(|(record, index)| CapturedRequest { reader, record, index }))
+    Ok(selection.map(|(record, index, purges)| CapturedRequest {
+        reader,
+        record,
+        index,
+        purges,
+    }))
 }

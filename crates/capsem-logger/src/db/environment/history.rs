@@ -40,13 +40,37 @@ pub(super) fn revision_purges(
     conn: &rusqlite::Connection,
     revision_id: &str,
 ) -> DbResult<Vec<EnvironmentVariablePurgeMarker>> {
-    let mut statement = conn.prepare_cached("SELECT p.purge_id,p.environment_id,p.source_revision_id,p.variable_name,p.timestamp_unix_ms,p.actor,p.state
-        FROM environment_revision_purges m JOIN environment_variable_purges p ON p.purge_id=m.purge_id
-        WHERE m.revision_id=?1 AND p.state IN ('reclaim_pending','committed') ORDER BY p.id LIMIT ?2")
+    purges(conn, revision_id, MarkerSubject::Revision)
+}
+
+pub(super) fn request_purges(
+    conn: &rusqlite::Connection,
+    request_id: &str,
+) -> DbResult<Vec<EnvironmentVariablePurgeMarker>> {
+    purges(conn, request_id, MarkerSubject::Request)
+}
+
+enum MarkerSubject {
+    Revision,
+    Request,
+}
+
+fn purges(
+    conn: &rusqlite::Connection,
+    owner_id: &str,
+    subject: MarkerSubject,
+) -> DbResult<Vec<EnvironmentVariablePurgeMarker>> {
+    let (link, column) = match subject {
+        MarkerSubject::Revision => ("environment_revision_purges", "revision_id"),
+        MarkerSubject::Request => ("environment_request_purges", "request_id"),
+    };
+    let mut statement = conn.prepare_cached(&format!("SELECT p.purge_id,p.environment_id,p.source_revision_id,p.variable_name,p.timestamp_unix_ms,p.actor,p.state
+        FROM {link} m JOIN environment_variable_purges p ON p.purge_id=m.purge_id
+        WHERE m.{column}=?1 AND p.state IN ('reclaim_pending','committed') ORDER BY p.id LIMIT ?2"))
         .map_err(|error| format!("environment history purge markers: {error}"))?;
     let mut rows = statement
         .query(rusqlite::params![
-            revision_id,
+            owner_id,
             (capsem_proto::ENVIRONMENT_MAX_VARIABLES + 1) as i64
         ])
         .map_err(|error| format!("environment history purge markers: {error}"))?;
@@ -99,7 +123,7 @@ pub(super) fn index(
         return Err("replayable environment history contradicts its published purge markers".into());
     }
     if !replayable && matches!(mode, SnapshotMode::Replay) {
-        return Err("environment revision is non-replayable because required historical values are unavailable".into());
+        return Err("environment history is non-replayable because required historical values are unavailable".into());
     }
     if !replayable {
         let present:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM event_body_blobs WHERE event_id=?1 AND source_table=?2 AND direction='payload')",[event_id,source],|row|row.get(0))

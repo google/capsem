@@ -144,6 +144,7 @@ enum ReadRequest {
     },
     EnvironmentRequestSnapshot {
         query: EnvironmentRequestQuery,
+        mode: environment::history::SnapshotMode,
         reply: tokio::sync::oneshot::Sender<DbResult<Observed<Option<environment::requests::CapturedRequest>>>>,
     },
     EnvironmentSnapshot {
@@ -873,7 +874,9 @@ pub use environment::history::{EnvironmentHistoryPayload, EnvironmentVariablePur
 pub use environment::purges::EnvironmentVariablePurgeQuery;
 pub(crate) use environment::purges::{decode_purge_row, PURGE_COLUMNS};
 pub use environment::references::{EnvironmentReferenceQuery, EnvironmentReferenceRecord};
-pub use environment::requests::{EnvironmentRequestQuery, EnvironmentRequestRecord, EnvironmentRequestSnapshot};
+pub use environment::requests::{
+    EnvironmentRequestHistory, EnvironmentRequestQuery, EnvironmentRequestRecord, EnvironmentRequestSnapshot,
+};
 pub use environment::{
     EnvironmentRevisionHistory, EnvironmentRevisionQuery, EnvironmentRevisionRecord, EnvironmentRevisionSnapshot,
 };
