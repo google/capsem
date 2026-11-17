@@ -151,3 +151,102 @@ async fn invalid_revision_queries_are_refused_before_worker_admission() {
         assert_eq!(db.reader_requests(), before);
     }
 }
+
+#[tokio::test]
+async fn environment_snapshots_reconstruct_exact_archived_specification_and_state() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = DbHandle::open(&dir.path().join("host.db")).unwrap();
+    let mut source = record(1, 11, 100);
+    source
+        .specification
+        .variables
+        .insert("PRIVATE".into(), "snapshot-reconstruction-canary".into());
+    assert!(db
+        .environment_revision_snapshot(&id(1), &id(11))
+        .await
+        .unwrap()
+        .is_none());
+    prepare(&db, source.clone()).await;
+    let snapshot = db
+        .environment_revision_snapshot(&id(1), &id(11))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(snapshot.specification, source.specification);
+    assert_eq!(snapshot.record.state, EnvironmentRevisionState::Committing);
+    assert!(!format!("{snapshot:?}").contains("snapshot-reconstruction-canary"));
+    db.write(WriteOp::EnvironmentRevisionTransition(EnvironmentRevisionTransition {
+        environment_id: id(1),
+        revision_id: id(11),
+        state: EnvironmentRevisionState::Committed,
+        timestamp_unix_ms: 101,
+        actor: "operator".into(),
+    }))
+    .await
+    .unwrap();
+    db.flush().await.unwrap();
+    let committed = db
+        .environment_revision_snapshot(&id(1), &id(11))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(committed.record.state, EnvironmentRevisionState::Committed);
+    assert_eq!(committed.specification, snapshot.specification);
+}
+
+#[tokio::test]
+async fn environment_snapshots_refuse_purged_truncated_and_missing_payloads() {
+    for (damage, expected) in [
+        ("UPDATE environment_revisions SET replayable=0", "purged"),
+        (
+            "UPDATE event_body_blobs SET truncated=1 WHERE source_table='environment_revisions'",
+            "truncated",
+        ),
+        (
+            "DELETE FROM event_body_blobs WHERE source_table='environment_revisions'",
+            "missing",
+        ),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("host.db");
+        let db = DbHandle::open(&path).unwrap();
+        prepare(&db, record(1, 11, 1)).await;
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute_batch(damage)
+            .unwrap();
+        let error = db.environment_revision_snapshot(&id(1), &id(11)).await.unwrap_err();
+        assert!(error.contains(expected), "{damage}: {error}");
+    }
+}
+
+#[tokio::test]
+async fn environment_snapshot_keeps_replayability_and_bytes_in_one_read_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("host.db");
+    let owner = DbHandle::open(&path).unwrap();
+    let source = record(1, 11, 1);
+    prepare(&owner, source.clone()).await;
+    let reader = DbHandle::open_external_reader(&path).unwrap();
+    let (reached, resume) = bodies::pause_next_archive_capture_for_tests(&path);
+    let request = tokio::spawn(async move { reader.environment_revision_snapshot(&id(1), &id(11)).await });
+    tokio::task::spawn_blocking(move || reached.recv_timeout(std::time::Duration::from_secs(5)))
+        .await
+        .unwrap()
+        .expect("capture reached its pinned SQL snapshot");
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute("UPDATE environment_revisions SET replayable=0", [])
+        .unwrap();
+    resume.send(()).unwrap();
+    // This read began before the marker changed. It must observe the complete
+    // old snapshot; a subsequent read must refuse the now-purged revision.
+    let captured = request.await.unwrap().unwrap().unwrap();
+    assert!(captured.record.replayable);
+    assert_eq!(captured.specification, source.specification);
+    assert!(owner
+        .environment_revision_snapshot(&id(1), &id(11))
+        .await
+        .unwrap_err()
+        .contains("purged"));
+}

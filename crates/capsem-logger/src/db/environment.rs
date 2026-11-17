@@ -3,6 +3,8 @@ use super::*;
 use crate::events::{EnvironmentRevisionParent, EnvironmentRevisionState};
 use serde::{Deserialize, Serialize};
 
+pub(super) mod snapshot;
+pub use snapshot::EnvironmentRevisionSnapshot;
 #[cfg(test)]
 mod tests;
 
@@ -101,7 +103,8 @@ impl DbHandle {
 
 pub(super) fn execute(reader: &DbReader, query: &EnvironmentRevisionQuery) -> DbResult<Vec<EnvironmentRevisionRecord>> {
     let started = Instant::now();
-    let result = query_rows(reader, query).map_err(|error| format!("environment revision query: {error}"));
+    let _deadline = reader.sql_deadline(started + super::bodies::INTERACTIVE_CAPTURE_DEADLINE);
+    let result = query_rows(reader.connection(), query).map_err(|error| format!("environment revision query: {error}"));
     let status = if result.is_ok() { "ok" } else { "error" };
     ::metrics::counter!(DB_QUERY_TOTAL, "phase" => "environment_revision_execute", "status" => status).increment(1);
     ::metrics::histogram!(DB_QUERY_DURATION_MS, "phase" => "environment_revision_execute", "status" => status)
@@ -127,13 +130,16 @@ pub(super) fn execute(reader: &DbReader, query: &EnvironmentRevisionQuery) -> Db
 
 const COLUMNS: &str = "id,environment_id,revision_id,previous_revision_id,fork_parent_environment_id,fork_parent_revision_id,timestamp_unix_ms,actor,reason,request_id,state,payload_event_id,replayable";
 
-fn query_rows(reader: &DbReader, query: &EnvironmentRevisionQuery) -> rusqlite::Result<Vec<EnvironmentRevisionRecord>> {
+fn query_rows(
+    connection: &rusqlite::Connection,
+    query: &EnvironmentRevisionQuery,
+) -> rusqlite::Result<Vec<EnvironmentRevisionRecord>> {
     match query {
         EnvironmentRevisionQuery::Get {
             environment_id,
             revision_id,
         } => {
-            let mut statement = reader.connection().prepare_cached(&format!(
+            let mut statement = connection.prepare_cached(&format!(
                 "SELECT {COLUMNS} FROM environment_revisions WHERE environment_id=?1 AND revision_id=?2"
             ))?;
             let rows = statement.query_map(rusqlite::params![environment_id, revision_id], from_row)?;
@@ -158,7 +164,7 @@ fn query_rows(reader: &DbReader, query: &EnvironmentRevisionQuery) -> rusqlite::
                 Some(EnvironmentRevisionState::Committed) => " AND state='committed'",
                 Some(EnvironmentRevisionState::RecoveredUnapplied) => " AND state='recovered_unapplied'",
             };
-            let mut statement = reader.connection().prepare_cached(&format!(
+            let mut statement = connection.prepare_cached(&format!(
                 "SELECT {COLUMNS} FROM environment_revisions WHERE {environment}{state} AND id>?2 ORDER BY id LIMIT ?3"
             ))?;
             let rows = statement.query_map(rusqlite::params![environment_id, after_id, limit], from_row)?;

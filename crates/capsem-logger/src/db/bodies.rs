@@ -126,7 +126,7 @@ impl<'a> ArchiveSqlDeadline<'a> {
 
 const INTERACTIVE_CAPTURE_MAX_IDS: usize = 10_000;
 const INTERACTIVE_CAPTURE_MAX_METADATA_BYTES: usize = 16 * 1024 * 1024;
-const INTERACTIVE_CAPTURE_DEADLINE: Duration = Duration::from_secs(5);
+pub(super) const INTERACTIVE_CAPTURE_DEADLINE: Duration = Duration::from_secs(5);
 
 #[cfg(test)]
 struct CapturePause {
@@ -347,7 +347,7 @@ impl DbHandle {
             .map_err(|error| format!("session body archive read task failed: {error}"))?
     }
 
-    fn read_archived_blocking(&self, captured: CapturedBodies) -> DbResult<Vec<StoredBody>> {
+    pub(super) fn read_archived_blocking(&self, captured: CapturedBodies) -> DbResult<Vec<StoredBody>> {
         let CapturedBodies { reader, rows } = captured;
         let result = rows.into_iter().map(|row| read_one(&reader, row)).collect();
         self.inner
@@ -471,6 +471,38 @@ pub(super) fn capture_body_rows(
             "archive capture requested {requested_ids} ids; limit is {INTERACTIVE_CAPTURE_MAX_IDS}"
         ));
     }
+    let (reader, captured) = with_archive_snapshot(db_reader, db_path, codecs, |connection, sql_deadline| {
+        const MAX_CAPTURED_ROWS: usize = 10_000;
+        let mut captured = Vec::new();
+        let mut metadata_bytes = 0usize;
+        for (sql, params) in queries {
+            sql_deadline.check("archive metadata capture")?;
+            let mut statement = connection.prepare(&sql).map_err(|error| error.to_string())?;
+            let owned = sqlite_params(&params);
+            let refs: Vec<&dyn rusqlite::types::ToSql> = owned.iter().map(|value| value.as_ref()).collect();
+            let mut rows = statement.query(refs.as_slice()).map_err(|error| error.to_string())?;
+            while let Some(row) = rows.next().map_err(|error| error.to_string())? {
+                if captured.len() == MAX_CAPTURED_ROWS {
+                    return Err(format!("archive capture exceeds {MAX_CAPTURED_ROWS} rows"));
+                }
+                let index = index_row_sql(row)?;
+                metadata_bytes = checked_interactive_metadata_bytes(metadata_bytes, index_metadata_bytes(&index))?;
+                captured.push(index);
+            }
+        }
+        Ok(captured)
+    })?;
+    Ok(CapturedBodies { reader, rows: captured })
+}
+
+/// Capture typed metadata under the same generation lease and SQLite snapshot.
+/// The selector returns owned data before the transaction and deadline close.
+pub(super) fn with_archive_snapshot<T>(
+    db_reader: &crate::DbReader,
+    db_path: &std::path::Path,
+    codecs: &ArchiveCodecs,
+    select: impl FnOnce(&rusqlite::Connection, &ArchiveSqlDeadline<'_>) -> DbResult<T>,
+) -> DbResult<(BodyLogReader, T)> {
     let deadline = Instant::now() + INTERACTIVE_CAPTURE_DEADLINE;
     let archive_lock = lock::acquire_existing_until(
         &crate::writer::archive_lock_path_for_db(db_path),
@@ -496,27 +528,10 @@ pub(super) fn capture_body_rows(
     drop(archive_lock);
     pause_archive_capture_for_tests(db_path);
 
-    const MAX_CAPTURED_ROWS: usize = 10_000;
-    let mut captured = Vec::new();
-    let mut metadata_bytes = 0usize;
-    for (sql, params) in queries {
-        sql_deadline.check("archive metadata capture")?;
-        let mut statement = tx.prepare(&sql).map_err(|error| error.to_string())?;
-        let owned = sqlite_params(&params);
-        let refs: Vec<&dyn rusqlite::types::ToSql> = owned.iter().map(|value| value.as_ref()).collect();
-        let mut rows = statement.query(refs.as_slice()).map_err(|error| error.to_string())?;
-        while let Some(row) = rows.next().map_err(|error| error.to_string())? {
-            if captured.len() == MAX_CAPTURED_ROWS {
-                return Err(format!("archive capture exceeds {MAX_CAPTURED_ROWS} rows"));
-            }
-            let index = index_row_sql(row)?;
-            metadata_bytes = checked_interactive_metadata_bytes(metadata_bytes, index_metadata_bytes(&index))?;
-            captured.push(index);
-        }
-    }
+    let selected = select(&tx, &sql_deadline)?;
     tx.commit()
         .map_err(|error| format!("commit archive capture snapshot: {error}"))?;
-    Ok(CapturedBodies { reader, rows: captured })
+    Ok((reader, selected))
 }
 
 pub(super) fn checked_interactive_metadata_bytes(current: usize, additional: usize) -> DbResult<usize> {
