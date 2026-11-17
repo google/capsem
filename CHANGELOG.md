@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fixed: The MCP upstream broker independently enforces the shared request payload bound when a worker bypasses client-side admission.
+
 - Fixed: MCP HTTP and SSE response admission preserves the shared usable payload allowance, with separately bounded SSE framing and metadata.
 
 - Fixed: MCP HTTP capabilities enforce the shared usable payload ceiling before forwarding, independently of framing overhead.

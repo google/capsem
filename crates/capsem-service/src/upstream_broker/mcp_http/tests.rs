@@ -319,7 +319,7 @@ async fn broker_bounds_request_bodies_even_when_the_worker_skips_client_validati
         .header(MCP_SERVER_HEADER, "assigned")
         .body(http_body_util::Full::new(bytes::Bytes::from(vec![
             0;
-            capsem_proto::MCP_FRAME_MAX_SIZE
+            capsem_proto::MCP_PAYLOAD_MAX_BYTES
                 + 1
         ])))
         .unwrap();
@@ -329,6 +329,20 @@ async fn broker_bounds_request_bodies_even_when_the_worker_skips_client_validati
         .unwrap();
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
     assert!(upstream.requests.lock().unwrap().is_empty());
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri(&upstream.url)
+        .header(MCP_SERVER_HEADER, "assigned")
+        .body(http_body_util::Full::new(bytes::Bytes::from(
+            vec![0; capsem_proto::MCP_PAYLOAD_MAX_BYTES],
+        )))
+        .unwrap();
+    let response = tokio::time::timeout(Duration::from_secs(2), sender.send_request(request))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(upstream.requests.lock().unwrap().len(), 1);
     authority.revoke();
     task.await.unwrap();
     driver.abort();

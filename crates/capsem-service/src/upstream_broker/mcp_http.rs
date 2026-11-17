@@ -140,7 +140,7 @@ async fn prepare(
         McpHttpRole::Aggregator => configured_client(&url, &method, &mut headers, policy, client)?,
         McpHttpRole::Builtin => builtin_client(&url, &method, &mut headers, policy).await?,
     };
-    let body = http_body_util::Limited::new(request.into_body(), capsem_proto::MCP_FRAME_MAX_SIZE)
+    let body = http_body_util::Limited::new(request.into_body(), capsem_proto::MCP_PAYLOAD_MAX_BYTES)
         .collect()
         .await
         .map_err(|error| anyhow::anyhow!("MCP HTTP request exceeds its body bound or is incomplete: {error}"))?
