@@ -301,13 +301,10 @@ json = { count = 8, reason = "provider" }
 json = { count = 25, reason = "provider" }
 
 [sources."crates/capsem-core/src/net/mitm_proxy/mcp_frame/wire.rs"]
-json = { count = 7, reason = "mcp" }
+json = { count = 5, reason = "mcp" }
 
 [sources."crates/capsem-core/src/net/mitm_proxy/mcp_frame.rs"]
 json = { count = 14, reason = "mcp" }
-
-[sources."crates/capsem-core/src/net/mitm_proxy/mcp_http.rs"]
-json = { count = 1, reason = "provider" }
 
 [sources."crates/capsem-core/src/net/mitm_proxy/mcp_observe.rs"]
 json = { count = 11, reason = "mcp" }

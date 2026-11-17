@@ -29,16 +29,7 @@ pub(super) async fn send_response(
     process_name: &str,
     response: &JsonRpcResponse,
 ) -> Result<()> {
-    let mut payload = serde_json::to_vec(response).context("serialize framed MCP response")?;
-    let frame_len = capsem_proto::MCP_FRAME_HEADER_LEN as usize + process_name.len() + payload.len();
-    if frame_len > capsem_proto::MCP_FRAME_MAX_SIZE {
-        let fallback = JsonRpcResponse::err(
-            response.id.clone(),
-            -32000,
-            "MCP result exceeds the frame limit; the tool may already have run",
-        );
-        payload = serde_json::to_vec(&fallback).context("serialize MCP size error")?;
-    }
+    let payload = encode_response_payload(response)?;
     tx.send(OutboundFrame {
         stream_id,
         process_name: process_name.to_string(),
@@ -46,6 +37,25 @@ pub(super) async fn send_response(
     })
     .await
     .context("framed MCP writer channel closed")
+}
+
+/// The external JSON-RPC response is encoded once into its final payload
+/// buffer. A refused result is an explicit error, never a truncated success.
+pub(in crate::net::mitm_proxy) fn encode_response_payload(response: &JsonRpcResponse) -> Result<Vec<u8>> {
+    match capsem_proto::framing::encode_json_record(response, MCP_JSON_RPC_MAX_BYTES) {
+        Ok(payload) => Ok(payload),
+        Err(error) if capsem_proto::framing::is_frame_too_large(&error) => {
+            let id = response.id.as_ref().filter(|id| is_valid_mcp_request_id(id)).cloned();
+            let fallback = JsonRpcResponse::err(
+                id,
+                -32000,
+                "MCP result exceeds the frame limit; the tool may already have run",
+            );
+            capsem_proto::framing::encode_json_record(&fallback, MCP_JSON_RPC_MAX_BYTES)
+                .context("encode MCP size error")
+        }
+        Err(error) => Err(error).context("encode MCP JSON-RPC response"),
+    }
 }
 
 pub(super) async fn read_next_frame<R: AsyncRead + Unpin>(reader: &mut R) -> Result<FrameRead> {
@@ -104,7 +114,15 @@ pub(super) fn parse_json_rpc_payload(payload: &[u8]) -> std::result::Result<Json
         id: None,
     })?;
 
-    let id = value.get("id").cloned();
+    let id = value.get("id");
+    if id.is_some_and(|id| !is_valid_mcp_request_id(id)) {
+        return Err(JsonRpcPayloadError {
+            code: -32600,
+            message: "invalid or oversized MCP correlation ID".into(),
+            id: None,
+        });
+    }
+    let id = id.cloned();
     if value.get("jsonrpc").and_then(|v| v.as_str()) != Some("2.0") {
         return Err(JsonRpcPayloadError {
             code: -32600,
@@ -263,7 +281,14 @@ pub(super) fn record_method_metric(summary: &McpMethodSummary) {
 }
 
 pub(super) async fn write_frame<W: AsyncWrite + Unpin>(writer: &mut W, out: &OutboundFrame) -> Result<()> {
-    let bytes = capsem_proto::encode_mcp_frame(out.stream_id, 0, &out.process_name, &out.payload)?;
-    writer.write_all(&bytes).await.context("write MCP frame")?;
+    let header = capsem_proto::encode_mcp_frame_header(out.stream_id, 0, &out.process_name, out.payload.len())?;
+    writer
+        .write_all(header.as_bytes())
+        .await
+        .context("write MCP frame header")?;
+    writer
+        .write_all(&out.payload)
+        .await
+        .context("write MCP frame payload")?;
     writer.flush().await.context("flush MCP frame")
 }

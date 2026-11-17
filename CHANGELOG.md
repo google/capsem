@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fixed: Guest framed and HTTP MCP replies use bounded JSON encoding with full attribution overhead reserved; invalid correlation IDs are rejected before dispatch.
+
 - Fixed: Oversized MCP result errors state that the tool may already have run, preserving request correlation and the next reply.
 
 - Fixed: MCP aggregator IPC refuses oversized output during bounded encoding, without allocating the complete oversized result first.

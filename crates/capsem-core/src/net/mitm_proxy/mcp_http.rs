@@ -32,7 +32,7 @@ use crate::net::dns::private::{in_private_zone, MCP_HOST};
 const MCP_PATH: &str = "/mcp";
 
 /// One POST carries one JSON-RPC message, bounded like a frame.
-const MAX_MESSAGE_BYTES: usize = capsem_proto::MCP_FRAME_MAX_SIZE;
+const MAX_MESSAGE_BYTES: usize = super::mcp_frame::MCP_JSON_RPC_MAX_BYTES;
 
 /// Rule id the ledger records for a refused name in the zone.
 const RESERVED_RULE: &str = "capsem.internal.reserved";
@@ -126,7 +126,7 @@ pub(super) async fn serve(
 }
 
 fn json_reply(status: u16, response: &capsem_proto::mcp_contracts::JsonRpcResponse) -> hyper::Response<ProxyBoxBody> {
-    match serde_json::to_vec(response) {
+    match super::mcp_frame::encode_response_payload(response) {
         Ok(body) => reply(status, "application/json", body),
         Err(error) => reply(
             500,

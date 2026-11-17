@@ -1,5 +1,34 @@
 use super::*;
 
+#[tokio::test]
+async fn mcp_transport_bounds_http_rejects_oversized_results_without_truncated_success() {
+    use capsem_proto::mcp_contracts::JsonRpcResponse;
+    let response = JsonRpcResponse::ok(
+        Some(serde_json::json!(7)),
+        serde_json::json!({"content":"x".repeat(capsem_proto::MCP_FRAME_MAX_SIZE)}),
+    );
+    let reply = json_reply(200, &response);
+    assert_eq!(reply.status(), 200);
+    let body = reply.into_body().collect().await.unwrap().to_bytes();
+    let decoded: JsonRpcResponse = serde_json::from_slice(&body).unwrap();
+    assert!(decoded.result.is_none());
+    assert_eq!(decoded.id, Some(serde_json::json!(7)));
+    assert!(decoded.error.unwrap().message.contains("tool may already have run"));
+    let complete = JsonRpcResponse::ok(
+        Some(serde_json::json!(8)),
+        serde_json::json!({"content":"complete 🧪","nested":[true,42]}),
+    );
+    let body = json_reply(200, &complete)
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    let decoded: JsonRpcResponse = serde_json::from_slice(&body).unwrap();
+    assert_eq!(decoded.result, complete.result);
+    assert_eq!(decoded.id, complete.id);
+}
+
 #[test]
 fn the_exact_name_on_its_default_port_is_the_gateway() {
     assert_eq!(

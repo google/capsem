@@ -9,6 +9,7 @@ use super::*;
 mod retirement;
 
 mod approval;
+mod bounds;
 mod fragmentation;
 
 fn request(method: &str, params: serde_json::Value) -> JsonRpcRequest {

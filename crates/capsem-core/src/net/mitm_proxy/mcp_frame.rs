@@ -23,7 +23,9 @@ use crate::security_engine::{
     McpSecurityEvent, ProcessSecurityEvent, RuntimeSecurityEventType, SecurityEnforcementAction,
     SecurityEnforcementDecision, SecurityEvent,
 };
-use capsem_proto::mcp_contracts::{parse_namespaced, parse_resource_uri, JsonRpcRequest, JsonRpcResponse};
+use capsem_proto::mcp_contracts::{
+    is_valid_mcp_request_id, parse_namespaced, parse_resource_uri, JsonRpcRequest, JsonRpcResponse,
+};
 
 use super::fd_stream::{AsyncFdStream, ReplayReader};
 use super::McpEndpointState;
@@ -31,13 +33,16 @@ use capsem_telemetry::mitm as m;
 mod dispatch;
 mod memory;
 mod wire;
-pub(super) use wire::truncate_preview;
+pub(super) use wire::{encode_response_payload, truncate_preview};
 use wire::{
     interpret_mcp_method, mcp_log_attribution, parse_json_rpc_payload, read_next_frame, record_method_metric,
     send_response, validate_frame_request_pair, write_frame, OutboundFrame,
 };
 
-const MCP_JSON_RPC_MAX_BYTES: usize = capsem_proto::MCP_FRAME_MAX_SIZE - capsem_proto::MCP_FRAME_HEADER_LEN as usize;
+// Every accepted JSON reply fits the frame even with maximum attribution.
+pub(super) const MCP_JSON_RPC_MAX_BYTES: usize = capsem_proto::MCP_FRAME_MAX_SIZE
+    - capsem_proto::MCP_FRAME_HEADER_LEN as usize
+    - capsem_proto::MCP_FRAME_MAX_PROCESS_NAME_LEN;
 pub(super) const MCP_REQUEST_PREVIEW_BYTES: usize = 4096;
 
 /// Deadline for a framed-MCP body once its length prefix has been read. Bounds a
@@ -108,6 +113,12 @@ pub async fn dispatch_cancellable_mcp_request(
     transport: McpTransport,
     cancellation: tokio_util::sync::CancellationToken,
 ) -> Option<LoggedMcpResponse> {
+    if request.id.as_ref().is_some_and(|id| !is_valid_mcp_request_id(id)) {
+        return Some(LoggedMcpResponse {
+            response: JsonRpcResponse::err(None, -32600, "invalid or oversized MCP correlation ID"),
+            event_id: None,
+        });
+    }
     // Direct host calls have no framed-session owner to reserve this budget.
     let _admission = if transport == McpTransport::Direct {
         match endpoint.admit_frame(memory::request(&request)) {
