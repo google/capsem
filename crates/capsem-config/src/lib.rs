@@ -11,6 +11,7 @@ mod lint;
 mod managed_sessions;
 pub mod mcp;
 pub mod model;
+pub mod plugins;
 pub mod private_pool;
 mod provider_profile;
 mod resolver;

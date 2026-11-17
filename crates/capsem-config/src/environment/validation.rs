@@ -65,6 +65,7 @@ impl<I, R, C> EnvironmentSpecification<I, R, C> {
             "invalid environment description",
         )?;
         validate_values(&self.variables, &self.secrets)?;
+        self.plugins.validate().map_err(str::to_owned)?;
         if let Some(startup) = &self.startup {
             require(self.image.is_some(), "environment startup requires an OCI image")?;
             require(

@@ -345,3 +345,5 @@ mod catalog;
 mod rules;
 
 mod mcps;
+
+mod plugins;

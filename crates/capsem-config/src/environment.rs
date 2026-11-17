@@ -58,6 +58,8 @@ pub struct EnvironmentSpecification<I = EnvironmentImage, R = EnvironmentReposit
     pub detection: EnvironmentDetectionRules<C>,
     #[serde(default)]
     pub mcps: EnvironmentMcps<C>,
+    #[serde(default)]
+    pub plugins: crate::plugins::EnvironmentPlugins,
 }
 
 /// Agent/operator intent has selectors, never self-attested resolution metadata.
