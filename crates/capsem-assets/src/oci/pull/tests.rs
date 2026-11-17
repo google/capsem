@@ -1,4 +1,5 @@
 use super::*;
+mod environment_catalogs;
 mod inventory;
 mod progress;
 use std::collections::BTreeMap;

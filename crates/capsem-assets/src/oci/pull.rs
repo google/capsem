@@ -244,6 +244,27 @@ impl Puller {
             .context("catalog fetch exceeded five minutes")?
     }
 
+    /// Read the chosen catalog through the same authenticated, bounded OCI
+    /// transport and verified blob cache as the image catalog. Refreshes read
+    /// the manifest tag again; a fetch failure never substitutes older data.
+    pub async fn fetch_environment_catalog(
+        &self,
+        source: &crate::catalogs::ValidatedCatalogSource,
+        parent: &Path,
+    ) -> Result<crate::catalogs::CatalogArtifact> {
+        let (digest, bytes) = tokio::time::timeout(
+            PULL_TIMEOUT,
+            self.fetch_catalog_artifact(
+                source.reference(),
+                crate::catalogs::catalog_media_type(source.kind()),
+                parent,
+            ),
+        )
+        .await
+        .context("environment catalog fetch exceeded five minutes")??;
+        Ok(crate::catalogs::CatalogArtifact::new(source.kind(), digest, bytes))
+    }
+
     /// Fetch a catalog-pinned filesystem attached to the selected platform
     /// image. The caller supplies that image's verified original manifest
     /// digest, rather than its multi-platform index or normalized layout.
@@ -354,14 +375,26 @@ impl Puller {
 
     async fn fetch_catalog_inner(&self, reference: &str, parent: &Path) -> Result<(ContentDigest, Catalog)> {
         let reference = image_reference(reference)?;
+        let (identity, document) = self
+            .fetch_catalog_artifact(&reference, CATALOG_MEDIA_TYPE, parent)
+            .await?;
+        Ok((identity, Catalog::parse(&document)?))
+    }
+
+    async fn fetch_catalog_artifact(
+        &self,
+        reference: &Reference,
+        media_type: &str,
+        parent: &Path,
+    ) -> Result<(ContentDigest, Vec<u8>)> {
         if let Some(cache) = &self.cache {
             cache.prepare().await?;
         }
         let token = self
             .registry
-            .auth(&reference, &self.authentication, RegistryOperation::Pull)
+            .auth(reference, &self.authentication, RegistryOperation::Pull)
             .await?;
-        let bytes = self.manifest(&reference, token.as_deref()).await?;
+        let bytes = self.manifest(reference, token.as_deref()).await?;
         let identity = ContentDigest::parse(&sha256(&bytes))?;
         let manifest: OciImageManifest =
             serde_json::from_slice(&bytes).context("catalog must be a single OCI artifact manifest")?;
@@ -373,8 +406,8 @@ impl Puller {
             );
         };
         ensure!(
-            layer.media_type == CATALOG_MEDIA_TYPE,
-            "catalog layer media type is {:?}, expected {CATALOG_MEDIA_TYPE}",
+            layer.media_type == media_type,
+            "catalog layer media type is {:?}, expected {media_type}",
             layer.media_type
         );
         ensure!(
@@ -387,10 +420,10 @@ impl Puller {
             "external catalog URLs are unsupported"
         );
         let directory = staging(parent).await?;
-        self.blob(&reference, layer, directory.path(), BlobUse::Private, None)
+        self.blob(reference, layer, directory.path(), BlobUse::Private, None)
             .await?;
         let document = tokio::fs::read(directory.path().join(digest_hex(&layer.digest)?)).await?;
-        Ok((identity, Catalog::parse(&document)?))
+        Ok((identity, document))
     }
 
     async fn pull_inner(&self, reference: &str, parent: &Path, cache_only: bool) -> Result<ImageLayout> {

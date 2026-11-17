@@ -5,6 +5,42 @@ use capsem_proto::catalogs::{CatalogKind, CatalogSourceOrigin, CatalogSources, S
 use oci_client::Reference;
 use serde::Deserialize;
 
+/// The independently published single JSON layer for each catalog kind.
+pub const fn catalog_media_type(kind: CatalogKind) -> &'static str {
+    match kind {
+        CatalogKind::Skills => "application/vnd.capsem.skills.catalog.v1+json",
+        CatalogKind::Rules => "application/vnd.capsem.rules.catalog.v1+json",
+        CatalogKind::Mcp => "application/vnd.capsem.mcp.catalog.v1+json",
+    }
+}
+
+/// OCI-verified transport bytes. This proves descriptor integrity only;
+/// schema, publisher authenticity, revocation and policy admission are still
+/// required before these bytes become an approved environment selection.
+#[derive(Debug)]
+pub struct CatalogArtifact {
+    kind: CatalogKind,
+    digest: crate::oci::Digest,
+    bytes: Vec<u8>,
+}
+impl CatalogArtifact {
+    pub(crate) fn new(kind: CatalogKind, digest: crate::oci::Digest, bytes: Vec<u8>) -> Self {
+        Self { kind, digest, bytes }
+    }
+    pub fn kind(&self) -> CatalogKind {
+        self.kind
+    }
+    pub fn digest(&self) -> &crate::oci::Digest {
+        &self.digest
+    }
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
+}
+
 /// Read metadata from the selected public or legacy manifest without requiring
 /// a VM runtime. JSON is the external release-manifest format; unrelated release
 /// fields are skipped rather than copied into another release document.
