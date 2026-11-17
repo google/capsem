@@ -140,17 +140,28 @@ async fn a_tool_permission_edit_is_written_to_settings_and_recorded() {
     )
     .unwrap();
     let rules = active.compile_security_rule_set().unwrap();
-    let event = json!({"mcp": {
-        "method": "tools/call",
-        "server": {"name": "local"},
-        "tool_call": {"name": "local__fetch_http"},
-    }});
+    use capsem_core::security_engine::{McpSecurityEvent, RuntimeSecurityEventType, SecurityEvent};
+    let request = || McpSecurityEvent {
+        method: Some("tools/call".into()),
+        server_name: Some("local".into()),
+        tool_call_name: Some("local__fetch_http".into()),
+        ..Default::default()
+    };
+    let event = SecurityEvent::new(RuntimeSecurityEventType::McpToolCall).with_mcp(request());
     let evaluated = rules.evaluate(&event).unwrap();
     assert_eq!(
         evaluated.enforcement_rules()[0].rule_id,
         "profiles.rules.mcp_local_fetch_http_permission"
     );
     assert_eq!(evaluated.enforcement_rules()[0].action, SecurityRuleAction::Ask);
+    let response = SecurityEvent::new(RuntimeSecurityEventType::McpToolCall)
+        .with_mcp(request().with_response_preview(Some("upstream failed")));
+    assert!(!rules
+        .evaluate(&response)
+        .unwrap()
+        .matched_rules()
+        .iter()
+        .any(|rule| rule.rule_id == "profiles.rules.mcp_local_fetch_http_permission"));
 
     let tools = get(&app, "/mcp/servers/local/tools/list").await;
     assert_eq!(tools[0]["namespaced_name"], "local__fetch_http");

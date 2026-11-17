@@ -404,17 +404,46 @@ async fn actual_service_router_counts_owner_denials_and_bounds_unknown_operation
         })
     });
     let recorded = snapshot.snapshot().into_vec();
+    for (key, _, _, _) in &recorded {
+        assert!(!format!("{:?}", key.key()).to_lowercase().contains("canary"));
+    }
+    // Authentication refusal also records durable audit enqueue metrics.
+    // The HTTP cardinality contract covers exactly the HTTP owner's family.
+    let recorded: Vec<_> = recorded
+        .into_iter()
+        .filter(|(key, _, _, _)| {
+            capsem_telemetry::http::SPECS
+                .iter()
+                .any(|spec| spec.name == key.key().name())
+        })
+        .collect();
     assert_eq!(
         recorded.len(),
         8,
         "Two normalized operations, four metric instruments each"
     );
+    let mut operations = std::collections::BTreeMap::new();
     for (key, _, _, _) in &recorded {
         let labels: std::collections::HashMap<_, _> =
             key.key().labels().map(|label| (label.key(), label.value())).collect();
         assert_eq!(labels["component"], "service");
         assert!(!format!("{labels:?}").to_lowercase().contains("canary"));
         assert!(["unmatched", "/version"].contains(&labels["route"]));
+        operations
+            .entry((labels["method"], labels["route"]))
+            .or_insert_with(std::collections::BTreeSet::new)
+            .insert(key.key().name());
+    }
+    assert_eq!(
+        operations.keys().copied().collect::<Vec<_>>(),
+        [("GET", "/version"), ("OTHER", "unmatched")]
+    );
+    let expected = capsem_telemetry::http::SPECS
+        .iter()
+        .map(|spec| spec.name)
+        .collect::<std::collections::BTreeSet<_>>();
+    for instruments in operations.values() {
+        assert_eq!(instruments, &expected);
     }
     assert!(recorded.iter().any(
         |(key, _, _, value)| key.key().name() == capsem_telemetry::http::REQUESTS_TOTAL
