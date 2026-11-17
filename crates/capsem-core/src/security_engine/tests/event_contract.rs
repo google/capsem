@@ -752,6 +752,37 @@ async fn host_environment_writes_never_enter_runtime_security_admission() {
                 reason: "base context changed".into(),
             },
         ),
+        WriteOp::EnvironmentApplication(
+            capsem_logger::events::environment::application::EnvironmentApplicationMutation {
+                request_id: id(1),
+                target: capsem_logger::events::environment::request::EnvironmentRequestTarget {
+                    session_id: id(4),
+                    generation: id(5),
+                },
+                expected_version: None,
+                expected_references: Default::default(),
+                timestamp_unix_ms: 4,
+                actor: "system".into(),
+                state: capsem_logger::events::environment::application::EnvironmentApplicationState::Pending,
+                composition: capsem_logger::events::environment::application::EnvironmentApplicationComposition {
+                    boot: capsem_logger::events::EnvironmentRevisionParent {
+                        environment_id: id(2),
+                        revision_id: id(3),
+                    },
+                    live_policy: capsem_logger::events::EnvironmentRevisionParent {
+                        environment_id: id(2),
+                        revision_id: id(3),
+                    },
+                    desired: capsem_logger::events::EnvironmentRevisionParent {
+                        environment_id: id(2),
+                        revision_id: id(3),
+                    },
+                    corporate_policy_id: "corporate-policy-v1".into(),
+                    pending_restart: false,
+                },
+                failure_reason: None,
+            },
+        ),
         WriteOp::EnvironmentSandboxReference(
             capsem_logger::events::environment::EnvironmentSandboxReferenceMutation {
                 session_id: id(4),
