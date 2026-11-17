@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fixed: MCP aggregator IPC refuses oversized output during bounded encoding, without allocating the complete oversized result first.
+
 - Changed: Host MCP tools return complete structured gateway results without duplicate JSON text mirrors or the 16 KiB mirror threshold.
 
 - Fixed: Approved environment commits record their exact request result, and startup repairs interrupted receipts without reapplying configuration.

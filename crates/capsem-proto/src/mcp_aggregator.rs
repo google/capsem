@@ -25,12 +25,13 @@ use crate::mcp_contracts::{McpPromptDef, McpResourceDef, McpServerDef, McpToolDe
 const MAX_FRAME_SIZE: u32 = 16 * 1024 * 1024;
 
 /// A frame refused before any bytes are written, so the stream stays aligned.
+/// The length is a lower bound: encoding stops at the first excessive write.
 #[derive(Debug)]
 pub struct AggregatorFrameTooLarge(pub usize);
 
 impl std::fmt::Display for AggregatorFrameTooLarge {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "frame too large: {} bytes (max {MAX_FRAME_SIZE})", self.0)
+        write!(f, "frame too large: at least {} bytes (max {MAX_FRAME_SIZE})", self.0)
     }
 }
 
@@ -42,16 +43,16 @@ where
     W: AsyncWriteExt + Unpin,
     T: Serialize,
 {
-    let payload = rmp_serde::to_vec_named(msg).context("msgpack serialize")?;
-    if payload.len() > MAX_FRAME_SIZE as usize {
-        return Err(AggregatorFrameTooLarge(payload.len()).into());
-    }
-    let len = payload.len() as u32;
-    writer
-        .write_all(&len.to_be_bytes())
-        .await
-        .context("write frame length")?;
-    writer.write_all(&payload).await.context("write frame payload")?;
+    // Reuse the shared final-frame writer: stop traversal/allocation at the
+    // transport ceiling, with no sizing pass or payload-to-frame copy.
+    let frame = crate::framing::encode_frame(msg, MAX_FRAME_SIZE).map_err(|error| {
+        if crate::framing::is_frame_too_large(&error) {
+            anyhow::Error::new(AggregatorFrameTooLarge(MAX_FRAME_SIZE as usize + 1))
+        } else {
+            anyhow::Error::new(error).context("msgpack serialize")
+        }
+    })?;
+    writer.write_all(&frame).await.context("write frame")?;
     writer.flush().await.context("flush frame")?;
     Ok(())
 }

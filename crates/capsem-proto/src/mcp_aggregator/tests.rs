@@ -1,6 +1,53 @@
 use super::*;
 use tokio::io::AsyncWriteExt;
 
+struct SerializationProbe<'a>(&'a std::sync::atomic::AtomicBool);
+impl Serialize for SerializationProbe<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        self.0.store(true, Ordering::Relaxed);
+        serializer.serialize_bool(true)
+    }
+}
+
+#[tokio::test]
+async fn oversized_aggregator_encoding_stops_before_visiting_later_fields() {
+    #[derive(Serialize)]
+    struct Message<'a> {
+        content: &'a str,
+        later: SerializationProbe<'a>,
+    }
+    let content = "x".repeat(MAX_FRAME_SIZE as usize + 1);
+    let visited = std::sync::atomic::AtomicBool::new(false);
+    let message = Message {
+        content: &content,
+        later: SerializationProbe(&visited),
+    };
+    let (mut writer, _reader) = tokio::io::duplex(128);
+    let error = write_frame(&mut writer, &message).await.unwrap_err();
+    assert!(error.downcast_ref::<AggregatorFrameTooLarge>().is_some());
+    assert!(
+        !visited.load(Ordering::Relaxed),
+        "oversized MCP encoding must stop before walking later fields"
+    );
+}
+
+#[tokio::test]
+async fn bounded_aggregator_encoder_preserves_existing_named_messagepack_wire_bytes() {
+    let message = AggregatorRequest {
+        id: 42,
+        method: AggregatorMethod::CallTool {
+            name: "server__tool".into(),
+            arguments: serde_json::json!({"text": "complete 🧪", "nested": [false, null, 1.25]}),
+            timeout_ms: Some(3000),
+        },
+    };
+    let expected = rmp_serde::to_vec_named(&message).unwrap();
+    let mut wire = Vec::new();
+    write_frame(&mut wire, &message).await.unwrap();
+    assert_eq!(&wire[..4], &(expected.len() as u32).to_be_bytes());
+    assert_eq!(&wire[4..], expected.as_slice());
+}
+
 /// Roundtrip helper: serialize to msgpack and back.
 fn msgpack_roundtrip<T: Serialize + for<'de> Deserialize<'de>>(val: &T) -> T {
     let bytes = rmp_serde::to_vec_named(val).unwrap();
