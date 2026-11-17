@@ -364,6 +364,11 @@ impl<R> LedgerResponse<R> {
     pub const fn outcome(&self) -> &LedgerOutcome<R> {
         &self.outcome
     }
+
+    /// Move an already-decoded reply to its consumer without cloning payloads.
+    pub fn into_outcome(self) -> LedgerOutcome<R> {
+        self.outcome
+    }
 }
 
 #[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]

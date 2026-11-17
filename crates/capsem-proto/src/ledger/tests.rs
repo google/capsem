@@ -193,3 +193,18 @@ fn pre_purge_execution_peers_are_rejected_before_admission() {
         })
     );
 }
+
+#[test]
+fn decoded_response_transfers_uncloneable_payload_without_copying_its_allocation() {
+    struct Payload(Vec<u8>);
+    let payload = Payload(vec![0xa5; 1024]);
+    let allocation = payload.0.as_ptr();
+    let response = LedgerResponse::success(1, payload).unwrap();
+    assert_eq!(response.request_id(), 1);
+    let LedgerOutcome::Success { reply } = response.into_outcome() else {
+        panic!("successful outcome")
+    };
+    assert_eq!(reply.0.as_ptr(), allocation);
+    assert_eq!(reply.0.len(), 1024);
+    assert_eq!(reply.0[0], 0xa5);
+}
