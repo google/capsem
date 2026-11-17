@@ -14,7 +14,12 @@ use capsem_logger::DbWriter;
 
 /// Every schema object a ledger declares, as `(type, name, sql)`.
 fn schema_objects(path: &Path) -> BTreeSet<(String, String, String)> {
-    let conn = rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    // SQLite may create WAL/SHM even for a read-only connection. Inspect a
+    // private standalone copy so checking a fixture never mutates its directory.
+    let staging = tempfile::tempdir().unwrap();
+    let database = staging.path().join("schema.db");
+    std::fs::copy(path, &database).unwrap();
+    let conn = rusqlite::Connection::open_with_flags(database, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
     let mut stmt = conn
         .prepare("SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'")
         .unwrap();
@@ -82,4 +87,19 @@ fn fixture_model_counters_carry_current_writer_fields_and_price_coverage() {
             );
         }
     }
+}
+
+#[test]
+fn schema_inspection_leaves_its_source_bytes_and_directory_unchanged() {
+    let source = tempfile::tempdir().unwrap();
+    let database = source.path().join("fixture.db");
+    std::fs::copy(super::fixture_regen::fixture_path(), &database).unwrap();
+    let before = std::fs::read(&database).unwrap();
+    assert!(!schema_objects(&database).is_empty());
+    assert_eq!(std::fs::read(&database).unwrap(), before);
+    let entries: Vec<_> = std::fs::read_dir(source.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(entries, [std::ffi::OsString::from("fixture.db")]);
 }
