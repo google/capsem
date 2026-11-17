@@ -32,6 +32,18 @@ snapshot to the rows lives in capsem-logger/src/counters/oracle.rs, a test.
 # comments stripped and whitespace collapsed, so editing an allowed statement
 # makes it a new one to justify, and adding one beside it fails.
 AGGREGATE_DEBT: dict[str, str] = {
+    "crates/capsem-logger/src/schema/environment.rs:2ad612532094": (
+        "Open-time incompatible-cohort probe over bounded SQLite catalog tables, never a status poll."
+    ),
+    "crates/capsem-logger/src/writer/environment_purges/rewrite/payloads.rs:9cdc4c80cc89": (
+        "One explicit purge maintenance pass compares its streamed indices with the whole body index to reject dangling block references; not a poll."
+    ),
+    "crates/capsem-logger/src/writer/environment_requests.rs:2a5261c1993d": (
+        "Writer admission checks the partial pending index, bounded by APPROVAL_PENDING_TOTAL, before accepting a new request; never scans completed history or runs on polls."
+    ),
+    "crates/capsem-logger/src/writer/environment_requests.rs:c123830d83da": (
+        "Writer admission checks one requester in the bounded pending set against APPROVAL_PENDING_PER_SESSION; not a polled history total."
+    ),
     "crates/capsem-logger/src/db/maintenance.rs:be5c29f7ac00": (
         "fork-time validation that every body index row names a block; runs once per fork, not per poll"
     ),

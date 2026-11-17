@@ -387,6 +387,8 @@ pub(crate) const READY_SCHEMA_COLUMNS: &[(&str, &[&str])] = &[
             "old_generation_id",
             "new_generation_id",
             "failure_reason",
+            "revision_count",
+            "request_count",
         ],
     ),
     ("environment_revision_purges", &["purge_id", "revision_id"]),

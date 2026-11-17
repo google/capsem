@@ -417,10 +417,44 @@ async fn variable_purge_plan_queries_bound_pages_and_fail_on_broken_metadata() {
     conn.execute_batch("UPDATE environment_variable_purges SET variable_name='../WRONG'")
         .unwrap();
     assert!(reader.environment_variable_purges(page(2, 0, 1)).await.is_err());
-    conn.execute_batch("UPDATE environment_variable_purges SET variable_name='WRONG'; ALTER TABLE environment_request_purges RENAME TO missing_request_purges").unwrap();
+    conn.execute_batch("UPDATE environment_variable_purges SET variable_name='WRONG',revision_count=9223372036854775807,request_count=1").unwrap();
+    assert!(
+        reader.environment_variable_purges(page(2, 0, 1)).await.is_err(),
+        "corrupt stored counts must not overflow rewrite accounting"
+    );
+    conn.execute_batch("UPDATE environment_variable_purges SET variable_name='WRONG'; ALTER TABLE environment_variable_purges RENAME TO missing_variable_purges").unwrap();
     assert!(reader
         .environment_variable_purges(page(2, 0, 1))
         .await
         .unwrap_err()
         .contains("no such table"));
+}
+
+#[test]
+fn variable_purge_status_queries_do_not_walk_target_history() {
+    let conn = Connection::open_in_memory().unwrap();
+    crate::schema::create_tables(&conn).unwrap();
+    for predicate in ["p.purge_id=?1", "p.environment_id=?1 AND p.id>0 ORDER BY p.id LIMIT 10"] {
+        let mut statement = conn
+            .prepare(&format!(
+                "EXPLAIN QUERY PLAN SELECT {} FROM environment_variable_purges p WHERE {predicate}",
+                crate::db::PURGE_COLUMNS
+            ))
+            .unwrap();
+        let plan = statement
+            .query_map([id(2)], |row| row.get::<_, String>(3))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+            .join("\n");
+        assert!(
+            !plan.contains("CORRELATED"),
+            "purge polling must not recount history: {plan}"
+        );
+        assert!(
+            !plan.contains("environment_revision_purges") && !plan.contains("environment_request_purges"),
+            "{plan}"
+        );
+        assert!(plan.contains("SEARCH p USING"), "{plan}");
+    }
 }

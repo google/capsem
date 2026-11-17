@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fixed: Read persisted purge target counts without recounting revision and request history on every status poll.
+
 - Fixed: Include environment revision and request bodies in WARC exports, retaining their identity and original timestamp and marking purged bodies as non-replayable.
 
 - Fixed: Publish older buffered host events together with durable control audits so cursor readers cannot skip events that become visible out of order. Rollback restores the whole pending prefix.

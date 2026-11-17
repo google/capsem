@@ -155,6 +155,8 @@ CREATE TABLE IF NOT EXISTS environment_variable_purges (
     old_generation_id BLOB CHECK (old_generation_id IS NULL OR length(old_generation_id)=16),
     new_generation_id BLOB CHECK (new_generation_id IS NULL OR length(new_generation_id)=16),
     failure_reason TEXT,
+    revision_count INTEGER NOT NULL DEFAULT 0 CHECK (revision_count >= 0),
+    request_count INTEGER NOT NULL DEFAULT 0 CHECK (request_count >= 0),
     FOREIGN KEY(environment_id,source_revision_id) REFERENCES environment_revisions(environment_id,revision_id)
 );
 -- Every purge collects all previous generations of this archive. Serialize

@@ -105,6 +105,8 @@ pub(super) fn prepare(
     }
     execute_cached(conn,"INSERT INTO main.environment_variable_purges(purge_id,environment_id,source_revision_id,variable_name,timestamp_unix_ms,actor,state) VALUES(?1,?2,?3,?4,?5,?6,'prepared')",
         rusqlite::params![intent.purge_id,intent.environment_id,intent.source_revision_id,intent.variable_name,intent.timestamp_unix_ms,intent.actor])?;
+    let mut revision_count = 0i64;
+    let mut request_count = 0i64;
     // Scan in physical order with one leased decoder; history growth does not
     // create an unbounded Rust projection or repeatedly inflate each block.
     let mut statement=conn.prepare_cached("SELECT r.revision_id,r.payload_event_id FROM main.environment_revisions r
@@ -121,6 +123,9 @@ pub(super) fn prepare(
                 "INSERT INTO main.environment_revision_purges(purge_id,revision_id) VALUES(?1,?2)",
                 rusqlite::params![intent.purge_id, id],
             )?;
+            revision_count = revision_count
+                .checked_add(1)
+                .ok_or_else(|| invalid("environment purge target count overflow"))?;
         }
     }
     let mut statement=conn.prepare_cached("SELECT q.request_id,q.payload_event_id FROM main.environment_requests q
@@ -150,8 +155,16 @@ pub(super) fn prepare(
                 "INSERT INTO main.environment_request_purges(purge_id,request_id) VALUES(?1,?2)",
                 rusqlite::params![intent.purge_id, id],
             )?;
+            request_count = request_count
+                .checked_add(1)
+                .ok_or_else(|| invalid("environment purge target count overflow"))?;
         }
     }
+    execute_cached(
+        conn,
+        "UPDATE main.environment_variable_purges SET revision_count=?2,request_count=?3 WHERE purge_id=?1",
+        rusqlite::params![intent.purge_id, revision_count, request_count],
+    )?;
     let detail = capsem_proto::framing::encode_record(intent, capsem_proto::APPROVAL_CONTEXT_BYTES)
         .map_err(|_| invalid("environment purge intent audit exceeds its byte limit"))?;
     event_rows::insert_durable_host_event(

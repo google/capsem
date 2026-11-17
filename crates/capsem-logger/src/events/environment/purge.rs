@@ -123,6 +123,7 @@ impl EnvironmentVariablePurgeRecord {
             || self.intent.validate().is_err()
             || self.revision_count <= 0
             || self.request_count < 0
+            || self.revision_count.checked_add(self.request_count).is_none()
             || self.old_generation_id.is_some() != self.new_generation_id.is_some()
             || self
                 .old_generation_id

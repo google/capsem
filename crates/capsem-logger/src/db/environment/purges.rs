@@ -73,7 +73,7 @@ pub(in crate::db) fn execute(
     record_metadata_query("environment_variable_purge_execute", started, &result);
     result
 }
-pub(crate) const PURGE_COLUMNS:&str="p.id,p.purge_id,p.environment_id,p.source_revision_id,p.variable_name,p.timestamp_unix_ms,p.actor,p.state,p.old_generation_id,p.new_generation_id,p.failure_reason,(SELECT COUNT(*) FROM environment_revision_purges r WHERE r.purge_id=p.purge_id),(SELECT COUNT(*) FROM environment_request_purges q WHERE q.purge_id=p.purge_id)";
+pub(crate) const PURGE_COLUMNS:&str="p.id,p.purge_id,p.environment_id,p.source_revision_id,p.variable_name,p.timestamp_unix_ms,p.actor,p.state,p.old_generation_id,p.new_generation_id,p.failure_reason,p.revision_count,p.request_count";
 fn query_rows(
     conn: &rusqlite::Connection,
     query: &EnvironmentVariablePurgeQuery,
