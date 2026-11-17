@@ -75,6 +75,26 @@ BENCHMARK_DB_INTERNALS = {
 }
 
 LOGGER_DB_INTERNALS = {
+    # DB-owned snapshot capture, bounded typed history and the archive executor.
+    # These modules receive the reader worker's connection/snapshot, never a
+    # service-owned connection or logged-data projection.
+    Path("crates/capsem-logger/src/db/bodies.rs"),
+    Path("crates/capsem-logger/src/db/environment.rs"),
+    Path("crates/capsem-logger/src/db/environment/applications.rs"),
+    Path("crates/capsem-logger/src/db/environment/history.rs"),
+    Path("crates/capsem-logger/src/db/environment/purges.rs"),
+    Path("crates/capsem-logger/src/db/environment/references.rs"),
+    Path("crates/capsem-logger/src/db/environment/requests.rs"),
+    # Paused snapshot fixtures inspect their private test ledger, not a route.
+    Path("crates/capsem-logger/src/db/handle_tests/snapshot_leases.rs"),
+    # Open-time format validation, under the existing writer/reader authority.
+    Path("crates/capsem-logger/src/schema/environment.rs"),
+    # Generation publication/retention execute on the owning writer thread.
+    Path("crates/capsem-logger/src/writer/archive_publication.rs"),
+    Path("crates/capsem-logger/src/writer/environment_retention.rs"),
+    # Rewriting alone opens an additional READ_ONLY snapshot of its own DB,
+    # so old index offsets remain stable while its main transaction remaps them.
+    Path("crates/capsem-logger/src/writer/environment_purges/rewrite.rs"),
     # Candidate preinstall admission owns its short-lived READ_ONLY connection;
     # it reuses schema validation and never delegates DB opens to package code.
     Path("crates/capsem-logger/src/host_admission.rs"),

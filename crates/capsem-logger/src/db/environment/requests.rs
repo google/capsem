@@ -159,13 +159,15 @@ impl DbHandle {
                 purges,
             } = captured;
             let value = if let Some(index) = index {
-                let body = handle
-                    .read_archived_blocking(crate::db::bodies::CapturedBodies {
+                let body = crate::db::bodies::read_archived_blocking(
+                    &handle,
+                    crate::db::bodies::CapturedBodies {
                         reader,
                         rows: vec![index],
-                    })?
-                    .pop()
-                    .ok_or("required environment request payload is missing")?;
+                    },
+                )?
+                .pop()
+                .ok_or("required environment request payload is missing")?;
                 let payload: EnvironmentRequestPayload =
                     rmp_serde::from_slice(&body.bytes).map_err(|_| "invalid archived environment request encoding")?;
                 if payload.source_revision() != record.source.as_ref() {

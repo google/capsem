@@ -342,18 +342,9 @@ impl DbHandle {
     /// CPU work on a file, and neither belongs on the async runtime.
     async fn read_archived(&self, captured: CapturedBodies) -> DbResult<Vec<StoredBody>> {
         let handle = self.clone();
-        tokio::task::spawn_blocking(move || handle.read_archived_blocking(captured))
+        tokio::task::spawn_blocking(move || read_archived_blocking(&handle, captured))
             .await
             .map_err(|error| format!("session body archive read task failed: {error}"))?
-    }
-
-    pub(super) fn read_archived_blocking(&self, captured: CapturedBodies) -> DbResult<Vec<StoredBody>> {
-        let CapturedBodies { reader, rows } = captured;
-        let result = rows.into_iter().map(|row| read_one(&reader, row)).collect();
-        self.inner
-            .archive_blocks_inflated
-            .fetch_add(reader.blocks_inflated(), std::sync::atomic::Ordering::Relaxed);
-        result
     }
 
     /// Drop the cached archive reader, so the next read opens the file again.
@@ -370,6 +361,18 @@ impl DbHandle {
             .archive_blocks_inflated
             .load(std::sync::atomic::Ordering::Relaxed)
     }
+}
+
+// Only the DB executor consumes captured descriptors. This is not a reader
+// facade: it opens no connection and runs only after async snapshot capture.
+pub(in crate::db) fn read_archived_blocking(handle: &DbHandle, captured: CapturedBodies) -> DbResult<Vec<StoredBody>> {
+    let CapturedBodies { reader, rows } = captured;
+    let result = rows.into_iter().map(|row| read_one(&reader, row)).collect();
+    handle
+        .inner
+        .archive_blocks_inflated
+        .fetch_add(reader.blocks_inflated(), std::sync::atomic::Ordering::Relaxed);
+    result
 }
 
 /// Why one archived body could not be produced, and how far the damage reaches.

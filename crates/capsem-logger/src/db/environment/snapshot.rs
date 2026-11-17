@@ -86,13 +86,15 @@ impl DbHandle {
                 purges,
             } = captured;
             let specification = if let Some(index) = index {
-                let body = handle
-                    .read_archived_blocking(CapturedBodies {
+                let body = bodies::read_archived_blocking(
+                    &handle,
+                    CapturedBodies {
                         reader,
                         rows: vec![index],
-                    })?
-                    .pop()
-                    .ok_or("required environment snapshot payload is missing")?;
+                    },
+                )?
+                .pop()
+                .ok_or("required environment snapshot payload is missing")?;
                 let specification: EnvironmentSpecification = rmp_serde::from_slice(&body.bytes)
                     .map_err(|_| "invalid archived environment specification encoding")?;
                 specification
