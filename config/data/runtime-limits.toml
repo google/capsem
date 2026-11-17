@@ -121,3 +121,17 @@ max_lease_seconds = 86400
 
 # Bound delegated issuance JSON before allocating scope arrays.
 max_request_bytes = 65536
+
+# Environment documents are current persisted specifications, not ledger history.
+# These ceilings bound validation before approval; history reuses ledger retention.
+[environment]
+max_name_bytes = 64
+max_description_bytes = 4096
+max_startup_script_bytes = 65536
+# Preserve the existing guest boot variable count.
+max_variables = 128
+max_variable_name_bytes = 128
+max_variable_value_bytes = 16384
+max_variable_total_bytes = 262144
+max_repositories = 64
+max_spec_bytes = 1048576

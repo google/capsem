@@ -7,6 +7,7 @@ mod mcp_frames;
 mod snapshot;
 mod sparse;
 mod update_limits;
+mod environment_limits;
 mod validation;
 
 // -------------------------------------------------------------------
@@ -685,14 +686,6 @@ fn one_mib_file_content_fits_in_frame() {
 // Constants
 // -------------------------------------------------------------------
 
-#[test]
-fn boot_cap_constants() {
-    assert_eq!(MAX_BOOT_ENV_VARS, 128);
-    assert_eq!(MAX_BOOT_FILES, 64);
-    assert_eq!(MAX_BOOT_FILE_BYTES, 10_485_760);
-    assert_eq!(MAX_ENV_KEY_LEN, 256);
-    assert_eq!(MAX_ENV_VALUE_LEN, 131_072);
-}
 
 // -------------------------------------------------------------------
 // File event edge cases
