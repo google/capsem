@@ -19,8 +19,11 @@ fn environment_policy_inputs_separate_boot_settings_from_live_access_without_cop
         "observe".into(),
         toml::from_str("name='Observe'\nlevel='low'\nmatch='http.host == \"example.org\"'").unwrap(),
     );
-    boot.plugins.pii_filter = Some(capsem_config::plugins::PluginConfiguration {
-        mode: capsem_config::SecurityPluginMode::Block,
+    boot.plugins.pii_filter = Some(capsem_config::plugins::PiiFilterConfiguration {
+        inbound: capsem_config::plugins::PluginConfiguration {
+            mode: capsem_config::SecurityPluginMode::Block,
+            ..Default::default()
+        },
         ..Default::default()
     });
     boot.mcps.catalog.selected.push(EnvironmentCatalogPin {
@@ -47,7 +50,7 @@ fn environment_policy_inputs_separate_boot_settings_from_live_access_without_cop
     live.packages.registries = vec!["npm".into()];
     live.access.custom.get_mut("network").unwrap().action = capsem_config::SecurityRuleAction::Allow;
     live.detection.custom.get_mut("observe").unwrap().level = capsem_config::DetectionLevel::Critical;
-    live.plugins.pii_filter.as_mut().unwrap().mode = capsem_config::SecurityPluginMode::Rewrite;
+    live.plugins.pii_filter.as_mut().unwrap().inbound.mode = capsem_config::SecurityPluginMode::Rewrite;
     live.mcps.catalog.selected[0].resolved_digest = format!("sha256:{}", "b".repeat(64));
     live.mcps.servers.insert(
         "remote".into(),
@@ -76,7 +79,7 @@ fn environment_policy_inputs_separate_boot_settings_from_live_access_without_cop
         capsem_config::DetectionLevel::Low
     );
     assert_eq!(
-        inputs.plugins().pii_filter.as_ref().unwrap().mode,
+        inputs.plugins().pii_filter.as_ref().unwrap().inbound.mode,
         capsem_config::SecurityPluginMode::Block
     );
     assert_eq!(
