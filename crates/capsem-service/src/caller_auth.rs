@@ -84,7 +84,7 @@ impl Authority {
 }
 
 impl OperatorEpoch {
-    pub(crate) fn register(&mut self, token: GatewayAuthSecret<64>) -> Result<(), GatewayAuthDenial> {
+    pub(crate) fn activate(&mut self, token: GatewayAuthSecret<64>) -> Result<(), GatewayAuthDenial> {
         if self.registered {
             return Err(GatewayAuthDenial::Forbidden);
         }

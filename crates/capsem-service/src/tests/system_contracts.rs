@@ -134,7 +134,7 @@ async fn gateway_status_route_returns_vms_assets_and_updates_in_one_response() {
     let authority = Arc::clone(&state.caller_authority);
     let mut epoch = authority.begin();
     epoch
-        .register(capsem_proto::gateway_grant::auth::GatewayAuthSecret::from_bytes(
+        .activate(capsem_proto::gateway_grant::auth::GatewayAuthSecret::from_bytes(
             [b'A'; 64],
         ))
         .unwrap();

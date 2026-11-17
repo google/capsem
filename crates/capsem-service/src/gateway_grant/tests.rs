@@ -397,7 +397,7 @@ async fn operator_registration_is_once_and_control_disconnect_retires_pooled_htt
     }
     // A later valid operator epoch must not resurrect an old broker's seat.
     let mut fresh = state.caller_authority.begin();
-    fresh.register(GatewayAuthSecret::from_bytes([b'B'; 64])).unwrap();
+    fresh.activate(GatewayAuthSecret::from_bytes([b'B'; 64])).unwrap();
     let response = client
         .send_request(
             axum::http::Request::get("/version")

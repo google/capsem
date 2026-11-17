@@ -5,7 +5,7 @@ use capsem_proto::gateway_grant::auth::GatewayAuthSecret;
 async fn doctor_administration_requires_live_operator_and_pinned_cli_peer() {
     let state = crate::tests::make_test_state();
     let mut epoch = state.caller_authority.begin();
-    epoch.register(GatewayAuthSecret::from_bytes([b'A'; 64])).unwrap();
+    epoch.activate(GatewayAuthSecret::from_bytes([b'A'; 64])).unwrap();
     let mut headers = axum::http::HeaderMap::new();
     headers.insert("authorization", format!("Bearer {}", "A".repeat(64)).parse().unwrap());
     let peer = capsem_foundation::unix::peer::PeerIdentity {
@@ -72,7 +72,7 @@ async fn public_doctor_cleanup_denies_untrusted_clients_and_registered_vm_owners
     use tower::ServiceExt;
     let state = crate::tests::make_test_state();
     let mut epoch = state.caller_authority.begin();
-    epoch.register(GatewayAuthSecret::from_bytes([b'A'; 64])).unwrap();
+    epoch.activate(GatewayAuthSecret::from_bytes([b'A'; 64])).unwrap();
     let peer = super::super::ServicePeer(Some(capsem_foundation::unix::peer::PeerIdentity {
         pid: capsem_foundation::unix::process::ProcessId::try_from(std::process::id()).unwrap(),
         uid: capsem_foundation::unix::process::current_uid(),

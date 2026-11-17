@@ -106,7 +106,7 @@ async fn authenticate(
 ) -> GatewayAuthResponse {
     let request_id = request.request_id();
     match request {
-        GatewayAuthRequest::RegisterOperator { token, .. } => match operator_epoch.register(token) {
+        GatewayAuthRequest::RegisterOperator { token, .. } => match operator_epoch.activate(token) {
             Ok(()) => GatewayAuthResponse::RegisteredOperator { request_id },
             Err(reason) => GatewayAuthResponse::Denied { request_id, reason },
         },
