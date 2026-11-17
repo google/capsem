@@ -4,6 +4,7 @@ use crate::events::environment::request::{EnvironmentRequestPayload, PreparedEnv
 use crate::events::{EnvironmentRevisionState, EnvironmentRevisionTransition, PreparedEnvironmentRevision};
 
 const SELECTED: &str = "purge-selected-value-canary";
+mod rewrite;
 fn id(value: u64) -> String {
     format!("00000000-0000-4000-8000-{value:012x}")
 }

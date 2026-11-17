@@ -3,6 +3,27 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct EnvironmentVariablePurgeExecution {
+    pub purge_id: String,
+    pub timestamp_unix_ms: i64,
+}
+
+impl EnvironmentVariablePurgeExecution {
+    pub(crate) fn validate(&self) -> Result<(), &'static str> {
+        let valid = uuid::Uuid::parse_str(&self.purge_id).is_ok_and(|id| {
+            id.to_string() == self.purge_id
+                && (1..=8).contains(&id.get_version_num())
+                && id.get_variant() == uuid::Variant::RFC4122
+        });
+        if !valid || self.timestamp_unix_ms < 0 {
+            return Err("invalid variable purge execution");
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PreparedEnvironmentVariablePurge {
     pub purge_id: String,
     pub environment_id: String,

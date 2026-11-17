@@ -157,6 +157,10 @@ CREATE TABLE IF NOT EXISTS environment_variable_purges (
     failure_reason TEXT,
     FOREIGN KEY(environment_id,source_revision_id) REFERENCES environment_revisions(environment_id,revision_id)
 );
+-- Every purge collects all previous generations of this archive. Serialize
+-- plans until collection finishes so another plan cannot report early success.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_environment_variable_purges_inflight
+    ON environment_variable_purges((1)) WHERE state IN ('prepared','rewriting','reclaim_pending');
 CREATE INDEX IF NOT EXISTS idx_environment_variable_purges_state ON environment_variable_purges(state,id);
 CREATE INDEX IF NOT EXISTS idx_environment_variable_purges_environment ON environment_variable_purges(environment_id,id);
 CREATE TABLE IF NOT EXISTS environment_revision_purges (

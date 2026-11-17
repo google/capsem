@@ -15,13 +15,24 @@ use tracing::{info, warn};
 
 use super::bodies::BodyArchive;
 use super::retention::{retain_bodies, RetainOutcome};
-use super::{FlushOutcome, RetainReply, WriteEnvelope, WriterMessage};
+use super::{FlushOutcome, PurgeReply, RetainReply, WriteEnvelope, WriterMessage};
 
 /// Barrier requests collected from one drain of the writer channel.
 #[derive(Default)]
 pub(super) struct Barriers {
     flushes: Vec<tokio::sync::oneshot::Sender<FlushOutcome>>,
-    retains: Vec<(String, RetainReply)>,
+    maintenance: Vec<Maintenance>,
+}
+
+enum Maintenance {
+    Retain {
+        cutoff: String,
+        reply: RetainReply,
+    },
+    Purge {
+        execution: crate::events::environment::purge::EnvironmentVariablePurgeExecution,
+        reply: PurgeReply,
+    },
 }
 
 impl Barriers {
@@ -42,8 +53,12 @@ impl Barriers {
                 self.flushes.push(reply);
                 true
             }
+            WriterMessage::Purge { execution, reply } => {
+                self.maintenance.push(Maintenance::Purge { execution, reply });
+                true
+            }
             WriterMessage::Retain { cutoff, reply } => {
-                self.retains.push((cutoff, reply));
+                self.maintenance.push(Maintenance::Retain { cutoff, reply });
                 true
             }
         }
@@ -51,7 +66,7 @@ impl Barriers {
 
     /// Whether anything is waiting, and so whether the disk flush is due.
     pub(super) fn waiting(&self) -> bool {
-        !self.flushes.is_empty() || !self.retains.is_empty()
+        !self.flushes.is_empty() || !self.maintenance.is_empty()
     }
 
     /// Answer every waiting request now that the flush has run.
@@ -64,15 +79,26 @@ impl Barriers {
         for reply in self.flushes.drain(..) {
             let _ = reply.send(flush.clone());
         }
-        for (cutoff, reply) in self.retains.drain(..) {
-            let outcome = match flush {
-                Err(error) => Err(format!(
-                    "session body retention skipped, the ledger did not flush: {error}"
-                )),
-                Ok(()) => retain_bodies(conn, bodies, &cutoff),
-            };
-            report(&cutoff, &outcome);
-            let _ = reply.send(outcome);
+        for request in self.maintenance.drain(..) {
+            match request {
+                Maintenance::Retain { cutoff, reply } => {
+                    let outcome = match flush {
+                        Err(error) => Err(format!(
+                            "session body retention skipped, the ledger did not flush: {error}"
+                        )),
+                        Ok(()) => retain_bodies(conn, bodies, &cutoff),
+                    };
+                    report(&cutoff, &outcome);
+                    let _ = reply.send(outcome);
+                }
+                Maintenance::Purge { execution, reply } => {
+                    let outcome = match flush {
+                        Err(_) => Err("variable history purge requires a successful ledger durability barrier".into()),
+                        Ok(()) => super::environment_purges::rewrite::run(conn, bodies, &execution),
+                    };
+                    let _ = reply.send(outcome);
+                }
+            }
         }
     }
 }

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: Ledger-owned variable history purge rewrites compressed snapshots and proposals while preserving unrelated fields and history identities. Removed values disable replay, stale affected pending proposals, and report cleanup pending until captured readers release old archive generations.
+
 - Added: Durable per-sandbox configuration application results with independent boot, live-policy, and desired revisions, atomic reference updates, explicit failures and retries, and retained reconstruction dependencies.
 
 - Added: Durable configuration request review deadlines and explicit expired/stale outcomes that preserve original approval attribution and prevent late resolution or application.

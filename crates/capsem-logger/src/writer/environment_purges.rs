@@ -37,6 +37,13 @@ pub(super) fn prepare(
             Err(invalid("environment variable purge intent is immutable"))
         };
     }
+    let purge_inflight: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM main.environment_variable_purges WHERE state IN ('prepared','rewriting','reclaim_pending'))", [], |row| row.get(0))?;
+    if purge_inflight {
+        return Err(invalid(
+            "previous variable purge must finish reclamation before another plan",
+        ));
+    }
     let inflight:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM main.environment_revisions WHERE environment_id=?1 AND state='committing' UNION ALL SELECT 1 FROM mem.environment_revisions WHERE environment_id=?1 AND state='committing')",
         [&intent.environment_id],|row|row.get(0))?;
     if inflight {
@@ -159,3 +166,5 @@ pub(super) fn prepare(
         },
     )
 }
+
+pub(super) mod rewrite;

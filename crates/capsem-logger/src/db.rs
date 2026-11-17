@@ -865,11 +865,11 @@ mod bodies;
 mod environment;
 mod host;
 pub use crate::events::environment::application::EnvironmentApplicationRecord;
-pub use environment::applications::EnvironmentApplicationQuery;
 pub use crate::events::environment::purge::EnvironmentVariablePurgeRecord;
+pub use environment::applications::EnvironmentApplicationQuery;
+pub(crate) use environment::applications::{decode_application_row, APPLICATION_COLUMNS};
 pub use environment::purges::EnvironmentVariablePurgeQuery;
 pub(crate) use environment::purges::{decode_purge_row, PURGE_COLUMNS};
-pub(crate) use environment::applications::{decode_application_row, APPLICATION_COLUMNS};
 pub use environment::references::{EnvironmentReferenceQuery, EnvironmentReferenceRecord};
 pub use environment::requests::{EnvironmentRequestQuery, EnvironmentRequestRecord, EnvironmentRequestSnapshot};
 pub use environment::{EnvironmentRevisionQuery, EnvironmentRevisionRecord, EnvironmentRevisionSnapshot};
@@ -878,6 +878,13 @@ mod maintenance;
 mod reader_worker;
 mod warc_export;
 
+pub(crate) use bodies::bounded_sql_text as archive_sql_text;
+#[cfg(test)]
+pub(crate) use bodies::pause_next_archive_capture_for_tests;
+pub(crate) use bodies::{
+    index_row_sql as archive_index_row, read_one as read_archive_index, INDEX_COLUMNS as ARCHIVE_INDEX_COLUMNS,
+    INDEX_FROM as ARCHIVE_INDEX_FROM,
+};
 pub use bodies::{ArchivedBodies, BodyDirection, StoredBody};
 use hot_counters::HotCounters;
 pub use maintenance::snapshot_session_ledger;

@@ -27,10 +27,10 @@ use flush::flush_dirty_tables_to_disk;
 use flush::{flush_dirty_tables_to_disk_recorded, FlushRequest};
 mod environment;
 mod environment_applications;
-mod environment_references;
-mod environment_retention;
 mod environment_purges;
+mod environment_references;
 mod environment_requests;
+mod environment_retention;
 mod legacy;
 mod model_rows;
 mod producer;
@@ -251,6 +251,8 @@ type FlushOutcome = Result<(), String>;
 
 /// What one retention request reports back.
 type RetainReply = tokio::sync::oneshot::Sender<Result<RetainOutcome, String>>;
+type PurgeReply =
+    tokio::sync::oneshot::Sender<Result<crate::events::environment::purge::EnvironmentVariablePurgeRecord, String>>;
 
 /// What the writer thread is asked to do. An enum rather than a pair of
 /// options: every payload combination it can hold is now one the loop has to
@@ -281,6 +283,10 @@ enum WriterMessage {
         cutoff: String,
         reply: RetainReply,
     },
+    Purge {
+        execution: crate::events::environment::purge::EnvironmentVariablePurgeExecution,
+        reply: PurgeReply,
+    },
 }
 
 impl WriterMessage {
@@ -300,7 +306,7 @@ impl WriterMessage {
         match self {
             Self::Write(_) => 1,
             Self::WriteBatch(writes) => writes.len(),
-            Self::Flush(_) | Self::Retain { .. } => 0,
+            Self::Flush(_) | Self::Retain { .. } | Self::Purge { .. } => 0,
         }
     }
 }

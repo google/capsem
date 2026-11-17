@@ -19,7 +19,7 @@ const MAX_LEDGER_COLUMN_BYTES: usize = 128;
 const MAX_LEDGER_CELL_BYTES: usize = 1024 * 1024;
 const MAX_LEDGER_RESULT_SETS: usize = 16;
 const MAX_EVENT_ID_BYTES: usize = 12;
-const MAX_TIMESTAMP_BYTES: usize = 64;
+pub(crate) const MAX_TIMESTAMP_BYTES: usize = 64;
 const SNAPSHOT_ID_BYTES: usize = 16;
 
 pub type LedgerResponse = capsem_proto::ledger::LedgerResponse<LedgerReply>;

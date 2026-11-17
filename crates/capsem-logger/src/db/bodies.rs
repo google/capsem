@@ -85,16 +85,16 @@ pub struct ArchivedBodies {
 const MAX_EVENT_IDS_PER_QUERY: usize = 997;
 
 /// An index row, before its bytes are fetched.
-pub(super) struct IndexRow {
-    pub(super) event_id: String,
-    pub(super) source_table: String,
-    pub(super) direction: BodyDirection,
-    pub(super) content_type: Option<String>,
-    pub(super) original_bytes: u64,
-    pub(super) truncated: bool,
-    pub(super) body_hash: String,
-    pub(super) reference: BodyRef,
-    pub(super) extent: BlockExtent,
+pub(crate) struct IndexRow {
+    pub(crate) event_id: String,
+    pub(crate) source_table: String,
+    pub(crate) direction: BodyDirection,
+    pub(crate) content_type: Option<String>,
+    pub(crate) original_bytes: u64,
+    pub(crate) truncated: bool,
+    pub(crate) body_hash: String,
+    pub(crate) reference: BodyRef,
+    pub(crate) extent: BlockExtent,
 }
 
 pub(super) struct CapturedBodies {
@@ -177,10 +177,10 @@ pub(super) fn pause_archive_capture_for_tests(_db_path: &std::path::Path) {}
 /// The ten index columns, in the order [`index_row`] reads them. A query that
 /// carries extra columns of its own -- the WARC export joins each body to its
 /// source row -- puts them after these.
-pub(super) const INDEX_COLUMNS: &str = "b.event_id, b.source_table, b.direction, b.content_type, b.original_bytes, \
+pub(crate) const INDEX_COLUMNS: &str = "b.event_id, b.source_table, b.direction, b.content_type, b.original_bytes, \
                                         b.truncated, b.body_hash, b.block_offset, b.body_offset, b.body_len, \
                                         blocks.disk_len, blocks.raw_len";
-pub(super) const INDEX_FROM: &str =
+pub(crate) const INDEX_FROM: &str =
     "event_body_blobs AS b JOIN body_blocks AS blocks ON blocks.block_offset = b.block_offset";
 
 /// Rows are ordered by block so the reader inflates each block once: the
@@ -411,7 +411,7 @@ impl BodyFault {
     }
 }
 
-pub(super) fn read_one(reader: &BodyLogReader, row: IndexRow) -> DbResult<StoredBody> {
+pub(crate) fn read_one(reader: &BodyLogReader, row: IndexRow) -> DbResult<StoredBody> {
     read_one_checked(reader, row).map_err(BodyFault::into_message)
 }
 
@@ -572,7 +572,7 @@ pub(super) fn sqlite_params(params: &[Value]) -> Vec<Box<dyn rusqlite::types::To
         .collect()
 }
 
-pub(super) fn index_row_sql(row: &Row<'_>) -> DbResult<IndexRow> {
+pub(crate) fn index_row_sql(row: &Row<'_>) -> DbResult<IndexRow> {
     let direction_text = bounded_sql_text(row, 2, 32)?;
     let direction = BodyDirection::parse(&direction_text)
         .ok_or_else(|| format!("body index row has unknown direction {direction_text}"))?;
@@ -603,7 +603,7 @@ pub(super) fn index_row_sql(row: &Row<'_>) -> DbResult<IndexRow> {
     })
 }
 
-pub(super) fn bounded_sql_text(row: &Row<'_>, index: usize, max: usize) -> DbResult<String> {
+pub(crate) fn bounded_sql_text(row: &Row<'_>, index: usize, max: usize) -> DbResult<String> {
     match row.get_ref(index).map_err(|error| error.to_string())? {
         rusqlite::types::ValueRef::Text(bytes) if bytes.len() <= max => std::str::from_utf8(bytes)
             .map(str::to_owned)

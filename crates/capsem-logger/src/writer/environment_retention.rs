@@ -111,14 +111,20 @@ pub(super) fn prepare(conn: &Connection, cutoff: &str) -> rusqlite::Result<bool>
          SELECT 'environment_revisions',r.payload_event_id FROM environment_revisions r
          JOIN retained_environment_nodes c ON c.kind='revision'
              AND c.environment_id=r.environment_id AND c.node_id=r.revision_id
-         WHERE r.replayable=1 OR EXISTS (
+         WHERE r.replayable=1 OR (EXISTS (
+             SELECT 1 FROM environment_revision_purges m JOIN environment_variable_purges p ON p.purge_id=m.purge_id
+             WHERE m.revision_id=r.revision_id AND p.state IN ('reclaim_pending','committed')) AND EXISTS (
+             SELECT 1 FROM event_body_blobs b WHERE b.source_table='environment_revisions' AND b.event_id=r.payload_event_id AND b.direction='payload')) OR EXISTS (
              SELECT 1 FROM environment_variable_purges p WHERE p.state IN ('prepared','rewriting')
              AND (p.source_revision_id=r.revision_id OR EXISTS (
                  SELECT 1 FROM environment_revision_purges m WHERE m.purge_id=p.purge_id AND m.revision_id=r.revision_id)));
          INSERT INTO retained_environment_payloads
          SELECT 'environment_requests',q.payload_event_id FROM environment_requests q
          JOIN retained_environment_nodes c ON c.kind='request' AND c.node_id=q.request_id
-         WHERE q.replayable=1 OR EXISTS (
+         WHERE q.replayable=1 OR (EXISTS (
+             SELECT 1 FROM environment_request_purges m JOIN environment_variable_purges p ON p.purge_id=m.purge_id
+             WHERE m.request_id=q.request_id AND p.state IN ('reclaim_pending','committed')) AND EXISTS (
+             SELECT 1 FROM event_body_blobs b WHERE b.source_table='environment_requests' AND b.event_id=q.payload_event_id AND b.direction='payload')) OR EXISTS (
              SELECT 1 FROM environment_request_purges m JOIN environment_variable_purges p ON p.purge_id=m.purge_id
              WHERE m.request_id=q.request_id AND p.state IN ('prepared','rewriting'));",
     )?;

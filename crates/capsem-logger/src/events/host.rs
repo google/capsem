@@ -37,10 +37,11 @@ pub enum HostEventKind {
     EnvironmentReferenceChanged,
     EnvironmentApplicationChanged,
     EnvironmentVariablePurgePrepared,
+    EnvironmentVariablePurgeChanged,
 }
 
 impl HostEventKind {
-    pub const ALL: [Self; 26] = [
+    pub const ALL: [Self; 27] = [
         Self::SessionCreated,
         Self::SessionStarted,
         Self::SessionStopped,
@@ -67,6 +68,7 @@ impl HostEventKind {
         Self::EnvironmentReferenceChanged,
         Self::EnvironmentApplicationChanged,
         Self::EnvironmentVariablePurgePrepared,
+        Self::EnvironmentVariablePurgeChanged,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -94,6 +96,7 @@ impl HostEventKind {
             Self::EnvironmentRequestInvalidated => "environment_request_invalidated",
             Self::EnvironmentRequestDecided => "environment_request_decided",
             Self::EnvironmentRequestResultBound => "environment_request_result_bound",
+            Self::EnvironmentVariablePurgeChanged => "environment_variable_purge_changed",
             Self::EnvironmentVariablePurgePrepared => "environment_variable_purge_prepared",
             Self::EnvironmentApplicationChanged => "environment_application_changed",
             Self::EnvironmentReferenceChanged => "environment_reference_changed",
