@@ -3,23 +3,14 @@ import type {CallToolResult} from '@modelcontextprotocol/sdk/types.js';
 
 type Structured = Record<string, unknown>;
 
-/**
- * Largest structured result also mirrored into `content[0].text`. Beyond it
- * the agent would pay twice for one read; `structuredContent` still carries
- * the whole value.
- */
-export const MAX_MIRRORED_TEXT_BYTES = 16 * 1024;
-
 /** Set to any value to write gateway failure bodies to stderr. */
 export const DIAGNOSTICS_ENV = 'CAPSEM_MCP_DEBUG';
 
 export function success(value: Structured): CallToolResult {
-  const text = JSON.stringify(value);
-  const mirrored = text.length <= MAX_MIRRORED_TEXT_BYTES
-    ? text
-    : `${text.length} bytes of JSON in structuredContent`;
+  // The SDK transport serializes the complete structured result once. A
+  // second JSON text mirror or size-dependent summary adds no tool content.
   return {
-    content: [{type: 'text', text: mirrored}],
+    content: [],
     structuredContent: value,
   };
 }

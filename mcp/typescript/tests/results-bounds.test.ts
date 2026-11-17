@@ -1,22 +1,44 @@
 import {HttpError} from '@capsem/sdk';
+import {Client} from '@modelcontextprotocol/sdk/client/index.js';
+import {InMemoryTransport} from '@modelcontextprotocol/sdk/inMemory.js';
+import {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js';
 import {afterEach, expect, it, vi} from 'vitest';
-import {DIAGNOSTICS_ENV, MAX_MIRRORED_TEXT_BYTES, failure, success} from '../src/results.js';
+import {DIAGNOSTICS_ENV, failure, success} from '../src/results.js';
 
 afterEach(() => {vi.restoreAllMocks(); vi.unstubAllEnvs();});
 
-// A large result was serialized twice: once as structuredContent and again as
-// content[0].text, doubling what an agent pays for one read.
-it('mirrors a small result as text but not a large one', () => {
-  const small = success({path: '/etc/hostname', content: 'box'});
-  expect(small.content[0]).toEqual({type: 'text', text: JSON.stringify({path: '/etc/hostname', content: 'box'})});
+it.each([1, 65_536])('preserves complete structured content without a mirror (%i Unicode units)', length => {
+  const value = {path: '/workspace/result', content: '🧪'.repeat(length), nested: {complete: true}};
+  const result = success(value);
+  expect(result.content).toEqual([]);
+  expect(result.structuredContent).toBe(value);
+});
 
-  const large = success({content: 'x'.repeat(MAX_MIRRORED_TEXT_BYTES + 1)});
-  expect(large.structuredContent).toEqual({content: 'x'.repeat(MAX_MIRRORED_TEXT_BYTES + 1)});
-  const text = large.content[0];
-  expect(text?.type).toBe('text');
-  const mirrored = text?.type === 'text' ? text.text : '';
-  expect(mirrored).toMatch(/structuredContent/);
-  expect(mirrored.length).toBeLessThan(MAX_MIRRORED_TEXT_BYTES);
+it('leaves the single payload serialization to the MCP transport', () => {
+  const stringify = vi.spyOn(JSON, 'stringify');
+  const value = {content: 'complete result'};
+  const result = success(value);
+  expect(stringify).not.toHaveBeenCalled();
+  expect(result.structuredContent).toBe(value);
+});
+
+it('returns complete unmirrored structured content through the standard MCP SDK', async () => {
+  const value = {content: '🧪 complete result\n'.repeat(8192), nested: {complete: true}};
+  const server = new McpServer({name: 'result-test', version: '1'});
+  server.registerTool('result_probe', {description: 'Return the complete structured result'}, () => success(value));
+  const client = new Client({name: 'result-client', version: '1'});
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const result = await client.callTool({name: 'result_probe'});
+    expect(result.isError).not.toBe(true);
+    expect(result.content).toEqual([]);
+    expect(result.structuredContent).toEqual(value);
+  } finally {
+    await client.close();
+    await server.close();
+  }
 });
 
 // stdout is the MCP protocol channel, so diagnostics go to stderr. The tool
