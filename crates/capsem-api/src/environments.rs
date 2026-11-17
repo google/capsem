@@ -4,6 +4,26 @@ pub use capsem_config::environment::*;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+/// Canonical current content verified against the committed host-ledger revision.
+/// Effective corporate policy is a separate view of this same revision.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EnvironmentCurrentResponse {
+    pub document: EnvironmentDocument,
+    pub timestamp_unix_ms: i64,
+    pub actor: String,
+    pub reason: String,
+    pub request_id: Option<String>,
+}
+impl std::fmt::Debug for EnvironmentCurrentResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EnvironmentCurrentResponse")
+            .field("environment_id", &self.document.identity.id)
+            .field("revision_id", &self.document.identity.revision_id)
+            .finish_non_exhaustive()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentSandboxTarget {
