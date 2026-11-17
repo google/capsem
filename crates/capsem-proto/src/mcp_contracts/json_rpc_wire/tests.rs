@@ -60,11 +60,11 @@ fn unused_identity_allowance_cannot_admit_oversized_content_or_duplicate_ids() {
 }
 
 #[test]
-fn unknown_error_identity_is_explicit_null_and_response_fields_survive() {
+fn unknown_error_identity_is_omitted_and_response_fields_survive() {
     let response = JsonRpcResponse::err(None, -32700, "parse error");
     let bytes = encode_response(&response).unwrap();
     let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert!(value.get("id").unwrap().is_null());
+    assert!(value.get("id").is_none());
     assert_eq!(value["error"]["message"], "parse error");
     let mut response = JsonRpcResponse::ok(Some(serde_json::json!("id")), serde_json::json!({"complete":"🧪"}));
     response.meta = Some(super::super::JsonRpcMeta {

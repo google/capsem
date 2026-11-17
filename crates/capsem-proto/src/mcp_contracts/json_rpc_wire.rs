@@ -75,15 +75,11 @@ impl Serialize for Content<'_> {
 /// escaped guest ID cannot shrink the usable content ceiling. No sizing pass,
 /// content clone or payload-to-frame copy is involved.
 pub fn encode_response(response: &JsonRpcResponse) -> io::Result<Vec<u8>> {
-    if response
-        .id
-        .as_ref()
-        .is_some_and(|id| !is_valid_mcp_request_id(id) && !(response.error.is_some() && id.is_null()))
-    {
+    if response.id.as_ref().is_some_and(|id| !is_valid_mcp_request_id(id)) {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid MCP response ID"));
     }
     let mut bytes = crate::framing::encode_json_record(&Content(response), MCP_PAYLOAD_MAX_BYTES)?;
-    if response.id.is_some() || response.error.is_some() {
+    if response.id.is_some() {
         bytes.pop(); // Replace the final object delimiter, retaining its storage.
         let mut out = FinalBuffer::new(&mut bytes, MCP_JSON_RPC_MAX_BYTES);
         out.write_all(b",\"id\":")?;
