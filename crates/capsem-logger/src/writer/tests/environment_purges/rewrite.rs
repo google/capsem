@@ -624,3 +624,5 @@ async fn variable_purge_rewrite_stales_source_and_base_dependencies_without_reda
 
 mod history;
 mod request_history;
+
+mod warc;

@@ -371,16 +371,6 @@ fn active_warc_export_process_limit() -> usize {
         MAX_WARC_EXPORTS_PER_PROCESS
     }
 }
-const SOURCE_TABLES: &[&str] = &[
-    "net_events",
-    "model_calls",
-    "tool_calls",
-    "tool_responses",
-    "exec_events",
-    "security_rule_events",
-    "security_decision_events",
-    "security_ask_events",
-];
 
 fn warc_page_sql() -> String {
     format!(
@@ -470,83 +460,6 @@ pub(super) fn capture_warc(
         .seek(SeekFrom::Start(0))
         .map_err(|error| format!("rewind WARC metadata spool: {error}"))?;
     Ok(CapturedWarc { reader, spool })
-}
-
-fn source_metadata(
-    conn: &Connection,
-    index: &IndexRow,
-    created_at: &str,
-) -> DbResult<(Option<String>, Option<String>, Option<i64>)> {
-    if !SOURCE_TABLES.contains(&index.source_table.as_str()) {
-        return Err(format!(
-            "archive index has unsupported source table {}",
-            index.source_table
-        ));
-    }
-    let text = |sql: &str| -> DbResult<Option<(String, String)>> {
-        conn.query_row(sql, [&index.event_id], |row| {
-            Ok((bounded_text(row, 0)?, bounded_text(row, 1)?))
-        })
-        .optional()
-        .map_err(|error| error.to_string())
-    };
-    let millis = |sql: &str| -> DbResult<Option<(String, i64)>> {
-        conn.query_row(sql, [&index.event_id], |row| Ok((bounded_text(row, 0)?, row.get(1)?)))
-            .optional()
-            .map_err(|error| error.to_string())
-    };
-    match index.source_table.as_str() {
-        "net_events" => Ok(text(
-            "SELECT 'https://' || domain || COALESCE(path, ''), timestamp
-             FROM net_events WHERE event_id = ?1 ORDER BY id LIMIT 1",
-        )?
-        .map_or((None, None, None), |(uri, date)| (Some(uri), Some(date), None))),
-        "model_calls" => Ok(text(
-            "SELECT 'https://' || provider || path, timestamp
-             FROM model_calls WHERE event_id = ?1 ORDER BY id LIMIT 1",
-        )?
-        .map_or((None, None, None), |(uri, date)| (Some(uri), Some(date), None))),
-        "tool_calls" => Ok(text(
-            "SELECT 'capsem://tool/' || tool_name, timestamp
-             FROM tool_calls WHERE event_id = ?1 ORDER BY id LIMIT 1",
-        )?
-        .map_or((None, None, None), |(uri, date)| (Some(uri), Some(date), None))),
-        "tool_responses" => {
-            let uri = conn
-                .query_row(
-                    "SELECT 'capsem://tool-response/' || call_id
-                     FROM tool_responses WHERE event_id = ?1 ORDER BY id LIMIT 1",
-                    [&index.event_id],
-                    |row| bounded_text(row, 0),
-                )
-                .optional()
-                .map_err(|error| error.to_string())?;
-            Ok((uri, Some(created_at.to_string()), None))
-        }
-        "exec_events" => Ok(text(
-            "SELECT 'capsem://exec/' || exec_id, timestamp
-             FROM exec_events WHERE event_id = ?1 ORDER BY id LIMIT 1",
-        )?
-        .map_or((None, None, None), |(uri, date)| (Some(uri), Some(date), None))),
-        "security_rule_events" => Ok(millis(
-            "SELECT 'capsem://security/' || rule_id, timestamp_unix_ms
-             FROM security_rule_events WHERE event_id = ?1 ORDER BY id LIMIT 1",
-        )?
-        .map_or((None, None, None), |(uri, date)| (Some(uri), None, Some(date)))),
-        "security_decision_events" => Ok(millis(
-            "SELECT 'capsem://security-decision/' || COALESCE(event.actor, run.actor), event.timestamp_unix_ms
-             FROM security_decision_events AS event
-             LEFT JOIN security_decision_runs AS run ON run.id = event.run_id
-             WHERE event.event_id = ?1 ORDER BY event.id LIMIT 1",
-        )?
-        .map_or((None, None, None), |(uri, date)| (Some(uri), None, Some(date)))),
-        "security_ask_events" => Ok(millis(
-            "SELECT 'capsem://security-ask/' || ask_id, timestamp_unix_ms
-             FROM security_ask_events WHERE event_id = ?1 ORDER BY id LIMIT 1",
-        )?
-        .map_or((None, None, None), |(uri, date)| (Some(uri), None, Some(date)))),
-        table => unreachable!("{table} was checked against SOURCE_TABLES"),
-    }
 }
 
 fn bounded_text(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<String> {
@@ -998,3 +911,8 @@ impl<W: Write> Write for CountingWriter<W> {
 }
 #[cfg(test)]
 mod tests;
+
+mod sources;
+use sources::source_metadata;
+#[cfg(test)]
+use sources::SOURCE_TABLES;

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fixed: Include environment revision and request bodies in WARC exports, retaining their identity and original timestamp and marking purged bodies as non-replayable.
+
 - Fixed: Publish older buffered host events together with durable control audits so cursor readers cannot skip events that become visible out of order. Rollback restores the whole pending prefix.
 
 - Security: Reject producer-submitted environment control audit events, including claimed purge completion and operator attribution. Only authenticated coordinator channels may write that evidence.
