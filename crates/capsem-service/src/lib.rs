@@ -8,6 +8,7 @@
 
 pub mod api;
 pub mod environment_files;
+pub mod environment_revisions;
 pub mod errors;
 pub mod fs_utils;
 pub mod lifecycle;
