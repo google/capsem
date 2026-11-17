@@ -272,6 +272,9 @@ fn environment_editor_metadata_reuses_compiled_runtime_limits() {
     assert_eq!(limits.max_repositories, ENVIRONMENT_MAX_REPOSITORIES);
     assert_eq!(limits.max_spec_bytes, ENVIRONMENT_MAX_SPEC_BYTES);
     assert_eq!(limits.max_rules, ENVIRONMENT_MAX_RULES);
+    assert_eq!(limits.max_mcp_servers, ENVIRONMENT_MAX_MCP_SERVERS);
+    assert_eq!(limits.max_mcp_arguments, ENVIRONMENT_MAX_MCP_ARGUMENTS);
+    assert_eq!(limits.max_mcp_tool_overrides, ENVIRONMENT_MAX_MCP_TOOL_OVERRIDES);
     assert_eq!(limits.max_rule_bytes, ENVIRONMENT_MAX_RULE_BYTES);
     assert_eq!(limits.max_configuration_entries, ENVIRONMENT_MAX_CONFIGURATION_ENTRIES);
     assert_eq!(
@@ -340,3 +343,5 @@ fn environment_draft_refuses_caller_resolution_identity_and_invalid_fields() {
 mod catalog;
 
 mod rules;
+
+mod mcps;

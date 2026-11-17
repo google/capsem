@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 mod catalog;
+mod mcps;
 mod rules;
+pub use mcps::{EnvironmentCapabilityDecision, EnvironmentMcpDefinition, EnvironmentMcpPermissions, EnvironmentMcps};
 pub use rules::{
     EnvironmentAccessRule, EnvironmentAccessRules, EnvironmentDetectionRule, EnvironmentDetectionRules,
     EnvironmentRuleParameter, EnvironmentRules,
@@ -54,6 +56,8 @@ pub struct EnvironmentSpecification<I = EnvironmentImage, R = EnvironmentReposit
     pub access: EnvironmentAccessRules<C>,
     #[serde(default)]
     pub detection: EnvironmentDetectionRules<C>,
+    #[serde(default)]
+    pub mcps: EnvironmentMcps<C>,
 }
 
 /// Agent/operator intent has selectors, never self-attested resolution metadata.
@@ -198,6 +202,7 @@ impl<I, R, C> std::fmt::Debug for EnvironmentSpecification<I, R, C> {
             .field("binding_count", &self.secrets.len())
             .field("repository_count", &self.repositories.len())
             .field("skill_count", &self.skills.selected.len())
+            .field("mcp_server_count", &self.mcps.servers.len())
             .field("has_image", &self.image.is_some())
             .field("has_startup", &self.startup.is_some())
             .finish_non_exhaustive()
@@ -231,6 +236,9 @@ pub struct EnvironmentLimits {
     pub max_rule_bytes: usize,
     pub max_configuration_entries: usize,
     pub max_configuration_text_bytes: usize,
+    pub max_mcp_servers: usize,
+    pub max_mcp_arguments: usize,
+    pub max_mcp_tool_overrides: usize,
 }
 
 impl EnvironmentLimits {
@@ -251,5 +259,8 @@ impl EnvironmentLimits {
         max_rule_bytes: capsem_proto::ENVIRONMENT_MAX_RULE_BYTES,
         max_configuration_entries: capsem_proto::ENVIRONMENT_MAX_CONFIGURATION_ENTRIES,
         max_configuration_text_bytes: capsem_proto::ENVIRONMENT_MAX_CONFIGURATION_TEXT_BYTES,
+        max_mcp_servers: capsem_proto::ENVIRONMENT_MAX_MCP_SERVERS,
+        max_mcp_arguments: capsem_proto::ENVIRONMENT_MAX_MCP_ARGUMENTS,
+        max_mcp_tool_overrides: capsem_proto::ENVIRONMENT_MAX_MCP_TOOL_OVERRIDES,
     };
 }

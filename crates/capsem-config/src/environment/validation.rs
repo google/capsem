@@ -6,7 +6,7 @@ fn require(valid: bool, message: &'static str) -> Result<(), String> {
     valid.then_some(()).ok_or_else(|| message.into())
 }
 
-fn canonical_uuid(value: &str) -> bool {
+pub(super) fn canonical_uuid(value: &str) -> bool {
     uuid::Uuid::parse_str(value).is_ok_and(|id| {
         (1..=8).contains(&id.get_version_num()) && id.get_variant() == uuid::Variant::RFC4122 && id.to_string() == value
     })
@@ -64,44 +64,7 @@ impl<I, R, C> EnvironmentSpecification<I, R, C> {
             self.description.len() <= ENVIRONMENT_MAX_DESCRIPTION_BYTES && text(&self.description),
             "invalid environment description",
         )?;
-        require(
-            self.variables.len() <= ENVIRONMENT_MAX_VARIABLES && self.secrets.len() <= ENVIRONMENT_MAX_VARIABLES,
-            "environment variable or binding count exceeds its limit",
-        )?;
-        let mut total = 0usize;
-        let mut names = BTreeSet::new();
-        for (name, value) in &self.variables {
-            require(variable_name(name), "invalid environment variable name")?;
-            require(
-                value.len() <= ENVIRONMENT_MAX_VARIABLE_VALUE_BYTES && validate_env_value(value).is_ok(),
-                "invalid environment variable value",
-            )?;
-            total = total
-                .checked_add(name.len())
-                .and_then(|total| total.checked_add(value.len()))
-                .ok_or("environment variable aggregate overflow")?;
-            require(
-                total <= ENVIRONMENT_MAX_VARIABLE_TOTAL_BYTES,
-                "environment variables exceed their aggregate byte limit",
-            )?;
-            names.insert(name.as_str());
-        }
-        for (alias, binding) in &self.secrets {
-            require(
-                crate::validate_identifier_shape(alias).is_ok() && canonical_uuid(&binding.binding_id),
-                "invalid environment binding reference",
-            )?;
-            if let Some(name) = &binding.env_name {
-                require(
-                    variable_name(name) && names.insert(name.as_str()),
-                    "invalid or colliding environment binding variable name",
-                )?;
-            }
-        }
-        require(
-            names.len() <= ENVIRONMENT_MAX_VARIABLES,
-            "injected environment variables exceed their count limit",
-        )?;
+        validate_values(&self.variables, &self.secrets)?;
         if let Some(startup) = &self.startup {
             require(self.image.is_some(), "environment startup requires an OCI image")?;
             require(
@@ -194,6 +157,12 @@ impl EnvironmentSpecification {
     pub fn validate(&self) -> Result<(), String> {
         self.validate_common()?;
         self.skills.validate()?;
+        self.mcps.catalog.validate()?;
+        mcps::validate(
+            &self.mcps,
+            self.mcps.catalog.selected.iter().map(|entry| entry.id.as_str()),
+            self.image.is_some(),
+        )?;
         self.access.catalog.validate()?;
         self.detection.catalog.validate()?;
         rules::access(
@@ -243,6 +212,12 @@ impl EnvironmentDraft {
     pub fn validate(&self) -> Result<(), String> {
         self.validate_common()?;
         self.skills.validate()?;
+        self.mcps.catalog.validate()?;
+        mcps::validate(
+            &self.mcps,
+            self.mcps.catalog.selected.iter().map(|entry| entry.id.as_str()),
+            self.image.is_some(),
+        )?;
         self.access.catalog.validate()?;
         self.detection.catalog.validate()?;
         rules::access(
@@ -264,4 +239,49 @@ impl EnvironmentDraft {
             )
         }))
     }
+}
+
+pub(super) fn validate_values(
+    variables: &BTreeMap<String, String>,
+    secrets: &BTreeMap<String, EnvironmentSecretBinding>,
+) -> Result<(), String> {
+    require(
+        variables.len() <= ENVIRONMENT_MAX_VARIABLES && secrets.len() <= ENVIRONMENT_MAX_VARIABLES,
+        "environment variable or binding count exceeds its limit",
+    )?;
+    let mut total = 0usize;
+    let mut names = BTreeSet::new();
+    for (name, value) in variables {
+        require(variable_name(name), "invalid environment variable name")?;
+        require(
+            value.len() <= ENVIRONMENT_MAX_VARIABLE_VALUE_BYTES && validate_env_value(value).is_ok(),
+            "invalid environment variable value",
+        )?;
+        total = total
+            .checked_add(name.len())
+            .and_then(|total| total.checked_add(value.len()))
+            .ok_or("environment variable aggregate overflow")?;
+        require(
+            total <= ENVIRONMENT_MAX_VARIABLE_TOTAL_BYTES,
+            "environment variables exceed their aggregate byte limit",
+        )?;
+        names.insert(name.as_str());
+    }
+    for (alias, binding) in secrets {
+        require(
+            crate::validate_identifier_shape(alias).is_ok() && canonical_uuid(&binding.binding_id),
+            "invalid environment binding reference",
+        )?;
+        if let Some(name) = &binding.env_name {
+            require(
+                variable_name(name) && names.insert(name.as_str()),
+                "invalid or colliding environment binding variable name",
+            )?;
+        }
+    }
+    require(
+        names.len() <= ENVIRONMENT_MAX_VARIABLES,
+        "injected environment variables exceed their count limit",
+    )?;
+    Ok(())
 }

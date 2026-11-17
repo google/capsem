@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: Environment-scoped remote and sandbox MCP definitions, catalog selections, per-server permissions and separate credential bindings, with bounded configuration and raw authentication-header rejection.
+
 - Added: Separate access and detection rule configuration in environment documents, with catalog selections, typed parameters, validated conditions and reserved corporate priorities.
 
 - Added: Pinned skill catalog selections in canonical environment documents, with selector-only drafts, bounded metadata and duplicate checks.
