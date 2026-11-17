@@ -50,6 +50,24 @@ pub(super) fn reader_loop(
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         };
         match request {
+            ReadRequest::EnvironmentRequests { query, reply } => {
+                let result = observe_change(&reader).and_then(|observed| {
+                    environment::requests::execute(&reader, &query).map(|value| Observed {
+                        changed: commit(&reader, observed),
+                        value,
+                    })
+                });
+                let _ = reply.send(result);
+            }
+            ReadRequest::EnvironmentRequestSnapshot { query, reply } => {
+                let result = observe_change(&reader).and_then(|observed| {
+                    environment::requests::capture(&reader, &path, &query, &codecs).map(|value| Observed {
+                        changed: commit(&reader, observed),
+                        value,
+                    })
+                });
+                let _ = reply.send(result);
+            }
             ReadRequest::EnvironmentSnapshot { query, reply } => {
                 let result = observe_change(&reader).and_then(|observed| {
                     environment::snapshot::capture(&reader, &path, &query, &codecs).map(|value| Observed {

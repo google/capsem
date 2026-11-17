@@ -3,6 +3,7 @@ use super::*;
 use crate::events::{EnvironmentRevisionParent, EnvironmentRevisionState};
 use serde::{Deserialize, Serialize};
 
+pub(super) mod requests;
 pub(super) mod snapshot;
 pub use snapshot::EnvironmentRevisionSnapshot;
 #[cfg(test)]
@@ -105,27 +106,29 @@ pub(super) fn execute(reader: &DbReader, query: &EnvironmentRevisionQuery) -> Db
     let started = Instant::now();
     let _deadline = reader.sql_deadline(started + super::bodies::INTERACTIVE_CAPTURE_DEADLINE);
     let result = query_rows(reader.connection(), query).map_err(|error| format!("environment revision query: {error}"));
+    record_metadata_query("environment_revision_execute", started, &result);
+    result
+}
+
+fn record_metadata_query<T>(phase: &'static str, started: Instant, result: &DbResult<Vec<T>>) {
     let status = if result.is_ok() { "ok" } else { "error" };
-    ::metrics::counter!(DB_QUERY_TOTAL, "phase" => "environment_revision_execute", "status" => status).increment(1);
-    ::metrics::histogram!(DB_QUERY_DURATION_MS, "phase" => "environment_revision_execute", "status" => status)
-        .record(elapsed_ms_f64(started));
-    match &result {
+    ::metrics::counter!(DB_QUERY_TOTAL, "phase" => phase, "status" => status).increment(1);
+    ::metrics::histogram!(DB_QUERY_DURATION_MS, "phase" => phase, "status" => status).record(elapsed_ms_f64(started));
+    match result {
         Ok(rows) => {
-            ::metrics::histogram!(DB_QUERY_RESULT_ROWS, "phase" => "environment_revision_execute")
-                .record(rows.len() as f64);
+            ::metrics::histogram!(DB_QUERY_RESULT_ROWS, "phase" => phase).record(rows.len() as f64);
             tracing::debug!(
-                operation = "environment_revision_query",
+                operation = phase,
                 rows = rows.len(),
                 duration_ms = elapsed_ms(started),
-                "environment revision metadata read"
+                "environment metadata read"
             );
         }
         Err(error) => {
-            tracing::error!(operation = "environment_revision_query", error = %error, duration_ms = elapsed_ms(started),
-            "environment revision metadata read failed")
+            tracing::error!(operation = phase, error = %error, duration_ms = elapsed_ms(started),
+            "environment metadata read failed")
         }
     }
-    result
 }
 
 const COLUMNS: &str = "id,environment_id,revision_id,previous_revision_id,fork_parent_environment_id,fork_parent_revision_id,timestamp_unix_ms,actor,reason,request_id,state,payload_event_id,replayable";

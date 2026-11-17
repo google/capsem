@@ -67,6 +67,8 @@ CREATE INDEX IF NOT EXISTS idx_environment_requests_environment
 -- Historical requests are unbounded; admission counts only the bounded pending set.
 CREATE INDEX IF NOT EXISTS idx_environment_requests_pending
     ON environment_requests(requester_session_id,id) WHERE state='pending';
+CREATE INDEX IF NOT EXISTS idx_environment_requests_requester
+    ON environment_requests(requester_session_id,requester_generation,id);
 
 CREATE TABLE IF NOT EXISTS environment_request_decisions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

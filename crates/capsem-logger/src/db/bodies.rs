@@ -603,23 +603,23 @@ pub(super) fn index_row_sql(row: &Row<'_>) -> DbResult<IndexRow> {
     })
 }
 
-fn bounded_sql_text(row: &Row<'_>, index: usize, max: usize) -> DbResult<String> {
+pub(super) fn bounded_sql_text(row: &Row<'_>, index: usize, max: usize) -> DbResult<String> {
     match row.get_ref(index).map_err(|error| error.to_string())? {
         rusqlite::types::ValueRef::Text(bytes) if bytes.len() <= max => std::str::from_utf8(bytes)
             .map(str::to_owned)
-            .map_err(|error| format!("body index column {index} is not UTF-8: {error}")),
+            .map_err(|error| format!("ledger text column {index} is not UTF-8: {error}")),
         rusqlite::types::ValueRef::Text(bytes) => Err(format!(
-            "body index column {index} exceeds its {max}-byte bound: {} bytes",
+            "ledger text column {index} exceeds its {max}-byte bound: {} bytes",
             bytes.len()
         )),
         value => Err(format!(
-            "body index column {index} is {:?}, not text",
+            "ledger text column {index} is {:?}, not text",
             value.data_type()
         )),
     }
 }
 
-fn bounded_optional_sql_text(row: &Row<'_>, index: usize, max: usize) -> DbResult<Option<String>> {
+pub(super) fn bounded_optional_sql_text(row: &Row<'_>, index: usize, max: usize) -> DbResult<Option<String>> {
     match row.get_ref(index).map_err(|error| error.to_string())? {
         rusqlite::types::ValueRef::Null => Ok(None),
         _ => bounded_sql_text(row, index, max).map(Some),
@@ -629,4 +629,42 @@ fn bounded_optional_sql_text(row: &Row<'_>, index: usize, max: usize) -> DbResul
 fn unsigned(row: &Row<'_>, index: usize, field: &str) -> DbResult<u64> {
     let value: i64 = row.get(index).map_err(|error| error.to_string())?;
     u64::try_from(value).map_err(|_| format!("body index row has a negative {field}"))
+}
+
+/// The required configuration index contract is shared by revision and request
+/// captures. All selectors run under the caller's pinned SQLite snapshot.
+pub(super) fn required_configuration_index(
+    connection: &rusqlite::Connection,
+    event_id: &str,
+    source: &'static str,
+) -> DbResult<IndexRow> {
+    let mut statement = connection
+        .prepare_cached(&format!(
+        "SELECT {INDEX_COLUMNS} FROM {INDEX_FROM} WHERE b.event_id=?1 AND b.source_table=?2 AND b.direction='payload'"
+    ))
+        .map_err(|error| format!("prepare required configuration payload: {error}"))?;
+    let mut rows = statement
+        .query([event_id, source])
+        .map_err(|error| format!("query required configuration payload: {error}"))?;
+    let index = rows
+        .next()
+        .map_err(|error| format!("read required configuration payload: {error}"))?
+        .ok_or("required configuration snapshot payload is missing")?;
+    let index = index_row_sql(index)?;
+    if index.truncated {
+        return Err("required configuration snapshot payload is truncated".into());
+    }
+    if index.original_bytes != u64::from(index.reference.len)
+        || u64::from(index.reference.len) > capsem_proto::ENVIRONMENT_MAX_SPEC_BYTES as u64
+    {
+        return Err("required configuration snapshot payload exceeds its byte contract".into());
+    }
+    if rows
+        .next()
+        .map_err(|error| format!("read required configuration payload uniqueness: {error}"))?
+        .is_some()
+    {
+        return Err("configuration record has multiple required snapshot payloads".into());
+    }
+    Ok(index)
 }

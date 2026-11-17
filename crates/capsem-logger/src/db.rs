@@ -126,6 +126,14 @@ pub(crate) struct ReaderIntrospection {
 }
 
 enum ReadRequest {
+    EnvironmentRequests {
+        query: EnvironmentRequestQuery,
+        reply: tokio::sync::oneshot::Sender<DbResult<Observed<Vec<EnvironmentRequestRecord>>>>,
+    },
+    EnvironmentRequestSnapshot {
+        query: EnvironmentRequestQuery,
+        reply: tokio::sync::oneshot::Sender<DbResult<Observed<Option<environment::requests::CapturedRequest>>>>,
+    },
     EnvironmentSnapshot {
         query: EnvironmentRevisionQuery,
         reply: tokio::sync::oneshot::Sender<DbResult<Observed<Option<environment::snapshot::CapturedRevision>>>>,
@@ -844,6 +852,7 @@ impl SessionDb {
 mod bodies;
 mod environment;
 mod host;
+pub use environment::requests::{EnvironmentRequestQuery, EnvironmentRequestRecord, EnvironmentRequestSnapshot};
 pub use environment::{EnvironmentRevisionQuery, EnvironmentRevisionRecord, EnvironmentRevisionSnapshot};
 mod hot_counters;
 mod maintenance;

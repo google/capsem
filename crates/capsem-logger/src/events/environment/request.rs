@@ -10,6 +10,54 @@ pub struct EnvironmentRequestTarget {
     pub generation: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EnvironmentRequestKind {
+    Change,
+    ImageUpdate,
+    Promotion,
+    Apply,
+}
+impl EnvironmentRequestKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Change => "change",
+            Self::ImageUpdate => "image_update",
+            Self::Promotion => "promotion",
+            Self::Apply => "apply",
+        }
+    }
+    pub fn parse_str(value: &str) -> Option<Self> {
+        [Self::Change, Self::ImageUpdate, Self::Promotion, Self::Apply]
+            .into_iter()
+            .find(|kind| kind.as_str() == value)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EnvironmentRequestState {
+    Pending,
+    Approved,
+    Denied,
+    Cancelled,
+}
+impl EnvironmentRequestState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Approved => "approved",
+            Self::Denied => "denied",
+            Self::Cancelled => "cancelled",
+        }
+    }
+    pub fn parse_str(value: &str) -> Option<Self> {
+        [Self::Pending, Self::Approved, Self::Denied, Self::Cancelled]
+            .into_iter()
+            .find(|state| state.as_str() == value)
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum EnvironmentRequestPayload {
@@ -31,10 +79,10 @@ pub enum EnvironmentRequestPayload {
 impl EnvironmentRequestPayload {
     pub fn kind(&self) -> &'static str {
         match self {
-            Self::Change { .. } => "change",
-            Self::ImageUpdate { .. } => "image_update",
-            Self::Promotion { .. } => "promotion",
-            Self::Apply { .. } => "apply",
+            Self::Change { .. } => EnvironmentRequestKind::Change.as_str(),
+            Self::ImageUpdate { .. } => EnvironmentRequestKind::ImageUpdate.as_str(),
+            Self::Promotion { .. } => EnvironmentRequestKind::Promotion.as_str(),
+            Self::Apply { .. } => EnvironmentRequestKind::Apply.as_str(),
         }
     }
 }
@@ -89,9 +137,9 @@ impl EnvironmentRequestDecisionKind {
     }
     pub fn state(self) -> &'static str {
         match self {
-            Self::Approve => "approved",
-            Self::Deny => "denied",
-            Self::Cancel => "cancelled",
+            Self::Approve => EnvironmentRequestState::Approved.as_str(),
+            Self::Deny => EnvironmentRequestState::Denied.as_str(),
+            Self::Cancel => EnvironmentRequestState::Cancelled.as_str(),
         }
     }
 }
