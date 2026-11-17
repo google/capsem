@@ -743,6 +743,15 @@ async fn host_environment_writes_never_enter_runtime_security_admission() {
             timestamp_unix_ms: 3,
             actor: "operator".into(),
         }),
+        WriteOp::EnvironmentRequestInvalidation(
+            capsem_logger::events::environment::request::EnvironmentRequestInvalidation {
+                request_id: id(1),
+                timestamp_unix_ms: 4,
+                actor: "system".into(),
+                kind: capsem_logger::events::environment::request::EnvironmentRequestInvalidationKind::Stale,
+                reason: "base context changed".into(),
+            },
+        ),
         WriteOp::EnvironmentSandboxReference(
             capsem_logger::events::environment::EnvironmentSandboxReferenceMutation {
                 session_id: id(4),
