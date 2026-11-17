@@ -54,23 +54,48 @@ async fn reply(request: http::Request<Incoming>) -> http::Response<Full<Bytes>> 
     let result = match message["method"].as_str().unwrap() {
         "initialize" => serde_json::json!({
             "protocolVersion": message["params"]["protocolVersion"],
-            "capabilities": { "tools": {} },
+            "capabilities": { "tools": {}, "resources": {}, "prompts": {} },
             "serverInfo": { "name": "fixture", "version": "1" }
         }),
+        "resources/list" => serde_json::json!({"resources":[]}),
+        "prompts/list" => serde_json::json!({"prompts":[]}),
         "tools/list" => serde_json::json!({"tools": [{
             "name": "echo", "description": "fixture echo",
             "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}}}
         }]}),
-        "tools/call" => serde_json::json!({"content": [{
-            "type": "text", "text": message["params"]["arguments"]["text"]
-        }]}),
+        "tools/call" => {
+            let args = &message["params"]["arguments"];
+            let text = if args["boundary"] == true {
+                let empty =
+                    serde_json::json!({"jsonrpc":"2.0", "id":id, "result":{"content":[{"type":"text","text":""}]}});
+                let overhead = serde_json::to_vec(&empty).unwrap().len()
+                    - serde_json::to_vec(id).unwrap().len()
+                    - b",\"id\":".len();
+                "r".repeat(capsem_proto::MCP_PAYLOAD_MAX_BYTES - overhead + usize::from(args["oversized"] == true))
+            } else {
+                args["text"].as_str().unwrap().to_owned()
+            };
+            serde_json::json!({"content": [{"type":"text", "text":text}]})
+        }
         method => panic!("unexpected upstream method {method}"),
     };
+    let bytes = serde_json::to_vec(&serde_json::json!({"jsonrpc": "2.0", "id": id, "result": result})).unwrap();
+    let (content_type, bytes) = if message["params"]["arguments"]["sse"] == true {
+        (
+            "text/event-stream",
+            format!("data: {}\r\n\r\n", String::from_utf8(bytes).unwrap()).into_bytes(),
+        )
+    } else {
+        ("application/json", bytes)
+    };
     http::Response::builder()
-        .header(http::header::CONTENT_TYPE, "application/json")
-        .body(Full::new(Bytes::from(
-            serde_json::to_vec(&serde_json::json!({"jsonrpc": "2.0", "id": id, "result": result})).unwrap(),
-        )))
+        .status(if message["params"]["arguments"]["http_error"] == true {
+            http::StatusCode::INTERNAL_SERVER_ERROR
+        } else {
+            http::StatusCode::OK
+        })
+        .header(http::header::CONTENT_TYPE, content_type)
+        .body(Full::new(Bytes::from(bytes)))
         .unwrap()
 }
 
@@ -137,7 +162,7 @@ async fn binary_confines_before_ready_and_keeps_its_capabilities_after_refresh()
     unapproved.command = Some("/usr/bin/touch".into());
     unapproved.args = vec![unexpected_file.to_string_lossy().into_owned()];
     let large_echo = "r".repeat(512 * 1024);
-    for (id, method) in [
+    let mut cases = vec![
         (1, AggregatorMethod::ListTools),
         (
             2,
@@ -153,6 +178,33 @@ async fn binary_confines_before_ready_and_keeps_its_capabilities_after_refresh()
                 timeout_ms: Some(1000),
             },
         ),
+    ];
+    for (index, sse) in [false, true].into_iter().enumerate() {
+        for (offset, oversized, boundary) in [(0, false, true), (1, true, true), (2, false, false)] {
+            cases.push((10 + index as u64 * 3 + offset, AggregatorMethod::CallTool {
+                name: "assigned__echo".into(),
+                arguments: serde_json::json!({"boundary":boundary, "oversized":oversized, "sse":sse, "text":"after refusal"}),
+                timeout_ms: Some(2000),
+            }));
+        }
+    }
+    cases.extend([
+        (
+            16,
+            AggregatorMethod::CallTool {
+                name: "assigned__echo".into(),
+                arguments: serde_json::json!({"boundary":true, "oversized":true, "http_error":true}),
+                timeout_ms: Some(2000),
+            },
+        ),
+        (
+            17,
+            AggregatorMethod::CallTool {
+                name: "assigned__echo".into(),
+                arguments: serde_json::json!({"text":"after refusal"}),
+                timeout_ms: Some(2000),
+            },
+        ),
         (
             4,
             AggregatorMethod::Refresh {
@@ -161,7 +213,8 @@ async fn binary_confines_before_ready_and_keeps_its_capabilities_after_refresh()
         ),
         (5, AggregatorMethod::ListServers),
         (6, AggregatorMethod::Shutdown),
-    ] {
+    ]);
+    for (id, method) in cases {
         write_frame(&mut control, &AggregatorRequest { id, method })
             .await
             .unwrap();
@@ -176,6 +229,25 @@ async fn binary_confines_before_ready_and_keeps_its_capabilities_after_refresh()
             (2 | 4 | 6, AggregatorResult::Ok { ok }) => assert!(ok),
             (3, AggregatorResult::CallResult { result }) => {
                 assert_eq!(result["content"][0]["text"], large_echo);
+            }
+            (10 | 13, AggregatorResult::CallResult { result }) => {
+                let text = result["content"][0]["text"].as_str().unwrap();
+                assert!(text.len() > capsem_proto::MCP_PAYLOAD_MAX_BYTES - 256);
+                assert!(text.bytes().all(|byte| byte == b'r'));
+                let response = capsem_proto::mcp_contracts::JsonRpcResponse::ok(
+                    Some(serde_json::json!("\0".repeat(capsem_proto::MCP_REQUEST_ID_MAX_BYTES))),
+                    result,
+                );
+                let bytes = capsem_proto::mcp_contracts::json_rpc_wire::encode_response(&response).unwrap();
+                assert_eq!(bytes.len(), capsem_proto::MCP_JSON_RPC_MAX_BYTES);
+                capsem_proto::encode_mcp_frame(9, 0, &"x".repeat(capsem_proto::MCP_FRAME_MAX_PROCESS_NAME_LEN), &bytes)
+                    .unwrap();
+            }
+            (11 | 14 | 16, AggregatorResult::Error { error }) => {
+                assert!(error.contains("tool may already have run"), "{error}");
+            }
+            (12 | 15 | 17, AggregatorResult::CallResult { result }) => {
+                assert_eq!(result["content"][0]["text"], "after refusal")
             }
             (5, AggregatorResult::Servers { servers }) => assert!(!servers[0].connected),
             (_, body) => panic!("unexpected response {id}: {body:?}"),

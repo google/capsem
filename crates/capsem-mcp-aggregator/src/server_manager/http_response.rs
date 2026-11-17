@@ -5,10 +5,34 @@ use bytes::Bytes;
 use futures::{stream::BoxStream, Stream, StreamExt};
 use sse_stream::{Error as SseError, Sse, SseStream};
 
+#[derive(Debug)]
+struct SizeRefusal(usize);
+impl std::fmt::Display for SizeRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "MCP response exceeds its {}-byte transport limit; the tool may already have run",
+            self.0
+        )
+    }
+}
+impl std::error::Error for SizeRefusal {}
+
 fn too_large(limit: usize) -> io::Error {
-    io::Error::new(
-        io::ErrorKind::InvalidData,
-        format!("MCP response exceeds its {limit}-byte transport limit; the tool may already have run"),
+    io::Error::new(io::ErrorKind::InvalidData, SizeRefusal(limit))
+}
+
+pub(super) fn is_size_refusal(error: &io::Error) -> bool {
+    error.get_ref().is_some_and(|error| error.is::<SizeRefusal>())
+}
+
+pub(super) fn size_error(id: Option<rmcp::model::RequestId>) -> rmcp::model::ServerJsonRpcMessage {
+    rmcp::model::JsonRpcMessage::error(
+        rmcp::ErrorData::internal_error(
+            SizeRefusal(capsem_proto::MCP_PAYLOAD_MAX_BYTES).to_string(),
+            Some(serde_json::json!({"origin":"capsem_transport", "kind":"response_size"})),
+        ),
+        id,
     )
 }
 
@@ -154,6 +178,42 @@ where
             })
         })
         .boxed()
+}
+
+/// A POST stream belongs to one known request. Deliver a normal correlated
+/// local error on refusal, then drop that stream, preserving the SDK peer for
+/// later calls. Never replay the operation or manufacture a successful result.
+pub(super) fn post_sse<S, E>(
+    stream: S,
+    limit: usize,
+    id: Option<rmcp::model::RequestId>,
+) -> BoxStream<'static, Result<Sse, SseError>>
+where
+    S: Stream<Item = Result<Bytes, E>> + Send + 'static,
+    E: std::error::Error + Send + Sync + 'static,
+{
+    futures::stream::unfold((Some(sse(stream, limit)), id), |(stream, id)| async move {
+        let mut stream = stream?;
+        let item = stream.next().await?;
+        match item {
+            Err(SseError::Body(error)) if error.downcast_ref::<io::Error>().is_some_and(is_size_refusal) => {
+                let encoded = capsem_proto::framing::encode_json_record(
+                    &size_error(id.clone()),
+                    capsem_proto::MCP_JSON_RPC_MAX_BYTES,
+                )
+                .and_then(|bytes| String::from_utf8(bytes).map_err(io::Error::other));
+                let reply = encoded
+                    .map(|data| Sse {
+                        data: Some(data),
+                        ..Sse::default()
+                    })
+                    .map_err(|error| SseError::Body(Box::new(error)));
+                Some((reply, (None, id)))
+            }
+            item => Some((item, (Some(stream), id))),
+        }
+    })
+    .boxed()
 }
 
 #[cfg(test)]

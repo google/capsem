@@ -125,6 +125,11 @@ json = { count = 11, reason = "mcp" }
 # application content once, and append the validated ID in its own allowance.
 json = { count = 5, reason = "mcp" }
 
+[sources."crates/capsem-mcp-aggregator/src/server_manager/http_response.rs"]
+# A standard MCP error identifies a locally generated transport refusal;
+# no result envelope or success-body transformation is introduced.
+json = { count = 2, reason = "mcp" }
+
 [sources."crates/capsem-api/src/diagnostics.rs"]
 json = { count = 1, reason = "http" }
 

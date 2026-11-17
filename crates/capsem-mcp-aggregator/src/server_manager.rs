@@ -299,6 +299,10 @@ impl StreamableHttpClient for CapsemMcpHttpClient {
         let bytes = capsem_proto::framing::encode_json_record(&message, capsem_proto::MCP_JSON_RPC_MAX_BYTES)
             .map_err(StreamableHttpError::Client)?;
         capsem_proto::mcp_contracts::json_rpc_wire::validate_size(&bytes).map_err(StreamableHttpError::Client)?;
+        let response_id = match &message {
+            JsonRpcMessage::Request(request) => Some(request.id.clone()),
+            _ => None,
+        };
         let response = self
             .send(
                 request
@@ -350,9 +354,16 @@ impl StreamableHttpClient for CapsemMcpHttpClient {
             .map(|value| value.to_string());
 
         if !status.is_success() {
-            let bytes = http_response::json_body(response)
-                .await
-                .map_err(StreamableHttpError::Client)?;
+            let bytes = match http_response::json_body(response).await {
+                Ok(bytes) => bytes,
+                Err(error) if http_response::is_size_refusal(&error) => {
+                    return Ok(StreamableHttpPostResponse::Json(
+                        http_response::size_error(response_id),
+                        session_id,
+                    ));
+                }
+                Err(error) => return Err(StreamableHttpError::Client(error)),
+            };
             let body = String::from_utf8_lossy(&bytes);
             if content_type
                 .as_deref()
@@ -371,17 +382,25 @@ impl StreamableHttpClient for CapsemMcpHttpClient {
         match content_type.as_deref() {
             Some(ct) if ct.as_bytes().starts_with(EVENT_STREAM_MIME_TYPE.as_bytes()) => {
                 Ok(StreamableHttpPostResponse::Sse(
-                    http_response::sse(
+                    http_response::post_sse(
                         response.bytes_stream(),
                         max_sse_event_size.min(capsem_proto::MCP_JSON_RPC_MAX_BYTES),
+                        response_id,
                     ),
                     session_id,
                 ))
             }
             Some(ct) if ct.as_bytes().starts_with(JSON_MIME_TYPE.as_bytes()) => {
-                let bytes = http_response::json_body(response)
-                    .await
-                    .map_err(StreamableHttpError::Client)?;
+                let bytes = match http_response::json_body(response).await {
+                    Ok(bytes) => bytes,
+                    Err(error) if http_response::is_size_refusal(&error) => {
+                        return Ok(StreamableHttpPostResponse::Json(
+                            http_response::size_error(response_id),
+                            session_id,
+                        ));
+                    }
+                    Err(error) => return Err(StreamableHttpError::Client(error)),
+                };
                 match serde_json::from_slice::<ServerJsonRpcMessage>(&bytes) {
                     Ok(message) => Ok(StreamableHttpPostResponse::Json(message, session_id)),
                     Err(error) => {

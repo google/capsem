@@ -1,6 +1,36 @@
 use super::*;
 
 #[tokio::test]
+async fn refused_post_sse_is_correlated_local_error_and_drops_without_another_read() {
+    let limit = capsem_proto::MCP_PAYLOAD_MAX_BYTES;
+    let data = format!(
+        r#"data: {{"jsonrpc":"2.0","id":7,"result":"{}"}}
+
+"#,
+        "x".repeat(limit)
+    );
+    let chunks = stream::iter([Ok::<_, io::Error>(Bytes::from(data))]).chain(stream::pending());
+    let mut received = post_sse(
+        chunks,
+        capsem_proto::MCP_JSON_RPC_MAX_BYTES,
+        Some(rmcp::model::RequestId::Number(7)),
+    );
+    let event = received.next().await.unwrap().unwrap();
+    let message: serde_json::Value = serde_json::from_str(event.data.as_deref().unwrap()).unwrap();
+    assert_eq!(message["id"], 7);
+    assert!(message.get("result").is_none());
+    assert!(message["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("tool may already have run"));
+    assert_eq!(message["error"]["data"]["origin"], "capsem_transport");
+    assert!(tokio::time::timeout(std::time::Duration::from_secs(1), received.next())
+        .await
+        .expect("a refused POST stream must not wait for another upstream item")
+        .is_none());
+}
+
+#[tokio::test]
 async fn correlation_envelope_is_shared_by_json_and_sse_without_content_credit() {
     use capsem_proto::mcp_contracts::{json_rpc_wire::encode_response, JsonRpcResponse};
     let limit = capsem_proto::MCP_PAYLOAD_MAX_BYTES;
