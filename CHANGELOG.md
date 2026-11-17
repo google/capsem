@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: Separate access and detection rule configuration in environment documents, with catalog selections, typed parameters, validated conditions and reserved corporate priorities.
+
 - Added: Pinned skill catalog selections in canonical environment documents, with selector-only drafts, bounded metadata and duplicate checks.
 
 - Fixed: Read persisted purge target counts without recounting revision and request history on every status poll.

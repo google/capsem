@@ -194,6 +194,16 @@ impl EnvironmentSpecification {
     pub fn validate(&self) -> Result<(), String> {
         self.validate_common()?;
         self.skills.validate()?;
+        self.access.catalog.validate()?;
+        self.detection.catalog.validate()?;
+        rules::access(
+            &self.access,
+            self.access.catalog.selected.iter().map(|entry| entry.id.as_str()),
+        )?;
+        rules::detection(
+            &self.detection,
+            self.detection.catalog.selected.iter().map(|entry| entry.id.as_str()),
+        )?;
         if let Some(image) = &self.image {
             validate_image_reference(&image.reference)?;
             require(
@@ -233,6 +243,16 @@ impl EnvironmentDraft {
     pub fn validate(&self) -> Result<(), String> {
         self.validate_common()?;
         self.skills.validate()?;
+        self.access.catalog.validate()?;
+        self.detection.catalog.validate()?;
+        rules::access(
+            &self.access,
+            self.access.catalog.selected.iter().map(|entry| entry.id.as_str()),
+        )?;
+        rules::detection(
+            &self.detection,
+            self.detection.catalog.selected.iter().map(|entry| entry.id.as_str()),
+        )?;
         if let Some(image) = &self.image {
             validate_image_reference(&image.reference)?;
         }

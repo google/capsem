@@ -4,6 +4,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 mod catalog;
+mod rules;
+pub use rules::{
+    EnvironmentAccessRule, EnvironmentAccessRules, EnvironmentDetectionRule, EnvironmentDetectionRules,
+    EnvironmentRuleParameter, EnvironmentRules,
+};
 #[cfg(test)]
 mod tests;
 mod validation;
@@ -45,6 +50,10 @@ pub struct EnvironmentSpecification<I = EnvironmentImage, R = EnvironmentReposit
     pub packages: EnvironmentPackages,
     #[serde(default)]
     pub skills: EnvironmentCatalogSelections<C>,
+    #[serde(default)]
+    pub access: EnvironmentAccessRules<C>,
+    #[serde(default)]
+    pub detection: EnvironmentDetectionRules<C>,
 }
 
 /// Agent/operator intent has selectors, never self-attested resolution metadata.
@@ -218,6 +227,10 @@ pub struct EnvironmentLimits {
     pub max_spec_bytes: usize,
     pub max_catalog_selections: usize,
     pub max_catalog_reference_bytes: usize,
+    pub max_rules: usize,
+    pub max_rule_bytes: usize,
+    pub max_configuration_entries: usize,
+    pub max_configuration_text_bytes: usize,
 }
 
 impl EnvironmentLimits {
@@ -234,5 +247,9 @@ impl EnvironmentLimits {
         max_spec_bytes: capsem_proto::ENVIRONMENT_MAX_SPEC_BYTES,
         max_catalog_selections: capsem_proto::ENVIRONMENT_MAX_CATALOG_SELECTIONS,
         max_catalog_reference_bytes: capsem_proto::ENVIRONMENT_MAX_CATALOG_REFERENCE_BYTES,
+        max_rules: capsem_proto::ENVIRONMENT_MAX_RULES,
+        max_rule_bytes: capsem_proto::ENVIRONMENT_MAX_RULE_BYTES,
+        max_configuration_entries: capsem_proto::ENVIRONMENT_MAX_CONFIGURATION_ENTRIES,
+        max_configuration_text_bytes: capsem_proto::ENVIRONMENT_MAX_CONFIGURATION_TEXT_BYTES,
     };
 }
