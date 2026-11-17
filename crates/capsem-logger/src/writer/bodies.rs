@@ -362,6 +362,11 @@ impl BodyArchive {
             lock::acquire_existing_until(&lock_path, LockMode::Exclusive, Instant::now() + Duration::from_secs(5))
                 .map_err(|error| archive_contract_error(format!("lock {}: {error}", lock_path.display())))?;
         let state = crate::schema::archive_state(conn)?;
+        let purge_reclamation_pending: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM main.environment_variable_purges WHERE state='reclaim_pending')",
+            [],
+            |row| row.get(0),
+        )?;
         let writer =
             BodyLogWriter::open_generation_with_codecs(&directory, state.header, state.committed_end, codecs.clone())
                 .map_err(|error| archive_contract_error(format!("open active generation: {error}")))?;
@@ -377,7 +382,12 @@ impl BodyArchive {
         if updated != 1 {
             return Err(archive_contract_error("archive_state changed during writer recovery"));
         }
-        Self::gc_unreferenced_generations(&directory, state.header.generation_id);
+        // A pending purge owns physical reclamation. Its collector checks old
+        // descriptor leases before unlink, including across worker restarts.
+        // Generic orphan GC must not erase that evidence and report early success.
+        if !purge_reclamation_pending {
+            Self::gc_unreferenced_generations(&directory, state.header.generation_id);
+        }
         Ok(Self::with_writer(db_path.to_path_buf(), directory, writer, now, codecs))
     }
 

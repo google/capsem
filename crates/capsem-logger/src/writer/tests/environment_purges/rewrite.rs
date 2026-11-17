@@ -433,3 +433,35 @@ async fn variable_purge_rewrite_keeps_failure_audit_after_successful_retry() {
     assert_eq!(audits.last().unwrap().state, EnvironmentVariablePurgeState::Committed);
     assert!(audits.last().unwrap().failure_reason.is_none());
 }
+
+#[tokio::test]
+async fn variable_purge_rewrite_keeps_pending_reader_generation_across_writer_restart() {
+    use capsem_archive::BodyLogReader;
+    use capsem_foundation::unix::contained::ContainedDir;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("host.db");
+    let writer = owner(&path, true).await;
+    durable(&writer, WriteOp::PrepareEnvironmentVariablePurge(intent())).await;
+    let conn = Connection::open(&path).unwrap();
+    let old = crate::schema::archive_state(&conn).unwrap();
+    let directory = ContainedDir::open_root(&crate::writer::archive_path_for_db(&path)).unwrap();
+    let held = BodyLogReader::open_generation(&directory, old.header, old.committed_end).unwrap();
+    let pending = writer.purge_variable_history(execution(51)).await.unwrap();
+    assert_eq!(pending.state, EnvironmentVariablePurgeState::ReclaimPending);
+    writer.shutdown_blocking();
+    let writer = DbWriter::open(&path, 8).unwrap();
+    let resumed = writer.purge_variable_history(execution(52)).await.unwrap();
+    assert_eq!(resumed.state, EnvironmentVariablePurgeState::ReclaimPending);
+    assert_eq!(resumed.new_generation_id, pending.new_generation_id);
+    assert!(crate::writer::archive_path_for_db(&path)
+        .join(old.header.generation_id.file_name())
+        .exists());
+    drop(held);
+    assert_eq!(
+        writer.purge_variable_history(execution(53)).await.unwrap().state,
+        EnvironmentVariablePurgeState::Committed
+    );
+    assert!(!crate::writer::archive_path_for_db(&path)
+        .join(old.header.generation_id.file_name())
+        .exists());
+}
