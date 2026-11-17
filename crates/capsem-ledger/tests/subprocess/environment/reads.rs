@@ -184,3 +184,71 @@ pub(super) async fn refuses_replay(worker: &Worker, database: &Path) {
         drop(client);
     }
 }
+
+pub(super) async fn recovery_states(
+    worker: &Worker,
+    database: &Path,
+    sender: &ipc_channel::Sender<LedgerClientMessage>,
+    receiver: &ipc_channel::Receiver<LedgerServerMessage>,
+    next: &mut u64,
+) {
+    let client = worker.maintainer(4, database).await;
+    durable(
+        sender,
+        receiver,
+        next,
+        WriteOp::PrepareEnvironmentRevision(PreparedEnvironmentRevision {
+            environment_id: id(30),
+            revision_id: id(31),
+            previous_revision_id: None,
+            fork_parent: None,
+            timestamp_unix_ms: 31,
+            actor: "operator".into(),
+            reason: "native recovery probe".into(),
+            request_id: None,
+            payload_event_id: "00000000001f".into(),
+            specification: Box::new(
+                toml::from_str("name='recovery-probe'\n[variables]\nKEEP='recovery field'").unwrap(),
+            ),
+        }),
+    )
+    .await;
+    let query = Q::Revisions {
+        query: EnvironmentRevisionQuery::Get {
+            environment_id: id(30),
+            revision_id: id(31),
+        },
+    };
+    let reply = client.environment_read(query.clone()).await.unwrap();
+    assert!(
+        matches!(reply,R::Revisions {records} if records.len()==1&&records[0].state==EnvironmentRevisionState::Committing)
+    );
+    let reply = client
+        .environment_read(Q::RevisionSnapshot {
+            environment_id: id(30),
+            revision_id: id(31),
+        })
+        .await
+        .unwrap();
+    assert!(
+        matches!(reply,R::RevisionSnapshot {snapshot:Some(snapshot)} if snapshot.record.state==EnvironmentRevisionState::Committing&&snapshot.specification.variables["KEEP"]=="recovery field")
+    );
+    durable(
+        sender,
+        receiver,
+        next,
+        WriteOp::EnvironmentRevisionTransition(EnvironmentRevisionTransition {
+            environment_id: id(30),
+            revision_id: id(31),
+            state: EnvironmentRevisionState::RecoveredUnapplied,
+            timestamp_unix_ms: 32,
+            actor: "system".into(),
+        }),
+    )
+    .await;
+    let reply = client.environment_read(query).await.unwrap();
+    assert!(
+        matches!(reply,R::Revisions {records} if records.len()==1&&records[0].state==EnvironmentRevisionState::RecoveredUnapplied)
+    );
+    drop(client);
+}

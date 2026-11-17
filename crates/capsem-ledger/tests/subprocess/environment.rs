@@ -240,6 +240,7 @@ async fn executable_variable_purge_recompresses_native_history_and_recovers_dura
     let worker = Worker::start(&database, 0x71).await;
     let (sender, receiver) = worker.producer(1, LedgerClientRole::Coordinator).await;
     let mut next = 1;
+    reads::recovery_states(&worker, &database, &sender, &receiver, &mut next).await;
     for (n, previous, value) in [
         (3, None, Some(SELECTED)),
         (4, Some(3), Some("different legitimate value")),
@@ -292,6 +293,35 @@ async fn executable_variable_purge_recompresses_native_history_and_recovers_dura
             2,
             LedgerCommand::AdmitBatch {
                 events: vec![body_event(), WriteOp::EnvironmentRequestDecision(decision.clone())],
+            },
+        ),
+        (
+            3,
+            LedgerCommand::Admit {
+                event: Box::new(WriteOp::HostEvent(capsem_logger::HostEvent {
+                    timestamp_unix_ms: 41,
+                    kind: capsem_logger::HostEventKind::EnvironmentVariablePurgeChanged,
+                    session_id: None,
+                    actor: "operator".into(),
+                    detail: vec![0x80],
+                    trace_id: None,
+                })),
+            },
+        ),
+        (
+            4,
+            LedgerCommand::AdmitBatch {
+                events: vec![
+                    body_event(),
+                    WriteOp::HostEvent(capsem_logger::HostEvent {
+                        timestamp_unix_ms: 41,
+                        kind: capsem_logger::HostEventKind::EnvironmentRevisionCommitted,
+                        session_id: None,
+                        actor: "operator".into(),
+                        detail: vec![0x80],
+                        trace_id: None,
+                    }),
+                ],
             },
         ),
     ] {
