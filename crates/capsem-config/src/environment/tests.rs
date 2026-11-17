@@ -1,4 +1,5 @@
 use super::*;
+mod drafts;
 
 const BASE: &str = r#"schema_version = 1
 id = "6f3601ee-04df-4c1b-9828-dfd2015c38d4"

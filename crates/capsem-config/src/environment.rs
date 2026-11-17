@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 mod catalog;
+mod drafts;
 mod mcps;
 mod rules;
 pub use mcps::{EnvironmentCapabilityDecision, EnvironmentMcpDefinition, EnvironmentMcpPermissions, EnvironmentMcps};
