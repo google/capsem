@@ -1,6 +1,60 @@
 use super::*;
+use std::io::BufRead;
 use std::os::unix::io::{FromRawFd, IntoRawFd};
 use std::os::unix::net::UnixStream;
+
+#[test]
+fn correlation_identity_is_bounded_before_tracking() {
+    for id in ["null", "[]", "{}", "true", "1.5"] {
+        assert_eq!(
+            classify_jsonrpc_line(&format!(r#"{{"id":{id}}}"#)),
+            JsonRpcLineKind::InvalidCorrelationId
+        );
+    }
+    let oversized_id = "x".repeat(capsem_proto::MCP_REQUEST_ID_MAX_BYTES + 1);
+    assert_eq!(
+        classify_jsonrpc_line(&format!(r#"{{"id":"{oversized_id}"}}"#)),
+        JsonRpcLineKind::InvalidCorrelationId
+    );
+}
+
+#[test]
+fn escaped_boundary_identity_and_large_parameters_preserve_the_id() {
+    let escaped = "\\u0000".repeat(capsem_proto::MCP_REQUEST_ID_MAX_BYTES);
+    let line = format!(r#"{{"id":"{escaped}","params":{{"input":"{}"}}}}"#, "x".repeat(100_000));
+    assert_eq!(
+        classify_jsonrpc_line(&line),
+        JsonRpcLineKind::Request {
+            json_id: Some(Value::String("\0".repeat(capsem_proto::MCP_REQUEST_ID_MAX_BYTES)))
+        }
+    );
+}
+
+#[test]
+fn forwarding_borrows_the_original_payload_and_stops_after_header_failure() {
+    let payload = b"{\"id\":1}";
+    let header = capsem_proto::encode_mcp_frame_header(1, 0, "test", payload.len()).unwrap();
+    let mut calls = 0;
+    write_frame(&header, payload, |bytes| {
+        if calls == 0 {
+            assert_eq!(bytes, header.as_bytes());
+        } else {
+            assert_eq!(bytes.as_ptr(), payload.as_ptr());
+            assert_eq!(bytes, payload);
+        }
+        calls += 1;
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(calls, 2);
+    calls = 0;
+    assert!(write_frame(&header, payload, |_| {
+        calls += 1;
+        Err(io::Error::new(io::ErrorKind::BrokenPipe, "test"))
+    })
+    .is_err());
+    assert_eq!(calls, 1);
+}
 
 #[test]
 fn mcp_transport_uses_mitm_vsock_port() {
@@ -9,13 +63,12 @@ fn mcp_transport_uses_mitm_vsock_port() {
 }
 
 #[test]
-fn classify_valid_request_tracks_id_and_method() {
+fn classify_valid_request_tracks_id() {
     let line = r#"{"jsonrpc":"2.0","id":"abc","method":"tools/call"}"#;
     assert_eq!(
         classify_jsonrpc_line(line),
         JsonRpcLineKind::Request {
             json_id: Some(Value::String("abc".to_string())),
-            method: Some("tools/call".to_string()),
         }
     );
 }
@@ -30,10 +83,7 @@ fn classify_notification_uses_reserved_stream_zero() {
 fn classify_invalid_json_as_request_so_host_can_return_parse_error() {
     assert_eq!(
         classify_jsonrpc_line("{not json"),
-        JsonRpcLineKind::Request {
-            json_id: None,
-            method: None,
-        }
+        JsonRpcLineKind::Request { json_id: None }
     );
 }
 
@@ -44,14 +94,12 @@ fn pending_disconnect_errors_are_emitted_once_with_original_ids() {
         1,
         PendingRequest {
             json_id: Value::from(7),
-            method: Some("tools/call".to_string()),
         },
     );
     pending.insert(
         2,
         PendingRequest {
             json_id: Value::String("abc".to_string()),
-            method: Some("resources/list".to_string()),
         },
     );
 
@@ -153,7 +201,6 @@ fn framed_reader_consumes_empty_responses_and_pending_ids() {
         9,
         PendingRequest {
             json_id: Value::from(9),
-            method: Some("tools/list".to_string()),
         },
     );
     let frame = capsem_proto::encode_mcp_frame(9, 0, "host", &[]).unwrap();
@@ -164,18 +211,11 @@ fn framed_reader_consumes_empty_responses_and_pending_ids() {
 
 #[test]
 fn jsonrpc_classification_fails_closed_on_malformed_shapes() {
-    assert_eq!(
-        classify_jsonrpc_line("[]"),
-        JsonRpcLineKind::Request {
-            json_id: None,
-            method: None,
-        }
-    );
+    assert_eq!(classify_jsonrpc_line("[]"), JsonRpcLineKind::Request { json_id: None });
     assert_eq!(
         classify_jsonrpc_line(r#"{"id":1,"method":7}"#),
         JsonRpcLineKind::Request {
             json_id: Some(Value::from(1)),
-            method: None,
         }
     );
 }

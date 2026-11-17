@@ -15,8 +15,11 @@ mod procfs;
 #[path = "process_attribution.rs"]
 mod process_attribution;
 
+#[path = "mcp_server/lines.rs"]
+mod lines;
+
 use std::collections::HashMap;
-use std::io::{self, BufRead, Write};
+use std::io::{self, Write};
 use std::os::unix::io::RawFd;
 use std::process;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -38,7 +41,6 @@ struct PendingRequests {
 #[derive(Clone, Debug, PartialEq)]
 struct PendingRequest {
     json_id: Value,
-    method: Option<String>,
 }
 
 impl PendingRequests {
@@ -80,11 +82,9 @@ struct FramedConnection {
 
 #[derive(Debug, PartialEq)]
 enum JsonRpcLineKind {
-    Request {
-        json_id: Option<Value>,
-        method: Option<String>,
-    },
+    Request { json_id: Option<Value> },
     Notification,
+    InvalidCorrelationId,
 }
 
 /// Get the parent process name (the AI agent that spawned us).
@@ -104,12 +104,26 @@ fn main() {
     let mut next_stream_id = 1u32;
 
     let stdin = io::stdin();
-    let reader = stdin.lock();
+    let mut reader = lines::McpLines::new(stdin.lock(), capsem_proto::MCP_PAYLOAD_MAX_BYTES);
 
-    for line in reader.lines() {
-        let line = match line {
-            Ok(line) => line,
-            Err(_) => break,
+    loop {
+        let line = match reader.next_line() {
+            Ok(lines::LineRead::Message(line)) => line,
+            Ok(lines::LineRead::TooLarge) => {
+                emit_input_error(
+                    &stdout,
+                    "MCP request exceeds the transport limit; request was not forwarded",
+                );
+                continue;
+            }
+            Ok(lines::LineRead::End) | Err(_) => break,
+        };
+        let text = match std::str::from_utf8(&line) {
+            Ok(text) => text,
+            Err(_) => {
+                emit_input_error(&stdout, "MCP request is not UTF-8; request was not forwarded");
+                continue;
+            }
         };
 
         if !conn.alive.load(Ordering::SeqCst) {
@@ -118,10 +132,14 @@ fn main() {
             next_stream_id = 1;
         }
 
-        let kind = classify_jsonrpc_line(&line);
+        let kind = classify_jsonrpc_line(text);
         let (stream_id, flags, pending_request) = match kind {
+            JsonRpcLineKind::InvalidCorrelationId => {
+                emit_input_error(&stdout, "Invalid MCP correlation ID; request was not forwarded");
+                continue;
+            }
             JsonRpcLineKind::Notification => (0, MCP_FRAME_FLAG_NOTIFICATION, None),
-            JsonRpcLineKind::Request { json_id, method } => {
+            JsonRpcLineKind::Request { json_id } => {
                 let id = next_stream_id;
                 if id == u32::MAX {
                     eprintln!("[capsem-mcp-server] framed stream id exhausted; reconnecting before next request");
@@ -131,11 +149,11 @@ fn main() {
                 }
                 let id = next_stream_id;
                 next_stream_id += 1;
-                (id, 0, json_id.map(|json_id| PendingRequest { json_id, method }))
+                (id, 0, json_id.map(|json_id| PendingRequest { json_id }))
             }
         };
 
-        let frame = match capsem_proto::encode_mcp_frame(stream_id, flags, &process_name, line.as_bytes()) {
+        let frame = match capsem_proto::encode_mcp_frame_header(stream_id, flags, &process_name, line.len()) {
             Ok(frame) => frame,
             Err(e) => {
                 eprintln!("[capsem-mcp-server] failed to encode MCP frame: {e:#}");
@@ -150,7 +168,7 @@ fn main() {
             pending.insert(stream_id, request);
         }
 
-        if write_all_fd(conn.fd, &frame).is_err() {
+        if write_frame(&frame, &line, |bytes| write_all_fd(conn.fd, bytes)).is_err() {
             conn.alive.store(false, Ordering::SeqCst);
             emit_disconnect_errors(&pending, &stdout, "write failed");
             close_broken_connection(conn);
@@ -159,6 +177,7 @@ fn main() {
         }
     }
 
+    drop(reader);
     finish_connection(conn);
 }
 
@@ -279,28 +298,59 @@ fn framed_vsock_to_stdout(fd: RawFd, pending: PendingRequests, stdout: Arc<Mutex
     }
 }
 
-/// Classify one stdin line with a single parse. Anything that is not a
-/// JSON object is forwarded as a request so the host answers with the
-/// parse error the client expects.
+// MCP is external JSON-RPC. Borrow the ID token and skip parameter trees;
+// only a validated, bounded identity is retained for disconnect reporting.
+#[derive(serde::Deserialize)]
+struct LineIdentity<'a> {
+    #[serde(borrow, default, deserialize_with = "present_id")]
+    id: Option<&'a serde_json::value::RawValue>,
+}
+
+fn present_id<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<&'de serde_json::value::RawValue>, D::Error> {
+    // Preserve present null: it is invalid correlation, not a notification.
+    serde::Deserialize::deserialize(deserializer).map(Some)
+}
+
 fn classify_jsonrpc_line(line: &str) -> JsonRpcLineKind {
-    let value = serde_json::from_str::<Value>(line).ok();
-    let Some(object) = value.as_ref().and_then(Value::as_object) else {
-        return JsonRpcLineKind::Request {
-            json_id: None,
-            method: None,
-        };
-    };
-    let method = object
-        .get("method")
-        .and_then(|method| method.as_str())
-        .map(str::to_string);
-    match object.get("id") {
-        Some(json_id) => JsonRpcLineKind::Request {
-            json_id: Some(json_id.clone()),
-            method,
-        },
-        None => JsonRpcLineKind::Notification,
+    if !line.trim_start().starts_with('{') {
+        return JsonRpcLineKind::Request { json_id: None };
     }
+    let Ok(identity) = serde_json::from_str::<LineIdentity<'_>>(line) else {
+        return JsonRpcLineKind::Request { json_id: None };
+    };
+    let Some(raw) = identity.id else {
+        return JsonRpcLineKind::Notification;
+    };
+    // JSON escapes may use six bytes per UTF-8 byte. Refuse larger tokens
+    // before allocating their decoded identity; this is metadata admission.
+    if raw.get().len() > 6 * capsem_proto::MCP_REQUEST_ID_MAX_BYTES + 2 {
+        return JsonRpcLineKind::InvalidCorrelationId;
+    }
+    match serde_json::from_str::<Value>(raw.get()) {
+        Ok(id) if capsem_proto::mcp_contracts::is_valid_mcp_request_id(&id) => {
+            JsonRpcLineKind::Request { json_id: Some(id) }
+        }
+        _ => JsonRpcLineKind::InvalidCorrelationId,
+    }
+}
+
+fn write_frame(
+    header: &capsem_proto::McpFrameHeader,
+    payload: &[u8],
+    mut write: impl FnMut(&[u8]) -> io::Result<()>,
+) -> io::Result<()> {
+    write(header.as_bytes())?;
+    write(payload)
+}
+
+fn emit_input_error(stdout: &Arc<Mutex<io::Stdout>>, message: &str) {
+    let response = serde_json::json!({ "jsonrpc": "2.0", "id": null, "error": { "code": -32600, "message": message } });
+    let mut out = stdout.lock().expect("stdout mutex poisoned");
+    let _ = serde_json::to_writer(&mut *out, &response);
+    let _ = writeln!(out);
+    let _ = out.flush();
 }
 
 fn emit_disconnect_errors(pending: &PendingRequests, stdout: &Arc<Mutex<io::Stdout>>, reason: &str) {
@@ -322,13 +372,12 @@ fn emit_single_disconnect_error(stdout: &Arc<Mutex<io::Stdout>>, request: Pendin
 }
 
 fn write_disconnect_error<W: Write>(out: &mut W, request: PendingRequest, reason: &str) -> io::Result<()> {
-    let method = request.method.as_deref().unwrap_or("request");
     let response = serde_json::json!({
         "jsonrpc": "2.0",
         "id": request.json_id,
         "error": {
             "code": -32001,
-            "message": format!("MCP transport disconnected before {method} response: {reason}"),
+            "message": format!("MCP transport disconnected before response: {reason}"),
         }
     });
     serde_json::to_writer(&mut *out, &response)?;

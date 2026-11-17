@@ -116,7 +116,9 @@ hash = { count = 4, reason = "hash-asset" }
 json = { count = 1, reason = "logging" }
 
 [sources."crates/capsem-agent/src/mcp_server.rs"]
-json = { count = 5, reason = "mcp" }
+# Borrow external ID tokens without materializing params; emit local JSON-RPC
+# refusal errors before forwarding, and preserve IDs in disconnect responses.
+json = { count = 11, reason = "mcp" }
 
 [sources."crates/capsem-api/src/diagnostics.rs"]
 json = { count = 1, reason = "http" }
