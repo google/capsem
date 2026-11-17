@@ -272,6 +272,7 @@ fn environment_editor_metadata_reuses_compiled_runtime_limits() {
     assert_eq!(limits.max_repositories, ENVIRONMENT_MAX_REPOSITORIES);
     assert_eq!(limits.max_spec_bytes, ENVIRONMENT_MAX_SPEC_BYTES);
     assert_eq!(limits.max_rules, ENVIRONMENT_MAX_RULES);
+    assert_eq!(limits.max_package_registries, ENVIRONMENT_MAX_PACKAGE_REGISTRIES);
     assert_eq!(limits.max_mcp_servers, ENVIRONMENT_MAX_MCP_SERVERS);
     assert_eq!(limits.max_mcp_arguments, ENVIRONMENT_MAX_MCP_ARGUMENTS);
     assert_eq!(limits.max_mcp_tool_overrides, ENVIRONMENT_MAX_MCP_TOOL_OVERRIDES);
@@ -347,3 +348,5 @@ mod rules;
 mod mcps;
 
 mod plugins;
+
+mod package_registries;

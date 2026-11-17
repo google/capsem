@@ -241,6 +241,7 @@ pub struct EnvironmentLimits {
     pub max_mcp_servers: usize,
     pub max_mcp_arguments: usize,
     pub max_mcp_tool_overrides: usize,
+    pub max_package_registries: usize,
 }
 
 impl EnvironmentLimits {
@@ -264,5 +265,6 @@ impl EnvironmentLimits {
         max_mcp_servers: capsem_proto::ENVIRONMENT_MAX_MCP_SERVERS,
         max_mcp_arguments: capsem_proto::ENVIRONMENT_MAX_MCP_ARGUMENTS,
         max_mcp_tool_overrides: capsem_proto::ENVIRONMENT_MAX_MCP_TOOL_OVERRIDES,
+        max_package_registries: capsem_proto::ENVIRONMENT_MAX_PACKAGE_REGISTRIES,
     };
 }

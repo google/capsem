@@ -83,6 +83,10 @@ impl<I, R, C> EnvironmentSpecification<I, R, C> {
             self.repositories.is_empty() || self.image.is_some(),
             "environment repositories require an OCI image",
         )?;
+        require(
+            self.packages.registries.len() <= ENVIRONMENT_MAX_PACKAGE_REGISTRIES,
+            "environment package registries exceed their count limit",
+        )?;
         let mut registries = BTreeSet::new();
         for registry in &self.packages.registries {
             require(

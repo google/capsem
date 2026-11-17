@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fixed: Enforce the shared package-registry selection count in environment drafts and canonical documents and expose the same limit to editors.
+
 - Added: Plugin-specific environment options with independent PII directions, mandatory broker/log-sanitizer rewrite configuration and separate credential-capture control.
 
 - Added: Environment-scoped remote and sandbox MCP definitions, catalog selections, per-server permissions and separate credential bindings, with bounded configuration and raw authentication-header rejection.
