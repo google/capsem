@@ -1,6 +1,7 @@
 //! Editable catalog selectors are distinct from host-resolved immutable pins.
 use super::*;
 
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentCatalogSelection {
@@ -10,6 +11,7 @@ pub struct EnvironmentCatalogSelection {
 
 /// The registry owner verifies the OCI source and digest before constructing
 /// a canonical revision. Format validation alone does not attest provenance.
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentCatalogPin {
@@ -19,6 +21,7 @@ pub struct EnvironmentCatalogPin {
     pub resolved_digest: String,
 }
 
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, bound(deserialize = "C: Deserialize<'de>"))]
 pub struct EnvironmentCatalogSelections<C> {

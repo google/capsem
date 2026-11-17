@@ -16,6 +16,7 @@ mod tests;
 mod validation;
 pub use catalog::{EnvironmentCatalogPin, EnvironmentCatalogSelection, EnvironmentCatalogSelections};
 
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentIdentity {
@@ -29,6 +30,7 @@ pub struct EnvironmentIdentity {
 }
 
 /// Editable content contains no service-assigned revision/history metadata.
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     deny_unknown_fields,
@@ -53,8 +55,10 @@ pub struct EnvironmentSpecification<I = EnvironmentImage, R = EnvironmentReposit
     #[serde(default)]
     pub skills: EnvironmentCatalogSelections<C>,
     #[serde(default)]
+    #[cfg_attr(feature = "schema", schema(value_type = EnvironmentRules<C, EnvironmentAccessRule>))]
     pub access: EnvironmentAccessRules<C>,
     #[serde(default)]
+    #[cfg_attr(feature = "schema", schema(value_type = EnvironmentRules<C, EnvironmentDetectionRule>))]
     pub detection: EnvironmentDetectionRules<C>,
     #[serde(default)]
     pub mcps: EnvironmentMcps<C>,
@@ -66,6 +70,7 @@ pub struct EnvironmentSpecification<I = EnvironmentImage, R = EnvironmentReposit
 pub type EnvironmentDraft =
     EnvironmentSpecification<EnvironmentImageSelection, EnvironmentRepositorySelection, EnvironmentCatalogSelection>;
 
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentImageSelection {
@@ -74,6 +79,7 @@ pub struct EnvironmentImageSelection {
     pub update_policy: EnvironmentImageUpdatePolicy,
 }
 
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentRepositorySelection {
@@ -83,6 +89,7 @@ pub struct EnvironmentRepositorySelection {
     pub destination: String,
 }
 
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentImage {
@@ -92,6 +99,7 @@ pub struct EnvironmentImage {
     pub update_policy: EnvironmentImageUpdatePolicy,
 }
 
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EnvironmentImageUpdatePolicy {
@@ -101,6 +109,7 @@ pub enum EnvironmentImageUpdatePolicy {
     Auto,
 }
 
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentStartup {
@@ -108,6 +117,7 @@ pub struct EnvironmentStartup {
     pub timeout_seconds: u32,
 }
 
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentSecretBinding {
@@ -116,6 +126,7 @@ pub struct EnvironmentSecretBinding {
     pub env_name: Option<String>,
 }
 
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentRepository {
@@ -126,6 +137,7 @@ pub struct EnvironmentRepository {
     pub destination: String,
 }
 
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentPackages {
@@ -136,10 +148,12 @@ pub struct EnvironmentPackages {
 }
 
 /// Binary history uses this typed envelope; the canonical TOML file is flat.
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentDocument {
     pub identity: EnvironmentIdentity,
+    #[cfg_attr(feature = "schema", schema(value_type = EnvironmentSpecification<EnvironmentImage, EnvironmentRepository, EnvironmentCatalogPin>))]
     pub specification: EnvironmentSpecification,
 }
 
@@ -220,6 +234,7 @@ impl std::fmt::Debug for EnvironmentDocument {
 }
 
 /// The API can expose these exact compiled bounds to SDKs and editors.
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct EnvironmentLimits {
     pub max_name_bytes: usize,

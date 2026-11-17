@@ -19,6 +19,8 @@ mod resolver;
 pub mod router;
 mod security_rule_profile;
 mod settings_metadata;
+#[cfg(test)]
+mod tests;
 mod tree;
 mod types;
 mod validation;

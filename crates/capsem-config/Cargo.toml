@@ -9,7 +9,11 @@ homepage.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+[features]
+schema = ["dep:utoipa"]
+
 [dependencies]
+utoipa = { version = "5.4", optional = true }
 capsem-proto = { path = "../capsem-proto" }
 regex = { workspace = true }
 serde = { workspace = true }

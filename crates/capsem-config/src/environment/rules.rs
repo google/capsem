@@ -3,6 +3,7 @@
 use super::*;
 use crate::security_rule_profile::{DetectionLevel, SecurityRuleAction, USER_PRIORITY_MAX, USER_PRIORITY_MIN};
 
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, bound(deserialize = "C: Deserialize<'de>, R: Deserialize<'de>"))]
 pub struct EnvironmentRules<C, R> {
@@ -27,6 +28,7 @@ pub type EnvironmentDetectionRules<C = EnvironmentCatalogPin> = EnvironmentRules
 
 /// Parameter kinds supported by the initial rule catalogs. The registry's
 /// typed descriptor additionally validates names, choices and numeric bounds.
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum EnvironmentRuleParameter {
@@ -36,10 +38,14 @@ pub enum EnvironmentRuleParameter {
     Choices(Vec<String>),
 }
 
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentAccessRule {
     pub name: String,
+    // Environment access accepts capability decisions, not the internal
+    // preprocessing/rewriting action variants of SecurityRuleAction.
+    #[cfg_attr(feature = "schema", schema(value_type = EnvironmentCapabilityDecision))]
     pub action: SecurityRuleAction,
     #[serde(rename = "match")]
     pub condition: String,
@@ -49,6 +55,7 @@ pub struct EnvironmentAccessRule {
     pub priority: Option<i32>,
 }
 
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentDetectionRule {

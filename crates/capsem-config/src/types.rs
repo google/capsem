@@ -25,6 +25,7 @@ pub const SETTING_SSH_PUBLIC_KEY: &str = "vm.environment.ssh.public_key";
 // ---------------------------------------------------------------------------
 
 /// The data type of a setting (drives UI rendering).
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SettingType {
@@ -52,6 +53,7 @@ pub enum SettingType {
 
 /// Explicit UI widget override. When set on a setting's metadata,
 /// the frontend renders this widget instead of inferring from SettingType.
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Widget {
@@ -68,6 +70,7 @@ pub enum Widget {
 }
 
 /// Frontend side effect triggered when a setting value changes.
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SideEffect {
@@ -91,6 +94,7 @@ pub enum McpTransport {
 }
 
 /// Where an MCP tool runs.
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum McpToolOrigin {
@@ -106,6 +110,7 @@ pub enum McpToolOrigin {
 /// string) so TOML tables like `{ path = "...", content = "..." }` deserialize
 /// as `File` rather than failing on `Text`.
 /// List variants must come before `Text` so arrays deserialize correctly.
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(untagged)]
 pub enum SettingValue {
@@ -187,6 +192,7 @@ impl SettingValue {
 }
 
 /// Per-rule HTTP method permissions.
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct HttpMethodPermissions {
     /// Optional per-rule domain subset.
@@ -213,6 +219,7 @@ pub struct HttpMethodPermissions {
 /// Note: `skip_serializing_if` is intentionally NOT used on collection fields.
 /// The frontend accesses fields like `metadata.choices.length` directly, so
 /// omitting empty fields from JSON would cause `undefined.length` TypeErrors.
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct SettingMetadata {
     /// Domain patterns for network settings.
@@ -276,6 +283,7 @@ pub struct SettingMetadata {
 }
 
 /// Schema definition for a setting (loaded from defaults.toml at compile time).
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SettingDef {
     pub id: String,

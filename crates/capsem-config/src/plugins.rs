@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 mod descriptors;
 pub use descriptors::*;
 
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PluginId {
@@ -49,15 +50,28 @@ pub trait PluginOptions: Default {
     }
 }
 
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, bound(deserialize = "O: PluginOptions + Deserialize<'de>"))]
 pub struct PluginConfiguration<O: PluginOptions> {
     #[serde(default = "O::default_mode")]
+    #[cfg_attr(feature = "schema", schema(schema_with = plugin_modes_schema::<O>))]
     pub mode: SecurityPluginMode,
     #[serde(default = "informational")]
     pub detection_level: DetectionLevel,
     #[serde(default)]
     pub options: O,
+}
+
+/// The external OpenAPI document must use the same choices/default as option
+/// validation, rather than advertising every mode of the internal enum.
+#[cfg(feature = "schema")]
+fn plugin_modes_schema<O: PluginOptions>() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+    utoipa::openapi::ObjectBuilder::new()
+        .schema_type(utoipa::openapi::schema::Type::String)
+        .enum_values(Some(O::MODES.iter().map(|mode| mode.as_str())))
+        .default(Some(O::DEFAULT_MODE.as_str().into()))
+        .into()
 }
 fn informational() -> DetectionLevel {
     DetectionLevel::Informational
@@ -80,6 +94,7 @@ impl<O: PluginOptions> PluginConfiguration<O> {
     }
 }
 
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PiiFilterOptions {
@@ -100,6 +115,7 @@ impl Default for PiiFilterOptions {
 }
 /// Directions are relative to the sandbox. These options describe the HTTP
 /// inspection implemented today; they do not claim universal protocol support.
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PiiFilterConfiguration {
@@ -112,6 +128,7 @@ impl PiiFilterConfiguration {
         self.outbound.validate()
     }
 }
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Utf8GuardOptions {
@@ -126,6 +143,7 @@ impl Default for Utf8GuardOptions {
         }
     }
 }
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct CredentialBrokerOptions {
@@ -154,6 +172,7 @@ options!(CredentialBrokerOptions, CredentialBroker, Rewrite, &[Rewrite]);
 
 macro_rules! empty_options {
     ($name:ident,$id:ident,$default:ident,$modes:expr) => {
+        #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
         #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
         #[serde(deny_unknown_fields)]
         pub struct $name {}
@@ -167,6 +186,7 @@ empty_options!(DummyPostAllowOptions, DummyPostAllow, Disable, &[Disable, Allow]
 
 /// Absent entries inherit built-in/corporate resolution; an explicit entry
 /// replaces the whole plugin configuration, preserving existing precedence.
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct EnvironmentPlugins {

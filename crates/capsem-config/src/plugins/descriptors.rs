@@ -4,6 +4,7 @@ use super::*;
 use crate::{SettingDef, SettingMetadata, SettingType, SettingValue, Widget};
 use std::sync::LazyLock;
 
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PluginStage {
@@ -20,12 +21,14 @@ impl PluginStage {
         }
     }
 }
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PluginDirection {
     Inbound,
     Outbound,
 }
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PluginEventFamily {
@@ -39,16 +42,19 @@ pub enum PluginEventFamily {
     Process,
     Security,
 }
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PluginDetailCapability {
     CredentialInventory,
 }
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct PluginFieldDependency {
     pub field: String,
     pub not_equals: SettingValue,
 }
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct PluginField {
     #[serde(flatten)]
@@ -56,12 +62,14 @@ pub struct PluginField {
     /// All conditions must hold; this controls presentation, not authority.
     pub dependencies: Vec<PluginFieldDependency>,
 }
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct PluginControlGroup {
     /// Configuration path prefix; empty means the plugin's root entry.
     pub path: String,
     pub name: String,
 }
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct PluginDescriptor {
     pub id: PluginId,

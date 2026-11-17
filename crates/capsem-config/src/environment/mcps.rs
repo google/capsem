@@ -2,6 +2,7 @@
 //! It never carries a host executable, descriptor, or raw credential material.
 use super::*;
 
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, bound(deserialize = "C: Deserialize<'de>"))]
 pub struct EnvironmentMcps<C = EnvironmentCatalogPin> {
@@ -22,6 +23,7 @@ impl<C> Default for EnvironmentMcps<C> {
     }
 }
 
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum EnvironmentMcpDefinition {
@@ -45,6 +47,7 @@ pub enum EnvironmentMcpDefinition {
     },
 }
 
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EnvironmentCapabilityDecision {
@@ -54,6 +57,7 @@ pub enum EnvironmentCapabilityDecision {
     Block,
 }
 
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentMcpPermissions {

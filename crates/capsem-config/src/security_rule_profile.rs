@@ -236,6 +236,7 @@ impl SecurityRuleManagedOperation {
     }
 }
 
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SecurityRuleAction {
@@ -287,6 +288,7 @@ pub enum SecurityRulePriorityName {
     Default,
 }
 
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SecurityPluginMode {
@@ -346,6 +348,7 @@ const fn default_plugin_detection_level() -> DetectionLevel {
     DetectionLevel::Informational
 }
 
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DetectionLevel {
