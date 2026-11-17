@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Security: Authenticate the internal doctor failure-preservation operation with a live operator credential and a kernel-verified CLI executable. Keep other direct service mutations closed and refuse delegated agents and VM owners.
+
 - Fix managed MCP tool permissions to check invocations once while preserving independent response rules. Operator approval resumes the original call without a second permission prompt.
 
 - Fix MCP response classification so plain-text errors retain their observed response phase and do not trigger request-only approval rules.

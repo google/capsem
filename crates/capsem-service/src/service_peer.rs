@@ -1,5 +1,7 @@
 //! Kernel identity attached to every request accepted on the service UDS.
 
+mod local_admin;
+
 use crate::agent_access::refusals::Reason;
 use axum::extract::connect_info::Connected;
 use axum::serve::IncomingStream;
@@ -18,7 +20,8 @@ impl Connected<IncomingStream<'_, UnixListener>> for ServicePeer {
 /// The public UDS grants no ambient same-user API authority. The gateway's
 /// inherited private seat authenticates each credential; registered VM owners
 /// get only their two kernel-bound internal operations. Bootstrap/admin retain
-/// named read-only status probes and cannot mutate through those exceptions.
+/// named read-only status probes. Doctor preservation additionally requires
+/// the pinned CLI executable and a live operator credential.
 pub(crate) async fn restrict_owner_routes(
     axum::extract::State(state): axum::extract::State<std::sync::Arc<crate::ServiceState>>,
     mut request: axum::extract::Request,
@@ -101,6 +104,20 @@ pub(crate) async fn restrict_owner_routes(
         tracing::debug!(actor = %actor.evidence().ledger_id(), "authenticated service request");
         request.extensions_mut().insert(actor);
         return next.run(request).await;
+    }
+    let doctor_cleanup = request.method() == axum::http::Method::POST
+        && request
+            .extensions()
+            .get::<axum::extract::MatchedPath>()
+            .is_some_and(|path| path.as_str() == "/vms/{id}/preserve-failure");
+    if doctor_cleanup {
+        if let Some(value) = request.headers_mut().get_mut(axum::http::header::AUTHORIZATION) {
+            value.set_sensitive(true);
+        }
+        if let Some(actor) = local_admin::admit(&state, peer, request.headers()).await {
+            request.extensions_mut().insert(actor);
+            return next.run(request).await;
+        }
     }
     if direct_status_route(request.method(), request.uri().path()) {
         return next.run(request).await;

@@ -93,10 +93,11 @@ pub(super) async fn finalize_one_shot_session(
 }
 
 pub(super) async fn handle_preserve_failure(
-    _actor: crate::caller_auth::AuthenticatedActor,
+    actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
+    actor.require_operator()?;
     let shutdown_result = shutdown_vm_process(&state, &id, ShutdownMode::Retain, None).await?;
     let _preserved = ensure_failed_session_preserved(Arc::clone(&state), id.clone(), shutdown_result)
         .await?
