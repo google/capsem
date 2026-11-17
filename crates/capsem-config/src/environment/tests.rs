@@ -272,3 +272,55 @@ fn environment_editor_metadata_reuses_compiled_runtime_limits() {
     assert_eq!(limits.max_repositories, ENVIRONMENT_MAX_REPOSITORIES);
     assert_eq!(limits.max_spec_bytes, ENVIRONMENT_MAX_SPEC_BYTES);
 }
+
+const DRAFT: &str = r#"name='development'
+[image]
+reference='development:stable'
+[startup]
+script='printf proposal-script-canary'
+timeout_seconds=120
+[variables]
+PROJECT='proposal-variable-canary'
+[[repositories]]
+url='https://example.org/team/project.git'
+ref='main'
+destination='project'
+"#;
+
+#[test]
+fn environment_draft_accepts_selectors_without_fabricated_resolution_pins() {
+    let draft: EnvironmentDraft = toml::from_str(DRAFT).unwrap();
+    draft.validate().unwrap();
+    let encoded = toml::to_string(&draft).unwrap();
+    assert!(!encoded.contains("resolved_"));
+    assert!(
+        toml::from_str::<EnvironmentSpecification>(DRAFT).is_err(),
+        "canonical revisions still require exact pins"
+    );
+    assert!(!format!("{draft:?}").contains("proposal-variable-canary"));
+    assert!(!format!("{draft:?}").contains("proposal-script-canary"));
+}
+
+#[test]
+fn environment_draft_refuses_caller_resolution_identity_and_invalid_fields() {
+    for source in [
+        DRAFT.replace(
+            "reference='development:stable'",
+            "reference='development:stable'\nresolved_digest='sha256:forged'",
+        ),
+        DRAFT.replace("ref='main'", "ref='main'\nresolved_commit='forged'"),
+        format!("revision_id='forged'\n{DRAFT}"),
+        format!("actor='operator'\n{DRAFT}"),
+    ] {
+        assert!(toml::from_str::<EnvironmentDraft>(&source).is_err());
+    }
+    for source in [
+        DRAFT.replace("development:stable", "bad reference"),
+        DRAFT.replace("https://example.org/", "https://user:secret@example.org/"),
+        DRAFT.replace("destination='project'", "destination='../project'"),
+        DRAFT.replace("ref='main'", "ref='--upload-pack=bad'"),
+    ] {
+        let draft: EnvironmentDraft = toml::from_str(&source).unwrap();
+        assert!(draft.validate().is_err());
+    }
+}

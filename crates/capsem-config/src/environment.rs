@@ -21,13 +21,13 @@ pub struct EnvironmentIdentity {
 
 /// Editable content contains no service-assigned revision/history metadata.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct EnvironmentSpecification {
+#[serde(deny_unknown_fields, bound(deserialize = "I: Deserialize<'de>, R: Deserialize<'de>"))]
+pub struct EnvironmentSpecification<I = EnvironmentImage, R = EnvironmentRepository> {
     pub name: String,
     #[serde(default)]
     pub description: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub image: Option<EnvironmentImage>,
+    pub image: Option<I>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub startup: Option<EnvironmentStartup>,
     #[serde(default)]
@@ -35,9 +35,29 @@ pub struct EnvironmentSpecification {
     #[serde(default)]
     pub secrets: BTreeMap<String, EnvironmentSecretBinding>,
     #[serde(default)]
-    pub repositories: Vec<EnvironmentRepository>,
+    pub repositories: Vec<R>,
     #[serde(default)]
     pub packages: EnvironmentPackages,
+}
+
+/// Agent/operator intent has selectors, never self-attested resolution metadata.
+pub type EnvironmentDraft = EnvironmentSpecification<EnvironmentImageSelection, EnvironmentRepositorySelection>;
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EnvironmentImageSelection {
+    pub reference: String,
+    #[serde(default)]
+    pub update_policy: EnvironmentImageUpdatePolicy,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EnvironmentRepositorySelection {
+    pub url: String,
+    #[serde(rename = "ref")]
+    pub reference: String,
+    pub destination: String,
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -154,7 +174,7 @@ impl EnvironmentDocument {
 
 // These representations may contain ordinary variables accidentally holding
 // credentials. Debug output reports shape only, never variable/script values.
-impl std::fmt::Debug for EnvironmentSpecification {
+impl<I, R> std::fmt::Debug for EnvironmentSpecification<I, R> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EnvironmentSpecification")
             .field("variable_count", &self.variables.len())

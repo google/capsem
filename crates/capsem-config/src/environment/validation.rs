@@ -48,10 +48,8 @@ impl EnvironmentDocument {
     }
 }
 
-impl EnvironmentSpecification {
-    /// Validate editable values without accepting service-owned revision fields.
-    /// No failure message includes ordinary variable values or script content.
-    pub fn validate(&self) -> Result<(), String> {
+impl<I, R> EnvironmentSpecification<I, R> {
+    fn validate_common(&self) -> Result<(), String> {
         let name = self.name.as_bytes();
         require(
             !name.is_empty()
@@ -104,13 +102,99 @@ impl EnvironmentSpecification {
             names.len() <= ENVIRONMENT_MAX_VARIABLES,
             "injected environment variables exceed their count limit",
         )?;
-        if let Some(image) = &self.image {
+        if let Some(startup) = &self.startup {
+            require(self.image.is_some(), "environment startup requires an OCI image")?;
             require(
-                !image.reference.is_empty()
-                    && !image.reference.chars().any(char::is_whitespace)
-                    && text(&image.reference),
-                "invalid environment image reference",
+                startup.script.len() <= ENVIRONMENT_MAX_STARTUP_SCRIPT_BYTES
+                    && text(&startup.script)
+                    && startup.timeout_seconds > 0,
+                "invalid environment startup script or timeout",
             )?;
+        }
+        require(
+            self.repositories.len() <= ENVIRONMENT_MAX_REPOSITORIES,
+            "environment repository count exceeds its limit",
+        )?;
+        require(
+            self.repositories.is_empty() || self.image.is_some(),
+            "environment repositories require an OCI image",
+        )?;
+        let mut registries = BTreeSet::new();
+        for registry in &self.packages.registries {
+            require(
+                crate::validate_identifier_shape(registry).is_ok() && registries.insert(registry),
+                "invalid or duplicate package registry selection",
+            )?;
+        }
+        Ok(())
+    }
+}
+
+fn validate_image_reference(reference: &str) -> Result<(), String> {
+    require(
+        !reference.is_empty() && !reference.chars().any(char::is_whitespace) && text(reference),
+        "invalid environment image reference",
+    )?;
+    Ok(())
+}
+
+fn validate_repositories<'a>(
+    repositories: impl IntoIterator<Item = (&'a str, &'a str, &'a str)>,
+) -> Result<(), String> {
+    let mut destinations: Vec<&str> = Vec::new();
+    for (repository_url, reference, destination) in repositories {
+        let url = url::Url::parse(repository_url).map_err(|_| "invalid environment repository URL")?;
+        require(
+            matches!(url.scheme(), "http" | "https" | "ssh")
+                && url.host_str().is_some()
+                && url.password().is_none()
+                && (url.scheme() == "ssh" || url.username().is_empty())
+                && url.query().is_none()
+                && url.fragment().is_none(),
+            "repository URLs must not embed credentials or tokens",
+        )?;
+        require(
+            !reference.is_empty()
+                && !reference.starts_with('-')
+                && !reference.ends_with('/')
+                && !reference.ends_with('.')
+                && !reference.contains("..")
+                && !reference.contains("@{")
+                && !reference.contains("//")
+                && !reference.chars().any(|ch| {
+                    ch.is_whitespace() || ch.is_control() || matches!(ch, '~' | '^' | ':' | '?' | '*' | '[' | '\\')
+                }),
+            "invalid environment repository ref",
+        )?;
+        require(
+            !destination.contains('\\')
+                && !destination.chars().any(char::is_control)
+                && destination.split('/').all(|part| !matches!(part, "" | "." | "..")),
+            "repository destination must be a normalized relative path",
+        )?;
+        require(
+            !destinations.iter().any(|other| {
+                destination == *other
+                    || destination
+                        .strip_prefix(other)
+                        .is_some_and(|suffix| suffix.starts_with('/'))
+                    || other
+                        .strip_prefix(destination)
+                        .is_some_and(|suffix| suffix.starts_with('/'))
+            }),
+            "environment repository destinations overlap",
+        )?;
+        destinations.push(destination);
+    }
+    Ok(())
+}
+
+impl EnvironmentSpecification {
+    /// Validate host-resolved revision content. A selector alone is not a pin.
+    pub fn validate(&self) -> Result<(), String> {
+        self.validate_common()?;
+        if let Some(image) = &self.image {
+            validate_image_reference(&image.reference)?;
             require(
                 image.resolved_digest.strip_prefix("sha256:").is_some_and(|hex| {
                     hex.len() == 64
@@ -121,61 +205,14 @@ impl EnvironmentSpecification {
                 "environment image requires an exact SHA-256 digest",
             )?;
         }
-        if let Some(startup) = &self.startup {
-            require(self.image.is_some(), "environment startup requires an OCI image")?;
-            require(
-                startup.script.len() <= ENVIRONMENT_MAX_STARTUP_SCRIPT_BYTES
-                    && text(&startup.script)
-                    && startup.timeout_seconds > 0,
-                "invalid environment startup script or timeout",
-            )?;
-        }
-        self.validate_repositories()?;
-        let mut registries = BTreeSet::new();
-        for registry in &self.packages.registries {
-            require(
-                crate::validate_identifier_shape(registry).is_ok() && registries.insert(registry),
-                "invalid or duplicate package registry selection",
-            )?;
-        }
-        Ok(())
-    }
-
-    fn validate_repositories(&self) -> Result<(), String> {
-        require(
-            self.repositories.len() <= ENVIRONMENT_MAX_REPOSITORIES,
-            "environment repository count exceeds its limit",
-        )?;
-        require(
-            self.repositories.is_empty() || self.image.is_some(),
-            "environment repositories require an OCI image",
-        )?;
-        let mut destinations: Vec<&str> = Vec::new();
+        validate_repositories(self.repositories.iter().map(|repository| {
+            (
+                repository.url.as_str(),
+                repository.reference.as_str(),
+                repository.destination.as_str(),
+            )
+        }))?;
         for repository in &self.repositories {
-            let url = url::Url::parse(&repository.url).map_err(|_| "invalid environment repository URL")?;
-            require(
-                matches!(url.scheme(), "http" | "https" | "ssh")
-                    && url.host_str().is_some()
-                    && url.password().is_none()
-                    && (url.scheme() == "ssh" || url.username().is_empty())
-                    && url.query().is_none()
-                    && url.fragment().is_none(),
-                "repository URLs must not embed credentials or tokens",
-            )?;
-            let reference = &repository.reference;
-            require(
-                !reference.is_empty()
-                    && !reference.starts_with('-')
-                    && !reference.ends_with('/')
-                    && !reference.ends_with('.')
-                    && !reference.contains("..")
-                    && !reference.contains("@{")
-                    && !reference.contains("//")
-                    && !reference.chars().any(|ch| {
-                        ch.is_whitespace() || ch.is_control() || matches!(ch, '~' | '^' | ':' | '?' | '*' | '[' | '\\')
-                    }),
-                "invalid environment repository ref",
-            )?;
             require(
                 matches!(repository.resolved_commit.len(), 40 | 64)
                     && repository
@@ -184,27 +221,25 @@ impl EnvironmentSpecification {
                         .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
                 "repository requires an exact resolved commit",
             )?;
-            let destination = repository.destination.as_str();
-            require(
-                !destination.contains('\\')
-                    && !destination.chars().any(char::is_control)
-                    && destination.split('/').all(|part| !matches!(part, "" | "." | "..")),
-                "repository destination must be a normalized relative path",
-            )?;
-            require(
-                !destinations.iter().any(|other| {
-                    destination == *other
-                        || destination
-                            .strip_prefix(other)
-                            .is_some_and(|suffix| suffix.starts_with('/'))
-                        || other
-                            .strip_prefix(destination)
-                            .is_some_and(|suffix| suffix.starts_with('/'))
-                }),
-                "environment repository destinations overlap",
-            )?;
-            destinations.push(destination);
         }
         Ok(())
+    }
+}
+
+impl EnvironmentDraft {
+    /// Validate intent before resolution; the ledger admission bounds the final
+    /// encoded proposal. Errors and Debug never expose variable/script values.
+    pub fn validate(&self) -> Result<(), String> {
+        self.validate_common()?;
+        if let Some(image) = &self.image {
+            validate_image_reference(&image.reference)?;
+        }
+        validate_repositories(self.repositories.iter().map(|repository| {
+            (
+                repository.url.as_str(),
+                repository.reference.as_str(),
+                repository.destination.as_str(),
+            )
+        }))
     }
 }
