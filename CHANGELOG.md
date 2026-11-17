@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fixed: Core MCP replies retain complete accepted content when remapping maximum escaped guest IDs, and keep content overflow errors correlated.
+
 - Fixed: Reserve independent JSON-RPC correlation space so maximal escaped IDs do not reduce usable MCP content; unknown error identities are explicit null values.
 
 - Fixed: The MCP upstream broker independently enforces the shared request payload bound when a worker bypasses client-side admission.

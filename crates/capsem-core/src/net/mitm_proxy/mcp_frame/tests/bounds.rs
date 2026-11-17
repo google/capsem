@@ -1,5 +1,29 @@
 use super::*;
 
+#[tokio::test]
+async fn mcp_transport_bounds_upstream_boundary_survives_correlation_remapping() {
+    let mut upstream = ok_response(json!(""));
+    let overhead = serde_json::to_vec(&upstream).unwrap().len();
+    upstream.result = Some(json!("x".repeat(capsem_proto::MCP_PAYLOAD_MAX_BYTES - overhead)));
+    let accepted = serde_json::to_vec(&upstream).unwrap();
+    assert_eq!(accepted.len(), capsem_proto::MCP_PAYLOAD_MAX_BYTES);
+    let mut response: JsonRpcResponse = serde_json::from_slice(&accepted).unwrap();
+    response.id = Some(json!("\0".repeat(capsem_proto::MCP_REQUEST_ID_MAX_BYTES)));
+    let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+    let process = "x".repeat(capsem_proto::MCP_FRAME_MAX_PROCESS_NAME_LEN);
+    send_response(&tx, 99, &process, &response).await.unwrap();
+    let frame = rx.recv().await.unwrap();
+    let decoded: JsonRpcResponse = serde_json::from_slice(&frame.payload).unwrap();
+    assert!(
+        decoded.error.is_none(),
+        "accepted upstream payload failed downstream: {:?}",
+        decoded.error
+    );
+    assert_eq!(decoded.result, upstream.result);
+    assert_eq!(decoded.id, response.id);
+    capsem_proto::encode_mcp_frame(99, 0, &process, &frame.payload).unwrap();
+}
+
 struct PayloadIdentityWriter {
     expected: usize,
     body_len: usize,
@@ -101,10 +125,8 @@ async fn mcp_transport_bounds_invalid_ids_never_dispatch_and_valid_ids_still_wor
 
 #[tokio::test]
 async fn mcp_transport_bounds_reserve_maximum_attribution_for_every_reply() {
-    let limit = capsem_proto::MCP_FRAME_MAX_SIZE
-        - capsem_proto::MCP_FRAME_HEADER_LEN as usize
-        - capsem_proto::MCP_FRAME_MAX_PROCESS_NAME_LEN;
-    let overhead = serde_json::to_vec(&ok_response(json!(""))).unwrap().len();
+    let limit = capsem_proto::MCP_PAYLOAD_MAX_BYTES;
+    let overhead = serde_json::to_vec(&ok_response(json!(""))).unwrap().len() - b",\"id\":1".len();
     let complete = ok_response(json!("x".repeat(limit - overhead)));
     for process in [
         "codex".to_owned(),
@@ -113,7 +135,7 @@ async fn mcp_transport_bounds_reserve_maximum_attribution_for_every_reply() {
         let (tx, mut rx) = tokio::sync::mpsc::channel(1);
         send_response(&tx, 9, &process, &complete).await.unwrap();
         let accepted = rx.recv().await.unwrap();
-        assert_eq!(accepted.payload.len(), limit);
+        assert_eq!(accepted.payload.len(), limit + b",\"id\":1".len());
         let decoded: JsonRpcResponse = serde_json::from_slice(&accepted.payload).unwrap();
         assert_eq!(decoded.result, complete.result);
         capsem_proto::encode_mcp_frame(9, 0, &process, &accepted.payload).unwrap();

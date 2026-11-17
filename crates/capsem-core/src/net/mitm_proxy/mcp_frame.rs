@@ -40,9 +40,7 @@ use wire::{
 };
 
 // Every accepted JSON reply fits the frame even with maximum attribution.
-pub(super) const MCP_JSON_RPC_MAX_BYTES: usize = capsem_proto::MCP_FRAME_MAX_SIZE
-    - capsem_proto::MCP_FRAME_HEADER_LEN as usize
-    - capsem_proto::MCP_FRAME_MAX_PROCESS_NAME_LEN;
+pub(super) const MCP_JSON_RPC_MAX_BYTES: usize = capsem_proto::MCP_JSON_RPC_MAX_BYTES;
 pub(super) const MCP_REQUEST_PREVIEW_BYTES: usize = 4096;
 
 /// Deadline for a framed-MCP body once its length prefix has been read. Bounds a

@@ -42,7 +42,7 @@ pub(super) async fn send_response(
 /// The external JSON-RPC response is encoded once into its final payload
 /// buffer. A refused result is an explicit error, never a truncated success.
 pub(in crate::net::mitm_proxy) fn encode_response_payload(response: &JsonRpcResponse) -> Result<Vec<u8>> {
-    match capsem_proto::framing::encode_json_record(response, MCP_JSON_RPC_MAX_BYTES) {
+    match capsem_proto::mcp_contracts::json_rpc_wire::encode_response(response) {
         Ok(payload) => Ok(payload),
         Err(error) if capsem_proto::framing::is_frame_too_large(&error) => {
             let id = response.id.as_ref().filter(|id| is_valid_mcp_request_id(id)).cloned();
@@ -51,7 +51,7 @@ pub(in crate::net::mitm_proxy) fn encode_response_payload(response: &JsonRpcResp
                 -32000,
                 "MCP result exceeds the frame limit; the tool may already have run",
             );
-            capsem_proto::framing::encode_json_record(&fallback, MCP_JSON_RPC_MAX_BYTES)
+            capsem_proto::mcp_contracts::json_rpc_wire::encode_response(&fallback)
                 .context("encode MCP size error")
         }
         Err(error) => Err(error).context("encode MCP JSON-RPC response"),
@@ -100,10 +100,10 @@ pub(super) fn recover_stream_id(body: &[u8]) -> Option<u32> {
 }
 
 pub(super) fn parse_json_rpc_payload(payload: &[u8]) -> std::result::Result<JsonRpcRequest, JsonRpcPayloadError> {
-    if payload.len() > MCP_JSON_RPC_MAX_BYTES {
+    if let Err(error) = capsem_proto::mcp_contracts::json_rpc_wire::validate_size(payload) {
         return Err(JsonRpcPayloadError {
             code: -32600,
-            message: format!("JSON-RPC payload too large: {} bytes", payload.len()),
+            message: format!("JSON-RPC payload too large: {error}"),
             id: None,
         });
     }
