@@ -22,6 +22,10 @@ Capsem 0.7 is a clean break from the 0.6 release model; no compatibility
 shim serves 0.6 field binaries. Applications are OCI images resolved through
 the image catalog; they are not part of the VM runtime and are not authored by the release lanes in this document.
 
+Environment skills, rules, and MCP catalogs are also independently published
+OCI data artifacts. Manifests identify their sources and supported catalog
+schemas; binary and runtime lanes do not build or publish catalog contents.
+
 ## 1. Purpose
 
 Capsem has two independently moving product dimensions:
@@ -203,6 +207,21 @@ The authoritative update and integrity document authored through
 - Compatibility relationships needed to prevent invalid binary/runtime
   combinations.
 - Evidence needed to verify the origin and contents of referenced artifacts.
+- Optional `catalogs` source descriptors for `skills`, `rules`, and `mcp`, each
+  containing an OCI `reference` and `schema_version`.
+
+Missing catalog descriptors MUST be reported as unavailable, never filled from
+invented public defaults. Catalog fetching MUST resolve and verify OCI digests
+through the existing asset owner. Corporate source selection overrides the
+corresponding manifest source; an unavailable or invalid corporate source MUST
+NOT trigger a fallback to the public source. Refreshing a catalog or changing
+its source MUST NOT silently change approved environment selections.
+
+Catalog source descriptors are manifest metadata authored through
+`capsem-admin`. Ordinary binary/runtime authoring preserves them; changing them
+requires an explicit manifest-authoring operation. No catalog bytes, launch
+commands, skill contents, or rule definitions become runtime/package artifacts
+or a new release family through these references.
 
 A manifest is not merely an asset list. It is the authoritative description of
 the complete, valid release graph that installed Capsem instances poll.
@@ -268,6 +287,7 @@ The release graph has this hierarchy:
 Manifest
 ├── Channel A
 │   ├── Capsem binary selection and compatibility policy
+│   ├── Optional environment catalog source descriptors
 │   └── Runtime
 │       ├── images/assets per architecture
 │       ├── integrity metadata

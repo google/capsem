@@ -150,6 +150,8 @@ pub struct ReleaseManifest {
     pub packages: Vec<PackageInventoryRow>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime: Option<RuntimeDocument>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalogs: Option<capsem_proto::catalogs::CatalogSources>,
 }
 
 /// The VM runtime a channel publishes: one image set per architecture.
@@ -540,7 +542,26 @@ pub fn verify_package_contents_match_binary_inventory(
 }
 
 impl ReleaseManifest {
+    pub fn validate_catalog_sources(&self) -> Result<()> {
+        use capsem_proto::catalogs::{CatalogKind, CatalogSourceOrigin, SelectedCatalogSource};
+        if let Some(sources) = &self.catalogs {
+            for kind in CatalogKind::ALL {
+                if let Some(source) = sources.source(kind) {
+                    capsem_assets::catalogs::ValidatedCatalogSource::new(
+                        kind,
+                        SelectedCatalogSource {
+                            source,
+                            origin: CatalogSourceOrigin::Manifest,
+                        },
+                    )
+                    .with_context(|| format!("invalid {} catalog source descriptor", kind.as_str()))?;
+                }
+            }
+        }
+        Ok(())
+    }
     pub fn validate_inventory_shape(&self) -> Result<()> {
+        self.validate_catalog_sources()?;
         if self.version.trim().is_empty() {
             bail!("release manifest version must not be empty");
         }

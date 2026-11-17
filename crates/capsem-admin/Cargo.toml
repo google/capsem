@@ -14,6 +14,7 @@ name = "capsem-admin"
 path = "src/main.rs"
 
 [dependencies]
+capsem-proto = { path = "../capsem-proto" }
 capsem-crypto = { path = "../capsem-crypto" }
 capsem-assets = { path = "../capsem-assets" }
 capsem-core = { path = "../capsem-core" }

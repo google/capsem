@@ -1,2 +1,2 @@
-sha256 = "a8451f3ba64b998b0551bbaa44a786421a10e38aef521c2e311321db81fd3be7"
-reason = "Deliberately add only the capsem-assets -> capsem-proto edge for shared catalog source descriptors, preserving the assets/config dependency boundary and all prior security upgrades. No third-party package versions change; guest/native builder caches are intentionally invalidated."
+sha256 = "c1141b16bddf18bf1cc025ee5aa798f4d52bebfa6c479ab7c030326c956d98ef"
+reason = "Deliberately add only the capsem-admin -> capsem-proto edge for the authoritative manifest catalog source descriptors. All prior security fixes and the permitted assets/proto edge remain; no third-party package versions change. Guest/native builder caches are intentionally invalidated."

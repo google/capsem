@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: Optional skill, rule and MCP catalog source descriptors in release manifests, with OCI validation and preservation across binary and runtime releases.
+
 - Fixed: Enforce the shared package-registry selection count in environment drafts and canonical documents and expose the same limit to editors.
 
 - Added: Plugin-specific environment options with independent PII directions, mandatory broker/log-sanitizer rewrite configuration and separate credential-capture control.

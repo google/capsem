@@ -623,6 +623,7 @@ dependencies = [
  "capsem-assets",
  "capsem-core",
  "capsem-crypto",
+ "capsem-proto",
  "clap",
  "flate2",
  "reqwest 0.12.28",

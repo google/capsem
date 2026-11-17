@@ -10,6 +10,7 @@ from copy import deepcopy
 from pathlib import Path
 
 import blake3
+import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = PROJECT_ROOT / "build_system" / "scripts" / "release" / "check-release-graph-diff.py"
@@ -106,6 +107,28 @@ def test_fixture_can_mutate_nightly_runtime_only(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     assert new["channels"]["stable"] == old["channels"]["stable"]
     assert new["manifests"]["stable"] == old["manifests"]["stable"]
+
+
+@pytest.mark.parametrize("lane", ["binary", "runtime"])
+def test_release_lanes_preserve_catalog_source_metadata(tmp_path: Path, lane: str) -> None:
+    old = _graph()
+    old["manifests"]["stable"]["1.0.2"]["catalogs"] = {
+        "skills": {"reference": "ghcr.io/google/capsem/skills:stable", "schema_version": 1}
+    }
+    new = deepcopy(old)
+    new["channels"]["stable"]["manifests"][0]["digest"]["sha256"] = "c" * 64
+    manifest = new["manifests"]["stable"]["1.0.2"]
+    if lane == "binary":
+        manifest["packages"][0]["digest"]["sha256"] = "d" * 64
+    else:
+        manifest["runtime"]["revision"] = "1.1.1"
+    result = _run_policy(tmp_path, old, new, "--lane", lane, "--channel", "stable")
+    assert result.returncode == 0, result.stderr
+
+    manifest["catalogs"]["skills"]["reference"] = "ghcr.io/google/capsem/skills:changed"
+    result = _run_policy(tmp_path, old, new, "--lane", lane, "--channel", "stable")
+    assert result.returncode == 1
+    assert "manifests.stable.1.0.2.catalogs.skills.reference" in result.stderr
 
 
 def _run_policy(

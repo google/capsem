@@ -37,7 +37,11 @@ def test_package_rows_are_not_binary_rows() -> None:
     assert "pub package: String" not in source
     assert "pub installed_path: String" in source
     assert "pub sbom_component_ref: String" in source
-    assert "package_inventory_rows_are_separate_from_binary_rows" in sibling_tests(RELEASE_GRAPH)
+    assert "mod package_inventory;" in sibling_tests(RELEASE_GRAPH)
+    inventory_tests = RELEASE_GRAPH.parent / "release_graph" / "tests" / "package_inventory.rs"
+    assert "fn package_inventory_rows_are_separate_from_binary_rows" in inventory_tests.read_text(
+        encoding="utf-8"
+    )
 
 
 def test_every_packaged_executable_has_hashes_and_sbom_ref() -> None:
