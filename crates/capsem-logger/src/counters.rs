@@ -234,6 +234,9 @@ impl LedgerTally {
             | WriteOp::HostEvent(_)
             | WriteOp::PrepareEnvironmentRevision(_)
             | WriteOp::EnvironmentRevisionTransition(_)
+            | WriteOp::PrepareEnvironmentRequest(_)
+            | WriteOp::EnvironmentRequestDecision(_)
+            | WriteOp::EnvironmentRequestResult(_)
             | WriteOp::Network(_)
             | WriteOp::NetworkMembership(_)
             | WriteOp::NetworkDeparture(_) => {}

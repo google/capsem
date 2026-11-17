@@ -25,10 +25,11 @@ mod flush_faults;
 #[cfg(test)]
 use flush::flush_dirty_tables_to_disk;
 use flush::{flush_dirty_tables_to_disk_recorded, FlushRequest};
+mod environment;
+mod environment_requests;
 mod legacy;
 mod model_rows;
 mod producer;
-mod environment;
 #[cfg(test)]
 pub(crate) use bodies::close_blocks_at_every_flush_for_tests;
 pub(crate) use bodies::{archive_lock_path_for_db, archive_path_for_db};
@@ -226,6 +227,9 @@ pub enum WriteOp {
     HostEvent(HostEvent),
     PrepareEnvironmentRevision(crate::events::PreparedEnvironmentRevision),
     EnvironmentRevisionTransition(crate::events::EnvironmentRevisionTransition),
+    PrepareEnvironmentRequest(crate::events::environment::request::PreparedEnvironmentRequest),
+    EnvironmentRequestDecision(crate::events::environment::request::EnvironmentRequestDecision),
+    EnvironmentRequestResult(crate::events::environment::request::EnvironmentRequestResult),
     /// Registry rows of a network database; upserted by key, disk-only.
     Network(NetworkRecord),
     NetworkMembership(NetworkMembership),

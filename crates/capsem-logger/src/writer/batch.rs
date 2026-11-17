@@ -200,6 +200,9 @@ fn insert_batch_ops<'a>(
             WriteOp::HostEvent(e) => insert_host_event(tx, e, WriteTarget::Memory)?,
             WriteOp::PrepareEnvironmentRevision(record) => environment::prepare_revision(tx, record, bodies)?,
             WriteOp::EnvironmentRevisionTransition(record) => environment::transition_revision(tx, record)?,
+            WriteOp::PrepareEnvironmentRequest(record) => environment_requests::prepare(tx, record, bodies)?,
+            WriteOp::EnvironmentRequestDecision(record) => environment_requests::decide(tx, record)?,
+            WriteOp::EnvironmentRequestResult(record) => environment_requests::bind_result(tx, record, bodies)?,
             WriteOp::Network(n) => event_rows::upsert_network(tx, n, WriteTarget::Memory)?,
             WriteOp::NetworkMembership(m) => event_rows::upsert_network_membership(tx, m, WriteTarget::Memory)?,
             WriteOp::NetworkDeparture(departure) => {

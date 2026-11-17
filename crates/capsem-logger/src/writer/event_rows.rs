@@ -456,3 +456,13 @@ pub(super) fn insert_host_event(conn: &Connection, event: &HostEvent, target: Wr
     )?;
     Ok(())
 }
+
+/// Reserve insertion order through the common sequence, then publish this audit
+/// in the caller's main transaction beside the durable state transition.
+pub(super) fn insert_durable_host_event(conn: &Connection, event: &HostEvent) -> rusqlite::Result<()> {
+    insert_host_event(conn, event, WriteTarget::Memory)?;
+    let id = conn.last_insert_rowid();
+    execute_cached(conn, "INSERT INTO main.host_events(id,timestamp_unix_ms,kind,session_id,actor,detail,trace_id) SELECT id,timestamp_unix_ms,kind,session_id,actor,detail,trace_id FROM mem.host_events WHERE id=?1", [id])?;
+    execute_cached(conn, "DELETE FROM mem.host_events WHERE id=?1", [id])?;
+    Ok(())
+}

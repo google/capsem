@@ -30,10 +30,13 @@ pub enum HostEventKind {
     EnvironmentRevisionPrepared,
     EnvironmentRevisionCommitted,
     EnvironmentRevisionRecovered,
+    EnvironmentRequestPrepared,
+    EnvironmentRequestDecided,
+    EnvironmentRequestResultBound,
 }
 
 impl HostEventKind {
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 22] = [
         Self::SessionCreated,
         Self::SessionStarted,
         Self::SessionStopped,
@@ -53,6 +56,9 @@ impl HostEventKind {
         Self::EnvironmentRevisionPrepared,
         Self::EnvironmentRevisionCommitted,
         Self::EnvironmentRevisionRecovered,
+        Self::EnvironmentRequestPrepared,
+        Self::EnvironmentRequestDecided,
+        Self::EnvironmentRequestResultBound,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -76,6 +82,9 @@ impl HostEventKind {
             Self::EnvironmentRevisionPrepared => "environment_revision_prepared",
             Self::EnvironmentRevisionCommitted => "environment_revision_committed",
             Self::EnvironmentRevisionRecovered => "environment_revision_recovered",
+            Self::EnvironmentRequestPrepared => "environment_request_prepared",
+            Self::EnvironmentRequestDecided => "environment_request_decided",
+            Self::EnvironmentRequestResultBound => "environment_request_result_bound",
         }
     }
 

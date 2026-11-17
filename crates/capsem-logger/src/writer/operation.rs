@@ -21,6 +21,9 @@ impl WriteOp {
             WriteOp::HostEvent(_) => "host_event",
             WriteOp::PrepareEnvironmentRevision(_) => "environment_revision_prepare",
             WriteOp::EnvironmentRevisionTransition(_) => "environment_revision_transition",
+            WriteOp::PrepareEnvironmentRequest(_) => "environment_request_prepare",
+            WriteOp::EnvironmentRequestDecision(_) => "environment_request_decision",
+            WriteOp::EnvironmentRequestResult(_) => "environment_request_result",
             WriteOp::Network(_) => "network",
             WriteOp::NetworkMembership(_) => "network_membership",
             WriteOp::NetworkDeparture(_) => "network_departure",
@@ -50,6 +53,9 @@ impl WriteOp {
             | WriteOp::HostEvent(_)
             | WriteOp::PrepareEnvironmentRevision(_)
             | WriteOp::EnvironmentRevisionTransition(_)
+            | WriteOp::PrepareEnvironmentRequest(_)
+            | WriteOp::EnvironmentRequestDecision(_)
+            | WriteOp::EnvironmentRequestResult(_)
             | WriteOp::Network(_)
             | WriteOp::NetworkMembership(_)
             | WriteOp::NetworkDeparture(_) => None,
@@ -75,6 +81,9 @@ impl WriteOp {
             | WriteOp::HostEvent(_)
             | WriteOp::PrepareEnvironmentRevision(_)
             | WriteOp::EnvironmentRevisionTransition(_)
+            | WriteOp::PrepareEnvironmentRequest(_)
+            | WriteOp::EnvironmentRequestDecision(_)
+            | WriteOp::EnvironmentRequestResult(_)
             | WriteOp::Network(_)
             | WriteOp::NetworkMembership(_)
             | WriteOp::NetworkDeparture(_) => None,
@@ -135,11 +144,18 @@ pub(super) fn affected_memory_tables(op: &WriteOp, tables: &mut BTreeSet<&'stati
         WriteOp::PolicyMutationEvent(_) => {
             tables.insert("policy_mutation_events");
         }
-        WriteOp::HostEvent(_) | WriteOp::EnvironmentRevisionTransition(_) => {
+        WriteOp::HostEvent(_)
+        | WriteOp::EnvironmentRevisionTransition(_)
+        | WriteOp::EnvironmentRequestDecision(_)
+        | WriteOp::EnvironmentRequestResult(_) => {
             tables.insert("host_events");
         }
         WriteOp::PrepareEnvironmentRevision(_) => {
             tables.insert("environment_revisions");
+            tables.insert("host_events");
+        }
+        WriteOp::PrepareEnvironmentRequest(_) => {
+            tables.insert("environment_requests");
             tables.insert("host_events");
         }
         // Disk-only registry tables: written to main directly, nothing to flush.

@@ -3,9 +3,11 @@ use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
+pub mod environment;
 mod host;
-mod environment;
-pub use environment::{PreparedEnvironmentRevision, EnvironmentRevisionParent, EnvironmentRevisionState, EnvironmentRevisionTransition};
+pub use environment::{
+    EnvironmentRevisionParent, EnvironmentRevisionState, EnvironmentRevisionTransition, PreparedEnvironmentRevision,
+};
 mod network;
 mod transport;
 pub use host::{HostEvent, HostEventKind};

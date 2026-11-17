@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS environment_revisions (
     FOREIGN KEY(environment_id,previous_revision_id)
         REFERENCES environment_revisions(environment_id,revision_id),
     FOREIGN KEY(fork_parent_environment_id,fork_parent_revision_id)
-        REFERENCES environment_revisions(environment_id,revision_id)
+        REFERENCES environment_revisions(environment_id,revision_id),
+    FOREIGN KEY(request_id) REFERENCES environment_requests(request_id)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_environment_revisions_inflight
     ON environment_revisions(environment_id) WHERE state='committing';
@@ -35,6 +36,8 @@ CREATE INDEX IF NOT EXISTS idx_environment_revisions_fork
     ON environment_revisions(fork_parent_revision_id);
 CREATE INDEX IF NOT EXISTS idx_environment_revisions_time
     ON environment_revisions(timestamp_unix_ms,id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_environment_revisions_request
+    ON environment_revisions(request_id) WHERE request_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS environment_requests (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -61,6 +64,9 @@ CREATE TABLE IF NOT EXISTS environment_requests (
 );
 CREATE INDEX IF NOT EXISTS idx_environment_requests_environment
     ON environment_requests(environment_id,id);
+-- Historical requests are unbounded; admission counts only the bounded pending set.
+CREATE INDEX IF NOT EXISTS idx_environment_requests_pending
+    ON environment_requests(requester_session_id,id) WHERE state='pending';
 
 CREATE TABLE IF NOT EXISTS environment_request_decisions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

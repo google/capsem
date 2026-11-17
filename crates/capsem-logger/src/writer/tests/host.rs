@@ -119,3 +119,6 @@ async fn host_event_pages_bound_filter_and_resume_by_insertion_order() {
 
 #[path = "environment.rs"]
 mod environment;
+
+#[path = "environment_requests.rs"]
+mod environment_requests;

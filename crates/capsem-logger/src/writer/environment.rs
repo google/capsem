@@ -7,17 +7,17 @@ use crate::events::{
 };
 use rusqlite::OptionalExtension;
 
-fn invalid(message: &'static str) -> rusqlite::Error {
+pub(super) fn invalid(message: &'static str) -> rusqlite::Error {
     rusqlite::Error::InvalidParameterName(message.into())
 }
 
-fn uuid(value: &str) -> bool {
+pub(super) fn uuid(value: &str) -> bool {
     uuid::Uuid::parse_str(value).is_ok_and(|id| {
         id.to_string() == value && (1..=8).contains(&id.get_version_num()) && id.get_variant() == uuid::Variant::RFC4122
     })
 }
 
-fn actor(value: &str) -> bool {
+pub(super) fn actor(value: &str) -> bool {
     matches!(value, "operator" | "system" | "corporate")
         || value.strip_prefix("agent:").is_some_and(uuid)
         || value
@@ -141,6 +141,7 @@ pub(super) fn prepare_revision(
         }
         return Ok(());
     }
+    super::environment_requests::require_revision_request(conn, record)?;
     let inflight: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM main.environment_revisions WHERE environment_id=?1 AND state='committing' UNION ALL SELECT 1 FROM mem.environment_revisions WHERE environment_id=?1 AND state='committing')", [&record.environment_id], |row| row.get(0))?;
     if inflight {
         return Err(invalid("environment already has a revision commit in flight"));
@@ -240,24 +241,18 @@ fn audit_identity(
         EnvironmentRevisionState::Committed => HostEventKind::EnvironmentRevisionCommitted,
         EnvironmentRevisionState::RecoveredUnapplied => HostEventKind::EnvironmentRevisionRecovered,
     };
-    event_rows::insert_host_event(
-        conn,
-        &HostEvent {
-            timestamp_unix_ms: at,
-            kind,
-            session_id: None,
-            actor: actor.into(),
-            detail,
-            trace_id: None,
-        },
-        WriteTarget::Memory,
-    )?;
+    let event = HostEvent {
+        timestamp_unix_ms: at,
+        kind,
+        session_id: None,
+        actor: actor.into(),
+        detail,
+        trace_id: None,
+    };
     if durable {
-        // Reserve ordering through the same memory sequence as every other
-        // host event, then publish this transition's audit atomically with it.
-        let id = conn.last_insert_rowid();
-        execute_cached(conn, "INSERT INTO main.host_events(id,timestamp_unix_ms,kind,session_id,actor,detail,trace_id) SELECT id,timestamp_unix_ms,kind,session_id,actor,detail,trace_id FROM mem.host_events WHERE id=?1", [id])?;
-        execute_cached(conn, "DELETE FROM mem.host_events WHERE id=?1", [id])?;
+        event_rows::insert_durable_host_event(conn, &event)?;
+    } else {
+        event_rows::insert_host_event(conn, &event, WriteTarget::Memory)?;
     }
     Ok(())
 }
@@ -308,4 +303,13 @@ pub(super) fn transition_revision(conn: &Connection, record: &EnvironmentRevisio
         &record.actor,
         true,
     )
+}
+
+pub(super) fn committed_reference(
+    conn: &Connection,
+    reference: &EnvironmentRevisionParent,
+    needs_replay: bool,
+) -> rusqlite::Result<(Option<EnvironmentRevisionParent>, Option<String>)> {
+    let found = committed_parent(conn, &reference.environment_id, &reference.revision_id, needs_replay)?;
+    Ok((found.fork_parent, found.request_id))
 }
