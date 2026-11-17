@@ -6,6 +6,7 @@
 
 mod condition;
 mod content_filter;
+pub mod environment;
 mod lint;
 mod managed_sessions;
 pub mod mcp;

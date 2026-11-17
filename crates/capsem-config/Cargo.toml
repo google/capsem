@@ -18,5 +18,8 @@ serde-saphyr = { workspace = true }
 toml = { workspace = true }
 tracing = { workspace = true }
 
+uuid = "1"
+url = "2"
+
 [lints]
 workspace = true
