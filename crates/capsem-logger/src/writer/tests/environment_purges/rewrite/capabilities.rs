@@ -56,11 +56,13 @@ PROJECT='approved-launch-variable'
 default='block'
 [mcps.permissions.worker.tools]
 read='allow'
-[plugins.pii_filter]
+[plugins.pii_filter.inbound]
 mode='rewrite'
-[plugins.pii_filter.options.inbound]
+[plugins.pii_filter.inbound.options]
 email=false
-[plugins.pii_filter.options.outbound]
+[plugins.pii_filter.outbound]
+mode='rewrite'
+[plugins.pii_filter.outbound.options]
 phone=false
 [plugins.credential_broker.options]
 capture_enabled=false
